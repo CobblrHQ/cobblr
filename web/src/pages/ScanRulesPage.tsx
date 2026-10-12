@@ -310,7 +310,7 @@ function RuleCard({
       {/* title bar */}
       <div className="flex items-center gap-2 border-b border-line dark:border-slate-800 px-2 py-1.5">
         {isAdmin && (
-          <button {...attributes} {...listeners} className="cursor-grab text-faint hover:text-muted" aria-label="Reorder">
+          <button title="Reorder" {...attributes} {...listeners} className="cursor-grab text-faint hover:text-muted" aria-label="Reorder">
             <GripVertical size={16} />
           </button>
         )}
@@ -326,10 +326,10 @@ function RuleCard({
           )}
           {isAdmin && (
             <>
-              <button onClick={onEdit} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800" aria-label="Edit">
+              <button title="Edit" onClick={onEdit} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800" aria-label="Edit">
                 <Pencil size={14} />
               </button>
-              <button onClick={onDelete} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800" aria-label="Delete">
+              <button title="Delete" onClick={onDelete} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800" aria-label="Delete">
                 <Trash2 size={14} />
               </button>
             </>
@@ -495,7 +495,7 @@ function RuleModal({
         </div>
         {mode === "json" ? (
           <div className="space-y-1">
-            <textarea value={jsonText} onChange={(e) => editJson(e.target.value)} rows={16} spellCheck={false} className="input w-full font-mono text-xs" />
+            <textarea aria-label="Rules as JSON" value={jsonText} onChange={(e) => editJson(e.target.value)} rows={16} spellCheck={false} className="input w-full font-mono text-xs" />
             {jsonErr ? (
               <p className="text-xs text-ember-600 dark:text-ember-400">{jsonErr}</p>
             ) : (
@@ -626,7 +626,7 @@ function TypeMapEditor({ value, onChange }: { value: Record<string, string>; onC
             <input value={t} onChange={(e) => { const m = { ...value }; delete m[t]; if (e.target.value) m[e.target.value] = k; onChange(m); }} placeholder="printers" className="input font-mono text-sm flex-1" />
             <ArrowRight size={14} className="text-faint" />
             <input value={k} onChange={(e) => onChange({ ...value, [t]: e.target.value })} placeholder="machines:machine" className="input font-mono text-sm flex-1" />
-            <button onClick={() => { const m = { ...value }; delete m[t]; onChange(m); }} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800"><Trash2 size={13} /></button>
+            <button onClick={() => { const m = { ...value }; delete m[t]; onChange(m); }} aria-label="Remove this mapping" title="Remove this mapping" className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800"><Trash2 size={13} /></button>
           </div>
         ))}
         <button onClick={() => onChange({ ...value, "": "" })} className="text-xs text-cobble-600 hover:underline">+ add mapping</button>
@@ -654,7 +654,7 @@ function ChildrenEditor({ base, value, onChange }: { base: string; value: Record
           <span className="text-[11px] font-mono text-faint dark:text-slate-500">/</span>
           <ArrowRight size={14} className="text-faint shrink-0" />
           <input list="qr-target-kinds" value={kind} onChange={(e) => onChange({ ...value, [seg]: e.target.value })} placeholder="machines:machine" className="input font-mono text-sm flex-1" />
-          <button onClick={() => { const m = { ...value }; delete m[seg]; onChange(m); }} className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800"><Trash2 size={13} /></button>
+          <button onClick={() => { const m = { ...value }; delete m[seg]; onChange(m); }} aria-label="Remove this child" title="Remove this child" className="rounded p-1 text-muted hover:bg-mortar-100 dark:hover:bg-slate-800"><Trash2 size={13} /></button>
         </div>
       ))}
       <button onClick={() => onChange({ ...value, "": "" })} className="text-xs text-cobble-600 hover:underline">+ add child</button>

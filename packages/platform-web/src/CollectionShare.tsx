@@ -23,7 +23,7 @@ export function CollectionShare({ kind, title, ids, selectionList }: { kind: str
   if (shares.isLoading || shares.data?.can_share === false) return null;
   return <>
     <button type="button" data-testid="collection-share" className={`${headerButton()} max-sm:hidden`} onClick={open}><Share2 size={14} aria-hidden />Share</button>
-    <button ref={trigger} type="button" aria-label="More list actions" aria-haspopup="menu" aria-expanded={!!anchor} data-testid="collection-more" className={`${headerButton()} sm:hidden`} onClick={() => setAnchor(trigger.current?.getBoundingClientRect() ?? null)}><MoreHorizontal size={16} aria-hidden /></button>
+    <button title="More list actions" ref={trigger} type="button" aria-label="More list actions" aria-haspopup="menu" aria-expanded={!!anchor} data-testid="collection-more" className={`${headerButton()} sm:hidden`} onClick={() => setAnchor(trigger.current?.getBoundingClientRect() ?? null)}><MoreHorizontal size={16} aria-hidden /></button>
     {anchor && <><BackdropLayer className="z-[60]" onClick={close} /><PopoverLayer ref={menu} role="menu" aria-label="List actions" style={{ left: anchor.left, top: anchor.bottom + 4, width: 180 }} className="z-[61] rounded-lg border border-line bg-surface p-1 shadow-xl dark:border-slate-600">
       <button type="button" role="menuitem" className="flex w-full items-center gap-2 rounded px-3 py-2 text-sm text-content hover:bg-subtle" onClick={open}><Share2 size={14} aria-hidden />Share</button>
     </PopoverLayer></>}

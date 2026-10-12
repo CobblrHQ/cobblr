@@ -3,6 +3,7 @@ type: feature
 scope: fields
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#4.5 Custom fields
+docs_published: 2026-10-12
 ---
 Records can carry an address. The picker offers the places your workspace already used as you type, and the address becomes the calendar event's Where, with directions on your phone.
 

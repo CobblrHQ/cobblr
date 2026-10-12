@@ -24,6 +24,7 @@
 // discovered from POSTGRES'S OWN FOREIGN KEYS. A module that adds a new
 // instance-scoped table gets moved correctly without touching this file.
 
+import { compareChoices } from "@cobblr/platform-contract/choice-order";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { getEntry } from "../modules/registry.js";
@@ -391,7 +392,7 @@ async function growParentCategory(orgId: string, parentKind: string, value: stri
   if (!key || choices.some((c) => normaliseCategory(c) === key)) return;
   await meta
     .updateTable("module_field_defs")
-    .set({ choices: sql`${JSON.stringify([...choices, value].sort((a, b) => a.localeCompare(b)))}::jsonb` as never })
+    .set({ choices: sql`${JSON.stringify([...choices, value].sort(compareChoices))}::jsonb` as never })
     .where("id", "=", axis.id)
     .execute();
 }

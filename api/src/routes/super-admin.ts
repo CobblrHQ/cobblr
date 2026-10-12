@@ -20,6 +20,7 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requirePlatformAdmin, isPlatformAdmin } from "../auth/middleware.js";
 import { usageStats } from "../platform/usage-stats.js";
+import { computeStats } from "../platform/compute-ledger.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { inviteExpiresAt } from "../auth/signup-gate.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
@@ -76,6 +77,7 @@ import { operatorEmail } from "@cobblr/platform-contract/outbound-identity";
 import { signupsBySource } from "../platform/signups-by-source.js";
 import { recentViolations } from "../platform/csp-reports.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const superAdminRouter = Router();
 
@@ -201,8 +203,8 @@ superAdminRouter.patch("/workspaces/:id", async (req, res, next) => {
 // "core-ai"]) so the demo can show off what real trials lock. Target the user by email.
 const DemoBody = z.object({
   email: z.string().email(),
-  name: z.string().min(1).max(120).optional(),
-  expiresInDays: z.number().int().positive().optional(),
+  name: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  expiresInDays: optionalField(z.number().int().positive()),
   unlock: z.array(z.string().min(1)).max(50).optional(),
   blueprint: BlueprintManifest.optional(),
 });
@@ -241,7 +243,7 @@ superAdminRouter.post("/demos", async (req, res, next) => {
       userId: target.id,
       orgName: parsed.data.name ?? "Demo workspace",
       blueprint: parsed.data.blueprint ?? null,
-      expiresInDays: parsed.data.expiresInDays,
+      expiresInDays: parsed.data.expiresInDays ?? undefined,
       unlock: parsed.data.unlock,
     });
     await activityLog({
@@ -684,6 +686,14 @@ superAdminRouter.get("/usage-stats", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// GET /super-admin/compute-stats — what each route costs this deployment since the api started: wall
+// time, CPU, memory growth and calls per workspace per day (platform/compute-ledger.ts, #5424). Counts and
+// distributions, never a workspace; readable with an ops:read token. `?limit=` (default 60, at most 400).
+superAdminRouter.get("/compute-stats", (req, res) => {
+  const limit = Number(req.query.limit) || 60;
+  res.json(computeStats(limit));
 });
 
 // GET /super-admin/product-metrics — the thesis dashboard (2026-07 audit F2)
@@ -1636,11 +1646,11 @@ const UpdateFeedback = z.object({
   // this" / "it's fixed" reply). `reply_message` is the human note; falls
   // back to a status-derived default. Best-effort — never fails the update.
   notify_reporter: z.boolean().optional(),
-  reply_message: z.string().max(2000).optional(),
+  reply_message: optionalText(2000),
   // Third-person "what was reported → what we fixed" note for the PUBLIC Discord
   // feedback-resolved post (NOT addressed to the reporter). Distinct from
   // reply_message (the personal in-app/email reply). Used when status=resolved.
-  public_summary: z.string().max(2000).optional(),
+  public_summary: optionalText(2000),
   // AI triage verdict, written by the host-side analyzer (feedback:triage
   // token). Setting this stamps triaged_at; the analyzer also passes
   // status:"triaged". Kept a nested object so a human PATCH (status/notes)
@@ -1652,7 +1662,7 @@ const UpdateFeedback = z.object({
       viable: z.boolean(),
       summary: z.string().max(4000),
       action: z.string().max(2000),
-      model: z.string().max(80).optional(),
+      model: z.string().max(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
       // The analyzer may RE-FILE the item. A ticket arrives typed by the channel
       // it was posted in, which is a guess made before anybody read it: a bug
       // reported in #help arrives as "other", and a use case that turns out to
@@ -1662,7 +1672,7 @@ const UpdateFeedback = z.object({
       // Nested here rather than top-level BECAUSE of the scope: a feedback:triage
       // token may write `triage` and `status` and nothing else, and a top-level
       // `type` would widen what that narrow credential can reach.
-      type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).optional(),
+      type: z.enum(["bug", "confusing", "idea", "use_case", "other"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
     })
     .optional(),
 });
@@ -2594,16 +2604,16 @@ const BatchResolveBody = z.object({
       z.object({
         id: z.string().uuid(),
         // Third-person changelog line for the PUBLIC Discord post.
-        public_summary: z.string().max(2000).optional(),
+        public_summary: optionalText(2000),
         // Reporter-facing "we fixed it by …" line for THIS item, shown next to
         // its quoted report in the combined email. Falls back to public_summary.
-        fix_note: z.string().max(2000).optional(),
+        fix_note: optionalText(2000),
       }),
     )
     .min(1)
     .max(50),
   // Optional intro/summary shown once at the top (above the per-item breakdown).
-  reply_message: z.string().max(4000).optional(),
+  reply_message: optionalText(4000),
   notify_reporter: z.boolean().optional(),
 });
 
@@ -3070,7 +3080,7 @@ superAdminRouter.post("/impersonations", async (req, res, next) => {
 
 const PatchImpersonation = z.object({
   ended: z.boolean().optional(),
-  mode: z.enum(["read", "write"]).optional(),
+  mode: z.enum(["read", "write"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // PATCH /super-admin/impersonations/:id — end the session, and/or arm/disarm write
@@ -3179,7 +3189,7 @@ const NoticeBody = z.object({
   user_ids: z.array(z.string().uuid()).optional(),
   subject: z.string().min(1).max(200),
   message: z.string().min(1).max(4000),
-  link_url: z.string().max(500).optional(),
+  link_url: optionalText(500),
 });
 
 superAdminRouter.post("/notices", async (req, res, next) => {
@@ -3557,9 +3567,9 @@ const AuthoringEvalBody = z.object({
   // harness first — bundle refine only here.)
   task: z.enum(["create-bundle", "customize-template", "design-workspace", "refine-bundle"]).default("create-bundle"),
   selected_kinds: z.array(z.string().max(120)).max(20).optional(),
-  base_template_id: z.string().max(120).optional(),
+  base_template_id: optionalText(120),
   base_artifact: z.record(z.unknown()).optional(),
-  org: z.string().optional(),
+  org: optionalField(z.string()),
 });
 
 superAdminRouter.post("/authoring-eval", async (req, res, next) => {
@@ -3593,7 +3603,7 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
       return;
     }
 
-    const ctx = await assembleContext(orgId, parsed.data.selected_kinds, parsed.data.task, parsed.data.base_template_id);
+    const ctx = await assembleContext(orgId, parsed.data.selected_kinds ?? undefined, parsed.data.task, parsed.data.base_template_id ?? undefined);
     if (parsed.data.task === "refine-bundle") {
       if (!parsed.data.base_artifact) {
         res.status(400).json({ error: { code: "missing_base_artifact", message: "task refine-bundle requires base_artifact (the bundle to revise)." } });

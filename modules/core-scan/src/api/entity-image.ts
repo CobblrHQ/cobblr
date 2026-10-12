@@ -18,6 +18,7 @@ import { selectTopCandidates } from "../services/ddg-images.js";
 import { isRankFailure, rankFailureSentence, rankPhotoWithAi } from "../services/rank-photo.js";
 import { showingFirst, showsTheThing } from "../services/shows-the-thing.js";
 import { IMAGE_BUDGET } from "../services/auto-rank.js";
+import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 export const entityImageRouter = Router({ mergeParams: true });
 
@@ -28,23 +29,23 @@ const Body = z.object({
    *  the picker and the scan inbox derive it. Callers should omit rather than
    *  hand-build — a hand-built phrase is how "Auto" and "search the web" ended
    *  up finding different things for the same book. */
-  query: z.string().min(2).max(200).optional(), // SEARCH-PARAM-OK: a POST body's web-image phrase, not a list's query string
+  query: optionalField(z.string().min(2).max(200)), // SEARCH-PARAM-OK: a POST body's web-image phrase, not a list's query string
   instance: z.string().max(80).nullable().optional(),
   /** A specific web-image url the user picked (skips auto-search). */
-  image_url: z.string().url().max(2000).optional(),
+  image_url: optionalField(z.string().url().max(2000)),
   /** The address of the copy the person SAW for that pick (the strip shows a
    *  search engine's thumbnail). Kept instead when the original will not come. */
-  shown_url: z.string().url().max(2000).optional(),
+  shown_url: optionalField(z.string().url().max(2000)),
   /** A file ALREADY in this workspace's store (a scan's catalog picture),
    *  handed to the record with no second download. Skips the search too. */
-  file_id: z.string().uuid().optional(),
+  file_id: optionalUuid(),
   /** For a picked `image_url`: chosen by the person from the results, or by
    *  AI Pick. Stored on the file with where it was found (photo-source). */
-  source: z.enum(["web", "ai_pick"]).optional(),
-  source_page: z.string().max(2000).optional(),
+  source: z.enum(["web", "ai_pick"]).optional(), // none-refused-ok: a column that cannot hold null
+  source_page: optionalText(2000),
   /** The phrase whose results it was picked from. */
-  searched: z.string().max(200).optional(),
-  reason: z.string().max(600).optional(),
+  searched: optionalText(200),
+  reason: optionalText(600),
 });
 
 // GET /image-options — the universal "search the web for a photo" strip, for
@@ -262,11 +263,11 @@ const RankBody = z.object({
     .array(
       z.object({
         url: z.string().url().max(2000),
-        thumb: z.string().max(2000).optional(),
-        title: z.string().max(300).optional(),
-        source: z.string().max(200).optional(),
-        width: z.number().int().positive().optional(),
-        height: z.number().int().positive().optional(),
+        thumb: optionalText(2000),
+        title: optionalText(300),
+        source: z.string().max(200).optional(), // none-refused-ok: a column that cannot hold null
+        width: optionalField(z.number().int().positive()),
+        height: optionalField(z.number().int().positive()),
       }),
     )
     .min(1)
@@ -284,7 +285,7 @@ entityImageRouter.post(
     const derived = await derivedQueryFor(orgId, entity_kind, entity_id);
     const name = derived.name ?? derived.query;
     if (!name || !derived.query) return void res.json({ chosen_url: null, reason: "This record needs a name before photos can be ranked." });
-    const pool = parsed.data.candidates.map((c) => ({ url: c.url, thumb: c.thumb ?? "", title: c.title ?? "", source: c.source ?? "", width: c.width, height: c.height }));
+    const pool = parsed.data.candidates.map((c) => ({ url: c.url, thumb: c.thumb ?? "", title: c.title ?? "", source: c.source ?? "", width: c.width ?? undefined, height: c.height ?? undefined }));
     const showing = pool.filter((c) => showsTheThing(c, { name, brand: derived.brand }).ok);
     if (!showing.length) {
       return void res.json({ chosen_url: null, reason: "None of these pictures clearly shows this. Search with other words, or choose one yourself." });
@@ -320,7 +321,7 @@ const BackfillBody = z.object({
   entity_kind: z.string().min(1).max(64),
   instance: z.string().max(80).nullable().optional(),
   /** Bounded per press — this spends a web search + download per record. */
-  limit: z.number().int().min(1).max(50).optional(),
+  limit: optionalField(z.number().int().min(1).max(50)),
 });
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 entityImageRouter.post(

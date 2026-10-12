@@ -19,6 +19,7 @@
 // significant tokens (≥2, the same bar the combine clusters use) so "WD-40
 // EZ-Reach" matches "WD-40 EZ-Reach Lubricant" but not "WD External Drive".
 
+import { GENERIC_NOUNS } from "@cobblr/platform-contract/table-fit";
 import type { Kysely } from "kysely";
 import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { scanTargetsForOrg, scanTargetsRegistered } from "./scan-target.js";
@@ -39,6 +40,13 @@ export interface TrackedMatch {
   instance: string | null;
   noun: string;
   qty: number | null;
+  /** The unit its count is kept in ("g", "each"), when the record says. A
+   *  count of spools is not grams (#5905). */
+  unit?: string | null;
+  /** The unit measures (grams, metres, litres) rather than counts, as the
+   *  workspace's units vocabulary resolves it: a count of things is never
+   *  added to it (#5905). Unknown or unresolved units count. */
+  measured?: boolean;
   /** Where it lives now — shown on the banner ("· 📍Garage Shelf") and used
    *  by move-mode to skip entities already in the active bin. */
   location_id: string | null;
@@ -272,6 +280,7 @@ function toMatch(
     instance: inst,
     noun: info.noun,
     qty: Number.isFinite(qty) ? qty : null,
+    unit: typeof e.fields.unit === "string" && e.fields.unit.trim() ? e.fields.unit.trim() : null,
     location_id: typeof e.fields.location_id === "string" ? e.fields.location_id : null,
     expired: isExpired(e.fields, expiryField),
     matched_by: matchedBy,
@@ -296,6 +305,9 @@ function toMatch(
 interface OrgKind {
   kind: string;
   noun: string;
+  /** The named instance it lives in; null for the module's own table, the
+   *  catch-all that holds anything. */
+  instance?: string | null;
   qtyField?: string;
   /** The kind's NATIVE identifier fields (a part's serial_number), by role,
    *  with the words a person reads for each ("VIN" on a vehicle). */
@@ -320,6 +332,7 @@ async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
   return kinds.map((k) => ({
     kind: k.kind,
     noun: k.noun,
+    instance: k.instance ?? null,
     ...(k.qtyField ? { qtyField: k.qtyField } : {}),
     nativeIdentifiers: identifierFieldNames(k.record).map((name) => ({ name, label: nativeLabel(k.record, name) })),
   }));
@@ -362,6 +375,38 @@ export async function identifierFieldsByKind(
   return out;
 }
 
+const FAMILY_NOISE = new Set(["type", "kind", "part", "stock", "general", "misc", "other", "my", "the", "of", "and"]);
+const familyStem = (w: string): string => w.replace(/(ie)?s$/, (m) => (m === "ies" ? "y" : ""));
+function familyWords(...parts: Array<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const p of parts)
+    for (const w of (p ?? "").toLowerCase().split(/[^a-z0-9]+/)) {
+      const s = familyStem(w);
+      if (s.length > 1 && !FAMILY_NOISE.has(s) && !GENERIC_NOUNS.has(s)) out.add(s);
+    }
+  return out;
+}
+
+/** Whether a table holds the same kind of thing as one the scan is routed
+ *  to: the same kind, or a table whose own words (its instance, its noun)
+ *  share one with the routed table's. "Filament Types" holds what "Filament"
+ *  holds; Groceries and 3D Printers do not (#6004). */
+export function sameFamily(
+  k: { kind: string; noun?: string | null; instance?: string | null },
+  tables: ReadonlyArray<{ kind: string | null; instance: string | null; label: string | null }>,
+): boolean {
+  // A module's own table is its catch-all: it holds anything, so its table
+  // rules nothing out and the name decides (a spool kept in Inventory).
+  if (k.instance === null) return true;
+  const mine = familyWords(k.kind.split(":")[0], k.noun);
+  return tables.some((t) => {
+    if (t.kind && t.kind === k.kind) return true;
+    const theirs = familyWords(t.kind?.split(":")[0], t.instance, t.label);
+    for (const w of theirs) if (mine.has(w)) return true;
+    return false;
+  });
+}
+
 export async function findTracked(
   orgId: string,
   opts: {
@@ -383,6 +428,10 @@ export async function findTracked(
      *  exact as a barcode: a record whose part number, or identifier-role
      *  field, is this one is the same thing, wherever it is kept. */
     identifier?: string | null;
+    /** The tables the scan is routed to. A name is only matched among
+     *  records of the same kind of thing (sameFamily); a code or a part
+     *  number is identity and is matched anywhere. */
+    tables?: ReadonlyArray<{ kind: string | null; instance: string | null; label: string | null }> | null;
   },
 ): Promise<{ barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] }> {
   const kinds = await kindsForOrg(orgId);
@@ -494,8 +543,13 @@ export async function findTracked(
       // probe would starve the ranking. The shared-token ratio (nameOverlap)
       // then decides, so "Prusa PLA Filament Black" won't match "Prusa Nozzle Kit".
       const probes = probeTokens(name);
+      // Before any word is scored: only records of the same kind of thing
+      // as the scan. One shared word made a filament spool "the Apricot
+      // Jasmine Tea you have" (#6004). A row routed only to a catch-all says
+      // nothing of its kind, so it is matched everywhere (routedTablesOf).
+      const nameKinds = opts.tables?.length ? kinds.filter((k) => sameFamily(k, opts.tables!)) : kinds;
       const perKind = await Promise.all(
-        kinds.map(async (k) => {
+        nameKinds.map(async (k) => {
           try {
             const byId = new Map<string, ResolvedEntity>();
             const pages = await Promise.all(
@@ -550,7 +604,29 @@ export async function findTracked(
   }
 
   await withCards(orgId, barcodeMatches);
+  await withMeasures(orgId, [...barcodeMatches, ...nameMatches]);
   return { barcode_matches: barcodeMatches, name_matches: nameMatches };
+}
+
+/** Mark each match whose unit measures rather than counts, through the
+ *  workspace's units vocabulary (core-units owns it). A unit it cannot
+ *  resolve, or a vocabulary that cannot be asked, is a count: the hold this
+ *  feeds only ever holds back an add, never makes one. */
+async function withMeasures(orgId: string, matches: TrackedMatch[]): Promise<void> {
+  const units = [...new Set(matches.map((m) => m.unit).filter((u): u is string => !!u))];
+  if (!units.length) return;
+  const measured = new Map<string, boolean>();
+  for (const u of units) {
+    let info: { category: string } | null = null;
+    try {
+      info = await platform().units.resolve(orgId, u);
+    } catch {
+      // pass-catch: an unresolved unit counts; the hold only ever holds back an add
+      info = null;
+    }
+    measured.set(u, !!info && info.category !== "count");
+  }
+  for (const m of matches) if (m.unit) m.measured = measured.get(m.unit) ?? false;
 }
 
 /** Stamp each match with the card it belongs to (itself when it is kept in

@@ -7,7 +7,7 @@
 // own navbar affordances.
 
 import { InstallThisPhoneItem } from "../tips/install-tip";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink } from "react-router-dom";
 import { discordConnectable } from "../lib/discord-connect";
@@ -21,7 +21,7 @@ import { configurationReachable } from "../lib/configuration-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { useThemeToggle } from "../theme/useThemeToggle";
 import { UpdateBadge } from "./UpdateBadge";
-import { GrowModal } from "./GrowModal";
+const GrowModal = lazy(() => import("./GrowModal").then((m) => ({ default: m.GrowModal })));
 import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
@@ -382,7 +382,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             <ChevronRight size={14} className={"shrink-0 transition " + (open ? "rotate-90" : "")} />
           </button>
         </div>
-        {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
+        {appMode && growOpen && <Suspense fallback={null}><GrowModal open onClose={() => setGrowOpen(false)} /></Suspense>}
       </div>
     );
   }
@@ -593,7 +593,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
         </PopoverLayer>,
         document.body,
       )}
-      {appMode && <GrowModal open={growOpen} onClose={() => setGrowOpen(false)} />}
+      {appMode && growOpen && <Suspense fallback={null}><GrowModal open onClose={() => setGrowOpen(false)} /></Suspense>}
     </div>
   );
 }

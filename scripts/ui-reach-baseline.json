@@ -25,7 +25,6 @@
     "api/src/routes/me.ts POST /me/notifications/self-test",
     "api/src/routes/me.ts POST /me/signup-invites/:x/revoke",
     "api/src/routes/orgs.ts DELETE /:x",
-    "api/src/routes/orgs.ts POST /:x/convert-to-keep",
     "api/src/routes/orgs.ts POST /:x/notifications/:x/read",
     "api/src/routes/orgs.ts POST /:x/notifications/read-all",
     "api/src/routes/orgs.ts POST /provision-app",

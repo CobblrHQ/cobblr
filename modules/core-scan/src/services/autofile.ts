@@ -24,7 +24,7 @@
 // (#2980).
 
 import { filedQuantityOf } from "./filed-quantity.js";
-import { scanRebuy, type ScanRebuy, type ScanResolverTable, type ScanTriageRow } from "@cobblr/platform-contract/scan-triage";
+import { scanRebuy, scanRowState, type ScanRebuy, type ScanResolverTable, type ScanTriageRow } from "@cobblr/platform-contract/scan-triage";
 
 /** What findTracked gives back, narrowed to what the decision needs. */
 export interface TrackedCandidate {
@@ -68,6 +68,10 @@ export interface AutofileItem {
   /** Why the row still needs a person (scanReviewReason), or null when
    *  nothing is flagged. Set, the row is left for them whatever else matched. */
   review?: string | null;
+  /** The card's own word for this row, when it is not "+N more" of the
+   *  matched record: what its card says instead (a keyword-only route, a
+   *  doubt). The plan never adds what the card would not (#5905). */
+  cardSays?: string | null;
 }
 
 /** One line of the plan a person reads before confirming. `name` is the
@@ -78,6 +82,14 @@ export type AutofilePlan =
   | { action: "attach"; itemId: string; name: string | null; to: TrackedCandidate; qty: number; why: string }
   | { action: "create"; itemId: string; name: string | null; destination: string | null; installs?: string | null; qty: number; why: string }
   | { action: "skip"; itemId: string; name: string | null; why: string };
+
+/** What the row's card says when it is not "+N more" of its match, or null
+ *  when it is: the card and the plan read one row state (#5905). */
+export function cardSaysOtherwise(row: ScanTriageRow, tables: readonly ScanResolverTable[], canInstall: boolean): string | null {
+  const state = scanRowState(row, { tables, canInstall });
+  if (state.action.kind === "merge") return null;
+  return state.sentence ?? state.action.title ?? "needs a look first";
+}
 
 /**
  * The plan for a page of rows, matched before anything is written.
@@ -122,6 +134,7 @@ export async function planInbox<T extends ScanTriageRow & { id: string; suggeste
         rebuy: scanRebuy(judged, { tables: deps.tables }),
         canInstall: deps.canInstall,
         review: deps.review(row),
+        cardSays: cardSaysOtherwise(judged, deps.tables, deps.canInstall),
       }),
     );
   }
@@ -149,6 +162,7 @@ export function planItem(item: AutofileItem): AutofilePlan {
   // Something already here: the tier rule (a barcode decides, two of one
   // tier are a person's) is applied once, where the match is stamped
   // (services/tracked-stamp.ts), and read here as the card reads it.
+  if (item.rebuy.kind === "adds" && item.cardSays) return { action: "skip", itemId: item.id, name, why: item.cardSays };
   if (item.rebuy.kind === "adds") {
     const to = item.rebuy.to;
     const by = item.rebuy.matchedBy;

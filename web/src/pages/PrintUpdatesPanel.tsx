@@ -71,7 +71,7 @@ export function PrintUpdatesPanel({ slug }: { slug: string }) {
                     <span className="block text-[11px] text-faint truncate">{ruleSummary(r, chans)}</span>
                   </span>
                 </button>
-                <button type="button" onClick={() => dup.mutate(r)} disabled={dup.isPending} title="Duplicate this rule" className="px-2.5 text-faint hover:text-accent shrink-0"><Copy size={13} /></button>
+                <button aria-label="Duplicate this rule" type="button" onClick={() => dup.mutate(r)} disabled={dup.isPending} title="Duplicate this rule" className="px-2.5 text-faint hover:text-accent shrink-0"><Copy size={13} /></button>
               </li>
             ))}
           </ul>
@@ -135,8 +135,8 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
           {channels.map((c) => (
             <li key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
               <span className="text-content dark:text-mortar-100 flex-1 truncate">{c.label}</span>
-              <button type="button" onClick={() => test.mutate(c.id)} disabled={test.isPending} title="Send a test message" className="text-faint hover:text-accent"><Send size={13} /></button>
-              <button type="button" onClick={() => del.mutate(c.id)} disabled={del.isPending} title="Remove" className="text-faint hover:text-ember-500"><Trash2 size={13} /></button>
+              <button aria-label="Send a test message" type="button" onClick={() => test.mutate(c.id)} disabled={test.isPending} title="Send a test message" className="text-faint hover:text-accent"><Send size={13} /></button>
+              <button aria-label="Remove" type="button" onClick={() => del.mutate(c.id)} disabled={del.isPending} title="Remove" className="text-faint hover:text-ember-500"><Trash2 size={13} /></button>
             </li>
           ))}
         </ul>
@@ -244,12 +244,12 @@ function RuleEditor({
           <div>
             <span className={lbl + " block mb-1"}>Which printers</span>
             <div className="flex gap-1.5">
-              <select value={scopeType} onChange={(e) => setScopeType(e.target.value as DigifabRule["scope_type"])} className={field + " flex-1"}>
+              <select aria-label="Which printers" value={scopeType} onChange={(e) => setScopeType(e.target.value as DigifabRule["scope_type"])} className={field + " flex-1"}>
                 <option value="all">All printers</option>
                 <option value="printer">A specific printer</option>
               </select>
               {scopeType === "printer" && (
-                <select value={scopeValue} onChange={(e) => setScopeValue(e.target.value)} className={field + " flex-1"}>
+                <select aria-label="Printer" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)} className={field + " flex-1"}>
                   {printers.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                 </select>
               )}
@@ -280,12 +280,12 @@ function RuleEditor({
             <div className="space-y-1.5">
               {cadence.map((c, i) => (
                 <div key={i} className="flex items-center gap-1.5">
-                  <NumberField min={1} value={c.every} onChange={(n) => setCad(i, { every: Math.max(1, n || 1) })} className={field + " !w-20"} />
-                  <select value={c.type} onChange={(e) => setCad(i, { type: e.target.value as DigifabCadence["type"] })} className={field + " !w-32"}>
+                  <NumberField label="Every" min={1} integer value={c.every} onChange={(n) => setCad(i, { every: n })} className={field + " !w-20"} />
+                  <select aria-label="Unit" value={c.type} onChange={(e) => setCad(i, { type: e.target.value as DigifabCadence["type"] })} className={field + " !w-32"}>
                     {CADENCE_TYPES.map((t) => <option key={t} value={t}>{t === "minutes" ? "minutes" : t}</option>)}
                   </select>
                   {i > 0 && <span className="text-[10px] text-faint">or</span>}
-                  <button type="button" onClick={() => setCadence((x) => x.filter((_, j) => j !== i))} className="text-faint hover:text-ember-500"><X size={13} /></button>
+                  <button type="button" onClick={() => setCadence((x) => x.filter((_, j) => j !== i))} aria-label="Remove this condition" title="Remove this condition" className="text-faint hover:text-ember-500"><X size={13} /></button>
                 </div>
               ))}
               <button type="button" onClick={() => setCadence((x) => [...x, { type: "minutes", every: 30 }])} className="flex items-center gap-1 text-xs text-accent hover:underline"><Plus size={12} /> add a condition</button>
@@ -369,7 +369,7 @@ function StepEditor({ steps, onChange }: { steps: DigifabStep[]; onChange: (s: D
         const kind = stepKind(s);
         return (
           <div key={i} className="flex items-center gap-1.5">
-            <select
+            <select aria-label="Step"
               value={kind}
               onChange={(e) => set(i, makeStep(e.target.value as StepKind, "wait_ms" in s ? s.wait_ms / 1000 : 6))}
               className={field + " !w-36"}
@@ -382,7 +382,7 @@ function StepEditor({ steps, onChange }: { steps: DigifabStep[]; onChange: (s: D
             </select>
             {kind === "wait" && (
               <>
-                <NumberField
+                <NumberField label="Seconds"
                   min={0}
                   value={"wait_ms" in s ? s.wait_ms / 1000 : 0}
                   onChange={(n) => set(i, { wait_ms: Math.max(0, Math.round(n * 1000)) })}
@@ -391,7 +391,7 @@ function StepEditor({ steps, onChange }: { steps: DigifabStep[]; onChange: (s: D
                 <span className="text-xs text-faint">s</span>
               </>
             )}
-            <button type="button" onClick={() => onChange(steps.filter((_, j) => j !== i))} className="text-faint hover:text-ember-500"><X size={13} /></button>
+            <button type="button" onClick={() => onChange(steps.filter((_, j) => j !== i))} aria-label="Remove this step" title="Remove this step" className="text-faint hover:text-ember-500"><X size={13} /></button>
           </div>
         );
       })}

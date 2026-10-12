@@ -16,6 +16,7 @@ import { ActionRefusal, columnSet, platform, quantityWithUnit, requireActionEnti
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
+import { logPartCreated } from "./part-created.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { stockMoved } from "./stock-moved.js";
 import { reserveAllocation, settleAllocation } from "./allocations.js";
@@ -1267,7 +1268,17 @@ export function registerInventoryActionHandlers(): void {
     const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;
     const qty = typeof a.qty === "number" ? String(a.qty) : "1";
     const unit = typeof a.unit === "string" && a.unit.trim() ? a.unit.trim().slice(0, 30) : "each";
-    const imagePath = typeof a.image_path === "string" && a.image_path ? a.image_path.slice(0, 500) : null;
+    // A photo sent with the call (the Cataloging Bench's photo box) is the
+    // record's picture and the first in its Photos, never drawn and dropped
+    // (#5922). An image_path argument still wins: the caller chose it.
+    const photo = ctx.document?.mimeType.startsWith("image/") && ctx.document.bytes.length
+      ? await platform().files.write(ctx.orgId, ctx.document.bytes, { filename: ctx.document.name || "photo.png", mimeType: ctx.document.mimeType, photoSource: { kind: "camera", at: new Date().toISOString() } })
+      : null;
+    if (ctx.document && !photo?.fileId) return { ok: false, error: "The photo could not be kept, so nothing was added. Take it again." };
+    const slug = photo?.fileId ? (await platform().orgs.get(ctx.orgId))?.slug : null;
+    const imagePath = typeof a.image_path === "string" && a.image_path
+      ? a.image_path.slice(0, 500)
+      : photo?.fileId && slug ? `/api/v1/orgs/${slug}/modules/core-files/files/${photo.fileId}/raw?variant=medium` : null;
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
     const created = await db
@@ -1303,6 +1314,8 @@ export function registerInventoryActionHandlers(): void {
       }
     }
 
+    if (photo?.fileId) await platform().files.attach(ctx.orgId, { fileId: photo.fileId, source_module: "inventory", source_type: "part", source_id: created.id, role: "gallery" });
+    await logPartCreated(ctx.orgId, created.id, { name: created.name, qty, instance: instance ?? "inventory" }, ctx.userId);
     await platform().events.emit("inventory.part.created", { orgId: ctx.orgId, partId: created.id });
     return {
       ok: true,
@@ -1320,7 +1333,8 @@ export function registerInventoryActionHandlers(): void {
   // batch from another module). Returns the new ids in input order so the
   // caller can wire pairings. Deliberately does NOT fan out per-item
   // inventory.part.created events (a 700-part expansion shouldn't fire 700
-  // wires); a caller that needs a signal emits its own. Generic — no use-case.
+  // wires); a caller that needs a signal emits its own. Each part still gets
+  // its History entry, as one made on the form does (#5923). Generic — no use-case.
   platform().actions.registerHandler("inventory.create-items", async (ctx) => {
     const a = (ctx.args as Record<string, unknown> | null) ?? {};
     const items = Array.isArray(a.items) ? (a.items as Record<string, unknown>[]) : [];
@@ -1344,6 +1358,7 @@ export function registerInventoryActionHandlers(): void {
       metadata: sql`${JSON.stringify(o.fields && typeof o.fields === "object" ? o.fields : {})}::jsonb` as never,
     }));
     const inserted = await db.insertInto("inventory_parts").values(rows).returning(["id"]).execute();
+    for (const [i, r] of inserted.entries()) await logPartCreated(ctx.orgId, r.id, { name: rows[i]!.name, qty: rows[i]!.qty, instance: rows[i]!.instance ?? "inventory" }, ctx.userId);
     return { ok: true, ids: inserted.map((r) => r.id) };
   });
 

@@ -110,6 +110,7 @@ function ServiceChain({
                 {s.scope === "personal" && (up || down) && (
                   <span className="flex shrink-0 gap-0.5">
                     <button
+                      title={`Ask ${s.label} earlier for ${c.title}`}
                       type="button"
                       disabled={!up || move.isPending}
                       onClick={() => up && move.mutate(up)}
@@ -119,6 +120,7 @@ function ServiceChain({
                       <ArrowUp className="h-4 w-4" />
                     </button>
                     <button
+                      title={`Ask ${s.label} later for ${c.title}`}
                       type="button"
                       disabled={!down || move.isPending}
                       onClick={() => down && move.mutate(down)}

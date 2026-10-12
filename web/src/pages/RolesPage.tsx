@@ -112,6 +112,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <button
+                  aria-label="Edit"
                   type="button"
                   onClick={() => setEditing(r)}
                   className="text-faint hover:text-accent transition p-1"
@@ -120,6 +121,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <Pencil size={12} />
                 </button>
                 <button
+                  aria-label="Delete"
                   type="button"
                   onClick={async () => {
                     const ok = await confirm({
@@ -209,6 +211,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
                         <AssignToggle
                           assigned={m.custom_role_ids.includes(r.id)}
                           roleId={r.id}
+                          name={`${r.name} for ${m.display_name || m.email}`}
                           onToggle={(grant) =>
                             assign.mutate({ user_id: m.id, role_id: r.id, grant })
                           }
@@ -256,27 +259,36 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
 function AssignToggle({
   assigned,
   roleId,
+  name,
   onToggle,
 }: {
   assigned: boolean;
   roleId: string;
+  name: string;
   onToggle: (grant: boolean) => void;
 }) {
   return (
     <button
       type="button"
+      role="checkbox"
+      aria-checked={assigned}
+      aria-label={name}
       onClick={() => onToggle(!assigned)}
-      className={
-        "w-6 h-6 rounded inline-flex items-center justify-center transition " +
-        (assigned
-          ? "bg-cobble-600 text-white hover:bg-cobble-700"
-          : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
-      }
-      title={assigned ? "Unassign" : "Assign"}
+      className="group min-h-11 min-w-11 inline-flex items-center justify-center"
+      title={name}
       data-role-id={roleId}
       data-assigned={assigned}
     >
-      {assigned && <Check size={12} />}
+      <span
+        className={
+          "w-6 h-6 rounded inline-flex items-center justify-center transition " +
+          (assigned
+            ? "bg-cobble-600 text-white group-hover:bg-cobble-700"
+            : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 group-hover:border-accent")
+        }
+      >
+        {assigned && <Check size={12} aria-hidden />}
+      </span>
     </button>
   );
 }

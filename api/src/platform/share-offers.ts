@@ -13,6 +13,7 @@
 // Every change between the sides names the giver's offer id; each side keeps
 // its own row and decides for itself what a change may do to its things.
 
+import { titleVariantsOf } from "@cobblr/platform-contract/display-identity";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -78,6 +79,15 @@ async function collectionOf(orgId: string, kind: string, f: Record<string, unkno
   return { module, instance: r.instance ?? own };
 }
 
+/** A record's count, through its kind's quantity field; null when it has none. */
+function quantityOf(f: Record<string, unknown>, fields: ReadonlyArray<{ name: string; role?: string | null }> | undefined): number | null {
+  const name = fields?.find((d) => d.role === "quantity")?.name ?? (f.quantity !== undefined ? "quantity" : null);
+  if (!name) return null;
+  const v = f[name];
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
 export async function recordAsThing(orgId: string, kind: string, id: string): Promise<OfferedThing | null> {
   const ent = await lookup(orgId, kind, id);
   if (!ent) return null;
@@ -98,8 +108,13 @@ export async function recordAsThing(orgId: string, kind: string, id: string): Pr
     model: str(f.model),
     kind_words: kindRec?.display_name ?? null,
     collection: await collectionOf(orgId, kind, f),
-    quantity: typeof f.quantity === "number" ? f.quantity : null,
+    // How many there are, read through the field the kind declares as its
+    // quantity (inventory's is `qty`), as the number it says: a numeric column
+    // reads as text ("2.000"). Reading `quantity` found nothing, and every
+    // copy arrived proposing 1 (#5935).
+    quantity: quantityOf(f, kindRec?.fields),
     notes: str(f.notes) ?? str(f.description),
+    title_variants: titleVariantsOf(metaBag),
     fields,
     photos: await photosOf(orgId, kind, id, f.image_path),
   };
@@ -119,6 +134,7 @@ export async function offerTargets(orgId: string, userId: string): Promise<Offer
     .selectFrom("share_links as l")
     .select(["l.id", "l.peer_name", "l.label", "l.org_id"])
     .where("l.status", "=", "active")
+    .where(sql<boolean>`coalesce(l.settings->>'purpose', '') <> 'own'`)
     .where((eb) =>
       eb.or([
         eb("l.org_id", "=", orgId),
@@ -193,7 +209,7 @@ export async function offerInboxItems(
   inboxIds: string[],
   opts: { userId: string },
 ): Promise<{ ok: true; offered: number } | { ok: false; error: string }> {
-  const link = await meta.selectFrom("share_links").select("id").where("org_id", "=", orgId).where("side", "=", "share").where("status", "=", "active").executeTakeFirst();
+  const link = await meta.selectFrom("share_links").select("id").where("org_id", "=", orgId).where("side", "=", "share").where("status", "=", "active").where(sql<boolean>`coalesce(settings->>'purpose', '') <> 'own'`).executeTakeFirst();
   if (!link) return { ok: false, error: "Only a shared workspace offers its scans to the person who shared it." };
   const row = await getShareLink(link.id);
   if (!row) return { ok: false, error: "That share has ended." };
@@ -396,7 +412,7 @@ export interface OfferView {
   can_send_back: boolean;
   can_undo?: boolean;
   send_mode?: "copy" | "move";
-  send_file?: {id: string; transport: "file-export" | "file-import"; state: string; can_download: boolean; can_undo: boolean};
+  send_file?: {id: string; transport: "file-export" | "file-import"; state: string; can_download: boolean; can_undo: boolean; connected?: boolean; can_remote_undo?: boolean; can_restore?: boolean};
 }
 
 /** What has been handed over through this workspace's shares, newest first. */
@@ -411,7 +427,7 @@ export async function listOffers(orgId: string, userId?: string): Promise<OfferV
     .execute();
   const now = Date.now();
   return rows.map((r) => ({
-    ...(r.transfer && ["file-export", "file-import"].includes((r.transfer as {transport?: string}).transport ?? "") ? {send_file: {id: r.batch!, transport: (r.transfer as {transport: "file-export" | "file-import"}).transport, state: (r.transfer as {state: string}).state, can_download: r.created_by === userId, can_undo: r.created_by === userId && r.target_org_id === orgId && (r.transfer as {state: string}).state === "complete"}} : {}),
+    ...(r.transfer && ["file-export", "file-import"].includes((r.transfer as {transport?: string}).transport ?? "") ? {send_file: {id: r.batch!, transport: (r.transfer as {transport: "file-export" | "file-import"}).transport, state: (r.transfer as {state: string}).state, can_download: r.created_by === userId, can_undo: r.created_by === userId && r.target_org_id === orgId && (r.transfer as {state: string}).state === "complete", ...((r.transfer as {connected?: unknown}).connected ? {connected: true, can_remote_undo: r.created_by === userId && (r.transfer as {state: string}).state === "complete" && !(r.transfer as {connected: {return_receipt?: unknown}}).connected.return_receipt, can_restore: r.created_by === userId && (r.transfer as {mode: string}).mode === "move" && (r.transfer as {state: string}).state === "complete" && !!(r.transfer as {connected: {return_receipt?: unknown}}).connected.return_receipt} : {})}} : {}),
     id: r.id,
     direction: r.target_org_id === orgId ? "in" : r.direction,
     title: r.title,

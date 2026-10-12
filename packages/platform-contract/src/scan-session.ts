@@ -31,7 +31,7 @@ export interface ReceiptReadAttempt {
   source?: ReceiptReadSource;
   outcome: "read" | "failed";
   /** The parser's failure class. */
-  code?: "ai_unavailable" | "no_line_items" | "unreadable";
+  code?: "ai_unavailable" | "no_line_items" | "unreadable" | "reader_failed";
   /** The router's coded reason, when the AI was the reason. */
   ai?: AiFallback;
   ai_reason?: ProviderErrorReason;
@@ -40,7 +40,7 @@ export interface ReceiptReadAttempt {
 
 /** The batch's `read_failure` column: the last failure, and every attempt. */
 export interface ReceiptReadFailure {
-  code: "ai_unavailable" | "no_line_items" | "unreadable";
+  code: "ai_unavailable" | "no_line_items" | "unreadable" | "reader_failed";
   source?: ReceiptReadSource;
   ai?: AiFallback;
   ai_reason?: ProviderErrorReason;
@@ -81,6 +81,9 @@ export type SessionVerdict =
 export function receiptReadWords(f: Pick<ReceiptReadFailure, "code" | "ai" | "ai_reason" | "reason" | "source">): { sentence: string; retry: boolean; connect: boolean } {
   if (f.code === "no_line_items") return { sentence: noLineItemsWords(f.source), retry: true, connect: false };
   if (f.code === "unreadable") return { sentence: unreadableWords(f.source), retry: f.source !== "scanned-pdf", connect: false };
+  // The engine stopped partway (#5921): nothing was read or filed, and a
+  // second read usually finishes.
+  if (f.code === "reader_failed") return { sentence: "Couldn't be read: the page reader did not finish. Nothing was filed. Read it again.", retry: true, connect: false };
   switch (f.ai) {
     case "no-provider":
       return { sentence: "Couldn't be read: no AI provider is connected. Connect one (Configuration → AI, or your own under Account), then read it again.", retry: false, connect: true };

@@ -11,11 +11,12 @@
 // several places asks what to move. Every move can be undone, and reads
 // "moved via floor plan" in the activity.
 
+import { useQueryClient } from "@tanstack/react-query";
 import { swallowNextClick } from "../../lib/swallow-click";
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
-import { EntityThumb, FloatingChrome, Modal, PopoverLayer, SearchInput, StockStepper, useToast } from "@cobblr/platform-web";
+import { EntityThumb, FloatingChrome, Modal, PopoverLayer, SearchInput, StockStepper, useToast, refreshAfterStockChange } from "@cobblr/platform-web";
 import { ApiError, api, type Location } from "../../lib/api";
 import { hasOwnLayout, readBound, readRect } from "../../lib/floorplanGeometry";
 import { useIsDesktopWidth } from "../../lib/useIsDesktopWidth";
@@ -87,6 +88,7 @@ export function PlaceItemsView({
 }) {
   const isDesktop = useIsDesktopWidth();
   const toast = useToast();
+  const qc = useQueryClient();
   const { records, kinds, isLoading } = usePlaceableRecords(slug, { fresh: true });
   const actions = usePlaceActions(slug);
   const byId = useMemo(() => new Map(locations.map((l) => [l.id, l] as const)), [locations]);
@@ -344,7 +346,7 @@ export function PlaceItemsView({
             {(within.get(previewId) ?? 0) > previewRows.length ? `, ${within.get(previewId)} with what is inside it` : ""}
           </div>
         </div>
-        <button type="button" onClick={() => setPreviewId(null)} aria-label="Back to the things to place" className="p-1 text-muted hover:text-accent">
+        <button title="Back to the things to place" type="button" onClick={() => setPreviewId(null)} aria-label="Back to the things to place" className="p-1 text-muted hover:text-accent">
           <X size={16} />
         </button>
       </div>
@@ -362,6 +364,7 @@ export function PlaceItemsView({
                   label={r.name}
                   onStep={async (d) => {
                     const out = await api.stockAdjustAt(slug, r.instance ?? "inventory", here?.id ?? r.id, d);
+                    void refreshAfterStockChange(qc, [here?.id ?? r.id, r.id]);
                     actions.refresh();
                     return Number(out.qty);
                   }}

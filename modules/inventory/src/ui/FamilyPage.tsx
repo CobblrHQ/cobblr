@@ -1,4 +1,5 @@
 import { ReceivePackage } from "./ReceivePackage";
+import { useStockWrites } from "./stock-writes";
 import { FilamentCatalog } from "./FilamentCatalog";
 import { SpoolmanModal } from "./SpoolmanModal";
 // A type collection and its things on one page (Filament: a card per filament
@@ -50,13 +51,14 @@ export function thingSubline(t: Pick<FamilyThing, "qty" | "metadata">, place: st
 
 function ThingRow({ t, childInstance, childPath, place, highlighted, named, noun }: { t: FamilyThing; childInstance: string; childPath: string; place: string | null; highlighted: boolean; named?: boolean; noun: string }) {
   const { api, orgSlug, getToken } = useInventory();
+  const stock = useStockWrites();
   const units = useUnits();
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const refresh = () => void qc.invalidateQueries({ queryKey: ["inventory-family"] });
   const change = async (delta: number) => {
-    const out = await api.stockAdjustIn(childInstance, t.id, delta);
+    const out = await stock.stockAdjustIn(childInstance, t.id, delta);
     refresh();
     return Number(out.qty);
   };
@@ -356,6 +358,7 @@ function PopMenu({ label, children, size = "sm" }: { label: string; children: (c
   return (
     <>
       <button
+        title={label}
         ref={trigger}
         type="button"
         onClick={() => setAt((cur) => (cur ? null : trigger.current?.getBoundingClientRect() ?? null))}

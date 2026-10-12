@@ -219,6 +219,7 @@ export function EditableCell({
         <span onClick={(e) => e.stopPropagation()}>
           <RelationSelect
             refKind={def.ref_kind ?? ""}
+            label={def.display_label}
             value={value}
             onChange={(v) => commit(v)}
             className="w-full text-sm py-1"
@@ -228,13 +229,13 @@ export function EditableCell({
     case "member":
       return (
         <span onClick={(e) => e.stopPropagation()}>
-          <MemberSelect value={value} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
+          <MemberSelect value={value} label={def.display_label} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
         </span>
       );
     case "person":
       return (
         <span onClick={(e) => e.stopPropagation()}>
-          <PersonSelect value={value} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
+          <PersonSelect value={value} label={def.display_label} onChange={(v) => commit(v)} className="w-full text-sm py-1" />
         </span>
       );
     case "choice":

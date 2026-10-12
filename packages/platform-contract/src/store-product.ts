@@ -59,6 +59,38 @@ export function storeHostOf(email: string | null | undefined): string | null {
   return parts.join(".");
 }
 
+/** Hosts in an email that are never the shop: carriers, social sites, the
+ *  places a store links to without being them. */
+const NOT_A_STORE = /(^|\.)(ups\.com|fedex\.com|usps\.com|dhl\.com|amazon\.com|aftership\.com|17track\.net|parcelsapp\.com|facebook\.com|instagram\.com|twitter\.com|x\.com|youtube\.com|tiktok\.com|pinterest\.com|google\.com|apple\.com|paypal\.com|cdn\.shopify\.com)$/i;
+
+/** A sender that is never a shop: a carrier, a social site. Amazon is a
+ *  shop when it is the sender, so only the body's links set it aside. */
+export function isNotAStore(host: string | null | undefined): boolean {
+  return !!host && NOT_A_STORE.test(host) && !/(^|\.)amazon\.com$/i.test(host);
+}
+
+/** The store's host from what its email SAYS, for an email whose sender is a
+ *  mail service (a Shopify notice comes from t.shopifyemail.com): the store's
+ *  own contact address first ("contact us at shop@kingroon.com"), then its
+ *  links. Never a mail service, a carrier or a social site, and never the
+ *  person's own domain (`notOf`). Null when the email names no store (#6004). */
+export function storeHostInText(text: string | null | undefined, notOf?: string | null): string | null {
+  // A mail header names people, never the shop: the forward's "To:" is the
+  // person who forwarded it (#6004, read as example.org before this).
+  const t = (text ?? "").replace(/^[ \t>*]*(to|cc|bcc|from|reply-to|sent|date|subject|delivered-to|return-path)\s*:.*$/gim, "");
+  const own = storeHostOf(notOf ?? null);
+  const pick = (hosts: Array<string | null>): string | null => {
+    const counts = new Map<string, number>();
+    for (const h of hosts) if (h && h !== own && !NOT_A_STORE.test(h)) counts.set(h, (counts.get(h) ?? 0) + 1);
+    let best: string | null = null;
+    for (const [h, n] of counts) if (!best || n > counts.get(best)!) best = h;
+    return best;
+  };
+  const addressed = pick([...t.matchAll(/[A-Z0-9._%+-]+@([A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,})/gi)].map((m) => storeHostOf(`x@${m[1]}`)));
+  if (addressed) return addressed;
+  return pick([...t.matchAll(/https?:\/\/([A-Z0-9-]+(?:\.[A-Z0-9-]+)*\.[A-Z]{2,})/gi)].map((m) => storeHostOf(`x@${m[1]}`)));
+}
+
 const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
 function optionsOf(v: StoreVariant): string[] {

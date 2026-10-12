@@ -561,7 +561,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
                   <button className={ghost} onClick={() => runNow(d)} disabled={busy !== null || (d.driver === "google_drive" && !d.connected)}>
                     {busy === `run-${d.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />} Back up now
                   </button>
-                  <button className={ghost} onClick={() => remove(d)} disabled={busy !== null} aria-label="Delete destination">
+                  <button title="Delete destination" className={ghost} onClick={() => remove(d)} disabled={busy !== null} aria-label="Delete destination">
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>

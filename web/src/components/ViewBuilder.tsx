@@ -12,6 +12,7 @@ import { moneyStorageOf, type MoneyStorage } from "@cobblr/platform-contract/mon
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { Check } from "lucide-react";
 import { useFieldPresentation } from "@cobblr/platform-web";
 
 /** A field the user can build a view on. Unifies native (entity-kind) and
@@ -211,7 +212,7 @@ export function FieldSelect({
   // field since removed), keep it selectable so we never silently drop it.
   const known = fields.some((f) => f.name === value);
   return (
-    <select className={smallCls} data-testid={testid} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select aria-label="Field" className={smallCls} data-testid={testid} value={value} onChange={(e) => onChange(e.target.value)}>
       {allowBlank && <option value="">{blankLabel}</option>}
       {!known && value && <option value={value}>{value}</option>}
       {fields.map((f) => (
@@ -246,7 +247,7 @@ export function SortBuilder({
             blankLabel="Pick a field…"
             testid="sort-field"
           />
-          <select
+          <select aria-label="Sort direction"
             className={smallCls}
             data-testid="sort-dir"
             value={r.dir}
@@ -305,7 +306,7 @@ export function FilterBuilder({
               blankLabel="Pick a field…"
               testid="filter-field"
             />
-            <select
+            <select aria-label="Filter condition"
               className={smallCls}
               data-testid="filter-op"
               value={r.op}
@@ -318,7 +319,7 @@ export function FilterBuilder({
               ))}
             </select>
             {field?.type === "secret" || r.op === "has a value" || r.op === "is empty" ? null : r.op === "is any of" ? (
-              <select
+              <select aria-label="Filter values"
                 multiple
                 data-testid="filter-value"
                 className={`${smallCls} min-w-[8rem] h-20`}
@@ -334,7 +335,7 @@ export function FilterBuilder({
                 ))}
               </select>
             ) : choices.length && (r.op === "is" || r.op === "is not") ? (
-              <select
+              <select aria-label="Filter value"
                 className={smallCls}
                 data-testid="filter-value"
                 value={r.value}
@@ -398,7 +399,7 @@ export function ColumnPicker({
     ...fields,
   ];
   return (
-    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 border border-line dark:border-slate-600 rounded">
+    <div role="group" aria-label="Columns" className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 border border-line dark:border-slate-600 rounded">
       {all.map((f) => {
         const on = value.includes(f.name);
         return (
@@ -406,12 +407,14 @@ export function ColumnPicker({
             key={f.name}
             type="button"
             onClick={() => toggle(f.name, !on)}
-            className={`px-2 py-0.5 text-xs rounded transition ${
+            aria-pressed={on}
+            className={`min-h-11 inline-flex items-center gap-1 px-3 text-xs rounded transition ${
               on
                 ? "bg-cobble-600 text-white"
                 : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300"
             }`}
           >
+            {on && <Check size={12} strokeWidth={2.5} aria-hidden />}
             {f.label}
           </button>
         );

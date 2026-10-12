@@ -30,8 +30,9 @@ import {
 import type { CoreScanDB } from "../db.js";
 import { mergeMeta } from "./metadata.js";
 import { splitRowIntoParts, type PartsRow, type RowPart } from "./row-parts.js";
-import { knownPackFor, packOptionsOf, type KnownPack } from "@cobblr/platform-contract/known-packs";
+import { knownPackFor, knownPackForLine, packOptionsOf, type KnownPack } from "@cobblr/platform-contract/known-packs";
 import { askPackNetwork, type PackKey } from "./pack-network.js";
+import { storeVariantOf } from "@cobblr/platform-contract/same-product";
 import type { BoxChoice } from "@cobblr/platform-contract/box-label";
 import { readStoreProduct, type StoreFetch } from "./store-product.js";
 import { fetchImageBase64 } from "./rank-photo.js";
@@ -74,6 +75,20 @@ export async function storeProductPass(o: StoreProductPassOpts): Promise<StorePr
   const pack = meta.line_pack as { count?: number; each?: string | null; ask?: boolean } | undefined;
   const count = !pack?.ask && typeof pack?.count === "number" ? pack.count : 0;
   if ("unread" in read) {
+    // A pack whose contents are known splits from its own line when the
+    // store's page cannot be read (an egress policy, the store down): its
+    // title and options are on the line, and its ten need no network (#6004).
+    const byLine = count > 1 ? knownPackForLine(host, line, o.seed) : null;
+    if (byLine && byLine.units.length === count) {
+      await stamp(o.db, o.itemId, { store_product: { status: "unread", host, why: read.unread } });
+      const product = { title: byLine.title, options: [], variants: [] } as unknown as StoreProduct;
+      const variant = { title: storeVariantOf(line)?.options.join(" / ") ?? line, option1: null, option2: null, option3: null } as unknown as StoreVariant;
+      const known = { units: byLine.units, source: byLine.source };
+      const key = { host: host.toLowerCase().replace(/^www\./, ""), title: byLine.title, options: [...byLine.options] };
+      await splitIntoColours(o, row, meta, product, variant, byLine.units.map((u) => u.colour), pack!, known, key);
+      if (o.purchase) await (o.splitOrderLine ?? splitOrderLineForParts)(o.db, o.itemId, o.purchase).catch((e: Error) => console.warn("[core-scan] pack order line split:", e.message));
+      return "split";
+    }
     await stamp(o.db, o.itemId, {
       store_product: { status: "unread", host, why: read.unread },
       ...(count > 1 && /multi|mix|assort/i.test(line) ? { pack_parts: { status: "unread", why: read.unread } } : {}),
@@ -178,7 +193,8 @@ async function splitIntoColours(
     note: `Split into ${colours.length} by colour, ${known ? "from what this pack is known to hold" : "from the store's page"}: ${groups.map((t) => `${t.n > 1 ? `${t.n} ` : ""}${t.colour ?? "colour unknown"}`).join(", ")}.`,
     // The pack's key goes with the line, so its contents can be reported
     // once every part is filed (pack-network.ts).
-    mark: { pack_split: true, line_units: { mode: "different", by: "evidence" }, ...(key ? { pack_key: key } : {}) },
+    // How it came apart, in the words the inbox shows over its parts (#6067).
+    mark: { pack_split: true, split_how: !known ? "store" : /barcode network/.test(known.source) ? "network" : "known", line_units: { mode: "different", by: "evidence" }, ...(key ? { pack_key: key } : {}) },
   });
 }
 

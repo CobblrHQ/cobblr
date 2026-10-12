@@ -231,6 +231,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       </div>
       {!toast.actionLabel && (
         <button
+          aria-label="Dismiss"
           onClick={() => dismiss(toast.id)}
           className={`shrink-0 ${palette.icon} hover:opacity-75 mt-0.5`}
           title="Dismiss"

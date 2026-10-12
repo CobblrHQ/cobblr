@@ -14,6 +14,7 @@ import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { isSafeFontUrl } from "@cobblr/platform-contract/safe-font-url";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const appsRouter = Router({ mergeParams: true });
 
@@ -112,13 +113,13 @@ const Theme = z
 const AppCreate = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/, "app slug must be kebab-case").max(80),
   name: z.string().min(1).max(160),
-  icon: z.string().max(80).optional(),
+  icon: optionalText(80),
   visible_capability: z.string().min(1).max(120).nullable().optional(),
   pages: Pages.default([]),
   theme: Theme.nullable().optional(),
 });
 const AppUpdate = z.object({
-  name: z.string().min(1).max(160).optional(),
+  name: z.string().min(1).max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   icon: z.string().max(80).nullable().optional(),
   visible_capability: z.string().min(1).max(120).nullable().optional(),
   pages: Pages.optional(),

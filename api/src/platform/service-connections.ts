@@ -542,19 +542,23 @@ export function adapterFetchFor(config: Record<string, string>, ownerUserId: str
  *  whose: the shared ones a background call may use, then each member's own. */
 async function holdersOf(orgId: string, capability: string): Promise<ServiceConnectionHolder[]> {
   const out = new Map<string, ServiceConnectionHolder>();
-  const owner = async (id: string) => (await storedCredentialById(id))?.user_id ?? null;
+  const stored = async (id: string) => {
+    const row = await storedCredentialById(id);
+    const at = row?.credentials?.[ADAPTER_ADDRESS_KEY];
+    return { owner: row?.user_id ?? null, address: typeof at === "string" && at.trim() ? at.trim() : null };
+  };
   for (const ref of await refsFor(orgId, null, capability)) {
-    const o = await owner(ref.credentialId);
-    if (o) out.set(ref.credentialId, { credentialId: ref.credentialId, label: ref.label, ownerUserId: o, shared: true, provider: ref.adapter ?? ref.manifest.id });
+    const { owner: o, address } = await stored(ref.credentialId);
+    if (o) out.set(ref.credentialId, { credentialId: ref.credentialId, label: ref.label, ownerUserId: o, shared: true, provider: ref.adapter ?? ref.manifest.id, address });
   }
   const members = await meta.selectFrom("org_memberships").select("user_id").where("org_id", "=", orgId).execute();
   for (const m of members) {
     for (const ref of await refsFor(orgId, m.user_id, capability)) {
       if (out.has(ref.credentialId)) continue;
-      const o = await owner(ref.credentialId);
+      const { owner: o, address } = await stored(ref.credentialId);
       // Only a member's OWN connection is theirs to have matched for them;
       // a connection in their chain that belongs to someone else is shared.
-      if (o === m.user_id) out.set(ref.credentialId, { credentialId: ref.credentialId, label: ref.label, ownerUserId: o, shared: false, provider: ref.adapter ?? ref.manifest.id });
+      if (o === m.user_id) out.set(ref.credentialId, { credentialId: ref.credentialId, label: ref.label, ownerUserId: o, shared: false, provider: ref.adapter ?? ref.manifest.id, address });
     }
   }
   return [...out.values()];

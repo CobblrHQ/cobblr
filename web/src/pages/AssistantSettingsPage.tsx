@@ -133,12 +133,13 @@ export function AssistantSettingsPage() {
                 >
                   {r.enabled ? "on" : "off"}
                 </button>
-                <button type="button" onClick={() => setEditing(r)} title="Edit" className="text-faint hover:text-accent p-1">
+                <button aria-label="Edit" type="button" onClick={() => setEditing(r)} title="Edit" className="text-faint hover:text-accent p-1">
                   <Pencil size={14} />
                 </button>
                 {r.builtin ? (
                   r.id && (
                     <button
+                      aria-label="Reset to the shipped default"
                       type="button"
                       onClick={() => r.id && remove.mutate(r.id)}
                       title="Reset to the shipped default"
@@ -149,6 +150,7 @@ export function AssistantSettingsPage() {
                   )
                 ) : (
                   <button
+                    aria-label="Delete"
                     type="button"
                     onClick={async () => {
                       const ok = await confirm({
@@ -333,6 +335,7 @@ function Commands({ slug }: { slug: string }) {
                 {c.enabled ? "Turn off" : "Turn on"}
               </button>
               <button
+                title="Forget"
                 type="button"
                 onClick={() =>
                   void confirm({ title: "Forget this command?", message: c.template, confirmLabel: "Forget", destructive: true }).then(
@@ -438,7 +441,7 @@ function Unanswered({ slug, onAnswer }: { slug: string; onAnswer: (m: BasicMissR
             <button
               type="button"
               onClick={() => dismiss.mutate(m.id)}
-              title="Not worth an answer"
+              title="Dismiss: not worth an answer"
               aria-label="Dismiss"
               className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
             >

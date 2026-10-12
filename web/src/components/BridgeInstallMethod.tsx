@@ -8,7 +8,7 @@ import { useMutation } from "@tanstack/react-query";
 import { LightBurnPairing, type BridgeInstallOS } from "./LightBurnPairing";
 import { desktopBridgeAction } from "../lib/desktop-bridge";
 import { api, ApiError } from "../lib/api";
-import { useToast } from "@cobblr/platform-web";
+import { SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 
 const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
@@ -119,18 +119,15 @@ export function BridgeInstallMethod({
           <>
             {token && (
               <div className="flex items-center justify-end gap-2 mb-1">
-                <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden text-[10px]">
-                  {(["run", "compose"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setCmdMode(mode)}
-                      className={"px-1.5 py-0.5 " + (cmdMode === mode ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}
-                    >
-                      {mode === "run" ? "docker run" : "compose"}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedChoice
+                  label="How to start the bridge"
+                  value={cmdMode}
+                  onChange={setCmdMode}
+                  options={[
+                    { value: "run", label: "docker run" },
+                    { value: "compose", label: "compose" },
+                  ]}
+                />
                 <button type="button" onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline">
                   Copy
                 </button>

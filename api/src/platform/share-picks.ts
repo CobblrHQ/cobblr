@@ -15,6 +15,7 @@ import { meta } from "../db/meta.js";
 import { recordsInScope, scopeKey } from "./scope-eval.js";
 import { mirrorAndDeliverNow } from "./share-mirror.js";
 import { sharePerson } from "./share-person.js";
+import { shareRefusal } from "./kind-writer.js";
 
 // One record however it is named: a page's kind or its collection's (#4689).
 const key = scopeKey;
@@ -27,7 +28,7 @@ export interface ShareTarget {
 
 /** The live shares of this workspace's own things, by person. */
 export async function shareTargets(orgId: string): Promise<ShareTarget[]> {
-  const rows = await meta.selectFrom("share_links").select(["id", "peer_name", "label"]).where("org_id", "=", orgId).where("side", "=", "owner").where("status", "=", "active").orderBy("created_at").execute();
+  const rows = await meta.selectFrom("share_links").select(["id", "peer_name", "label"]).where("org_id", "=", orgId).where("side", "=", "owner").where("status", "=", "active").where(sql<boolean>`coalesce(settings->>'purpose', '') <> 'own'`).orderBy("created_at").execute();
   return rows.map((r) => ({ link_id: r.id, to: r.peer_name ?? r.label ?? "them" }));
 }
 
@@ -47,7 +48,7 @@ export async function findShareTarget(orgId: string, said: string): Promise<Shar
 }
 
 async function readLinkScope(linkId: string): Promise<{ orgId: string; scope: ScopeDef } | null> {
-  const l = await meta.selectFrom("share_links").select(["org_id", "settings"]).where("id", "=", linkId).where("side", "=", "owner").where("status", "=", "active").executeTakeFirst();
+  const l = await meta.selectFrom("share_links").select(["org_id", "settings"]).where("id", "=", linkId).where("side", "=", "owner").where("status", "=", "active").where(sql<boolean>`coalesce(settings->>'purpose', '') <> 'own'`).executeTakeFirst();
   return l ? { orgId: l.org_id, scope: readScope((l.settings as Record<string, unknown> | null)?.scope) } : null;
 }
 
@@ -77,6 +78,8 @@ async function inScope(orgId: string, linkId: string, scope: ScopeDef): Promise<
 export async function shareRecords(linkId: string, refs: ScopeRef[]): Promise<{ changed: ScopeRef[]; delivered?: boolean } | { error: string }> {
   const got = await readLinkScope(linkId);
   if (!got) return { error: "That share has ended." };
+  const refused = await shareRefusal(got.orgId, refs.map((r) => r.entity_kind));
+  if (refused) return { error: refused };
   const scope = { ...got.scope, picks: [...got.scope.picks], excluded: [...got.scope.excluded] };
   const before = await inScope(got.orgId, linkId, scope);
   const changed: ScopeRef[] = [];
@@ -134,6 +137,10 @@ export async function shareCollection(linkId: string, kind: string, stop: boolea
   if (!got) return { error: "That share has ended." };
   const has = got.scope.rules.some((r) => r.type === "collection" && r.entity_kind === kind);
   if (has === !stop) return { changed: false };
+  if (!stop) {
+    const refused = await shareRefusal(got.orgId, [kind]);
+    if (refused) return { error: refused };
+  }
   const scope = { ...got.scope, rules: got.scope.rules.filter((r) => !(r.type === "collection" && r.entity_kind === kind)) };
   if (!stop) scope.rules.push({ type: "collection", entity_kind: kind });
   const { delivered } = await writeLinkScope(linkId, scope);

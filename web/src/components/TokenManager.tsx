@@ -205,6 +205,7 @@ export function TokenManager({
             </div>
             {!t.revoked_at && (
               <button
+                aria-label="Revoke token"
                 onClick={() => handleRevoke(t)}
                 className="text-faint hover:text-ember-500 transition shrink-0"
                 title="Revoke token"
@@ -214,6 +215,7 @@ export function TokenManager({
             )}
             {!t.revoked_at && (
               <button
+                aria-label="Rotate - mint a replacement with the same name, then revoke this one"
                 type="button"
                 onClick={() => {
                   setRotating({

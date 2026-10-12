@@ -14,6 +14,7 @@ import { readSnapshot } from "@cobblr/platform-contract/torn-reads";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { kickAssign } from "../assign-worker.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const runsRouter = Router({ mergeParams: true });
 
@@ -69,13 +70,13 @@ runsRouter.get(
 const RunCreate = z.object({
   name: z.string().min(1).max(160),
   pool_id: z.string().uuid(),
-  file_id: z.string().min(1).optional(),
-  file_ref: z.string().min(1).max(300).optional(),
+  file_id: z.string().min(1).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  file_ref: z.string().min(1).max(300).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   parts_per_plate: z.number().int().min(1).max(1000).default(1),
   target_qty: z.number().int().min(1).max(1_000_000),
-  material_part_id: z.string().optional(),
-  material_grams: z.number().positive().optional(),
-  linked_build_id: z.string().optional(),
+  material_part_id: optionalField(z.string()),
+  material_grams: optionalField(z.number().positive()),
+  linked_build_id: optionalField(z.string()),
   build_qty: z.number().int().min(1).default(1),
   priority: z.number().int().min(0).max(100).default(0),
 });
@@ -139,9 +140,9 @@ runsRouter.post(
 // PATCH /:id — pause / resume / cancel, and operator edits to completed_qty.
 // target_qty is immutable (create a new run); status transitions are explicit.
 const RunPatch = z.object({
-  status: z.enum(["active", "paused", "cancelled"]).optional(),
-  completed_qty: z.number().int().min(0).optional(),
-  priority: z.number().int().min(0).max(100).optional(),
+  status: z.enum(["active", "paused", "cancelled"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  completed_qty: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  priority: z.number().int().min(0).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door

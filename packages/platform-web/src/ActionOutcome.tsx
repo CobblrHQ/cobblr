@@ -40,6 +40,7 @@ export function ActionOutcome({
         >
           <span>{failure}</span>
           <button
+            title="Dismiss"
             type="button"
             aria-label="Dismiss"
             onClick={(e) => {

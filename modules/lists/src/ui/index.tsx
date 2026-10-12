@@ -12,6 +12,10 @@ import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity,
 import { RunningLowOffer } from "./RunningLowOffer.js";
 import { PickToLight } from "@cobblr/platform-web";
 
+
+/** A line's small icon button: the icon's own size on a wide screen, a
+ *  44 by 44 px target on a phone. */
+const LINE_TOOL = "inline-flex shrink-0 items-center justify-center rounded max-sm:h-11 max-sm:w-11"
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
 
 interface Props {
@@ -143,7 +147,7 @@ function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () =>
             {list.open_count} open{list.done_count > 0 ? ` · ${list.done_count} done` : ""}
           </div>
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete list">
+        <button title="Delete list" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete list">
           <Trash2 size={15} />
         </button>
       </div>
@@ -327,7 +331,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
           ) : (
             <li key={it.id} className="px-3 py-2 text-sm group">
               <div className="flex items-center gap-3">
-              <input
+              <input aria-label={it.title}
                 type="checkbox"
                 checked={it.checked}
                 onChange={() => toggle.mutate({ id: it.id, checked: !it.checked, quantity: amountFor(it) ?? undefined })}
@@ -392,30 +396,38 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   {it.claimed_by ? "Never mind" : "I'll get it"}
                 </button>
               )}
-              {!it.checked && (
-                <button
-                  type="button"
-                  onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "" })}
-                  className="text-slate-300 hover:text-accent hover-reveal"
-                  aria-label="Correct this line"
-                >
-                  <Pencil size={13} />
+              {/* Correct, its fields, and remove: small icons, each a finger's
+                  target on a phone (44 by 44 px, side by side, never on top
+                  of each other), so a tap meant for the pencil never lands on
+                  remove (#6059). Held by the list walk's tapTargets check. */}
+              <span data-line-tools className="flex shrink-0 items-center gap-0.5 max-sm:gap-1">
+                {!it.checked && (
+                  <button
+                    title="Correct this line"
+                    type="button"
+                    onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "" })}
+                    className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-accent hover-reveal`}
+                    aria-label="Correct this line"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
+                {lineHasFields && (
+                  <button
+                    title={expanded === it.id ? "Hide this line's fields" : "Show this line's fields"}
+                    type="button"
+                    onClick={() => setExpanded((x) => (x === it.id ? null : it.id))}
+                    className={`${LINE_TOOL} text-muted hover:text-accent`}
+                    aria-label={expanded === it.id ? "Hide this line's fields" : "Show this line's fields"}
+                    aria-expanded={expanded === it.id}
+                  >
+                    <ChevronDown size={14} className={expanded === it.id ? "rotate-180" : ""} />
+                  </button>
+                )}
+                <button title="Remove item" type="button" onClick={() => remove.mutate(it.id)} className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-red-500 hover-reveal`} aria-label="Remove item">
+                  <X size={14} />
                 </button>
-              )}
-              {lineHasFields && (
-                <button
-                  type="button"
-                  onClick={() => setExpanded((x) => (x === it.id ? null : it.id))}
-                  className="shrink-0 text-muted hover:text-accent"
-                  aria-label={expanded === it.id ? "Hide this line's fields" : "Show this line's fields"}
-                  aria-expanded={expanded === it.id}
-                >
-                  <ChevronDown size={14} className={expanded === it.id ? "rotate-180" : ""} />
-                </button>
-              )}
-              <button type="button" onClick={() => remove.mutate(it.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove item">
-                <X size={14} />
-              </button>
+              </span>
               </div>
               {expanded === it.id && (
                 <CustomFieldsPanel

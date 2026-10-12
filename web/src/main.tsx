@@ -7,8 +7,19 @@ import { raiseBlockedAction } from "./lib/blocked-action";
 import { App } from "./App";
 import { ThemeProvider } from "./theme/ThemeContext";
 import "./index.css";
+
 import { listenForInstallPrompt } from "./lib/install-app";
 import { registerServiceWorker } from "./lib/offline";
+
+// Every detail panel (History, Links, Photos and files, Tags, a module's own)
+// registers from the moment the app starts, whatever page opens first. They
+// used to register only when one of the pages importing the panel registry
+// loaded, so a module's own detail page opened first (a classic part on a
+// phone, a list, a project) had none of them (#5954). Its own chunk, started
+// here: the panel host re-renders when they arrive (useSyncExternalStore), so
+// they cost the first paint nothing. e2e/every-record-detail-shows-its-history.mjs
+// holds it.
+void import("./panels/detail-panels").catch((err) => console.error("[panels] the record panels could not load:", err));
 
 // Chromium's install prompt fires early and once per page; kept here so the
 // tour's install step, minutes later, can raise the real one.
@@ -37,6 +48,10 @@ const queryClient = new QueryClient({
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Root element missing");
+
+// The app's code arrived: the boot guard (web/public/boot-guard.js) stops
+// waiting for it and takes down its "Couldn't load this page" if shown.
+(window as { __cobblrStarted?: () => void }).__cobblrStarted?.();
 
 createRoot(root).render(
   <StrictMode>

@@ -1,4 +1,4 @@
-import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField } from "@cobblr/platform-web";
+import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
 // price), a running total, and the **Fulfill** button that decrements the sold
@@ -16,7 +16,8 @@ import { IntakeSettings } from "./intake.js";
 import { invoiceCsv, invoiceHtml, orderTotal } from "../invoice.js";
 import { Link } from "react-router-dom";
 import { fieldCurrency, formatStoredMoney, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
-import { PickToLight } from "@cobblr/platform-web";
+import { PickToLight, useUnits } from "@cobblr/platform-web";
+import type { LineAvailability } from "../availability.js";
 
 export const navItems = [{ label: "Sales", path: "/sales", icon: ShoppingCart }];
 
@@ -122,7 +123,7 @@ export function SalesUI({ orgSlug, getToken }: Props) {
             <button type="button" onClick={() => setCustomersOpen(true)} className={headerButton()}>
               <Users size={14} /> Customers
             </button>
-            <button type="button" onClick={() => setSettingsOpen(true)} className={headerButton()} aria-label="Sales settings">
+            <button title="Sales settings" type="button" onClick={() => setSettingsOpen(true)} className={headerButton()} aria-label="Sales settings">
               <Settings size={14} />
             </button>
             <button type="button" onClick={() => setCreating(true)} className={headerButton("primary")}>
@@ -253,7 +254,7 @@ function OrderCard({ order, onOpen, onDelete }: { order: SalesOrder; onOpen: () 
             {order.order_number && order.customer_name && <span>{order.order_number}</span>}
           </div>
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition shrink-0" aria-label="Delete order">
+        <button title="Delete order" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition shrink-0" aria-label="Delete order">
           <Trash2 size={15} />
         </button>
       </div>
@@ -292,7 +293,7 @@ function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; or
             node: (
               <div>
                 <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
-                <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+                <input aria-label="Order number" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
               </div>
             ),
           },
@@ -412,7 +413,10 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
       invalidate();
     },
     onError: (e) => {
-      if (e instanceof SalesApiError && e.remedied) return;
+      if (e instanceof SalesApiError && e.remedied) {
+        setMaking(null);
+        return;
+      }
       if (e instanceof SalesApiError) setMakeRefusal({ message: e.message, doors: e.doors });
       else toast.error(String(e));
     },
@@ -459,7 +463,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   node: (
                     <div>
                       <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
-                      <select value={d.status} onChange={(e) => (e.target.value === "cancelled" ? cancel.mutate(undefined) : update.mutate({ status: e.target.value as SalesOrderStatus }))} className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
+                      <select aria-label="Status" value={d.status} onChange={(e) => (e.target.value === "cancelled" ? cancel.mutate(undefined) : update.mutate({ status: e.target.value as SalesOrderStatus }))} className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
                         {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
                       </select>
                     </div>
@@ -520,9 +524,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                       {parseMoneyAmount(it.unit_price) === null && <span className="block text-xs text-ember-600 dark:text-ember-400" data-testid="line-unpriced">No price yet</span>}
                       {!fulfilled && d.status !== "cancelled" && (() => {
                         const a = d.availability?.find((a) => a.line_id === it.id);
-                        return a ? <span className="block text-xs text-muted" data-testid="line-availability">
-                          {[`${a.in_stock} in stock`, ...(a.being_made > 0 ? [`${a.being_made} being made`] : []), ...(a.short > 0 ? [`${a.short} short`] : [])].join(" · ")}
-                        </span> : null;
+                        return a ? <LineStock ordered={Number(it.qty)} a={a} /> : null;
                       })()}
                     </span>
                     {fulfilled ? (
@@ -540,6 +542,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                           min={0.0001}
                           onSave={(v) => v !== null && updateItem.mutate({ itemId: it.id, body: { qty: v } })}
                         />
+                        <UnitSuffix unit={d.availability?.find((a) => a.line_id === it.id)?.unit ?? null} />
                         <span aria-hidden>×</span>
                         <MoneyInput
                           ariaLabel={`Price each for ${it.description || "this line"}`}
@@ -583,6 +586,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                     })()}
                     {!fulfilled && (
                       <button
+                        title={`Remove ${it.description || "line item"}`}
                         type="button"
                         onClick={async () => {
                           if (await confirm({ title: "Remove this line?", message: `${it.description || "This line"} comes off the order.`, confirmLabel: "Remove", destructive: true })) removeItem.mutate(it.id);
@@ -708,8 +712,9 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">How many</span>
               <NumberField
                 min={1}
+                integer
                 value={making.qty}
-                onChange={(n) => setMaking({ ...making, qty: Math.max(1, Math.floor(n || 1)) })}
+                onChange={(n) => setMaking({ ...making, qty: n })}
                 className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
               />
             </label>
@@ -1014,7 +1019,27 @@ function OrderHistory({ api, orderId }: { api: SalesApi; orderId: string }) {
   );
 }
 
-function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string; onAdd: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => void }) {
+/** A line's amount and the shelf's, apart and each in the record's unit:
+ *  "Ordered 0.5 m · 8.4 m in stock". It read "0.5 in stock", the part of the
+ *  order stock covers, worded as the stock and with no unit (#6002). */
+function LineStock({ ordered, a }: { ordered: number; a: LineAvailability }) {
+  const units = useUnits();
+  const amount = (n: number) => {
+    const shown = String(parseFloat(n.toFixed(3)));
+    return !a.unit || a.unit.trim().toLowerCase() === "each" ? shown : units.format(n, a.unit);
+  };
+  const parts = [`Ordered ${amount(ordered)}`, `${amount(a.on_hand)} in stock`, ...(a.being_made > 0 ? [`${amount(a.being_made)} being made`] : []), ...(a.short > 0 ? [`${amount(a.short)} short`] : [])];
+  return <span className="block text-xs text-muted" data-testid="line-availability">{parts.join(" · ")}</span>;
+}
+
+/** The measured unit beside a line's quantity ("m"); nothing for a count. */
+function UnitSuffix({ unit }: { unit: string | null }) {
+  const units = useUnits();
+  const symbol = unit ? units.suffix(unit) : "";
+  return symbol ? <span>{symbol}</span> : null;
+}
+
+export function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string; onAdd: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => void }) {
   const [q, setQ] = useState("");
   const [picked, setPicked] = useState<PartOption | null>(null);
   const [desc, setDesc] = useState("");
@@ -1026,7 +1051,7 @@ function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string;
     onAdd({
       part_id: picked?.id ?? null,
       description: (picked?.title ?? desc).trim() || null,
-      qty: Math.max(1, qty),
+      qty,
       unit_price: price,
     });
     setPicked(null); setQ(""); setDesc(""); setQty(1); setPrice(null);
@@ -1066,7 +1091,7 @@ function AddLineRow({ api, currency, onAdd }: { api: SalesApi; currency: string;
         )}
       </div>
       <div className="flex items-center gap-2">
-        <label className="text-xs text-muted">Qty <NumberField min={1} value={qty} onChange={(n) => setQty(Math.max(1, n || 1))} className="w-16 ml-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></label>
+        <span className="text-xs text-muted inline-flex items-center gap-1">Qty <QuantityField unit={picked?.unit ?? null} value={qty} onChange={setQty} label="Quantity" className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm" /></span>
         <label className="text-xs text-muted flex items-center gap-1">Each <MoneyInput value={price} currency={currency} storage="amount" live onCommit={setPrice} ariaLabel="Price each" className="w-28 text-sm" /></label>
         <div className="flex-1" />
         <button type="button" disabled={!picked && !desc.trim()} onClick={submit} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
@@ -1093,7 +1118,7 @@ function CustomerPicker({ api, customerId, customerName, onChange }: { api: Sale
   if (creating) {
     return (
       <div className="flex gap-2">
-        <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Customer name" className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
+        <input autoFocus aria-label="Customer name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Customer name" className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
         <button type="button" disabled={!newName.trim() || create.isPending} onClick={() => create.mutate(newName.trim())} className="px-2.5 py-1.5 rounded text-xs bg-cobble-600 text-white disabled:opacity-50">Add</button>
         <button type="button" onClick={() => setCreating(false)} className="px-2.5 py-1.5 rounded text-xs bg-subtle dark:bg-slate-800">Cancel</button>
       </div>
@@ -1107,6 +1132,7 @@ function CustomerPicker({ api, customerId, customerName, onChange }: { api: Sale
       <SearchInput value={find} onChange={setFind} placeholder="find a customer…" aria-label="Find a customer" />
     )}
     <select
+      aria-label="Customer"
       value={customerId ?? ""}
       onChange={(e) => {
         const val = e.target.value;
@@ -1165,7 +1191,12 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
           {shown.map((c) => (
             <li key={c.id}>
               {editing === c.id ? (
-                <CustomerForm api={api} customer={c} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
+                <>
+                  <CustomerForm api={api} customer={c} onDone={() => { setEditing(null); invalidate(); }} onCancel={() => setEditing(null)} />
+                  {/* A customer opened is that customer's own page: its
+                      History, Links and Tags come with it (#5954). */}
+                  <ContributedDetailPanels target="sales:customer" ctx={{ slug: api.workspace, entityId: c.id, entityTitle: c.name }} />
+                </>
               ) : (
                 <div className="flex items-center gap-3 rounded-lg border border-line dark:border-slate-700 p-3">
                   <div className="flex-1 min-w-0">
@@ -1174,6 +1205,7 @@ function CustomersModal({ api, initialEditing, onClose }: { api: SalesApi; initi
                   </div>
                   <button type="button" onClick={() => setEditing(c.id)} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
                   <button
+                    title="Delete customer"
                     type="button"
                     onClick={async () => { if (await confirm({ title: `Delete "${c.name}"?`, message: "Orders for this customer keep their name but lose the link.", confirmLabel: "Delete", destructive: true })) remove.mutate(c.id); }}
                     className="text-slate-300 hover:text-red-500 shrink-0" aria-label="Delete customer"

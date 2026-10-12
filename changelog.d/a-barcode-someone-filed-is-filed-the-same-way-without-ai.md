@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: none (the card already shows a route's note, which says the barcode network filed it and whether one person or several)
+docs_published: 2026-10-12
 ---
 A barcode someone has filed is filed the next time into the same kind of table, with its product details filled in, without asking the AI.
 

@@ -3,6 +3,7 @@ type: feature
 scope: vault
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#The Vault
+docs_published: 2026-10-12
 ---
 A Vault for personal documents: folders whose documents are encrypted and opened only by the people you choose, never by search, Cobb, shares or anyone else in the workspace, its admins included.
 

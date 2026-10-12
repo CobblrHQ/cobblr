@@ -9,7 +9,7 @@
 
 import { Search } from "lucide-react";
 import { NotificationsBell } from "./NotificationsBell";
-import { OPEN_PALETTE_EVENT } from "./CommandPalette";
+import { OPEN_PALETTE_EVENT } from "./palette-events";
 
 export function PhoneHeaderShortcuts({ search = true }: { search?: boolean }) {
   return (

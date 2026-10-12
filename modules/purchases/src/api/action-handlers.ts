@@ -17,6 +17,7 @@ import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { OrderStatus, PurchasesDB } from "../db.js";
+import { PURCHASED_STATUSES } from "../price-stats.js";
 
 let registered = false;
 
@@ -78,6 +79,9 @@ export function registerPurchasesActionHandlers(): void {
       .innerJoin("purchases_orders as o", "o.id", "i.order_id")
       .select(["i.qty", "i.unit_cost", "i.description", "o.vendor", "o.vendor_id"])
       .where("i.part_id", "=", partId)
+      // What was bought, not another draft or a cancelled order, or a draft's
+      // own amount becomes the next draft's (price-stats.ts).
+      .where("o.status", "in", [...PURCHASED_STATUSES])
       .orderBy("i.created_at", "desc")
       .limit(1)
       .executeTakeFirst();

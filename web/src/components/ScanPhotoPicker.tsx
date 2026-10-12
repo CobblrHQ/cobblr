@@ -98,6 +98,14 @@ export interface ScanIntake {
   sheet: ReactNode;
 }
 
+/** A personal document refused from the shared upload WITH what was read:
+ *  its card is already open on the personal path (sendUpload raised it), so
+ *  nothing failed. A refusal with nothing read (too large to check here)
+ *  opened no card, and is still said. */
+function isPersonalDocument(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "personal_document" && (e.details as { personalCardOpened?: boolean } | undefined)?.personalCardOpened === true;
+}
+
 export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake {
   const qc = useQueryClient();
   const toast = useToast();
@@ -171,6 +179,13 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
           // Reveal each as it lands, so a long selection fills in progressively.
           invalidate();
         } catch (e) {
+          // A personal document is not a failure: the upload door already
+          // opened its card on the personal path (sendUpload), so the picture
+          // just leaves the inbox, with no error beside the card that read it.
+          if (isPersonalDocument(e)) {
+            dropPending(slug, key);
+            continue;
+          }
           updatePending(slug, key, { stage: "failed" });
           toast.error(`${file.name}: ${e instanceof ApiError ? e.message : String(e)}`);
         }
@@ -241,6 +256,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
       const rec = await api.uploadFile(slug, file);
       await importReceiptFile(rec.id, false);
     } catch (e) {
+      if (isPersonalDocument(e)) return;
       toast.error(e instanceof ApiError ? e.message : String(e));
     } finally {
       setUploading(false);

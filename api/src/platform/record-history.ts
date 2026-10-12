@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { changesOf, changesIn, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
+import { changesOf, changesIn, DERIVED_FIELDS, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
 import { isStoredSecret, secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
 
 export const historyBag = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
@@ -36,7 +36,7 @@ export function publicHistoryDiff(diff: unknown, hidden: ReadonlySet<string>): u
   if (!diff || typeof diff !== "object" || diff instanceof Date) return diff;
   if (Array.isArray(diff)) return diff.map((value) => publicHistoryDiff(value, hidden));
   const out = Object.fromEntries(Object.entries(historyBag(diff))
-    .filter(([key]) => key !== "version_before" && !hidden.has(key))
+    .filter(([key]) => key !== "version_before" && !hidden.has(key) && !DERIVED_FIELDS.has(key))
     .map(([key, value]) => [key, publicHistoryDiff(value, hidden)]));
   const changes = changesIn(diff);
   if (changes) out.changes = changes.filter((c) => !hidden.has(c.field)).map((c) => publicHistoryDiff(c, hidden));
@@ -57,4 +57,16 @@ export function runHistoryWrite<T>(write: HistoryWrite, fn: () => T): T { return
 export function currentHistoryWrite(orgId: string, kind: string, id: string): HistoryWrite | null {
   const write = writes.getStore();
   return write && write.orgId === orgId && write.kind === kind && write.id === id ? write : null;
+}
+
+/** The records a writer's create is making, by `<module>:<noun>:<id>`: a
+ *  `<noun>_created` row logged while one runs is noted here, so the door logs
+ *  its own only when the module's create did not (one entry, never two). */
+const creating = new AsyncLocalStorage<Set<string>>();
+export async function runCreateWrite<T>(fn: () => Promise<T>): Promise<{ result: T; logged: ReadonlySet<string> }> {
+  const logged = new Set<string>();
+  return creating.run(logged, async () => ({ result: await fn(), logged }));
+}
+export function noteCreatedLog(module: string | null, entityType: string, entityId: string): void {
+  creating.getStore()?.add(`${module}:${entityType}:${entityId}`);
 }

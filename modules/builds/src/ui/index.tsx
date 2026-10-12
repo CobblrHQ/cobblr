@@ -3,7 +3,7 @@ import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";
 export { BoardProjectPanel } from "./BoardRevisions.js";
-import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
@@ -15,7 +15,8 @@ import { Link, useMatch } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
 import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
-import { PickToLight } from "@cobblr/platform-web";
+import { PickToLight, SubjectLink } from "@cobblr/platform-web";
+import { shortageSentence } from "../shortage.js";
 import { BoardInspection } from "./Inspection.js";
 import { useRunAction } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
@@ -161,7 +162,7 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
                       placeholder="Leave empty if it adds nothing to stock"
                       className="mt-1 w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
                     />
-                    <span className="block mt-1">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</span>
+                    <span className="block mt-1">A record with this name in any collection is used; otherwise it is added to your inventory with none in stock.</span>
                   </label>
                 ),
               },
@@ -187,7 +188,7 @@ function BuildCard({ build, onOpen, onDelete }: { build: BuildSummary; onOpen: (
           <div className="font-medium text-content dark:text-mortar-100">{build.name}</div>
           {build.description && <div className="text-xs text-muted mt-0.5 line-clamp-2">{build.description}</div>}
         </button>
-        <button type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete build">
+        <button title="Delete build" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete build">
           <Trash2 size={15} />
         </button>
       </div>
@@ -278,6 +279,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 
   const d = detail.data;
   const max = d?.buildable.max_buildable ?? 0;
+  const short = d ? shortageSentence(d.buildable.components ?? [], qty) : null;
   const limitingIds = new Set((d?.buildable.limiting ?? []).map((l) => l.part_id));
 
   return (
@@ -318,22 +320,24 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                   aria-label="Output serial or lot number"
                   title="Tag this build's output with a serial/lot for traceability"
                 />
-                <NumberField
+                <NumberField label="Quantity"
                   min={1}
+                  integer
                   value={qty}
-                  onChange={(n) => setQty(Math.max(1, n || 1))}
+                  onChange={setQty}
                   className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
                 />
                 <button
                   type="button"
-                  disabled={d.components.length === 0 || doBuild.isPending}
+                  disabled={d.components.length === 0 || !!short || doBuild.isPending}
                   onClick={() => doBuild.mutate({ n: qty, serial: serial.trim() || undefined })}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded bg-cobble-600 text-white hover:bg-cobble-700 disabled:opacity-50"
-                  title={qty > max ? "More than current stock supports. Stock can go negative" : undefined}
+                  aria-describedby={short ? "build-short" : undefined}
                 >
                   <Wrench size={15} /> Build
                 </button>
               </div>
+              {short && <p id="build-short" className="basis-full text-xs text-ember-600 dark:text-ember-400" data-testid="build-short">{short}</p>}
             </div>
 
             {/* Bill of materials */}
@@ -371,7 +375,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                           </>
                         )}
                       </span>
-                      <button type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
+                      <button title="Remove component" type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
                         <X size={14} />
                       </button>
                     </li>
@@ -504,7 +508,7 @@ function OutputLine({
           </button>
         )}
       </div>
-      <div className="text-xs text-muted">An existing part with this name is used; otherwise it is added to your inventory with none in stock.</div>
+      <div className="text-xs text-muted">A record with this name in any collection is used; otherwise it is added to your inventory with none in stock.</div>
     </form>
   );
 }
@@ -556,7 +560,7 @@ function OperationsSection({
                   type="button"
                   onClick={() => onCycle(op)}
                   className="shrink-0"
-                  title={`Status: ${op.status} (click to advance)`}
+                  title={`Step status: ${op.status} (click to advance)`}
                   aria-label={`Step status ${op.status}`}
                 >
                   {op.status === "done" ? (
@@ -592,13 +596,13 @@ function OperationsSection({
                   Log
                 </button>
                 <div className="flex items-center hover-reveal">
-                  <button type="button" onClick={() => onMove(op, "up")} disabled={i === 0} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move up">
+                  <button title="Move up" type="button" onClick={() => onMove(op, "up")} disabled={i === 0} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move up">
                     <ChevronUp size={14} />
                   </button>
-                  <button type="button" onClick={() => onMove(op, "down")} disabled={i === sorted.length - 1} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move down">
+                  <button title="Move down" type="button" onClick={() => onMove(op, "down")} disabled={i === sorted.length - 1} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move down">
                     <ChevronDown size={14} />
                   </button>
-                  <button type="button" onClick={() => onRemove(op.id)} className="text-slate-300 hover:text-red-500 ml-1" aria-label="Remove step">
+                  <button title="Remove step" type="button" onClick={() => onRemove(op.id)} className="text-slate-300 hover:text-red-500 ml-1" aria-label="Remove step">
                     <X size={14} />
                   </button>
                 </div>
@@ -638,7 +642,7 @@ function OperationsSection({
   );
 }
 
-function AddComponentRow({
+export function AddComponentRow({
   api,
   currentBuildId,
   onAddPart,
@@ -680,10 +684,10 @@ function AddComponentRow({
       {picked ? (
         <div className="flex items-center gap-2">
           <span className="flex-1 text-sm text-content dark:text-mortar-100">{picked.title}</span>
-          <NumberField
-            min={1}
+          <QuantityField
+            unit={mode === "part" ? picked.unit : null}
             value={qty}
-            onChange={(n) => setQty(Math.max(1, n || 1))}
+            onChange={setQty}
             className="w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
             label="Quantity per build"
           />
@@ -706,8 +710,8 @@ function AddComponentRow({
           <SearchInput
             value={q}
             onChange={setQ}
-            placeholder={mode === "part" ? "Search inventory parts…" : "Search builds to nest as a sub-assembly…"}
-            aria-label={mode === "part" ? "Search inventory parts" : "Search builds"}
+            placeholder={mode === "part" ? "Search your stock…" : "Search builds to nest as a sub-assembly…"}
+            aria-label={mode === "part" ? "Search your stock" : "Search builds"}
           />
           {q.length > 0 && (
             <div className="absolute z-10 mt-1 w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg max-h-56 overflow-auto">
@@ -715,7 +719,7 @@ function AddComponentRow({
               {!results.isLoading && options.length === 0 && (
                 <div className="px-3 py-2 text-xs text-muted italic">
                   {mode === "part"
-                    ? "No parts. Components come from your inventory. Enable Inventory and add parts first."
+                    ? "Nothing kept in stock matches. Components come from any collection you keep stock in."
                     : "No other builds to nest. Create another build first."}
                 </div>
               )}
@@ -728,6 +732,7 @@ function AddComponentRow({
                 >
                   {p.title}
                   {p.subtitle && <span className="text-xs text-muted ml-2">{p.subtitle}</span>}
+                  {p.collection && <span className="text-xs text-muted ml-2">in {p.collection}</span>}
                 </button>
               ))}
             </div>
@@ -766,7 +771,7 @@ function OpLogRow({
         }}
       >
         <Clock size={12} className="text-muted" />
-        <select value={timeKind} onChange={(e) => setTimeKind(e.target.value as typeof timeKind)} className={selCls}>
+        <select aria-label="Time kind" value={timeKind} onChange={(e) => setTimeKind(e.target.value as typeof timeKind)} className={selCls}>
           <option value="labor">labor</option>
           <option value="machine">machine</option>
           <option value="setup">setup</option>
@@ -783,7 +788,7 @@ function OpLogRow({
           if (n > 0) { onQty(qtyKind, n, reason.trim() || undefined); setQty(""); setReason(""); }
         }}
       >
-        <select value={qtyKind} onChange={(e) => setQtyKind(e.target.value as typeof qtyKind)} className={selCls}>
+        <select aria-label="Quantity kind" value={qtyKind} onChange={(e) => setQtyKind(e.target.value as typeof qtyKind)} className={selCls}>
           <option value="good">good</option>
           <option value="scrap">scrap</option>
           <option value="rework">rework</option>
@@ -834,7 +839,7 @@ function HistorySection({ buildId, api }: { buildId: string; api: BuildsApi }) {
   );
 }
 
-function RunGenealogy({ runId, api }: { runId: string; api: BuildsApi }) {
+export function RunGenealogy({ runId, api }: { runId: string; api: BuildsApi }) {
   const g = useQuery({ queryKey: ["builds-genealogy", runId], queryFn: () => api.getGenealogy(runId) });
   if (g.isLoading) return <div className="px-3 py-2 text-xs text-muted">Loading as-built…</div>;
   if (!g.data) return null;
@@ -858,8 +863,10 @@ function GenealogyTree({ node, depth }: { node: GenealogyNode; depth: number }) 
           <span className="inline-flex items-center gap-1 text-content dark:text-mortar-100">
             <CornerDownRight size={11} className="text-slate-400" />
             <span className="tabular-nums text-muted">{inp.quantity}×</span>
-            <span className="font-mono text-[11px]">{inp.lot_code ?? inp.part_id.slice(0, 8)}</span>
-            {inp.lot_code && <span className="text-[10px] text-muted">lot</span>}
+            {inp.subject
+              ? <SubjectLink href={inp.subject.href} className="text-accent hover:underline">{inp.subject.title}</SubjectLink>
+              : <span className="italic text-muted">a record you cannot open</span>}
+            {inp.lot_code && <span className="text-[10px] text-muted">lot <span className="font-mono">{inp.lot_code}</span></span>}
           </span>
           {inp.source && (
             <div className="ml-3 border-l border-slate-200 dark:border-slate-700 pl-1.5 mt-0.5">
@@ -1045,7 +1052,7 @@ function AddPlannedRow({ builds, onAdd, onCancel }: { builds: BuildSummary[]; on
       <select value={buildId} onChange={(e) => setBuildId(e.target.value)} className={`${inCls} flex-1 min-w-32`} aria-label="Build">
         {builds.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
       </select>
-      <NumberField min={1} value={qty} onChange={(n) => setQty(Math.max(1, n || 1))} className={`${inCls} w-14`} label="Quantity" />
+      <NumberField min={1} integer value={qty} onChange={setQty} className={`${inCls} w-14`} label="Quantity" />
       <label className="text-[11px] text-muted">due <input type="date" value={due} onChange={(e) => setDue(e.target.value)} className={`${inCls} ml-1`} aria-label="Due date" /></label>
       <input value={lane} onChange={(e) => setLane(e.target.value)} placeholder="lane (e.g. Laser)" className={`${inCls} w-28`} aria-label="Lane" />
       <button type="submit" disabled={!buildId} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>

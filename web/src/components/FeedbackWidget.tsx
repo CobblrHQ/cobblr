@@ -349,6 +349,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
                       {/* EXTERNAL-IMAGE-OK: an object URL for a File the user just picked. */}
                       <img src={p.url} alt={p.file.name} className="w-full h-full object-cover" />
                       <button
+                        aria-label="Remove"
                         type="button"
                         onClick={() => removePick(i)}
                         className="absolute top-0.5 right-0.5 p-0.5 rounded bg-black/50 text-white hover:bg-ember-600 transition"

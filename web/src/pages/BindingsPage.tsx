@@ -3,6 +3,11 @@
 // existing wires + recent firings.
 
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { wirePrefillFromParams } from "../lib/wire-composer";
+import { usePrefill } from "../lib/prefill";
+import { STOCK_CHANGED_EVENT, readStockChange, readWireRecords, stockChangePhrase, type NarrowingCondition } from "@cobblr/platform-contract/wire-narrowing";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PlatformBinding } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -14,6 +19,8 @@ import { WireComposer } from "../components/WireComposer";
 import { WireGraph } from "../components/WireGraph";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 
+const WIRE_PREFILL_KEYS = ["kind", "event", "change", "below", "record", "record_name", "category", "tag", "view"];
+
 export function BindingsPage() {
   usePageTitle("Wires");
   const { activeSlug: slug } = useActiveOrg();
@@ -22,6 +29,11 @@ export function BindingsPage() {
   const [selected, setSelected] = useState<PlatformBinding | null>(null);
   const [editing, setEditing] = useState<PlatformBinding | null>(null);
   const [view, setView] = useState<"list" | "graph">("list");
+  const [search, setSearch] = useSearchParams();
+  // The record's "When this runs out…" link puts the narrowing in the address;
+  // the assistant's escort sends the same keys as prefill.* (lib/prefill.ts).
+  const escorted = usePrefill(WIRE_PREFILL_KEYS);
+  const prefill = wirePrefillFromParams(Object.keys(escorted).length ? new URLSearchParams(escorted) : search);
   const bindings = useQuery({
     queryKey: ["bindings", slug],
     queryFn: () => api.listBindings(slug),
@@ -47,7 +59,16 @@ export function BindingsPage() {
 
   return (
     <div className="space-y-5">
-      <WireComposer slug={slug} onCreated={() => {}} />
+      {/* A wire started elsewhere ("When this runs out…", the assistant's
+          escort) arrives with its trigger and narrowing in the address. */}
+      <WireComposer
+        key={`${search.toString()}|${Object.values(escorted).join("|")}`}
+        slug={slug}
+        prefill={prefill ? { sourceKind: prefill.kind, triggerEvent: prefill.event, change: prefill.change, records: prefill.records, recordLabel: prefill.recordName } : null}
+        onCreated={() => {
+          if (prefill) setSearch(new URLSearchParams(), { replace: true });
+        }}
+      />
 
       <div>
         <div className="flex items-center gap-3 mb-2">
@@ -98,6 +119,9 @@ export function BindingsPage() {
                   </span>
                   {b.target && b.target !== "self" && (
                     <span className="text-[10px] font-mono text-faint dark:text-slate-500">→ linked</span>
+                  )}
+                  {narrowingLine(b) && (
+                    <span className="text-[11px] text-muted dark:text-slate-400" data-testid="wire-narrowing">{narrowingLine(b)}</span>
                   )}
                   <div className="flex-1" />
                   <label
@@ -242,4 +266,21 @@ function WireFiringsPanel({ slug }: { slug: string }) {
       </ul>
     </div>
   );
+}
+
+/** What a wire is narrowed to, in words, for its row (#6070): "when it runs
+ *  out, one record" or "tagged “coffee”". Null when it is not narrowed. */
+function narrowingLine(b: PlatformBinding): string | null {
+  const f = b.filter as { all?: NarrowingCondition[]; in?: unknown } | null;
+  const parts: string[] = [];
+  if (b.trigger_event === STOCK_CHANGED_EVENT) {
+    const phrase = stockChangePhrase(readStockChange(f?.all ?? []).change);
+    if (phrase) parts.push(`when it ${phrase}`);
+  }
+  const r = readWireRecords(f?.in);
+  if (r?.record) parts.push("one record");
+  if (r?.category) parts.push(`in “${r.category}”`);
+  if (r?.tag) parts.push(`tagged “${r.tag}”`);
+  if (r?.view) parts.push("those a saved view shows");
+  return parts.length ? parts.join(", ") : null;
 }

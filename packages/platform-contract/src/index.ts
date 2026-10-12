@@ -2305,6 +2305,10 @@ export interface HistoryWriter {
 export interface PlatformActivity {
   registerHistoryWriter(kind: string, writer: HistoryWriter): void;
   log(p: ActivityLogParams): Promise<void>;
+  /** The rows of one bulk write (an import), one INSERT per chunk: each
+   *  record's History gets its line, and the feeds show only the write's own
+   *  summary entry, which the caller logs as usual (#5963). */
+  logMany(p: { orgId: string; userId?: string | null; rows: ReadonlyArray<{ action: string; ref: ActivityLogParams["ref"]; diff?: Record<string, unknown> }> }): Promise<void>;
 }
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;
@@ -2793,6 +2797,11 @@ export interface ScannableInfo {
    *  kinds without a native quantity (one row = one thing, e.g. a record):
    *  scan flows then skip the qty bump / adjust affordances for that kind. */
   qtyField?: string;
+  /** The field holding the unit the quantity is kept in ("unit": "each",
+   *  "m", "kg"). A picker that asks how much of a record to use reads it, so
+   *  a measured record takes 0.25 and a counted one takes whole numbers
+   *  (#5962). Absent: the quantity counts whole things. */
+  unitField?: string;
   /** The qty field says how many identical things one record stands for, and
    *  the kind's list never also returns those things as records of their own
    *  (a unit named under its parent stays under it). Then a count answers in
@@ -3446,6 +3455,9 @@ export type ActionRequester = (ctx: { orgId: string; args: Record<string, unknow
 export interface ActionInvokeContext {
   orgId: string;
   userId: string | null;
+  /** An original uploaded with this authenticated request. Never an action
+   *  argument, event payload or assistant message, and never ledgered. */
+  document?: { bytes: Uint8Array; name: string; mimeType: string };
   /** Which pole this invocation runs on. "entity" (default) → `entity` is
    *  populated. "workspace" → a config/admin action with NO record, so
    *  `entity`/`entityKind`/`entityId` are all absent. A handler that reads
@@ -4666,6 +4678,11 @@ export interface AiProviderDef {
    *  photo" about it; a provider that reads images natively is not in doubt
    *  and is never flagged. */
   checksPhotosInTest?: boolean;
+  /** Its testConnection already makes a real generation (a bridge asks its
+   *  agent; the replay double answers from its cassette), so the registry
+   *  does not add another (ai-verify.ts, #6024). Every other provider's
+   *  verify is its own check and then one tiny generation. */
+  generatesInTest?: boolean;
   /**
    * A fingerprint of the PROMPT this provider will actually send for
    * (capability, input) — i.e. the part of the request that the caller's `input`
@@ -4785,6 +4802,15 @@ export interface AiConnectionTest extends ConnectionTestOutcome {
   detail?: string;
   /** Every model id the provider reported, unfiltered and in its own order. */
   models?: string[];
+  /** The model the verify GENERATED with (ai-verify.ts): the one a pass
+   *  names, or the one refused. Never a listed model nobody asked (#6024). */
+  model?: string;
+  /** A refused chosen model: the connection's default that answered instead. */
+  default_answers?: string;
+  /** The provider's own words for a refusal (connection-verification.ts). */
+  provider_said?: string;
+  /** The provider, as the screen names it. */
+  provider?: string;
   /** Said instead of a verdict when the provider implements no test at all. */
   note?: string;
   /** A provider that can be handed an image but whose backend may or may not
@@ -7142,6 +7168,8 @@ export interface PlatformVault {
    *  is known (null unlinks). Only a document in a folder the person owns;
    *  the record then lists it for the people who may open it. */
   link(orgId: string, userId: string, fileId: string, record: { kind: string; id: string } | null): Promise<void>;
+  /** Remove a document this person filed, for compensation or Undo. */
+  remove(orgId: string, userId: string, fileId: string): Promise<void>;
   /** How many of a record's vault documents this person may open (0 for
    *  anyone not on those folders' lists: never a count of the rest). */
   countFor(orgId: string, userId: string, record: { kind: string; id: string }): Promise<number>;

@@ -17,6 +17,9 @@ import { pathToFileURL } from "node:url";
 
 const MODULES_DIR = "modules";
 const REGISTRY = "web/src/panels/registry.tsx";
+// Detail panels register in their own module, loaded at boot by main.tsx
+// (#5954); page tabs, toolbars and config sections stay in REGISTRY.
+const DETAIL_PANELS = "web/src/panels/detail-panels.ts";
 
 interface DeclaredPanel {
   id: string;
@@ -72,7 +75,7 @@ async function main(): Promise<void> {
     console.error(`[lint-panel-registry] missing ${REGISTRY}`);
     process.exit(1);
   }
-  const src = readFileSync(REGISTRY, "utf8");
+  const src = readFileSync(REGISTRY, "utf8") + "\n" + (existsSync(DETAIL_PANELS) ? readFileSync(DETAIL_PANELS, "utf8") : "");
   const { tabs, panels, sections } = registeredIds(src);
   const declared = await declaredPanels();
   const failures: string[] = [];
@@ -89,7 +92,7 @@ async function main(): Promise<void> {
               ? `a CONFIG_SECTIONS entry "${d.id}": lazy(...)`
               : d.surface === "view-toolbar"
                 ? `registerViewToolbar("${d.id}", lazy(...))`
-                : `registerDetailPanel("${d.id}", lazy(...))`),
+                : `registerDetailPanel("${d.id}", lazy(...)) in ${DETAIL_PANELS}`),
       );
     }
   }
@@ -100,7 +103,7 @@ async function main(): Promise<void> {
   const kernelBlock = kernelSrc.match(/export const KERNEL_PANELS[^=]*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
   const kernelIds = [...kernelBlock.matchAll(/id:\s*["']([a-z][a-z0-9-]*:[a-z][a-z0-9-]*)["']/g)].map((m) => m[1]!);
   for (const id of kernelIds) {
-    if (!panels.has(id)) failures.push(`platform-web KERNEL_PANELS declares "${id}" but nothing renders it.\n    Fix: registerDetailPanel("${id}", lazy(...)) in ${REGISTRY}`);
+    if (!panels.has(id)) failures.push(`platform-web KERNEL_PANELS declares "${id}" but nothing renders it.\n    Fix: registerDetailPanel("${id}", lazy(...)) in ${DETAIL_PANELS}`);
   }
   const declaredIds = new Set([...declared.map((d) => d.id), ...kernelIds]);
   for (const id of [...tabs, ...panels]) {

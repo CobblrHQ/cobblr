@@ -15,7 +15,7 @@
 // candidate's routing token would ask for one that was never created.
 
 import { displayName } from "@cobblr/platform-contract/display-identity";
-import { filedQuantityOf } from "./filed-quantity.js";
+import { filedQuantityOf, isOwnCopy } from "./filed-quantity.js";
 import type { ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
 import { filingDestination, type DestinationRow } from "./destination.js";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
@@ -228,7 +228,9 @@ export async function fileThroughConfirm(
         name: displayName(row),
         // A row's own count goes through the rule the door checks, so a row
         // that predates it never turns an auto-file into a bad request.
-        quantity: overrides.quantity ?? (row.quantity == null ? undefined : filedQuantityOf(row.quantity)),
+        // An own copy files its own count, 0 included (filed-quantity.ts): the
+        // door reads it from the row, so it is never sent through the floor.
+        quantity: overrides.quantity ?? (row.quantity == null || isOwnCopy(row.suggested_metadata) ? undefined : filedQuantityOf(row.quantity)),
         extras: cand.fields ?? {},
         // A thing that holds things wins over a place: the new record goes
         // inside it (a Backpack), not onto a shelf.

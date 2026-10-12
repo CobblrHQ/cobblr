@@ -161,18 +161,15 @@ export function DigifabPage({
             Open the shop floor →
           </Link>
         ) : (
-        <div className="inline-flex rounded-lg border border-line dark:border-slate-600 overflow-hidden">
-          {([["floor", "Floor"], ["setup", "Setup"]] as const).map(([t, label]) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => pickTab(t)}
-              className={"px-3 py-1.5 text-sm transition " + (tab === t ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedChoice
+          label="Floor or setup"
+          value={tab}
+          onChange={pickTab}
+          options={[
+            { value: "floor", label: "Floor" },
+            { value: "setup", label: "Setup" },
+          ]}
+        />
         )}
       </div>
 
@@ -261,6 +258,7 @@ export function DigifabPage({
           <li key={c.id} className="px-3 py-2.5">
             <div className="flex items-center gap-2">
               <button
+                aria-label={isOpen ? "Hide printers" : "Show printers"}
                 onClick={() => toggleExpanded(c.id)}
                 title={isOpen ? "Hide printers" : "Show printers"}
                 className="text-faint hover:text-accent transition p-0.5 shrink-0"
@@ -300,6 +298,7 @@ export function DigifabPage({
                 )}
               </div>
               <button
+                aria-label="Test connection"
                 onClick={() => test.mutate(c.id)}
                 disabled={test.isPending}
                 title="Test connection"
@@ -308,6 +307,7 @@ export function DigifabPage({
                 {test.isPending && test.variables === c.id ? <RefreshCw size={15} className="animate-spin" /> : <Wifi size={15} />}
               </button>
               <button
+                aria-label="Edit connection (rename / host / credentials / enable)"
                 onClick={() => setEditConn(c)}
                 title="Edit connection (rename / host / credentials / enable)"
                 className="text-faint hover:text-accent transition p-1.5"
@@ -315,6 +315,7 @@ export function DigifabPage({
                 <Sliders size={15} />
               </button>
               <button
+                aria-label="Remove"
                 onClick={async () => {
                   const ok = await confirm({
                     title: `Remove "${c.label}"?`,
@@ -595,6 +596,8 @@ function DriversModal({ onClose }: { onClose: () => void }) {
                 onClick={async () => {
                   if (await confirm({ title: `Remove "${d.name}"?`, message: "Connections using it will stop resolving.", confirmLabel: "Remove", destructive: true })) remove.mutate(d.key);
                 }}
+                aria-label={`Remove ${d.name}`}
+                title={`Remove ${d.name}`}
                 className="text-faint hover:text-ember-500 transition p-1"
               >
                 <Trash2 size={14} />
@@ -861,7 +864,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   </label>
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Detector</span>
-                    <select value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 text-xs !w-auto">
+                    <select aria-label="Detector" value={c.backend} onChange={(e) => save.mutate({ backend: e.target.value as DigifabFailureConfig["backend"] })} className="input !py-0.5 text-xs !w-auto">
                       <option value="auto">Auto - local model when available, else vision AI</option>
                       {/* "Local model only" is not offered until a bridge-side
                           model actually ships - edge-only mode would sit and
@@ -884,7 +887,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   )}
                   <div className="flex items-center gap-2">
                     <span className={lbl}>Check every</span>
-                    <select value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 text-xs !w-auto">
+                    <select aria-label="Check every" value={c.sample_interval_sec} onChange={(e) => save.mutate({ sample_interval_sec: Number(e.target.value) })} className="input !py-0.5 text-xs !w-auto">
                       <option value={15}>15s</option><option value={30}>30s</option><option value={60}>60s</option><option value={120}>2 min</option>
                     </select>
                   </div>
@@ -911,7 +914,7 @@ function ExternalDetectorConfig({ slug, cfg, save }: { slug: string; cfg: Digifa
     <div className="space-y-1.5">
       <div className="flex items-center gap-2 flex-wrap">
         <span className={detLbl}>Service</span>
-        <select value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 text-xs !w-auto">
+        <select aria-label="Service" value={cfg.detector_id ?? ""} onChange={(e) => save({ detector_id: e.target.value || null })} className="input !py-0.5 text-xs !w-auto">
           <option value=""> - pick a detector - </option>
           {detectors.map((d) => (
             <option key={d.id} value={d.id}>{d.label} · {d.key}{d.enabled ? "" : " (off)"}</option>
@@ -958,7 +961,7 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
         )}
         <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3 space-y-2">
           <div className={detLbl}>Add a detector</div>
-          <select value={key} onChange={(e) => { setKey(e.target.value); const c = cat.find((x) => x.key === e.target.value); if (c) setLabel((l) => l || c.name); }} className={input}>
+          <select aria-label="Detector service" value={key} onChange={(e) => { setKey(e.target.value); const c = cat.find((x) => x.key === e.target.value); if (c) setLabel((l) => l || c.name); }} className={input}>
             <option value=""> - choose a service - </option>
             {cat.map((c) => <option key={c.key} value={c.key}>{c.name} · {c.shape}</option>)}
           </select>
@@ -1091,14 +1094,14 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
                 const camMissing = !!r.cam && !cams.some((c) => c.id === r.cam);
                 return (
                   <div key={i} className="flex items-center gap-1.5">
-                    <select value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
+                    <select aria-label="Machine" value={r.ref} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, ref: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
                       <option value=""> - pick a machine - </option>
                       {refMissing && <option value={r.ref}>{r.ref}</option>}
                       {deviceOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
                     <span className="text-faint">→</span>
                     {cams.length > 0 || r.cam ? (
-                      <select value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
+                      <select aria-label="Camera" value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} className="input !py-1 text-xs flex-1">
                         <option value=""> - pick a camera - </option>
                         {camMissing && <option value={r.cam}>{r.cam}</option>}
                         {cams.map((c) => <option key={c.id} value={c.id}>{(c.name ? `${c.name} (${c.id})` : c.id) + (c.online === false ? " · offline" : "")}</option>)}
@@ -1106,7 +1109,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
                     ) : (
                       <input value={r.cam} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, cam: e.target.value } : x)))} placeholder="camera id" className="input !py-1 text-xs flex-1" />
                     )}
-                    <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-ember-600 dark:text-ember-500"><X size={13} /></button>
+                    <button type="button" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Remove this camera link" title="Remove this camera link" className="text-ember-600 dark:text-ember-500"><X size={13} /></button>
                   </div>
                 );
               })}
@@ -1184,7 +1187,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5">
                 <span className={detLbl}>From a machine</span>
-                <select value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 text-xs flex-1">
+                <select aria-label="From a machine" value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 text-xs flex-1">
                   <option value=""> - a Cobblr machine to mirror - </option>
                   {mappable.map((c) => <option key={c.connection_id} value={c.connection_id}>{c.label} ({c.type})</option>)}
                 </select>
@@ -1199,7 +1202,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               {needsDevice && (
                 <div className="flex items-center gap-1.5">
                   <span className={detLbl}>Machine</span>
-                  <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs flex-1">
+                  <select aria-label="Printer" value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs flex-1">
                     <option value=""> - which printer (needs stored LAN creds) - </option>
                     {(selectedConn?.devices ?? []).map((dv) => <option key={dv.id} value={dv.id}>{dv.name} ({dv.id})</option>)}
                   </select>
@@ -1210,7 +1213,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
           )}
           <div className="text-[10px] text-faint">or register one by hand:</div>
           {providers.isError && <div className="text-[10px] text-ember-600 dark:text-ember-500">Couldn't load providers - needs a manage-scope token on this detector.</div>}
-          <select value={provider} onChange={(e) => { setProvider(e.target.value); setConfig({}); }} className={input}>
+          <select aria-label="Provider" value={provider} onChange={(e) => { setProvider(e.target.value); setConfig({}); }} className={input}>
             <option value=""> - provider - </option>
             {provs.map((p) => <option key={p.id} value={p.id}>{p.label ?? p.id}</option>)}
           </select>
@@ -1257,7 +1260,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
         <div className="mt-2 space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-faint">Last</span>
-            <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !py-0.5 text-xs !w-auto">
+            <select aria-label="Period" value={days} onChange={(e) => setDays(Number(e.target.value))} className="input !py-0.5 text-xs !w-auto">
               <option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option>
             </select>
           </div>
@@ -1506,29 +1509,26 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
           {totalForFilter != null && totalForFilter > items.length ? ` of ${totalForFilter}` : ""} job{items.length === 1 ? "" : "s"}
         </span>
         <div className="flex-1" />
-        <div className="flex items-center gap-1">
-          {(["active", "failed", "completed", "all"] as const).map((f) => (
-            <button
-              key={f}
-              onClick={() => { setFilter(f); clearSel(); }}
-              className={
-                "px-2 py-0.5 text-[11px] rounded-full transition " +
-                (filter === f
-                  ? "bg-cobble-600 text-white"
-                  : "border border-line dark:border-slate-600 text-muted hover:text-accent hover:border-accent")
-              }
-            >
-              {f === "active" ? "Active" : f === "failed" ? "Failed" : f === "completed" ? "Done" : "All"}
-            </button>
-          ))}
-        </div>
-        <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden">
-          {([["list", "List"], ["timeline", "Timeline"]] as const).map(([v, label]) => (
-            <button key={v} type="button" onClick={() => setView(v)} className={"text-[11px] px-2 py-0.5 transition " + (view === v ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}>
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedChoice
+          label="Which jobs"
+          value={filter}
+          onChange={(f) => { setFilter(f); clearSel(); }}
+          options={[
+            { value: "active", label: "Active" },
+            { value: "failed", label: "Failed" },
+            { value: "completed", label: "Done" },
+            { value: "all", label: "All" },
+          ]}
+        />
+        <SegmentedChoice
+          label="List or timeline"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "list", label: "List" },
+            { value: "timeline", label: "Timeline" },
+          ]}
+        />
         <button
           onClick={() => setNewOpen(true)}
           className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition"
@@ -1631,6 +1631,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
               </button>
               {canPoll(jb) && (
                 <button
+                  aria-label="Refresh status"
                   onClick={() => poll.mutate(jb.id)}
                   disabled={poll.isPending}
                   title="Refresh status"
@@ -1660,13 +1661,14 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
               )}
               {canAssign(jb) && <ReassignControl job={jb} slug={activeSlug} onDone={invalidate} />}
               {canCancel(jb) && (
-                <button onClick={() => askCancel(jb)} disabled={cancel.isPending} title="Cancel" className="text-faint hover:text-ember-500 transition p-1.5 disabled:opacity-50">
+                <button aria-label="Cancel" onClick={() => askCancel(jb)} disabled={cancel.isPending} title="Cancel" className="text-faint hover:text-ember-500 transition p-1.5 disabled:opacity-50">
                   <Ban size={14} />
                 </button>
               )}
               {jb.target_device === "lightburn" && jb.remote_job_id && !TERMINAL_JOB(jb.status) && <span className="text-xs text-muted max-w-40">{jb.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</span>}
               {canDelete(jb) && (
                 <button
+                  aria-label="Remove from queue"
                   onClick={async () => { if (await confirm({ title: "Remove this job?", message: "Deletes it from the queue.", confirmLabel: "Remove", destructive: true })) del.mutate(jb.id); }}
                   disabled={del.isPending}
                   title="Remove from queue"
@@ -1793,7 +1795,7 @@ function JobDetailModal({
             )) : null}
             {j.material_part_id ? row("Filament", `${j.material_grams ?? "?"} g`) : null}
             {row("Priority", (
-              <select
+              <select aria-label="Priority"
                 value={j.priority}
                 onChange={(e) => setPriority.mutate(Number(e.target.value))}
                 disabled={setPriority.isPending || TERMINAL_JOB(j.status)}
@@ -2594,6 +2596,7 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
           {!(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
           {(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <span className="text-xs text-muted">Use the queued job at its station.</span>}
           <button
+            aria-label="Delete"
             onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any machine).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
             disabled={del.isPending || !!(item.metadata?.laser_layout || item.metadata?.cutter_plan)}
             className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
@@ -2846,6 +2849,7 @@ function PoolsSection({ slug }: { slug: string }) {
                   <span className="text-[11px] text-faint">{p.members.length} machine{p.members.length === 1 ? "" : "s"}</span>
                   <div className="flex-1" />
                   <button
+                    aria-label="Remove pool"
                     onClick={async () => {
                       const ok = await confirm({ title: `Remove pool "${p.name}"?`, message: "Jobs already assigned keep running; nothing is sent anywhere.", confirmLabel: "Remove", destructive: true });
                       if (ok) del.mutate(p.id);
@@ -2863,6 +2867,7 @@ function PoolsSection({ slug }: { slug: string }) {
                       <span key={`${m.connection_id}:${m.remote_device_id}`} className="inline-flex items-center gap-1 rounded bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[11px] text-content dark:text-mortar-200">
                         {info?.name ?? m.remote_device_id}
                         <button
+                          aria-label="Remove from pool"
                           onClick={() => removeMember.mutate({ poolId: p.id, connId: m.connection_id, deviceId: m.remote_device_id })}
                           className="text-faint hover:text-ember-500"
                           title="Remove from pool"

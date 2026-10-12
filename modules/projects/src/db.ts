@@ -96,6 +96,9 @@ export type PatternNeedSource = "pattern" | "ai" | "hand";
 
 export interface ProjectsPatternNeedsTable {
   id: Generated<string>;
+  /** Which line of the pattern's read this came from (#5900): "yarn:0",
+   *  "hook:0", "notion:safety eyes". Null for a row the person added. */
+  read_key: string | null;
   project_id: string;
   kind: PatternNeedKind;
   position: Generated<number>;

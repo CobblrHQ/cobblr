@@ -283,7 +283,10 @@ const copy: BuiltInServiceDef = {
     const disposition = res.headers["content-disposition"] ?? "";
     const named = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1];
     const name = named ? decodeURIComponent(named) : `paperless-${id}${type === "application/pdf" ? ".pdf" : ""}`;
-    const stored = await platform().files.write(ctx.orgId, res.bytes, { filename: name, mimeType: type });
+    // Where the job keeps its outputs decides (the requester's Vault for a
+    // personal document, #5871); written here, a bill of sale would always
+    // meet the shared-Files refusal.
+    const stored = ctx.keepFile ? await ctx.keepFile(res.bytes, { filename: name, mimeType: type }) : await platform().files.write(ctx.orgId, res.bytes, { filename: name, mimeType: type });
     if (!stored) throw new Error("This workspace cannot store files right now.");
     return { output: { name, type }, files: { file: stored.fileId } };
   },

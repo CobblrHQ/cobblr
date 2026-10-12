@@ -82,6 +82,7 @@ export function DuplicateRecordsSheet({
           </h2>
         </div>
         <button
+          title="Close"
           type="button"
           onClick={onClose}
           aria-label="Close"

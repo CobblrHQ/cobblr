@@ -145,6 +145,7 @@ export function TemplatesPage() {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     <button
+                      aria-label="Edit"
                       type="button"
                       onClick={() => setEditing(t)}
                       title="Edit"
@@ -153,6 +154,7 @@ export function TemplatesPage() {
                       <Pencil size={14} />
                     </button>
                     <button
+                      aria-label="Delete"
                       type="button"
                       onClick={async () => {
                         const ok = await confirm({

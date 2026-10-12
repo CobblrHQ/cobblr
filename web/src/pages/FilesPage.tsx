@@ -146,7 +146,7 @@ export function FilesPage() {
     setRenaming(null);
   };
   const renameInput = (
-    <input
+    <input aria-label="New name"
       autoFocus
       value={renaming?.value ?? ""}
       onChange={(e) => setRenaming((r) => (r ? { ...r, value: e.target.value } : r))}
@@ -458,10 +458,10 @@ function ImageTile({ file, slug, onOpen, onDelete }: { file: FileRecord; slug: s
       {/* Auth is Bearer-header-only — a plain <img src> sends no credentials
           and 401s (the "all I see is broken images" report). useImageSrc
           blob-fetches with the token, like every other thumbnail. */}
-      <button type="button" onClick={onOpen} aria-label={`Open ${file.filename}`} className="absolute inset-0 cursor-zoom-in">
+      <button title={`Open ${file.filename}`} type="button" onClick={onOpen} aria-label={`Open ${file.filename}`} className="absolute inset-0 cursor-zoom-in">
         <AuthedThumb slug={slug} file={file} />
       </button>
-      <button onClick={onDelete} className="absolute top-1 right-1 p-1 rounded bg-black/40 text-white hover-reveal hover:bg-ember-600 transition" title="Delete">
+      <button aria-label="Delete" onClick={onDelete} className="absolute top-1 right-1 p-1 rounded bg-black/40 text-white hover-reveal hover:bg-ember-600 transition" title="Delete">
         <Trash2 size={12} />
       </button>
     </div>

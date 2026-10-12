@@ -89,13 +89,13 @@ export function CalendarPage() {
           <CalendarDays size={22} className="text-accent" /> Calendar
         </h1>
         <div className="flex items-center gap-1">
-          <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Previous month">
+          <button aria-label="Previous month" onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Previous month">
             <ChevronLeft size={16} />
           </button>
           <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-[9rem] text-center">
             {MONTHS[cursor.m]} {cursor.y}
           </span>
-          <button onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Next month">
+          <button aria-label="Next month" onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Next month">
             <ChevronRight size={16} />
           </button>
           <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] font-mono uppercase tracking-widest text-accent hover:underline">
@@ -266,11 +266,11 @@ function SubscribeBar({ slug }: { slug: string }) {
         </button>
         {enabled && url && (
           <>
-            <input readOnly value={url} className="input flex-1 font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
-            <button onClick={() => { void navigator.clipboard?.writeText(url); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy URL">
+            <input aria-label="Calendar feed link" readOnly value={url} className="input flex-1 font-mono text-xs" onFocus={(e) => e.currentTarget.select()} />
+            <button aria-label="Copy URL" onClick={() => { void navigator.clipboard?.writeText(url); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy URL">
               <Copy size={14} />
             </button>
-            <button onClick={() => rotate.mutate()} disabled={rotate.isPending} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Rotate (invalidate old URL)">
+            <button aria-label="Rotate (invalidate old URL)" onClick={() => rotate.mutate()} disabled={rotate.isPending} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Rotate (invalidate old URL)">
               <RefreshCw size={14} />
             </button>
           </>

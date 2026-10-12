@@ -167,7 +167,7 @@ export function EditTagModal({
           <div className="border-t border-line dark:border-slate-700 pt-3">
             <div className="text-xs text-muted mb-1">Merge into another tag</div>
             <div className="flex items-center gap-2">
-              <select
+              <select aria-label="Merge into another tag"
                 value={mergeInto}
                 onChange={(e) => setMergeInto(e.target.value)}
                 className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"

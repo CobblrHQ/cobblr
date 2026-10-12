@@ -292,10 +292,11 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
                   </button>
                 </>
               )}
-              <button onClick={() => setEditing(p)} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Edit">
+              <button aria-label="Edit" onClick={() => setEditing(p)} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Edit">
                 <Pencil size={14} />
               </button>
               <button
+                aria-label="Remove"
                 onClick={async () => {
                   if (await confirm({ title: `Remove ${p.name}?`, message: "This deletes the printer connection.", confirmLabel: "Remove", destructive: true })) {
                     clearPrinterStatus(p.id);

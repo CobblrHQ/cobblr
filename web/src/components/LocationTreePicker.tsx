@@ -261,6 +261,7 @@ export function LocationTreePicker({
       </span>
       {!triggerLabel && (selected || inside) && (
         <button
+          aria-label={inside ? `Take out of ${inside.name}` : "Clear location"}
           type="button"
           onClick={(e) => {
             e.stopPropagation();
@@ -385,6 +386,7 @@ export function LocationTreePicker({
                   </button>
                   {!q.trim() && kids && (
                     <button
+                      aria-label={`Open ${nameOf(l)}`}
                       type="button"
                       onClick={() => drill(l.id)}
                       title={`Open ${nameOf(l)}`}

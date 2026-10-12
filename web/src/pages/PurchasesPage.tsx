@@ -360,11 +360,11 @@ export function PurchasesPage() {
             {/* Receipt intake sits with the other controls, not on a line of
                 its own: the same chip the scan header carries. */}
             {receiptAddress && <ReceiptAddressChip address={receiptAddress} name={receiptAddrQ.data?.receipt_name ?? undefined} />}
-            <button onClick={() => setVendorsOpen(true)} aria-label="Vendors" className={headerButton()}>
+            <button onClick={() => setVendorsOpen(true)} aria-label="Vendors" title="Vendors" className={headerButton()}>
               <Store size={14} /> <span className="hidden lg:inline">Vendors</span>
             </button>
             <NewItemMenu kind="purchases:order">
-              <button onClick={() => setNewOpen(true)} aria-label="New order" className={headerButton("primary")}>
+              <button onClick={() => setNewOpen(true)} aria-label="New order" title="New order" className={headerButton("primary")}>
                 <Plus size={14} /> <span className="hidden lg:inline">New order</span>
               </button>
             </NewItemMenu>
@@ -1277,7 +1277,7 @@ function VendorsModal({ onClose, initialVendorId }: { onClose: () => void; initi
                     <a href={v.website} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs text-accent hover:underline shrink-0">site ↗</a>
                   )}
                   <button type="button" onClick={(e) => { e.stopPropagation(); setEditing(v.id); }} className="text-xs text-muted hover:text-accent shrink-0">Edit</button>
-                  {mayDelete && <button
+                  {mayDelete && <button title="Delete vendor"
                     type="button"
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -1447,6 +1447,10 @@ function VendorDetailPane({
               </ul>
             )}
           </div>
+
+          {/* History, Links, Photos and files, Tags: what every record's own
+              page carries (#5954). */}
+          <ContributedDetailPanels target="purchases:vendor" ctx={{ slug, entityId: v.id, entityTitle: v.name }} />
         </>
       )}
     </div>

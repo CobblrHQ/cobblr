@@ -1,3 +1,4 @@
+import { startRequest } from "./platform/compute-ledger.js";
 import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
 import { deletedRecordsRouter } from "./routes/deleted-records.js";
@@ -229,6 +230,15 @@ export function createApp(): AppHandles {
   // reaches next(err) still counts.
   app.use((req, res, next) => {
     res.on("finish", () => noteResponse(res.statusCode, req.originalUrl));
+    next();
+  });
+
+  // What each route costs this deployment: wall time, CPU and memory growth, and calls per workspace per
+  // day (platform/compute-ledger.ts, read by GET /super-admin/compute-stats, #5424).
+  app.use((req, res, next) => {
+    const done = startRequest(req.method, req.originalUrl);
+    res.on("finish", () => done(res.statusCode));
+    res.on("close", () => done(res.statusCode));
     next();
   });
 

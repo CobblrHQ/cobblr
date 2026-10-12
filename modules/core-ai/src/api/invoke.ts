@@ -14,8 +14,8 @@ const Body = z.object({
   privacy: z.enum(["personal", "normal"]).default("normal"),
   capability: z.enum(AiCapabilities),
   input: z.record(z.unknown()),
-  provider_id: z.string().optional(),
-  model: z.string().optional(),
+  provider_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  model: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   bypass_cache: z.boolean().optional(),
   source: z.object({ kind: z.string(), id: z.string() }).optional(),
 });

@@ -514,7 +514,7 @@ function Row({
     >
       {dragHandle ? (
         <button
-          aria-label="Reorder"
+          aria-label="Drag to reorder"
           className="mt-0.5 shrink-0 text-faint hover:text-accent dark:text-slate-600 dark:hover:text-cobble-400 cursor-grab active:cursor-grabbing transition"
           onMouseDown={(e) => e.stopPropagation()}
           title="Drag to reorder in navbar"

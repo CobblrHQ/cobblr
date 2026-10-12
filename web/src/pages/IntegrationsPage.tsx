@@ -392,6 +392,7 @@ function ConnectorRow({
         </div>
         <div className="flex items-center gap-1">
           <button
+            aria-label="Test connection"
             type="button"
             onClick={() => testM.mutate()}
             disabled={testM.isPending}
@@ -401,6 +402,7 @@ function ConnectorRow({
             <Play className="h-4 w-4" />
           </button>
           <button
+            aria-label="Send a test action"
             type="button"
             onClick={onInvoke}
             className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
@@ -409,6 +411,7 @@ function ConnectorRow({
             <Send className="h-4 w-4" />
           </button>
           <button
+            aria-label="Edit"
             type="button"
             onClick={onEdit}
             className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
@@ -425,6 +428,7 @@ function ConnectorRow({
             {connector.enabled ? "Disable" : "Enable"}
           </button>
           <button
+            aria-label="Delete"
             type="button"
             onClick={async () => {
               const ok = await confirm({
@@ -490,6 +494,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <button
+            aria-label="Copy URL"
             type="button"
             onClick={async () => {
               await navigator.clipboard.writeText(fullUrl);
@@ -510,6 +515,7 @@ function InboundTokenRow({ token }: { token: InboundToken }) {
             </button>
           )}
           <button
+            aria-label="Delete"
             type="button"
             onClick={async () => {
               const ok = await confirm({
@@ -570,8 +576,8 @@ function ConnectorAddModal({
           createM.mutate();
         }}
       >
-        <div>
-          <label className="block text-sm font-medium mb-1">Connector type</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Connector type</span>
           <select
             value={pickedId}
             onChange={(e) => {
@@ -586,21 +592,22 @@ function ConnectorAddModal({
               </option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Label (your name for this connection)</label>
+        </label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Label (your name for this connection)</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={picked?.label ?? ""}
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
-        </div>
+        </label>
         {picked &&
           Object.entries(picked.credentials).map(([key, def]) => (
             <div key={key}>
-              <label className="block text-sm font-medium mb-1">{def.label}</label>
+              <span className="block text-sm font-medium mb-1">{def.label}</span>
               <SecretInput
+              aria-label={def.label}
                 secret={def.secret}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
@@ -668,14 +675,14 @@ function ConnectorEditModal({
           saveM.mutate();
         }}
       >
-        <div>
-          <label className="block text-sm font-medium mb-1">Label</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Label</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
-        </div>
+        </label>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -687,8 +694,9 @@ function ConnectorEditModal({
         {updateCreds &&
           Object.entries(def.credentials).map(([key, d]) => (
             <div key={key}>
-              <label className="block text-sm font-medium mb-1">{d.label}</label>
+              <span className="block text-sm font-medium mb-1">{d.label}</span>
               <SecretInput
+              aria-label={d.label}
                 secret={d.secret}
                 value={creds[key] ?? ""}
                 onChange={(e) => setCreds({ ...creds, [key]: e.target.value })}
@@ -753,36 +761,38 @@ function ConnectorInvokeModal({
     <Modal open onClose={onClose} title={`Send via ${connector.label}`} size="md">
       <div className="space-y-3">
         <div>
-          <label className="block text-sm font-medium mb-1">Action</label>
-          <select
-            value={actionId}
-            onChange={(e) => setActionId(e.target.value)}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-          >
-            {def.actions.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label}
-              </option>
-            ))}
-          </select>
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">Action</span>
+            <select
+              value={actionId}
+              onChange={(e) => setActionId(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+            >
+              {def.actions.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {action?.description && (
             <div className="text-xs text-muted mt-1">{action.description}</div>
           )}
         </div>
         {action?.argsSchema &&
           Object.entries(action.argsSchema).map(([key, d]) => (
-            <div key={key}>
-              <label className="block text-sm font-medium mb-1">{d.label}</label>
+            <label key={key} className="block">
+              <span className="block text-sm font-medium mb-1">{d.label}</span>
               <input
                 type={d.type === "number" ? "number" : "text"}
                 value={args[key] ?? ""}
                 onChange={(e) => setArgs({ ...args, [key]: e.target.value })}
                 className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
               />
-            </div>
+            </label>
           ))}
-        <div>
-          <label className="block text-sm font-medium mb-1">Rendered body (optional, wins over args)</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Rendered body (optional, wins over args)</span>
           <textarea
             value={rendered}
             onChange={(e) => setRendered(e.target.value)}
@@ -790,7 +800,7 @@ function ConnectorInvokeModal({
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900 font-mono"
             placeholder="hello world"
           />
-        </div>
+        </label>
         {result !== null && (
           <pre className="text-xs bg-subtle dark:bg-slate-900 border dark:border-slate-700 rounded p-2 overflow-auto max-h-40">
             {JSON.stringify(result, null, 2)}
@@ -859,41 +869,44 @@ function InboundTokenAddModal({
         }}
       >
         <div>
-          <label className="block text-sm font-medium mb-1">Handler</label>
-          <select
-            value={handlerId}
-            onChange={(e) => {
-              setHandlerId(e.target.value);
-              setConfig({});
-            }}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-          >
-            {handlers.map((h) => (
-              <option key={h.id} value={h.id}>
-                {h.label}
-              </option>
-            ))}
-          </select>
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">Handler</span>
+            <select
+              value={handlerId}
+              onChange={(e) => {
+                setHandlerId(e.target.value);
+                setConfig({});
+              }}
+              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+            >
+              {handlers.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {handler && (
             <div className="text-xs text-muted mt-1">
               Emits: {handler.emits.join(", ")}
             </div>
           )}
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Label</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Label</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={handler?.label ?? ""}
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
-        </div>
+        </label>
         {handler &&
           Object.entries(handler.config).map(([key, d]) => (
             <div key={key}>
-              <label className="block text-sm font-medium mb-1">{d.label}</label>
+              <span className="block text-sm font-medium mb-1">{d.label}</span>
               <SecretInput
+              aria-label={d.label}
                 secret={d.secret}
                 value={config[key] ?? ""}
                 onChange={(e) => setConfig({ ...config, [key]: e.target.value })}

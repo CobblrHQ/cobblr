@@ -63,10 +63,10 @@ export function ScanItemSheetHeader({ nav }: { nav: ScanItemSheetNav }) {
       <span className="flex-1 text-center text-xs tabular-nums text-muted dark:text-slate-400">
         {nav.index + 1} of {nav.total}
       </span>
-      <button type="button" onClick={() => nav.onPrev?.()} disabled={!nav.onPrev} aria-label="Previous item" className={arrow}>
+      <button title="Previous item" type="button" onClick={() => nav.onPrev?.()} disabled={!nav.onPrev} aria-label="Previous item" className={arrow}>
         <ChevronLeft size={18} />
       </button>
-      <button type="button" onClick={() => nav.onNext?.()} disabled={!nav.onNext} aria-label="Next item" className={arrow}>
+      <button title="Next item" type="button" onClick={() => nav.onNext?.()} disabled={!nav.onNext} aria-label="Next item" className={arrow}>
         <ChevronRight size={18} />
       </button>
     </div>

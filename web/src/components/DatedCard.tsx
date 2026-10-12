@@ -168,6 +168,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
       <li key={e.id} className="flex items-center gap-2 pl-9 pr-3 py-1.5 text-[13px]" data-testid="dated-entry">
         {e.action?.task && (
           <button
+            aria-label="Mark done"
             type="button"
             onClick={() => void tick(e)}
             disabled={busy !== null}
@@ -253,7 +254,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
               <span className="text-faint dark:text-slate-400"> · {datedCounts(card)}</span>
             </span>
           </button>
-          <button type="button" onClick={() => setOpen((o) => !o)} className="shrink-0" aria-label={open ? "Collapse" : "Expand"}>
+          <button title={open ? "Collapse" : "Expand"} type="button" onClick={() => setOpen((o) => !o)} className="shrink-0" aria-label={open ? "Collapse" : "Expand"}>
             <ChevronDown size={13} className={"text-faint transition-transform " + (open ? "rotate-180" : "")} />
           </button>
           <Link to={collection.route} className="shrink-0" title="Open the page" aria-label="Open the page">

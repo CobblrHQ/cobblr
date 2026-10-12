@@ -3,13 +3,14 @@
 // its owner named. A workspace admin not on a folder's list sees nothing of
 // it here or anywhere else; the server decides, this page only shows it.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Lock } from "lucide-react";
-import { downloadBlob, useConfirm, useLater, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
+import { downloadBlob, raisePersonalDocument, useConfirm, useLater, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { api, type VaultEvent, type VaultFile, type VaultFolder } from "../lib/api";
+import { ReadPersonalDocumentModal } from "../components/PersonalDocumentReader";
 
 const btn = "rounded-md border border-line px-3 py-2 text-sm min-h-10 disabled:opacity-50";
 const card = "rounded-xl border border-line bg-surface p-4";
@@ -66,6 +67,7 @@ function FolderList() {
   const toast = useToast();
   const navigate = useNavigate();
   const [name, setName] = useState("");
+  const [reading, setReading] = useState(false);
   const folders = useQuery({ queryKey: ["vault-folders", activeSlug], queryFn: () => api.vaultFolders(activeSlug), enabled: !!activeSlug });
   const make = useMutation({
     mutationFn: () => api.vaultCreateFolder(activeSlug, name.trim()),
@@ -79,10 +81,15 @@ function FolderList() {
   const items = folders.data?.items ?? [];
   return (
     <div className="space-y-4 max-w-3xl">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Lock size={18} className="text-accent" aria-hidden />
         <h1 className="text-2xl font-semibold">Vault</h1>
+        {/* The Vault's main action: read a registration, a bill of sale or
+            insurance on the personal path (the same reader as the scan
+            inbox's ⋯ menu); its card can then keep it in a folder. */}
+        <button type="button" className="ml-auto rounded-md bg-accent px-3 py-2 text-sm font-medium text-white min-h-10" onClick={() => setReading(true)}>Read a personal document</button>
       </div>
+      <ReadPersonalDocumentModal open={reading} onClose={() => setReading(false)} />
       <Explainer />
       <form
         className="flex flex-wrap gap-2"
@@ -131,6 +138,8 @@ function FolderView({ folderId }: { folderId: string }) {
   const input = useRef<HTMLInputElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const later = useLater();
+  const generation = useRef(0);
+  useEffect(() => { generation.current++; return () => { generation.current++; }; }, [activeSlug, folderId]);
   const key = ["vault-folder", activeSlug, folderId];
   const folder = useQuery({ queryKey: key, queryFn: () => api.vaultFolder(activeSlug, folderId), enabled: !!activeSlug, retry: false });
   const all = useQuery({ queryKey: ["vault-folders", activeSlug], queryFn: () => api.vaultFolders(activeSlug), enabled: !!activeSlug });
@@ -162,7 +171,20 @@ function FolderView({ folderId }: { folderId: string }) {
         later.after(`revoke-${f.id}`, 60_000, () => URL.revokeObjectURL(url));
       }
     });
-  const add = (file: File) => void run("upload", () => api.vaultUpload(activeSlug, folderId, file), `${file.name} is in the Vault.`);
+  const add = (file: File) => void run("upload", async () => {
+    const current = generation.current;
+    if (file.type === "application/pdf" || file.type.startsWith("image/")) {
+      const read = await api.readPersonalDocument(activeSlug, file);
+      if (current !== generation.current) return;
+      if (read.kind === "registration" || read.renewalType) {
+        raisePersonalDocument({ orgSlug: activeSlug, read, file, ...(folder.data?.mine ? { folder: folderId } : {}) });
+        return;
+      }
+    }
+    if (current !== generation.current) return;
+    await api.vaultUpload(activeSlug, folderId, file);
+    toast.success(`${file.name} is in the Vault.`);
+  });
   // A document pasted onto the folder (a screenshot of a letter) goes in the
   // same way as one chosen with Add a document.
   usePasteImage(page, { accept: "*", onFiles: (files) => files[0] && add(files[0]) });
@@ -200,7 +222,7 @@ function FolderView({ folderId }: { folderId: string }) {
             if (file) add(file);
           }}
         />
-        <button type="button" className={btn} disabled={busy !== null} onClick={() => input.current?.click()}>{busy === "upload" ? "Encrypting…" : "Add a document"}</button>
+        <button type="button" className={btn} disabled={busy !== null} onClick={() => input.current?.click()}>{busy === "upload" ? "Reading…" : "Add a document"}</button>
       </div>
       {f.files.length === 0 ? (
         <p>No documents in this folder yet.</p>

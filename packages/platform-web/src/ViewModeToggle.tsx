@@ -44,6 +44,7 @@ export function ViewModeToggle({
       aria-label="View mode"
     >
       <button
+        aria-label="List view"
         type="button"
         onClick={() => onChange("list")}
         aria-pressed={mode === "list"}
@@ -58,6 +59,7 @@ export function ViewModeToggle({
         <LayoutList size={14} />
       </button>
       <button
+        aria-label="Tile view"
         type="button"
         onClick={() => onChange("tiles")}
         aria-pressed={mode === "tiles"}

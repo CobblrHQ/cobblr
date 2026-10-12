@@ -24,6 +24,7 @@ import { readRenewalPeriod } from "./renewal-draft.js";
 // — a receipt becomes N parts without retyping. Mirrors the invoice-parse path.
 
 import { platform } from "@cobblr/platform-contract";
+import { PERSONAL_READER_PLACE } from "@cobblr/platform-contract/personal-documents";
 import { readPersonalDocumentLocally } from "./personal-document.js";
 import { classifyAiFailure } from "@cobblr/platform-contract/ai-refusal";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
@@ -63,6 +64,7 @@ import {
 import { detectOrderRef, parseTextReceipt } from "./receipt-text.js";
 import { parseOrderEmail } from "./receipt-order-email.js";
 import { asBillOfSale, looksLikeBillOfSale, looksLikeTransaction, markCharges, readBillOfSale } from "./bill-of-sale.js";
+import { isOcrFailed } from "./ocr-failed.js";
 import { ocrImageText } from "./ocr.js";
 import { looksLikeFullPage, ocrFormText } from "./form-ocr.js";
 import { checkedByCode, readCheckedDocument, withTextChecks } from "./document-read.js";
@@ -375,7 +377,7 @@ export async function parseReceipt(
   const bytes = Buffer.from(file.bytes);
   const mime = file.mimeType || "";
   if ((await readPersonalDocumentLocally({ bytes, mime })).privacy === "personal") {
-    return { ok: false, code: "unreadable", reason: "This is a personal document. Read it with Personal documents in the scan inbox." };
+    return { ok: false, code: "unreadable", reason: `This is a personal document. Read it with ${PERSONAL_READER_PLACE}.` };
   }
   return readReceiptBytes(orgId, bytes, mime, fileId, userId, visitorIp, opts);
 }
@@ -451,6 +453,17 @@ async function readReceiptBytes(
     return done(checked.receipt, checked.method === "ai-document" ? "ai-document" : method, checked.text, source);
   };
 
+  // The OCR engine stopping partway is said, and nothing is read from it
+  // (#5921); any other error is a fault and still throws.
+  const readPictureOrSayWhy = async (img: Buffer, imgMime: string, source: ReceiptSource): Promise<ReceiptResult> => {
+    try {
+      return await readPicture(img, imgMime, source);
+    } catch (err) {
+      if (!isOcrFailed(err)) throw err;
+      console.warn(`[core-scan] ${err.message}`);
+      return failed({ ok: false, code: "reader_failed", reason: "The page reader did not finish. Nothing was filed; read it again." }, source);
+    }
+  };
   const readPicture = async (img: Buffer, imgMime: string, source: ReceiptSource): Promise<ReceiptResult> => {
     // A full page (a scanned sheet) is a form, not a till receipt: read the
     // way a form is (form-ocr.ts). A dealer's carbon copy read the receipt way
@@ -458,7 +471,9 @@ async function readReceiptBytes(
     const meta = await sharp(img).metadata().catch(() => null);
     const fullPage = source === "scanned-pdf" || (meta?.width && meta.height ? looksLikeFullPage(meta.width, meta.height) : false);
     if (fullPage) {
-      const form = await ocrFormText(img).catch(() => null);
+      // A failed engine throws (OcrFailed): never read as "no form here",
+      // which handed the page to the receipt-way read (#5921).
+      const form = await ocrFormText(img);
       if (form && looksLikeBillOfSale(form.text)) {
         const sale = readBillOfSale(form.text);
         const read = await readDocument(img, sale ? { receipt: sale, text: form.text } : null, "ocr-form", source);
@@ -471,7 +486,7 @@ async function readReceiptBytes(
     // fallback is vision, not chat on the OCR text: if the text was not good
     // enough to reconcile, the text is the weak link, and the model should
     // look at the picture itself (no-ai-receipt-reading.md §5.3).
-    const read = await ocrImageText(img);
+    const read = await ocrImageText(img, { strict: true });
     if (read) {
       // A bill of sale has one thing on it and no lines to add up; it is read
       // by its own labels before the till parser looks for line items.
@@ -513,7 +528,7 @@ async function readReceiptBytes(
       // No text layer: a scanner's PDF, one photo of the paper per page. Read
       // that photo the way a photo of the receipt is read.
       const scan = await pageScanOf(bytes);
-      if (scan) return readPicture(scan.png, "image/png", "scanned-pdf");
+      if (scan) return readPictureOrSayWhy(scan.png, "image/png", "scanned-pdf");
       return failed(
         {
           ok: false,
@@ -543,7 +558,7 @@ async function readReceiptBytes(
   }
 
   // ── Tier 3: image → OCR + the line parser, then AI vision ──────────────────
-  if (isImage) return readPicture(bytes, mime, "photo");
+  if (isImage) return readPictureOrSayWhy(bytes, mime, "photo");
 
   // ── Non-CSV text file → line-wise parse first, AI on the raw text ──────────
   const asText = bytes.toString("utf8");

@@ -14,6 +14,7 @@
 // BridgePicker (choose among connected bridges).
 
 import { useQuery } from "@tanstack/react-query";
+import { SegmentedChoice } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 import { EdgeBridgeInstall } from "./EdgeBridgeInstall";
 import { BridgePicker } from "./BridgePicker";
@@ -80,23 +81,15 @@ export function EdgeConnectField({
   return (
     <div className="space-y-2">
       {/* Mode chooser — how Cobblr reaches the manager. */}
-      <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden text-[11px]">
-        {(
-          [
-            ["edge", "Via edge bridge"],
-            ["direct", "Direct URL"],
-          ] as const
-        ).map(([mode, label]) => (
-          <button
-            key={mode}
-            type="button"
-            onClick={() => (mode === "direct" ? setDirect(value.mode === "direct" ? value.base_url : "") : setEdge(value.bridge))}
-            className={"px-2.5 py-1 " + (value.mode === mode ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedChoice
+        label="How Cobblr reaches the print manager"
+        value={value.mode}
+        onChange={(mode) => (mode === "direct" ? setDirect(value.mode === "direct" ? value.base_url : "") : setEdge(value.bridge))}
+        options={[
+          { value: "edge", label: "Via edge bridge" },
+          { value: "direct", label: "Direct URL" },
+        ]}
+      />
 
       {value.mode === "direct" ? (
         <div>

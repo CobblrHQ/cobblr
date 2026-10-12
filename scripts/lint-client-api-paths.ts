@@ -174,6 +174,14 @@ export function shippedRef(repoDir: string): string | null {
   return tryRef(["rev-parse", "--verify", "--quiet", "HEAD"]) ? "HEAD" : null;
 }
 
+/** Another service's API that shares the /api/v1 shape: the line names its host, or builds the URL on the
+ *  forge's own server (a workflow's `${GITHUB_SERVER_URL}`), and it is not ours. A forge-API call in a
+ *  sibling repo's CI (cloud's overlay-kit download, `/api/v1/packages/<owner>`) failed every core
+ *  session's lint:all as a path core does not serve (2026-10-12). */
+export function onAnotherService(text: string): boolean {
+  return /git\.|forgejo|github\.com|gitlab/i.test(text) || /\b(?:GITHUB|GITEA|FORGEJO)_SERVER_URL\b|\bgithub\.server_url\b|\bgitea\.server_url\b|\bforgejo\.server_url\b/.test(text);
+}
+
 export function discoverPaths(repoDir: string, repoName: string): Map<string, Provenance[]> {
   const out = new Map<string, Provenance[]>();
   const ref = shippedRef(repoDir);
@@ -193,9 +201,7 @@ export function discoverPaths(repoDir: string, repoName: string): Map<string, Pr
     const base = parts[parts.length - 1]!;
     if (!CLIENT_FILE.test(base) || TEST_FILE.test(base)) continue;
     if (parts.slice(0, -1).some((d) => SKIP_DIR.test(d))) continue;
-    // Another service's API that happens to share the /api/v1 shape: the
-    // line names its host, and it is not one of ours.
-    if (/git\.|forgejo|github\.com|gitlab/.test(text!)) continue;
+    if (onAnotherService(text!)) continue;
     for (const pm of text!.matchAll(PATH_RE)) {
       const p = pm[0]!;
       const at = { repo: repoName, file: file!, line: Number(lineNo) };

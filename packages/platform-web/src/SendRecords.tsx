@@ -7,22 +7,23 @@ import { RecordActionItem } from "./RecordActionContributions";
 import { useToast } from "./ToastContext";
 import { SendPreviewCards } from "./SendPreviewCards";
 import { NounChoiceButtons } from "./NounChoice";
+import { ConnectCobblr } from "./ConnectCobblr";
 import { randomId } from "@cobblr/platform-contract/random-id";
 
 export interface WorkspaceSendRequest {
-  entity_kind: string; ids: string[]; target_org: string; collection?: string | null; mode: "copy" | "move";
+  entity_kind: string; ids: string[]; target_org: string; connection_id?: string; collection?: string | null; mode: "copy" | "move";
   placement?: "unplaced";
   field_map?: Record<string, string | null>; include_secrets?: boolean; location?: string | null;
   create_matching?: boolean; add_fields?: string[];
   duplicate?: "update" | "another"; request_id?: string; dry_run?: boolean;
 }
 export interface WorkspaceSendPreview {
-  blocked?: string[];
+  blocked?: string[]; version_warnings?: string[];
   target: { id: string; slug: string; name: string }; can_include_secrets: boolean;
   items: Array<{ id: string; name: string; collection: string | null; mappings: Array<{ from: string; to: string | null }>; missing: string[]; dropped: string[]; needs: string[]; duplicate: string | null; files: number; arrival: "collection" | "inbox" }>;
 }
 export interface SendFileExportPreview {can_move: boolean; collection: string; items: Array<{id: string;name: string;fields: string[];files: number;dropped: string[];placement_needed: boolean}>; summary: string;}
-export interface WorkspaceSendTargets { targets: Array<{ id: string; slug: string; name: string; role: string; collections: Array<{ kind: string; label: string; module: string }> }> }
+export interface WorkspaceSendTargets { connection_refusals?: string[]; targets: Array<{ id: string; slug: string; name: string; role: string; connection_id?: string; host?: string | null; places?: Array<{id: string;title: string}>; collections: Array<{ kind: string; label: string; module: string }> }> }
 
 export function SendRecords({ kind, ids, record = false, onDone, onOpenChange }: { kind: string; ids: string[]; record?: boolean; onDone?: () => void; onOpenChange?: (open: boolean) => void }) {
   const { api, orgSlug } = usePlatformWeb();
@@ -45,13 +46,14 @@ export function SendRecords({ kind, ids, record = false, onDone, onOpenChange }:
   const [busy, setBusy] = useState(false);
   const [requestId, setRequestId] = useState(() => randomId());
   const [failure, setFailure] = useState("");
-  const [sent, setSent] = useState<{ summary: string; offer_ids: string[] } | null>(null);
+  const [sent, setSent] = useState<{ summary: string; offer_ids: string[]; connected?: boolean; restore_available?: boolean; undone?: boolean } | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const targets = useQuery({ queryKey: ["send-targets", orgSlug], queryFn: () => api.sendTargets!(orgSlug), enabled: open && !!api.sendTargets });
-  const chosen = targets.data?.targets.find((t) => t.id === target);
+  const chosen = targets.data?.targets.find((t) => (t.connection_id || t.id) === target);
   const matchingCollection = (!collection ? preview?.items[0]?.collection : null) ?? chosen?.collections.find((c) => c.kind === kind)?.label;
-  const places = useQuery({ queryKey: ["send-places", chosen?.slug], queryFn: () => api.listEntities!(chosen!.slug, "core-locations:location"), enabled: !!chosen && !!api.listEntities });
+  const places = useQuery({ queryKey: ["send-places", chosen?.slug], queryFn: () => api.listEntities!(chosen!.slug, "core-locations:location"), enabled: !!chosen && !chosen.connection_id && !!api.listEntities });
   const label = record ? "Send to another workspace" : `Send ${ids.length} to…`;
-  const request = (): WorkspaceSendRequest => ({ entity_kind: kind, ids, target_org: target, collection: collection || null, mode, include_secrets: includeSecrets, field_map: map, duplicate, create_matching: createMatching, add_fields: addFields, location: location && location !== "unplaced" ? location : null, ...(location === "unplaced" ? { placement: "unplaced" as const } : {}) });
+  const request = (): WorkspaceSendRequest => ({ entity_kind: kind, ids, target_org: chosen?.id || target, connection_id: chosen?.connection_id, collection: collection || null, mode, include_secrets: includeSecrets, field_map: map, duplicate, create_matching: createMatching, add_fields: addFields, location: location && location !== "unplaced" ? location : null, ...(location === "unplaced" ? { placement: "unplaced" as const } : {}) });
   async function check() {
     setBusy(true); setFailure("");
     try { setRequestId(randomId()); if (toFile) setFilePreview(await api.previewSendFile!(orgSlug, {entity_kind: kind, ids, mode})); else setPreview(await api.previewSend!(orgSlug, request())); }
@@ -78,18 +80,29 @@ export function SendRecords({ kind, ids, record = false, onDone, onOpenChange }:
     <Modal open={open} onClose={() => { onOpenChange?.(false); setOpen(false); if (sent) onDone?.(); }} title="Send to another workspace" size="lg">
       <div className="space-y-4" data-testid="send-workspace-dialog" aria-busy={busy}>
         {fileSent ? <div className="space-y-3"><p role="status">{fileSent.summary}</p><p>Import this file on the other Cobblr. For a Move, bring its confirmation file back here through Import before the source moves.</p><button type="button" disabled={busy} className="rounded border border-line px-3 py-2" onClick={() => void api.downloadSendFile!(orgSlug,fileSent.id)}>Download again</button></div> : sent ? <div className="space-y-3"><p role="status">{sent.summary}</p><button type="button" disabled={busy} onClick={async () => {
-          setBusy(true); try { for (const id of sent.offer_ids) await api.undoSend!(orgSlug, id); setSent(null); setPreview(null); await qc.invalidateQueries(); toast.success("Send undone. The source is back as it was."); } catch (err) { setFailure((err as Error).message); } finally { setBusy(false); }
-        }} className="rounded border border-line px-3 py-2">Undo send</button></div> : <>
-          <label className="block text-sm">Workspace<select aria-label="Workspace" value={target} onChange={(e) => { setTarget(e.target.value); setCollection(""); setPreview(null); setFilePreview(null); }} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose a workspace</option>{api.exportSendFile && <option value="file">To another Cobblr (send file)</option>}{targets.data?.targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
+          setBusy(true); setFailure(""); try {
+            let result: {summary?: string;restore_available?: boolean} = {};
+            for (const id of sent.offer_ids) result = sent.restore_available ? await api.undoSend!(orgSlug, id, true) : await api.undoSend!(orgSlug, id);
+            if (sent.connected && !sent.restore_available) setSent({...sent, summary: result.summary || "Import undone there.", restore_available: result.restore_available, undone: true});
+            else {setSent(null); setPreview(null);}
+            await qc.invalidateQueries(); toast.success(result.summary || "Send undone. The source is back as it was.");
+          } catch (err) { setFailure((err as Error).message); } finally { setBusy(false); }
+        }} className="rounded border border-line px-3 py-2" hidden={sent.undone && !sent.restore_available}>{sent.restore_available ? "Restore source here" : sent.connected ? "Undo import there" : "Undo send"}</button></div> : <>
+          <label className="block text-sm">Workspace<select aria-label="Workspace" value={target} onChange={(e) => { setTarget(e.target.value); setCollection(""); setPreview(null); setFilePreview(null); }} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose a workspace</option>{api.exportSendFile && <option value="file">To another Cobblr (send file)</option>}{targets.data?.targets.map((t) => <option key={t.connection_id || t.id} value={t.connection_id || t.id}>{t.name}{t.host ? ` on ${t.host}` : ""}</option>)}</select></label>
+          <button type="button" className="text-sm text-accent underline" onClick={() => setConnecting(!connecting)}>Connect your other Cobblr</button>
+          {connecting && <ConnectCobblr />}
+          {targets.data?.connection_refusals?.map((message) => <p key={message} className="text-sm">{message}</p>)}
+          {targets.isError && <p role="alert">{(targets.error as Error).message}</p>}
           {targets.isSuccess && !targets.data.targets.length && !toFile && <p>You need another workspace where you can add records.</p>}
           {!toFile && <label className="block text-sm">Collection<select aria-label="Collection" value={collection} onChange={(e) => { setCollection(e.target.value); setPreview(null); }} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">{matchingCollection ? `Matching: ${matchingCollection}` : "Find the matching collection"}</option>{chosen?.collections.map((c) => <option key={c.kind} value={c.kind}>{c.label}</option>)}</select></label>}
           {chosen && ["owner", "admin", "editor"].includes(chosen.role) && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={createMatching} onChange={(e) => { setCreateMatching(e.target.checked); setPreview(null); }} />Create a matching collection there if needed</label>}
-          {chosen && <label className="block text-sm">Placement<select aria-label="Placement" value={location} onChange={(e) => { setLocation(e.target.value); setPreview(null); }} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose later if needed</option><option value="unplaced">Arrive unplaced</option>{places.data?.items.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>}
+          {chosen && <label className="block text-sm">Placement<select aria-label="Placement" value={location} onChange={(e) => { setLocation(e.target.value); setPreview(null); }} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose later if needed</option><option value="unplaced">Arrive unplaced</option>{(chosen.places || places.data?.items)?.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>}
           <fieldset><legend className="mb-1 text-sm">How to send</legend><NounChoiceButtons label="How to send" offer={{of: "item", singular: "copy", plural: "Copy", alternatives: [{singular: "move", plural: "Move"}]}} current={mode} disabled={busy} onPick={(m) => { setMode(m === "move" ? "move" : "copy"); setPreview(null); setFilePreview(null); }} /></fieldset>
           <p className="text-sm text-muted">Photos, attachments and documents are copied. Locations and stock placement stay here. The new record starts with where it came from; the source keeps its history.</p>
           {toFile && <p className="text-sm">Download a send file with the original photos and documents inside. Import it on any Cobblr without connecting accounts. A Move keeps its source here until you import the receiving Cobblr's confirmation file.</p>}
           {filePreview && <div className="space-y-3" data-testid="send-file-preview"><p>{filePreview.summary}</p>{filePreview.items.map((i) => <section key={i.id} className="rounded border border-line p-3"><h3 className="font-medium">{i.name}</h3><p>{i.fields.join(", ")} · {i.files} files</p>{i.placement_needed && <p>Choose a placement when importing.</p>}{i.dropped.map((d) => <p key={d}>Not sent: {d}</p>)}</section>)}</div>}
           {preview?.can_include_secrets && <label className="flex items-center gap-2"><input type="checkbox" checked={includeSecrets} onChange={(e) => { setIncludeSecrets(e.target.checked); setPreview(null); }} />Include secrets</label>}
+          {preview?.version_warnings?.map((message) => <p key={message} className="text-sm">{message}</p>)}
           {preview && <div className="space-y-3"><SendPreviewCards items={preview.items} canConfigure={!!chosen && ["owner", "admin", "editor"].includes(chosen.role)} onDrop={(label) => {setMap({...map,[label]: null}); setPreview(null);}} onAdd={(label) => {setAddFields([...addFields,label]); setPreview(null);}} />
             {preview.items.some((i) => i.duplicate) && <label className="block text-sm">Sent before<select aria-label="Sent before" value={duplicate ?? ""} onChange={(e) => setDuplicate(e.target.value as "update" | "another")} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose what to do</option><option value="update">Update the earlier copy</option><option value="another">Make another copy</option></select></label>}
           </div>}

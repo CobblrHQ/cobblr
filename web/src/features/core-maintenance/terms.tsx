@@ -4,6 +4,7 @@ import { MoneyInput, RecordFormModal, useMoneyCurrency, usePhotoPick, useRunWith
 import { dayHere } from "@cobblr/platform-contract/day";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceTerm, type MaintenanceTermPatch } from "../../lib/api";
+import { RecordVaultDocuments } from "../vault/RecordVaultDocuments";
 import { openAuthedFile } from "../../lib/authed-file";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -28,6 +29,7 @@ export function TermHistory({ slug, entityId, refresh }: { slug: string; entityI
       <p className="text-sm">{t.cost_cents == null || !Object.hasOwn(t, "currency") ? "Cost unknown" : formatStoredMoney(t.cost_cents, "cents", { currency: t.currency })}{t.quantity != null ? ` · ${countOf(t.quantity, "seat")} or units` : ""}</p>
       {t.reference && <p className="text-sm break-words">Reference: {t.reference}</p>}
       {t.renewed_by && <p className="text-xs text-muted">Renewed by {t.renewed_by}</p>}
+      <RecordVaultDocuments ctx={{ slug, kind: "core-maintenance:term", entityId: t.id, entityTitle: t.name }} />
       {t.attachments?.map((f) => <button type="button" key={f.fileId} className="block max-w-full break-all text-sm text-accent underline" onClick={() => { void openAuthedFile(slug, f.fileId, { filename: f.filename }); }}>{f.filename}</button>)}
     </article>)}
     {query.hasNextPage && <button type="button" className="text-sm text-accent" disabled={query.isFetchingNextPage} onClick={() => { void query.fetchNextPage(); }}>Older terms</button>}

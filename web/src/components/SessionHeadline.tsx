@@ -2,11 +2,13 @@
 // number, the date and the count, with an order for giving way.
 //
 // Under pressure the ORDER NUMBER goes first (it is in the session when you
-// open it, and on the tooltip), then a merchant's name shortens with an
-// ellipsis but keeps its first characters. A date, a time and a count never
-// shorten mid-word: "Sep 1, 8:4…" spends width on a character that says
-// nothing (the owner, 2026-09-25). They drop whole words instead, "Sep 1,
-// 8:42 PM" to "Sep 1", "100 items" to "100", and the long form is on the
+// open it, and on the tooltip), then the count, then the date, and the
+// merchant's name is the last to give way (the owner, 2026-10-12: "Kingr…"
+// beside a whole "Oct 12 · 21 items" said nothing the row is for, #6095). A
+// date, a time and a count never shorten mid-word: "Sep 1, 8:4…" spends width
+// on a character that says nothing (the owner, 2026-09-25). They drop whole
+// words instead, "Sep 1, 8:42 PM" to "Sep 1", "100 items" to "100", then go,
+// separator and all, so no "·" is left hanging; the long form is on the
 // tooltip.
 //
 // It was three separate spans with no order, and the order number sat in a
@@ -16,10 +18,6 @@
 // e2e/session-headline-fits.test.mjs, in a real browser at phone sizes.
 import { useLayoutEffect, useRef, useState } from "react";
 
-/** Below this many characters the name is shown whole, so the floor never
- *  pads a short name out into a hole, and a longer one keeps this many: the
- *  order number gives way first, never "eB… · #08-15026-52…". */
-const NAME_FLOOR_CH = 6;
 /** Narrow no-break spaces: a flex item drops a plain leading space (so the
  *  dot ran into the name, #3393), and a full-width one costs the tightest
  *  phone row the pixels its count needs. */
@@ -88,12 +86,9 @@ export function SessionHeadline({
   return (
     <span data-session-headline className="flex min-w-0 items-baseline">
       {nameFits?.length ? (
-        <Fit variants={nameFits} title={nameFits[0]} shrink="shrink-[1000]" isName />
+        <Fit variants={nameFits} title={nameFits[0]} shrink="shrink" isName />
       ) : (
-        <span
-          data-headline-name
-          className={`truncate ${(name ?? "").length > NAME_FLOOR_CH ? "min-w-[6ch] shrink-[1000]" : "shrink-0"}`}
-        >
+        <span data-headline-name className="truncate min-w-[6ch] shrink">
           {name}
         </span>
       )}
@@ -117,15 +112,15 @@ export function SessionHeadline({
           </span>
         ))}
       {date && (
-        <span data-session-date title={dateTitle} className="shrink-0 whitespace-nowrap font-normal text-faint">
-          {SEP}
-          {date}
+        // The separator goes with its word: a date that does not fit leaves
+        // nothing behind, never "Oct 12 ·" (#6095).
+        <span data-session-date title={dateTitle} className="flex min-w-0 shrink-[1000] font-normal text-faint">
+          <Fit variants={[`${SEP}${date}`, ""]} shrink="shrink-[1000]" />
         </span>
       )}
       {items && (
-        <span data-headline-count className="flex min-w-0 font-normal text-faint" title={items}>
-          <span className="shrink-0 whitespace-pre">{SEP}</span>
-          <Fit variants={[items, String(count)]} />
+        <span data-headline-count className="flex min-w-0 shrink-[10000] font-normal text-faint" title={items}>
+          <Fit variants={[`${SEP}${items}`, `${SEP}${count}`, ""]} shrink="shrink-[10000]" />
         </span>
       )}
     </span>

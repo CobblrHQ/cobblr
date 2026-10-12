@@ -103,9 +103,11 @@ export function RecordDisposition({
               changed();
             } catch (e) {
               // Refused with a reason (a thing someone else has now, #4736):
-              // the refusal sheet says who and what brings it back, where a
-              // toast would be gone before it was read.
-              const blocked = (e as { blocked?: BlockedAction }).blocked;
+              // the refusal sheet says who took it, when, and what brings it
+              // back, where a toast would be gone before it was read. The
+              // host's door may have opened it already (`told`).
+              const { blocked, told } = e as { blocked?: BlockedAction; told?: boolean };
+              if (told) return;
               if (blocked && api.raiseBlocked) api.raiseBlocked(blocked);
               else toast.error((e as Error).message);
             } finally {

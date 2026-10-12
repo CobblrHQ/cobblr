@@ -5,7 +5,7 @@
 // under /share-links: an invite is read and claimed with its code, and once
 // paired every change arrives signed with the link's key.
 
-import { inviteDestinations } from "../platform/cloud.js";
+import { cloudUrl, inviteLinks, inviteDestinations } from "../platform/cloud.js";
 import { hasAuthEmailSender } from "../platform/hosted-seams.js";
 import { inviteToShare } from "../platform/share-invite.js";
 import { inviteSaid } from "../platform/share-invite-email.js";
@@ -33,6 +33,7 @@ import { publicOrigin } from "./edge.js";
 import {
   ShareInviteError,
   acceptShareInvite,
+  createShareInvite,
   claimShareInvite,
   decodeInvite,
   hereUrl,
@@ -41,8 +42,12 @@ import {
   readInvite,
   revokeShareLink,
 } from "../platform/share-links.js";
-import { ShareApplyError, applyShareOps, flushShareLinkNow, getShareLink, verifyShareRequest } from "../platform/share-sync.js";
+import { ShareApplyError, isOwnLink, applyShareOps, flushShareLinkNow, getShareLink, verifyShareRequest } from "../platform/share-sync.js";
 import { listOffers, offerTargets, receivedOffer, sendBack, withdrawOffer } from "../platform/share-offers.js";
+
+import { ownConnections, receiveConnectedSend } from "../platform/record-send-connected.js";
+import { SendError, requireSendToken } from "../platform/record-send.js";
+import { kindHoldable, shareRefusal } from "../platform/kind-writer.js";
 
 export const shareLinksOrgRouter = Router();
 export const shareLinksRouter = Router();
@@ -61,7 +66,18 @@ shareLinksOrgRouter.get("/:slug/share-links", requireAuth, withTenant, async (re
   }
 });
 
+// UI-REACH: Send to another workspace and Settings → Sharing
+// AI-REACH: exempt — personal pairing approval; send_targets exposes approved destinations to the assistant.
+shareLinksOrgRouter.get("/:slug/own-connections", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const here = hereUrl(publicOrigin(req));
+    const destinations = inviteDestinations(here).map((d, index) => ({index, label: d.label, note: d.note, cloud: d.origin === cloudUrl()}));
+    res.json({items: await ownConnections(req.tenant!.org.id, req.session!.id), destinations: destinations.sort((a,b) => Number(b.cloud) - Number(a.cloud))});
+  } catch (err) {if (err instanceof SendError) return bad(res, 409, "connection_refused", err.message); next(err);}
+});
+
 const CreateBody = z.object({
+  purpose: z.literal("own").optional(),
   label: z.string().max(120).default(""),
   /** Their email: the invite is bound to it and, with outgoing mail, sent there. */
   email: z.union([z.string().trim().toLowerCase().email().max(254), z.literal("")]).optional(),
@@ -74,9 +90,18 @@ const CreateBody = z.object({
 // AI-REACH: platform:share-with — Cobb invites by email through the share action
 shareLinksOrgRouter.post("/:slug/share-links", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
     const body = CreateBody.safeParse(req.body ?? {});
     if (!body.success) return bad(res, 400, "bad_body", body.error.issues[0]?.message ?? "bad body");
+    if (!requireRole(req, res, ...(body.data.purpose === "own" ? ["guest"] as const : ["owner", "admin"] as const))) return;
+    if (body.data.purpose === "own") {
+      await requireSendToken();
+      const made = await createShareInvite({orgId: req.tenant!.org.id, userId: req.session!.id, here: hereUrl(publicOrigin(req)), label: "", purpose: "own"});
+      const links = inviteLinks(hereUrl(publicOrigin(req)), made.token);
+      const link = body.data.where === undefined ? [...links].sort((a,b) => Number(b.origin === cloudUrl()) - Number(a.origin === cloudUrl()))[0] : links[body.data.where];
+      if (!link) throw new ShareInviteError(400, "Choose one of this Cobblr's configured destinations.");
+      res.status(201).json({id: made.linkId, invite_url: link.url, expires_at: made.expiresAt, links});
+      return;
+    }
     if (body.data.collection && !(await listKindsForOrg(req.tenant!.org.id)).some((k) => k.id === body.data.collection!.kind)) return bad(res, 400, "bad_collection", "That collection is not in this workspace.");
     const made = await inviteToShare({ orgId: req.tenant!.org.id, userId: req.session!.id, here: hereUrl(publicOrigin(req)), email: body.data.email || null, label: body.data.label, where: body.data.where, collection: body.data.collection });
     res.status(201).json({ id: made.linkId, invite_url: made.url, expires_at: made.expiresAt, links: made.links, email: made.email, mail: made.mail, said: inviteSaid(made) });
@@ -110,7 +135,7 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/sync", requireAuth, withTenant,
     // Sync now sends what the owner has now: a mirror pass first (waiting
     // out one already running), then the outbox, rather than only what an
     // earlier pass already queued.
-    const r = link.side === "owner" ? await mirrorAndDeliverNow(link.id) : await flushShareLinkNow(link.id);
+    const r = link.side === "owner" && !isOwnLink(link) ? await mirrorAndDeliverNow(link.id) : await flushShareLinkNow(link.id);
     const left = await meta.selectFrom("share_outbox").select((eb) => eb.fn.countAll<string>().as("n")).where("link_id", "=", link.id).where("sent_at", "is", null).executeTakeFirst();
     res.json({ sent: r.sent, error: r.error, waiting: Number(left?.n ?? 0) });
   } catch (err) {
@@ -122,7 +147,10 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/sync", requireAuth, withTenant,
 // AI-REACH: exempt — ending a share removes the other person's copy; a person's decision.
 shareLinksOrgRouter.post("/:slug/share-links/:id/revoke", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    const link = await getShareLink(String(req.params.id));
+    if (link && isOwnLink(link)) {
+      if (link.org_id !== req.tenant!.org.id || link.created_by !== req.session!.id) return bad(res, 403, "not_yours", "Only the account that approved this connection can revoke it.");
+    } else if (!requireRole(req, res, "owner", "admin")) return;
     const ok = await revokeShareLink(req.tenant!.org.id, String(req.params.id));
     if (!ok) return bad(res, 404, "not_found", "No such share, or it has already ended.");
     res.json({ ok: true });
@@ -131,7 +159,7 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/revoke", requireAuth, withTenan
   }
 });
 
-const AcceptBody = z.object({ invite: z.string().min(8).max(4000) });
+const AcceptBody = z.object({ invite: z.string().min(8).max(4000), target_org: z.string().uuid().optional() });
 
 // UI-REACH: /share/join (the invite page, before Accept)
 // AI-REACH: exempt — the invite page reads who is sharing before its person decides.
@@ -141,8 +169,8 @@ shareLinksRouter.post("/share-links/preview", requireAuth, async (req, res, next
     if (!body.success) return bad(res, 400, "bad_body", "invite is required");
     const token = decodeInvite(body.data.invite);
     if (!token) return bad(res, 400, "bad_invite", "That invite link is damaged. Ask for a new one.");
-    const r = await readInvite(token, hereUrl(publicOrigin(req)));
-    res.json({ owner_name: r.preview.owner_name, workspace_name: r.preview.workspace_name, for_email: r.preview.for_email ?? null, from_host: r.local ? null : new URL(r.ownerUrl).host });
+    const r = await readInvite(token, hereUrl(publicOrigin(req) || undefined));
+    res.json({ owner_name: r.preview.owner_name, workspace_name: r.preview.workspace_name, for_email: r.preview.for_email ?? null, purpose: r.preview.purpose ?? null, from_host: r.local ? null : new URL(r.ownerUrl).host });
   } catch (err) {
     if (err instanceof ShareInviteError) return bad(res, err.status, "invite_refused", err.message);
     next(err);
@@ -157,7 +185,8 @@ shareLinksRouter.post("/share-links/accept", requireAuth, async (req, res, next)
     if (!body.success) return bad(res, 400, "bad_body", "invite is required");
     const token = decodeInvite(body.data.invite);
     if (!token) return bad(res, 400, "bad_invite", "That invite link is damaged. Ask for a new one.");
-    const made = await acceptShareInvite({ userId: req.session!.id, token, here: hereUrl(publicOrigin(req)) });
+    if (token.p === "own") await requireSendToken();
+    const made = await acceptShareInvite({ userId: req.session!.id, token, here: hereUrl(publicOrigin(req)), targetOrg: body.data.target_org });
     res.status(201).json({ org_id: made.orgId, slug: made.slug });
   } catch (err) {
     if (err instanceof ShareInviteError) return bad(res, err.status, "invite_refused", err.message);
@@ -182,6 +211,8 @@ shareLinksRouter.get("/share-links/invite/:code", async (req, res, next) => {
 });
 
 const ClaimBody = z.object({
+  purpose: z.literal("own").optional(),
+  share_org_id: z.string().uuid().optional(),
   code: z.string().min(8).max(200),
   share_url: z.string().max(500),
   share_link_id: z.string().uuid(),
@@ -224,6 +255,21 @@ shareLinksRouter.post("/share-links/:id/ops", async (req: Request, res: Response
     res.json(await applyShareOps(link, JSON.parse((raw ?? "") || "{}")));
   } catch (err) {
     if (err instanceof ShareApplyError) return bad(res, err.status, err.code, err.message);
+    next(err);
+  }
+});
+
+// AI-REACH: exempt — signed transport between the workspaces a person approved.
+// UI-REACH: spoken by another Cobblr
+shareLinksRouter.post("/share-links/:id/own-send", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const raw = (req as unknown as {rawBody?: string}).rawBody;
+    const link = await verifyShareRequest({linkId: String(req.params.id), headers: req.headers as Record<string, string | undefined>, pathAndQuery: req.originalUrl, rawBody: raw});
+    res.json(await receiveConnectedSend(link, JSON.parse((raw ?? "") || "{}"), publicOrigin(req) || undefined));
+  } catch (err) {
+    if (err instanceof ShareApplyError) return bad(res, err.status, err.code, err.message);
+    if (err instanceof SendError) return bad(res, 409, "send_refused", err.message);
+    if (err instanceof z.ZodError) return bad(res, 409, "needs_update", "The Cobblrs cannot read this connected send. Update them, or use a send file.");
     next(err);
   }
 });
@@ -361,6 +407,12 @@ shareLinksOrgRouter.get("/:slug/record-shares", requireAuth, withTenant, async (
     // selection bar asks that).
     const kind = String(req.query.kind ?? "");
     const id = String(req.query.id ?? "");
+    // A kind no share space can hold is not offered at all: no Share on its
+    // records, rather than a share accepted and never delivered (#5911).
+    if (kind && !(await kindHoldable(req.tenant!.org.id, kind))) {
+      res.json({ targets: [], can_share: false, shared_with: [] });
+      return;
+    }
     const targets = await shareTargets(req.tenant!.org.id);
     const org = await meta.selectFrom("orgs").select("kind").where("id", "=", req.tenant!.org.id).executeTakeFirst();
     const can_share = !!org && org.kind !== "share" && roleSatisfies(req.tenant!.role, ["owner", "admin"]);
@@ -432,7 +484,7 @@ shareLinksOrgRouter.get("/:slug/public-status/:id", requireAuth, withTenant, asy
 
 async function ownerLink(orgId: string, id: string) {
   const l = await meta.selectFrom("share_links").select(["id", "org_id", "side", "status", "settings"]).where("id", "=", id).executeTakeFirst();
-  return l && l.org_id === orgId && l.side === "owner" && l.status !== "revoked" ? l : null;
+  return l && !isOwnLink(l) && l.org_id === orgId && l.side === "owner" && l.status !== "revoked" ? l : null;
 }
 
 // UI-REACH: Settings → Sharing (a share's "What's shared")
@@ -463,6 +515,8 @@ shareLinksOrgRouter.put("/:slug/share-links/:id/what", requireAuth, withTenant, 
     const scope = readScope(body.data.scope);
     const visibility = readVisibility(body.data.visibility);
     const edit_mode = body.data.edit_mode ?? readEditMode(l.settings);
+    const refused = await shareRefusal(req.tenant!.org.id, [...scope.rules.flatMap((r) => (r.type === "collection" ? [r.entity_kind] : [])), ...scope.picks.map((p) => p.entity_kind)]);
+    if (refused) return bad(res, 409, "not_holdable", refused);
     await meta
       .updateTable("share_links")
       .set({ settings: sql`coalesce(settings, '{}'::jsonb) || ${JSON.stringify({ scope, visibility, edit_mode })}::jsonb` as never })

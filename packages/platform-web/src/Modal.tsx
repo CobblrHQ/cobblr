@@ -232,6 +232,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
                   window.dispatchEvent(new CustomEvent("cobblr:open-chat", { detail: { opener: cobb.opener } }))
                 }
                 className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-accent hover:bg-subtle dark:hover:bg-slate-800 transition shrink-0"
+                aria-label={cobb.label ?? "Ask Cobb"}
                 title="Ask Cobb about this (opens chat with Cobb ready to help)"
               >
                 <Sparkles size={15} className="shrink-0" />

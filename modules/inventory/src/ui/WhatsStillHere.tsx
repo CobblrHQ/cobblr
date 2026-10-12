@@ -7,8 +7,8 @@
 // will go is pressed.
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { EntityPhoto, Modal, NumberField, useConfirm, usePhotoPick, useRunAction, useToast } from "@cobblr/platform-web";
-import { countOf, quantityWithUnit } from "@cobblr/platform-contract/plural";
+import { EntityPhoto, Modal, NumberField, useConfirm, usePhotoPick, useRunAction, useToast, useUnits } from "@cobblr/platform-web";
+import { countOf } from "@cobblr/platform-contract/plural";
 import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
 import type { InventoryApi } from "./api";
 
@@ -58,6 +58,7 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
   const confirm = useConfirm();
   // PRESS-ARGS: the sheet passes its scope, the ticked ids, the counts and, when everything goes, the count said back; Undo passes the stocktake it made; Add passes the name, collection and place the photo saw.
   const runAction = useRunAction();
+  const units = useUnits();
   const q = useQuery({ queryKey: ["stocktake-scope", slug, scopeKey(scope)], queryFn: () => api.stocktakeScope(scope) });
   // Ticked = still here; the number is what is left when it is less than recorded.
   const [here, setHere] = useState<Map<string, number | null>>(new Map());
@@ -284,10 +285,10 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
                         label={`How many ${i.title} are left`}
                         className="w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-right text-sm text-content dark:text-mortar-100"
                       />
-                      {i.unit && i.unit !== "each" ? `${i.unit} left` : "left"}
+                      {i.unit && i.unit !== "each" ? `${units.unit(i.unit)} left` : "left"}
                     </span>
                   ) : (
-                    <span className="font-mono text-xs text-faint">{quantityWithUnit(i.qty, i.unit)}</span>
+                    <span className="font-mono text-xs text-faint">{units.format(i.qty, i.unit)}</span>
                   )}
                 </li>
               );

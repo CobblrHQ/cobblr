@@ -9,6 +9,13 @@
 // purchase but is excluded from every price figure — averaging a null as zero
 // would report a phantom price drop.
 
+/** The orders that are a purchase: placed with someone, on its way, or here.
+ *  A planned order is a draft nobody has bought yet (the low-stock wire makes
+ *  one with the re-buy amount), and a cancelled one was never paid for. Read
+ *  as a purchase, a draft of 2 showed in a restocked milk's price history as
+ *  "1 purchase · ×2" (#6065). */
+export const PURCHASED_STATUSES = ["ordered", "in-transit", "arrived"] as const;
+
 /** One purchase of one thing: a line item, flattened with its order's date. */
 export interface PricePoint {
   id: string;

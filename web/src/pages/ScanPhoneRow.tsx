@@ -8,6 +8,7 @@
 // ("Details"). The tools a person reaches for on a phone sit on the card
 // itself: the camera, Re-run AI with its live running state, and an
 // overflow for the rest. The card's brain (InboxCard) computes everything.
+import { lineRuns } from "../lib/placeLine";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
@@ -158,6 +159,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         type="button"
         onClick={p.onViewImage ?? p.onOpen}
         aria-label={p.thumb ? "View the picture full size" : "Open the item"}
+        title={p.thumb ? "View the picture full size" : "Open the item"}
         className="w-16 shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
       >
         {p.thumb ? (
@@ -198,7 +200,11 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
           <span data-name className={"mr-2 text-[15px] " + (nameless ? "text-muted dark:text-slate-400" : "font-medium text-content dark:text-mortar-100")}>
             {name ?? (p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </span>
-          {p.subtitle && <span className="mr-2 font-mono text-[11px] text-faint dark:text-slate-500">{p.subtitle}</span>}
+          {p.subtitle && (
+            <span className="mr-2 font-mono text-[11px] text-faint dark:text-slate-500">
+              {lineRuns(p.subtitle).map((r, i) => (r.place ? <span key={i} data-place-run="" className="inline-block">{r.text}</span> : r.text))}
+            </span>
+          )}
           {p.chips.map((c) => (
             <span
               key={c.key}
@@ -331,13 +337,13 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             aria-busy={p.rerun.running}
             aria-label={p.rerun.running ? (p.rerun.replaying ? "Replaying" : "Re-running the AI") : p.rerun.failed ? "Retry the AI" : "Re-run AI"}
             data-state={p.rerun.running ? "running" : p.rerun.failed ? "failed" : "idle"}
-            title={p.rerun.running ? "The AI is working on this item" : p.rerun.failed ? "Ask the AI again" : "A fresh look at the photo and the code"}
+            title={p.rerun.running ? "Re-running: the AI is working on this item" : p.rerun.failed ? "Retry: ask the AI again" : "Re-run AI: a fresh look at the photo and the code"}
             className={tool + " min-w-10 justify-center" + (p.rerun.failed && !p.rerun.running ? " border-amber-400/70 text-amber-700 dark:text-amber-300" : p.rerun.running ? " border-accent text-accent" : "")}
           >
             {p.rerun.running ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
           </button>
           {p.more.length > 0 && (
-            <button type="button" onClick={() => setMoreOpen(true)} aria-expanded={moreOpen} aria-label="More item tools" className={tool}>
+            <button title="More item tools" type="button" onClick={() => setMoreOpen(true)} aria-expanded={moreOpen} aria-label="More item tools" className={tool}>
               <MoreHorizontal size={14} />
             </button>
           )}

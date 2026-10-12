@@ -10,6 +10,7 @@
 // alone), the colour its box prints, and its SKU when the box showed one.
 
 import type { BoxChoice } from "@cobblr/platform-contract/box-label";
+import { storeVariantOf } from "@cobblr/platform-contract/same-product";
 
 export interface KnownPack {
   host: string;
@@ -82,4 +83,20 @@ export function knownPackFor(host: string, title: string, packOptions: readonly 
   const want = [...new Set(packOptions.map(norm))].sort().join("/");
   const h = host.toLowerCase().replace(/^www\./, "");
   return packs.find((p) => p.host === h && norm(p.title) === norm(title) && [...p.options].sort().join("/") === want) ?? null;
+}
+
+/** A ships-from value as an order line prints it ("US", "EU"): where the store
+ *  sends it from, never part of which pack it is. */
+const SHIPS_FROM_VALUE = /^(us|usa|eu|uk|gb|ca|au|de|fr|es|it|cn|jp|mx)$/i;
+
+/** The pack an order line names, read from the line itself ("KINGROON PETG
+ *  Filament 1.75mm - US / 10KG / Multicolor"), for when the store's page
+ *  cannot be read: its title and its options, a ships-from value aside. A
+ *  known pack is known without the network (#6004). */
+export function knownPackForLine(host: string, line: string, packs: readonly KnownPack[] = KNOWN_PACKS): KnownPack | null {
+  const v = storeVariantOf(line);
+  if (!v) return null;
+  const h = host.toLowerCase().replace(/^www\./, "");
+  const have = new Set(v.options.map(norm));
+  return packs.find((p) => p.host === h && norm(p.title) === norm(v.base) && p.options.every((o) => have.has(norm(o))) && [...have].every((o) => p.options.map(norm).includes(o) || SHIPS_FROM_VALUE.test(o))) ?? null;
 }

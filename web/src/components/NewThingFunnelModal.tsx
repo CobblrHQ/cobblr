@@ -386,7 +386,7 @@ export function NewThingFunnelModal({
                 />
                 {placement === "menu" && (
                   <div className="ml-6 space-y-2">
-                    <select
+                    <select aria-label="Menu"
                       value={menuId}
                       onChange={(e) => setMenuId(e.target.value)}
                       className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"

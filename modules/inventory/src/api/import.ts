@@ -45,6 +45,9 @@ interface ParsedRow {
   insured: boolean;
   archived: boolean;
   supplier_url: string | null;
+  /** The product's code, kept where a scan looks for it (metadata.barcode),
+   *  so an imported thing is recognised by the scanner like one made by hand. */
+  barcode: string | null;
   /** The table's own fields (a bookshelf's author, a pantry's expiry), by
    *  field name, typed by the field's definition. What the export writes
    *  after the native columns, read back. */
@@ -152,6 +155,7 @@ const HEADER_SYNONYMS: Record<string, string[]> = {
   insured: ["insured"],
   archived: ["archived"],
   supplier_url: ["supplier_url", "supplier", "url", "link"],
+  barcode: ["barcode", "upc", "ean", "gtin", "upc_code", "ean_code", "ean13", "gtin13", "gtin14", "isbn"],
 };
 
 function detectHeaders(rawHeaders: string[]): Record<string, number> {
@@ -288,6 +292,8 @@ function parseCsv(text: string, ownFields: DefinedField[] = []): ParseResult {
       insured: asBool(get("insured")),
       archived: asBool(get("archived")),
       supplier_url: get("supplier_url")?.trim() || null,
+      // "4000-0002-0993" and "4000 0002 0993" are the same code a scan reads.
+      barcode: get("barcode")?.replace(/[\s-]/g, "") || null,
       metadata: Object.fromEntries(
         ownCols
           .map(({ field, idx }) => [field.name, ownValue(field, fields[idx])] as const)
@@ -383,7 +389,7 @@ importRouter.post(
       insured: row.insured,
       archived: row.archived,
       supplier_url: row.supplier_url,
-      metadata: row.metadata,
+      metadata: row.barcode ? { ...row.metadata, barcode: row.barcode } : row.metadata,
     }));
 
     const CHUNK = 500;
@@ -400,11 +406,21 @@ importRouter.post(
       return ids;
     });
 
-    // ONE summary activity entry — not 40k. A bulk import is a single
-    // deliberate action; per-row audit at scale just floods the log
-    // (and 40k inserts blew the request budget). Per-row part.created
-    // events are dropped too: nothing subscribes to them, and search
-    // indexes via the generated search_blob column, not an event.
+    // Each record's own History says it was made by this import (#5963):
+    // one part_created per row, written in one INSERT per chunk and marked
+    // as an import's row, so the feeds show only the summary line below.
+    // Per-row part.created events stay dropped: nothing subscribes to them,
+    // and search indexes via the generated search_blob column, not an event.
+    await platform().activity.logMany({
+      orgId: ctx.org.id,
+      userId: session.id,
+      rows: inserted.map((id, i) => ({
+        action: "part_created",
+        ref: { module: "inventory", entityType: "part", entityId: id },
+        diff: { name: valueRows[i]?.name ?? null, qty: valueRows[i]?.qty ?? null, instance, source: "csv_import" },
+      })),
+    });
+    // And ONE summary entry for the import itself, the feeds' line.
     try {
       await platform().activity.log({
         orgId: ctx.org.id,

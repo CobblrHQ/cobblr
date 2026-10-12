@@ -256,6 +256,7 @@ function EntryRow({
         <div className="flex items-center gap-1 shrink-0">
           {onComplete && (
             <button
+              aria-label="Mark done"
               type="button"
               onClick={onComplete}
               className="text-moss-600 hover:text-moss-700"
@@ -265,6 +266,7 @@ function EntryRow({
             </button>
           )}
           <button
+            aria-label="Delete"
             type="button"
             onClick={onDelete}
             className="text-faint hover:text-ember-500"

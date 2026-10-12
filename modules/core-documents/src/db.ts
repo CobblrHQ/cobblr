@@ -35,6 +35,11 @@ export interface SuggestionsTable extends DocumentRowCommon {
   id: Generated<string>;
   score: number;
   because: string | null;
+  /** What on the item contradicts the record: a VIN or serial that is not its
+   *  own. Shown, never a match (#5870). */
+  conflict: string | null;
+  /** A softer disagreement, a year: shown beside the match. */
+  warning: string | null;
   for_user_id: string | null;
   dismissed_at: Date | null;
   found_at: Stamp;
@@ -48,7 +53,11 @@ export interface LinkedTable extends DocumentRowCommon {
   copied_at: Date | null;
   copied_filename: string | null;
   copied_file_id: string | null;
+  /** The copy is in the requester's Vault (a personal document, #5871). */
+  copied_vault_file_id: string | null;
   copy_requested_by: string | null;
+  library_provider: string | null;
+  library_address: string | null;
 }
 
 export interface ConnectionsTable {

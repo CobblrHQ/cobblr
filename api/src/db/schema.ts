@@ -1188,6 +1188,10 @@ export interface ModuleFieldDefsTable {
    *  items across near-synonym tables. Declared, never guessed. At most one
    *  category field per (org, kind) — enforced by a partial unique index. */
   field_role: string | null;
+  /** Whether the field is a fact about the MODEL (every unit shares it) or
+   *  about this UNIT; null when it declares none (@cobblr/platform-contract/
+   *  fact-scope reads it, #6013). */
+  fact_scope: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** TRAIT SCOPE: when set, this def applies to a CLASS of entity kinds
    *  ("everything physical") rather than the single `entity_kind` it's keyed to,
    *  and `entity_kind` holds a scope sentinel (`@physical`) instead of a real
@@ -1670,7 +1674,9 @@ export interface ShareAdditionsTable {
   decided_at: Date | null;
 }
 
-export type ShareSuggestionStatus = "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected";
+/** `void`: never the friend's edit (a field the record works out itself,
+ *  stored before #6039 refused one); on no list, and no answer is sent. */
+export type ShareSuggestionStatus = "pending" | "conflict" | "applied" | "undone" | "accepted" | "rejected" | "void";
 
 /** One field of one record a friend changed in a share space (20261003-186). */
 export interface ShareSuggestionsTable {
@@ -1720,6 +1726,8 @@ export interface ShareMirrorStateTable {
   entity_id: string;
   digest: string;
   photo_digest: string | null;
+  /** The owner's file ids of the record's attachments already sent (#6056). */
+  file_keys: Generated<string[]>;
   sent_at: Generated<Date>;
 }
 

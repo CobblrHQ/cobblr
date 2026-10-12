@@ -7,6 +7,7 @@
 // then reads as a model. There is no "make this a model" toggle — model-ness is
 // derived from having units, the same way stock-vs-catalog is derived from data.
 
+import { useStockWrites } from "./stock-writes";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -57,6 +58,7 @@ function HolderCell({ value, onCommit }: { value: string | null; onCommit: (v: s
 
 export function UnitsPanel({ partId }: { partId: string }) {
   const { api, basePath, instance } = useInventory();
+  const stock = useStockWrites();
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
@@ -73,7 +75,7 @@ export function UnitsPanel({ partId }: { partId: string }) {
   });
 
   const add = useMutation({
-    mutationFn: () => api.mintUnit(partId, serial.trim() ? { serial_number: serial.trim() } : {}),
+    mutationFn: () => stock.mintUnit(partId, serial.trim() ? { serial_number: serial.trim() } : {}),
     onSuccess: () => {
       setSerial("");
       // The list grows, and units_count on the model changes — which is what the

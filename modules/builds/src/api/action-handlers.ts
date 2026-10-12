@@ -6,7 +6,7 @@
 // with the route). Reads inventory ONLY through the platform — no joins.
 
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
 import { consumeComponents, explodeLeafComponents } from "../build-engine.js";
 import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
@@ -53,7 +53,13 @@ export function registerBuildsActionHandlers(): void {
     // Explode nested sub-assemblies down to leaf inventory parts, then consume.
     const comps = await explodeLeafComponents(ctx.orgId, buildId);
 
-    const consumed = await consumeComponents(ctx.orgId, ctx.userId, buildId, comps, qty);
+    let consumed: Awaited<ReturnType<typeof consumeComponents>>;
+    try {
+      consumed = await consumeComponents(ctx.orgId, ctx.userId, buildId, comps, qty);
+    } catch (e) {
+      if (isActionRefusal(e)) return { ok: false, error: e.message };
+      throw e;
+    }
 
     const run = await db
       .insertInto("builds_runs")

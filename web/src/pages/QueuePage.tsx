@@ -51,6 +51,7 @@ export function QueuePage() {
           {countOf(items.length, "job")}
         </span>
         <select
+          aria-label="Status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | Status)}
           className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"

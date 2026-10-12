@@ -28,6 +28,7 @@ import { receiptTrackingTick } from "../services/receipt-tracking-sweeper.js";
 import { INTERNAL_API } from "./inbox.js";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const shipmentEventRouter = Router({ mergeParams: true });
 
@@ -44,7 +45,7 @@ const Body = z.object({
   /** The promised day as a date, when the email names one. */
   expected_arrival_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   /** When the email was sent, for the record; defaults to now. */
-  observed_at: z.string().datetime().optional(),
+  observed_at: optionalField(z.string().datetime()),
   /** The lines this parcel carries, as the store listed them ("Items in this
    *  shipment"). A store that ships an order in several boxes sends one
    *  notice per box; the order's other lines are not in this one. */

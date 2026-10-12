@@ -56,7 +56,7 @@ const ProviderCreate = z.object({
 });
 
 const ProviderUpdate = z.object({
-  label: z.string().min(1).max(120).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).optional(),
   config: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),

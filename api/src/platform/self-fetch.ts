@@ -61,6 +61,13 @@ class LoopbackSocket extends Duplex {
   }
 }
 
+/** Whether a request is the api calling itself in-process: its socket is the
+ *  loopback one only selfFetch makes, so no request from outside can claim
+ *  it (a header could be sent by anyone). */
+export function isSelfCall(req: { socket?: unknown }): boolean {
+  return req.socket instanceof LoopbackSocket;
+}
+
 /** A raw HTTP/1.1 response, as written to the socket, as a fetch Response. */
 export function parseRawResponse(raw: Buffer): Response {
   const split = raw.indexOf("\r\n\r\n");

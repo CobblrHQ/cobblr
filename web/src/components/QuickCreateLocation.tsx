@@ -104,6 +104,7 @@ export function QuickCreateLocation({
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-mono uppercase tracking-widest text-accent">New location</span>
         <button
+          title="Close"
           type="button"
           onClick={onClose}
           className="text-faint hover:text-content dark:hover:text-mortar-100 transition"

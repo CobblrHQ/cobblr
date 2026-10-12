@@ -15,22 +15,24 @@ import { useAuth } from "../auth/AuthContext";
 import { urlHandleFor } from "../auth/ActiveOrgContext";
 import { CenteredCard } from "../components/CenteredCard";
 
-function inviteFromHash(): { raw: string; from: string | null; name: string | null; workspace: string | null } | null {
+function inviteFromHash(): { raw: string; from: string | null; name: string | null; workspace: string | null; own: boolean } | null {
   const raw = window.location.hash.replace(/^#/, "");
   if (!raw) return null;
   try {
-    const t = JSON.parse(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))) as { u?: string; n?: string; w?: string };
-    return { raw, from: t.u ?? null, name: t.n ?? null, workspace: t.w ?? null };
+    const t = JSON.parse(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))) as { u?: string; n?: string; w?: string; p?: string };
+    return { raw, from: t.u ?? null, name: t.n ?? null, workspace: t.w ?? null, own: t.p === "own" };
   } catch {
     return null;
   }
 }
 
 export function ShareJoinPage() {
-  usePageTitle("A share for you");
+  const invite = inviteFromHash();
+  usePageTitle(invite?.own ? "Connect your other Cobblr" : "A share for you");
   const { user } = useAuth();
   const toast = useToast();
-  const invite = inviteFromHash();
+  const [target, setTarget] = useState("");
+  const workspaces = useQuery({queryKey: ["own-connection-workspaces"], queryFn: () => api.listOrgs(), enabled: !!user && !!invite?.own});
   const [elsewhere, setElsewhere] = useState("");
   // Signed in and back on the invite: it is here again, so it is not held.
   useEffect(() => {
@@ -43,7 +45,7 @@ export function ShareJoinPage() {
     retry: false,
   });
   const accept = useMutation({
-    mutationFn: () => api.acceptShareInvite(invite!.raw),
+    mutationFn: () => api.acceptShareInvite(invite!.raw, invite?.own ? target : undefined),
     onSuccess: async (r) => {
       const list = await api.listOrgs();
       const org = list.items.find((o) => o.slug === r.slug);
@@ -92,8 +94,8 @@ export function ShareJoinPage() {
     holdShareInvite(invite.raw);
     const back = encodeURIComponent(`/share/join#${invite.raw}`);
     return (
-      <CenteredCard tone="info" title={`${who} wants to share with you`}>
-        <p className="text-sm text-content">Sign in to accept, or make an account here first; this invite opens again after. You get a workspace of your own for what {who} shares.</p>
+      <CenteredCard tone="info" title={invite.own ? "Connect your other Cobblr" : `${who} wants to share with you`}>
+        <p className="text-sm text-content">{invite.own ? "Sign in here to choose and approve an existing workspace. This invite opens again after." : `Sign in to accept, or make an account here first; this invite opens again after. You get a workspace of your own for what ${who} shares.`}</p>
         <button
           type="button"
           data-testid="share-join-sign-in"
@@ -123,21 +125,21 @@ export function ShareJoinPage() {
     );
   }
   return (
-    <CenteredCard tone="info" title={`${who} wants to share with you`}>
-      <p className="text-sm text-content">
+    <CenteredCard tone="info" title={invite.own ? "Connect your other Cobblr" : `${who} wants to share with you`}>
+      {invite.own ? <div className="space-y-3"><p>Connect <strong>{what}</strong>{preview.data?.from_host ? ` on ${preview.data.from_host}` : ""} to a workspace here. You can then send selected items in either direction. This shares no collection or workspace view.</p><label className="block text-sm">Workspace to connect<select aria-label="Workspace to connect" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose an existing workspace</option>{workspaces.data?.items.filter((o) => o.kind !== "share" && o.role !== "guest").map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label><p className="text-sm text-muted">Revoking later keeps both workspaces and the items already sent.</p>{workspaces.isError && <p role="alert">{(workspaces.error as Error).message}</p>}</div> : <p className="text-sm text-content">
         <strong>{who}</strong> shares part of <strong>{what}</strong>
         {preview.data?.from_host ? <> from <strong>{preview.data.from_host}</strong></> : null}. Accepting makes{" "}
         <strong>{who}'s workspace (shared)</strong> for you here: you can scan into it, see what is offered to you, and offer {who} things of yours.
-      </p>
+      </p>}
       {preview.data?.for_email && <p className="mt-2 text-sm text-muted" data-testid="share-join-for">This invite is for {preview.data.for_email}. Accept it signed in with that address.</p>}
       <button
         type="button"
         data-testid="share-join-accept"
-        disabled={accept.isPending || preview.isLoading}
+        disabled={accept.isPending || preview.isLoading || (!!invite.own && !target)}
         onClick={() => accept.mutate()}
         className="mt-4 w-full rounded-md bg-cobble-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
-        {accept.isPending ? "Setting it up…" : "Accept"}
+        {accept.isPending ? "Setting it up…" : invite.own ? "Approve connection" : "Accept"}
       </button>
       {otherCobblr}
     </CenteredCard>

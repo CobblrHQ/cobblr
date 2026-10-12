@@ -92,6 +92,7 @@ function FocusedModeCard({ slug, focused }: { slug: string; focused: boolean }) 
             </p>
           </div>
         </div>
+        {/* COLOUR-NOT-STATE: Turn on is the primary action; whether simple mode is on is written in the heading beside it. */}
         <button
           type="button"
           onClick={flip}

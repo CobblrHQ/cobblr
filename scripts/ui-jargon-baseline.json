@@ -108,10 +108,6 @@
     "why": "The portal's view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person configuring the portal who knows which table they mean."
   },
   {
-    "key": "web/src/pages/QrTokensPage.tsx::{t.entity_kind}",
-    "why": "The QR tokens ledger lists every minted code by its payload, kind and id, beside its mode (navigate, action) and auth pills; a person here is matching a printed label against a row to revoke it, and the payload is what they are matching."
-  },
-  {
     "key": "web/src/pages/RolesPage.tsx::<div className=\"text-[10px] font-mono text-faint truncate\">{a.action_id}</div>",
     "why": "The roles editor lists each permission with its label in words on the first line and the action id small underneath, because two actions can share a label and the id is what the role is checked against."
   },

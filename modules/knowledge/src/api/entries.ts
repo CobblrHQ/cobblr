@@ -13,25 +13,14 @@ import { sql } from "kysely";
 import { likeEscape, platform, uploadOne } from "@cobblr/platform-contract";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
-import { z } from "zod";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
+import { EntryCreate, EntryUpdate } from "./entry-schema.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const entriesRouter = Router({ mergeParams: true });
 
 const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
 const upload = uploadOne({ maxBytes: 20 * 1024 * 1024 });
-
-const EntryCreate = z.object({
-  title: z.string().min(1).max(300),
-  body: z.string().max(200_000).optional(),
-  kind: z.string().max(80).optional(),
-  pinned: z.boolean().optional(),
-  code: z.string().max(200).optional(),
-  image_path: z.string().max(1000).nullable().optional(),
-  metadata: z.record(z.unknown()).optional(),
-});
-const EntryUpdate = EntryCreate.partial();
 
 entriesRouter.get(
   "/entries",

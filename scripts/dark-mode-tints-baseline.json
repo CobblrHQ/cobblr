@@ -37,7 +37,7 @@
   "web/src/components/LayoutBoard.tsx::\"border-black bg-white text-black\"",
   "web/src/components/LayoutBoard.tsx::\"mt-1 flex items-center gap-2 text-[10px] text-black\"",
   "web/src/components/LayoutBoard.tsx::`relative w-full border-2 ${print ? \"border-black bg-white\" : `",
-  "web/src/components/LayoutPrint.tsx::\"block text-black\"",
+  "web/src/components/LayoutPrint.tsx::\"block h-auto max-w-full text-black print:max-w-none\"",
   "web/src/components/LayoutPrint.tsx::\"text-black\"",
   "web/src/components/LiveBox.tsx::\"text-cobble-600 shrink-0 mt-0.5\"",
   "web/src/components/ModulePickerModal.tsx::\"text-moss-600\"",

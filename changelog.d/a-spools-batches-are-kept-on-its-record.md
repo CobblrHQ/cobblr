@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-12
 ---
 The batch numbers printed on a spool's box are kept on its record, counted per batch, even though a spool has no use-by date.
 

@@ -16,6 +16,7 @@ import { SendError, sendThing, sendFieldDefs, sendWriter, refuseUnsentDependents
 export interface ExportSendFileRequest {
   entity_kind: string; ids: string[]; mode: "copy" | "move";
   request_id?: string; include_secrets?: boolean; dry_run?: boolean;
+  connected?: {link_id: string; target_org: string; target_instance: string; options_digest: string; return_receipt?: import("@cobblr/platform-contract/send-file").SendReceipt};
 }
 export interface FileExportTransfer {
   transport: "file-export"; state: "exported" | "landing" | "complete" | "undoing" | "undone";
@@ -24,6 +25,7 @@ export interface FileExportTransfer {
   source_snapshot?: Record<string, unknown>; source_attachments?: unknown;
   key_encrypted: string; digest: string; collection: SendFile["collection"]; created_at: string; ordinal: number; thing: OfferedThing;
   receipt?: import("@cobblr/platform-contract/send-file").SendReceipt;
+  connected?: ExportSendFileRequest["connected"];
 }
 const object = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as never;
@@ -72,6 +74,17 @@ async function prepareExport(orgId: string, userId: string, p: ExportSendFileReq
   return {source, collection, entries, canMove, person: await sendFilePerson(userId)};
 }
 
+export async function previewConnectedPacket(orgId: string, userId: string, p: ExportSendFileRequest, origin?: string) {
+  const plan = await prepareExport(orgId, userId, p, origin);
+  return packetFor(plan, orgId, p.mode, randomUUID(), randomBytes(32).toString("hex"), new Date().toISOString());
+}
+
+function packetFor(plan: Awaited<ReturnType<typeof prepareExport>>, orgId: string, mode: "copy" | "move", id: string, key: string, createdAt: string) {
+  const packet = readSendFile(json({format: "cobblr-send", version: 1, id, created_at: createdAt, mode, confirmation_key: key, source: {instance: plan.entries[0]!.thing.send!.origin.instance, org: orgId, name: plan.source.name, person: plan.person}, collection: plan.collection, items: plan.entries.map((e) => e.thing)}));
+  if (Buffer.byteLength(JSON.stringify(packet)) > SEND_FILE_MAX_BYTES) throw new SendError("This send file is over 64 MB. Send fewer items together; every file on those items stays included.");
+  return packet;
+}
+
 export async function previewExportSendFile(orgId: string, userId: string, p: ExportSendFileRequest, origin?: string) {
   const plan = await prepareExport(orgId, userId, p, origin);
   return {can_move: plan.canMove, collection: plan.collection.plural, items: plan.entries.map(({thing}) => ({id: thing.send!.origin.id, name: thing.name, fields: Object.keys(thing.send!.values), files: thing.send!.files.length, dropped: [...thing.send!.needs, ...(thing.send!.references ?? []).map((r) => `${r.label}: kept only if its linked record exists there`)], placement_needed: !!thing.send!.placement_needed})), summary: "The source stays here. Choose the receiving collection and map fields when you import the file."};
@@ -90,17 +103,17 @@ export async function exportSendFile(orgId: string, userId: string, p: ExportSen
     const id = p.request_id ?? randomUUID();
     const existing = await fileExportRows(orgId, userId, id);
     if (existing.length) {
+      if (!sameSendSnapshot((existing[0]!.transfer as FileExportTransfer).connected, p.connected)) throw new SendError("That request belongs to a different destination or mapping. Preview a new send.");
       if (existing.length !== p.ids.length || existing.some((r) => object(r.source).kind !== p.entity_kind || !p.ids.includes(String(object(r.source).id)) || object(r.transfer).mode !== p.mode || object(r.transfer).state === "undone")) throw new SendError("That file request belongs to a different send. Preview and download a new file.");
       return {id, download_path: `/api/v1/orgs/${source.slug}/records/send/file/${id}/download`, summary: `${p.ids.length} ${p.ids.length === 1 ? "item" : "items"} ready to download. The source is still here.`};
     }
     const plan = await prepareExport(orgId, userId, p, origin);
     const createdAt = new Date().toISOString();
     const key = randomBytes(32).toString("hex");
-    const packet = readSendFile(json({format: "cobblr-send", version: 1, id, created_at: createdAt, mode: p.mode, confirmation_key: key, source: {instance: plan.entries[0]!.thing.send!.origin.instance, org: orgId, name: plan.source.name, person: plan.person}, collection: plan.collection, items: plan.entries.map((e) => e.thing)}));
-    if (Buffer.byteLength(JSON.stringify(packet)) > SEND_FILE_MAX_BYTES) throw new SendError("This send file is over 64 MB. Send fewer items together; every file on those items stays included.");
+    const packet = packetFor(plan, orgId, p.mode, id, key, createdAt);
     const digest = sendFileDigest(packet);
     const encrypted = encryptCreds(key);
-    const rows = plan.entries.map(({thing, snapshot, attachments}, ordinal) => ({link_id: null, target_org_id: null, direction: "out" as const, batch: id, title: thing.name, created_by: userId, source: json({org_id: orgId, kind: p.entity_kind, id: thing.send!.origin.id}), transfer: json({transport: "file-export", state: "exported", mode: p.mode, source_name: plan.source.name, source_person: plan.person, key_encrypted: encrypted, digest, collection: plan.collection, created_at: createdAt, ordinal, thing, ...(snapshot ? {source_snapshot: snapshot, source_attachments: attachments} : {})} satisfies FileExportTransfer)}));
+    const rows = plan.entries.map(({thing, snapshot, attachments}, ordinal) => ({link_id: null, target_org_id: null, direction: "out" as const, batch: id, title: thing.name, created_by: userId, source: json({org_id: orgId, kind: p.entity_kind, id: thing.send!.origin.id}), transfer: json({transport: "file-export", state: "exported", mode: p.mode, source_name: plan.source.name, source_person: plan.person, key_encrypted: encrypted, digest, collection: plan.collection, created_at: createdAt, ordinal, thing, ...(p.connected ? {connected: p.connected} : {}), ...(snapshot ? {source_snapshot: snapshot, source_attachments: attachments} : {})} satisfies FileExportTransfer)}));
     await meta.insertInto("share_offers").values(rows).execute();
     await platform().activity.log({orgId, userId, action: "send_file_downloaded", diff: {items: rows.length, mode: p.mode}, ref: {module: "platform", entityType: "send", entityId: id}});
     return {id, download_path: `/api/v1/orgs/${source.slug}/records/send/file/${id}/download`, summary: `${rows.length} ${rows.length === 1 ? "item" : "items"} ready to download. The source is still here.`};

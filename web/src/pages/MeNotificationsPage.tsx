@@ -117,6 +117,7 @@ export function MeNotificationsPage() {
         </span>
         <div className="flex-1" />
         <select
+          aria-label="Workspace"
           value={orgFilter}
           onChange={(e) => setOrgFilter(e.target.value)}
           className="px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
@@ -204,13 +205,13 @@ export function MeNotificationsPage() {
                     }
                   }}
                   className={
-                    "w-full text-left px-4 py-3 transition flex items-baseline gap-3 cursor-pointer " +
+                    "w-full text-left px-4 py-3 transition grid grid-cols-[minmax(0,1fr)_auto] sm:flex items-baseline gap-x-3 gap-y-1 cursor-pointer " +
                     (n.read_at
                       ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/40"
                       : "hover:bg-subtle dark:hover:bg-slate-800/60")
                   }
                 >
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 shrink-0">
+                  <span className="col-span-2 w-fit max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 shrink-0">
                     {n.org_name}
                   </span>
                   <div className="flex-1 min-w-0">

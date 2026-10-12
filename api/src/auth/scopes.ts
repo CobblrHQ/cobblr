@@ -98,6 +98,8 @@ export const TOKEN_SCOPES: TokenScopeDef[] = [
       ["GET", /^\/super-admin\/product-metrics$/],
       // Usage in the last 1, 7 and 30 days: counts, never a row.
       ["GET", /^\/super-admin\/usage-stats$/],
+      // What each route costs (#5424): distributions per route, never a workspace.
+      ["GET", /^\/super-admin\/compute-stats$/],
       // Sign-ups per source per day. Counts only: the route leaves out the
       // per-account rows for any token (routes/super-admin.ts).
       ["GET", /^\/super-admin\/signups$/],

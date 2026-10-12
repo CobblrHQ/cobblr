@@ -1,3 +1,5 @@
+import { applyModelFacts } from "../services/model-facts.js";
+import { appendScanHistory } from "../services/scan-history.js";
 import { TEXT_OR_NULL, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { linkInVault } from "../services/vault-original.js";
@@ -66,9 +68,10 @@ import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
-import { retargetByCategory } from "../services/retarget-by-category.js";
+import { listNamedByCategory, retargetByCategory } from "../services/retarget-by-category.js";
 import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
-import { FiledQuantity, filedQuantityOf } from "../services/filed-quantity.js";
+import { priorSessionOfOrder } from "../services/receipt-prior-session.js";
+import { FiledQuantity, copiedCountOf, filedQuantityOf, isOwnCopy } from "../services/filed-quantity.js";
 import { expiryDefaults } from "../services/shelf-life.js";
 import { Router, type Request, type Response } from "express";
 import { sql } from "kysely";
@@ -178,6 +181,7 @@ import { parseReceipt } from "../services/receipt.js";
 import { lineDiscounted, lineNet, shareOrderDiscount, type ReceiptResult } from "../services/receipt-shared.js";
 import { isLineImageRef, lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
 import { storeHostForReceipt } from "../services/store-product.js";
+import { splitParentsOf } from "../services/split-groups.js";
 import { undoSplit } from "../services/undo-split.js";
 import { orderLinePass } from "../services/order-line-offer.js";
 import { readOrderPacks } from "@cobblr/platform-contract/receipt-pack";
@@ -218,6 +222,7 @@ import { receiptRecord, type ReceiptLineMeta } from "../services/receipt-record.
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 /** A table's own category word for a row ("Dairy" on Groceries), which says
  *  how a thing keeps when the catalog's word is in another language. */
@@ -300,7 +305,8 @@ inboxRouter.get(
       .orderBy("created_at", "desc")
       .orderBy("id", "desc")
       .execute();
-    res.json(scannerQueue(rows, await destinationTablesFor(req), await liveTablesFor(req)));
+    const canInstall = roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]);
+    res.json(scannerQueue(rows, await destinationTablesFor(req), await liveTablesFor(req), { canInstall }));
   }),
 );
 
@@ -519,35 +525,35 @@ inboxRouter.get(
 // ─────────────────────────── POST /scan ────────────────────────────
 
 const ScanBody = z.object({
-  barcode: z.string().min(4).max(64).optional(),
+  barcode: optionalField(z.string().min(4).max(64)),
   source_kind: z.enum(["barcode", "photo", "url", "receipt"]).default("barcode"),
-  source_url: z.string().url().max(2000).optional(),
+  source_url: optionalField(z.string().url().max(2000)),
   /** The product's title as the person shared or pasted it with the link
    *  (parseSharedText, @cobblr/platform-contract/shared-text). Kept as the
    *  item's name, before and after enrichment: a shop page that blocks us
    *  cannot take away a name the person brought. */
-  shared_title: z.string().trim().min(1).max(300).optional(),
-  image_file_id: z.string().uuid().optional(),
-  scan_batch_id: z.string().uuid().optional(),
-  scan_area: z.string().max(200).optional(),
+  shared_title: optionalField(z.string().trim().min(1).max(300)),
+  image_file_id: optionalUuid(),
+  scan_batch_id: optionalUuid(),
+  scan_area: optionalText(200),
   /** The picture arrived by email (an attachment the mail door filed), not
    *  from the person's camera or upload. Stamped on the row as `arrived_by`:
    *  an emailed image is never kept as an example (photo-observation-gate). */
-  origin: z.enum(["email"]).optional(),
+  origin: optionalField(z.enum(["email"])),
   /** The active filing location ("bin") for this scan session — a
    *  core-locations node. Stamped on the item so confirm files the created
    *  entity into that location without re-picking. The active-bin pattern. */
-  target_location_id: z.string().uuid().optional(),
+  target_location_id: optionalUuid(),
   /** Scan-into-container: the active bin is a container ENTITY (a server asset,
    *  a machine) rather than a location. Confirm places the created item inside
    *  it (a placement) instead of stamping location_id. */
-  target_container_kind: z.string().max(120).optional(),
-  target_container_id: z.string().max(200).optional(),
-  capture_id: z.string().uuid().optional(),
+  target_container_kind: optionalText(120),
+  target_container_id: optionalText(200),
+  capture_id: optionalUuid(),
   /** Per-scan budget for the inline enrichment race. After this
    *  the response returns the bare row and enrichment continues
    *  detached. Default 12s. */
-  enrich_ms: z.number().int().positive().max(30_000).optional(),
+  enrich_ms: optionalField(z.number().int().positive().max(30_000)),
   /** The same picture was just added: add it again anyway. Without it, a
    *  repeat within the window answers with the existing item (#3852). */
   allow_duplicate: z.boolean().optional(),
@@ -817,11 +823,11 @@ inboxRouter.post(
 
 const NoteBody = z.object({
   text: z.string().trim().min(1).max(2000),
-  scan_batch_id: z.string().uuid().optional(),
-  scan_area: z.string().max(200).optional(),
+  scan_batch_id: optionalUuid(),
+  scan_area: optionalText(200),
   /** Explicit pre-filed location (the picker, or an integration that already
    *  resolved one). When set it wins over text extraction. */
-  target_location_id: z.string().uuid().optional(),
+  target_location_id: optionalUuid(),
 });
 
 /** A typed thing into the inbox: the note door's whole shaping (a place
@@ -954,14 +960,14 @@ const AssistantBody = z.object({
   name: z.string().trim().min(1).max(300),
   /** A barcode, ISBN, model or part number. A product code is stamped as
    *  the row's code, as a typed one is; anything else is kept as a note. */
-  identifier: z.string().trim().min(1).max(200).optional(),
+  identifier: optionalField(z.string().trim().min(1).max(200)),
   /** A page about it, for the agent that found one. */
-  url: z.string().url().max(2000).optional(),
+  url: optionalField(z.string().url().max(2000)),
   /** A photo uploaded first through core-files. */
-  image_file_id: z.string().uuid().optional(),
+  image_file_id: optionalUuid(),
   /** Where it is, in words ("in the garage") or as a place's id. */
-  place: z.string().trim().min(1).max(200).optional(),
-  location_id: z.string().uuid().optional(),
+  place: optionalField(z.string().trim().min(1).max(200)),
+  location_id: optionalUuid(),
   /** Field values the agent already knows, by the table's field names (or
    *  their labels). Placed on the table the thing is routed to; each one is
    *  reported back as kept or refused with the reason (#4537). */
@@ -971,8 +977,8 @@ const AssistantBody = z.object({
   roles: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
   /** The list it belongs in, said by the person ("3D Printers", or a kind id
    *  like 3d-printers:item): their answer, so routing honours it. */
-  goes_to: z.string().trim().min(1).max(200).optional(),
-  quantity: z.number().positive().max(1_000_000).optional(),
+  goes_to: optionalField(z.string().trim().min(1).max(200)),
+  quantity: z.number().positive().max(1_000_000).optional(), // none-refused-ok: a column that cannot hold null
   /** File it now. Absent or false: it stays in the inbox for its person. */
   file: z.boolean().optional(),
   /** File it even though the workspace already tracks the same thing. */
@@ -1023,6 +1029,20 @@ inboxRouter.post(
     // maker it names is read by the same-maker rule. When no list keeps them
     // all, they are placed after the route, as before.
     const menu = await assembleScanMenu(baseUrl, ctx.org.slug, token, ctx.org.id).catch(() => [] as ScanMenuEntry[]);
+    // A category that names an installed list says where the thing goes: a
+    // book said to be "Books" goes to the Bookshelf, as a scanned book does.
+    // Read as a field it routed by the field's NAME, to whichever table has
+    // a "category" (Records), and never by what it named (#6037). The value
+    // is the list's name, and inside that list it says nothing more.
+    if (!body.goes_to && body.fields) {
+      const axes = new Set(["category", ...menu.map((e) => e.category_field?.name ?? "")].filter(Boolean).map((n) => n.toLowerCase()));
+      const key = Object.keys(body.fields).find((k) => axes.has(k.toLowerCase()));
+      const named = key ? listNamedByCategory(body.fields[key], menu) : null;
+      if (key && named) {
+        body.goes_to = named.label;
+        delete body.fields[key];
+      }
+    }
     const early = (body.fields && Object.keys(body.fields).length) ? await givenValuesTable(ctx.org.id, menu, body.fields, body.roles) : null;
     const admitted = await admitTypedNote(req, {
       text: body.place && !body.location_id ? `${body.name} in ${body.place}` : body.name,
@@ -1867,9 +1887,9 @@ const ReceiptBody = z.object({
   file_id: z.string().uuid(),
   /** Where the receipt came from — "email" makes the inbox session read
    *  "Receipt · emailed <when>". Absent → an ordinary in-app upload. */
-  origin: z.enum(["email", "upload"]).optional(),
+  origin: optionalField(z.enum(["email", "upload"])),
   /** The address an emailed receipt came from; kept on the session. */
-  from: z.string().trim().max(320).optional(),
+  from: optionalField(z.string().trim().max(320)),
   /** The photo the email printed in each line's row, with that row's words
    *  (emailLineImages, #5350). Kept on the session so a re-read keeps them. */
   line_images: z
@@ -1888,14 +1908,14 @@ const ReceiptBody = z.object({
    *  because there was nothing left to triage. So: the order and all its lines
    *  are recorded as usual, the item is linked to it, and NO inbox rows are
    *  created. Nothing needs triaging; it already was. */
-  target_item_id: z.string().uuid().optional(),
+  target_item_id: optionalUuid(),
   /** The caller will wait for the hosted identify's queue (barcode-
    *  intelligence #43): when every engine is busy and the workspace's own AI
    *  cannot read it either, answer 202 with the job instead of failing. Only
    *  the photographed-receipt route sends it; it owns a row to wait on. */
   queue_if_busy: z.boolean().optional(),
   /** A queued read that finished: its answer is collected, not asked again. */
-  hosted_job_id: z.string().uuid().optional(),
+  hosted_job_id: optionalUuid(),
   /** The email this came in was an order confirmation: an online order, on
    *  its way rather than in hand (the email ingest knows the subject). */
   order_confirmation: z.boolean().optional(),
@@ -1984,23 +2004,7 @@ export async function fileReceiptRead(
     }
   }
   if (dupKey && !parsed.data.force) {
-    const prior = await db
-      .selectFrom("core_scan_batches as b")
-      .select(["b.id", "b.label", "b.vendor", "b.order_ref"])
-      .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${dupKey.vendor}`)
-      .where("b.order_ref", "=", dupKey.orderRef)
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom("core_scan_inbox_items as i")
-            .select("i.id")
-            .whereRef("i.scan_batch_id", "=", "b.id")
-            .where("i.status", "!=", "discarded"),
-        ),
-      )
-      .orderBy("b.created_at", "desc")
-      .limit(1)
-      .executeTakeFirst();
+    const prior = await priorSessionOfOrder(db as never, dupKey, contentKey);
     if (prior) {
       const live = await db
         .selectFrom("core_scan_inbox_items")
@@ -2626,6 +2630,8 @@ const ListQuery = z.object({
 const TRIAGE_SCAN_CAP = 1000;
 
 interface BatchLabel {
+  /** The purchase this session's order was filed on, so its header can open it. */
+  purchases_order_id: string | null;
   label: string | null;
   origin: string | null;
   /** Who an emailed receipt came from, and the shop the read found: the
@@ -2674,7 +2680,7 @@ async function batchLabelsFor(
   const lines = await sessionLines(db, batchIds);
   for (const b of await db
     .selectFrom("core_scan_batches")
-    .select(["id", "label", "origin", "origin_from", "vendor", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase"])
+    .select(["id", "label", "origin", "origin_from", "vendor", "source_file_id", "order_ref", "tracking_number", "shipment_state", "shipment_description", "shipment_location", "read_state", "read_failure", "read_started_at", "created_at", "date_convention", "date_decided_by", "date_printed", "pending_purchase", "purchases_order_id"])
     .where("id", "in", batchIds)
     .execute()) {
     batches[b.id] = batchLabelOf(b, lines.get(b.id));
@@ -2706,9 +2712,11 @@ function batchLabelOf(b: {
   read_state: string | null; read_failure: unknown; read_started_at: Date | null; created_at: Date;
   date_convention?: string | null; date_decided_by?: string | null; date_printed?: string | null;
   pending_purchase?: unknown;
+  purchases_order_id?: string | null;
 }, lines: { pending: number; ever: number } = { pending: 0, ever: 0 }): BatchLabel {
   return {
     lines,
+    purchases_order_id: b.purchases_order_id ?? null,
     purchase_pending: !!pendingPurchaseOf(b.pending_purchase),
     date_convention: b.date_convention ?? null,
     date_decided_by: b.date_decided_by ?? null,
@@ -2857,7 +2865,7 @@ inboxRouter.get(
     // read one after the other, a receipt session marked read between the
     // items query and the sessions query showed up in neither (no lines yet
     // when the items were read, no longer "in flight" when the sessions were).
-    const { items, next_cursor, batches, sessions, total } = await readSnapshot(db, async (snap) => {
+    const { items, next_cursor, batches, sessions, total, splits } = await readSnapshot(db, async (snap) => {
       let query = snap
         .selectFrom("core_scan_inbox_items")
         .selectAll()
@@ -2878,6 +2886,9 @@ inboxRouter.get(
       const next_cursor = items.length === limit && last ? encodeCursor(last.created_at, last.id) : null;
 
       const batches = await batchLabelsFor(snap, items);
+      // The lines this page's parts came from (#6067): a split line is
+      // resolved and off the page, and its parts sit under it.
+      const splits = await splitParentsOf(snap as never, items);
       // Sessions with no rows on any page: a failed or in-flight receipt read.
       // First page only, unscoped, so they are seen once; a batch_id scope
       // asks for one session and gets its own state through `batches`.
@@ -2893,9 +2904,11 @@ inboxRouter.get(
         const row = await cq.executeTakeFirst();
         total = Number(row?.n ?? 0);
       }
-      return { items, next_cursor, batches, sessions, total };
+      return { items, next_cursor, batches, sessions, total, splits };
     });
-    res.json({ items: await servedAll(req, items), batches, sessions, next_cursor, ...(total !== undefined ? { total } : {}) });
+    const parentRows = (splits.parents.length ? await servedAll(req, splits.parents as never) : []) as unknown as Array<{ id: string }>;
+    const split_parents = Object.fromEntries(Object.values(splits.summaries).map((s) => [s.id, { ...s, row: parentRows.find((r) => r.id === s.id) ?? null }]));
+    res.json({ items: await servedAll(req, items), batches, sessions, split_parents, next_cursor, ...(total !== undefined ? { total } : {}) });
   }),
 );
 
@@ -3013,7 +3026,7 @@ export const PatchBody = z.object({
   send_drop_unmapped: z.boolean().optional(),
   send_unplaced: z.boolean().optional(),
   quantity: FiledQuantity.optional(),
-  name: z.string().min(1).max(160).optional(),
+  name: z.string().min(1).max(160).optional(), // none-refused-ok: a column that cannot hold null
   // Set/clear the filing location on an existing item (bulk "Set location" in
   // triage stamps the same value across a selection). null clears it.
   target_location_id: z.string().uuid().nullable().optional(),
@@ -3024,7 +3037,7 @@ export const PatchBody = z.object({
   reviewed: z.boolean().optional(),
   // "Not right": the name shown is wrong. It joins the turned-down list and
   // never comes back on its own; the row waits for a name (#3724).
-  reject_name: z.literal(true).optional(),
+  reject_name: optionalField(z.literal(true)),
   // "Not the same, keep separate": this scan is not the record the
   // matchmaker found. Stored against THAT record, so a re-run that finds a
   // different one asks again; false withdraws it.
@@ -3048,7 +3061,7 @@ export const PatchBody = z.object({
   fields: z.record(z.string().min(1).max(80), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()])).optional(),
   // The table the fields were typed for ("yarn:item"). Absent: the top
   // candidate's table at the time of the write.
-  fields_kind: z.string().max(120).optional(),
+  fields_kind: optionalText(120),
   // The category the person chose, by name, for a table that keeps its own
   // categories and so has no field to type it into (#3223). Kept beside
   // `fields` for the same table and read back as the top candidate's
@@ -3374,15 +3387,15 @@ export const ConfirmBody = z.object({
   /** Optional — when absent, routed from the identify's asset/part hint
    *  (suggested_metadata.entity_type): asset → assets:asset, else
    *  inventory:part. Both must be given together to override. */
-  target_module: z.string().min(1).max(80).optional(),
-  target_kind: z.string().min(1).max(80).optional(),
+  target_module: optionalField(z.string().min(1).max(80)),
+  target_kind: optionalField(z.string().min(1).max(80)),
   /** Name override. Falls back to suggested_name if absent. Accepts catalog
    *  length: provider titles are marketing copy (a real dimmer's is 206 chars)
    *  and the commit CLAMPS to the entity-name limit below - rejecting the
    *  whole commit because a catalog title is long turned "Add" into
    *  "bad request body" (reported 2026-08-03). */
-  name: z.string().min(1).max(2000).optional(),
-  location_id: z.string().uuid().optional(),
+  name: z.string().min(1).max(2000).optional(), // none-refused-ok: a column that cannot hold null
+  location_id: optionalUuid(),
   /** File it inside a thing that holds things (a Backpack) rather than a
    *  place. Stamped on the item as its container, so the commit places the
    *  new record inside it, the way a scan into an active container does. */
@@ -3398,7 +3411,7 @@ export const ConfirmBody = z.object({
    *  (inventory's tree): it has no custom field to carry a name, so without
    *  this a changed or batch-agreed category could not reach it. A value in
    *  the table's own category slot (a field, or a picked category_id) wins. */
-  category: z.string().max(200).optional(),
+  category: optionalText(200),
   /** Tags to attach to the created entity (session-theme "tag them all", or a
    *  manual pick). Union'd with any pending_tags stashed on the item. */
   tags: z.array(z.string().min(1).max(60)).max(20).optional(),
@@ -3406,20 +3419,20 @@ export const ConfirmBody = z.object({
    *  instance of inventory) instead of the module's default instance. The
    *  workspace-level instance slug; the platform's instance router resolves
    *  it to (module, instance) and scopes the create. Absent → default. */
-  instance: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80).optional(),
+  instance: optionalField(z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(80)),
   /** Platform-admin only: also record this commit as a matchmaker eval case
    *  (the corrected answer is the ground truth). Best-effort; ignored for
    *  non-admins. See docs/operations/ai-prompt-eval-harness.md (P2). */
   save_eval_case: z.boolean().optional(),
   /** Optional note / hard-case label stored on the captured eval case. */
-  eval_note: z.string().max(200).optional(),
+  eval_note: optionalText(200),
 });
 
 const FileSelectedBody = z.object({
   ids: z.array(z.string().uuid()).min(1).max(200),
-  target_module: z.string().min(1).optional(),
-  target_kind: z.string().min(1).optional(),
-  instance: z.string().min(1).optional(),
+  target_module: optionalField(z.string().min(1)),
+  target_kind: optionalField(z.string().min(1)),
+  instance: optionalField(z.string().min(1)),
   /** File a thing the workspace already tracks as a second record anyway. */
   allow_duplicate: z.boolean().optional(),
 });
@@ -3574,8 +3587,8 @@ inboxRouter.post(
     // Route to the right kind: explicit choice wins, else the identify's
     // asset/part hint (asset → assets:asset, else inventory:part).
     const target = resolveTargetKind(
-      parsed.data.target_module,
-      parsed.data.target_kind,
+      parsed.data.target_module ?? undefined,
+      parsed.data.target_kind ?? undefined,
       (meta as { entity_type?: unknown }).entity_type,
     );
     // A collection's kind arrives whole ("groceries:item"): prefixing the
@@ -3707,10 +3720,13 @@ inboxRouter.post(
     } catch {
       /* advisory — a confirm must never fail over provenance */
     }
-    const scannedQty = filedQuantityOf(row.quantity);
+    // An own copy files the count it had, 0 included; anything else a scan
+    // or an arrival from outside counted, never below one (filed-quantity.ts).
+    const ownCopy = isOwnCopy(row.suggested_metadata);
+    const scannedQty = ownCopy ? copiedCountOf(row.quantity) : filedQuantityOf(row.quantity);
     const qty =
       parsed.data.quantity ??
-      (targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
+      (ownCopy ? scannedQty : targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
     // The batches its boxes printed, filed as lots on the record (#5764).
     const lots =
       resolvedTarget && scanTarget.adjustAction && scanTarget.qtyField && typeof qty === "number" && qty > 0 ? await rowLots(db, row, qty).catch(() => []) : [];
@@ -5388,43 +5404,6 @@ async function stampScanHistoryOutcome(
   }
 }
 
-async function appendScanHistory(
-  db: ReturnType<typeof tenantDb>,
-  id: string,
-  entry: {
-    action: "rerun" | "replay" | "rerun-hint" | "hint" | "wrong" | "enrich" | "confirm" | "combine" | "uncombine" | "attached" | "split" | "unsplit" | "unconfirm" | "undo-rerun" | "barcode" | "confirm-guess" | "reject-guess" | "crop-again";
-    note?: string | null;
-  },
-): Promise<void> {
-  try {
-    const cur = await db
-      .selectFrom("core_scan_inbox_items")
-      .select("suggested_metadata")
-      .where("id", "=", id)
-      .executeTakeFirst();
-    const meta = (cur?.suggested_metadata ?? {}) as Record<string, unknown>;
-    const prev = Array.isArray((meta as { history?: unknown }).history)
-      ? ((meta as { history: unknown[] }).history as unknown[])
-      : [];
-    const e: Record<string, unknown> = { action: entry.action, at: new Date().toISOString() };
-    if (entry.note && entry.note.trim()) e.note = entry.note.trim();
-    // Write ONLY the history key, DB-side. This used to write the whole bag
-    // back from the copy read above - a lost update that destroyed anything
-    // committed in between. The replay handler writes `pre_rerun` (the
-    // before-image that powers "Put it back", including the user's chosen
-    // catalog photo) and then calls this to record the replay: the history
-    // entry deleted the snapshot of the very action it was recording, so the
-    // undo button never appeared and a hand-picked photo was unrecoverable
-    // (reported 2026-08-01). `catalog_image_user_set` went the same way.
-    await db
-      .updateTable("core_scan_inbox_items")
-      .set({ suggested_metadata: mergeMeta({ history: [...prev, e].slice(-8) }) as never })
-      .where("id", "=", id)
-      .execute();
-  } catch {
-    /* best-effort */
-  }
-}
 
 // ─────────────────────── POST /inbox/:id/as-receipt ───────────────
 //
@@ -5486,7 +5465,7 @@ const RerunBody = z.object({
    *  persisted into suggested_metadata.user_hint, which rides
    *  lookup_metadata into the matchmaker prompt as the authoritative
    *  correction. */
-  hint: z.string().trim().max(500).optional(),
+  hint: optionalField(z.string().trim().max(500)),
   /** "This is wrong" — re-resolve across ALL sources + the web, treat the result
    *  as authoritative (distrust the flagged answer), and write the correction
    *  back to BIdb. */
@@ -5498,12 +5477,12 @@ const RerunBody = z.object({
    *  force the VISION path even when a (wrong) barcode is already on the item. The
    *  phone's "Not it — photograph it": a junk/non-product barcode that no source
    *  can fix gets identified from the package instead. */
-  image_file_id: z.string().uuid().optional(),
+  image_file_id: optionalUuid(),
   /** The CORRECTED barcode - typed into the barcode editor, or read off the
    *  label after the camera/vision got a digit wrong. Replaces `barcode_text`
    *  and the lookup re-runs on the corrected code. Spaces/dashes tolerated;
    *  rejected unless it normalizes to a real barcode length. */
-  barcode: z.string().trim().max(40).optional(),
+  barcode: optionalField(z.string().trim().max(40)),
   /** REPLAY: re-run the pipeline without spending a token. Every AI stage is
    *  served from the cache, and a stage with no cached reply is SKIPPED (it
    *  degrades exactly as it would with no provider — the matchmaker falls back to
@@ -6239,7 +6218,7 @@ inboxRouter.put(
 // across every source and writes the correction back to the barcode database.
 const GlanceAnswerBody = z.object({
   answer: z.enum(["yes", "no"]),
-  hint: z.string().trim().max(500).optional(),
+  hint: optionalField(z.string().trim().max(500)),
 });
 
 // AI-REACH: exempt — a yes/no a person taps with the item in their hand, about a photo only they can see; the assistant reaches the inbox through list_scan_inbox and corrects a name through rerun-ai
@@ -6359,16 +6338,16 @@ inboxRouter.post(
 // a caller that sends none. Each URL is SSRF-guarded at fetch time
 // (fetchImageBase64), the same trust level as POST /catalog-image's url.
 const RankPhotoBody = z.object({
-  q: z.string().max(200).optional(),
+  q: optionalText(200),
   candidates: z
     .array(
       z.object({
         url: z.string().url().max(2000),
-        thumb: z.string().max(2000).optional(),
-        title: z.string().max(300).optional(),
-        source: z.string().max(200).optional(),
-        width: z.number().int().positive().optional(),
-        height: z.number().int().positive().optional(),
+        thumb: optionalText(2000),
+        title: optionalText(300),
+        source: z.string().max(200).optional(), // none-refused-ok: a column that cannot hold null
+        width: optionalField(z.number().int().positive()),
+        height: optionalField(z.number().int().positive()),
       }),
     )
     .max(24)
@@ -6417,8 +6396,8 @@ inboxRouter.post(
       thumb: c.thumb ?? "",
       title: c.title ?? "",
       source: c.source ?? "",
-      width: c.width,
-      height: c.height,
+      width: c.width ?? undefined,
+      height: c.height ?? undefined,
     }));
     const pool =
       sent.length > 0
@@ -7468,7 +7447,7 @@ const AttachBody = z.object({
   entity_id: z.string().min(1),
   /** Instance slug when the entity lives in a skinned instance (the bare
    *  module route filters to the default instance and would 404). */
-  instance: z.string().optional(),
+  instance: optionalField(z.string()),
   /** `replace`: the one you had ran out and this is its replacement. The
    *  count is SET to what was scanned rather than added to, and the ledger
    *  hears the old one consumed (or discarded, when `resolution` says it went
@@ -7492,25 +7471,25 @@ const AttachBody = z.object({
    *  default: silence beats a guess. */
   cadence: z
     .object({
-      context: z.enum(["normal", "faster", "bulk", "one_off"]).optional(),
-      resolution: z.enum(["over_buy", "consumed", "discarded"]).optional(),
+      context: optionalField(z.enum(["normal", "faster", "bulk", "one_off"])),
+      resolution: optionalField(z.enum(["over_buy", "consumed", "discarded"])),
     })
     .optional(),
   /** For mode=move: target location; defaults to the item's own
    *  target_location_id (the active bin it was scanned into). */
-  location_id: z.string().optional(),
+  location_id: optionalField(z.string()),
   /** How many were bought, for add-qty / replace, when the door says so (a
    *  File everything line, a queue's count); else the row's own. Absent from
    *  this schema, a door's count was stripped and the row's filed instead. */
   qty: FiledQuantity.optional(),
   /** `count`: what is in your hands, signed (+3 arrived, -1 used up). The
    *  card's Change by. Exactly one of change / total. */
-  change: z.number().int().min(-1_000_000).max(1_000_000).optional(),
+  change: optionalField(z.number().int().min(-1_000_000).max(1_000_000)),
   /** `count`: the count as it actually is, the card's Set total. Filed in
    *  the ledger as a correction, never as use or a purchase. */
-  total: z.number().int().min(0).max(1_000_000).optional(),
+  total: optionalField(z.number().int().min(0).max(1_000_000)),
   /** `count`: why, for the ledger line. A chip on the card, never asked. */
-  reason: z.enum(SCAN_COUNT_REASONS).optional(),
+  reason: optionalField(z.enum(SCAN_COUNT_REASONS)),
 });
 
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
@@ -8029,7 +8008,7 @@ inboxRouter.post(
     // never rejects, and the subscriber swallows its own failures.
     const cadenceEvents = buildCadenceEvents({
       mode: parsed.data.mode,
-      cadence: parsed.data.cadence,
+      cadence: parsed.data.cadence && { context: parsed.data.cadence.context ?? undefined, resolution: parsed.data.cadence.resolution ?? undefined },
       kind: baseKind,
       entityId: parsed.data.entity_id,
       added: counting ? counted : qtyAdded,
@@ -8082,11 +8061,11 @@ inboxRouter.get(
 const BinAdjustBody = z.object({
   kind: z.string().min(1),
   entity_id: z.string().min(1),
-  instance: z.string().optional(),
+  instance: optionalField(z.string()),
   /** Signed change (+10 / −5) … */
-  delta: z.number().int().min(-100_000).max(100_000).optional(),
+  delta: z.number().int().min(-100_000).max(100_000).optional(), // none-refused-ok: a column that cannot hold null
   /** … or an absolute recount. Exactly one of delta/set. */
-  set: z.number().int().min(0).max(1_000_000).optional(),
+  set: optionalField(z.number().int().min(0).max(1_000_000)),
 });
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
@@ -8599,6 +8578,7 @@ inboxRouter.post(
         suggested_metadata: mergeMeta({
           split_into: children.map((c) => (c as { id: string }).id),
           split_prior_notes: row.ai_notes ?? null,
+          split_how: "photo",
         }) as never,
         ai_notes: `Split into ${countOf(children.length, "item")}.`,
         resolved_at: new Date(),
@@ -8727,9 +8707,9 @@ const MergeBatchesBody = z.object({
 const AutofileBody = z.object({
   confirm: z.boolean().optional(),
   /** Limit to one receipt/session. Omitted, the whole pending inbox. */
-  batch_id: z.string().optional(),
+  batch_id: optionalField(z.string()),
   /** Passed to the entity write so a date lands on the right calendar day. */
-  timezone: z.string().optional(),
+  timezone: optionalField(z.string()),
   /** On confirm: act ONLY on these items. The sheet sends the ids it showed,
    *  so a run never writes what nobody looked at. The dry run used to return
    *  the first 100 plans while confirm acted on every pending row, so a
@@ -8749,7 +8729,7 @@ const AutofileBody = z.object({
          *  means for it, the same answers the card and the detail offer
          *  (useRepurchaseChoices). add = +1; replaced = the old one ran out,
          *  this is what there is now; went_bad = the old one was thrown out. */
-        restock: z.enum(RESTOCK_CHOICES).optional(),
+        restock: optionalField(z.enum(RESTOCK_CHOICES)),
       }),
     )
     .max(500)
@@ -9077,7 +9057,7 @@ async function pendingThemeItems(
 // pending_tags (attached to the entity at confirm) + a category hint the
 // confirm form pre-fills. No entity is created here.
 const ApplyThemeBody = z.object({
-  tag: z.string().min(1).max(60).optional(),
+  tag: optionalField(z.string().min(1).max(60)),
   tag_item_ids: z.array(z.string().uuid()).max(200).default([]),
   category: z.object({ value: z.string().min(1).max(80), item_ids: z.array(z.string().uuid()).max(200) }).optional(),
 });
@@ -9126,7 +9106,7 @@ inboxRouter.post(
 const CombineBody = z.object({
   ids: z.array(z.string()).min(2).max(50),
   /** Which item's name/photo to keep; defaults to the first id. */
-  keep_id: z.string().optional(),
+  keep_id: optionalField(z.string()),
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
@@ -9973,7 +9953,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // A place read that fails leaves no stamp, as a failed match does: the
     // place-less stamp it fell back to offered "+1 more" into whichever row
     // matched first, a place nobody chose (#4985).
-    const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row)).catch(() => null);
+    const trackedStamp = await trackedMatchStampAt(opts.orgId, tracked, scanPlaceOf(row), row.suggested_metadata).catch(() => null);
     // What the workspace already knows outranks what the model guessed: the
     // table the record this thing IS lives in, else the table its twins in
     // the inbox are headed to, the most specific of them (kept-route.ts,
@@ -10049,6 +10029,23 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       },
       (values, name, roles) => withSellersApart(values, name, roles) as typeof values,
     );
+
+    // A fact about the model is the model's, not the one model call this row
+    // got: its empty model fields fill from what the workspace already knows
+    // about this model, what it teaches is kept, and the model's other
+    // waiting rows get it too (model-facts.ts, #6013). A unit's own facts
+    // (its seller, serial, price) never move.
+    const modelFacts = await applyModelFacts(opts.orgId, dbAfter as never, {
+      itemId: opts.itemId,
+      name: adoptName ? candName : row.suggested_name,
+      candidates: candidates as never,
+      provenance: fieldProvenance as Record<string, unknown>,
+      meta: row.suggested_metadata,
+    }).catch((err) => {
+      console.error(`[core-scan] ${opts.itemId}: model facts not applied:`, (err as Error).message);
+      return null;
+    });
+    if (modelFacts?.filled.length || modelFacts?.spread) console.log(`[core-scan] ${opts.itemId}: model facts filled ${modelFacts.filled.join(", ") || "none"}; learned ${modelFacts.learned.join(", ") || "none"}, filled into ${modelFacts.spread} other row(s)`);
 
     // A row the lookup could not name stays nameless (adopt-name.ts, guard
     // 0): the route and the fields are stored, the invented name on each

@@ -30,7 +30,7 @@ import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { ChevronDown, Bot } from "lucide-react";
 import { api } from "../lib/api";
-import { CORNER_STACK, HIDE_WHEN_OVERLAY_OPEN, FloatingChrome, PopoverLayer } from "@cobblr/platform-web";
+import { CORNER_STACK, HIDE_WHEN_OVERLAY_OPEN, FloatingChrome, PopoverLayer, SegmentedChoice } from "@cobblr/platform-web";
 import {
   useToast, usePrintProgress, useBridgeLive, BridgePrinterCard, allowLocalAccess,
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus,
@@ -353,23 +353,13 @@ function Row({
         </span>
       </div>
       {on && control.control === "switch-segment" && segment && opts.length > 0 && (
-        <div className="mt-2 ml-[42px] inline-flex rounded-md border border-line dark:border-slate-700 overflow-hidden">
-          {opts.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => segment.onChange(o.value)}
-              className={
-                "px-2.5 py-0.5 text-[11px] transition " +
-                (segment.value === o.value
-                  ? "bg-cobble-600 text-white"
-                  : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100")
-              }
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        <SegmentedChoice
+          className="mt-2 ml-[42px]"
+          label={control.label}
+          value={segment.value}
+          onChange={segment.onChange}
+          options={opts.map((o) => ({ value: o.value, label: o.label }))}
+        />
       )}
       {detail && <div className="mt-2 flex flex-col gap-1.5">{detail}</div>}
       {on && control.detail && (

@@ -13,6 +13,7 @@
 // of its own when the kind has one (the `seller` role): the host passes it as
 // `detail`, and the picker writes there instead of the note.
 
+import { compareChoices } from "@cobblr/platform-contract/choice-order";
 import { useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
@@ -177,5 +178,5 @@ export function detailOptions(details: Record<string, UsedValueBody[]> | undefin
       rest.push({ value: o.value });
     }
   }
-  return [...own, ...rest.sort((a, b) => a.value.localeCompare(b.value))];
+  return [...own, ...rest.sort((a, b) => compareChoices(a.value, b.value))];
 }

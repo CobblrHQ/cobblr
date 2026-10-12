@@ -34,7 +34,7 @@ export function ChangeEmailSection({ email }: { email: string }) {
     <div className="block" data-testid="change-email">
       <div className="text-xs text-muted mb-1">Email</div>
       <div className="flex items-center gap-2">
-        <input
+        <input aria-label="Email"
           type="email"
           value={email}
           readOnly

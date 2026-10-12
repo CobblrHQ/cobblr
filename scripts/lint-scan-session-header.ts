@@ -312,10 +312,12 @@ for (const m of headerJsx.matchAll(/className=[{"`][^"`}]*\babsolute\b/g)) {
 
 const barAt = src.indexOf(ANCHOR);
 const headerBar =
-  barAt === -1 ? null : src.slice(barAt, barAt + 900).match(/className="flex [^"]*w-full items-center[^"]*"/);
+  // A string or a template literal: the bar's box sizes differ between the
+  // list and a session's own page (#5931), so its classes are a template.
+  barAt === -1 ? null : src.slice(barAt, barAt + 1400).match(/className=(?:"|\{`)flex [^"`]*w-full items-center[^"`]*(?:"|`)/);
 if (!headerBar) {
   errors.push(`could not find the session header bar in ${REL} - if its classes changed, update this lint`);
-} else if (/(^|\s)(max-sm:)?flex-wrap(\s|")/.test(headerBar[0])) {
+} else if (/(^|\s)(max-sm:)?flex-wrap(\s|"|`)/.test(headerBar[0])) {
   // One clipping row at every width, the phone included (#2982): the name
   // truncates, a control never wraps. Any flex-wrap on the bar is the drift.
   errors.push("the session header bar is one line at every width - no flex-wrap, not even under sm; the name truncates instead (#2982)");

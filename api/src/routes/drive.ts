@@ -23,6 +23,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { driveHub } from "../platform/drive-hub.js";
 import type { DriveMode } from "../db/schema.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const driveRouter = Router({ mergeParams: true });
 
@@ -231,10 +232,10 @@ driveRouter.post("/:slug/drive/driver/navigate", requireAuth, withTenant, async 
 // Visual presence (Feature 3 polish) — show a cursor / click ripple / element
 // highlight on the driven tab so the user can SEE where Claude is pointing.
 const PresentBody = z.object({
-  selector: z.string().max(400).optional(),
-  x: z.number().optional(),
-  y: z.number().optional(),
-  label: z.string().max(120).optional(),
+  selector: optionalText(400),
+  x: optionalField(z.number()),
+  y: optionalField(z.number()),
+  label: z.string().max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   ripple: z.boolean().optional(),
 });
 // UI-REACH: the driver's side of a drive session (an MCP client); the tab being driven is the screen

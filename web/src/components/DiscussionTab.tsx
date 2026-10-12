@@ -496,7 +496,11 @@ export function DiscussionTab() {
               thread). The `settled` badge on the inbox row has had no way to be
               set until this control existed. */}
           {canResolve && conv.data?.conversation && (
-            <button
+            <button aria-label={
+                resolved
+                  ? "Settled. Click to reopen."
+                  : "Mark this conversation settled"
+              }
               type="button"
               onClick={() => resolve.mutate(!resolved)}
               disabled={resolve.isPending}
@@ -516,7 +520,11 @@ export function DiscussionTab() {
               {resolved ? <RotateCcw size={14} /> : <CheckCircle2 size={14} />}
             </button>
           )}
-          <button
+          <button aria-label={
+              following
+                ? "You hear about new comments here. Click to stop."
+                : "Hear about new comments on this record"
+            }
             type="button"
             onClick={() => follow.mutate(!following)}
             disabled={follow.isPending}
@@ -553,6 +561,7 @@ export function DiscussionTab() {
               open Cobblr.
             </p>
             <button
+              title="Dismiss"
               type="button"
               onClick={() => {
                 localStorage.setItem("cobblr.discussion.discord-nudge", "dismissed");
@@ -661,7 +670,7 @@ export function DiscussionTab() {
                     // stays a token. Enter saves, Escape cancels — the same keys
                     // the composer uses, so muscle memory carries over.
                     <div className="flex flex-col gap-1.5">
-                      <textarea
+                      <textarea aria-label="Edit comment"
                         value={editDraft}
                         autoFocus
                         onChange={(e) => setEditDraft(e.target.value)}
@@ -785,6 +794,7 @@ export function DiscussionTab() {
                 })()}
               </span>
               <button
+                title="Cancel reply"
                 type="button"
                 onClick={() => setReplyTo(null)}
                 className="shrink-0 text-faint hover:text-content dark:hover:text-mortar-200 transition"
@@ -857,6 +867,7 @@ export function DiscussionTab() {
             )}
             </div>
             <button
+              title="Post comment"
               type="button"
               onClick={send}
               disabled={!draft.trim() || post.isPending}

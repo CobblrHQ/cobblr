@@ -4,7 +4,8 @@
 // one tap: onto the list this thing last went on, or, the first time, a choice
 // of list (or a new one). It is the Lists module's own action
 // (lists:add-item), so the button shows only where that action exists, which
-// is where Lists is on; nothing is added until someone presses it.
+// is where Lists is on; nothing is added until someone presses it. The line
+// it makes restocks the record when checked off.
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -30,7 +31,9 @@ export function AddToListButton({ kind, id, compact }: { kind: string; id: strin
   async function add(args: Record<string, unknown>) {
     setBusy(true);
     try {
-      const run = await runAction({ actionId: ADD_ITEM, entityKind: kind, entityId: id, args });
+      // Put on the list to buy again: checking it off adds it back to stock,
+      // and the line says so before it is checked (#6062).
+      const run = await runAction({ actionId: ADD_ITEM, entityKind: kind, entityId: id, args: { ...args, restocks: true } });
       const r = (run.result ?? {}) as AddResult;
       if (r.needs_list) {
         setChoices(r.lists ?? []);

@@ -64,6 +64,7 @@ import type { PlanStepBefore } from "@cobblr/platform-contract";
 import { WHOLE, cardsOf, planTitle, withCards, type Card } from "./one-plan.js";
 import { forAPerson } from "./says-something.js";
 import { insteadList, listMadeBy, mayPassOnRetry, missingList, orderWrites, personReason, retryAfter, saidWhatFailed, stepSaid } from "./failed-steps.js";
+import { optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 /** ToolCall → the ledgered write request shape (null = not a known write). */
 /** The writes a tool call MEANS — one for a single write, many for a bulk one.
@@ -744,9 +745,9 @@ const ChatBody = z.object({
   selection: z
     .object({
       label: z.string().min(1).max(200),
-      kind: z.string().max(120).optional(),
+      kind: z.string().max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
       ids: z.array(z.string().max(64)).max(200).optional(),
-      text: z.string().max(2000).optional(),
+      text: z.string().max(2000).optional(), // none-refused-ok: it fills the prompt's typed selection, which takes text or nothing
     })
     .optional(),
 });
@@ -1834,7 +1835,7 @@ chatRouter.get(
 // back-compat (false → off, true → ask) and kept in sync for old readers.
 const PrefsBody = z.object({
   read_tools: z.boolean(),
-  write_mode: z.enum(["off", "ask", "auto"]).optional(),
+  write_mode: z.enum(["off", "ask", "auto"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   write_tools: z.boolean().optional(),
   // The model pill. Omitted = leave as is; null = back to the workspace
   // default. A choice is a provider_id OR a credential_id, plus a model.
@@ -2172,11 +2173,11 @@ const ExecBody = z.object({
   // The offer being confirmed. Its stored plan is what runs, never the copy
   // the browser sends back; the copy stays accepted for a panel loaded before
   // offers were kept, and for callers (the MCP server) that make none.
-  offer_id: z.string().uuid().optional(),
+  offer_id: optionalUuid(),
   // What the user asked, so a CONFIRMED write is a worked example too. The
   // widget knows it; the server cannot, because a proposal arrives on its own
   // request. Optional, and only ever used as a label on the ledger row.
-  prompt: z.string().max(2000).optional(),
+  prompt: z.string().max(2000).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   proposal: ExecProposal.optional(),
 });
 

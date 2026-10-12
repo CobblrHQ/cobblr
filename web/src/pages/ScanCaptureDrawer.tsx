@@ -331,6 +331,7 @@ export function ScanCaptureDrawer({
             {failed.busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Retry
           </button>
           <button
+            title="Discard failed photo"
             type="button"
             onClick={failed.discard}
             aria-label="Discard failed photo"
@@ -435,6 +436,7 @@ export function ScanCaptureDrawer({
       <>
       {/* Not ready to file it? ✕ just hides — it stays pending in the inbox. */}
       <button
+        title="Hide this, leave it in the inbox"
         type="button"
         onClick={onDismiss}
         data-testid="capture-drawer-dismiss"
@@ -720,6 +722,7 @@ function ExpandedSheet({
             />
           ))}
           <button
+            title="Add another photo"
             type="button"
             onClick={onAddPhoto}
             data-testid="capture-sheet-addphoto"
@@ -866,6 +869,7 @@ function GalleryTile({
   return (
     <div className="relative shrink-0">
       <button
+        title={primary ? "Cover photo" : "Make this the cover"}
         type="button"
         disabled={primary || busy}
         onClick={onMakeCover}
@@ -879,6 +883,7 @@ function GalleryTile({
       </button>
       {!primary && onRemove && (
         <button
+          title="Remove this photo"
           type="button"
           onClick={onRemove}
           disabled={busy}

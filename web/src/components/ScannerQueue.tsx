@@ -22,7 +22,7 @@ import { ArrowRight, Loader2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { useNavigate } from "react-router-dom";
-import { api, type ScanInboxItem, type ScannerQueueSummary } from "../lib/api";
+import { api, type AutofileResult, type ScanInboxItem, type ScannerQueueSummary } from "../lib/api";
 import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { CaptureTile } from "./CaptureTile";
 
@@ -50,6 +50,8 @@ export interface ScannerQueueState {
   groups: ScanGroup[];
   /** Scans nothing here can place: unmatched, or still being read. */
   residual: number;
+  /** Scans the Inbox holds for a person (a doubtful match, a pack): never offered. */
+  held: number;
   /** The scans the groups account for (what the put-away nag leaves out). */
   offered: number;
 }
@@ -69,7 +71,7 @@ export function queueFromServer(summary: ScannerQueueSummary, page: readonly Sca
     ids: g.item_ids,
     preview: g.item_ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])),
   }));
-  return { total: summary.scanned_total, groups, residual: summary.residual, offered: summary.offered };
+  return { total: summary.scanned_total, groups, residual: summary.residual, held: summary.held ?? 0, offered: summary.offered };
 }
 
 const EMPTY: ScannerQueueSummary = { scanned_total: 0, groups: [], residual: 0, offered: 0 };
@@ -98,27 +100,28 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
   const toast = useToast();
   const navigate = useNavigate();
   const materialize = useMaterializeCapture(slug);
-  // "Add all N to <existing table>": sequential confirms (small groups; no bulk
-  // endpoint needed). A scan that re-buys a record already in the table adds
-  // to it, as its card's +1 more does: confirming it made a second milk
-  // beside the first (#3707).
+  // "Add all N to <existing table>" is the Inbox's review plan, confirmed for
+  // exactly these ids: the same rule decides what is added, what adds to a
+  // record you already have (+1 more, never a second milk, #3707) and what is
+  // left for you (#5939). The server re-checks each row, so a match filed from
+  // elsewhere since this card loaded is reported, never acted on blind.
   const confirmGroup = useMutation({
     mutationFn: async (g: { label: string; target: { module: string; kind: string; instance?: string }; ids: string[]; updates?: ScanGroup["updates"] }) => {
-      for (const id of g.ids) {
-        const to = g.updates?.[id];
-        if (to) await api.scanAttach(slug, id, { kind: to.kind, entity_id: to.id, ...(to.instance ? { instance: to.instance } : {}), mode: "add-qty" });
-        else await api.confirmScanItem(slug, id, { target_module: g.target.module, target_kind: g.target.kind, ...(g.target.instance ? { instance: g.target.instance } : {}) });
-      }
-      return g;
+      const r = await api.autofileScan(slug, {
+        confirm: true,
+        item_ids: g.ids,
+        seen: g.ids.map((id) => (g.updates?.[id] ? { item_id: id, action: "attach" as const, to_id: g.updates[id]!.id } : { item_id: id, action: "create" as const })),
+      });
+      return { g, r: r as AutofileResult };
     },
-    onSuccess: (g) => {
+    onSuccess: ({ g, r }) => {
       void qc.invalidateQueries();
-      toast.success(`Filed ${g.ids.length} into ${g.label}.`);
-      if (g.target.instance) navigate(`/instances/${g.target.instance}`);
+      toast.success(r.message);
+      if (g.target.instance && r.filed.length) navigate(`/instances/${g.target.instance}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't file those"),
   });
-  if (queue.groups.length === 0) return null;
+  if (queue.groups.length === 0 && queue.held === 0) return null;
   const shown = queue.groups.slice(0, cap);
   const more = queue.groups.length - shown.length;
   const moreScans = queue.groups.slice(cap).reduce((n, g) => n + g.ids.length, 0);
@@ -141,6 +144,12 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100">
                   <strong>{g.ids.length}</strong> look{g.ids.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
+                  {(() => {
+                    // A re-buy adds to the record you have; the card says so
+                    // rather than calling it one more new thing (#5939).
+                    const adds = g.ids.filter((id) => g.updates?.[id]).length;
+                    return adds ? <span className="text-muted">{` · ${adds === g.ids.length ? "adds" : `${adds} add`} to what you have`}</span> : null;
+                  })()}
                 </div>
                 {g.bundleId ? (
                   <button
@@ -180,6 +189,11 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
           );
         })}
       </ul>
+      {queue.held > 0 && (
+        <Link to="/scan" data-testid="scanner-queue-held" className="block rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-xs text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition">
+          {queue.held} {queue.held === 1 ? "needs" : "need"} a look before adding - review in the Scan Inbox →
+        </Link>
+      )}
       {more > 0 && (
         <Link to="/scan" data-testid="scanner-queue-more" className="block rounded-lg border border-line dark:border-slate-800 bg-surface dark:bg-slate-900 px-3 py-2 text-xs text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition">
           {moreScans} more scan{moreScans === 1 ? "" : "s"} fit {more} other table{more === 1 ? "" : "s"} - review in the Scan Inbox →

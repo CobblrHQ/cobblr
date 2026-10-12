@@ -9,7 +9,8 @@
 // action acts on the ids the same answer names, never on the length of
 // whatever page the browser happened to load.
 
-import type { ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
+import { scanRebuy, scanReviewReason, type ScanResolverTable } from "@cobblr/platform-contract/scan-triage";
+import { cardSaysOtherwise, planItem } from "./autofile.js";
 import { filingDestination, type DestinationRow } from "./destination.js";
 import type { LiveTable } from "./resolve-offers.js";
 
@@ -37,6 +38,9 @@ export interface ScannerQueue {
   groups: ScannerQueueGroup[];
   /** Scans nothing here can place: unmatched, or still being read. */
   residual: number;
+  /** Scans with a home that the Inbox holds for a person (a doubtful match,
+   *  a pack, a unit that does not add up): waiting, never in an Add all. */
+  held: number;
   /** The scans the groups account for (what the put-away card leaves out). */
   offered: number;
 }
@@ -46,14 +50,32 @@ export interface ScannerQueue {
  *  the raw route, a vinegar the card sent to Groceries sat in the Inventory
  *  group, and "Add all 54 to Inventory" filed it there (#3618). Typed
  *  captures (notes) are the panel's conversation, not this queue. */
-export function scannerQueue(rows: readonly QueueRow[], tables: readonly ScanResolverTable[] = [], liveNow?: readonly LiveTable[]): ScannerQueue {
+export function scannerQueue(rows: readonly QueueRow[], tables: readonly ScanResolverTable[] = [], liveNow?: readonly LiveTable[], opts: { canInstall?: boolean } = {}): ScannerQueue {
   const scanned = rows.filter((r) => r.source_kind !== "note");
   const map = new Map<string, ScannerQueueGroup>();
+  const canInstall = opts.canInstall ?? true;
   let residual = 0;
+  let held = 0;
   for (const r of scanned) {
     const c = filingDestination(r, tables, liveNow);
     if (!c || (!c.bundle_external_id && !(c.module && c.kind))) {
       residual++;
+      continue;
+    }
+    // What can be added is the Inbox's answer, never this queue's own: the
+    // review plan's rule on the row as its card reads it (#5939, #5905). A
+    // row it leaves for a person is waiting here too, and no Add all files it.
+    const plan = planItem({
+      id: r.id,
+      suggested_name: r.suggested_name ?? null,
+      candidate: c,
+      rebuy: scanRebuy(r, { tables }),
+      canInstall,
+      review: scanReviewReason(r),
+      cardSays: cardSaysOtherwise(r, tables, canInstall),
+    });
+    if (plan.action === "skip") {
+      held++;
       continue;
     }
     const key = c.bundle_external_id ? `b:${c.bundle_external_id}` : `i:${c.module}:${c.instance ?? ""}`;
@@ -68,8 +90,8 @@ export function scannerQueue(rows: readonly QueueRow[], tables: readonly ScanRes
       map.set(key, g);
     }
     g.item_ids.push(r.id);
-    if (c.updates) g.updates = { ...g.updates, [r.id]: { kind: c.updates.kind, id: c.updates.id, instance: c.updates.instance } };
+    if (plan.action === "attach") g.updates = { ...g.updates, [r.id]: { kind: plan.to.kind, id: plan.to.id, instance: plan.to.instance ?? null } };
   }
   const groups = [...map.values()].sort((a, b) => b.item_ids.length - a.item_ids.length);
-  return { scanned_total: scanned.length, groups, residual, offered: groups.reduce((n, g) => n + g.item_ids.length, 0) };
+  return { scanned_total: scanned.length, groups, residual, held, offered: groups.reduce((n, g) => n + g.item_ids.length, 0) };
 }

@@ -5,6 +5,8 @@
 // recursing yields the full as-built tree ("what went into serial #X"). Cycle-
 // guarded so a mis-entered code that points back up the tree can't loop.
 
+import type { ActivitySubject } from "@cobblr/platform-contract/activity-summary";
+
 export interface RunOutput {
   part_id: string | null;
   serial_code: string | null;
@@ -19,10 +21,13 @@ export interface RunInput {
 export interface GenealogyInput extends RunInput {
   /** If lot_code links to a prior run's output serial, that run's as-built tree. */
   source?: GenealogyNode;
+  /** The record it was drawn from, named and linked (nameGenealogy); null
+   *  when the record is gone or hidden from the reader. */
+  subject?: ActivitySubject | null;
 }
 export interface GenealogyNode {
   run_id: string;
-  output: RunOutput | null;
+  output: (RunOutput & { subject?: ActivitySubject | null }) | null;
   inputs: GenealogyInput[];
 }
 
@@ -66,4 +71,33 @@ export function lineageCodes(node: GenealogyNode): string[] {
   };
   walk(node);
   return [...codes];
+}
+
+/** The kind a run's inputs and outputs are stored against: the stock door's
+ *  own, under which a record in any collection resolves. */
+export const STOCK_KIND = "inventory:part";
+
+/** Every input and output in an as-built tree, named and linked by `name`
+ *  (the platform record namer), so the history never shows an id (#5977). */
+export async function nameGenealogy(
+  tree: GenealogyNode,
+  name: (refs: Array<{ kind: string; id: string }>) => Promise<Map<string, ActivitySubject>>,
+): Promise<GenealogyNode> {
+  const ids = new Set<string>();
+  const collect = (n: GenealogyNode) => {
+    if (n.output?.part_id) ids.add(n.output.part_id);
+    for (const i of n.inputs) {
+      ids.add(i.part_id);
+      if (i.source) collect(i.source);
+    }
+  };
+  collect(tree);
+  const names = await name([...ids].map((id) => ({ kind: STOCK_KIND, id })));
+  const of = (id: string | null) => (id ? names.get(`${STOCK_KIND}:${id}`) ?? null : null);
+  const apply = (n: GenealogyNode): GenealogyNode => ({
+    ...n,
+    output: n.output ? { ...n.output, subject: of(n.output.part_id) } : null,
+    inputs: n.inputs.map((i) => ({ ...i, subject: of(i.part_id), ...(i.source ? { source: apply(i.source) } : {}) })),
+  });
+  return apply(tree);
 }

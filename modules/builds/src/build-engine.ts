@@ -4,8 +4,9 @@
 // action), never a table join — cross-module isolation.
 
 import { type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "./db.js";
+import { shortageSentence } from "./shortage.js";
 
 export interface ComponentInput {
   part_id: string;
@@ -165,9 +166,13 @@ export async function explodeLeafComponents(
   );
 }
 
-/** Consume the components for `qty` builds via the inventory adjust-stock action.
- *  Returns the consumed snapshot. Best-effort per component (a failure logs +
- *  continues — the run still records what it tried). */
+/** Consume the components for `qty` builds via the inventory adjust-stock
+ *  action, and return what actually left the shelf. A build short of a
+ *  required component is refused (ActionRefusal, the shortage named) before
+ *  anything moves: the stock floor clamps a draw to what is there without a
+ *  word, and a run once recorded two blanks taken from an empty shelf and
+ *  made a third output from them (#5976). An optional component gives what
+ *  it has. */
 export async function consumeComponents(
   orgId: string,
   userId: string | null,
@@ -175,11 +180,13 @@ export async function consumeComponents(
   comps: ComponentInput[],
   qty: number,
 ): Promise<Array<{ part_id: string; quantity: number }>> {
+  const refusal = shortageSentence(await readComponentStock(orgId, comps), qty);
+  if (refusal) throw new ActionRefusal(refusal);
   const consumed: Array<{ part_id: string; quantity: number }> = [];
   for (const c of comps) {
     const dec = c.quantity * qty;
     if (dec <= 0) continue;
-    await platform()
+    const moved = await platform()
       .actions.invoke("inventory:adjust-stock", {
         orgId,
         userId,
@@ -193,8 +200,15 @@ export async function consumeComponents(
         },
         args: { partId: c.part_id, delta: -dec, reason: `build:${buildId}` },
       })
-      .catch((e) => console.error("[builds] adjust-stock failed:", (e as Error).message));
-    consumed.push({ part_id: c.part_id, quantity: dec });
+      .then((r) => {
+        const out = r as { ok?: boolean; delta?: number } | null;
+        return out?.ok && typeof out.delta === "number" ? -out.delta : 0;
+      })
+      .catch((e) => {
+        console.error("[builds] adjust-stock failed:", (e as Error).message);
+        return 0;
+      });
+    if (moved > 0) consumed.push({ part_id: c.part_id, quantity: moved });
   }
   return consumed;
 }

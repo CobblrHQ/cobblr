@@ -304,7 +304,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       {upload.isPending && (
         <div className="text-[10px] font-mono text-accent mt-2 inline-flex items-center gap-1">
           <Upload size={10} className="animate-pulse" /> uploading
-          <button type="button" onClick={() => upload.reset()} title="Reset state">
+          <button aria-label="Reset state" type="button" onClick={() => upload.reset()} title="Reset state">
             <X size={10} />
           </button>
         </div>
@@ -326,7 +326,7 @@ function GalleryImg({ thumb, alt, onOpen }: { thumb: string; alt: string; onOpen
     );
   }
   return (
-    <button type="button" onClick={onOpen} aria-label={`Open ${alt}`} className="block w-full cursor-zoom-in">
+    <button title={`Open ${alt}`} type="button" onClick={onOpen} aria-label={`Open ${alt}`} className="block w-full cursor-zoom-in">
       <EntityPhoto src={resolvedThumb} alt={alt} aspect="square" />
     </button>
   );

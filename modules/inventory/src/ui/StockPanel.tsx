@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useStockWrites } from "./stock-writes";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MutationError, QueryError } from "@cobblr/platform-web";
@@ -13,6 +14,7 @@ const shapes: Array<{ value: StockShape; label: string }> = [{ value: "sheet", l
 const shown = (n: number) => Number(n.toFixed(3)).toLocaleString();
 export function StockPanel({ id, hideThreshold = false }: { id: string; hideThreshold?: boolean }) {
   const { api, orgSlug, entityKind } = useInventory();
+  const stock = useStockWrites();
   const qc = useQueryClient();
   const key = ["stock-shape", orgSlug, id];
   const query = useQuery({ queryKey: key, queryFn: () => api.stockShape(id) });
@@ -20,7 +22,7 @@ export function StockPanel({ id, hideThreshold = false }: { id: string; hideThre
   const [using, setUsing] = useState(false);
   const [station, setStation] = useState("");
   const reload = () => { void qc.invalidateQueries({ queryKey: key }); void qc.invalidateQueries({ queryKey: ["inventory-sheet", orgSlug, id] }); void qc.invalidateQueries({ queryKey: ["inventory-parts"] }); void qc.invalidateQueries({ queryKey: ["inventory-part"] }); };
-  const load = useMutation({ mutationFn: () => api.loadStock(id, { station: query.data?.loaded?.station ?? station, loaded: !query.data?.loaded }), onSuccess: reload });
+  const load = useMutation({ mutationFn: () => stock.loadStock(id, { station: query.data?.loaded?.station ?? station, loaded: !query.data?.loaded }), onSuccess: reload });
   const view = query.data;
   return <section className="rounded-xl border border-line bg-surface p-4 space-y-3" data-testid="stock-shape">
     <h3 className="font-semibold">Workshop stock</h3>
@@ -46,7 +48,7 @@ export function StockPanel({ id, hideThreshold = false }: { id: string; hideThre
 }
 
 function StockForm({ view, hideThreshold, onDone, onCancel }: { view: StockDetail; hideThreshold: boolean; onDone: () => void; onCancel: () => void }) {
-  const { api } = useInventory();
+  const stock = useStockWrites();
   const [revision] = useState(view.revision);
   const [shape, setShape] = useState(view.shape);
   const [unit, setUnit] = useState(view.config.shape === "sheet" ? "each" : view.config.unit);
@@ -65,7 +67,7 @@ function StockForm({ view, hideThreshold, onDone, onCancel }: { view: StockDetai
   const save = useMutation({ mutationFn: async () => {
     const config = StockConfig.parse({ shape, unit: shape === "roll" ? "m" : shape === "liquid" ? "ml" : shape === "count" ? "each" : unit,
       low_threshold: Number(threshold), width_mm: Number(width), waste: Number(waste), grams_per_m: grams ? Number(grams) : undefined, limit: Number(limit) });
-    return api.configureStock(view.id, { config, revision, ...(shape === "wearing-tool" ? { used: Number(used) } : shape === "sheet" ? { sheet: { material, thickness_mm: Number(thickness), width_mm: Number(sheetWidth), height_mm: Number(height) } } : { remaining: Number(remaining) }) });
+    return stock.configureStock(view.id, { config, revision, ...(shape === "wearing-tool" ? { used: Number(used) } : shape === "sheet" ? { sheet: { material, thickness_mm: Number(thickness), width_mm: Number(sheetWidth), height_mm: Number(height) } } : { remaining: Number(remaining) }) });
   }, onSuccess: result => { if (result.warning) setWarning(result.warning); else onDone(); } });
   const numeric = (label: string, value: string, setDraft: (v: string) => void, optional = false) => <label className="text-sm" key={label}>{label}<input aria-label={label} type="number" min="0" step="any" required={!optional} className="input min-h-11 w-full" value={value} onChange={e => setDraft(e.target.value)} /></label>;
   const actualUnit = stockUnitLabel(shape === "sheet" ? "mm²" : shape === "roll" ? "m" : shape === "liquid" ? "ml" : shape === "count" ? "each" : unit);
@@ -86,7 +88,7 @@ function StockForm({ view, hideThreshold, onDone, onCancel }: { view: StockDetai
   </form>;
 }
 function UseForm({ view, onDone, onCancel }: { view: StockDetail; onDone: () => void; onCancel: () => void }) {
-  const { api } = useInventory();
+  const stock = useStockWrites();
   const [revision] = useState(view.revision);
   const [amount, setAmount] = useState("");
   const [unit, setUnit] = useState(view.unit);
@@ -94,7 +96,7 @@ function UseForm({ view, onDone, onCancel }: { view: StockDetail; onDone: () => 
   const [verdict, setVerdict] = useState<"good" | "scrap">("good");
   const [waste, setWaste] = useState("");
   const [warning, setWarning] = useState("");
-  const save = useMutation({ mutationFn: () => api.consumeStock(view.id, { revision, source, verdict, amount: Number(amount), unit, ...(view.shape === "roll" && waste.trim() ? { waste: Number(waste) } : {}) }), onSuccess: result => { if (result.warning) setWarning(result.warning); else onDone(); } });
+  const save = useMutation({ mutationFn: () => stock.consumeStock(view.id, { revision, source, verdict, amount: Number(amount), unit, ...(view.shape === "roll" && waste.trim() ? { waste: Number(waste) } : {}) }), onSuccess: result => { if (result.warning) setWarning(result.warning); else onDone(); } });
   const units = view.shape === "spool" ? ["g", "kg", "m", "mm"] : view.unit === "h" ? ["h", "min"] : view.unit === "m" ? ["m", "mm", "cm"] : view.unit === "ml" ? ["ml", "l"] : [view.unit];
   return <form className="space-y-3" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -985,7 +985,7 @@ function SettingsSheet(props: {
     <Overlay onCancel={props.onClose} label="Station settings" wide>
       <div className="flex items-center justify-between">
         <div className="text-xl font-medium">{props.label} settings</div>
-        <button type="button" onClick={props.onClose} className="rounded-full p-2 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Close">
+        <button title="Close" type="button" onClick={props.onClose} className="rounded-full p-2 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Close">
           <X size={20} />
         </button>
       </div>
@@ -1005,7 +1005,7 @@ function SettingsSheet(props: {
       ) : (
         <div className="mt-4 max-h-[70vh] space-y-4 overflow-y-auto pr-1">
           <Field label="Name">
-            <input value={label} onChange={(e) => setLabel(e.target.value)} className="w-full rounded-xl border border-line px-3 py-2 text-lg dark:border-slate-600 dark:bg-slate-800" />
+            <input aria-label="Name" value={label} onChange={(e) => setLabel(e.target.value)} className="w-full rounded-xl border border-line px-3 py-2 text-lg dark:border-slate-600 dark:bg-slate-800" />
           </Field>
           <Field label="When a scan is something you have">
             <div className="grid gap-2">
@@ -1143,7 +1143,7 @@ function SettingsSheet(props: {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div>
+    <div role="group" aria-label={label}>
       <div className="mb-1.5 text-sm font-medium text-muted">{label}</div>
       {children}
     </div>

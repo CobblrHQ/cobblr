@@ -12,7 +12,9 @@ export function asyncHandler<R extends Request = Request>(
 }
 
 export function badBody(res: Response, err: z.ZodError, message = "Bad request body"): void {
-  res.status(400).json({ error: { code: "invalid_body", message, details: err.issues } });
+  const first = err.issues[0];
+  const why = first ? `${first.path.length ? `${first.path.join(".")}: ` : ""}${first.message}` : "";
+  res.status(400).json({ error: { code: "invalid_body", message: why ? `${message}: ${why}` : message, details: err.issues } });
 }
 
 export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]): boolean {

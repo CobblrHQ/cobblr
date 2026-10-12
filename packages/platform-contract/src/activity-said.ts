@@ -45,6 +45,16 @@ const DAY = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", y
  *  photos and money are the api's to say (they need a lookup or the
  *  workspace's currency); a value that still looks like an id or a path is
  *  never returned as text. */
+/** A stock reading (how much is left, in what), whatever else the object
+ *  carries: its amount and the unit it is kept in, or null. */
+export function stockReadingOf(value: unknown): { remaining: number; unit: string | null } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const o = value as Record<string, unknown>;
+  if (typeof o.remaining !== "number" || !Number.isFinite(o.remaining)) return null;
+  const unit = typeof o.unit === "string" && o.unit.trim() ? o.unit.trim() : null;
+  return { remaining: o.remaining, unit };
+}
+
 export function saidValue(value: unknown, field: SaidFieldType = {}): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" && !value.trim()) return null;
@@ -60,6 +70,12 @@ export function saidValue(value: unknown, field: SaidFieldType = {}): string | n
   }
   if (typeof value === "object") {
     const o = value as Record<string, unknown>;
+    // A stock reading carries its record's id and name beside the amount;
+    // said by the name, a change to stock read as a title replacing itself
+    // (#6039). It is how much: its unit needs the workspace's words, which a
+    // caller that has them adds (stockReadingOf, quantityWithUnit).
+    const reading = stockReadingOf(o);
+    if (reading) return String(parseFloat(reading.remaining.toFixed(3)));
     const named = o.label ?? o.name ?? o.title;
     if (typeof named === "string" && named.trim()) return named.trim();
     // A measure ("12 mm"), in the words the field itself shows.

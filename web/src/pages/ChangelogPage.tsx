@@ -76,7 +76,7 @@ export function ChangelogPage() {
                       <span className={`mt-0.5 h-fit shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${badge.cls}`}>
                         {badge.label}
                       </span>
-                      <p className="text-sm leading-relaxed text-content dark:text-mortar-100">
+                      <p className="min-w-0 text-sm leading-relaxed text-content dark:text-mortar-100 [overflow-wrap:anywhere]">
                         {e.scope && <span className="text-muted dark:text-slate-400">{e.scope}: </span>}
                         {e.text}
                       </p>

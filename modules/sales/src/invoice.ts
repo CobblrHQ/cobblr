@@ -1,3 +1,4 @@
+import type { LineAvailability } from "./availability.js";
 import { toCsv } from "@cobblr/platform-contract/csv";
 import { fieldCurrency, formatStoredMoney, roundMoneyAmount, totalOfLines, type LinesTotal } from "@cobblr/platform-contract/money";
 
@@ -8,7 +9,8 @@ interface InvoiceOrder {
   order_date: string | null;
   paid?: boolean;
   metadata?: Record<string, unknown>;
-  items: Array<{ description: string | null; qty: string | number; unit_price: string | number | null; metadata?: Record<string, unknown> }>;
+  availability?: Array<Pick<LineAvailability, "line_id" | "unit">>;
+  items: Array<{ id?: string; description: string | null; qty: string | number; unit_price: string | number | null; metadata?: Record<string, unknown> }>;
 }
 
 /** What an order's lines add up to: the one sum the order page, the invoice
@@ -20,13 +22,14 @@ export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_pri
 function invoice(order: InvoiceOrder, fallbackCurrency: string) {
   const currency = fieldCurrency(order.metadata, "amount", fallbackCurrency);
   const payment = order.paid === true ? "Paid" : "Not marked paid";
+  const units = new Map(order.availability?.map((a) => [a.line_id, a.unit]));
   const lines = order.items.map((it) => {
     const ownCurrency = fieldCurrency(it.metadata, "unit_price", currency);
     if (ownCurrency !== currency) throw new Error("Use the same currency for every invoice line before exporting.");
     const qty = Number(it.qty);
     const price = it.unit_price === null ? null : Number(it.unit_price);
     if (!Number.isFinite(qty) || (price !== null && !Number.isFinite(price))) throw new Error("Check the quantities and prices before exporting.");
-    return { description: it.description || "Item", qty, price, total: price === null ? null : roundMoneyAmount(qty * price, currency) };
+    return { description: it.description || "Item", qty, unit: it.id ? units.get(it.id)?.trim() || "" : "", price, total: price === null ? null : roundMoneyAmount(qty * price, currency) };
   });
   const sum = orderTotal(order.items, currency);
   return { unpriced: sum.unpriced, total: sum.complete ? sum.amount : null, reference: order.order_number || order.id, customer: order.customer_name || "Not recorded", date: order.order_date?.slice(0, 10) || "Not recorded", currency, payment, lines };
@@ -50,7 +53,7 @@ th:first-child { width: 45%; } thead { display: table-header-group; } tr { break
 <h1>Invoice ${escape(d.reference)}</h1>
 <p>Customer: ${escape(d.customer)}</p><p>Order date: ${escape(d.date)}</p><p>Payment: ${escape(d.payment)}</p>
 <table><thead><tr><th>Description</th><th>Quantity</th><th>Unit price (${escape(d.currency)})</th><th>Line total (${escape(d.currency)})</th></tr></thead>
-<tbody>${d.lines.map((it) => `<tr><td>${escape(it.description)}</td><td>${escape(it.qty)}</td><td>${money(it.price)}</td><td>${money(it.total)}</td></tr>`).join("")}</tbody></table>
+<tbody>${d.lines.map((it) => `<tr><td>${escape(it.description)}</td><td>${escape(it.qty)}${it.unit ? ` ${escape(it.unit)}` : ""}</td><td>${money(it.price)}</td><td>${money(it.total)}</td></tr>`).join("")}</tbody></table>
 <p class="total">Total (${escape(d.currency)}): ${money(d.total)}</p>
 ${d.total === null ? `<p>${d.unpriced === 1 ? "1 line has" : `${d.unpriced} lines have`} no price recorded. Add ${d.unpriced === 1 ? "it" : "them"} to complete the invoice total.</p>` : ""}
 </body></html>`;
@@ -59,6 +62,6 @@ ${d.total === null ? `<p>${d.unpriced === 1 ? "1 line has" : `${d.unpriced} line
 export function invoiceCsv(order: InvoiceOrder, fallbackCurrency: string): string {
   const d = invoice(order, fallbackCurrency);
   const common = [d.reference, d.customer, d.date, d.payment];
-  return toCsv(["Order reference", "Customer", "Order date", "Payment status", "Line", "Description", "Quantity", "Unit price", "Line total", "Currency", "Order total"],
-    d.lines.length ? d.lines.map((it, i) => [...common, i + 1, it.description, it.qty, it.price, it.total, d.currency, d.total]) : [[...common, null, null, null, null, null, d.currency, d.total]]);
+  return toCsv(["Order reference", "Customer", "Order date", "Payment status", "Line", "Description", "Quantity", "Unit", "Unit price", "Line total", "Currency", "Order total"],
+    d.lines.length ? d.lines.map((it, i) => [...common, i + 1, it.description, it.qty, it.unit, it.price, it.total, d.currency, d.total]) : [[...common, null, null, null, null, null, null, d.currency, d.total]]);
 }

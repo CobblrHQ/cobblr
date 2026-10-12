@@ -7,6 +7,18 @@ import { Plus, Check } from "lucide-react";
 import { useToast, NumberField, SegmentedChoice } from "@cobblr/platform-web";
 import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
+  STOCK_CHANGED_EVENT,
+  readStockChange,
+  readWireRecords,
+  stockChangeConditions,
+  stockChangePhrase,
+  type NarrowingCondition,
+  type StockChange,
+  type WireRecords,
+} from "@cobblr/platform-contract/wire-narrowing";
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { StockChangePicker, WireRecordsPicker, wireRecordsReady } from "./WireNarrowing";
+import {
   TRIGGER_OPTIONS,
   WEEKDAYS,
   DEFAULT_RECURRENCE,
@@ -30,16 +42,30 @@ const L = "block text-[10px] font-mono uppercase tracking-widest text-faint dark
 // `editing` switches the composer to edit-an-existing-wire mode: state prefills
 // from the binding and Save PATCHes it (preserving id + firing history) instead
 // of creating a new one. Mount with key={wire.id} so the prefill re-runs per wire.
+/** A new wire started from somewhere else ("When this runs out…" on a
+ *  record, the assistant's escort): the trigger, the kind and the narrowing,
+ *  already chosen. */
+export interface WirePrefill {
+  sourceKind?: string;
+  triggerEvent?: string;
+  change?: StockChange;
+  records?: WireRecords | null;
+  /** The record's name when `records.record` is set, to show instead of an id. */
+  recordLabel?: string | null;
+}
+
 export function WireComposer({
   slug,
   onCreated,
   editing,
   onCancel,
+  prefill,
 }: {
   slug: string;
   onCreated: () => void;
   editing?: PlatformBinding | null;
   onCancel?: () => void;
+  prefill?: WirePrefill | null;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -48,12 +74,13 @@ export function WireComposer({
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
   const wireEvents = useQuery({ queryKey: ["wire-events", slug], queryFn: () => api.listWireEvents(slug), enabled: !!slug });
 
-  const [triggerType, setTriggerType] = useState<TriggerType>(ed?.trigger_type ?? "on-create");
-  const [triggerEvent, setTriggerEvent] = useState(ed?.trigger_event ?? "");
+  const pre = ed ? null : prefill ?? null;
+  const [triggerType, setTriggerType] = useState<TriggerType>(ed?.trigger_type ?? (pre?.triggerEvent ? "event" : "on-create"));
+  const [triggerEvent, setTriggerEvent] = useState(ed?.trigger_event ?? pre?.triggerEvent ?? "");
   const [recurrence, setRecurrence] = useState<Recurrence>(
     ed?.trigger_schedule ? parseRRule(ed.trigger_schedule) : DEFAULT_RECURRENCE,
   );
-  const [sourceKind, setSourceKind] = useState(ed?.source_kind ?? "");
+  const [sourceKind, setSourceKind] = useState(ed?.source_kind ?? pre?.sourceKind ?? "");
   const [actionId, setActionId] = useState(ed?.action_id ?? "");
   const [template, setTemplate] = useState(ed?.template ?? "");
   // A button's own label, and the one thing it asks before it runs.
@@ -64,21 +91,40 @@ export function WireComposer({
   const [showTarget, setShowTarget] = useState(!!(ed?.target && ed.target !== "self"));
   // B7 — conditions: {all:[{path,op,value}]} evaluated per firing against the
   // same data templates see (target fields + event.*). AND-joined; empty = fire always.
-  type Cond = { path: string; op: string; value: string };
-  const initialConds: Cond[] = (() => {
-    const f = ed?.filter as { all?: Array<{ path?: string; op?: string; value?: unknown }> } | null | undefined;
-    return Array.isArray(f?.all)
-      ? f!.all!.map((c) => ({ path: String(c.path ?? ""), op: String(c.op ?? "eq"), value: c.value === undefined ? "" : String(c.value) }))
-      : [];
-  })();
+  type Cond = { path: string; op: string; value: string; valuePath?: string };
+  // A stock wire's change (ran out, fell below 3) and the records it is about
+  // are their own choices (WireNarrowing.tsx, #6070); the conditions a person
+  // added beside them stay rows here.
+  const edFilter = ed?.filter as { all?: NarrowingCondition[]; in?: unknown } | null | undefined;
+  const edRead = readStockChange(Array.isArray(edFilter?.all) ? edFilter!.all! : []);
+  const [stockChange, setStockChange] = useState<StockChange>(ed ? (ed.trigger_event === STOCK_CHANGED_EVENT ? edRead.change : { kind: "any" }) : pre?.change ?? { kind: "any" });
+  const [records, setRecords] = useState<WireRecords | null>(ed ? readWireRecords(edFilter?.in) : pre?.records ?? null);
+  const initialConds: Cond[] = (ed?.trigger_event === STOCK_CHANGED_EVENT ? edRead.rest : Array.isArray(edFilter?.all) ? edFilter!.all! : []).map((c) => ({
+    path: String(c.path ?? ""),
+    op: String(c.op ?? "eq"),
+    value: c.value === undefined ? "" : String(c.value),
+    ...(c.valuePath ? { valuePath: c.valuePath } : {}),
+  }));
   const [conditions, setConditions] = useState<Cond[]>(initialConds);
   const [showConds, setShowConds] = useState(initialConds.length > 0);
   const COND_OPS = ["eq", "neq", "lt", "lte", "gt", "gte", "contains", "not_contains", "empty", "not_empty"] as const;
-  const builtFilter = (): { all: Array<{ path: string; op: string; value?: string }> } | null => {
-    const rows = conditions
-      .filter((c) => c.path.trim() !== "")
-      .map((c) => (c.op === "empty" || c.op === "not_empty" ? { path: c.path.trim(), op: c.op } : { path: c.path.trim(), op: c.op, value: c.value }));
-    return rows.length > 0 ? { all: rows } : null;
+  const stockWire = triggerType === "event" && triggerEvent === STOCK_CHANGED_EVENT;
+  const builtFilter = (): { all?: Array<{ path: string; op: string; value?: string | number | boolean; valuePath?: string }>; in?: WireRecords } | null => {
+    const rows = [
+      ...conditions
+        .filter((c) => c.path.trim() !== "")
+        .map((c) =>
+          c.op === "empty" || c.op === "not_empty"
+            ? { path: c.path.trim(), op: c.op }
+            : c.valuePath
+              ? { path: c.path.trim(), op: c.op, valuePath: c.valuePath }
+              : { path: c.path.trim(), op: c.op, value: c.value },
+        ),
+      ...(stockWire ? stockChangeConditions(stockChange) : []),
+    ];
+    const recordsIn = !recordless && records && wireRecordsReady(records) ? records : null;
+    if (!rows.length && !recordsIn) return null;
+    return { ...(rows.length ? { all: rows } : {}), ...(recordsIn ? { in: recordsIn } : {}) };
   };
   const [err, setErr] = useState<string | null>(null);
   // Structured action args (per the action's argsSchema): each value is a
@@ -166,6 +212,7 @@ export function WireComposer({
   });
   const lifecycleWhy = sourceKind ? lifecycle.data?.triggers[triggerType]?.why ?? null : null;
 
+  const [recordName, setRecordName] = useState<string | null>(pre?.recordLabel ?? null);
   const preview = describeWire({
     triggerType,
     triggerEvent,
@@ -174,6 +221,8 @@ export function WireComposer({
     actionLabel: action?.label ?? "(an action)",
     target,
     recordless,
+    stockPhrase: stockWire ? stockChangePhrase(stockChange) : null,
+    whose: recordless ? null : whoseRecords(records, kind?.display_name ?? "record", recordName),
   });
 
   const filledArgs = (): Record<string, unknown> | undefined => {
@@ -238,6 +287,7 @@ export function WireComposer({
     (!recordless || RECORDLESS_TRIGGERS.includes(triggerType)) &&
     (!pickerArg || !!args[pickerArg]) &&
     (needs !== "event" || !!triggerEvent) &&
+    (recordless || wireRecordsReady(records)) &&
     (needs !== "schedule" || buildRRule(recurrence).length > 0);
 
   return (
@@ -261,7 +311,7 @@ export function WireComposer({
       {/* WHEN */}
       <div>
         <span className={L}>When…</span>
-        <select value={triggerType} onChange={(e) => setTriggerType(e.target.value as TriggerType)} className="input">
+        <select aria-label="When" value={triggerType} onChange={(e) => setTriggerType(e.target.value as TriggerType)} className="input">
           {TRIGGER_OPTIONS.filter((t) => !recordless || RECORDLESS_TRIGGERS.includes(t.value)).map((t) => {
             const off = !!sourceKind && lifecycle.data?.triggers[t.value]?.ok === false;
             return (
@@ -290,6 +340,8 @@ export function WireComposer({
           </div>
         )}
 
+        {stockWire && <StockChangePicker value={stockChange} onChange={setStockChange} />}
+
         {needs === "event" && triggerEvent.startsWith("services.job.") && (
           <label className="mt-2 block">
             <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">After which service</span>
@@ -314,7 +366,7 @@ export function WireComposer({
       {/* ON */}
       <div>
         <span className={L}>On which records…</span>
-        <select
+        <select aria-label="On which records"
           value={sourceKind}
           onChange={(e) => {
             const next = e.target.value;
@@ -330,12 +382,26 @@ export function WireComposer({
             <option key={k.id} value={k.id}>{k.display_name} ({k.id})</option>
           ))}
         </select>
+        {!!sourceKind && !recordless && (
+          <WireRecordsPicker
+            slug={slug}
+            kind={sourceKind}
+            kindNoun={(kind?.display_name ?? "record").toLowerCase()}
+            value={records}
+            recordLabel={recordName}
+            onChange={(r) => {
+              setRecords(r);
+              if (!r?.record) setRecordName(null);
+            }}
+            onRecordNamed={setRecordName}
+          />
+        )}
       </div>
 
       {/* DO */}
       <div>
         <span className={L}>Do…</span>
-        <select value={actionId} onChange={(e) => { setActionId(e.target.value); setArgs({}); setServiceValues({}); }} className="input" disabled={!sourceKind}>
+        <select aria-label="Do" value={actionId} onChange={(e) => { setActionId(e.target.value); setArgs({}); setServiceValues({}); }} className="input" disabled={!sourceKind}>
           <option value=""> - pick an action - </option>
           {actionChoices?.map((a) => (
             <option key={a.id} value={a.id}>{a.label} ({a.id})</option>
@@ -379,6 +445,24 @@ export function WireComposer({
                       const c = capabilities.data?.items.find((x) => x.id === args[name]);
                       return c ? <p className="mt-1 text-[11px] text-faint dark:text-slate-500">{c.summary}</p> : null;
                     })()}
+                  </label>
+                ) : spec.choices?.length ? (
+                  // A "who" (choicesFrom people) and any argument the server
+                  // filled with choices: picked by name, never typed as an id.
+                  <label key={name} className="block">
+                    <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">{spec.label}</span>
+                    <select
+                      value={args[name] ?? ""}
+                      onChange={(e) => setArgs((a) => ({ ...a, [name]: e.target.value }))}
+                      className="input text-sm"
+                      data-testid={`wire-arg-${name}`}
+                    >
+                      <option value=""> - pick one - </option>
+                      {spec.choices.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                      {args[name] && !spec.choices.some((c) => c.value === args[name]) && <option value={args[name]}>{args[name]}</option>}
+                    </select>
                   </label>
                 ) : spec.type === "json" && spec.schema_from ? (
                   <ServiceInputForm
@@ -425,7 +509,7 @@ export function WireComposer({
                 Ask before running <span className="normal-case tracking-normal">(optional)</span>
               </span>
               <div className="flex gap-2">
-                <select value={askArg} onChange={(e) => setAskArg(e.target.value)} className="input text-sm w-40">
+                <select aria-label="Ask for" value={askArg} onChange={(e) => setAskArg(e.target.value)} className="input text-sm w-40">
                   <option value="">nothing</option>
                   {Object.entries(action?.args_schema ?? {}).map(([name, spec]) => (
                     <option key={name} value={name}>{spec.label}</option>
@@ -516,7 +600,7 @@ export function WireComposer({
                   placeholder="event.newQty"
                   className="input !py-1 text-xs font-mono flex-1"
                 />
-                <select
+                <select aria-label="Condition"
                   value={c.op}
                   onChange={(e) => setConditions((cs) => cs.map((x, j) => (j === i ? { ...x, op: e.target.value } : x)))}
                   className="input !py-1 text-xs !w-auto"
@@ -583,7 +667,7 @@ export function WireComposer({
                       placeholder="relationship (e.g. matches)"
                       className="input text-xs col-span-2"
                     />
-                    <select
+                    <select aria-label="Direction"
                       value={target.dir ?? "out"}
                       onChange={(e) => setTarget({ ...target, dir: e.target.value as "out" | "in" })}
                       className="input text-xs"
@@ -682,13 +766,14 @@ function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (
     <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
       <div className="flex items-center gap-2 text-xs">
         <span className="text-faint">every</span>
-        <NumberField
+        <NumberField label="Every"
           min={1}
+          integer
           value={value.interval}
-          onChange={(n) => onChange({ ...value, interval: Math.max(1, n || 1) })}
+          onChange={(n) => onChange({ ...value, interval: n })}
           className="input !w-16 text-xs"
         />
-        <select
+        <select aria-label="Frequency"
           value={value.freq}
           onChange={(e) => onChange({ ...value, freq: e.target.value as Recurrence["freq"] })}
           className="input !w-auto text-xs"
@@ -699,7 +784,7 @@ function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (
         </select>
       </div>
       {value.freq === "WEEKLY" && (
-        <div className="flex flex-wrap gap-1">
+        <div role="group" aria-label="On these days" className="flex flex-wrap gap-1">
           {WEEKDAYS.map((d) => {
             const on = value.byday.includes(d.code);
             return (
@@ -712,11 +797,13 @@ function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (
                     byday: on ? value.byday.filter((c) => c !== d.code) : [...value.byday, d.code],
                   })
                 }
+                aria-pressed={on}
                 className={
-                  "px-2 py-0.5 rounded text-[10px] font-mono transition " +
+                  "min-h-11 min-w-11 inline-flex items-center justify-center gap-1 px-3 rounded text-[10px] font-mono transition " +
                   (on ? "bg-cobble-600 text-white" : "bg-subtle dark:bg-slate-800 text-muted hover:text-accent")
                 }
               >
+                {on && <Check size={11} strokeWidth={2.5} aria-hidden />}
                 {d.label}
               </button>
             );
@@ -740,4 +827,15 @@ function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (
       )}
     </div>
   );
+}
+
+/** Which records a wire is about, as the preview says it. */
+function whoseRecords(r: WireRecords | null, kindLabel: string, recordName: string | null): string | null {
+  if (!r) return null;
+  const noun = kindLabel.toLowerCase();
+  if (r.record) return recordName ? `“${recordName}”` : `this ${noun}`;
+  if (r.category) return `${withArticle(noun)} in “${r.category}”`;
+  if (r.tag) return `${withArticle(noun)} tagged “${r.tag}”`;
+  if (r.view) return `${withArticle(noun)} the saved view shows`;
+  return null;
 }

@@ -674,6 +674,7 @@ export function PartsListPage() {
               aria-expanded={toolsOpen}
               data-testid="list-tools"
               className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
+              aria-label="Import / export"
               title="Import and export"
             >
               <MoreHorizontal size={14} /> <span className="hidden sm:inline">Import / export</span>
@@ -1503,7 +1504,7 @@ function PartsTable({
                 <td />
                 <td colSpan={tableCols - 1} className="px-3 pb-2 pt-0">
                   <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
-                  <HoldingRows rows={p.holdings} basePath={basePath} unit={p.unit} />
+                  <HoldingRows rows={p.holdings} unit={p.unit} />
                 </td>
               </tr>
             )}
@@ -1568,7 +1569,7 @@ function PartsTable({
                 {p.holdings && p.rollup && (
                   <div className="mt-1" onClick={(e) => e.stopPropagation()}>
                     <RollupLine rollup={p.rollup} unit={units.suffix(p.unit) || undefined} />
-                    <HoldingRows rows={p.holdings} basePath={basePath} unit={p.unit} />
+                    <HoldingRows rows={p.holdings} unit={p.unit} />
                   </div>
                 )}
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono text-muted dark:text-slate-400">

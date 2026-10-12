@@ -42,6 +42,7 @@ import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
 import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const fleetRouter = Router({ mergeParams: true });
 
@@ -451,8 +452,8 @@ fleetRouter.get(
 // "9 good, 1 scrap". Without them the verdict covers the whole plate.
 const ReadyBody = z.object({
   outcome: z.enum(["good", "scrapped"]).default("good"),
-  good: z.number().int().min(0).optional(),
-  scrap: z.number().int().min(0).optional(),
+  good: optionalField(z.number().int().min(0)),
+  scrap: optionalField(z.number().int().min(0)),
 });
 // AI-REACH: action digifab:machine-outcome for CNC stock and bit use; print outcomes use digifab:record-outcome.
 fleetRouter.post(
@@ -903,9 +904,9 @@ fleetRouter.post(
 // keeps doing telemetry. The access code is a credential → stored encrypted in
 // the connection's creds (creds.bambu_lan = { serial: { host, access_code } }).
 const LanBody = z.object({
-  host: z.string().max(200).optional(),
-  access_code: z.string().max(64).optional(),
-  mode: z.enum(["cloud", "prefer_lan", "lan_only"]).optional(),
+  host: optionalText(200),
+  access_code: optionalText(64),
+  mode: optionalField(z.enum(["cloud", "prefer_lan", "lan_only"])),
 });
 async function readLanMap(orgId: string, connId: string): Promise<{ conn: { id: string; type: string; credentials_enc: string | null } | null; map: Record<string, BambuLan> }> {
   const conn = await platform().devices.connections().getInternal(orgId, connId);

@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: none (the card already shows a scan's note, where the label's words go, and the pack lines, Split off and rename are the existing controls)
+docs_published: 2026-10-12
 ---
 A photo of a filament box's label now names the spool and counts it toward its order with no AI, and a mixed pack whose contents are known splits into them with no AI.
 

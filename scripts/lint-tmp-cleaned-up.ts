@@ -31,7 +31,7 @@
 //
 //   npx tsx scripts/lint-tmp-cleaned-up.ts   (pnpm lint tmp-cleaned-up)
 import { readFileSync } from "node:fs";
-import { repoFiles } from "./lib/repo-files.ts";
+import { execFileSync } from "node:child_process";
 
 interface Violation {
   file: string;
@@ -40,6 +40,18 @@ interface Violation {
 }
 
 const KEPT = /tmp-kept:\s*\S/;
+
+function candidates(needle: string, paths: string[]): string[] {
+  try {
+    return execFileSync("git", ["grep", "--untracked", "--exclude-standard", "-l", "-z", "-F", needle, "--", ...paths], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    }).split("\0").filter(Boolean);
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return [];
+    throw error;
+  }
+}
 
 function checkShell(file: string, src: string): Violation[] {
   const out: Violation[] = [];
@@ -85,7 +97,7 @@ function checkJs(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const file of repoFiles(["scripts/*.sh", "scripts/**/*.sh", "deploy/*.sh", "deploy/**/*.sh", "docker/*.sh", "scripts/git-hooks/*"])) {
+for (const file of candidates("mktemp", ["scripts/*.sh", "scripts/**/*.sh", "deploy/*.sh", "deploy/**/*.sh", "docker/*.sh", "scripts/git-hooks/*"])) {
   let src: string;
   try {
     src = readFileSync(file, "utf8");
@@ -95,7 +107,7 @@ for (const file of repoFiles(["scripts/*.sh", "scripts/**/*.sh", "deploy/*.sh", 
   if (file.includes("/git-hooks/") && !src.startsWith("#!")) continue;
   violations.push(...checkShell(file, src));
 }
-for (const file of repoFiles(["scripts/*.ts", "scripts/**/*.ts", "scripts/*.mjs", "scripts/**/*.mjs", "api/src/**/*.ts", "modules/*/src/**/*.ts", "packages/*/src/**/*.ts", "e2e/*.mjs", "e2e/**/*.mjs"])) {
+for (const file of candidates("mkdtemp", ["scripts/*.ts", "scripts/**/*.ts", "scripts/*.mjs", "scripts/**/*.mjs", "api/src/**/*.ts", "modules/*/src/**/*.ts", "packages/*/src/**/*.ts", "e2e/*.mjs", "e2e/**/*.mjs"])) {
   if (file === "scripts/lint-tmp-cleaned-up.ts") continue;
   let src: string;
   try {

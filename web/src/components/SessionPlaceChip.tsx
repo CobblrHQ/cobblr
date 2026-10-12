@@ -56,12 +56,15 @@ export function SessionPlaceChip(props: SessionPlaceChipProps) {
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`inline-flex shrink-0 items-center gap-1.5 max-lg:gap-1 rounded-full border px-2.5 max-lg:px-2 py-1 text-[11.5px] font-medium ${
-        settled
-          ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 hover:border-cobble-400"
-          : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 hover:border-amber-500"
-      }`}
+      // The box is the finger's target (the session strip sizes it on a
+      // phone, #5903); the pill is drawn on the span inside it.
+      className="group inline-flex shrink-0 items-center justify-center"
     >
+      <span className={`inline-flex items-center gap-1.5 max-lg:gap-1 rounded-full border px-2.5 max-lg:px-2 py-1 text-[11.5px] font-medium ${
+        settled
+          ? "border-line/70 dark:border-slate-700/70 text-content dark:text-mortar-100 group-hover:border-cobble-400"
+          : "border-amber-400 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-300 group-hover:border-amber-500"
+      }`}>
       <MapPin size={12} className="shrink-0" />
       {mixed ? (
         <span className="max-lg:hidden">Mixed locations</span>
@@ -93,6 +96,7 @@ export function SessionPlaceChip(props: SessionPlaceChipProps) {
         // it its last characters (#2982).
         <span className="max-lg:hidden">Location</span>
       )}
+    </span>
     </button>
   );
 }

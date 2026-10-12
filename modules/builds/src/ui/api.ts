@@ -66,6 +66,8 @@ export interface OpRollup {
 export interface Buildable {
   max_buildable: number;
   limiting: Array<{ part_id: string; name: string; available: number; per_build: number }>;
+  /** Every leaf component with its stock, sub-assemblies exploded. */
+  components?: Array<{ part_id: string; name: string; available: number; per_build: number; optional: boolean }>;
 }
 
 export interface BuildDetail {
@@ -91,15 +93,24 @@ export interface RunSummary {
   built_at: string;
   serial_code: string | null;
 }
+/** A record named by the platform's record namer: its title and where it opens. */
+export interface RecordSubject {
+  href: string;
+  title: string;
+  kind: string | null;
+  id: string;
+}
 export interface GenealogyInput {
   part_id: string;
   lot_code: string | null;
   quantity: number;
   source?: GenealogyNode;
+  /** The record it was drawn from; null when it is gone or hidden. */
+  subject?: RecordSubject | null;
 }
 export interface GenealogyNode {
   run_id: string;
-  output: { part_id: string | null; serial_code: string | null; quantity: number } | null;
+  output: { part_id: string | null; serial_code: string | null; quantity: number; subject?: RecordSubject | null } | null;
   inputs: GenealogyInput[];
 }
 export interface TraceResult {
@@ -144,6 +155,10 @@ export interface PartOption {
   id: string;
   title: string;
   subtitle?: string;
+  /** The collection a stocked record is kept in, as the workspace names it. */
+  collection?: string;
+  /** The unit its count is kept in ("each", "m"): how much a recipe may ask for. */
+  unit?: string | null;
 }
 
 export class BuildsApiError extends Error {
@@ -301,9 +316,11 @@ export class BuildsApi {
     return this.req<unknown>("POST", `/builds/${buildId}/operations/${opId}/quantities`, body);
   }
 
-  /** Generic kernel entity search — inventory parts for the component picker. */
+  /** Stock in every collection the workspace keeps it in, for the component picker (#5892). */
   async searchParts(q: string): Promise<PartOption[]> {
-    return this.searchEntities("inventory:part", q);
+    const res = await workspaceFetch(`/api/v1/orgs/${this.slug}/modules/builds/stock?q=${encodeURIComponent(q)}`, { headers: this.headers() });
+    const data = await this.parse<{ items: Array<{ id: string; title: string; subtitle?: string; collection: string; unit?: string | null }> }>(res);
+    return data.items.map((i) => ({ id: i.id, title: i.title, subtitle: i.subtitle, collection: i.collection, unit: i.unit ?? null }));
   }
   /** Generic kernel entity search — builds, for the sub-assembly picker. */
   async searchBuilds(q: string): Promise<PartOption[]> {

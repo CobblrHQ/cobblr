@@ -46,7 +46,7 @@ const LabelCreate = z.object({
 });
 
 const LabelUpdate = z.object({
-  title: z.string().trim().min(1).max(60).optional(),
+  title: z.string().trim().min(1).max(60).optional(), // none-refused-ok: a label always has a title
   hint: z.string().trim().max(120).nullable().optional(),
   buttons: z.array(Button).min(1).max(8).optional(),
 });

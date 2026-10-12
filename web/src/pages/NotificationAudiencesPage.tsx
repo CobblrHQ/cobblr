@@ -10,15 +10,15 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users } from "lucide-react";
-import { usePageTitle, useToast } from "@cobblr/platform-web";
+import { SegmentedChoice, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ContributedConfigSections } from "../panels/registry";
 import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type WorkspaceMember } from "../lib/api";
 
-const MODES: Array<{ mode: NotificationAudienceMode; label: string; blurb: string }> = [
-  { mode: "all", label: "Everyone", blurb: "Every member of this workspace." },
-  { mode: "owners", label: "Owners only", blurb: "Just the workspace's owners." },
-  { mode: "custom", label: "Specific people", blurb: "Pick who." },
+const MODES: Array<{ mode: NotificationAudienceMode; label: string }> = [
+  { mode: "all", label: "Everyone" },
+  { mode: "owners", label: "Owners only" },
+  { mode: "custom", label: "Specific people" },
 ];
 
 export function NotificationAudiencesPage() {
@@ -122,25 +122,14 @@ function KindRow({ slug, kind, members }: { slug: string; kind: NotificationAudi
           {kind.description && <p className="text-xs text-faint dark:text-slate-400">{kind.description}</p>}
         </div>
       </div>
-      <div className="flex flex-wrap gap-1.5 pl-7">
-        {MODES.map((m) => (
-          <button
-            key={m.mode}
-            type="button"
-            onClick={() => choose(m.mode)}
-            disabled={save.isPending}
-            title={m.mode === "owners" ? `${owners} owner${owners === 1 ? "" : "s"}` : m.blurb}
-            className={
-              "rounded-full border px-3 py-1 text-xs font-medium transition disabled:opacity-50 " +
-              (mode === m.mode
-                ? "border-cobble-600 bg-cobble-600 text-white"
-                : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800")
-            }
-          >
-            {m.label}
-          </button>
-        ))}
-      </div>
+      <SegmentedChoice
+        className="pl-7"
+        label={`Who hears about ${kind.label}`}
+        value={mode}
+        onChange={choose}
+        disabled={save.isPending}
+        options={MODES.map((m) => ({ value: m.mode, label: m.mode === "owners" ? `${m.label} (${owners})` : m.label }))}
+      />
       {mode === "custom" && (
         <div className="pl-7 flex flex-wrap gap-1.5">
           {members.map((m) => {
@@ -151,6 +140,7 @@ function KindRow({ slug, kind, members }: { slug: string; kind: NotificationAudi
                 type="button"
                 onClick={() => toggle(m.user_id)}
                 disabled={save.isPending}
+                aria-pressed={on}
                 className={
                   "rounded-full border px-2.5 py-1 text-xs transition disabled:opacity-50 " +
                   (on

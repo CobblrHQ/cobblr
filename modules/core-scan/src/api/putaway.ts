@@ -52,6 +52,7 @@ import {
 import { walkQueue, type QueueGroup, type LeftOut, type QueuePlan } from "../services/putaway-queue.js";
 import { filingBlocker } from "../services/file-through-confirm.js";
 import { displayName } from "@cobblr/platform-contract/display-identity";
+import { optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 export const putawayRouter: Router = Router({ mergeParams: true });
 
@@ -312,7 +313,7 @@ async function loadActiveSession(
 
 const StartBody = z.object({
   /** Set → plan mode (the walk). Absent → live mode (Live Sort). */
-  plan_id: z.string().uuid().optional(),
+  plan_id: optionalUuid(),
   /** Live mode: the designated "Unsorted" bin for can't-route items. */
   catch_all_location_id: z.string().uuid().nullable().optional(),
 });
@@ -834,7 +835,7 @@ putawayRouter.post(
 
 const ConfirmBody = z.object({
   entry_id: z.string().uuid(),
-  location_id: z.string().uuid().optional(),
+  location_id: optionalUuid(),
   /** Or a thing that holds things (a Backpack): it goes inside that. */
   container: z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) }).optional(),
 });

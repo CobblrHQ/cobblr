@@ -163,7 +163,7 @@ export function NewBinSheet({
         <SidePanel width="sm:w-[min(100vw,440px)]">
           <header className="flex items-center justify-between px-4 py-3 border-b border-line dark:border-slate-700 shrink-0">
             <div className="text-sm font-semibold text-content dark:text-mortar-100">New bin</div>
-            <button type="button" onClick={onClose} className="text-faint hover:text-content" aria-label="Close">
+            <button title="Close" type="button" onClick={onClose} className="text-faint hover:text-content" aria-label="Close">
               <X size={18} />
             </button>
           </header>

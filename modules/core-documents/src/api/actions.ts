@@ -64,8 +64,9 @@ export function registerLibraryActions(): void {
     const ref = text(args.ref);
     if (!connectionId || !ref) return { ok: false, error: "Say which item: its connection_id and ref." };
     try {
-      const job = await copyItem(ctx.orgId, ctx.userId, { kind: entity.kind, id: entity.id }, connectionId, ref);
-      return { ok: true, summary: "Bringing a copy into Cobblr; it will be attached to this record.", job_id: job.id };
+      const vault = args.to === "vault";
+      const job = await copyItem(ctx.orgId, ctx.userId, { kind: entity.kind, id: entity.id }, connectionId, ref, { to: vault ? "vault" : "files" });
+      return { ok: true, summary: vault ? "Keeping a copy in your Vault, in Personal documents; this record will list it." : "Bringing a copy into Cobblr; it will be attached to this record.", job_id: job.id };
     } catch (err) {
       return refusal(err);
     }

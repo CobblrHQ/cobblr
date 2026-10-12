@@ -181,6 +181,7 @@ export function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxIt
         // before the button moves, and the full sentence is the title.
         <div
           key={g.series}
+          data-notice="series"
           className="rounded-lg border border-cobble-300 dark:border-cobble-700/60 bg-cobble-50/70 dark:bg-cobble-950/20 px-3 py-2.5 max-sm:px-2.5 max-sm:py-1.5 flex items-center gap-3 max-sm:gap-2"
           title={
             g.untagged.length === g.items.length
@@ -219,7 +220,7 @@ export function SeriesBanner({ slug, items }: { slug: string; items: ScanInboxIt
           >
             {apply.isPending ? "Tagging…" : <><span className="hidden sm:inline">Tag series</span><span className="sm:hidden">Tag</span></>}
           </button>
-          <button type="button" onClick={() => setDismissed((d) => new Set([...d, g.series.toLowerCase()]))} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
+          <button aria-label="Dismiss" type="button" onClick={() => setDismissed((d) => new Set([...d, g.series.toLowerCase()]))} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
             <X size={14} />
           </button>
         </div>

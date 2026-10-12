@@ -10,28 +10,15 @@
 // person, a date or a link, and never anything that looks like a phone number,
 // an email address or an account number.
 
+import { factScopeOf, type ScopedFieldDef } from "@cobblr/platform-contract/fact-scope";
+
 /** The network keys (barcode-intelligence `attributes.<key>`). */
 export const LEARNED_BUNDLE_KEY = "cobblr_bundle";
 const FIELD_PREFIX = "f_";
 
-/** The roles a field may carry and still be about the product. Every other
- *  role says something about a unit or about the person (lot, year made,
- *  identifier, expiry, acquired-*, seller, location, assignee, belongs-to,
- *  usage, payment-method, ready-*), and category travels on its own. */
-const PRODUCT_ROLES = new Set(["pack", "outer-size"]);
-
-/** The types whose values can be product facts. */
-const PRODUCT_TYPES = new Set(["text", "number", "boolean", "measure", "select", "choice", "multiselect", "tags"]);
-
-/** Field names that say the value is about the unit or the person, whatever
- *  role they declare. */
-const PERSONAL_NAME = /note|comment|remark|descr|serial|price|cost|paid|value|seller|vendor|shop|store|bought|purchase|order|receipt|location|where|place|shelf|bin|room|lot|batch|dye|date|year|owner|assignee|email|phone|address|url|link|warranty|condition|rating|review|status|qty|quantity|count|stock/i;
-
-export interface ShareableFieldDef {
-  name: string;
-  type?: string | null;
-  field_role?: string | null;
-}
+/** A field as the network reads it: whether it is a model fact is decided
+ *  once, in fact-scope.ts. */
+export type ShareableFieldDef = ScopedFieldDef;
 
 /** The network key for a field, or null when its name cannot be one. */
 export function learnedFieldKey(name: string): string | null {
@@ -55,9 +42,7 @@ function shareableValue(v: unknown): string | number | boolean | null {
 export function shareableProductFields(defs: readonly ShareableFieldDef[], values: Readonly<Record<string, unknown>>): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {};
   for (const d of defs) {
-    if (d.field_role && !PRODUCT_ROLES.has(d.field_role)) continue;
-    if (!d.type || !PRODUCT_TYPES.has(d.type)) continue;
-    if (PERSONAL_NAME.test(d.name) && !(d.field_role && PRODUCT_ROLES.has(d.field_role))) continue;
+    if (factScopeOf(d) !== "model") continue;
     const key = learnedFieldKey(d.name);
     const v = shareableValue(values[d.name]);
     if (key && v !== null) out[key] = v;

@@ -106,6 +106,12 @@ export function runRequestScope<T>(fn: () => T, scope: RequestScope = { memo: ne
   return scopeStorage.run(scope, fn);
 }
 
+/** Detached housekeeping must not retain a response's memo or change its
+ * measured cost depending on when it finishes. Actor and via stay intact. */
+export function runOutsideRequestScope<T>(fn: () => T): T {
+  return scopeStorage.exit(fn);
+}
+
 /** The current request's scope, or null outside one (a timer, a boot pass). */
 export function currentRequestScope(): RequestScope | null {
   return scopeStorage.getStore() ?? null;
@@ -122,6 +128,16 @@ export function perRequest<T>(key: string, load: () => Promise<T>): Promise<T> {
   scope.memo.set(key, p);
   p.catch(() => scope.memo.delete(key));
   return p;
+}
+
+/** Forget what this request remembered under the keys `match` picks: a write
+ *  that changes what a memo answers (a field defined, a collection made)
+ *  calls it, so the same request never reads its own change as it was. A
+ *  no-op outside a request. */
+export function forgetPerRequest(match: (key: string) => boolean): void {
+  const scope = scopeStorage.getStore();
+  if (!scope) return;
+  for (const key of [...scope.memo.keys()]) if (match(key)) scope.memo.delete(key);
 }
 
 /** Say this request only reads: from here, perReadRequest answers a repeated

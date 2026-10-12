@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.3",
+  version: "0.21.8",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -1098,6 +1098,15 @@ export default defineModule({
         surface: "entity-detail-panel" as const,
         target: "core-locations:location",
         title: "Stock here",
+      },
+      // On a stock record: the automations about this one record running out,
+      // and "When this runs out…" to add one (#6070, the wire composer).
+      {
+        id: "inventory:when-it-runs-out",
+        surface: "entity-detail-panel" as const,
+        target: "inventory:part",
+        title: "When this runs out",
+        appliesTo: { traits: ["fungible"] },
       },
       // On every saved view of this module's records (a Groceries "What's on
       // hand"): a stocktake of exactly the records the view shows.

@@ -8,7 +8,7 @@ import { Link } from "react-router-dom";
 import { Modal, NewFromTemplateButton } from "@cobblr/platform-web";
 import { FreeformAdd } from "./FreeformAdd";
 import { useAddByWords } from "../lib/useAddByWords";
-import { OPEN_ADD_SHEET_EVENT } from "./CommandPalette";
+import { OPEN_ADD_SHEET_EVENT, hostGone, hostLoaded } from "./palette-events";
 
 export function QuickAddSheet({ slug }: { slug: string }) {
   const [open, setOpen] = useState(false);
@@ -20,7 +20,11 @@ export function QuickAddSheet({ slug }: { slug: string }) {
       setOpen(true);
     };
     window.addEventListener(OPEN_ADD_SHEET_EVENT, onOpen);
-    return () => window.removeEventListener(OPEN_ADD_SHEET_EVENT, onOpen);
+    if (hostLoaded(OPEN_ADD_SHEET_EVENT)) onOpen();
+    return () => {
+      window.removeEventListener(OPEN_ADD_SHEET_EVENT, onOpen);
+      hostGone(OPEN_ADD_SHEET_EVENT);
+    };
   }, []);
 
   return (

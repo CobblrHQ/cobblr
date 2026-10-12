@@ -17,6 +17,7 @@ import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { logMeasurement } from "./record.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const metricsRouter = Router({ mergeParams: true });
 
@@ -39,9 +40,9 @@ function progress(latest: number | null, goal: number | null, dir: string, first
 
 const MetricCreate = z.object({
   name: z.string().min(1).max(200),
-  unit: z.string().max(40).optional(),
-  goal_value: z.number().optional(),
-  goal_direction: z.enum(["up", "down", "hit"]).optional(),
+  unit: optionalText(40),
+  goal_value: optionalField(z.number()),
+  goal_direction: z.enum(["up", "down", "hit"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
 });
 const MetricUpdate = MetricCreate.partial();
@@ -190,8 +191,8 @@ metricsRouter.delete(
 
 const MeasurementCreate = z.object({
   value: z.number(),
-  measured_at: z.string().datetime().optional(),
-  note: z.string().max(2000).optional(),
+  measured_at: z.string().datetime().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  note: optionalText(2000),
 });
 
 // AI-ACTION: tracking:log-measurement

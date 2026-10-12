@@ -2241,8 +2241,8 @@ export function registerPlatformActionHandlers(): void {
     const id = typeof ctx.args?.id === "string" ? ctx.args.id.trim() : "";
     if (!id) return { ok: false, error: "id is required: the send's id, from list_actions with send_targets." };
     try {
-      await undoSend(ctx.orgId, ctx.userId!, id);
-      return { ok: true, summary: "That send is undone: the copy there is gone and anything moved is back here." };
+      const r = await undoSend(ctx.orgId, ctx.userId!, id, ctx.args?.restore_source === true);
+      return { ...r, ok: true, summary: "summary" in r ? r.summary : "That send is undone: the copy there is gone and anything moved is back here." };
     } catch (err) {
       if (err instanceof SendError) return { ok: false, error: err.message };
       throw err;

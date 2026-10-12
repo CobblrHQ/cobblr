@@ -132,6 +132,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
           >
             <div className="flex items-start gap-3 p-3">
               <button
+                aria-label={e.pinned ? "Unpin" : "Pin to Quick Access"}
                 type="button"
                 title={e.pinned ? "Unpin" : "Pin to Quick Access"}
                 onClick={() => togglePin.mutate(e)}
@@ -154,6 +155,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
                 )}
               </button>
               <button
+                aria-label="Delete"
                 type="button"
                 title="Delete"
                 onClick={async () => {
@@ -292,7 +294,7 @@ function EntryEditor({
           autoFocus
         />
         <div className="flex flex-wrap items-center gap-2">
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="input">
+          <select aria-label="Category" value={kind} onChange={(e) => setKind(e.target.value)} className="input">
             <option value=""> - category - </option>
             {KINDS.map((k) => (
               <option key={k} value={k}>
@@ -334,6 +336,7 @@ function EntryEditor({
               </button>
               {viewingImage && <Lightbox items={[{ key: "entry", caption: "Entry image", src: imageSrc }]} index={0} onClose={() => setViewingImage(false)} />}
               <button
+                aria-label="Remove image"
                 type="button"
                 title="Remove image"
                 onClick={() => setImagePath(null)}

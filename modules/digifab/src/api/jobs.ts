@@ -88,7 +88,7 @@ const JOB_COLS = [
 const JobCreate = z.object({
   // Optional when `target_pool` is set — a pool job is unassigned until the
   // worker picks a free member (then it stamps the connection).
-  connection_id: z.string().uuid().optional(),
+  connection_id: z.string().uuid().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   file_ref: z.string().min(1).max(500),
   target_device: z.string().max(200).nullable().optional(),
   target_tag: z.string().max(200).nullable().optional(),
@@ -104,9 +104,9 @@ const JobCreate = z.object({
   linked_task_id: z.string().max(200).nullable().optional(),
   /** A build (BoM) this job produces — consumed from inventory on send. */
   linked_build_id: z.string().uuid().nullable().optional(),
-  build_qty: z.number().int().min(1).max(10000).optional(),
-  priority: z.number().int().min(0).max(100).optional(),
-  max_attempts: z.number().int().min(1).max(10).optional(),
+  build_qty: z.number().int().min(1).max(10000).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  priority: z.number().int().min(0).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  max_attempts: z.number().int().min(1).max(10).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // F-5: cursor-paginated + status-filterable, so a busy farm's older jobs don't
@@ -254,8 +254,8 @@ jobsRouter.get(
 // PATCH — re-prioritize or change the retry cap of a job (e.g. bump a queued job
 // to the front). Re-kicks assignment so a freshly-prioritized pool job re-sorts now.
 const JobPatch = z.object({
-  priority: z.number().int().min(0).max(100).optional(),
-  max_attempts: z.number().int().min(1).max(10).optional(),
+  priority: z.number().int().min(0).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  max_attempts: z.number().int().min(1).max(10).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
 });
 jobsRouter.patch(

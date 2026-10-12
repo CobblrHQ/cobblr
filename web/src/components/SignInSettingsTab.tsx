@@ -91,7 +91,7 @@ export function SignInSettingsTab() {
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 min-w-0 truncate rounded bg-subtle px-2 py-1 text-xs">{d.redirect_uri}</code>
-          <button type="button" aria-label="Copy the redirect URL" onClick={() => void navigator.clipboard.writeText(d.redirect_uri).then(() => toast.success("Copied."))} className="shrink-0 text-muted hover:text-content">
+          <button title="Copy the redirect URL" type="button" aria-label="Copy the redirect URL" onClick={() => void navigator.clipboard.writeText(d.redirect_uri).then(() => toast.success("Copied."))} className="shrink-0 text-muted hover:text-content">
             <Copy size={14} />
           </button>
         </div>
@@ -111,6 +111,7 @@ export function SignInSettingsTab() {
                 Edit
               </button>
               <button
+                title={`Remove ${p.display_name}`}
                 type="button"
                 aria-label={`Remove ${p.display_name}`}
                 onClick={async () => {
@@ -231,7 +232,7 @@ function GroupRolesEditor({ rows, onChange }: { rows: OidcGroupRole[]; onChange:
         <div key={i} className="flex flex-wrap items-center gap-2">
           <input className={`${input} w-32 flex-1`} placeholder="group" value={r.group} onChange={(e) => put(i, { group: e.target.value })} />
           <input className={`${input} w-32 flex-1`} placeholder="workspace short name" value={r.org_slug} onChange={(e) => put(i, { org_slug: e.target.value })} />
-          <select className={`${input} w-28`} value={r.role} onChange={(e) => put(i, { role: e.target.value as OidcGroupRole["role"] })}>
+          <select aria-label="Role" className={`${input} w-28`} value={r.role} onChange={(e) => put(i, { role: e.target.value as OidcGroupRole["role"] })}>
             {INVITABLE_ORG_ROLES.map((role) => (
               <option key={role} value={role}>
                 {role}
@@ -241,7 +242,7 @@ function GroupRolesEditor({ rows, onChange }: { rows: OidcGroupRole[]; onChange:
           <label className="flex items-center gap-1 text-xs">
             <input type="checkbox" checked={!!r.lower} onChange={(e) => put(i, { lower: e.target.checked })} /> lower
           </label>
-          <button type="button" aria-label="Remove this row" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-muted hover:text-ember-600">
+          <button title="Remove this row" type="button" aria-label="Remove this row" onClick={() => onChange(rows.filter((_, j) => j !== i))} className="text-muted hover:text-ember-600">
             <Trash2 size={14} />
           </button>
         </div>

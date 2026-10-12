@@ -127,6 +127,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </div>
         </div>
         <button
+          title="Collapse field details"
           type="button"
           onClick={onClose}
           aria-label="Collapse field details"

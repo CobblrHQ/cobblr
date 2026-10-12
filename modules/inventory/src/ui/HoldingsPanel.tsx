@@ -2,6 +2,7 @@
 // somewhere else too". On any record's detail, the card's or a place's, since
 // both belong to one thing. See docs/design-decisions/holdings-and-units.md.
 
+import { useStockWrites } from "./stock-writes";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +17,7 @@ type Open = { row: string; form: "restock" | "arrived" } | null;
 /** "Restock from…" for one place: pick where it comes from, how many, and
  *  (optionally) which lot; soonest-expiring first when none is chosen. */
 function RestockForm({ to, rows, onDone }: { to: HoldingRow; rows: HoldingRow[]; onDone: () => void }) {
-  const { api } = useInventory();
+  const stock = useStockWrites();
   const toast = useToast();
   const sources = rows.filter((r) => r.id !== to.id && r.qty > 0);
   const [from, setFrom] = useState(sources[0]?.id ?? "");
@@ -26,7 +27,7 @@ function RestockForm({ to, rows, onDone }: { to: HoldingRow; rows: HoldingRow[];
   const move = useMutation({
     mutationFn: () => {
       const [kind, value] = lot.split(":", 2) as [string, string | undefined];
-      return api.transferStock(from, {
+      return stock.transferStock(from, {
         to_id: to.id,
         qty: Number(qty),
         ...(kind === "lot" && value ? { lot: value } : {}),
@@ -85,13 +86,13 @@ function RestockForm({ to, rows, onDone }: { to: HoldingRow; rows: HoldingRow[];
 
 /** Stock arrived at one place, with the date printed on it and its lot number. */
 function ArrivedForm({ at, onDone }: { at: HoldingRow; onDone: () => void }) {
-  const { api } = useInventory();
+  const stock = useStockWrites();
   const toast = useToast();
   const [qty, setQty] = useState("");
   const [expires, setExpires] = useState("");
   const [lot, setLot] = useState("");
   const receive = useMutation({
-    mutationFn: () => api.receiveLot(at.id, { qty: Number(qty), expires_on: expires || null, lot: lot.trim() || null }),
+    mutationFn: () => stock.receiveLot(at.id, { qty: Number(qty), expires_on: expires || null, lot: lot.trim() || null }),
     onSuccess: () => {
       toast.success(`Added ${qty} at ${at.location_name ?? "that place"}.`);
       onDone();
@@ -198,7 +199,6 @@ export function HoldingsPanel({ partId, unit }: { partId: string; unit?: string 
       {rows.length > 0 && (
         <HoldingRows
           rows={rows}
-          basePath={basePath}
           unit={unit}
           onSplit={async (row) => {
             const ok = await confirm({

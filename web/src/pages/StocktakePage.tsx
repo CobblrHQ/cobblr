@@ -3,13 +3,11 @@
 // stays here after the toast that first offered it is gone.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
-import { usePageTitle, useRunAction, useToast } from "@cobblr/platform-web";
+import { usePageTitle, useRunAction, useToast, useUnits } from "@cobblr/platform-web";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { QueryError } from "../components/QueryError";
-
-const fmt = (n: number) => (Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3))));
 
 export function StocktakePage() {
   const { id = "" } = useParams();
@@ -18,6 +16,7 @@ export function StocktakePage() {
   const toast = useToast();
   // PRESS-ARGS: Undo needs only this stocktake's id, which the page has.
   const runAction = useRunAction();
+  const units = useUnits();
   const q = useQuery({ queryKey: ["stocktake", activeSlug, id], queryFn: () => api.stocktake(activeSlug, id), enabled: !!id });
   usePageTitle(q.data ? `Stocktake of ${q.data.label}` : "Stocktake");
   if (q.isError) return <QueryError what="this stocktake" onRetry={() => void q.refetch()} />;
@@ -65,7 +64,7 @@ export function StocktakePage() {
         </button>
       )}
       {section("Marked gone", t.gone.map((g) => ({ id: g.id, title: g.title, note: "gone, not recorded how" })))}
-      {section("Counted", t.counted.map((c) => ({ id: c.id, title: c.title, note: `${fmt(c.after)} left, was ${fmt(c.before)}` })))}
+      {section("Counted", t.counted.map((c) => ({ id: c.id, title: c.title, note: `${units.format(c.after, c.unit)} left, was ${units.format(c.before, c.unit)}` })))}
       {section("Still here", t.kept)}
     </div>
   );

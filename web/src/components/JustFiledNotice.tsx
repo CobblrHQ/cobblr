@@ -20,7 +20,7 @@ export function JustFiledNotice() {
           {note.firstEver && <div className="text-[13px] text-muted dark:text-slate-400">{note.label} is new: find it any time in the menu.</div>}
           {note.installed && <div className="text-[12px] text-muted dark:text-slate-400">{note.installed}</div>}
         </div>
-        <button type="button" onClick={dismiss} aria-label="Close" className="shrink-0 p-0.5 text-faint hover:text-content">
+        <button title="Close" type="button" onClick={dismiss} aria-label="Close" className="shrink-0 p-0.5 text-faint hover:text-content">
           <X size={16} />
         </button>
       </div>

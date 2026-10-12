@@ -236,10 +236,13 @@ export interface PlatformWebApi {
   previewSendFile?(slug: string, p: {entity_kind: string;ids: string[];mode: "copy" | "move"}): Promise<import("./SendRecords").SendFileExportPreview>;
   exportSendFile?(slug: string, p: {entity_kind: string;ids: string[];mode: "copy" | "move";request_id?: string}): Promise<{id: string;download_path: string;summary: string}>;
   downloadSendFile?(slug: string, id: string): Promise<void>;
+  ownConnections?(slug: string): Promise<import("./ConnectCobblr").OwnConnections>;
+  connectCobblr?(slug: string, where?: number): Promise<{id: string;invite_url: string}>;
+  revokeOwnConnection?(slug: string, id: string): Promise<unknown>;
   sendTargets?(slug: string): Promise<import("./SendRecords").WorkspaceSendTargets>;
   previewSend?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<import("./SendRecords").WorkspaceSendPreview>;
-  sendRecords?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<{ summary: string; offer_ids: string[] }>;
-  undoSend?(slug: string, id: string): Promise<unknown>;
+  sendRecords?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<{ summary: string; offer_ids: string[]; connected?: boolean }>;
+  undoSend?(slug: string, id: string, restore?: boolean): Promise<{summary?: string; restore_available?: boolean}>;
   listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;
   withdrawShareOffer?(slug: string, id: string): Promise<unknown>;
   /** The shares of this workspace's own things, and which of them hold this

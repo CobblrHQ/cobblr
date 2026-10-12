@@ -19,6 +19,7 @@ import {
 import { listNeeds, readNeedsFromText, readPastedMaterials, readPatternNeedsState, runPatternRead, type PatternNeedsState } from "./pattern-needs.js";
 import { matchNeeds, settlePattern, syncShoppingLine, useYarn } from "./pattern-yarn.js";
 import { patternTextMatches, snippetsFor } from "./pattern-text.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const projectsRouter = Router({ mergeParams: true });
 
@@ -323,8 +324,8 @@ async function withMatches(orgId: string, userId: string | null, projectId: stri
 const UseBody = z.object({
   part_id: z.string().uuid().nullable(),
   /** On a swap, what the old yarn has given so far, when more than was logged. */
-  used_so_far_m: z.number().min(0).optional(),
-  used_so_far_units: z.number().min(0).optional(),
+  used_so_far_m: optionalField(z.number().min(0)),
+  used_so_far_units: optionalField(z.number().min(0)),
 });
 
 // Make this yarn requirement with a stash yarn (null lets it go). A second

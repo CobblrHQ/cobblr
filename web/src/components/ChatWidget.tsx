@@ -7,7 +7,7 @@
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MarkdownText } from "@cobblr/platform-web";
+import { MarkdownText, raisePersonalDocument, usePasteImage } from "@cobblr/platform-web";
 import { panelArrived, panelLeft, type OpenChatDetail } from "../lib/open-chat-buffer";
 import { appliedCards } from "../lib/applied-cards";
 import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnnamed, type ChatEntityRef } from "../lib/entity-chips";
@@ -261,6 +261,7 @@ export function ModelChip({
     : `This chat uses the workspace default${menu.defaultLabel ? `, ${menu.defaultLabel}` : ""}. Click to switch.`;
   return (
     <>
+      {/* COLOUR-NOT-STATE: the pill names the model it answers with; the fill only says it is not the default. */}
       <button
         ref={btn}
         type="button"
@@ -523,6 +524,11 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   const messagesRef = useRef<Msg[]>([]);
   messagesRef.current = messages;
   const [input, setInput] = useState("");
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const documentInput = useRef<HTMLInputElement>(null);
+  const composer = useRef<HTMLDivElement>(null);
+  const documentGeneration = useRef(0);
+  useEffect(() => { documentGeneration.current++; setDocumentFile(null); }, [activeSlug, open]);
   // Deep-link seam: any surface can open the chat with GUIDANCE
   // (window.dispatchEvent(new CustomEvent("cobblr:open-chat", {detail:{seed|prefill|opener}}))).
   //   seed    — a PLACEHOLDER (ghost text saying what this conversation is for).
@@ -563,6 +569,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [busy, setBusy] = useState(false);
+  usePasteImage(composer, { enabled: open && !busy, accept: "application/pdf,image/*", onFiles: ([file]) => { if (file) setDocumentFile(file); } });
   const [error, setError] = useState<string | null>(null);
   // DEV ONLY — which Cobb pose this panel draws. Cobb normally only reaches
   // `working`/`tada` by way of a real AI build, so there is otherwise no way to
@@ -1015,7 +1022,20 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
 
   async function send(spoken?: string) {
     const text = (spoken ?? input).trim();
-    if (!text || busy) return;
+    if ((!text && !documentFile) || busy) return;
+    if (documentFile) {
+      const generation = documentGeneration.current;
+      setBusy(true); setError(null);
+      try {
+        const read = await api.readPersonalDocument(activeSlug, documentFile);
+        if (generation !== documentGeneration.current) return;
+        if (read.kind !== "registration" && !read.renewalType) { setError("This attachment is not a registration renewal. Use Scan for other documents."); return; }
+        raisePersonalDocument({ orgSlug: activeSlug, read, file: documentFile });
+        setDocumentFile(null); setInput("");
+      } catch (error) { if (generation === documentGeneration.current) setError(error instanceof Error ? error.message : "The document could not be read."); }
+      finally { setBusy(false); }
+      return;
+    }
     setInput("");
     setHistory((h) => {
       const entries = remember(h.entries, text);
@@ -1756,6 +1776,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                   the FULL-BODY Cobb below, which is where poses are reviewable. */}
               {import.meta.env.DEV ? (
                 <button
+                  aria-label={`Cobb: cycle the full-body pose below: ${devPose} (dev only)`}
                   type="button"
                   onClick={() => setDevPose((p) => COBB_POSES[(COBB_POSES.indexOf(p) + 1) % COBB_POSES.length]!)}
                   title={`Cobb: cycle the full-body pose below: ${devPose} (dev only)`}
@@ -2483,7 +2504,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           {/* What you are pointing at, held where you can see it — and drop it.
               A highlight is gone the moment the caret enters this box, so it is
               captured as a chip instead of being read back at send-time. */}
-          <div className="border-t border-line dark:border-slate-700 p-3 flex flex-col gap-2 shrink-0">
+          <div ref={composer} className="border-t border-line dark:border-slate-700 p-3 flex flex-col gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 text-sm"><button type="button" className="text-accent underline" disabled={busy} onClick={() => documentInput.current?.click()}>Attach personal document</button><input ref={documentInput} type="file" className="sr-only" aria-label="Attach personal document" accept="application/pdf,image/*" onChange={event => { setDocumentFile(event.target.files?.[0] ?? null); event.target.value = ""; }} />{documentFile && <span className="min-w-0 break-words">{documentFile.name} <button type="button" className="underline" onClick={() => setDocumentFile(null)}>Remove</button></span>}</div>
             {selection && (
               // INSIDE the box, at its top. Three attempts got here:
               //   a row of its own above the composer — a second divider and a
@@ -2562,9 +2584,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
               className="flex-1 resize-none px-3 py-2 text-base sm:text-sm rounded-lg border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-200 leading-relaxed"
             />
             <button
+              title="Send"
               type="button"
               onClick={() => void send()}
-              disabled={!input.trim() || busy}
+              disabled={(!input.trim() && !documentFile) || busy}
               className="h-9 w-9 shrink-0 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white flex items-center justify-center transition disabled:opacity-50"
               aria-label="Send"
             >

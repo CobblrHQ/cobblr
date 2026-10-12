@@ -21,7 +21,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-locations",
-  version: "0.12.0",
+  version: "0.12.1",
   displayName: "Locations",
   description:
     "Where your things live: rooms, shelves and bins, one inside another, and a floor plan to draw them on.",
@@ -334,7 +334,7 @@ export default defineModule({
         examples: ["does option A fit", "what is on each shelf in the draft"],
         label: "Read a layout",
         description:
-          "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere; the room's size and walls (doors with their swing, windows with their sill, closets), each rack's spot, size and turn on the floor, and `flags`: a rack in a door's swing, a rack taller than a window's sill in front of it, and (when the room checks aisles) a gap narrower than its aisle. Changes nothing.",
+          "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere; the room's size and walls (doors with their swing, windows with their sill, closets), each rack's spot, size and turn on the floor, and `flags`: a rack that does not fit the room (bigger than it, or reaching past a wall: such a layout cannot be applied), a rack in a door's swing, a rack taller than a window's sill in front of it, and (when the room checks aisles) a gap narrower than its aisle. Changes nothing.",
         icon: "layout",
         scope: "workspace" as const,
         invokeHandler: "core-locations.plan-read",

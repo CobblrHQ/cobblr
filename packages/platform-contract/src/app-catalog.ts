@@ -68,6 +68,15 @@ export function appCatalog(modules: readonly AppModuleLike[], hidden: ReadonlySe
   return out.sort((a, b) => a.label.localeCompare(b.label));
 }
 
+/** The apps Menu & surfaces offers beyond the menu's own rows: every app
+ *  that is on but is not a row there. The page for choosing what the menu
+ *  shows listed only the rows, so an app a person had not added (the
+ *  calendar, saved views, files) could not be added from it (#5971).
+ *  `rowNames` holds the names and keys the menu's rows answer to. */
+export function appsNotInMenu(apps: readonly AppEntry[], rowNames: ReadonlySet<string>): AppEntry[] {
+  return apps.filter((a) => a.state !== "off" && !rowNames.has(a.key) && !rowNames.has(a.name));
+}
+
 /** The apps a search finds: every word typed appears in what the app answers
  *  to. A label that starts with what was typed leads. */
 export function appsMatching(q: string, apps: readonly AppEntry[], limit = 6): AppEntry[] {

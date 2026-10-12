@@ -163,7 +163,7 @@ export function MeNotificationChannelsPage() {
               <span className="font-mono uppercase tracking-widest text-accent">
                 workspace:
               </span>
-              <select
+              <select aria-label="Workspace"
                 value={activeOrgId}
                 onChange={(e) => setActiveOrgId(e.target.value)}
                 className="input text-xs px-2 py-1"
@@ -368,6 +368,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                   <td className="px-3 py-2 text-right">
                     <div className="inline-flex items-center gap-2">
                       <button
+                        aria-label={`Send a test notification through THIS binding at priority=${b.min_priority} (its threshold)`}
                         onClick={() =>
                           testOne.mutate({ id: b.id, priority: b.min_priority })
                         }
@@ -378,6 +379,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                         <Send size={12} />
                       </button>
                       <button
+                        aria-label="Remove binding"
                         onClick={() => handleRemove(b)}
                         className="text-ember-500 hover:text-ember-600 transition"
                         title="Remove binding"

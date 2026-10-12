@@ -1,0 +1,10 @@
+{
+  "lint": "lint:test-guest-sweep-clock",
+  "run": "node scripts/lint-test-guest-sweep-clock.ts",
+  "rows": [
+    "integration-test"
+  ],
+  "ms": 2844,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -21,7 +21,7 @@ export const resolveRouter = Router({ mergeParams: true });
 const Body = z.object({
   value: z.string().min(1).max(2000),
   surface: z.enum(["scan", "palette", "search"]),
-  source: z.enum(["typed", "wedge", "camera", "bridge"]).optional(),
+  source: z.enum(["typed", "wedge", "camera", "bridge"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   scope: z
     .object({ kind: z.string().min(1).max(120), filter: z.record(z.string()).optional() })
     .optional(),

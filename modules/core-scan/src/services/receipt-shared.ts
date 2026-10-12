@@ -241,12 +241,15 @@ export type ParseMethod = "csv" | "pdf-table" | "text-lines" | "ocr-lines" | "oc
  *                   the same thing forever. DONE.
  *   unreadable      the bytes could not be read at all (a corrupt file, an
  *                   image-only PDF). Needs a different input, not a retry.
+ *   reader_failed   the OCR engine crashed or timed out partway (OcrFailed,
+ *                   #5921). Nothing was read and nothing filed; reading it
+ *                   again usually works. RECOVERABLE.
  *
  * Kept as a code rather than left in the prose `reason` because the caller has
  * to decide something with it, and deciding by matching on a human sentence is
  * a string comparison waiting to be reworded.
  */
-export type ReceiptFailure = "ai_unavailable" | "no_line_items" | "unreadable";
+export type ReceiptFailure = "ai_unavailable" | "no_line_items" | "unreadable" | "reader_failed";
 
 /** What was given to read, so a sentence about it names it: a PDF is never
  *  told to "check the picture". `scanned-pdf` is a PDF with no text, read

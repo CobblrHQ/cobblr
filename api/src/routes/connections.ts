@@ -44,7 +44,7 @@ const Route = z.object({ org_id: z.string().uuid(), mode: RouteMode });
 
 const CreateBody = z.object({
   provider_id: z.string().min(1).max(80),
-  label: z.string().max(160).optional(),
+  label: z.string().max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).default({}),
   route_mode: RouteMode.optional(),
   route_scope: RouteScope.optional(),
@@ -57,7 +57,7 @@ const CreateBody = z.object({
 });
 
 const PatchBody = z.object({
-  label: z.string().max(160).optional(),
+  label: z.string().max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).optional(),
   route_mode: RouteMode.optional(),
   route_scope: RouteScope.optional(),
@@ -188,7 +188,7 @@ connectionsRouter.post("/me/connections/test", requireAuth, async (req, res) => 
     provider_id: z.string().min(1).max(80),
     /** The kind, for a provider named by something no one registers (a
      *  service's manifest id). */
-    kind: z.string().min(1).max(40).optional(),
+    kind: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
     credentials: z.record(z.unknown()),
   });
   const parsed = Body.safeParse(req.body);

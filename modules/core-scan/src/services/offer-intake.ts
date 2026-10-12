@@ -7,6 +7,8 @@
 // Filed, it says where it came from through the same facts a receipt's seller
 // does: Acquired from is the person, Acquired on the day it arrived.
 
+import { arrivalCount } from "./filed-quantity.js";
+import { TITLE_VARIANTS_KEY } from "@cobblr/platform-contract/display-identity";
 import { fileThroughConfirm, BundleInstaller } from "./file-through-confirm.js";
 import { routeWhereKept, type RouteCandidate } from "./kept-route.js";
 import type { Kysely } from "kysely";
@@ -166,6 +168,12 @@ export const offerIntake: OfferIntake = {
         receipt_date: p.acquiredOn,
         ...(!thing.send ? { user_fields: userFields } : {}),
         offered_fields: thing.fields ?? {},
+        // A titled work's other forms ride to the record the way an identified
+        // scan's do (filing reads them from here), so the copy keeps them (#5958).
+        ...(thing.title_variants ? { [TITLE_VARIANTS_KEY]: thing.title_variants } : {}),
+        // A copy of a record that had none: held until someone says how many
+        // arrived, never offered ready to Add as one.
+        ...(arrivalCount(thing.quantity, { own: !!thing.send }).held ? { check_fields: { fields: ["quantity"], said: `This had a count of 0 in ${p.acquiredFrom ?? "the other workspace"}. Enter how many arrived.` } } : {}),
         ...(thing.kind_words ? { offered_kind: thing.kind_words } : {}),
         ...(thing.collection?.module ? { offered_collection: thing.collection } : {}),
         ...(photoIds.length > 1 ? { extra_photos: photoIds.slice(1) } : {}),
@@ -184,7 +192,9 @@ export const offerIntake: OfferIntake = {
           status: "pending",
           suggested_name: thing.name,
           suggested_manufacturer: thing.manufacturer ?? null,
-          quantity: thing.quantity && thing.quantity > 0 ? Math.round(thing.quantity) : 1,
+          // The count the record had, as the inbox can hold it (one or more,
+          // filed-quantity.ts); a known 0 is held for its count below (#5935).
+          quantity: arrivalCount(thing.quantity, { own: !!thing.send }).quantity,
           scan_batch_id: batchId,
           ...(photoIds[0] ? { image_file_id: photoIds[0] } : {}),
           suggested_metadata: JSON.stringify(metadata) as never,

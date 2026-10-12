@@ -47,13 +47,22 @@ export interface ConnectionVerification {
   photos_said?: string;
   /** How long the whole probe took, in milliseconds, whatever it said. */
   latency_ms?: number;
+  /** A refused model (model_unavailable): the connection's default that DID
+   *  answer on the same key, when there is one (ai-verify.ts). The screen
+   *  leads with it, so a model refusal is never read as a bad key (#6050). */
+  default_answers?: string;
+  /** The provider's own words for a refusal, kept for diagnosis and shown
+   *  after the explanation, never as it (#6050). */
+  provider_said?: string;
+  /** Who said it, as the screen names the provider ("Google AI Studio"). */
+  provider?: string;
 }
 
 /** The verification a probe's verdict becomes. A quota or an unreachable
  *  provider says nothing about the key, so those are "unverifiable", not
  *  "invalid"; a rejected key or a missing model is "invalid". */
 export function verificationOf(
-  probe: ConnectionTestOutcome & { reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; note?: string; photos?: { read: boolean; said?: string } },
+  probe: ConnectionTestOutcome & { reason?: ConnectionVerification["reason"]; error?: string; detail?: string; models?: string[]; model?: string; note?: string; photos?: { read: boolean; said?: string }; default_answers?: string; provider_said?: string; provider?: string },
   model?: string | null,
   now: Date = new Date(),
   latencyMs?: number,
@@ -64,10 +73,21 @@ export function verificationOf(
     ? { photos: probe.photos.read ? ("read" as const) : ("not-read" as const), ...(!probe.photos.read && probe.photos.said ? { photos_said: probe.photos.said.slice(0, 200) } : {}) }
     : {};
   const warning = probe.warning?.trim();
-  if (probe.ok) return { state: warning ? "warning" : "verified", at, ...(model ? { model } : probe.models?.[0] ? { model: probe.models[0] } : {}), ...(warning || probe.note ? { message: warning || probe.note } : {}), ...photos, ...took };
+  // The model named is the one that GENERATED: never the first of a list the
+  // provider returned, which the connection had not asked (#6024).
+  const confirmed = probe.model || model;
+  if (probe.ok) return { state: warning ? "warning" : "verified", at, ...(confirmed ? { model: confirmed } : {}), ...(warning || probe.note ? { message: warning || probe.note } : {}), ...photos, ...took };
   const reason = probe.reason ?? "unknown";
   const state: VerificationState = reason === "invalid_key" || reason === "model_unavailable" ? "invalid" : "unverifiable";
-  return { state, reason, at, ...(probe.error ? { message: probe.error } : {}), ...took };
+  // What the screen needs to name the real cause: the refused model, the
+  // default that answers instead, and the provider's own words (#6050).
+  const why = {
+    ...(reason === "model_unavailable" && (probe.model || model) ? { model: probe.model || model || undefined } : {}),
+    ...(probe.default_answers ? { default_answers: probe.default_answers } : {}),
+    ...(probe.provider_said ? { provider_said: probe.provider_said.slice(0, 300) } : {}),
+    ...(probe.provider ? { provider: probe.provider } : {}),
+  };
+  return { state, reason, at, ...(probe.error ? { message: probe.error } : {}), ...why, ...took };
 }
 
 /** Read a stored value back as a verification, or null for none / garbage. */
@@ -108,14 +128,18 @@ export function isWorkingVerification(v: { state?: string } | null | undefined):
  *  that save a key, a personal connection and a workspace AI provider, answer
  *  with this, so the panel reads one refusal (#3499). */
 export function unverifiedRefusal(verification: ConnectionVerification): {
-  error: { code: "key_invalid" | "key_unverifiable"; message: string };
+  error: { code: "key_invalid" | "key_unverifiable"; message: string; details: Pick<ConnectionVerification, "reason" | "model" | "default_answers" | "provider" | "provider_said"> };
   verification: ConnectionVerification;
 } {
   const invalid = verification.state === "invalid";
+  const fallback = !invalid ? "The key could not be verified just now." : verification.reason === "model_unavailable" ? "This model is not available on this key." : "The provider rejected this key.";
+  const { reason, model, default_answers, provider, provider_said } = verification;
   return {
     error: {
       code: invalid ? "key_invalid" : "key_unverifiable",
-      message: verification.message ?? (invalid ? "The provider rejected this key." : "The key could not be verified just now."),
+      message: verification.message ?? fallback,
+      // What the save dialog needs to head it by the real cause (#6050).
+      details: { reason, model, default_answers, provider, provider_said },
     },
     verification,
   };

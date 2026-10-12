@@ -17,6 +17,8 @@ import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import type { Remaining } from "@cobblr/platform-contract/consumption-gauge";
 import { remainingFor } from "./remaining.js";
 import { annotateInstalled } from "./installed.js";
+import { capacitySourceField } from "../consumption-unit.js";
+import { UNIT_OF_KEY } from "../on-hand.js";
 
 let registered = false;
 
@@ -58,6 +60,23 @@ export function registerInventoryResolvers(): void {
   // Shared parts list — used for the base `inventory:part` kind (all parts)
   // and, with an `instance` arg, for any inventory instance kind
   // (`<name>:item`), scoped to that instance's parts.
+  /** A per-unit total counts what is left in the units already opened: the
+   *  field a kind's capacity reads from (a yarn's length per skein) is value x
+   *  the unopened count plus each record's open units, which hold their
+   *  remainder in that same unit (consumption-unit.ts). Two full skeins and an
+   *  opened one at 150 m are 550 m, not 400 (#5897). */
+  const withOpenRemainders = async (orgId: string, query: EntityListQuery, instance?: string): Promise<EntityListQuery> => {
+    const plan = query.group_plan;
+    if (!plan) return query;
+    const defs = await platform().entities.fieldsFor(orgId, instance ? `${instance}:item` : "inventory:part").catch(() => []);
+    const source = capacitySourceField(defs.find((d) => d.name === "capacity")?.template ?? null);
+    if (!source || !plan.fields.some((f) => f.name === source && f.times)) return query;
+    const opened = sql<number>`(select sum(u.qty) from inventory_parts u where u.metadata->>${UNIT_OF_KEY} = (data->>'id') and u.qty > 0)`;
+    // The plan itself: the platform reads its result back off this object.
+    plan.plus = { ...(plan.plus ?? {}), [source]: opened };
+    return query;
+  };
+
   const partsListResolver = async (orgId: string, asked: EntityListQuery, instance?: string) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     // "Hide unavailable" is a view filter over what is installed, not a
@@ -94,7 +113,7 @@ export function registerInventoryResolvers(): void {
     // (#4789). "Hide unavailable" is decided per row below, after the query,
     // so a count would not match it and is left out then.
     const [rows, counted] = await Promise.all([
-      (async () => (await groupListRows(db, groupedQ, query)) ?? await sortedQ.limit(limit).offset(offset).execute())(),
+      (async () => (await groupListRows(db, groupedQ, await withOpenRemainders(orgId, query, instance))) ?? await sortedQ.limit(limit).offset(offset).execute())(),
       hideUnavailable ? Promise.resolve(null) : q.clearSelect().select((eb) => eb.fn.countAll<string>().as("n")).executeTakeFirst(),
     ]);
     const [names, places, left, held, inst] = await Promise.all([

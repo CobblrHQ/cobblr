@@ -28,6 +28,10 @@ export interface TrackedMatchStamp {
   matched_by: string;
   matched_label: string | null;
   qty: number | null;
+  /** The unit the record keeps its count in, when it says (#5905). */
+  unit?: string | null;
+  /** That unit measures (grams) rather than counts (#5905). */
+  measured?: boolean;
   image_path: string | null;
   /** How many THINGS matched at the deciding tier (1 = decisive); places of
    *  one item are one thing. */
@@ -42,7 +46,14 @@ export interface TrackedMatchStamp {
   new_place?: string | null;
   /** Where the thing is kept already, in words ("8 in Kitchen"). */
   held?: string | null;
+  /** A match only a person may settle, and why: a document's vehicle found by
+   *  its name while its VIN is not proved (#5921). Offered as a question,
+   *  never filed, counted or filled until they say "It's this one". */
+  confirm?: string | null;
 }
+
+/** What a name-only match of a vehicle without a proved VIN says. */
+export const VIN_DID_NOT_READ = "matched by name; the VIN didn't read; check it's this car";
 
 /** Where this scan is being filed, as far as a place of the matched thing is
  *  concerned: the place somebody picked on the row, then the place being
@@ -75,6 +86,8 @@ export function trackedMatchStamp(tracked: { barcode_matches: TrackedMatch[]; na
     // Whether the record keeps a count is what makes "+1 more" the right
     // filing (scanRebuy); a record with none is one unique thing.
     qty: best.qty,
+    ...(best.unit ? { unit: best.unit } : {}),
+    ...(best.measured ? { measured: true } : {}),
     // The picture a person already chose for the thing they have: the card
     // shows it ahead of anything a web search found (2026-09-06).
     image_path: best.image_path,
@@ -92,8 +105,13 @@ export async function trackedMatchStampAt(
   orgId: string,
   tracked: { barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] } | null,
   at: ScanPlace,
+  rowMeta?: unknown,
 ): Promise<TrackedMatchStamp | null> {
-  const stamp = trackedMatchStamp(tracked);
+  const found = trackedMatchStamp(tracked);
+  // Found by name (no barcode or identifier tier) for a vehicle whose VIN is
+  // not proved: a question for the person, never a settled match (#5921).
+  const byNameOnly = !!found && !!tracked && tracked.barcode_matches.length === 0;
+  const stamp = found && byNameOnly && vehicleWithoutProvedVin(rowMeta) ? { ...found, confirm: VIN_DID_NOT_READ } : found;
   if (!stamp || stamp.of > 1 || !tracked) return stamp;
   const tier = tracked.barcode_matches.length > 0 ? tracked.barcode_matches : tracked.name_matches;
   const card = tier[0]?.card_id ?? stamp.id;
@@ -168,6 +186,25 @@ export interface MatchInput {
   suggested_name: string | null;
   suggested_metadata?: unknown;
   suggested_manufacturer: string | null;
+  /** The tables the row is routed to (its candidates): a name match is only
+   *  looked for among records of the same kind of thing (#6004). */
+  suggested_candidates?: unknown;
+}
+
+/** The tables a row is routed to, as its candidates name them. */
+/** Only a table that says what the thing is: a specific table of its own
+ *  (an instance, not the module's catch-all, never the fallback, never a
+ *  bundle offered and not yet installed). A row the
+ *  router could only call "Inventory" says nothing about its kind, and the
+ *  milk it is lives in Groceries (#3707). */
+export function routedTablesOf(row: { suggested_candidates?: unknown }): Array<{ kind: string | null; instance: string | null; label: string | null }> {
+  const cands = Array.isArray(row.suggested_candidates) ? (row.suggested_candidates as Array<Record<string, unknown>>) : [];
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  return cands
+    // A table offered from a bundle not installed yet is not where the row
+    // lives, and says nothing a record can be measured against.
+    .filter((c) => str(c.instance) && c.is_fallback !== true && !str(c.bundle_external_id))
+    .map((c) => ({ kind: str(c.kind), instance: str(c.instance), label: str(c.label) }));
 }
 
 /** What the matcher is asked with: the name the row is known by (a
@@ -191,7 +228,18 @@ export function matchQuery(row: MatchInput, fields: Record<string, unknown> | nu
     brand: row.suggested_manufacturer,
     seller: sellerOf(row.suggested_metadata),
     category: category ?? null,
+    tables: routedTablesOf(row),
   };
+}
+
+/** A document's vehicle line (it gave a model year) whose VIN is not proved:
+ *  doubted by its checks, or never decoded. */
+export function vehicleWithoutProvedVin(meta: unknown): boolean {
+  const m = (meta ?? {}) as { line_facts?: Record<string, unknown>; check_fields?: { fields?: unknown }; decoded?: { decoder_id?: unknown } };
+  const vehicle = typeof m.line_facts?.["year-made"] === "number";
+  if (!vehicle) return false;
+  const doubted = Array.isArray(m.check_fields?.fields) && (m.check_fields!.fields as unknown[]).includes("vin");
+  return doubted || m.decoded?.decoder_id !== "vin";
 }
 
 /** The shop a receipt line came from, when it says. */
@@ -212,7 +260,7 @@ export async function trackedMatchFor(
   fields: Record<string, unknown> | null | undefined,
   category: string | null | undefined,
 ): Promise<TrackedMatchStamp | null> {
-  return trackedMatchStampAt(orgId, await findTracked(orgId, matchQuery(row, fields, category)), scanPlaceOf(row));
+  return trackedMatchStampAt(orgId, await findTracked(orgId, matchQuery(row, fields, category)), scanPlaceOf(row), row.suggested_metadata);
 }
 
 export async function restampTrackedMatch(

@@ -15,6 +15,8 @@ export function CobblestoneMark({ size = 64, dot }: { size?: number; dot?: strin
     <svg
       width={size}
       height={size}
+      // A fixed-size mark: beside a name that truncates, it keeps its size.
+      className="shrink-0"
       viewBox="0 0 100 100"
       xmlns="http://www.w3.org/2000/svg"
       aria-label={dot ? "cobblr logo (canary)" : "cobblr logo"}

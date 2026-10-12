@@ -3,6 +3,7 @@ type: feature
 scope: maintenance
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.16 Maintenance
+docs_published: 2026-10-12
 ---
 A service visit can say where it is. Pick a place you used before or type the address, and the visit's calendar event carries it, with directions on your phone.
 

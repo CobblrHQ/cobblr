@@ -64,6 +64,10 @@ export const SERVICE_ERROR_CODES = [
   // Cobblr's own: the supervisor judged the job stuck (no change, or past its
   // deadline) and had no one else to hand it to.
   "stalled",
+  // Cobblr's own: an output file is a personal document, which shared Files
+  // never hold; the same job can keep it in the requester's Vault instead
+  // (keepInVault, #5871).
+  "personal_document",
 ] as const;
 export type ServiceErrorCode = (typeof SERVICE_ERROR_CODES)[number] | `x-${string}`;
 
@@ -459,6 +463,11 @@ export interface ServiceInvokeRequest {
   idempotencyKey?: string;
   /** Outputs attach here as well as to the job. */
   attachTo?: { kind: string; id: string };
+  /** Keep the output files in this person's Vault (their Personal
+   *  documents folder, linked to `attachTo`), never in shared Files: for a
+   *  document the personal gate keeps out of Files (#5871). A job kept in
+   *  the Vault is its own job, never one that went to Files. */
+  keepInVault?: { userId: string };
   /** The job whose result led here, for the loop guard. */
   causedByJob?: string;
 }
@@ -473,6 +482,11 @@ export interface BuiltInServiceContext {
   files: Record<string, string>;
   /** Report progress while it works. */
   progress(fraction: number, message?: string): Promise<void>;
+  /** Keep an output file where this job keeps its outputs: shared Files, or
+   *  the requester's Vault when the job asked (keepInVault). Return its id
+   *  under `files`. A built-in that stores an output itself would put a
+   *  personal document where the job did not ask it to go. */
+  keepFile?(bytes: Uint8Array, meta: { filename: string; mimeType: string }): Promise<{ fileId: string }>;
   /** An adapter's connection settings (see BuiltInServiceDef.connection):
    *  the config of the connection this job runs on, decrypted. Absent for a
    *  plain built-in. */
@@ -740,6 +754,10 @@ export interface ServiceConnectionHolder {
   /** Which program it is: an adapter's group ("paperless"), or a service's
    *  manifest id. For what a module keeps per program (its setup steps). */
   provider: string;
+  /** Where it is: its address (base URL), never a secret. Two connections to
+   *  the same program at the same address are the same library, so a link
+   *  made through one still belongs once it is replaced by the other (#5876). */
+  address?: string | null;
 }
 
 /** Thrown by the placeholder platform().services until the kernel lands, so a

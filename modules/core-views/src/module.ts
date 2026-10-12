@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.3.1",
+  version: "0.3.2",
   displayName: "Views",
   description:
     "Save the ways you like to see a list (filtered, sorted, as a board or a calendar) and come back to them.",

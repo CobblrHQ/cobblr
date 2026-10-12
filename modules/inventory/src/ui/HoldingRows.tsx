@@ -12,6 +12,7 @@ import { AlertTriangle, MapPin } from "lucide-react";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import type { CardRollup } from "@cobblr/platform-contract/holdings";
+import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import type { HoldingLot, HoldingRow } from "./api";
 import { QtyStepper } from "./QtyStepper";
 
@@ -77,16 +78,16 @@ function LotsToggle({ lots }: { lots: HoldingLot[] }) {
   );
 }
 
-/** A row per place. `basePath` links each place's row to its own record. */
+/** A row per place; each place's name opens that place. */
+const LOCATION_KIND = "core-locations:location";
+
 export function HoldingRows({
   rows,
-  basePath,
   unit,
   onSplit,
   actions,
 }: {
   rows: HoldingRow[];
-  basePath: string;
   /** The unit the item is kept in: a measured one is used by amount. */
   unit?: string | null;
   /** Offered on a holding's row (never the card's own): make it a record of
@@ -106,13 +107,24 @@ export function HoldingRows({
             data-testid="holding-row"
             onClick={(e) => e.stopPropagation()}
           >
-            <Link
-              to={`${basePath}/parts/${r.id}`}
-              className="inline-flex items-center gap-1 min-w-0 flex-1 basis-32 text-content dark:text-mortar-100 hover:text-accent"
-            >
-              <MapPin size={11} className="shrink-0 text-faint" />
-              <span className="truncate">{r.location_name ?? "No place set"}</span>
-            </Link>
+            {/* The place a row names opens that place, never the record it is
+                on (#5944: "Sockets drawer" reopened the socket). A row with no
+                place set names none, so it links nowhere. */}
+            {r.location_id ? (
+              <Link
+                to={openRecordPath(LOCATION_KIND, r.location_id)}
+                className="inline-flex items-center gap-1 min-w-0 flex-1 basis-32 text-content dark:text-mortar-100 hover:text-accent"
+                data-testid="holding-place-link"
+              >
+                <MapPin size={11} className="shrink-0 text-faint" />
+                <span className="truncate">{r.location_name ?? "This place"}</span>
+              </Link>
+            ) : (
+              <span className="inline-flex items-center gap-1 min-w-0 flex-1 basis-32 text-muted dark:text-slate-400">
+                <MapPin size={11} className="shrink-0 text-faint" />
+                <span className="truncate">{r.location_name ?? "No place set"}</span>
+              </span>
+            )}
             <span className="inline-flex items-center gap-1 font-mono text-[11px]">
               <QtyStepper partId={r.id} qty={r.qty} unit={unit} label={r.location_name ?? "this place"} size="sm" />
             </span>

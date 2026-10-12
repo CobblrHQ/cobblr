@@ -19,7 +19,9 @@ import { BindingAsk, BindingLabel, bindingAskOf } from "@cobblr/platform-contrac
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
-import { platform, isActionRefusal, crashSentence } from "@cobblr/platform-contract";
+import { platform, isActionRefusal, crashSentence, uploadOne } from "@cobblr/platform-contract";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
+import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
@@ -74,6 +76,7 @@ import { fieldValuesUsed } from "../platform/field-values-used.js";
 import { addressesUsed, nearestBias } from "../platform/addresses-used.js";
 import { addressLookup, LOOKUP_MIN_CHARS, LOOKUP_TIMEOUT_MS } from "../platform/address-lookup.js";
 import type { AddressValue } from "@cobblr/platform-contract/address";
+import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 /** The person's own assistant reading for them: an MCP client or the relay
  *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
@@ -639,9 +642,9 @@ const InvokeBody = z.object({
   actionId: z.string().min(1, "actionId is required"),
   // Optional: a workspace-scoped action has no record. For an entity-scoped
   // action they're required — enforced after we read the action's scope.
-  entityKind: z.string().optional(),
-  entityId: z.string().optional(),
-  bindingId: z.string().uuid().optional(),
+  entityKind: optionalField(z.string()),
+  entityId: optionalField(z.string()),
+  bindingId: optionalUuid(),
   args: z.record(z.unknown()).optional(),
 });
 
@@ -711,7 +714,7 @@ platformOrgRouter.post(
       }
       if (!(await requireCapability(req, res, parsed.data.actionId))) return;
       const isWorkspaceAction = (await getActionScope(parsed.data.actionId)) === "workspace";
-      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
+      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId ?? undefined, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
       const plan = await planFor(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
@@ -780,6 +783,15 @@ platformOrgRouter.post(
   requireAuth,
   withTenant,
   labelVia,
+  (req, res, next) => {
+    if (!req.is("multipart/form-data")) { next(); return; }
+    uploadOne({ personalDocument: true, maxBytes: 25 * 1024 * 1024 })(req, res, (error) => {
+      if (error) { next(error); return; }
+      try { req.body = JSON.parse(String(req.body?.payload ?? "")); }
+      catch { res.status(400).json({ error: { code: "invalid_body", message: "Choose the renewal values before filing the document." } }); return; }
+      next();
+    });
+  },
   async (req, res, next) => {
     try {
       const parsed = InvokeBody.safeParse(req.body);
@@ -869,7 +881,7 @@ platformOrgRouter.post(
       // "Unknown action" below.)
       const isWorkspaceAction =
         (await getActionScope(parsed.data.actionId)) === "workspace";
-      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
+      const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId ?? undefined, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
       // An entity action that may also run with no record (its manifest says
       // `recordOptional`) is let through without one: "put milk on the
       // shopping list" has no record to name (#3255).
@@ -978,6 +990,11 @@ platformOrgRouter.post(
         },
         rendered,
         args,
+        ...(uploadedFile(req) ? { document: {
+          bytes: await readFile(uploadedFile(req)!.path),
+          name: uploadedFile(req)!.originalname,
+          mimeType: uploadedFile(req)!.mimetype,
+        } } : {}),
         });
       } catch (err) {
         // A refusal is a sentence written for the person; it is repeated as
@@ -1333,8 +1350,8 @@ platformOrgRouter.patch(
       // args / target) from the composer without losing its id + firing
       // history. Every field is optional; only the ones present are written.
       const Patch = z.object({
-        source_kind: z.string().optional(),
-        action_id: z.string().optional(),
+        source_kind: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+        action_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
         trigger_type: z
           .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
           .optional(),
@@ -2005,7 +2022,7 @@ const NativeFieldOverrideBody = z.object({
   name: z.string().min(1),
   display_label: z.string().max(160).nullable().optional(),
   hidden: z.boolean().optional(),
-  position: z.number().int().optional(),
+  position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // 1b — custom dropdown choices that override the field's own. null = clear
   // (fall back to the base choices). Omitted = leave the blob's choices as-is.
   choices: z.array(z.string().max(120)).nullable().optional(),

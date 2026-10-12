@@ -154,7 +154,7 @@ export type AccountFeature = "photo-consent";
 export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
   { label: "Identity & password", description: "Your display name, the address you sign in with, and your password.", to: "/me/identity", section: "you", icon: UserCog },
   { label: "Appearance", description: "Light or dark, and your desktop layout - for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
-  { label: "Menu & surfaces", description: "Hide the parts of the app you do not use.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
+  { label: "Menu & surfaces", description: "Choose what your menu shows: hide what you do not use, add what you do.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
   { label: "Photos of things you file", description: "Whether Cobblr keeps them to improve identification. You can change your mind at any time.", to: "/me/photos", onlyWhen: "photo-consent", section: "you", icon: Camera },
   // First in Notifications: the page the bell's foot and the Settings tab call
   // Notification settings (#5565), and the name still says Discord, because the

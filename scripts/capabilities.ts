@@ -73,6 +73,27 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "inventory:stock-writes-refresh",
+    what: "a stock write in inventory's screens goes through useStockWrites, which refreshes every read of the stock it changed",
+    why: "Workshop stock kept the old remaining after Use some (#5811) and again after Stock arrived (#5895): each screen refreshed what its author remembered",
+    owner: "modules/inventory/src/ui/stock-writes.ts",
+    scope: ["modules/inventory/src/ui/**/*.tsx", "modules/inventory/src/ui/**/*.ts", "web/src/features/inventory/**/*.tsx"],
+    detect: /\bapi\.(receiveLot|transferStock|stockAdjust|stockAdjustIn|consumeStock|configureStock|loadStock|measureMaterial|mintUnit|setAllocationStatus)\(/,
+    use: "const stock = useStockWrites(); stock.receiveLot(...)",
+  },
+  {
+    kind: "owns",
+    id: "choices:sort-by-size",
+    what: "a list of choices is ordered by compareChoices: by the size it names, then by text",
+    why: "the hook gauge picker sorted as text and read 1.0, 1.5, 10.0, 2.0 mm (#5886)",
+    owner: "packages/platform-contract/src/choice-order.ts",
+    scope: ["packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "api/src/platform/**/*.ts", "web/src/components/**/*.tsx", "web/src/pages/**/*.tsx"],
+    detect: /\.sort\(\s*\(a, b\) => a(\.value|\.label)?\.localeCompare\(b(\.value|\.label)?\)/,
+    also: /choice/i,
+    use: "compareChoices from @cobblr/platform-contract/choice-order",
+  },
+  {
+    kind: "owns",
     id: "digifab:job-display-name",
     what: "fabrication job titles use the saved display name with a filename fallback",
     why: "generated laser and cutter filenames hide the drawing name in the queue and fleet",
@@ -98,15 +119,39 @@ export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
     id: "stock:search-every-stocked-collection",
-    what: "a picker of stock to sell searches every kind the workspace keeps stock in, from the scannable registry",
-    why: "the sales line picker searched inventory:part alone, whose list is the default collection, so Home Inventory's records were never offered (#5825)",
-    owner: "modules/sales/src/stock-search.ts",
-    scope: ["modules/*/src/ui/**/*.ts", "modules/*/src/ui/**/*.tsx", "web/src/**/*.ts", "web/src/**/*.tsx"],
-    detect: /entities\/inventory:part\?/,
-    use: "a search over platform().entities.listScannableForOrg kinds, as searchStock does (GET /modules/sales/stock)",
+    what: "a search for stock to draw from or add to (a sales line, a build's component, what a build makes) covers every kind the workspace keeps stock in, from the scannable registry",
+    why: "the sales line picker searched inventory:part alone, whose list is the default collection, so Home Inventory's records were never offered (#5825); Builds did the same with the kind passed as an argument, so its picker found nothing and naming a Home Inventory record made a twin (#5892)",
+    owner: "packages/platform-contract/src/stock-search.ts",
+    scope: ["modules/*/src/**/*.ts", "modules/*/src/**/*.tsx", "web/src/**/*.ts", "web/src/**/*.tsx"],
+    detect: /entities\/inventory:part\?|searchEntities\(\s*"inventory:part"|entities\.list\(\s*[^,]+,\s*(?:"inventory:part"|PART)\s*,\s*\{\s*q\b/,
+    use: "searchStock / stockNamed from @cobblr/platform-contract/stock-search, behind a module route (GET /modules/sales/stock, GET /modules/builds/stock)",
     except: {
       "modules/inventory/src/ui/NewPartDialog.tsx": "inventory's own new-record dialog looks for a same-named part in the default collection it is adding to",
     },
+  },
+  {
+    kind: "owns",
+    id: "records:a-stored-reference-is-shown-by-name",
+    what: "a record a page holds by id (a run's input, a token's target, a row's subject) is shown as its live name, linked, and as words when it cannot be found; never the id or the first characters of it",
+    why: "a build's as-built history read 2× 97ec267a, the start of the blank's record id, while the recipe above named the same record (#5977); the QR tokens page did the same with the stored kind beside it",
+    owner: "packages/platform-contract/src/record-subjects.ts",
+    scope: ["modules/*/src/**/*.tsx", "web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx"],
+    detect: /\b\w*_id\.slice\(\s*0\s*,\s*\d+\s*\)/,
+    use: "nameRecords from @cobblr/platform-contract/record-subjects on the server (it attaches { title, href }), or EntityChip from @cobblr/platform-web on the page",
+    except: {
+      "modules/builds/src/ui/Inspection.tsx": "a finished batch is called by its batch number, the first eight characters of its work order, which is also the name of the placed batch's stock record (placement.ts); the line links to the batch",
+    },
+  },
+  {
+    kind: "owns",
+    id: "stock:quantity-precision-from-its-unit",
+    what: "how many of a stocked record a field takes, whole for a counted unit and to a thousandth for a measured one, decided by the record's unit",
+    why: "a build's component field floored what was typed with Math.max(1, n || 1), so 0.5 m of vinyl became 1 m on blur and a 0.1 m recipe was saved as 1 m, ten times the stock (#5962)",
+    owner: "packages/platform-web/src/QuantityField.tsx",
+    scope: ["modules/*/src/**/*.tsx", "web/src/**/*.tsx"],
+    detect: /Math\.max\(\s*1\s*,\s*(?:Math\.(?:floor|round)\()?\s*n\s*\|\|\s*1\s*\)/,
+    use: "QuantityField with the record's unit (StockOption.unit) for an amount of stock; NumberField min={1} integer for a count of builds, runs or intervals, whose min already holds the floor",
+    except: {},
   },
   {
     kind: "owns",
@@ -1906,6 +1951,48 @@ export const CAPABILITIES: Capability[] = [
         "activity entry for the batch rather than one per tag",
       "api/src/platform/rehome-instance.ts": "a one-off move of assignments between kinds, not a tag change anyone made",
     },
+  },
+  {
+    kind: "owns",
+    id: "web:a-module-page-talks-to-its-workspace",
+    what: "a module or platform-web page's request to /api/v1/orgs/<slug>/...: workspaceFetch in packages/platform-web/src/acting-role.ts",
+    why:
+      "the contents panel sent a bare fetch, so a guest's record page asked for what sits inside it and the server refused it on " +
+      "every guest visit, while every other client already left a refused read unsent (#5992)",
+    owner: "packages/platform-web/src/acting-role.ts",
+    scope: ["packages/platform-web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.ts", "modules/*/src/ui/**/*.tsx"],
+    detect: /(?<![\w.])fetch\(\s*[`"']\/api\/v1\/orgs\//,
+    use: "workspaceFetch(url, init) from @cobblr/platform-web (a guest's refused read never leaves the page; a refused write offers its remedy)",
+    except: {
+      "packages/platform-web/src/upload-client.ts":
+        "a best-effort report that an upload's connection dropped, sent in the background: no remedy sheet over it, and a guest never sends it",
+    },
+  },
+  {
+    kind: "owns",
+    id: "units:an-amount-on-screen-says-its-unit",
+    what: "an amount with its unit drawn on a page: useUnits().format(qty, unit) from @cobblr/platform-web, which resolves the unit against the workspace's vocabulary",
+    why:
+      "quantityWithUnit(qty, unit) without the resolved unit pluralises a symbol as a word, so the stocktake sheet read \"8.4 ms\" and \"3 eaches\", " +
+      "and the stocktake history dropped the unit altogether (#6036)",
+    owner: "packages/platform-web/src/units.ts",
+    scope: ["web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx", "packages/platform-web/src/**/*.tsx"],
+    // Called with only the number and the raw unit: nothing resolved it.
+    detect: /\bquantityWithUnit\(\s*[^,()]+(?:\([^()]*\))?[^,()]*,\s*[^,()]+(?:\([^()]*\))?[^,()]*\)/,
+    use: "const units = useUnits(); units.format(qty, unit) (or units.unit(unit) for the unit alone)",
+  },
+  {
+    kind: "owns",
+    id: "units:a-scanned-amount-says-its-unit",
+    what: "an amount of something you already have, drawn by the scanner (its match, its count, the inbox row): useMatchAmount(unit) in web/src/lib/useMatchAmount.ts",
+    why:
+      "a plank kept in metres scanned as \"×8.4\", \"You have 8.4 → 9.4\" and \"+1 more\", read as a count of eight planks (#6047), the scanner's " +
+      "half of units:an-amount-on-screen-says-its-unit",
+    owner: "web/src/lib/useMatchAmount.ts",
+    scope: ["web/src/components/Scan*.tsx", "web/src/components/TrackedMatch*.tsx", "web/src/pages/Scan*.tsx"],
+    // A held or counted amount drawn as a bare number.
+    detect: /×\{[^}]*\bqty\b|You have \{(?:have|[\w.]*qty)\}|\(was \{have\}\)|\$\{rowHave\} →/,
+    use: "const { amount, held } = useMatchAmount(match.unit); held(qty) on a title (\"8.4 m\" / \"×3\"), amount(n) in a sentence",
   },
   {
     kind: "owns",

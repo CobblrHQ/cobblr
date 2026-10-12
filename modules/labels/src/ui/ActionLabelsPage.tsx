@@ -301,7 +301,7 @@ function LabelRow({ label, onChanged, onError, onDone }: { label: ActionLabel; o
                 if (name.trim() && name.trim() !== label.title) void run(() => api.updateActionLabel(label.id, { title: name.trim() }), "Renamed.");
               }}
             >
-              <input className={input} value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={60} />
+              <input aria-label="Name" className={input} value={name} onChange={(e) => setName(e.target.value)} autoFocus maxLength={60} />
             </form>
           ) : (
             <div className="text-base font-medium text-content dark:text-slate-100 truncate">

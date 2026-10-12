@@ -13,7 +13,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { withCount, type CountedRow } from "@cobblr/inventory/stock-derived";
-import { useFaces } from "@cobblr/platform-web";
+import { useFaces, refreshAfterStockChange } from "@cobblr/platform-web";
 import { api, type ViewDataResponse } from "../lib/api";
 import { fieldVal } from "../lib/view-group-key";
 import { StockStepper } from "@cobblr/platform-web";
@@ -80,6 +80,7 @@ export function RowStockProvider({ slug, kind, children }: { slug: string; kind:
       if (!Number.isFinite(qty)) return null;
       const step = async (delta: number) => {
         const out = await api.stockAdjustAt(slug, counted.instance, row.id, delta);
+        void refreshAfterStockChange(qc, [row.id]);
         const n = Number(out.qty);
         // The row is redrawn now, every figure its count feeds (Available,
         // low) with it, through the rules the list endpoint uses; the view

@@ -61,13 +61,14 @@ export function ColourInput({
           />
           {many && (
             <>
-              <button type="button" className={icon} disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move colour ${i + 1} earlier`}>
+              <button title={`Move colour ${i + 1} earlier`} type="button" className={icon} disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Move colour ${i + 1} earlier`}>
                 <ArrowLeft size={12} />
               </button>
-              <button type="button" className={icon} disabled={i === colours.length - 1} onClick={() => move(i, 1)} aria-label={`Move colour ${i + 1} later`}>
+              <button title={`Move colour ${i + 1} later`} type="button" className={icon} disabled={i === colours.length - 1} onClick={() => move(i, 1)} aria-label={`Move colour ${i + 1} later`}>
                 <ArrowRight size={12} />
               </button>
               <button
+                title={`Remove colour ${i + 1}`}
                 type="button"
                 className={icon}
                 onClick={() => set({ style: colours.length - 1 > 1 ? style : "solid", colours: colours.filter((_, j) => j !== i) })}

@@ -21,7 +21,7 @@ export function NavRowMenu({ slug, label, members, candidates, className = "" }:
   }, [pos]);
   const choices = candidates.filter((c) => !members.some((m) => m.name === c.name));
   return <>
-    <button ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-expanded={!!pos} className={"shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent " + className} onClick={() => {
+    <button title={`Arrange ${label}`} ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-expanded={!!pos} className={"shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent " + className} onClick={() => {
       const rect = trigger.current?.getBoundingClientRect();
       setJoining(false);
       setPos(pos || !rect ? null : { left: rect.left, top: rect.bottom });

@@ -64,3 +64,16 @@ export function retargetByCategory(candidates: CandidateLike[], menu: readonly S
   }
   return moved;
 }
+
+/** The installed list a said category names, in any module: "Books" is the
+ *  Bookshelf (its noun is book), whatever table the thing would otherwise go
+ *  to. For a door where the category is said, not guessed (the assistant's
+ *  add_thing over chat and MCP): the same rule as above, so a book said to
+ *  be one files where a scanned book does (#6037). Null when it names none. */
+export function listNamedByCategory(category: unknown, menu: readonly ScanMenuEntry[]): ScanMenuEntry | null {
+  if (typeof category !== "string" || !category.trim()) return null;
+  const named = menu
+    .filter((e) => e.instance)
+    .map((e) => ({ instance: e.instance!, label: e.label, noun: e.noun, keywords: e.scan_keywords ?? null, entry: e }));
+  return instanceForCategory(category, named)?.entry ?? null;
+}

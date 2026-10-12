@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-12
 ---
 A forwarded order is read on the store's own page: each line takes its variant's photo, and a mixed pack like "10KG / Multicolor" becomes its ten spools, one per colour, each matched on its own against what you already have.
 

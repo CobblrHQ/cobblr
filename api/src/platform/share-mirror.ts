@@ -1,3 +1,4 @@
+import { isOwnLink } from "./share-sync.js";
 // The mirror: what the owner shares, copied into the share space, kept in step
 // (#4627 §2, docs/design-decisions/share-spaces.md §7).
 //
@@ -32,6 +33,8 @@ import { enqueueShareOp, flushShareLinkNow, kickShareSync, registerShareOp, type
 import { withShareCopyState } from "./share-copy-state.js";
 import { runExclusive } from "./exclusive.js";
 import { editsMadeDuringApply, type Bags } from "./share-held-edits.js";
+import { writerFor } from "./kind-writer.js";
+import { perKeyCoalesced } from "../lib/per-key-coalesce.js";
 
 /** The metadata key a copy carries: which share and which original it is. */
 export const ORIGIN_REF_KEY = "origin_ref";
@@ -54,6 +57,7 @@ export async function fieldsOf(orgId: string, kind: string): Promise<Classifiabl
     field_role: f.fieldRole ?? null,
     money: (f as { money?: "cents" | "amount" | null }).money ?? null,
     private: priv.has(f.name),
+    read_only: (f as { readOnly?: boolean }).readOnly === true,
   }));
   const custom = (await platform().entities.fieldsFor(orgId, kind)).map((d) => ({
     name: d.name,
@@ -151,11 +155,44 @@ async function shapeFor(orgId: string, kinds: string[], vis: VisibilityDef, gate
   };
 }
 
+/** The kind each record travels as. A record in a named instance (a
+ *  Pattern: a project in Yarn's "designs") travels as that instance's kind,
+ *  "designs:item", so the share space gets the instance, its fields and its
+ *  page, not a plain project (#6056). */
+async function carriedRefs(orgId: string, refs: ScopeRef[]): Promise<ScopeRef[]> {
+  const named = new Set(
+    (await meta.selectFrom("workspace_module_instances").select("instance_name").where("org_id", "=", orgId).where("is_default", "=", false).execute()).map((r) => r.instance_name),
+  );
+  const out = new Map<string, ScopeRef>();
+  for (const r of refs) {
+    let kind = r.entity_kind;
+    if (named.size && !kind.endsWith(":item")) {
+      const inst = ((await lookup(orgId, kind, r.id).catch(() => null))?.fields as Record<string, unknown> | undefined)?.instance;
+      if (typeof inst === "string" && named.has(inst)) kind = `${inst}:item`;
+    }
+    out.set(`${kind}\u0000${r.id}`, { ...r, entity_kind: kind });
+  }
+  return [...out.values()];
+}
+
+/** Largest attached file a share carries; a bigger one is left out and said. */
+const FILE_CAP_BYTES = 25 * 1024 * 1024;
+
+/** What is attached to a record: a Pattern's PDF, a manual, its photos. They
+ *  travel with it, each once (by the owner's file id), so the friend reads
+ *  the pattern the owner shared (#6056). */
+async function attachedFiles(orgId: string, kind: string, id: string) {
+  const [module, type] = (await baseKindOf(orgId, kind)).split(":", 2);
+  if (!module || !type) return [];
+  const rows = (await platform().files.listAttachments(orgId, { source_module: module, source_type: type, source_id: id }).catch(() => null)) ?? [];
+  return rows.map((a) => ({ key: a.fileId, role: a.role, filename: a.filename, mime: a.mimeType, sort_order: a.sort_order }));
+}
+
 /** One pass of a share's mirror, from the owner's side. Sends only what
  *  changed since the last pass, and removes what left the scope. */
 export async function mirrorShare(linkId: string): Promise<{ sent: number; removed: number }> {
   const link = await meta.selectFrom("share_links").select(["id", "org_id", "side", "status", "settings"]).where("id", "=", linkId).executeTakeFirst();
-  if (!link || link.side !== "owner" || link.status !== "active") return { sent: 0, removed: 0 };
+  if (!link || isOwnLink(link) || link.side !== "owner" || link.status !== "active") return { sent: 0, removed: 0 };
   // Due no longer, BEFORE anything is read: a change the owner makes while
   // this pass runs marks the share due again (noteWorkspaceChanged only marks
   // one that is not due) and gets a pass of its own. Cleared at the end, it
@@ -177,9 +214,9 @@ async function mirrorPass(link: { id: string; org_id: string; settings: unknown 
   const vis = readVisibility(settings.visibility);
   const gated = new Set((await gatedFields(link.org_id)).map((f) => f.name));
   const person = await sharePerson(linkId).catch(() => null);
-  const { refs } = await recordsInScope(link.org_id, scope, { person: person?.id ?? null });
-  const state = new Map<string, { entity_kind: string; entity_id: string; digest: string; photo_digest: string | null }>(
-    (await meta.selectFrom("share_mirror_state").select(["entity_kind", "entity_id", "digest", "photo_digest"]).where("link_id", "=", linkId).execute()).map(
+  const refs = await carriedRefs(link.org_id, (await recordsInScope(link.org_id, scope, { person: person?.id ?? null })).refs);
+  const state = new Map<string, { entity_kind: string; entity_id: string; digest: string; photo_digest: string | null; file_keys: string[] }>(
+    (await meta.selectFrom("share_mirror_state").select(["entity_kind", "entity_id", "digest", "photo_digest", "file_keys"]).where("link_id", "=", linkId).execute()).map(
       (r) => [`${r.entity_kind}\u0000${r.entity_id}`, r] as const,
     ),
   );
@@ -199,11 +236,11 @@ async function mirrorPass(link: { id: string; org_id: string; settings: unknown 
   }
   let sent = 0;
   let removed = 0;
-  const save = (kind: string, id: string, digest: string, photo: string | null) =>
+  const save = (kind: string, id: string, digest: string, photo: string | null, files: string[] = []) =>
     meta
       .insertInto("share_mirror_state")
-      .values({ link_id: linkId, entity_kind: kind, entity_id: id, digest, photo_digest: photo })
-      .onConflict((oc) => oc.columns(["link_id", "entity_kind", "entity_id"]).doUpdateSet({ digest, photo_digest: photo, sent_at: new Date() }))
+      .values({ link_id: linkId, entity_kind: kind, entity_id: id, digest, photo_digest: photo, file_keys: JSON.stringify(files) as never })
+      .onConflict((oc) => oc.columns(["link_id", "entity_kind", "entity_id"]).doUpdateSet({ digest, photo_digest: photo, file_keys: JSON.stringify(files) as never, sent_at: new Date() }))
       .execute();
 
   const kinds = [...new Set(refs.map((r) => r.entity_kind))].sort();
@@ -245,11 +282,25 @@ async function mirrorPass(link: { id: string; org_id: string; settings: unknown 
         if (state.get(k)?.photo_digest !== photoDigest) photo = { mime: got.mimeType, data: Buffer.from(got.bytes).toString("base64") };
       }
     }
-    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest, changed_since: changedSince };
+    const files = await attachedFiles(link.org_id, ref.entity_kind, ref.id);
+    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest, changed_since: changedSince, files };
     const digest = sha(JSON.stringify({ format: MIRROR_FORMAT, ...body }));
     if (state.get(k)?.digest === digest && !photo) continue;
-    await enqueueShareOp(linkId, "mirror.upsert", { ...body, ...(photo ? { photo } : {}) });
-    await save(ref.entity_kind, ref.id, digest, photoDigest);
+    // A file's bytes go once; a later pass names it and the copy keeps it.
+    const had = new Set(state.get(k)?.file_keys ?? []);
+    const fileData: Record<string, string> = {};
+    for (const f of files) {
+      if (had.has(f.key)) continue;
+      const got = await platform().files.read(link.org_id, f.key, "original").catch(() => null);
+      if (!got) continue;
+      if (got.bytes.byteLength > FILE_CAP_BYTES) {
+        console.warn(`[share] ${linkId}: ${f.filename} is over ${FILE_CAP_BYTES / 1024 / 1024} MB, so it stays with the original`);
+        continue;
+      }
+      fileData[f.key] = Buffer.from(got.bytes).toString("base64");
+    }
+    await enqueueShareOp(linkId, "mirror.upsert", { ...body, ...(photo ? { photo } : {}), file_data: fileData });
+    await save(ref.entity_kind, ref.id, digest, photoDigest, files.filter((f) => had.has(f.key) || f.key in fileData).map((f) => f.key));
     sent++;
   }
   for (const [k, row] of state) {
@@ -309,7 +360,9 @@ export async function mirrorAndDeliverNow(linkId: string, waitMs = 20_000): Prom
  *  One indexed update, matching nothing in a workspace that shares nothing;
  *  no cache, so a share set up a moment ago (in any process) is never
  *  missed. */
-export async function noteWorkspaceChanged(orgId: string): Promise<void> {
+// Coalesced per workspace (lib/per-key-coalesce.ts, #5969): every activity row and every event calls it, and
+// an import logs a row per record. One update in flight per workspace, one trailing.
+export const noteWorkspaceChanged = perKeyCoalesced(async (orgId: string): Promise<void> => {
   const r = await meta
     .updateTable("share_links")
     .set({ mirror_due_at: new Date() })
@@ -320,7 +373,7 @@ export async function noteWorkspaceChanged(orgId: string): Promise<void> {
     .where(sql<boolean>`settings ? 'scope'`)
     .executeTakeFirst();
   if (Number(r.numUpdatedRows ?? 0) > 0) kickShareSync();
-}
+});
 
 /** The mirrors that are due: a change a few seconds old (so a burst of edits
  *  is one pass), or a day since the last one (the nightly reconcile). */
@@ -352,10 +405,18 @@ export async function copyOf(orgId: string, kind: string, ref: string): Promise<
 
 /** The one way a copy is made: always carrying where it came from
  *  (lint:mirror-copies-carry-origin). */
-async function createMirrorCopy(orgId: string, kind: string, ref: string, fields: Record<string, unknown>, metadata: Record<string, unknown>): Promise<string> {
-  const w = await platform().entities.getWriter(orgId, kind);
+async function createMirrorCopy(link: ShareLinkRow, kind: string, ref: string, fields: Record<string, unknown>, metadata: Record<string, unknown>): Promise<string> {
+  const w = await copyWriter(link, kind);
   if (!w) throw new Error(`the share space cannot hold ${kind} yet`);
-  return w.create(orgId, { ...fields, metadata: { ...metadata, [ORIGIN_REF_KEY]: ref } });
+  return w.create(link.org_id, { ...fields, metadata: { ...metadata, [ORIGIN_REF_KEY]: ref } });
+}
+
+/** The writer a share space's copies are written with: the kind's own, or
+ *  its endpoints called as the share space's person (kind-writer.ts), the
+ *  same way a sent record is written. */
+async function copyWriter(link: ShareLinkRow, kind: string): Promise<EntityWriter | null> {
+  if (!link.created_by) return platform().entities.getWriter(link.org_id, kind);
+  return writerFor(link.org_id, kind, link.created_by);
 }
 
 /** The places a copy is in, made in the share space as they are named:
@@ -378,7 +439,34 @@ async function ensurePlace(orgId: string, path: string[]): Promise<string | null
 
 /** Keys of a copy that are the mirror's own bookkeeping, never the friend's
  *  to change. */
-export const COPY_BOOKKEEPING = new Set([ORIGIN_REF_KEY, "origin_place", "image_path"]);
+export const COPY_BOOKKEEPING = new Set([ORIGIN_REF_KEY, "origin_place", "image_path", "origin_files"]);
+
+type SentFile = { key: string; role: string | null; filename: string; mime: string; sort_order: number };
+
+/** The copy's attached files, as the owner's record has them: each one the
+ *  owner sent is attached with its role (a Pattern's PDF as its pattern
+ *  file), and one the owner took off is taken off. Which owner file each
+ *  local file is stays on the copy (`origin_files`), the mirror's own
+ *  bookkeeping (#6056). */
+async function carryFiles(link: ShareLinkRow, kind: string, copyId: string, files: SentFile[], data: Record<string, string>): Promise<void> {
+  const [module, type] = (await baseKindOf(link.org_id, kind)).split(":", 2);
+  if (!module || !type) return;
+  const source = { source_module: module, source_type: type, source_id: copyId };
+  const copy = await lookup(link.org_id, kind, copyId);
+  const md = ((copy?.fields as Record<string, unknown> | undefined)?.metadata ?? {}) as Record<string, unknown>;
+  const had = (md.origin_files && typeof md.origin_files === "object" ? md.origin_files : {}) as Record<string, string>;
+  const now: Record<string, string> = {};
+  for (const f of files) {
+    let fileId: string | null = had[f.key] ?? null;
+    if (!fileId && data[f.key]) fileId = (await platform().files.write(link.org_id, new Uint8Array(Buffer.from(data[f.key]!, "base64")), { filename: f.filename, mimeType: f.mime }))?.fileId ?? null;
+    if (!fileId) continue;
+    await platform().files.attach(link.org_id, { fileId, ...source, role: f.role, sort_order: f.sort_order });
+    now[f.key] = fileId;
+  }
+  const gone = new Set(Object.entries(had).filter(([k]) => !(k in now)).map(([, id]) => id));
+  if (gone.size) for (const a of (await platform().files.listAttachments(link.org_id, source)) ?? []) if (gone.has(a.fileId)) await platform().files.detach(link.org_id, a.id);
+  if (JSON.stringify(now) !== JSON.stringify(had)) await platform().entities.mergeMetadata(link.org_id, kind, copyId, { origin_files: now });
+}
 
 /** A copy as the mirror just left it, read back from the copy itself (so a
  *  value the module normalised is what later reads compare with): a later
@@ -492,7 +580,7 @@ async function keepEditsMadeDuringApply(link: ShareLinkRow, kind: string, origin
   if (!after) return;
   const { restore, base } = editsMadeDuringApply(writes, before, after, sent);
   if (!Object.keys(restore.fields).length && !Object.keys(restore.metadata).length) return;
-  const w = await platform().entities.getWriter(link.org_id, kind);
+  const w = await copyWriter(link, kind);
   if (!w) return;
   if (Object.keys(restore.fields).length) await w.update(link.org_id, copyId, restore.fields);
   if (Object.keys(restore.metadata).length) {
@@ -568,9 +656,9 @@ export function registerShareMirrorOps(): void {
     let written: string | null = null;
     let w: EntityWriter | null = null;
     if (!id) {
-      id = await createMirrorCopy(link.org_id, kind, ref, fields, metadata);
+      id = await createMirrorCopy(link, kind, ref, fields, metadata);
     } else {
-      w = await platform().entities.getWriter(link.org_id, kind);
+      w = await copyWriter(link, kind);
       if (!w) throw new Error(`the share space cannot hold ${kind} yet`);
       for (let tries = 0; ; tries++) {
         // The version first, then the copy: a write after this read moves it.
@@ -619,6 +707,7 @@ export function registerShareMirrorOps(): void {
     // the activity log and kept.
     const clean = written !== null && w?.version && (await w.version(link.org_id, id)) === written;
     if (!clean && mark !== null && before) await keepEditsMadeDuringApply(link, kind, origin.id, id, mark, before, sent ?? before);
+    if (Array.isArray(p.files)) await carryFiles(link, kind, id, p.files as SentFile[], (p.file_data ?? {}) as Record<string, string>);
   });
 
   registerCopyOp("mirror.remove", async (link, p) => {
@@ -626,7 +715,10 @@ export function registerShareMirrorOps(): void {
     if (!origin?.kind || !origin.id) return;
     const id = await copyOf(link.org_id, origin.kind, originRef(link, origin.kind, origin.id));
     if (!id) return;
-    const w = await platform().entities.getWriter(link.org_id, origin.kind);
+    // The writer the copy was made with: a kind written through its
+    // endpoints (a project) was never removed here when only a native
+    // writer was looked for.
+    const w = await copyWriter(link, origin.kind);
     await w?.delete(link.org_id, id);
     await meta.deleteFrom("share_copy_base").where("link_id", "=", link.id).where("origin_kind", "=", origin.kind).where("origin_id", "=", origin.id).execute();
   });

@@ -16,6 +16,7 @@ import { buildDriverById } from "../jobs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import { ensureDeclarativeDrivers, createPool, addPoolMember } from "./farm-build.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const bulkRouter = Router({ mergeParams: true });
 
@@ -32,7 +33,7 @@ const PrinterRow = z.object({
 
 const Body = z.object({
   default_type: z.string().min(1).max(80),
-  pool_name: z.string().min(1).max(120).optional(), // omit → don't pool
+  pool_name: optionalField(z.string().min(1).max(120)), // omit → don't pool
   test: z.boolean().optional(), // probe each after creating
   printers: z.array(PrinterRow).min(1).max(100),
 });
@@ -134,7 +135,7 @@ bulkRouter.post(
 // UI keeps the user's default).
 const DetectBody = z.object({
   url: z.string().min(1).max(500),
-  api_key: z.string().max(500).optional(),
+  api_key: optionalText(500),
 });
 
 /** The endpoints we probe, in priority order. */

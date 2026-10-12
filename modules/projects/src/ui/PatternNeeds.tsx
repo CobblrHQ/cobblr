@@ -20,9 +20,13 @@ const WEIGHTS = ["0 – Lace", "1 – Fingering", "2 – Sport", "3 – DK", "4 
 export function yarnTitle(n: Pick<PatternNeed, "brand" | "product" | "color" | "color_code" | "weight" | "fiber">): string {
   const line = [n.brand, n.product].filter(Boolean).join(" ");
   const colour = n.color ? `${n.color}${n.color_code ? ` (${n.color_code})` : ""}` : n.color_code ? `#${n.color_code}` : "";
-  const out = [line, colour].filter(Boolean).join(" · ");
+  // A yarn line names what it is; a colour alone never does ("blue" read as
+  // if the pattern needed a colour): it follows what the yarn is, by weight.
+  if (line) return [line, colour].filter(Boolean).join(" · ");
+  const weight = n.weight ? n.weight.replace(/^\s*\d+\s*[–-]\s*/, "").trim() : "";
+  if (colour) return `${weight ? `${weight} yarn` : "Yarn"}, ${colour}`;
   // No brand, line or colour: the pattern takes any yarn of its weight.
-  return out || "Yarn, any brand";
+  return "Yarn, any brand";
 }
 
 export function toolTitle(n: Pick<PatternNeed, "kind" | "size_mm" | "size_label">): string {
@@ -500,10 +504,10 @@ function NotionMatch({ designId, api, need, onChanged }: { designId: string; api
 function RowTools({ onEdit, onRemove }: { onEdit: () => void; onRemove: () => void }) {
   return (
     <span className="shrink-0 flex items-center">
-      <button type="button" onClick={onEdit} aria-label="Change" className="h-9 w-9 flex items-center justify-center text-faint hover:text-accent">
+      <button title="Change" type="button" onClick={onEdit} aria-label="Change" className="h-9 w-9 flex items-center justify-center text-faint hover:text-accent">
         <Pencil size={13} />
       </button>
-      <button type="button" onClick={onRemove} aria-label="Remove" className="h-9 w-9 flex items-center justify-center text-faint hover:text-ember-500">
+      <button title="Remove" type="button" onClick={onRemove} aria-label="Remove" className="h-9 w-9 flex items-center justify-center text-faint hover:text-ember-500">
         <X size={14} />
       </button>
     </span>

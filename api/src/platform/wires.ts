@@ -30,6 +30,7 @@ import { namePeopleForTemplate } from "./member-fields.js";
 import { log as logActivity } from "./activity.js";
 import { sandboxAwaitingVisitor } from "./sandbox-awaiting.js";
 import { parseWireFilter, passesWireFilter } from "./wire-filter.js";
+import { inWireRecords } from "./wire-records.js";
 import { FiringLedger, firingKey } from "./wire-firing-key.js";
 import { runVia, currentActor } from "../lib/request-context.js";
 
@@ -255,6 +256,19 @@ async function fireBindings(
       const idKey = sourceIdKey(baseKind);
       const sourceId =
         typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
+
+      // The records the wire is about (#6070, wire-records.ts): judged on the
+      // SOURCE record, once, before any target runs. A wire narrowed to
+      // records whose source cannot be judged stays quiet.
+      const { filter: narrowing } = parseWireFilter(b.filter);
+      if (narrowing?.in) {
+        const source = sourceId ? await lookup(orgId, b.source_kind, sourceId) : null;
+        const isIn = await inWireRecords(orgId, narrowing.in, { kind: b.source_kind, id: sourceId, fields: source?.fields ?? {} }).catch((err: unknown) => {
+          console.warn(`[wires] binding ${b.id}: could not tell whether ${sourceId} is one of its records: ${(err as Error).message}`);
+          return false;
+        });
+        if (!isIn) continue;
+      }
 
       // Resolve the target set for this binding. "self" → just the source.
       // Object target → walk pairings.

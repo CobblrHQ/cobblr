@@ -161,7 +161,7 @@ export function ExportInboxModal({
           {photoMode === "link" && ttlChoices.length > 0 && (
             <div className="mt-2 flex items-center gap-2 text-sm">
               <span className="text-muted">Links expire in</span>
-              <select
+              <select aria-label="Links expire in"
                 value={ttlMs}
                 onChange={(e) => setTtlMs(Number(e.target.value))}
                 className="rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-2 py-1 text-content dark:text-mortar-100"

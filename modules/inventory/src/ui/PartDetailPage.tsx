@@ -1,4 +1,5 @@
 import { PastePanel } from "./PastePanel";
+import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
 import { RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
@@ -188,6 +189,7 @@ const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const mainCurrency = useMoneyCurrency();
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords, storageTracking, pasteTracking } = useInventory();
+  const stock = useStockWrites();
   const fp = useFieldPresentation(entityKind);
   const disclosure = useDisclosure();
   const units = useUnits();
@@ -317,7 +319,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       const r = part.data?.reconcile;
       if (!r) return;
       const adj = adoptUnitsAdjustment(r);
-      await api.stockAdjust(id!, adj.delta, adj.reason, { source_kind: adj.source_kind });
+      await stock.stockAdjust(id!, adj.delta, adj.reason, { source_kind: adj.source_kind });
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
@@ -1017,7 +1019,7 @@ function EditableTitle({
   const [editing, setEditing] = useState(false);
   if (editing) {
     return (
-      <input
+      <input aria-label="Name"
         autoFocus
         // DRAFT-OK: mounted when the field opens for editing and gone when it closes; for its whole life the person is the one changing it.
         defaultValue={value}
@@ -1395,6 +1397,7 @@ function PerUnitConsumptionPanel({
   onDisable: () => void;
 }) {
   const { api, entityKind, countWords } = useInventory();
+  const stock = useStockWrites();
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -1507,9 +1510,9 @@ function PerUnitConsumptionPanel({
       archived: true,
       metadata: buildUnitMetadata(partId, unitCapacity),
     });
-    await api.stockAdjust(child.id, unitCapacity, `Opened ${countUnit || "unit"}`);
+    await stock.stockAdjust(child.id, unitCapacity, `Opened ${countUnit || "unit"}`);
     await api.createParentPairing(child.id, partId);
-    if (modelQty > 0) await api.stockAdjust(partId, -1, `Opened ${withArticle(countUnit || "unit")}`);
+    if (modelQty > 0) await stock.stockAdjust(partId, -1, `Opened ${withArticle(countUnit || "unit")}`);
     if (bindTo) {
       await api.createAllocation({
         part_id: child.id,
@@ -1608,7 +1611,7 @@ function PerUnitConsumptionPanel({
           {modelQty > 0 ? (
             <button
               onClick={() => {
-                api.setAllocationStatus(b.allocationId, "released").catch(() => {});
+                stock.setAllocationStatus(b.allocationId, "released").catch(() => {});
                 continueProject.mutate({ module: b.targetModule, type: b.targetEntityType, id: b.targetEntityId, label: b.label });
               }}
               className="text-accent hover:text-cobble-800"
@@ -1621,7 +1624,7 @@ function PerUnitConsumptionPanel({
           )}
           <span className="text-line dark:text-slate-700">·</span>
           <button
-            onClick={() => api.setAllocationStatus(b.allocationId, "released").then(invalidate).catch((e: unknown) => toast.error((e as Error).message))}
+            onClick={() => stock.setAllocationStatus(b.allocationId, "released").then(invalidate).catch((e: unknown) => toast.error((e as Error).message))}
             className="text-faint hover:text-content"
           >
             done
@@ -1678,6 +1681,7 @@ function OpenUnitCard({
   onChanged: () => void;
 }) {
   const { api } = useInventory();
+  const stock = useStockWrites();
   const toast = useToast();
   const [amt, setAmt] = useState("");
   const [open, setOpen] = useState(false);
@@ -1726,7 +1730,7 @@ function OpenUnitCard({
   // pool as an open, unbound partial. Never CONSUMED (that would double-decrement
   // the qty the per-unit withdrawals already tracked); release only.
   const release = () =>
-    api.setAllocationStatus(binding!.allocationId, "released").then(onChanged).catch(fail);
+    stock.setAllocationStatus(binding!.allocationId, "released").then(onChanged).catch(fail);
 
   // Finish the project on this skein (§1.1): gate on the remainder vs the tunable
   // threshold. Clearly reusable → back to the pool silently; small/ambiguous →
@@ -1752,9 +1756,9 @@ function OpenUnitCard({
     try {
       const n = Number(closeOut);
       if (Number.isFinite(n) && n >= 0 && Math.abs(n - unit.qty) > 1e-9) {
-        await api.stockAdjust(unit.id, round3(n - unit.qty), "Adjusted at close-out");
+        await stock.stockAdjust(unit.id, round3(n - unit.qty), "Adjusted at close-out");
       }
-      await api.setAllocationStatus(binding!.allocationId, "released");
+      await stock.setAllocationStatus(binding!.allocationId, "released");
       setCloseOut(null);
       onChanged();
     } catch (e) { fail(e); }
@@ -1765,8 +1769,8 @@ function OpenUnitCard({
   // release the binding. The unit goes empty and drops off the active view.
   const writeOff = async () => {
     try {
-      if (unit.qty > 0) await api.stockAdjust(unit.id, -unit.qty, "Written off");
-      await api.setAllocationStatus(binding!.allocationId, "released");
+      if (unit.qty > 0) await stock.stockAdjust(unit.id, -unit.qty, "Written off");
+      await stock.setAllocationStatus(binding!.allocationId, "released");
       setCloseOut(null);
       onChanged();
     } catch (e) { fail(e); }

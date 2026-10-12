@@ -361,7 +361,7 @@ function CreatedSuccessStrip() {
         <Link to="/dashboard" onClick={clear} className="shrink-0 inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-700 px-2 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:border-emerald-400 transition">
           <Plus size={12} /> Add more
         </Link>
-        <button type="button" onClick={clear} aria-label="Dismiss" className="shrink-0 rounded p-1 text-faint hover:text-content transition">
+        <button title="Dismiss" type="button" onClick={clear} aria-label="Dismiss" className="shrink-0 rounded p-1 text-faint hover:text-content transition">
           <X size={13} />
         </button>
       </div>

@@ -8,13 +8,13 @@
 // prune rows past the window; best-effort, never blocks the write) — same
 // pattern as product_events. Unset (default) = keep everything.
 
-import { currentHistoryWrite, historyDiff } from "./record-history.js";
+import { currentHistoryWrite, historyDiff, noteCreatedLog } from "./record-history.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
-import { currentActor, currentVia, type Via } from "../lib/request-context.js";
+import { currentActor, currentVia, runOutsideRequestScope, type Via } from "../lib/request-context.js";
 import type { AuthMethod } from "../db/schema.js";
 
 export interface ActivityRef {
@@ -95,9 +95,10 @@ export async function log(p: LogParams): Promise<void> {
     })
     .execute();
   if (write) write.logged = true;
+  if (p.action.endsWith("_created")) noteCreatedLog(p.ref.module, p.ref.entityType, p.ref.entityId);
   for (const fn of writeObservers) {
     try {
-      fn(p.orgId, p.ref);
+      runOutsideRequestScope(() => fn(p.orgId, p.ref));
     } catch (err) {
       console.error("[activity] observer failed:", err);
     }
@@ -105,11 +106,57 @@ export async function log(p: LogParams): Promise<void> {
 
   const days = env.ACTIVITY_LOG_RETENTION_DAYS;
   if (days && Math.random() < 0.01) {
-    void meta
+    runOutsideRequestScope(() => void meta
       .deleteFrom("activity_log")
       .where("occurred_at", "<", sql<Date>`now() - interval '${sql.raw(String(days))} days'`)
       .execute()
-      .catch((err) => console.error("[activity] retention sweep failed:", (err as Error).message));
+      .catch((err) => console.error("[activity] retention sweep failed:", (err as Error).message)));
+  }
+}
+
+/** One row of a bulk write (an import of thousands): `diff.import_row` marks
+ *  it, so a record's own History carries it while the workspace's and the
+ *  person's feeds leave it to the bulk write's one summary line (#5963). */
+export const IMPORT_ROW = "import_row";
+
+/** Many entries from one bulk write, by one person, in one INSERT per chunk:
+ *  every record a 40k-row import makes gets its own History line without 40k
+ *  round trips. Each entry's diff is marked IMPORT_ROW. */
+export async function logMany(p: { orgId: string; userId?: string | null; rows: ReadonlyArray<{ action: string; ref: ActivityRef; diff?: Record<string, unknown> }> }): Promise<void> {
+  if (!p.rows.length) return;
+  const actor = currentActor();
+  const userId = p.userId !== undefined ? p.userId : (actor?.userId ?? null);
+  const authMethod: AuthMethod = actor ? actor.authMethod : "system";
+  const apiTokenId = actor?.apiTokenId ?? null;
+  const via = currentVia();
+  const CHUNK = 500;
+  for (let i = 0; i < p.rows.length; i += CHUNK) {
+    await meta
+      .insertInto("activity_log")
+      .values(p.rows.slice(i, i + CHUNK).map((r) => ({
+        org_id: p.orgId,
+        user_id: userId,
+        module_name: r.ref.module,
+        action: r.action,
+        entity_type: r.ref.entityType,
+        entity_id: r.ref.entityId,
+        diff: secretHistoryDiff({ ...(r.diff ?? {}), [IMPORT_ROW]: true }) as object,
+        auth_method: authMethod,
+        api_token_id: apiTokenId,
+        via_kind: via?.kind ?? null,
+        via_label: via?.label ?? null,
+      })))
+      .execute();
+  }
+  for (const r of p.rows) {
+    if (r.action.endsWith("_created")) noteCreatedLog(r.ref.module, r.ref.entityType, r.ref.entityId);
+    for (const fn of writeObservers) {
+      try {
+        runOutsideRequestScope(() => fn(p.orgId, r.ref));
+      } catch (err) {
+        console.error("[activity] observer failed:", err);
+      }
+    }
   }
 }
 
@@ -173,6 +220,9 @@ function selected(p: ListParams) {
   if (p.entityType) q = q.where("entity_type", "=", p.entityType);
   if (p.entity) {
     q = q.where("module_name", "=", p.entity.module).where("entity_type", "=", p.entity.type).where("entity_id", "=", p.entity.id);
+  } else {
+    // A feed reads a bulk write as its one summary line, never its rows.
+    q = q.where(sql<boolean>`coalesce(diff->>${IMPORT_ROW}, '') <> 'true'`);
   }
   return q;
 }

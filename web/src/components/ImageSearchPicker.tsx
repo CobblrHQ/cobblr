@@ -386,6 +386,7 @@ export function ImageSearchPicker({
               {submitLabel}
             </button>
             <button
+              title="Close search"
               type="button"
               onClick={() => setSearchOpen(false)}
               aria-label="Close search"

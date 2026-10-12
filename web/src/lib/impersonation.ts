@@ -6,6 +6,7 @@
 // See docs/modules/operator-impersonation.md.
 
 import { useSyncExternalStore } from "react";
+import { markPageLeaving } from "./page-leaving";
 
 const KEY = "cobblr.impersonation";
 const EVENT = "cobblr-impersonation-change";
@@ -19,7 +20,35 @@ export interface ImpersonationSession {
   workspace: { id: string; slug: string; name: string };
 }
 
+/** The session this page is leaving: its own last requests still carry it
+ *  while the next page loads, which reads none. */
+let leavingWith: ImpersonationSession | null = null;
+
+const ENDING_KEY = "cobblr.impersonation.ending";
+
+/** Exit: stop new requests and go to `to`, leaving the session to be ended
+ *  by the page that opens there (finishEndingImpersonation). Ended from this
+ *  page, a poll already in flight was answered after the end, as a refusal. */
+export function endAndLeaveImpersonation(to: string, go?: (url: string) => void): void {
+  const s = getImpersonation();
+  if (s) sessionStorage.setItem(ENDING_KEY, JSON.stringify({ session_id: s.session_id }));
+  leaveImpersonation(to, go);
+}
+
+/** On the console: end the session the last page left, once. */
+export async function finishEndingImpersonation(end: (s: { session_id: string }) => Promise<unknown>): Promise<void> {
+  const raw = sessionStorage.getItem(ENDING_KEY);
+  if (!raw) return;
+  sessionStorage.removeItem(ENDING_KEY);
+  try {
+    await end(JSON.parse(raw) as { session_id: string });
+  } catch {
+    /* best-effort: the grant expires regardless */
+  }
+}
+
 export function getImpersonation(): ImpersonationSession | null {
+  if (leavingWith) return leavingWith;
   try {
     const raw = sessionStorage.getItem(KEY);
     if (!raw) return null;
@@ -55,9 +84,17 @@ export function setImpersonationMode(mode: "read" | "write"): void {
   emit();
 }
 
-export function clearImpersonation(): void {
+/** End the session in this tab and go to `to` (the console). The page is told
+ *  nothing first: told, the workspace it was viewing re-renders as one the
+ *  operator is not a member of and sends them to their own workspace, and that
+ *  later navigation won over this one, so Exit landed on the operator's own
+ *  dashboard instead of the console. The next page reads no session; this
+ *  one keeps it until it unloads, so a poll in flight is not refused. */
+export function leaveImpersonation(to: string, go: (url: string) => void = (url) => window.location.assign(url)): void {
+  markPageLeaving();
+  leavingWith = getImpersonation();
   sessionStorage.removeItem(KEY);
-  emit();
+  go(to);
 }
 
 // Reactive read: re-renders on any set/clear/mode-change (this tab) — and on the

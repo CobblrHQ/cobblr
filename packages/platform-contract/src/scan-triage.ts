@@ -21,6 +21,8 @@
 // One predicate, read by every commit surface, keeps the warning and the
 // commit in agreement by construction.
 
+import { variantsDisagree } from "@cobblr/platform-contract/same-product";
+import { lineUnitsOf } from "@cobblr/platform-contract/line-units";
 import { scanSourceConflict, sourceConflictWords, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { evidenceConflictWords, scanEvidenceConflicts } from "@cobblr/platform-contract/scan-evidence";
 import { identifyNeverTried, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
@@ -38,6 +40,7 @@ import {
   BLOCKED_SENTENCE,
   DUPLICATE_SENTENCE,
   AMBIGUOUS_MATCH_SENTENCE,
+  CONFIRM_MATCH_SENTENCE,
   WHICH_PLACE_SENTENCE,
   NEW_PLACE_SENTENCE,
   NEW_PLACE_BARE_SENTENCE,
@@ -291,18 +294,22 @@ export function withoutVouchedNameDoubt(row: ScanTriageRow): ScanTriageRow {
  *  them), and whether the document model is still to read the page. Null
  *  when nothing is in doubt. Written by the receipt reader (document-read.ts)
  *  on the item the document is about. */
-export function scanCheckFields(row: ScanTriageRow): { fields: string[]; waiting: boolean; limit?: boolean } | null {
-  const c = (metaOf(row) as { check_fields?: { fields?: unknown; waiting_for_ai?: unknown; waiting_reason?: unknown } }).check_fields;
+export function scanCheckFields(row: ScanTriageRow): { fields: string[]; waiting: boolean; limit?: boolean; said?: string } | null {
+  const c = (metaOf(row) as { check_fields?: { fields?: unknown; waiting_for_ai?: unknown; waiting_reason?: unknown; said?: unknown } }).check_fields;
   const fields = Array.isArray(c?.fields) ? (c!.fields as unknown[]).filter((f): f is string => typeof f === "string" && !!f) : [];
-  return fields.length ? { fields, waiting: c?.waiting_for_ai === true, ...(c?.waiting_for_ai === true && c?.waiting_reason === "limit" ? { limit: true } : {}) } : null;
+  // `said`: a check that knows its own reason (a copy whose count was 0, #5935)
+  // says it, rather than a page that did not read clearly.
+  const said = typeof c?.said === "string" && c.said.trim() ? c.said.trim() : undefined;
+  return fields.length ? { fields, waiting: c?.waiting_for_ai === true, ...(c?.waiting_for_ai === true && c?.waiting_reason === "limit" ? { limit: true } : {}), ...(said ? { said } : {}) } : null;
 }
 
 // VOCAB-ENUMERATION OK: the words for the fields a sale document's checks name
 const CHECK_FIELD_WORDS: Record<string, string> = { vin: "the VIN", year: "the year", name: "the name", make: "the make", model: "the model", price: "the price", total: "the total", deposit: "the deposit", seller: "the seller" };
 
 /** "Please check the VIN and the year: the page did not read clearly." */
-export function checkFieldsWords(checks: { fields: string[]; waiting: boolean; limit?: boolean }, fieldLabel?: (name: string) => string): string {
+export function checkFieldsWords(checks: { fields: string[]; waiting: boolean; limit?: boolean; said?: string }, fieldLabel?: (name: string) => string): string {
   if (checks.limit) return CHECK_FIELDS_LIMIT_SENTENCE;
+  if (checks.said) return checks.said;
   const words = checks.fields.map((f) => CHECK_FIELD_WORDS[f] ?? `the ${(fieldLabel?.(f) ?? f.replace(/_/g, " ")).toLowerCase()}`);
   const list = words.length <= 1 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} and ${words[words.length - 1]}`;
   return fillSentence(checks.waiting ? CHECK_FIELDS_WAITING_SENTENCE : CHECK_FIELDS_SENTENCE, { fields: list });
@@ -587,6 +594,16 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
     });
   }
   if (out.length) return out;
+  // A held check that says its own reason (a copy whose count was 0) is its
+  // own question: its action is the heading, its reason the line. It fell
+  // through to the identification question and read "Check the name: The
+  // count was 0 …", a name nothing was wrong with (#5959).
+  const checks = scanCheckFields(row);
+  if (checks?.said) {
+    const { problem, action } = splitSentence(checks.said);
+    out.push({ field: null, prompt: action ?? checks.said, choices: [], because: action ? problem : "" });
+    return out;
+  }
   // The identification itself: the row's one sentence (scanReviewReason),
   // split into the problem and the action, so the question's heading is
   // the thing to do and its line is why. Never the router's paragraph
@@ -785,6 +802,21 @@ export interface ScanDestinationContext {
    *  workspace gained since the route was stored, and for a stored choice's
    *  label. */
   tables?: readonly ScanResolverTable[];
+  /** Every table in the workspace by the name it shows, the ones the scan
+   *  menu does not offer too: a re-buy files onto the record it matched,
+   *  wherever that record lives (#6004). */
+  tableNames?: ReadonlyArray<{ instance_name: string; display_name?: string | null }>;
+}
+
+/** A table's name in words: the workspace's own name for it, else its id
+ *  read as words ("filament-types" is "Filament types"). Never the id as
+ *  stored: "Filament · filament-types" under a session header (#6004). */
+export function tableWords(id: string | null | undefined, names?: ScanDestinationContext["tableNames"]): string {
+  const raw = (id ?? "").trim();
+  const named = raw ? names?.find((t) => t.instance_name === raw)?.display_name?.trim() : null;
+  if (named) return named;
+  const words = raw.replace(/[-_:.]+/g, " ").replace(/\s+/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "a table";
 }
 
 /** What the fit rule reads off a row: its own words, its maker, what the
@@ -877,7 +909,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
       module: updates.module,
       instance: updates.instance,
       kind: table?.kind ?? cand?.kind ?? updates.kind,
-      label: table?.display_name ?? cand?.label ?? updates.instance ?? updates.module,
+      label: table?.display_name ?? cand?.label ?? tableWords(updates.instance ?? updates.module, ctx.tableNames),
       installs: false,
       bundle_external_id: null,
       chosenBy: stored?.by === "person" ? "person" : "system",
@@ -893,7 +925,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
       module: stored.module,
       instance: stored.instance,
       kind: stored.kind ?? cand?.kind ?? table?.kind ?? null,
-      label: stored.label ?? cand?.label ?? table?.display_name ?? table?.instance_name ?? stored.module,
+      label: stored.label ?? cand?.label ?? table?.display_name ?? tableWords(stored.instance ?? stored.module, ctx.tableNames),
       installs: !!(cand?.bundle_external_id ?? table?.bundle_external_id),
       bundle_external_id: cand?.bundle_external_id ?? table?.bundle_external_id ?? null,
       chosenBy: "person",
@@ -901,7 +933,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
       offered: (() => {
         if (!isPending(row)) return null;
         const b = scanBetterTable(scanFitItem(row), stored.kind ?? cand?.kind ?? table?.kind ?? null, tables, stored.module);
-        return b ? { module: b.module_name ?? b.instance_name, instance: b.instance_name, kind: b.kind ?? null, label: b.display_name ?? b.instance_name } : null;
+        return b ? { module: b.module_name ?? b.instance_name, instance: b.instance_name, kind: b.kind ?? null, label: b.display_name ?? tableWords(b.instance_name, ctx.tableNames) } : null;
       })(),
       updates: null,
     };
@@ -912,7 +944,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     module: top.module,
     instance: top.instance ?? null,
     kind: top.kind ?? null,
-    label: top.label ?? top.module,
+    label: top.label ?? tableWords(top.instance ?? top.module, ctx.tableNames),
     installs: !!top.bundle_external_id,
     bundle_external_id: top.bundle_external_id ?? null,
     chosenBy: "system",
@@ -927,7 +959,7 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
     module: entry.module_name ?? entry.instance_name,
     instance: entry.instance_name,
     kind: entry.kind ?? null,
-    label: entry.display_name ?? entry.instance_name,
+    label: entry.display_name ?? tableWords(entry.instance_name, ctx.tableNames),
     installs: !!entry.bundle_external_id,
     bundle_external_id: entry.bundle_external_id ?? null,
     chosenBy: "system",
@@ -983,6 +1015,11 @@ export interface ScanTrackedMatch {
   id: string | null;
   instance: string | null;
   counted: boolean;
+  /** The unit the record keeps its count in ("g", "each"), or null. */
+  unit: string | null;
+  /** That unit measures rather than counts (stamped from the workspace's
+   *  units vocabulary). */
+  measured: boolean;
   /** How many THINGS matched as well as this one (the same tier: two on
    *  one barcode, or two by name with no barcode). Places of one item are one
    *  thing. Above 1 no machine can pick. A stamp from before the count reads 1. */
@@ -999,13 +1036,21 @@ export interface ScanTrackedMatch {
   newPlace: string | null;
   /** Where the thing is kept already, in words ("8 in Kitchen"). */
   held: string | null;
+  /** Only a person settles this match, and why (a vehicle found by name
+   *  while its VIN did not read, #5921): it holds every filing as a question. */
+  confirm: string | null;
 }
 export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
   const m = ((row.suggested_metadata ?? {}) as {
-    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; of?: unknown; places?: unknown; place_chosen?: unknown; new_place?: unknown; held?: unknown } | null;
+    tracked_match?: { title?: unknown; matched_by?: unknown; kind?: unknown; id?: unknown; instance?: unknown; qty?: unknown; unit?: unknown; measured?: unknown; of?: unknown; places?: unknown; place_chosen?: unknown; new_place?: unknown; held?: unknown; confirm?: unknown } | null;
   }).tracked_match;
   if (!m || typeof m !== "object" || typeof m.title !== "string" || !m.title.trim()) return null;
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+  // A match by name is judged again as it is read: a stamp written before
+  // the variant rule (#5725) held a Multicolor pack to the white spool you
+  // have, "Possible match" on a session a day old (#6004). A different
+  // variant of the same product is never the thing you have.
+  if (m.matched_by === "name" && variantsDisagree(row.suggested_name ?? null, m.title)) return null;
   return {
     title: m.title,
     matched_by: str(m.matched_by),
@@ -1013,11 +1058,14 @@ export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
     id: str(m.id),
     instance: str(m.instance),
     counted: typeof m.qty === "number" && Number.isFinite(m.qty),
+    unit: str(m.unit),
+    measured: m.measured === true,
     of: typeof m.of === "number" && Number.isFinite(m.of) && m.of > 1 ? Math.floor(m.of) : 1,
     places: typeof m.places === "number" && Number.isFinite(m.places) && m.places > 1 ? Math.floor(m.places) : 1,
     placeChosen: m.place_chosen === true,
     newPlace: str(m.new_place),
     held: str(m.held),
+    confirm: str(m.confirm),
   };
 }
 
@@ -1113,10 +1161,20 @@ export type ScanRebuy =
   | { kind: "hold"; sentence: string }
   | { kind: "none" };
 
+/** A pack of different things matched to one record: the words the card,
+ *  File all and the review plan say. */
+export const PACK_NOT_ONE_SENTENCE = "A pack of different things: split it first, then match each.";
+/** A count matched to a record kept in a measure. */
+export const MEASURED_RECORD_SENTENCE = "{title} is kept in {unit}: say how much this is first.";
+
+
 export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}): ScanRebuy {
   if (!isPending(row) || metaOf(row).reviewed) return { kind: "none" };
   const t = scanTrackedMatch(row);
   if (!t) return { kind: "none" };
+  // A vehicle found by its name while its VIN did not read is a question, and
+  // only "It's this one" settles it: never +1, never filed for them (#5921).
+  if (t.confirm) return { kind: "hold", sentence: fillSentence(CONFIRM_MATCH_SENTENCE, { title: t.title, why: t.confirm.charAt(0).toUpperCase() + t.confirm.slice(1) }) };
   // Paperwork for a thing you have is put on it, never counted as another.
   if (isPaperworkMatch(row, t)) return { kind: "hold", sentence: fillSentence(PAPERWORK_SENTENCE, { title: t.title }) };
   const tables = ctx.tables ?? [];
@@ -1131,6 +1189,13 @@ export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}):
   if (t.places > 1 && !t.placeChosen && !t.newPlace) return { kind: "hold", sentence: fillSentence(WHICH_PLACE_SENTENCE, { n: t.places }) };
   // A record with no count is one unique thing, and "+1" would double it.
   if (!t.counted || !t.kind || !t.id) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
+  // A pack of different things is not more of one of them: it is split
+  // first, and each part matches on its own (#5905, the line's own rule).
+  const units = lineUnitsOf(row);
+  if (units?.mode === "different") return { kind: "hold", sentence: PACK_NOT_ONE_SENTENCE };
+  // A count is not a measure: ten spools are not ten grams. A record kept in
+  // a measured unit is never added to by a count (#5905).
+  if (t.measured && t.unit) return { kind: "hold", sentence: fillSentence(MEASURED_RECORD_SENTENCE, { title: t.title, unit: t.unit }) };
   const home = trackedTable(t, tables);
   if (!home) return { kind: "hold", sentence: DUPLICATE_SENTENCE };
   return {

@@ -19,6 +19,7 @@
 // close to a gold standard"). lint (scripts/capabilities.ts, choice-picker)
 // refuses a hand-rolled "add new" select anywhere else.
 
+import { compareChoices } from "@cobblr/platform-contract/choice-order";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { BackdropLayer, OverlayLayer, PopoverLayer } from "./fixed-layers";
@@ -84,8 +85,8 @@ export function orderChoices(options: readonly ChoiceOption[]): ChoiceOption[] {
   const all = [...seen.values()];
   const used = all.filter((o) => (o.uses ?? 0) > 0 || o.lastUsed);
   const unused = all.filter((o) => !((o.uses ?? 0) > 0 || o.lastUsed));
-  used.sort((a, b) => (b.lastUsed ?? "").localeCompare(a.lastUsed ?? "") || (b.uses ?? 0) - (a.uses ?? 0) || a.value.localeCompare(b.value));
-  unused.sort((a, b) => a.value.localeCompare(b.value));
+  used.sort((a, b) => (b.lastUsed ?? "").localeCompare(a.lastUsed ?? "") || (b.uses ?? 0) - (a.uses ?? 0) || compareChoices(a.value, b.value));
+  unused.sort((a, b) => compareChoices(a.value, b.value));
   return [...used, ...unused];
 }
 

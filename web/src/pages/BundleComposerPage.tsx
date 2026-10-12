@@ -354,6 +354,7 @@ export function BundleComposerPage() {
                       className="rounded border border-line dark:border-slate-700 p-2 text-xs flex items-start gap-2"
                     >
                       <button
+                        title={on ? "Exclude" : "Include"}
                         type="button"
                         onClick={() => toggleWire(k, !on)}
                         className="mt-0.5"
@@ -406,6 +407,7 @@ export function BundleComposerPage() {
                       className="flex items-center gap-2 text-sm border-b border-line dark:border-slate-700 last:border-0 py-1"
                     >
                       <button
+                        title={on ? "Exclude" : "Include"}
                         type="button"
                         onClick={() => toggleField(k, !on)}
                         aria-label={on ? "Exclude" : "Include"}

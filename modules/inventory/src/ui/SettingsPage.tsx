@@ -3,7 +3,8 @@
 // canonical UI for them is /locations in the host app.
 
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { STOCK_CHANGED_EVENT, wirePrefillHref } from "@cobblr/platform-contract/wire-narrowing";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
@@ -143,7 +144,7 @@ function StockTrackingCard() {
         catalog. <span className="text-content dark:text-mortar-200">Auto</span> lets the platform
         decide from your data - the right choice almost always.
       </p>
-      <select
+      <select aria-label="Stock tracking"
         className="input mt-3 !w-auto"
         value={value}
         disabled={current.isLoading || save.isPending}
@@ -302,6 +303,7 @@ function FieldRow({ def }: { def: InvFieldDef }) {
               >
                 {c}
                 <button
+                  title={`Remove ${c}`}
                   type="button"
                   onClick={() => remove(c)}
                   disabled={save.isPending}
@@ -338,7 +340,8 @@ function FieldRow({ def }: { def: InvFieldDef }) {
 /** Categories, rendered as a field row. They have their own table + slugs
  *  underneath, but on this page they are simply the Category options. */
 function CategoryRow() {
-  const { api } = useInventory();
+  const { api, entityKind } = useInventory();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
   const [name, setName] = useState("");
@@ -375,6 +378,28 @@ function CategoryRow() {
           <span className="text-[11px] text-faint dark:text-slate-500 italic">No categories yet.</span>
         )}
       </div>
+      {items.length > 0 && (
+        // A wire about everything filed under one category (#6070): the
+        // composer opens with the trigger, "it runs out" and the category set.
+        <label className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted dark:text-slate-400">
+          <span>When something in a category runs out…</span>
+          <select
+            aria-label="When something in this category runs out"
+            data-testid="category-when-it-runs-out"
+            value=""
+            onChange={(e) => {
+              if (!e.target.value) return;
+              navigate(wirePrefillHref({ kind: entityKind, event: STOCK_CHANGED_EVENT, change: { kind: "ran-out" }, records: { category: e.target.value } }));
+            }}
+            className="input text-sm w-auto"
+          >
+            <option value=""> - pick a category - </option>
+            {items.map((c) => (
+              <option key={c.id} value={c.name}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <form onSubmit={submit} className="mt-1.5 flex gap-1.5">
         <input
           value={name}

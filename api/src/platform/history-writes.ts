@@ -1,6 +1,6 @@
 import type { EntityWriter } from "@cobblr/platform-contract";
 import { omitSecretValues } from "@cobblr/platform-contract/secret-field";
-import { currentHistoryWrite, historyDiff, runHistoryWrite, type HistoryWrite } from "./record-history.js";
+import { currentHistoryWrite, historyDiff, runCreateWrite, runHistoryWrite, type HistoryWrite } from "./record-history.js";
 
 export async function finishHistoryWrite(write: HistoryWrite): Promise<void> {
   if (write.logged) return;
@@ -14,11 +14,28 @@ export async function finishHistoryWrite(write: HistoryWrite): Promise<void> {
   write.logged = true;
 }
 
+/** A record made through a writer (an import, a sync, another module) starts
+ *  its History the way one made on its form does: one `<noun>_created` entry,
+ *  by whoever is making it. A module whose own create already logs one is
+ *  left to it (#5923). */
+export async function createWithHistory(orgId: string, kind: string, fields: Record<string, unknown>, work: () => Promise<string>): Promise<string> {
+  const { result: id, logged } = await runCreateWrite(work);
+  const [module, noun] = kind.split(":");
+  if (!module || !noun || logged.has(`${module}:${noun}:${id}`)) return id;
+  const name = typeof fields.name === "string" ? fields.name : typeof fields.title === "string" ? fields.title : undefined;
+  const { log } = await import("./activity.js");
+  await log({ orgId, action: `${noun}_created`, ref: { module, entityType: noun, entityId: id }, diff: { ...(name ? { name } : {}), ...(typeof fields.instance === "string" && fields.instance ? { instance: fields.instance } : {}) } });
+  return id;
+}
+
 export function historyWriter(kind: string, writer: EntityWriter): EntityWriter {
+  const created = Object.assign(Object.create(writer) as EntityWriter, {
+    create: (orgId: string, fields: Record<string, unknown>) => createWithHistory(orgId, kind, fields, () => writer.create(orgId, fields)),
+  });
   const read = writer.snapshot?.bind(writer) ?? writer.read?.bind(writer);
-  if (!read) return writer;
+  if (!read) return created;
   const wrap = (orgId: string, id: string, work: () => Promise<void>, forceLog = false) => recordHistoryWrite(orgId, kind, id, () => read(orgId, id), work, forceLog);
-  const out = Object.assign(Object.create(writer) as EntityWriter, {
+  const out = Object.assign(created, {
     update: (orgId: string, id: string, fields: Record<string, unknown>) => wrap(orgId, id, () => writer.update(orgId, id, fields)),
   });
   if (writer.mergeMetadata) out.mergeMetadata = (orgId, id, fields) => wrap(orgId, id, () => writer.mergeMetadata!(orgId, id, fields));

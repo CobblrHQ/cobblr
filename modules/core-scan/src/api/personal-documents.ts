@@ -40,7 +40,9 @@ personalDocumentsRouter.post("/personal-documents/bill-of-sale", uploadOne({ per
   // purchase, as a paste of any paperwork does, with nothing attached.
   const onRecord = typeof req.body?.kind === "string" && typeof req.body?.id === "string" && /^[0-9a-f-]{36}$/i.test(req.body.id) ? { kind: String(req.body.kind), id: String(req.body.id) } : null;
   if (onRecord && !(await requireCapability(req, res, "core-scan:attach-paperwork"))) return;
-  const read = await readPersonalBillOfSale({ bytes: await readFile(file.path), mime: file.mimetype, path: file.path, orgId: tenantContext(req).org.id, userId: sessionUser(req).id });
+  // The VIN the person typed when the page's would not read (#5921).
+  const typedVin = typeof req.body?.vin === "string" && req.body.vin.trim() ? req.body.vin.trim().slice(0, 40) : undefined;
+  const read = await readPersonalBillOfSale({ bytes: await readFile(file.path), mime: file.mimetype, path: file.path, orgId: tenantContext(req).org.id, userId: sessionUser(req).id, ...(typedVin ? { vin: typedVin } : {}) });
   res.setHeader("Cache-Control", "no-store");
   if (!read.ok) { res.status(422).json({ error: { code: read.code, message: read.message } }); return; }
   // The original, into the Vault of whoever brought it: on the record when it

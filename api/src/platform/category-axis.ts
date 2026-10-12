@@ -19,6 +19,7 @@
 // `inventory:part` to native, migrates the values that are already in the
 // placeholder def, and drops the second Category from the create form.
 
+import { compareChoices } from "@cobblr/platform-contract/choice-order";
 import type { CategoryAxis, CategoryAxisAssignment, CategoryAxisSlot } from "@cobblr/platform-contract";
 import { normaliseCategory } from "@cobblr/platform-contract/category-reconcile";
 import { chooseAxisBacking, dedupeByKey } from "@cobblr/platform-contract/category-axis";
@@ -80,7 +81,7 @@ async function readAxis(orgId: string, kind: string): Promise<CategoryAxis | nul
       const key = normaliseCategory(v);
       if (key && !byKey.has(key)) byKey.set(key, v.trim());
     }
-    return { label: "Category", values: [...byKey.values()].sort((a, b) => a.localeCompare(b)), slot: { kind: "field", column: backing.column } };
+    return { label: "Category", values: [...byKey.values()].sort(compareChoices), slot: { kind: "field", column: backing.column } };
   }
   const writer = await getEntityWriterFor(orgId, backing.entityKind);
   const rows = (await writer?.listForMatch?.(orgId)) ?? [];
@@ -140,7 +141,7 @@ export async function commitAxisValue(args: {
     if (!axis.values.some((v) => normaliseCategory(v) === key)) {
       await meta
         .updateTable("module_field_defs")
-        .set({ choices: JSON.stringify([...axis.values, value].sort((a, b) => a.localeCompare(b))) })
+        .set({ choices: JSON.stringify([...axis.values, value].sort(compareChoices)) })
         .where("id", "=", axis.slot.defId)
         .execute();
       forgetAxis(args.orgId, args.kind, args.instance);

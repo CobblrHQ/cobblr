@@ -10,7 +10,7 @@ import { Copy, ExternalLink, QrCode, Ban, Globe, Download } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
+import { useConfirm, useToast, usePageTitle, downloadBlob, EntityChip } from "@cobblr/platform-web";
 
 export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("QR codes");
@@ -233,12 +233,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                 <QrCode size={15} className="text-accent mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-sm text-content dark:text-mortar-100">
-                      {t.entity_kind}
-                    </span>
-                    <span className="font-mono text-[10px] text-faint">
-                      {t.entity_id.slice(0, 8)}
-                    </span>
+                    <EntityChip kind={t.entity_kind} id={t.entity_id} />
                     <Pill
                       text={t.mode === "action" ? `action${t.action_id ? `:${t.action_id}` : ""}` : "navigate"}
                       tone="cobble"
@@ -260,6 +255,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    aria-label="Copy scan URL"
                     onClick={() => {
                       void navigator.clipboard.writeText(scanUrl);
                       toast.success("Scan URL copied");
@@ -270,6 +266,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                     <Copy size={14} />
                   </button>
                   <a
+                    aria-label="Open scan target"
                     href={`/qr/${t.token}`}
                     target="_blank"
                     rel="noopener noreferrer"
@@ -290,6 +287,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                   </button>
                   {isAdmin && st === "active" && (
                     <button
+                      aria-label="Revoke"
                       onClick={async () => {
                         const ok = await confirm({
                           title: "Revoke this QR token?",

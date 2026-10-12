@@ -37,7 +37,7 @@ function SortableRow({ item, children }: { item: Item; children: React.ReactNode
           : "flex items-center gap-2 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-2 ml-5"
       }
     >
-      <button {...attributes} {...listeners} className="cursor-grab text-faint hover:text-content dark:hover:text-mortar-100 touch-none" aria-label="Drag">
+      <button title="Drag" {...attributes} {...listeners} className="cursor-grab text-faint hover:text-content dark:hover:text-mortar-100 touch-none" aria-label="Drag">
         <GripVertical size={16} />
       </button>
       {children}
@@ -207,7 +207,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                 <SortableRow key={it.id} item={it}>
                   {it.kind === "section" ? (
                     <>
-                      <input
+                      <input aria-label="Section title"
                         // DRAFT-OK: a form section's title in the form builder, not a record's value; no action moves it.
                         defaultValue={it.name}
                         onBlur={(e) => {

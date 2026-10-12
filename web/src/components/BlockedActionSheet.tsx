@@ -21,7 +21,7 @@ import { changeWorkspaceShape, Modal, relativeTime, useToast } from "@cobblr/pla
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { api, ApiError, type ApprovalRequestView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { clearBlockedAction, subscribeBlockedAction, type RaisedBlock } from "../lib/blocked-action";
+import { clearBlockedAction, settleBlockedAction, subscribeBlockedAction, type RaisedBlock } from "../lib/blocked-action";
 
 const PRIMARY = "inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white px-3 py-1.5 text-sm font-medium";
 const SECONDARY = "rounded-md border border-line dark:border-slate-600 px-3 py-1.5 text-sm";
@@ -79,6 +79,9 @@ function TurnOnSheet({ raised, onClose }: { raised: RaisedBlock; onClose: () => 
         for (const r of blocked.remedies) await api.enableModule(activeSlug, r.key);
       });
       if (!raised.refused) return { finished: false as const };
+      // The refused call is waiting: it runs again itself, and the page that
+      // asked shows its answer, a second refusal included (#5890).
+      if (raised.settle) return { handedBack: true as const };
       try {
         await api.request(raised.refused.method, raised.refused.path, raised.refused.body ?? undefined);
         return { finished: true as const };
@@ -87,6 +90,12 @@ function TurnOnSheet({ raised, onClose }: { raised: RaisedBlock; onClose: () => 
       }
     },
     onSuccess: (r) => {
+      if ("handedBack" in r) {
+        toast.success(`${names} is on.`);
+        settleBlockedAction("applied");
+        onClose();
+        return;
+      }
       if (r.finished) void qc.invalidateQueries();
       if (r.finished) toast.success(`${names} is on, and it is done.`);
       else if ("message" in r && r.message) toast.error(`${names} is on. ${r.message}`);

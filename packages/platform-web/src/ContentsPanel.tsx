@@ -20,6 +20,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Package, Pencil, Plus, ScanLine, X } from "lucide-react";
 import { useToast } from "./ToastContext";
+import { mayRead, workspaceFetch } from "./acting-role";
 import { useViewerRole } from "./context";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import type { PlatformResolvedEntity } from "./types";
@@ -49,7 +50,9 @@ function createPathFor(k: KindRow): string | null {
   return base ? `${base}${suffix}` : null;
 }
 
-/** Thin fetch over the org-scoped API, Bearer from the caller's token getter. */
+/** Thin fetch over the org-scoped API, Bearer from the caller's token getter.
+ *  Through workspaceFetch, so a guest's read the server refuses never leaves
+ *  the page (acting-role.ts, #5992). */
 async function papi<T>(
   slug: string,
   getToken: GetToken,
@@ -61,7 +64,7 @@ async function papi<T>(
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(`/api/v1/orgs/${slug}${path}`, {
+  const res = await workspaceFetch(`/api/v1/orgs/${slug}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -138,7 +141,8 @@ function contentsQuery(slug: string, getToken: GetToken, container: { kind: stri
         "GET",
         `/modules/core-placement/contents?container_kind=${encodeURIComponent(container.kind)}&container_id=${encodeURIComponent(container.id)}`,
       ),
-    enabled: !!slug && !!container.id,
+    // A guest is not shown what sits inside: asked, the server refuses it.
+    enabled: !!slug && !!container.id && mayRead(`/orgs/${slug}/modules/core-placement/contents`),
     staleTime: 30_000,
   };
 }
@@ -194,7 +198,7 @@ export function ContentsPanel({
         "GET",
         `/modules/core-placement/word?kind=${encodeURIComponent(kindForWord)}`,
       ),
-    enabled: !!slug && !!kindForWord,
+    enabled: !!slug && !!kindForWord && mayRead(`/orgs/${slug}/modules/core-placement/word`),
     staleTime: 60_000,
   });
   const heading = wordQ.data?.word ?? title ?? (builtFrom ? "Built from" : "Contents");
@@ -434,7 +438,7 @@ export function ContentsPanel({
 
       {adding && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 border-b border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50">
-          <select
+          <select aria-label="Kind to add"
             value={addKind}
             onChange={(e) => {
               setAddKind(e.target.value);
@@ -449,7 +453,7 @@ export function ContentsPanel({
               </option>
             ))}
           </select>
-          <select
+          <select aria-label="Item to add"
             value={addId}
             onChange={(e) => {
               setAddId(e.target.value);

@@ -84,7 +84,7 @@ export default defineModule({
     // What a check-off carries. The item's record rides under its kind's own
     // id key (partId for a part), with sourceRef beside it.
     eventPayloads: {
-      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity"],
+      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity", "restocks", "actorId"],
     },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
@@ -147,6 +147,7 @@ export default defineModule({
           listTitle: { label: "Which list, by name; created if it does not exist yet", type: "text" },
           qty: { label: "How many", type: "number" },
           note: { label: "Optional note on the item", type: "text" },
+          restocks: { label: "Checking it off adds it back to the record's stock", type: "boolean" },
         },
         userInvokable: false,
       },

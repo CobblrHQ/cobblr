@@ -10,7 +10,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Plus, RefreshCw, Share2 } from "lucide-react";
-import { Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { ConnectCobblr, Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { api, type ShareLinkItem, type ShareOfferItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -136,6 +136,7 @@ export function SharingPage() {
           Review every suggested edit ({live.reduce((n, l) => n + (l.edits_waiting ?? 0), 0)})
         </Link>
       ) : null}
+      <ConnectCobblr />
       <HandedOver slug={activeSlug} />
       <PublicPagesSection slug={activeSlug} />
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`What ${editing?.peer_name ?? editing?.label ?? "they"} can see`} size="md">
@@ -248,7 +249,7 @@ function HandedOver({ slug }: { slug: string }) {
   const confirm = useConfirm();
   const list = useQuery({ queryKey: ["share-offers", slug], queryFn: () => api.listShareOffers(slug), enabled: !!slug });
   const act = useMutation({
-    mutationFn: ({ id, what }: { id: string; what: "withdraw" | "send-back" | "undo" }) => (what === "undo" ? api.undoSend(slug, id) : what === "withdraw" ? api.withdrawShareOffer(slug, id) : api.sendBackShareOffer(slug, id)),
+    mutationFn: async ({ id, what }: { id: string; what: "withdraw" | "send-back" | "undo" }) => {await (what === "undo" ? api.undoSend(slug, id) : what === "withdraw" ? api.withdrawShareOffer(slug, id) : api.sendBackShareOffer(slug, id));},
     onSuccess: (_r, v) => {
       toast.success(v.what === "undo" ? "Send undone." : v.what === "withdraw" ? "Withdrawn." : "Sent back.");
       void qc.invalidateQueries();
@@ -272,6 +273,7 @@ function HandedOver({ slug }: { slug: string }) {
               </span>
               {o.send_file?.can_download && <button type="button" className="rounded border border-line px-2 py-1 text-xs" onClick={async () => {try {if (o.send_file!.transport === "file-export") await api.downloadSendFile(slug,o.send_file!.id); else await api.downloadSendFileReceipt(slug,o.send_file!.id,o.send_file!.state === "undone" ? "undone" : "imported");} catch (e) {toast.error((e as Error).message);}}}>Download {o.send_file.transport === "file-export" ? "send file" : o.send_file.state === "undone" ? "return file" : "confirmation"}</button>}
               {o.send_file?.can_undo && <button type="button" className="rounded border border-line px-2 py-1 text-xs" onClick={async () => {try {const r = await api.undoSendFileImport(slug,o.send_file!.id);toast.success(r.summary);void qc.invalidateQueries();} catch (e) {toast.error((e as Error).message);}}}>Undo import here</button>}
+              {(o.send_file?.can_remote_undo || o.send_file?.can_restore) && <button type="button" className="rounded border border-line px-2 py-1 text-xs" onClick={async () => {try {const r = await api.undoSend(slug,o.send_file!.id,o.send_file!.can_restore);toast.success(r.summary || "Send undone.");void qc.invalidateQueries();} catch(e) {toast.error((e as Error).message);}}}>{o.send_file.can_restore ? "Restore source here" : "Undo import there"}</button>}
               {o.can_undo && <button type="button" disabled={act.isPending} onClick={() => act.mutate({ id: o.id, what: "undo" })} className="rounded border border-line px-2 py-1 text-xs">Undo send</button>}
               {o.can_withdraw && (
                 <button type="button" onClick={() => act.mutate({ id: o.id, what: "withdraw" })} disabled={act.isPending} className="rounded border border-line px-2 py-1 text-xs text-muted hover:text-accent dark:border-slate-600">

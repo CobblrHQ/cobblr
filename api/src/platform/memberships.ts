@@ -17,13 +17,16 @@
 //
 // One function, so the two answers cannot drift again.
 
+import type { Kysely } from "kysely";
+import type { PortalShares } from "@cobblr/platform-contract/guest-reads";
 import { meta } from "../db/meta.js";
+import { portalShares } from "../auth/guest-reads.js";
 
 /** Every field any caller of "my workspaces" needs. Deliberately the UNION of
  *  what the callers used to select separately — an extra column is harmless,
  *  a missing one is the bug above. */
 export async function listMembershipsForUser(userId: string) {
-  return meta
+  const rows = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("orgs as o", "o.id", "m.org_id")
     .select((eb) => [
@@ -38,6 +41,7 @@ export async function listMembershipsForUser(userId: string) {
       "o.created_at",
       // "share": a workspace someone shared with this person (share spaces).
       "o.kind",
+      "o.portal_config",
       "m.role",
       "m.position",
       "m.is_default",
@@ -56,6 +60,23 @@ export async function listMembershipsForUser(userId: string) {
     .orderBy("m.position", "asc")
     .orderBy("m.joined_at", "asc")
     .execute();
+  // A guest's membership carries what the portal shares, the same answer the
+  // guest gate works from, so their pages ask only for reads it answers
+  // (#5992). Worked out for a guest only: everyone else reads the workspace.
+  return Promise.all(
+    rows.map(async ({ portal_config, ...row }) => {
+      if (row.role !== "guest") return row;
+      // Loaded for a guest only: the tenant pool reads the credentials key as
+      // it loads, and a caller with no tenant (a sandbox, a test) never needs it.
+      const shares: PortalShares | null = await import("../db/tenant.js")
+        .then(({ getTenantDb }) => getTenantDb(row.id))
+        .then((db) => portalShares(portal_config, db as unknown as Kysely<unknown>))
+        .then((s) => ({ views: [...s.views], kinds: [...s.kinds] }))
+        // Unknown is not "nothing": the server's own gate still decides.
+        .catch(() => null);
+      return { ...row, portal_shares: shares };
+    }),
+  );
 }
 
 /** THE query for "who is a current member of this workspace" — the one the

@@ -313,7 +313,7 @@ export function BundlesPage() {
                   {st?.ok === false ? "✕" : "●"}
                 </span>
                 <span className="font-mono text-xs truncate flex-1 min-w-0">{s}</span>
-                <button type="button" onClick={() => setSources((p) => p.filter((x) => x !== s))} className="text-faint hover:text-ember-500 shrink-0" title="Remove source">
+                <button aria-label="Remove source" type="button" onClick={() => setSources((p) => p.filter((x) => x !== s))} className="text-faint hover:text-ember-500 shrink-0" title="Remove source">
                   <X size={14} />
                 </button>
               </li>
@@ -860,6 +860,7 @@ function ExportBundleModal({
           </div>
           <div className="flex items-center gap-2 justify-end pt-2">
             <button
+              aria-label="Web Share (mobile / browsers that support it)"
               type="button"
               onClick={() => {
                 void navigator.share?.({

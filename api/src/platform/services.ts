@@ -61,6 +61,8 @@ import {
 } from "@cobblr/platform-contract/services";
 import { getTenantDb } from "../db/tenant.js";
 import { validateAgainst } from "./service-schema.js";
+import { serviceJobIdentity, stableJson } from "./service-job-identity.js";
+import { isPersonalDocumentRefused } from "@cobblr/platform-contract/personal-documents";
 
 // ── Storage ─────────────────────────────────────────────────────────────
 
@@ -249,16 +251,7 @@ export function listBuiltIns(): BuiltInServiceDef[] {
 
 // ── Small pure helpers ──────────────────────────────────────────────────
 
-export function stableJson(v: unknown): string {
-  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
-  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
-  const o = v as Record<string, unknown>;
-  return `{${Object.keys(o)
-    .filter((k) => o[k] !== undefined)
-    .sort()
-    .map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`)
-    .join(",")}}`;
-}
+export { stableJson };
 const sha256 = (b: string | Uint8Array) => createHash("sha256").update(b).digest("hex");
 
 /** Refused before a job exists: the caller hears why, nothing is stored. */
@@ -432,6 +425,33 @@ export async function emit(orgId: string, job: { id: string; capability: string;
   }
 }
 
+/** The person whose Vault a job keeps its outputs in, when it asked to
+ *  (keepInVault); null for a job whose outputs go to shared Files. */
+function vaultUserOf(raw: unknown): string | null {
+  const v = typeof raw === "string" ? (() => { try { return JSON.parse(raw) as unknown; } catch { return null; } })() : raw;
+  const u = (v as { vault_user?: unknown } | null)?.vault_user;
+  return typeof u === "string" && u ? u : null;
+}
+
+/** Keep one output file where the job keeps its outputs: the requester's
+ *  Vault (linked to the record it is for) or shared Files. A personal
+ *  document shared Files refuse is thrown as PersonalDocumentRefused, which
+ *  fails the job with `personal_document`, so the panel can offer the Vault. */
+async function keepOutput(orgId: string, row: JobsTable, bytes: Uint8Array, meta: { filename: string; mimeType: string }): Promise<{ fileId: string } | null> {
+  const vaultUser = vaultUserOf(row.attach_to);
+  if (vaultUser) {
+    const kept = await platform().vault.file(orgId, vaultUser, { name: meta.filename, mimeType: meta.mimeType, bytes, record: attachToOf(row.attach_to) });
+    return { fileId: kept.fileId };
+  }
+  return platform().files.write(orgId, bytes, meta);
+}
+
+/** A failed job's error from what was thrown: a personal document shared
+ *  Files refused says so, so what asked can offer the Vault. */
+function failureOf(err: unknown): ServiceError {
+  return isPersonalDocumentRefused(err) ? failure("personal_document", (err as Error).message) : failure("internal", (err as Error).message.slice(0, 300));
+}
+
 function attachToOf(raw: unknown): { kind: string; id: string } | null {
   const v = typeof raw === "string" ? (() => { try { return JSON.parse(raw) as unknown; } catch { return null; } })() : raw;
   if (!v || typeof v !== "object") return null;
@@ -516,7 +536,10 @@ export async function invokeAs(
   }
 
   const target = route.connection ? `c:${route.connection.credentialId}` : `b:${route.builtIn!.id}`;
-  const idempotencyKey = sha256(stableJson([target, capability, req.input ?? null, fileHashes, req.idempotencyKey ?? null]));
+  // Where the outputs go is part of what the job is: kept in a person's Vault
+  // is never the same job as one whose output went to shared Files (#5871).
+  const destination = req.keepInVault ? { ...(req.attachTo ?? {}), vault_user: req.keepInVault.userId } : (req.attachTo ?? null);
+  const idempotencyKey = serviceJobIdentity({ target, capability, input: req.input, fileHashes, attachTo: req.attachTo ?? null, vaultUser: req.keepInVault?.userId ?? null, idempotencyKey: req.idempotencyKey ?? null });
   const existing = await db.selectFrom("core_services_jobs").select(["id", "status"]).where("idempotency_key", "=", idempotencyKey).executeTakeFirst();
   if (existing) return { id: existing.id, status: existing.status };
 
@@ -535,7 +558,7 @@ export async function invokeAs(
       confirm_hash: verdict.confirm_hash,
       caused_by_job: req.causedByJob ?? null,
       hop: verdict.hop,
-      attach_to: req.attachTo ? (sql`${JSON.stringify(req.attachTo)}::jsonb` as never) : null,
+      attach_to: destination ? (sql`${JSON.stringify(destination)}::jsonb` as never) : null,
       idempotency_key: idempotencyKey,
       last_progress_at: new Date(),
       manifest_version: route.connection && !route.connection.adapter ? route.connection.manifestVersion : null,
@@ -695,6 +718,11 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
       input: row.input,
       files: Object.fromEntries(files.map((f) => [f.name, f.file_id])),
       ...adapter,
+      keepFile: async (bytes, meta) => {
+        const kept = await keepOutput(orgId, running, bytes, meta);
+        if (!kept) throw new Error("This workspace cannot store files right now.");
+        return kept;
+      },
       progress: async (fraction, message) => {
         await update(orgId, row.id, { progress: Math.max(0, Math.min(1, fraction)), ...(message ? { message } : {}) }, { gen: row.attempt, live: true });
       },
@@ -704,7 +732,7 @@ async function runBuiltIn(orgId: string, row: JobsTable): Promise<void> {
     await recordOutputs(orgId, running, Object.entries(result.files ?? {}).map(([name, fileId]) => ({ name, fileId })));
     await finish(orgId, running, "done", { output: result.output ?? null, progress: 1 });
   } catch (err) {
-    await finish(orgId, running, "failed", { error: failure("internal", (err as Error).message.slice(0, 300)) });
+    await finish(orgId, running, "failed", { error: failureOf(err) });
   }
 }
 
@@ -734,6 +762,9 @@ async function recordOutputs(orgId: string, row: JobsTable, outs: Array<{ name: 
     .values(outs.map((o) => ({ job_id: row.id, name: o.name, direction: "out" as const, file_id: o.fileId, sha256: o.sha256 ?? null })))
     .onConflict((oc) => oc.columns(["job_id", "direction", "name"]).doNothing())
     .execute();
+  // A Vault output is the person's, linked to its record by the Vault
+  // itself: never attached as a shared file of the job or the record.
+  if (vaultUserOf(row.attach_to)) return;
   const attachTo = row.attach_to as { kind?: string; id?: string } | null;
   for (const o of outs) {
     await platform().files.attach(orgId, { fileId: o.fileId, source_module: "platform", source_type: "service-job", source_id: row.id, role: o.name }).catch(() => null);
@@ -894,7 +925,14 @@ async function absorb(orgId: string, row: JobsTable, conn: ServiceConnectionRef,
         await finish(orgId, row, "failed", { ...common, error: failure("hash_mismatch", `the "${name}" file did not match the hash the service gave`) });
         return null;
       }
-      const written = await platform().files.write(orgId, res.body, { filename: f.name ?? name, mimeType: f.type ?? "application/octet-stream" });
+      let written: { fileId: string } | null;
+      try {
+        written = await keepOutput(orgId, row, res.body, { filename: f.name ?? name, mimeType: f.type ?? "application/octet-stream" });
+      } catch (err) {
+        if (!isPersonalDocumentRefused(err)) throw err;
+        await finish(orgId, row, "failed", { ...common, error: failureOf(err) });
+        return null;
+      }
       if (!written) throw new ServicesNotReadyError("storing output files");
       outs.push({ name, fileId: written.fileId, sha256: f.sha256 });
     }

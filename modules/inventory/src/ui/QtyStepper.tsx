@@ -11,10 +11,10 @@
 // Shared by the detail view and the list table so the two can't drift into
 // different write paths for the same number.
 
+import { useStockWrites } from "./stock-writes";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { StockStepper } from "@cobblr/platform-web";
 import { rollupHoldings, type CardRollup } from "@cobblr/platform-contract/holdings";
-import { useInventory } from "./context";
 import type { HoldingRow } from "./api";
 import { withCount, type CountedRow } from "../stock-derived";
 
@@ -41,10 +41,10 @@ export function QtyStepper({
   /** "lg" on the detail hero, "sm" in a table row. */
   size?: "lg" | "sm";
 }) {
-  const { api } = useInventory();
+  const stock = useStockWrites();
   const qc = useQueryClient();
   const adjust = useMutation({
-    mutationFn: (delta: number) => api.stockAdjust(partId, delta),
+    mutationFn: (delta: number) => stock.stockAdjust(partId, delta),
     onSuccess: (resp) => {
       // Patch the row in place: the list is an INFINITE query, and this stepper
       // sits on every row — invalidating the list would refetch every loaded
@@ -74,11 +74,8 @@ export function QtyStepper({
         };
       });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"], refetchType: "none" });
-      // Every other read of this record moved too: the detail, and Workshop
-      // stock's remaining roll (["stock-shape", slug, id]), which stayed at
-      // the old length until a reload (#5811). Named by the record's id, as
-      // the platform's refresh after an action finds them.
-      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "inventory-parts" && q.queryKey.includes(partId) });
+      // Every other read of this record (the detail, Workshop stock) is
+      // refreshed by the stock write itself (stock-writes.ts).
     },
   });
   // The one stepper (platform-web StockStepper): a counted thing steps by one,

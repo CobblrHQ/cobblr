@@ -83,7 +83,12 @@ export async function findFresh(
         connection_id: s.credentialId,
         label: s.label,
         // The excerpt is for scoring, never for a page.
-        items: docs.map(({ excerpt: _excerpt, ...d }) => ({ ...d, score: scoreItemMatch(facts, { title: d.title, excerpt: _excerpt ?? "", match: d.match ?? null }).score })),
+        items: docs.map(({ excerpt: _excerpt, ...d }) => {
+          // What the item says that contradicts the record rides along, so a
+          // found item for another vehicle says so too (#5870).
+          const m = scoreItemMatch(facts, { title: d.title, excerpt: _excerpt ?? "", match: d.match ?? null });
+          return { ...d, score: m.score, ...(m.conflict ? { conflict: m.conflict } : {}), ...(m.warning ? { warning: m.warning } : {}) };
+        }),
       });
     } catch (err) {
       out.push({ connection_id: s.credentialId, label: s.label, items: [], error: `${s.label} didn't answer: ${(err as Error).message}` });
@@ -143,6 +148,8 @@ export async function linkItem(
         subtitle: d.subtitle ?? null,
         open_label: d.open_label ?? null,
         system_label: system.label,
+        library_provider: system.provider,
+        library_address: system.address ?? null,
         linked_by: userId,
       })
       .onConflict((oc) => oc.columns(["record_id", "connection_id", "ref"]).doNothing())
@@ -212,7 +219,16 @@ export async function unlinkItem(orgId: string, db: Db, userId: string | null, r
 
 /** Bring a copy of a linked or suggested item into Cobblr, attached to
  *  the record: a job, since a file can take a while. */
-export async function copyItem(orgId: string, userId: string | null, record: { kind: string; id: string }, connectionId: string, ref: string): Promise<ServiceJobRef> {
+export async function copyItem(
+  orgId: string,
+  userId: string | null,
+  record: { kind: string; id: string },
+  connectionId: string,
+  ref: string,
+  opts: { to?: "files" | "vault" } = {},
+): Promise<ServiceJobRef> {
+  // The Vault is a person's: a copy kept there needs who asked.
+  if (opts.to === "vault" && !userId) throw Object.assign(new Error("Only a signed-in person can keep a copy in their Vault."), { status: 400 });
   await systemOf(orgId, userId, connectionId);
   const db = (await platform().tenants.getDb(orgId)) as Db;
   await db
@@ -228,6 +244,7 @@ export async function copyItem(orgId: string, userId: string | null, record: { k
     input: { ref },
     via: { credentialId: connectionId },
     attachTo: { kind: record.kind, id: record.id },
+    ...(opts.to === "vault" && userId ? { keepInVault: { userId } } : {}),
   });
   // An earlier identical job may already be done, so no new completion event
   // will arrive. Reconcile it now as well as subscribing for new jobs.
@@ -249,4 +266,66 @@ export async function pickItem(orgId: string, userId: string | null, record: { k
     }
   }
   return best ? { connectionId: best.connectionId, doc: best.doc } : null;
+}
+
+/** An item a link points at belongs to this connection's library when the
+ *  connection is at the address the item is opened from: the same program at
+ *  the same place, never a lookalike with the same name (#5876). */
+export function sameLibrary(
+  link: { open_url: string | null; library_provider?: string | null; library_address?: string | null },
+  s: Pick<ServiceConnectionHolder, "address" | "provider">,
+): boolean {
+  const at = (s.address ?? "").trim().replace(/\/+$/, "");
+  if (!at) return false;
+  if (link.library_provider && link.library_provider !== s.provider) return false;
+  const was = link.library_address ?? link.open_url;
+  if (!was) return false;
+  try {
+    const a = new URL(at);
+    const u = new URL(was);
+    return a.origin === u.origin && (u.pathname === a.pathname || u.pathname.startsWith(`${a.pathname.replace(/\/+$/, "")}/`));
+  } catch {
+    return false;
+  }
+}
+
+/** A link whose connection is gone from the workspace (removed, then the same
+ *  library connected again: Reconnect makes a new connection) moves to the
+ *  connection now at that library's address, if this person may use it. The
+ *  link's row and its pairing move together, so every door (the panel, a
+ *  copy, the assistant) reads it as the library's again. Nothing moves to a
+ *  library at another address, or to one this person cannot use. */
+export async function healLinks(
+  orgId: string,
+  db: Db,
+  userId: string | null,
+  record: { kind: string; id: string },
+  rows: Array<{ connection_id: string; ref: string; title: string; open_url: string | null; open_label?: string | null; library_provider?: string | null; library_address?: string | null }>,
+  systems: ServiceConnectionHolder[],
+): Promise<number> {
+  const present = new Set((await holdersOf(orgId)).map((h) => h.credentialId));
+  let moved = 0;
+  for (const l of rows) {
+    if (present.has(l.connection_id)) continue;
+    const to = systems.find((s) => sameLibrary(l, s));
+    if (!to) continue;
+    const taken = await db.selectFrom("core_documents_linked").select("ref").where("record_id", "=", record.id).where("connection_id", "=", to.credentialId).where("ref", "=", l.ref).executeTakeFirst();
+    if (taken) await db.deleteFrom("core_documents_linked").where("record_id", "=", record.id).where("connection_id", "=", l.connection_id).where("ref", "=", l.ref).execute();
+    else await db.updateTable("core_documents_linked").set({ connection_id: to.credentialId, system_label: to.label, library_provider: to.provider, library_address: to.address ?? null }).where("record_id", "=", record.id).where("connection_id", "=", l.connection_id).where("ref", "=", l.ref).execute();
+    const presentation = libraryPairingPresentation(l);
+    await platform().pairings.create({
+      orgId,
+      sourceKind: record.kind,
+      sourceId: record.id,
+      targetKind: LIBRARY_ITEM_KIND,
+      targetId: libraryTargetId(to.credentialId, l.ref),
+      relationshipKind: LIBRARY_LINK_REL,
+      createdBy: userId,
+      notes: `${l.title} (in ${to.label})`,
+      ...(presentation ? { presentation } : {}),
+    });
+    await platform().pairings.remove({ orgId, sourceKind: record.kind, sourceId: record.id, targetKind: LIBRARY_ITEM_KIND, targetId: libraryTargetId(l.connection_id, l.ref), relationshipKind: LIBRARY_LINK_REL });
+    moved++;
+  }
+  return moved;
 }

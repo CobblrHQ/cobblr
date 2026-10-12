@@ -398,6 +398,7 @@ function Chip({
             ref={(el) => {
               inputRef.current = el;
             }}
+            aria-label={def.label}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onBlur={() => onCommit(draft)}

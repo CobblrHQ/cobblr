@@ -371,6 +371,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                   {preset.fields.map((f) => f.display_label).join(" · ")}
                 </div>
               </div>
+              {/* COLOUR-NOT-STATE: Turn on is the primary action; the label itself says Turn on or Turn off. */}
               <button
                 type="button"
                 disabled={busyPreset === preset.key}

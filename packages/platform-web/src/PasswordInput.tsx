@@ -48,6 +48,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         className={(className ?? "input") + " pr-11"}
       />
       <button
+        title={`${shown ? "Hide" : "Show"} ${what}`}
         type="button"
         aria-label={`${shown ? "Hide" : "Show"} ${what}`}
         aria-pressed={shown}
@@ -130,6 +131,7 @@ export const SecretInput = forwardRef<HTMLInputElement, PasswordInputProps & { s
     <div data-secret-field="" className={"relative " + (wrapperClassName ?? "")}>
       {field}
       <button
+        title={`${shown ? "Hide" : "Show"} ${what}`}
         type="button"
         aria-label={`${shown ? "Hide" : "Show"} ${what}`}
         aria-pressed={shown}

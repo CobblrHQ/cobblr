@@ -67,6 +67,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           invokeAction: (slug, body) => api.invokeAction(slug, body),
           requestLight: (slug, ref, reason) => api.requestLight(slug, ref, reason),
           lookupEntity: (slug, kind, id) => api.lookupEntity(slug, kind, id),
+          ownConnections: api.ownConnections, connectCobblr: api.connectCobblr, revokeOwnConnection: api.revokeOwnConnection,
           previewSendFile: api.previewSendFile, exportSendFile: api.exportSendFile, downloadSendFile: api.downloadSendFile, sendTargets: api.sendTargets, previewSend: api.previewSend, sendRecords: api.sendRecords, undoSend: api.undoSend,
           listShareOffers: (slug) => api.listShareOffers(slug),
           withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),

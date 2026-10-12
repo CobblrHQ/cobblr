@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/core-notifications",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -15,9 +15,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@cobblr/platform-contract": "workspace:*"
+    "@cobblr/platform-contract": "workspace:*",
+    "express": "^4.21.2"
   },
   "devDependencies": {
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "@types/express": "^4.17.21"
   }
 }

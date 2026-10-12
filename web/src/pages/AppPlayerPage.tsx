@@ -11,14 +11,15 @@
 // unknown/not-yet-supported block renders a small placeholder rather
 // than breaking the page.
 
+import { appInvokeRequest } from "../lib/app-invoke";
 import { useViewData } from "../lib/useViewData";
 import { ViewMore } from "../components/ViewMore";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
-import { MarkdownText } from "@cobblr/platform-web";
+import { ArrowLeft, Check, Plus, ScanLine, LogOut, LayoutDashboard, LayoutGrid, ChevronDown } from "lucide-react";
+import { MarkdownText, sendUpload } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
 import { useRunAction, undoStepsOf, AskBeforeRun, type Asking, EntityActionsBar, EntityThumb, usePageTitle, useToast, OverlayLayer, BackdropLayer } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
@@ -86,14 +87,18 @@ export function AppPlayerPage() {
   if (app.error || !app.data) {
     return (
       <div className="space-y-4">
+        {/* The launcher, never the portal root: a portal with one app (or a
+            default one) lands straight back in it, so Back looped (#6044). */}
         <Link
-          to={`/portal/${slug}`}
+          to={`/portal/${slug}?all=1`}
           className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-accent"
+          data-testid="app-back"
         >
-          <ArrowLeft size={12} /> back
+          <ArrowLeft size={12} /> All apps
         </Link>
-        <div className="text-sm text-muted italic py-8 text-center">
-          This app isn't available to you.
+        <div className="text-sm text-muted py-8 text-center" data-testid="app-unavailable">
+          <p className="italic">This app isn't available to you.</p>
+          <p className="mt-1">Ask whoever runs this workspace to share it with you, or open another app from All apps.</p>
         </div>
       </div>
     );
@@ -106,20 +111,23 @@ export function AppPlayerPage() {
   // Page-tabs (only when >1 page) + the block stack — shared between the
   // in-portal (unthemed) and full-bleed (themed) shells.
   const tabsEl = pages.length > 1 && (
-    <div className="flex flex-wrap gap-1 mt-2">
+    <div role="tablist" aria-label="Pages" className="flex flex-wrap gap-1 mt-2">
       {pages.map((p, i) => (
         <button
           key={p.slug}
           type="button"
+          role="tab"
+          aria-selected={i === pageIdx}
           onClick={() => setPageIdx(i)}
           className={
-            "px-3 py-1 rounded-md text-sm transition " +
+            "min-h-11 inline-flex items-center gap-1 px-3 rounded-md text-sm transition " +
             (i === pageIdx
               ? "bg-cobble-600 text-white"
               : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800")
           }
           style={i === pageIdx ? btnStyle(theme) : mutedStyle(theme)}
         >
+          {i === pageIdx && <Check size={14} strokeWidth={2.5} aria-hidden data-picked-mark />}
           {p.title}
         </button>
       ))}
@@ -171,14 +179,14 @@ export function AppPlayerPage() {
               {user?.display_name && <span className="hidden sm:inline">{user.display_name}</span>}
               <AppSwitcher slug={slug} currentSlug={appSlug} theme={theme} />
               {isAdmin && (
-                <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Switch to the admin dashboard">
+                <Link to="/" className="inline-flex items-center gap-1 hover:opacity-80 transition" aria-label="Dashboard" title="Dashboard: switch to the admin view">
                   <LayoutDashboard size={13} /> <span className="hidden sm:inline">Dashboard</span>
                 </Link>
               )}
               <Link to={`/portal/${slug}`} className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Back to the portal">
                 <ArrowLeft size={13} /> Exit
               </Link>
-              <button type="button" onClick={logout} className="inline-flex items-center gap-1 hover:opacity-80 transition" title="Log out">
+              <button type="button" onClick={logout} className="inline-flex items-center gap-1 hover:opacity-80 transition" aria-label="Log out" title="Log out">
                 <LogOut size={13} /> <span className="hidden sm:inline">Log out</span>
               </button>
             </div>
@@ -194,10 +202,11 @@ export function AppPlayerPage() {
   return (
     <div className="space-y-5">
       <Link
-        to={`/portal/${slug}`}
+        to={`/portal/${slug}?all=1`}
         className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
+        data-testid="app-back"
       >
-        <ArrowLeft size={12} /> back
+        <ArrowLeft size={12} /> All apps
       </Link>
 
       <div className="border-b border-line dark:border-slate-700 pb-3 flex items-start justify-between gap-3">
@@ -240,7 +249,8 @@ function AppSwitcher({ slug, currentSlug, theme }: { slug: string; currentSlug: 
         onClick={() => setOpen((o) => !o)}
         className="inline-flex items-center gap-1 hover:opacity-80 transition"
         style={mutedStyle(theme)}
-        title="Switch app"
+        aria-label="Apps"
+        title="Apps: switch app"
       >
         <LayoutGrid size={13} /> <span className="hidden sm:inline">Apps</span> <ChevronDown size={11} />
       </button>
@@ -687,14 +697,15 @@ function RecordView({
 //   cobblr.entity(kind,id)           — one entity (H2-scoped)
 //   cobblr.me()                      — { role, grants } for the viewer
 //   cobblr.can(actionId)             — bool: may the viewer run this action
-//   cobblr.invoke(id,{entityKind,entityId,args}) / cobblr.action(…) — a write
+//   cobblr.invoke(id,{entityKind,entityId,args,photo}) / cobblr.action(…) — a write;
+//                                    `photo` (an image Blob) travels with it as the action's document
 //   cobblr.mount(el, loader, render) — loading/error boilerplate, done once
 const SDK_SCRIPT = `<script>(function(){
 var pending={},seq=0;
 window.addEventListener("message",function(e){var m=e.data;if(!m||m.type!=="cobblr:result")return;var p=pending[m.id];if(!p)return;delete pending[m.id];m.ok?p.resolve(m.data):p.reject(new Error(m.error||"request failed"));});
 function send(type,payload){return new Promise(function(res,rej){var id=++seq;pending[id]={resolve:res,reject:rej};var msg={type:type,id:id};if(payload)for(var k in payload)msg[k]=payload[k];parent.postMessage(msg,"*");});}
 function fetchPath(path){return send("cobblr:fetch",{path:path});}
-function invoke(actionId,opts){opts=opts||{};return send("cobblr:invoke",{actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null});}
+function invoke(actionId,opts){opts=opts||{};return send("cobblr:invoke",{actionId:actionId,entityKind:opts.entityKind||"",entityId:opts.entityId||"",args:opts.args||null,photo:opts.photo||null,photoName:opts.photoName||null});}
 function qs(o){if(!o)return"";var s=[];for(var k in o){if(o[k]!=null)s.push(encodeURIComponent(k)+"="+encodeURIComponent(o[k]));}return s.length?"?"+s.join("&"):"";}
 window.cobblr={
 get:fetchPath,
@@ -764,6 +775,8 @@ export function CustomBlock({
         entityKind?: string;
         entityId?: string;
         args?: Record<string, unknown>;
+        photo?: unknown;
+        photoName?: unknown;
         op?: string;
         key?: string;
         value?: unknown;
@@ -853,16 +866,23 @@ export function CustomBlock({
               reply({ ok: false, error: "actionId required" });
               return;
             }
-            const res = await fetch(`/api/v1/orgs/${slug}/actions/invoke`, {
-              method: "POST",
-              headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-              body: JSON.stringify({
-                actionId: m.actionId,
-                entityKind: m.entityKind ?? "",
-                entityId: m.entityId ?? "",
-                args: m.args ?? undefined,
-              }),
-            });
+            const request = appInvokeRequest(
+              { actionId: m.actionId, entityKind: m.entityKind ?? "", entityId: m.entityId ?? "", args: m.args ?? undefined },
+              m.photo,
+              m.photoName,
+            );
+            if ("error" in request) {
+              reply({ ok: false, error: request.error });
+              return;
+            }
+            const url = `/api/v1/orgs/${slug}/actions/invoke`;
+            const res = "form" in request
+              ? await sendUpload(url, request.form, { token })
+              : await fetch(url, {
+                  method: "POST",
+                  headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+                  body: request.json,
+                });
             const data = (await res.json().catch(() => null)) as {
               error?: { message?: string };
             } | null;

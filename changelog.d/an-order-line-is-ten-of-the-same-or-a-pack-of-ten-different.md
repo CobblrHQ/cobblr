@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-12
 ---
 An order line of several now says whether it is several of the same thing or a pack of different things, and you can scan its units in one by one.
 

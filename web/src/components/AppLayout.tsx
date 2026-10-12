@@ -40,11 +40,8 @@ const ChatPanel = lazy(() => import("./ChatWidget").then((m) => ({ default: m.Ch
 const DiscussionTab = lazy(() => import("./DiscussionTab").then((m) => ({ default: m.DiscussionTab })));
 import { SideRail, useRailActiveTab } from "./SideRail";
 import { PinnedTab } from "./PinnedTab";
-import { FeedbackWidget } from "./FeedbackWidget";
 import { GlobalScanWedge } from "./GlobalScanWedge";
-import { PhotoCaptureHost } from "./PhotoCaptureHost";
 import { SearchBar } from "./SearchBar";
-import { CommandPalette } from "./CommandPalette";
 import { SheetImportHost } from "./SheetImportHost";
 import { NewVersionNudge } from "./NewVersionNudge";
 import { QuickAccess } from "./QuickAccess";
@@ -63,15 +60,29 @@ import { useDeployEnv, DEFAULT_HEADER } from "../lib/deploy-env";
 import { useNavMode, useNavAutoHide, useNavTopBar, setNavMode, setNavAutoHide, setNavTopBar } from "../lib/nav-mode";
 import { SIDEBAR_FOOT_ORDER, type SidebarFootSlot } from "./sidebar-foot";
 // The tour runs once in a while; its code loads when it starts.
+// Hosts that wait for a shortcut or an event: they load just after the first
+// paint instead of in it (the dashboard's first-load budget, #5971).
+const FeedbackWidget = lazy(() => import("./FeedbackWidget").then((m) => ({ default: m.FeedbackWidget })));
+const PhotoCaptureHost = lazy(() => import("./PhotoCaptureHost").then((m) => ({ default: m.PhotoCaptureHost })));
+const CommandPalette = lazy(() => import("./CommandPalette").then((m) => ({ default: m.CommandPalette })));
+const QuickAddSheet = lazy(() => import("./QuickAddSheet").then((m) => ({ default: m.QuickAddSheet })));
 const GuidedTour = lazy(() => import("../tour/GuidedTour").then((m) => ({ default: m.GuidedTour })));
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
 import { FloatingChrome, useScrollToHash, useToast } from "@cobblr/platform-web";
-import { QuickAddSheet } from "./QuickAddSheet";
+// Loaded with the shell: a ⌘K or an Add pressed before the palette or the
+// sheet has arrived is held for it from the start.
+import "./palette-events";
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { AiNoticeGiven, useAiStatus } from "./AiStatusNotice";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
+
+/** Below `sm` the side rail is the full width of the screen (SideRail's
+ *  `sm:w-[min(100vw,440px)]`): open, it hides the page. */
+export function panelCoversThePage(): boolean {
+  return typeof window !== "undefined" && !window.matchMedia?.("(min-width: 640px)").matches;
+}
 
 export function AppLayout({ activeSlug }: { activeSlug: string }) {
   const location = useLocation();
@@ -117,6 +128,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   useEffect(() => {
     if (chatOpen && railTab) writeOpenTab(railTab);
   }, [chatOpen, railTab]);
+  // On a phone the panel is the whole screen, so going to another page with
+  // it open (a link in Cobb's answer, a tap on a pinned entry) covered the
+  // page you went to and every page after (#5994). There it closes on the
+  // way; from a small tablet up it sits beside the page and stays, which is
+  // what Pinned is for.
+  const pathWas = useRef(location.pathname);
+  useEffect(() => {
+    if (pathWas.current === location.pathname) return;
+    pathWas.current = location.pathname;
+    if (chatOpen && panelCoversThePage()) setChatOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
   useEffect(() => {
     writeOpenOn(chatOpen ? location.pathname : null);
   }, [chatOpen, location.pathname]);
@@ -383,6 +406,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     <div className="flex items-center gap-0.5">
       {!skin && (
         <button
+          aria-label={theme === "dark" ? "Light mode" : "Dark mode"}
           type="button"
           onClick={toggleTheme}
           title={theme === "dark" ? "Light mode" : "Dark mode"}
@@ -392,6 +416,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         </button>
       )}
       <button
+        aria-label={navAutoHide ? "Auto-hiding: click to pin the sidebar open" : "Pinned: click to auto-hide the sidebar"}
         type="button"
         onClick={flipAutoHide}
         title={navAutoHide ? "Auto-hiding: click to pin the sidebar open" : "Pinned: click to auto-hide the sidebar"}
@@ -400,6 +425,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {navAutoHide ? <PinOff size={13} /> : <Pin size={13} />}
       </button>
       <button
+        aria-label={navTopBar ? "Sidebar only: hide the top bar, everything moves into the sidebar" : "Show the top bar again"}
         type="button"
         onClick={flipTopBar}
         title={navTopBar ? "Sidebar only: hide the top bar, everything moves into the sidebar" : "Show the top bar again"}
@@ -492,7 +518,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // Feedback is a "reach the makers" nudge, not a workspace tool, so it opens
     // the meta cluster under the rule rather than heading the foot. The
     // floating pill is suppressed in full-sidebar (App.tsx).
-    feedback: <FeedbackWidget asRow />,
+    feedback: <Suspense fallback={null}><FeedbackWidget asRow /></Suspense>,
     // Configuration lives HERE, not behind the account menu: the menu detour
     // (open menu → Configuration → back into the sidebar) was the exact loop
     // the author flagged.
@@ -613,7 +639,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <button
             type="button"
             onClick={flipNavMode}
-            title={navMode === "top" ? "Move navigation to a left sidebar" : "Move navigation back to the top bar"}
+            title={navMode === "top" ? "Switch navigation to a left sidebar" : "Switch navigation back to the top bar"}
             aria-label={navMode === "top" ? "Switch to sidebar navigation" : "Switch to top navigation"}
             className="hidden md:inline-flex shrink-0 p-1 rounded text-faint dark:text-slate-500 hover:text-accent transition"
           >
@@ -626,7 +652,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <Link
             to="/"
             title="Home"
-            className="relative flex items-center gap-2 shrink-0 hover:opacity-80 transition"
+            className={`relative flex items-center gap-2 hover:opacity-80 transition ${appMode && navSuffix ? "min-w-0" : "shrink-0"}`}
           >
             <CobblestoneMark size={26} dot={envDot} />
             <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100">
@@ -635,7 +661,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
                 here ("for Yarn") instead of a separate label that repeats it. */}
             {appMode && navSuffix && (
-              <span className="font-display font-extrabold text-content dark:text-mortar-100 truncate">
+              <span className="min-w-0 font-display font-extrabold text-content dark:text-mortar-100 truncate" title={navSuffix}>
                 {navSuffix}
               </span>
             )}
@@ -835,14 +861,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
-      <PhotoCaptureHost />
+      <Suspense fallback={null}><PhotoCaptureHost /></Suspense>
       {/* Quick Access — pinned Knowledge Base entries, one tap from any page
           (renders only when the knowledge module is enabled). */}
       {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
-      <CommandPalette />
+      <Suspense fallback={null}><CommandPalette /></Suspense>
       {/* The palette's "Add a thing": the dashboard's capture, from anywhere. */}
-      {activeSlug ? <QuickAddSheet slug={activeSlug} /> : null}
+      {activeSlug ? <Suspense fallback={null}><QuickAddSheet slug={activeSlug} /></Suspense> : null}
       {/* ? — every key the app answers to, from the one registry. */}
       <ShortcutsSheet />
       {/* Bring your spreadsheet: one sheet, opened from any door (openSheetImport). */}

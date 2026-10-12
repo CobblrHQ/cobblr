@@ -18,6 +18,7 @@ import { activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activit
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
+import { SubjectLink } from "../components/SubjectLink";
 import { getShareViewToken } from "../lib/share-view";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
@@ -84,7 +85,9 @@ import {
 } from "../lib/api";
 import { useWorkspaceContentProbe, useSettledOnce } from "../lib/workspaceContent";
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
-import { AddPhotosTile } from "../components/AddPhotosTile";
+// The photo picker behind this tile is the scan intake; it loads after the
+// first paint, holding its grid cell meanwhile (#5971).
+const AddPhotosTile = lazy(() => import("../components/AddPhotosTile").then((m) => ({ default: m.AddPhotosTile })));
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
@@ -126,7 +129,11 @@ export function QuickLinks({ slug }: { slug: string }) {
         Jump to
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {hasScan && <AddPhotosTile slug={slug} />}
+        {hasScan && (
+          <Suspense fallback={<div aria-hidden className="rounded-xl border border-line dark:border-slate-700 px-4 py-3 text-sm">&nbsp;</div>}>
+            <AddPhotosTile slug={slug} />
+          </Suspense>
+        )}
         {dests.map((d) => (
           <Link
             key={d.key}
@@ -665,6 +672,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
   const inlineActs = entries.length > 0 && entries.length <= 3 && entries.some((e) => e.action);
   const taskCheck = (id: string) => (
     <button
+      aria-label="Mark done"
       type="button"
       onClick={(ev) => { ev.stopPropagation(); doneTask.mutate(id); }}
       disabled={doneTask.isPending}
@@ -718,6 +726,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
           )}
           {expandable && (
             <button
+              title={open ? "Collapse" : "Expand"}
               type="button"
               onClick={() => setOpen((o) => !o)}
               className="shrink-0"
@@ -736,6 +745,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
               <li key={e.id} className="flex items-center gap-2.5 pl-9 pr-3 py-1.5 text-[13px]">
                 {e.action?.task ? (
                   <button
+                    aria-label="Mark done"
                     type="button"
                     onClick={() => doneTask.mutate(e.action!.task!)}
                     disabled={doneTask.isPending}
@@ -1494,6 +1504,7 @@ function ArrangeableBody({
               </span>
               <div className="flex-1" />
               <button
+                aria-label="Move up"
                 onClick={() => setSections((arr) => reorder(arr, idx, idx - 1))}
                 disabled={idx === 0}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
@@ -1502,6 +1513,7 @@ function ArrangeableBody({
                 <ArrowUp size={14} />
               </button>
               <button
+                aria-label="Move down"
                 onClick={() => setSections((arr) => reorder(arr, idx, idx + 1))}
                 disabled={idx === sections.length - 1}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
@@ -1510,6 +1522,7 @@ function ArrangeableBody({
                 <ArrowDown size={14} />
               </button>
               <button
+                aria-label={s.hidden ? "Show section" : "Hide section"}
                 onClick={() =>
                   setSections((arr) => arr.map((x, k) => (k === idx ? { ...x, hidden: !x.hidden } : x)))
                 }
@@ -1665,6 +1678,7 @@ function TileGrid({
             </div>
             <div className="absolute top-1.5 right-1.5 flex items-center gap-1 rounded-md bg-surface/90 dark:bg-slate-900/90 backdrop-blur border border-line dark:border-slate-700 px-1 py-0.5">
               <button
+                aria-label="Move earlier"
                 onClick={() => onMove(i, -1)}
                 disabled={i === 0}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
@@ -1673,6 +1687,7 @@ function TileGrid({
                 <ArrowLeft size={13} />
               </button>
               <button
+                aria-label="Move later"
                 onClick={() => onMove(i, 1)}
                 disabled={i === widgets.length - 1}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 disabled:opacity-30 transition"
@@ -1681,6 +1696,7 @@ function TileGrid({
                 <ArrowRight size={13} />
               </button>
               <button
+                aria-label={a.span === 2 ? "Shrink to 1 column" : "Widen to 2 columns"}
                 onClick={() => onResize(i)}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
                 title={a.span === 2 ? "Shrink to 1 column" : "Widen to 2 columns"}
@@ -1688,6 +1704,7 @@ function TileGrid({
                 {a.span === 2 ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
               </button>
               <button
+                aria-label={a.hidden ? "Show on dashboard" : "Hide from dashboard"}
                 onClick={() => onToggleHidden(i)}
                 className="p-0.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition"
                 title={a.hidden ? "Show on dashboard" : "Hide from dashboard"}
@@ -2201,7 +2218,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
     <div className={`text-sm w-full min-w-0 ${ACTIVITY_FEED_LAYOUT}`} data-testid="activity-row">
       <ActivityThumbnail entry={first} labels={labels} />
       <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
-        <Link to={first.subject?.href ?? "/activity"} className="hover:underline" data-testid="activity-item-link">{summary}</Link>
+        <SubjectLink href={first.subject?.href ?? "/activity"} className="hover:underline" testId="activity-item-link">{summary}</SubjectLink>
       </span>
       <span className="flex items-start gap-2">
         <span aria-hidden="true" data-testid="activity-caret" className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>

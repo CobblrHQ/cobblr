@@ -57,6 +57,9 @@ export interface Surface {
   first_run: boolean;
   source: string;
   applicable: string[];
+  /** The dimensions left out of `applicable` on purpose, each with why: a
+   *  page no one is signed in on has no workspace role (NOT_APPLICABLE). */
+  na?: Record<string, string>;
   /** The page's route pattern (":id", "{id}", "*"), for a row a browser visits; absent for an action. */
   path?: string;
   /** The files that make the surface (a page component, a module's ui or
@@ -98,6 +101,34 @@ const srcDir = (file: string) => file.replace(/\/src\/.*$/, "/src");
 const uiDir = (file: string) => `${srcDir(file)}/ui`;
 const apiDir = (file: string) => `${srcDir(file)}/api`;
 
+/** Pages where some dimensions cannot apply, and why. A cell there is not
+ *  owed, so the dimension leaves the row's `applicable` (the matrix's
+ *  denominator) and the row says why, rather than reading "never tested". */
+export const NOT_APPLICABLE: Array<{ paths: RegExp; dims: string[]; why: string }> = [
+  {
+    // Opened signed out, from a link or the front door: no workspace exists in
+    // the visit, so no role, and no standing workspace's volume.
+    paths: /^\/(verify\/:token|try\/join\/:token|try\/ended|p\/:token|p\/:org\/:address|login|signup)$/,
+    dims: [...ORG_ROLES, "volume"],
+    why: "opened signed out from a link: there is no workspace, so no role and no volume",
+  },
+  {
+    // A station screen signs in with the station's own token, set up by the
+    // workspace's owner: no member, editor or guest ever holds it.
+    paths: /^\/station\//,
+    dims: ORG_ROLES.filter((r) => r !== "owner"),
+    why: "a station runs on its own station token, set up by the owner: no other workspace role uses it",
+  },
+];
+
+/** A page's dimensions with the ones that cannot apply taken out, and why. */
+export function pageDimensions(path: string, dims: string[] = PAGE_DIMS): { applicable: string[]; na?: Record<string, string> } {
+  const na: Record<string, string> = {};
+  for (const rule of NOT_APPLICABLE) if (rule.paths.test(path)) for (const d of rule.dims) if (dims.includes(d)) na[d] = rule.why;
+  const applicable = dims.filter((d) => !(d in na));
+  return Object.keys(na).length ? { applicable, na } : { applicable };
+}
+
 export function deriveSurfaces(i: Inputs): Surface[] {
   // A module's page is its own ui when it has one, otherwise the web page its
   // address renders (assets, purchases, records draw theirs in web/src/pages).
@@ -126,12 +157,12 @@ export function deriveSurfaces(i: Inputs): Surface[] {
     if (r.redirect) continue;
     const path = norm(r.path);
     const mod = moduleForRoute(path, i.manifests);
-    add({ id: `route:${path}`, kind: "route", label: path, module: mod, area: areaOf(mod, path), nav: navRoutes.has(path), first_run: firstRun(mod), source: i.appFile, applicable: PAGE_DIMS, path, ...(i.appRouteFiles?.[r.path] ? { files: [i.appRouteFiles[r.path]!] } : {}) });
+    add({ id: `route:${path}`, kind: "route", label: path, module: mod, area: areaOf(mod, path), nav: navRoutes.has(path), first_run: firstRun(mod), source: i.appFile, ...pageDimensions(path), path, ...(i.appRouteFiles?.[r.path] ? { files: [i.appRouteFiles[r.path]!] } : {}) });
   }
   for (const r of i.moduleRoutes) {
     if (r.redirect) continue;
     const path = norm(`${r.mount}/${r.path}`);
-    add({ id: `route:${path}`, kind: "route", label: path, module: r.module, area: areaOf(r.module, path), nav: navRoutes.has(path), first_run: firstRun(r.module), source: r.file, applicable: PAGE_DIMS, path, files: real([uiDir(r.file)]) });
+    add({ id: `route:${path}`, kind: "route", label: path, module: r.module, area: areaOf(r.module, path), nav: navRoutes.has(path), first_run: firstRun(r.module), source: r.file, ...pageDimensions(path), path, files: real([uiDir(r.file)]) });
   }
   for (const m of i.manifests) {
     const area = areaOf(m.name);

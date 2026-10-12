@@ -195,7 +195,7 @@ export function FeedbackCard({
           </button>
         )}
         {canAct ? (
-          <select
+          <select aria-label="Status"
             value={f.status}
             onChange={(e) =>
               onUpdate({

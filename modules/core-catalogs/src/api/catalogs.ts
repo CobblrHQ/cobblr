@@ -13,6 +13,7 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { catalogResolverConfigured, datasetForKind, hostedSearch, isHostedSearchable } from "../services/hosted-resolver.js";
 import { gunzipBounded, readBodyBounded } from "../services/bounded-decompress.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const catalogsRouter = Router({ mergeParams: true });
 
@@ -24,9 +25,9 @@ const SchemaConfig = CatalogSchemaConfig;
 
 const CatalogCreate = z.object({
   name: z.string().min(1).max(160),
-  description: z.string().max(2000).optional(),
-  source_url: z.string().url().max(2000).optional(),
-  puller_id: z.string().max(80).optional(),
+  description: optionalText(2000),
+  source_url: optionalField(z.string().url().max(2000)),
+  puller_id: optionalText(80),
   schema: SchemaConfig.optional(),
 });
 

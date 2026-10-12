@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { setShareViewToken } from "../lib/share-view";
+import { markPageLeaving } from "../lib/page-leaving";
 
 export function ViewAsPage() {
   const [bad, setBad] = useState(false);
@@ -16,6 +17,9 @@ export function ViewAsPage() {
       setBad(true);
       return;
     }
+    // This page's own polls would go out with the share's grant, which reads
+    // only the share space, and be refused: it asks nothing more first.
+    markPageLeaving();
     setShareViewToken(t);
     window.location.replace(`/w/${w}/`);
   }, []);

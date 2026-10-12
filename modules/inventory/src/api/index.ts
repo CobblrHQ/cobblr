@@ -24,6 +24,7 @@ import { familiesRouter } from "./families.js";
 import { stockRouter } from "./stock-views.js";
 import { allocationsRouter } from "./allocations.js";
 import { importRouter } from "./import.js";
+import { registerListRestock } from "./list-restock.js";
 import { filamentCatalogRouter } from "./filament-catalog.js";
 import { nativeSpoolRouter } from "./spool-native.js";
 import { shapedStockRouter, registerShapedStockActions } from "./stock-shapes.js";
@@ -54,6 +55,7 @@ registerAssemblyFinish();
 registerPackageReceiving();
 registerPlacementConsumption();
 registerSpoolmanWriteBack();
+registerListRestock();
 registerHoldingActions();
 // "What's still here?": take stock of a place, the rest marked gone, one Undo.
 registerStocktakeActions();
@@ -71,6 +73,7 @@ platform().entities.registerScannable("inventory:part", {
   noun: "part",
   createEndpoint: "inventory/parts",
   qtyField: "qty",
+  unitField: "unit",
   default: true, // the fallback scan target when no identify hint matches a noun
   // The quantity door: the floor (stock-floor.ts), the lots and the
   // consumption ledger all live at this action, so a scan's undone bump comes

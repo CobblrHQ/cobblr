@@ -206,6 +206,8 @@ pairingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
         source_kind: parsed.data.source_kind,
         target_kind: parsed.data.target_kind,
         relationship_kind: parsed.data.relationship_kind,
+        // What the link is about, so every feed names and opens the record.
+        subject: { kind: parsed.data.source_kind, id: parsed.data.source_id },
       },
     });
     res.status(201).json(inserted);
@@ -277,7 +279,7 @@ pairingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) =>
       .deleteFrom("entity_pairings")
       .where("id", "=", id)
       .where("org_id", "=", req.tenant!.org.id)
-      .returning("id")
+      .returning(["id", "source_kind", "source_id"])
       .executeTakeFirst();
     if (!deleted) {
       res.status(404).json({ error: { code: "not_found", message: "pairing not found" } });
@@ -287,6 +289,8 @@ pairingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) =>
       orgId: req.tenant!.org.id,
       action: "pairing_deleted",
       ref: { module: null, entityType: "pairing", entityId: deleted.id },
+      // The link is gone by the time a feed reads this row: say its record now.
+      diff: { subject: { kind: deleted.source_kind, id: deleted.source_id } },
     });
     res.status(204).end();
   } catch (err) {

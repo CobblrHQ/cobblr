@@ -8,8 +8,9 @@
 // from), never a column name, an id or a storage path. One place, so the
 // History panel, the dashboard and the Activity page say a change the same
 // way.
-import { changesIn, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
-import { referenceStem, saidLabel, saidValue, type SaidFieldType } from "@cobblr/platform-contract/activity-said";
+import { changesIn, isInternalField, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
+import { referenceStem, saidLabel, saidValue, stockReadingOf, type SaidFieldType } from "@cobblr/platform-contract/activity-said";
+import { quantityWithUnit } from "@cobblr/platform-contract/plural";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
 import { formatStoredMoney, moneyStorageOf, type MoneyFieldLike, type MoneyStorage } from "@cobblr/platform-contract/money";
 import { platform } from "@cobblr/platform-contract";
@@ -51,8 +52,11 @@ interface FieldInfo extends SaidFieldType {
   money?: MoneyStorage | null;
 }
 
-/** Bookkeeping a patch carries that is not a field anyone changed. */
-const NOT_SAID = new Set(["id", "updated_at", "created_at", "instance", "metadata", "fields", "changes", "via", "event", "updates", "order_id", "said", "declined"]);
+/** What an activity row carries beside its fields (how it came, what it
+ *  answered): never a field anyone changed. The record's own internal fields
+ *  are the contract's one rule, isInternalField. */
+const ROW_KEYS = new Set(["changes", "via", "event", "updates", "order_id", "said", "declined"]);
+const notSaid = (field: string) => ROW_KEYS.has(field) || isInternalField(field);
 
 /** The fields of one kind, labelled the way its forms are. */
 async function fieldsOf(orgId: string, kinds: string[]): Promise<Map<string, FieldInfo>> {
@@ -94,7 +98,7 @@ function changesOfRow(action: string, diff: unknown): ActivityChange[] {
   const d = diff as Record<string, unknown>;
   const out: ActivityChange[] = [];
   for (const [field, to] of Object.entries(d)) {
-    if (NOT_SAID.has(field) || to === undefined) continue;
+    if (notSaid(field) || to === undefined) continue;
     out.push({ field, from: undefined, to });
   }
   for (const key of ["metadata", "fields"]) {
@@ -108,6 +112,15 @@ function changesOfRow(action: string, diff: unknown): ActivityChange[] {
 
 const FILE_IN_PATH = /\/core-files\/files\/([0-9a-f-]{36})\/raw/i;
 
+/** An amount in the unit it is kept in, through the workspace's own words:
+ *  "8.4 m", "3 skeins", "1 skein", or the bare number for a count of each. */
+export async function saidAmount(orgId: string, n: number, unit: string | null): Promise<string> {
+  const amount = parseFloat(n.toFixed(3));
+  if (!unit || unit.toLowerCase() === "each") return String(amount);
+  const resolved = await platform().units.resolve(orgId, unit).catch(() => null);
+  return quantityWithUnit(amount, unit, resolved);
+}
+
 /** Every row's changes, said. `rows[i].kinds` is the record's collection kind
  *  then its module kind, so a relabel on either is found. */
 export async function describeChanges(
@@ -115,7 +128,7 @@ export async function describeChanges(
   slug: string,
   rows: Array<{ action: string; diff: unknown; kinds: string[] }>,
 ): Promise<SaidChange[][]> {
-  const raw = rows.map((r) => changesOfRow(r.action, r.diff).filter((c) => (!NOT_SAID.has(c.field) || c.custom) && !c.field.startsWith("money_currency_")));
+  const raw = rows.map((r) => changesOfRow(r.action, r.diff).filter((c) => (!notSaid(c.field) || c.custom) && !c.field.startsWith("money_currency_")));
   if (raw.every((r) => r.length === 0)) return raw.map(() => []);
 
   const currency = await platform().money.currency(orgId);
@@ -153,6 +166,7 @@ export async function describeChanges(
     return titles.get(key) ?? null;
   };
 
+  const amountIn = (n: number, unit: string | null) => saidAmount(orgId, n, unit);
   const show = async (value: unknown, field: string, info: FieldInfo | undefined, own: string[]): Promise<ShownValue> => {
     if (field === "image_path" || info?.type === "image-path") {
       if (value === null || value === undefined || value === "") return { text: null };
@@ -180,6 +194,9 @@ export async function describeChanges(
     }
     const kind = refKind(field, own);
     if (kind && typeof value === "string" && value) return { text: (await titleOf(kind, value)) ?? "a record that is gone" };
+    // A stock reading is how much, in the unit it is kept in (#6039).
+    const reading = stockReadingOf(value);
+    if (reading) return { text: await amountIn(reading.remaining, reading.unit) };
     return { text: saidValue(value, info ?? {}) };
   };
 

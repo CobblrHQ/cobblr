@@ -26,6 +26,7 @@ export const HIDE_WHEN_COVERED = "fc-yield-covered";
 
 let openOverlays = 0;
 let coveringOverlays = 0;
+let bottomOwners = 0;
 
 /** Declarative form: drop `<OverlayFlag />` INSIDE the overlay's own layer.
  *  Mounting is then the condition — no `open &&` to thread through, no hook
@@ -41,17 +42,34 @@ export function OverlayFlag(): null {
  *  `side`: on a desk it sits beside the page rather than over it, so chrome
  *  in the content column (HIDE_WHEN_COVERED) stays; every other overlay
  *  covers the page. */
-export function useOverlayOpenFlag(active = true, kind: "covering" | "side" = "covering"): void {
+/** `ownsBottom`: a full-screen surface whose own controls run to the
+ *  bottom edge (the camera scanner). The dimmed strip under the toasts that
+ *  other overlays leave at their foot would sit on those controls and take
+ *  their presses (#6003), so it is not drawn; the surface registers its
+ *  bottom controls with the dock instead, and the toasts rise above them. */
+export function useOverlayOpenFlag(active = true, kind: "covering" | "side" = "covering", opts: { ownsBottom?: boolean } = {}): void {
+  const ownsBottom = !!opts.ownsBottom;
   useLayoutEffect(() => {
     if (!active) return;
     const root = document.documentElement;
     openOverlays += 1;
     root.setAttribute("data-overlay-open", "1");
+    if (ownsBottom) {
+      bottomOwners += 1;
+      root.setAttribute("data-overlay-owns-bottom", "1");
+    }
     if (kind === "covering") {
       coveringOverlays += 1;
       root.setAttribute("data-covering-open", "1");
     }
     return () => {
+      if (ownsBottom) {
+        bottomOwners -= 1;
+        if (bottomOwners <= 0) {
+          bottomOwners = 0;
+          root.removeAttribute("data-overlay-owns-bottom");
+        }
+      }
       openOverlays -= 1;
       if (openOverlays <= 0) {
         openOverlays = 0;
@@ -65,5 +83,5 @@ export function useOverlayOpenFlag(active = true, kind: "covering" | "side" = "c
         }
       }
     };
-  }, [active, kind]);
+  }, [active, kind, ownsBottom]);
 }

@@ -76,3 +76,17 @@ export function nfcUid(code: string): string | null {
 export function sameStationRef(a: StationRef | null | undefined, b: StationRef | null | undefined): boolean {
   return a?.kind === b?.kind && a?.id === b?.id;
 }
+
+/** What a station does with a scan, in its mode: the one place the station
+ *  page reads it, so an Open or Print station never shows File's steps
+ *  (#6035). Each says what is NOT done too, since File is the mode that moves
+ *  things. Mirrors StationEngine.scan in api/src/platform/scan-station-engine.ts. */
+export function stationModeHelp(mode: StationMode): string {
+  if (mode === "navigate") return "Each scan opens that record on a screen following this station. With no screen following, it waits in the scan inbox. Nothing is moved.";
+  if (mode === "print") return "Each scan queues a label for that record. Nothing is moved.";
+  return "Scan a place, then the things that go there. Scan a holder once to put it away. Scan it twice in a row to put things inside it. Scan any place to leave the holder.";
+}
+
+/** Whether the mode keeps a place between scans (File does, for ten idle
+ *  minutes); the others never read one, so none is shown for them. */
+export const stationUsesPlace = (mode: StationMode): boolean => mode === "file";

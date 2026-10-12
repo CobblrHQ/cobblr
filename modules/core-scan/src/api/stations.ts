@@ -49,6 +49,7 @@ import { findTracked } from "../services/entity-match.js";
 import { matchQuery, trackedMatchStampAt } from "../services/tracked-stamp.js";
 import { moveQuantity, scanTargetOf } from "../services/scan-target.js";
 import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const stationsRouter = Router({ mergeParams: true });
 
@@ -144,10 +145,10 @@ stationsRouter.get(
 );
 
 const SettingsBody = z.object({
-  label: z.string().trim().min(1).max(60).optional(),
+  label: z.string().trim().min(1).max(60).optional(), // none-refused-ok: a column that cannot hold null
   settings: z.record(z.string(), z.unknown()).optional(),
   /** The PIN, when the tablet itself is making the change. */
-  pin: z.string().max(12).optional(),
+  pin: optionalText(12),
   /** A new PIN (4 to 8 digits), or null to take it away. */
   new_pin: z.string().regex(/^\d{4,8}$/).nullable().optional(),
 });
@@ -278,7 +279,7 @@ const CountBody = z.object({
   entity_id: z.string().min(1),
   op: z.enum(["add", "use", "total"]),
   /** How many to add or use (default 1), or the new total. */
-  value: z.number().finite().min(0).max(1_000_000).optional(),
+  value: z.number().finite().min(0).max(1_000_000).optional(), // none-refused-ok: a column that cannot hold null
 });
 
 function moveOf(row: { request_id: string; op: string; delta: string | number; qty: string | number | null; note: string | null }): StationMove {

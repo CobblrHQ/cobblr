@@ -97,6 +97,7 @@ export function SurfacesPage() {
               )}
               <div className="flex-1" />
               <button
+                aria-label="Edit"
                 onClick={() => setEditFor(s)}
                 className="text-faint hover:text-accent transition"
                 title="Edit"
@@ -104,6 +105,7 @@ export function SurfacesPage() {
                 <Pencil size={14} />
               </button>
               <a
+                aria-label="Open public page"
                 href={`/p/${s.token}`}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -113,6 +115,7 @@ export function SurfacesPage() {
                 <ExternalLink size={14} />
               </a>
               <button
+                aria-label="Copy public URL"
                 onClick={() => {
                   void navigator.clipboard.writeText(
                     `${window.location.origin}/p/${s.token}`,
@@ -125,6 +128,7 @@ export function SurfacesPage() {
                 <Copy size={14} />
               </button>
               <button
+                aria-label="View stats"
                 onClick={() => setStatsFor(s)}
                 className="text-faint hover:text-accent transition"
                 title="View stats"
@@ -132,6 +136,7 @@ export function SurfacesPage() {
                 <BarChart3 size={14} />
               </button>
               <button
+                aria-label="Revoke"
                 onClick={async () => {
                   const ok = await confirm({
                     title: "Revoke this surface?",

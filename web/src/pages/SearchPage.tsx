@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Search, X } from "lucide-react";
+import { Check, Loader2, Search, X } from "lucide-react";
 import { EntityThumb, SnippetText, usePageTitle, SearchInput, useToast } from "@cobblr/platform-web";
 import { api, ApiError, type SearchHit } from "../lib/api";
 import { QueryError } from "../components/QueryError";
@@ -193,7 +193,7 @@ export function SearchPage() {
       )}
 
       {/* Kind picker — list each registered kind as a toggleable chip. */}
-      <div className="flex items-center gap-2 flex-wrap text-xs">
+      <div role="group" aria-label="Kinds to search" className="flex items-center gap-2 flex-wrap text-xs">
         <span className="font-mono uppercase tracking-wider text-faint text-[10px]">
           kinds
         </span>
@@ -204,13 +204,15 @@ export function SearchPage() {
               key={k.id}
               type="button"
               onClick={() => toggleKind(k.id)}
+              aria-pressed={on}
               className={
-                "px-2 py-0.5 rounded text-[11px] border transition " +
+                "min-h-11 inline-flex items-center gap-1 px-3 rounded text-[11px] border transition " +
                 (on
                   ? "bg-cobble-600 text-white border-cobble-600"
                   : "border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:border-accent hover:text-accent")
               }
             >
+              {on && <Check size={12} strokeWidth={2.5} aria-hidden />}
               {k.display_name}
             </button>
           );
@@ -336,6 +338,7 @@ function Chip({
     <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-700">
       {children}
       <button
+        aria-label="Clear"
         type="button"
         onClick={onClear}
         className="hover:text-ember-500 transition"

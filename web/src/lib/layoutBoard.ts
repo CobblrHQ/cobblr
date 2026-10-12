@@ -5,6 +5,7 @@
 // See docs/design-decisions/location-floor-plan.md, "Planning a layout".
 
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
+import { measureTokens } from "@cobblr/platform-contract/measure";
 import { PLANNED_PREFIX, placesUnderDraft, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import type { OuterSize } from "@cobblr/platform-contract/outer-size";
 import { ownSize, planFlags, readCloset, roomWalls, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
@@ -93,13 +94,23 @@ export function faceWidthPx(face: { w_mm: number; d_mm: number }, maxHeight: num
 }
 
 /** What a box too small for a thing's name shows instead: its own short
- *  name, else its model when the model stands alone after the brand ("Bambu
- *  P1S" is "P1S", "Prusa MK4" is "MK4"), else the whole name ("Ender 3 V3":
- *  "3 V3" would mean nothing). */
+ *  name, else the first size its name gives ("Review 12 mm socket, 1/4 in
+ *  drive" is "12mm", "5/8 in wrench" is "5/8in": the size is what tells one
+ *  socket from its neighbour, #5989), else its model when the model stands
+ *  alone after the brand ("Bambu P1S" is "P1S", "Prusa MK4" is "MK4"), else
+ *  the whole name ("Ender 3 V3": "3 V3" would mean nothing). */
 export function shortLabel(name: string, shortName?: string | null): string {
   if (shortName?.trim()) return shortName.trim();
+  const size = measureTokens(name.replace(/[,;()]/g, " "))?.values[0]?.text;
+  if (size) return size.replace(/\s+/g, "");
   const words = name.trim().split(/\s+/);
   return words.length === 2 && /\d/.test(words[1]!) ? words[1]! : name;
+}
+
+/** A size short name's number alone ("12mm" is "12", "5/8in" is "5/8"),
+ *  for a box too small even for its unit. */
+function bareNumber(short: string): string | null {
+  return /^(\d+(?:[./]\d+)?)[^\d\s./]+$/.exec(short)?.[1] ?? null;
 }
 
 /** Does `text` fit in `cols` characters by `rows` lines, wrapped at spaces
@@ -121,14 +132,18 @@ export function fitsIn(text: string, cols: number, rows: number): boolean {
 }
 
 /** What a box drawn `wPx` by `hPx` says: the whole name when it fits on its
- *  lines, else the short name, and only when neither fits the name without
- *  its first word, which is the last resort. */
+ *  lines, else the short name (or a size's number alone), and only when none
+ *  fits the name without its first word. A box too small for anything says
+ *  the short name when there is one, never the name's first letter: a
+ *  "12mm" socket clipped to "12" still says which socket it is. */
 export function labelFor(name: string, short: string, wPx: number, hPx: number, charPx = 5.6, linePx = 12): string {
   const cols = Math.floor((wPx - 4) / charPx);
   const rows = Math.floor((hPx - 2) / linePx);
   const words = name.trim().split(/\s+/);
   const tail = words.length > 1 ? words.slice(1).join(" ") : name;
-  return [name, short, tail].find((c) => fitsIn(c, cols, rows)) ?? tail;
+  const bare = bareNumber(short);
+  const fits = [name, short, ...(bare ? [bare] : []), tail].find((c) => fitsIn(c, cols, rows));
+  return fits ?? (short !== name ? (bare ?? short) : tail);
 }
 
 /** Each shelf keeps this many px at its top for its name and its fit. */

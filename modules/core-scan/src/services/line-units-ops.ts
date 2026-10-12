@@ -81,7 +81,7 @@ export async function setLineUnits(d: LineDoor, itemId: string, mode: "same" | "
   }));
   const children = await splitRowIntoParts({ db: d.db, admit: admitFor(d) }, row, meta, parts, {
     note: `Split into ${countOf(units.count, { singular: "different thing", plural: "different things" })} by hand.`,
-    mark: { line_units: { mode: "different", by: "person" } },
+    mark: { line_units: { mode: "different", by: "person" }, split_how: "hand" },
   });
   const http = purchaseOf(d);
   if (http) await splitOrderLineForParts(d.db, row.id, http).catch((e: Error) => console.warn("[core-scan] split by hand: order line kept:", e.message));

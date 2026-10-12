@@ -26,6 +26,7 @@ async function confirmation(orgId: string, userId: string, input: unknown, phase
   if (!rows.length) throw new SendError("This confirmation does not belong to a send file you made here.");
   const t = rows[0]!.transfer as FileExportTransfer;
   const prior = t.receipt;
+  if (t.connected && (receipt.target.org !== t.connected.target_org || receipt.target.instance !== t.connected.target_instance)) throw new SendError("This confirmation is from a different connected workspace. The source was left alone.");
   if (phase === "undone" && !prior) throw new SendError("This Move has not been confirmed here. Its source is still here.");
   if (!verifySendReceipt(receipt,decryptCreds(t.key_encrypted),{file_id: receipt.file_id,digest: t.digest,source_instance: t.thing.send!.origin.instance,source_org: orgId,ids: rows.map((r) => (r.transfer as FileExportTransfer).thing.send!.origin.id),phase,...(prior ? {target: {instance: prior.target.instance,org: prior.target.org,import_id: prior.import_id}} : {})})) throw new SendError("This confirmation is incomplete or belongs to another send. The source was left alone.");
   if (t.mode === "move" && !roleSatisfies(source.role,["member"])) throw new SendError("You cannot change records in this read-only source workspace.");

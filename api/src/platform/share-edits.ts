@@ -26,7 +26,7 @@ import type { ShareSuggestionStatus } from "../db/schema.js";
 import { runVia } from "../lib/request-context.js";
 import * as activity from "./activity.js";
 import { baseKindOf, lookup } from "./entities.js";
-import { describeChanges } from "./history-describe.js";
+import { describeChanges, saidAmount } from "./history-describe.js";
 import { gatedFields } from "./scope-eval.js";
 import { COPY_BOOKKEEPING, fieldsOf, holdForTests, isReference, mirrorAndDeliverNow, noteWorkspaceChanged } from "./share-mirror.js";
 import { enqueueShareOp, getShareLink, kickShareSync, registerShareOp, type ShareLinkRow } from "./share-sync.js";
@@ -34,6 +34,7 @@ import { withShareCopyState } from "./share-copy-state.js";
 import { runExclusive } from "./exclusive.js";
 import { noteShare } from "./share-notices.js";
 import { sendAdditions } from "./share-additions.js";
+import { perKeyCoalesced } from "../lib/per-key-coalesce.js";
 
 export type EditMode = "suggest" | "direct";
 export const readEditMode = (settings: unknown): EditMode => ((settings as { edit_mode?: unknown } | null)?.edit_mode === "direct" ? "direct" : "suggest");
@@ -53,7 +54,8 @@ interface FieldChange {
  *  due a look for edits. One indexed update, matching nothing in a workspace
  *  that is not one; no cache, so a share accepted a moment ago (in this
  *  process or another) is never missed. */
-export async function noteCopiesChanged(orgId: string): Promise<void> {
+// Coalesced per workspace, as noteWorkspaceChanged is (lib/per-key-coalesce.ts, #5969).
+export const noteCopiesChanged = perKeyCoalesced(async (orgId: string): Promise<void> => {
   const r = await meta
     .updateTable("share_links")
     .set({ edits_due_at: new Date() })
@@ -63,7 +65,7 @@ export async function noteCopiesChanged(orgId: string): Promise<void> {
     .where("edits_due_at", "is", null)
     .executeTakeFirst();
   if (Number(r.numUpdatedRows ?? 0) > 0) kickShareSync(4_000);
-}
+});
 
 /** Send back every field the friend changed on a link's copies since the
  *  mirror last left them. */
@@ -128,7 +130,11 @@ async function mayChange(orgId: string, kind: string, field: string, settings: R
   if (COPY_BOOKKEEPING.has(field) || field.startsWith("_")) return null;
   const defs = await fieldsOf(orgId, kind);
   const def = defs.find((d) => d.name === field);
-  if (!def || isReference(field, def)) return null;
+  // A field the record works out itself (stock, a count of uses) is never
+  // the friend's to change: its value moves on both sides as stock does, and
+  // an "edit" of it was the reading drifting, offered as a Stock suggestion
+  // nobody made (#6039).
+  if (!def || def.read_only || isReference(field, def)) return null;
   const gated = new Set((await gatedFields(orgId)).map((f) => f.name));
   if (!fieldVisible(classifyField(def, gated), field, readVisibility(settings.visibility))) return null;
   const custom = (await platform().entities.fieldsFor(orgId, kind)).some((d) => d.name === field);
@@ -255,6 +261,9 @@ export interface ShareEditRow {
   status: ShareSuggestionStatus;
   by_name: string | null;
   created_at: Date;
+  /** The unit the record keeps its quantity in, on a quantity edit, so the
+   *  values read "3 m" and not a bare number (#6039). */
+  unit?: string | null;
   /** False once the record left the share: the edit is kept for the owner
    *  to accept or drop, and says so. */
   still_shared: boolean;
@@ -279,6 +288,8 @@ export async function listShareEdits(orgId: string, where: { linkId?: string; ki
     .leftJoin("share_mirror_state as m", (j) => j.onRef("m.link_id", "=", "s.link_id").onRef("m.entity_kind", "=", "s.entity_kind").onRef("m.entity_id", "=", "s.entity_id"))
     .select(["s.id", "s.link_id", "s.entity_kind", "s.entity_id", "s.field", "s.in_metadata", "s.base", "s.proposed", "s.owner_before", "s.status", "s.by_name", "s.created_at", "m.entity_id as shared_id"])
     .where("s.org_id", "=", orgId)
+    // Never an edit (heal-void-share-suggestions.ts, #6038): on no list.
+    .where("s.status", "!=", "void")
     .$if(!!where.linkId, (q) => q.where("s.link_id", "=", where.linkId!))
     .$if(!!where.kind && !!where.id, (q) => q.where("s.entity_kind", "=", where.kind!).where("s.entity_id", "=", where.id!))
     .$if(where.open === true, (q) => q.where("s.status", "in", OPEN_STATUSES))
@@ -288,6 +299,7 @@ export async function listShareEdits(orgId: string, where: { linkId?: string; ki
     .execute();
   const titles = new Map<string, string>();
   const records = new Map<string, Record<string, unknown> | null>();
+  const counted = rows.length ? new Map((await platform().entities.listScannableForOrg(orgId)).map((k) => [k.kind, k])) : new Map();
   for (const r of rows) {
     const k = `${r.entity_kind}/${r.entity_id}`;
     if (!records.has(k)) {
@@ -303,7 +315,12 @@ export async function listShareEdits(orgId: string, where: { linkId?: string; ki
       r.owner_before = valueIn(now, r);
     }
   }
-  return rows.map(({ shared_id, ...r }) => ({ ...r, title: titles.get(`${r.entity_kind}/${r.entity_id}`) || null, still_shared: shared_id !== null }));
+  return rows.map(({ shared_id, ...r }) => {
+    const k = counted.get(r.entity_kind);
+    const fields = records.get(`${r.entity_kind}/${r.entity_id}`);
+    const unit = k?.qtyField === r.field && k.unitField ? fields?.[k.unitField] : null;
+    return { ...r, title: titles.get(`${r.entity_kind}/${r.entity_id}`) || null, still_shared: shared_id !== null, unit: typeof unit === "string" && unit.trim() ? unit.trim() : null };
+  });
 }
 
 /** The copy follows a decision: the record is sent again now. Its mirror
@@ -400,11 +417,22 @@ export async function describeShareEdits(orgId: string, rows: ShareEditRow[]): P
       diff: { changes: [{ field: r.field, ...(r.in_metadata ? { custom: true as const } : {}), from: r.base, to: r.proposed }, { field: r.field, ...(r.in_metadata ? { custom: true as const } : {}), from: null, to: r.owner_before }] },
     })),
   );
-  return rows.map((r, i) => {
+  return Promise.all(rows.map(async (r, i) => {
     const [mine, theirs] = said[i] ?? [];
     const { base: _b, proposed: _p, owner_before: _o, ...rest } = r;
-    return { ...rest, label: mine?.label ?? r.field, was: mine?.from?.text ?? null, now: mine?.to.text ?? null, yours: r.status === "conflict" ? (theirs?.to.text ?? null) : null };
-  });
+    // A quantity reads in the record's unit: "3 m → 5 m", not "3 → 5" (#6039).
+    const inUnit = async (raw: unknown, text: string | null) => {
+      const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() ? Number(raw) : NaN;
+      return r.unit && Number.isFinite(n) ? saidAmount(orgId, n, r.unit) : text;
+    };
+    return {
+      ...rest,
+      label: mine?.label ?? r.field,
+      was: await inUnit(r.base, mine?.from?.text ?? null),
+      now: await inUnit(r.proposed, mine?.to.text ?? null),
+      yours: r.status === "conflict" ? await inUnit(r.owner_before, theirs?.to.text ?? null) : null,
+    };
+  }));
 }
 
 /** On the friend's side: what the owner changed since the friend edited this

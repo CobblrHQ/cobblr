@@ -2850,17 +2850,21 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track your 3D printers: hotend, extruder, board, firmware, bed size, local IP. Its own tab; still part of your machines (prints, fleet, maintenance).",
     manifest: {
       id: "cobblr.community.3d-printers",
-      version: "0.3.5",
+      version: "0.3.6",
       name: "3D Printers",
       description:
         "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
       author: "Cobblr community",
       // 0.3.5: a printer added by its name alone names this list (#5065).
-      ...withRelease(machineBundleRelease("0.3.4", "3d-printers", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"), {
-        version: "0.3.5",
-        released_at: "2026-10-06",
-        notes: "A printer added by name alone (a Bambu Lab P1P, a Prusa MK4) is recognised as a 3D printer and lands in 3D Printers, from its maker and model.",
-      }),
+      // 0.3.6: bed size is a model fact, the fitted parts are the unit's (#6013).
+      ...withRelease(
+        withRelease(machineBundleRelease("0.3.4", "3d-printers", "3D Printers", "hotend, extruder, mainboard, firmware, bed size, local IP"), {
+          version: "0.3.5",
+          released_at: "2026-10-06",
+          notes: "A printer added by name alone (a Bambu Lab P1P, a Prusa MK4) is recognised as a 3D printer and lands in 3D Printers, from its maker and model.",
+        }),
+        { version: "0.3.6", released_at: "2026-10-12", notes: "A printer's bed size is a fact about its model: once one printer of a model has it, every printer of that model waiting in your inbox gets it too. What was fitted to one printer (its hotend, extruder, mainboard, firmware) stays with that printer." },
+      ),
       requires: [{ module: "machines" }],
       features: [connectMachinesFeature("3d-printers")],
       provides_instances: [
@@ -2879,6 +2883,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               entity_kind: "machines:machine",
               name: "hotend",
+              fact_scope: "instance",
               display_label: "Hotend",
               type: "text",
               position: 10,
@@ -2896,6 +2901,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               entity_kind: "machines:machine",
               name: "extruder",
+              fact_scope: "instance",
               display_label: "Extruder",
               type: "text",
               position: 11,
@@ -2913,6 +2919,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               entity_kind: "machines:machine",
               name: "board",
+              fact_scope: "instance",
               display_label: "Mainboard",
               type: "text",
               position: 12,
@@ -2929,6 +2936,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               entity_kind: "machines:machine",
               name: "firmware",
+              fact_scope: "instance",
               display_label: "Firmware",
               type: "text",
               position: 13,
@@ -2937,6 +2945,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
             {
               entity_kind: "machines:machine",
               name: "bed_size",
+              fact_scope: "model",
               display_label: "Bed size (mm)",
               type: "text",
               position: 14,
@@ -2970,12 +2979,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.community.laser-cutters",
       catalog: "extended",
-      version: "0.3.4",
+      version: "0.3.5",
       name: "Laser Cutters",
       description:
         "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
       author: "Cobblr community",
-      ...withRelease(machineBundleRelease("0.3.3", "laser-cutters", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"), { version: "0.3.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }),
+      ...withRelease(
+        withRelease(machineBundleRelease("0.3.3", "laser-cutters", "Laser Cutters", "tube type, wattage, bed size, cooling, focal length"), { version: "0.3.4", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }),
+        { version: "0.3.5", released_at: "2026-10-12", notes: "A laser cutter's bed size is a fact about its model: once one cutter of a model has it, every cutter of that model waiting in your inbox gets it too." },
+      ),
       requires: [{ module: "machines" }],
       features: [connectMachinesFeature("laser-cutters")],
       provides_instances: [
@@ -3004,6 +3016,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
         {
           entity_kind: "machines:machine",
           name: "bed_size_laser",
+          fact_scope: "model",
           display_label: "Bed size (mm)",
           type: "text",
           position: 22,
@@ -4863,7 +4876,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.cnc-tooling",
       catalog: "extended",
-      version: "0.2.5",
+      version: "0.2.6",
       name: "CNC Tooling",
       description:
         "Your CNC tooling as its own table (end mills, drills, taps, reamers, inserts) by type/diameter/flutes/material, with the bin each lives in. Ships the guided Cataloging Bench app: capture an unknown tool's measurements + observations and it composes the spec for you (AI-enriched when a provider is connected).",
@@ -4872,6 +4885,7 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       changelog:
         "The Cataloging Bench reads in plain sentences. Earlier: Says up front that it tracks stock, so counts and Use one or Used up are there from the first item rather than after one is counted. Earlier: The guided Cataloging Bench: measure (caliper) → weigh (scale) → observe → photograph → bin, hands-busy, no typing, with a live edge mode that streams real readings from an on-site agent. The structured spec is composed deterministically; a best-effort multimodal AI identify enriches the name/brand from the measurements when a provider is connected. Built on two GENERIC capabilities the bench app wires together, inventory:create-item + core-scan:identify, not a bench-specific module action. See docs/product/cataloging-bench.md.",
       releases: [
+        { version: "0.2.6", released_at: "2026-10-12", notes: "The Cataloging Bench keeps the photo it captures: the saved tool opens with it, in its picture and its Photos." },
         { version: "0.2.5", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." },
         { version: "0.2.4", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.2.3", released_at: "2026-09-30", notes: "The Cataloging Bench reads in plain sentences." },

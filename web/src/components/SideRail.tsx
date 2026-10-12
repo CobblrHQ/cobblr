@@ -205,13 +205,19 @@ export function SideRail({
   // back on Cobb. The restore is therefore attempted on every registration
   // until it lands, and then never again, so it cannot fight a later click.
   const restored = useRef(false);
+  const requested = useRef<string | null>(null);
   // A tab someone asked for (a launcher, a deep link, a click on the bar)
   // ends the restore: a remembered tab that registers later must not take
   // the panel away from what was asked for ("Ask Cobb" showed Pinned, #5142).
   const choose = useCallback((id: string) => {
     restored.current = true;
+    requested.current = id;
     setActiveId(id);
   }, []);
+  // The tab someone asked for, until it has registered. Cobb's and
+  // Discussion's panels load after the page draws, so an Ask Cobb pressed in
+  // the first moments chose a tab that did not exist yet, and the fallback
+  // below handed the rail to Pinned, the one tab already there (#5999).
   useEffect(() => {
     if (!activeId && tabs[0]) {
       const wanted = !restored.current && initialTab ? tabs.find((t) => t.id === initialTab) : undefined;
@@ -225,7 +231,10 @@ export function SideRail({
         setActiveId(wanted.id);
       }
     }
-    if (activeId && !tabs.some((t) => t.id === activeId)) setActiveId(tabs[0]?.id ?? null);
+    if (activeId && tabs.some((t) => t.id === activeId) && requested.current === activeId) requested.current = null;
+    // A tab that is gone gives way to the first; a tab that was asked for and
+    // is still loading keeps its place until it arrives.
+    else if (activeId && !tabs.some((t) => t.id === activeId) && requested.current !== activeId) setActiveId(tabs[0]?.id ?? null);
   }, [tabs, activeId, initialTab]);
 
   // Mirror it out for the launchers. `open` is theirs already; the tab is not.

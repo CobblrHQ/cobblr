@@ -3,6 +3,9 @@
   "version": "0.1.1",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
   "description": "Server-only outbound-fetch primitives shared across the platform: the one redirect-following, IP-pinning fetch loop every SSRF-guarded path uses.",
   "main": "src/index.ts",
   "types": "src/index.ts",

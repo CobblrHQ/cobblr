@@ -56,8 +56,8 @@ export const DraftBody = z.object({
         kind: z.string().min(1),
         id: z.string().min(1),
         into: z.string().min(1),
-        x_mm: z.number().finite().optional(),
-        y_mm: z.number().finite().optional(),
+        x_mm: z.number().finite().optional(), // none-refused-ok: a spot is both coordinates or neither
+        y_mm: z.number().finite().optional(), // none-refused-ok: a spot is both coordinates or neither
       }),
     )
     .default({}),

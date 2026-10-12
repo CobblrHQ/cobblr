@@ -143,7 +143,7 @@ bambuRouter.post("/code", asyncHandler(async (req, res) => {
 const CreateBody = z.object({
   session: z.string().uuid(),
   mode: z.enum(["cloud", "lan", "hybrid"]),
-  label: z.string().min(1).max(120).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 bambuRouter.post("/create", asyncHandler(async (req, res) => {

@@ -66,7 +66,7 @@ const EntryCreate = z
   );
 
 const EntryUpdate = z.object({
-  name: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   description: z.string().max(2_000).nullable().optional(),
   performed_at: When,
   scheduled_at: When,

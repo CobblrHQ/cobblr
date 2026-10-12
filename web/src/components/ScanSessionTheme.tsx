@@ -126,7 +126,7 @@ export function ScanSessionTheme({ slug, batchId, itemIds, evidence }: { slug: s
       >
         {apply.isPending ? "Applying…" : words.button}
       </button>
-      <button type="button" onClick={() => setDismissed(true)} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
+      <button aria-label="Dismiss" type="button" onClick={() => setDismissed(true)} className="shrink-0 text-faint hover:text-content p-1" title="Dismiss">
         <X size={14} />
       </button>
     </div>

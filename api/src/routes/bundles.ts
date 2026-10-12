@@ -1,3 +1,4 @@
+import { FACT_SCOPES } from "@cobblr/platform-contract/fact-scope";
 import { RecordTemplateSchema, ReceiptDraftSchema, RenewalBindingSchema } from "@cobblr/platform-contract/record-creation";
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
 import { ACTION_GROUPS, similarActionGroup } from "@cobblr/platform-contract/action-groups";
@@ -191,6 +192,11 @@ const FieldDefEntry = z
      *  `pack` marks the packaging-count field, filled from the scanned package.
      *  At most one of each per entity kind. */
     field_role: FieldRoleSchema.optional(),
+    /** A fact about the MODEL (every unit of it shares it: a printer's bed
+     *  size) or about this UNIT (its seller, what was upgraded on it). The
+     *  scan fills a model fact into every row of that model and never moves a
+     *  unit's (@cobblr/platform-contract/fact-scope, #6013). */
+    fact_scope: z.enum(FACT_SCOPES).optional(),
     /** Whether what a person types becomes a choice (field-choices.ts). Every
      *  text field with choices a bundle ships declares it
      *  (lint:field-learns-declared). */
@@ -1768,6 +1774,7 @@ function fieldDefRow(
     unit: fieldTypeTakesUnit(f.type) ? f.unit ?? null : null,
     decode_role: (f as { decode_role?: string | null }).decode_role ?? null,
     field_role: (f as { field_role?: string | null }).field_role ?? null,
+    fact_scope: (f as { fact_scope?: string | null }).fact_scope ?? null,
     learns: (f as { learns?: boolean | null }).learns ?? null,
     aggregate: f.aggregate ?? null,
   };
@@ -2711,7 +2718,7 @@ bundlesRouter.post(
          *  is configured; an id nothing here knows answers a coded 409 naming
          *  the missing registry and this door (#2922). */
         manifest: z.unknown().optional(),
-        id: z.string().min(1).max(200).optional(),
+        id: z.string().min(1).max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
         confirm: z.boolean().optional(),
         /** Phase 2: which optional features to install. Omitted on a FIRST
          *  install → the features' own default:true set. Omitted on an UPDATE

@@ -2,10 +2,14 @@ export function ordinaryPdf(label = "Pattern", sizeBytes = 0): Buffer {
   return textPdf(`Knitting pattern: ${label}`, sizeBytes);
 }
 
-export function textPdf(label: string, sizeBytes = 0): Buffer {
-  const text = label.replace(/[^\x20-\x7e]/g, " ").replace(/[\\()]/g, "\\$&");
-  const stream = `BT /F1 14 Tf 30 150 Td (${text}) Tj ET`;
-  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`];
+export function textPdf(label: string | readonly string[], sizeBytes = 0): Buffer {
+  const multiline = typeof label !== "string";
+  const lines = (typeof label === "string" ? [label] : label)
+    .map((line) => line.replace(/[^\x20-\x7e]/g, " ").replace(/[\\()]/g, "\\$&"));
+  const stream = multiline
+    ? `BT /F1 12 Tf 18 TL 30 750 Td ${lines.map((line) => `(${line}) Tj`).join(" T* ")} ET`
+    : `BT /F1 14 Tf 30 150 Td (${lines[0]}) Tj ET`;
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>", `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${multiline ? "612 792" : "300 200"}] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>", `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`];
   let body = "%PDF-1.4\n"; const offsets: number[] = [];
   objects.forEach((object, index) => { offsets.push(Buffer.byteLength(body)); body += `${index + 1} 0 obj\n${object}\nendobj\n`; });
   const finish = (xref: number) => `xref\n0 6\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;

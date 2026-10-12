@@ -209,6 +209,8 @@ export function register(): void {
       haiku: { label: "Haiku (newest)", short: "Haiku" },
     },
     checksPhotosInTest: true,
+    // Its test asks the agent to answer (and to name a picture): it generates.
+    generatesInTest: true,
     capabilities: SUPPORTED,
     // The prompt this adapter INJECTS (absent from `input` for the image
     // capabilities) joins the cache key — so editing a prompt actually invalidates
@@ -391,7 +393,7 @@ export function register(): void {
       } catch (err) {
         photos = { read: false, said: (err as Error).message };
       }
-      return { ok: true, models: [model], photos };
+      return { ok: true, models: [model], model, photos };
     },
     // What the bridge's target reports (an Ollama-shaped /api/tags): a Claude
     // bridge answers sonnet, opus and haiku, a local Ollama what it pulled.

@@ -23,8 +23,8 @@ const VIEW_MINUTES = 30;
 
 /** The share space's side: make a grant to look through this link. */
 export async function mintShareView(shareLinkId: string, viewerName: string | null): Promise<{ token: string; slug: string; expires_at: string }> {
-  const link = await meta.selectFrom("share_links as l").innerJoin("orgs as o", "o.id", "l.org_id").select(["l.id", "l.org_id", "l.side", "l.status", "l.created_by", "o.slug"]).where("l.id", "=", shareLinkId).executeTakeFirst();
-  if (!link || link.side !== "share" || link.status !== "active") throw new Error("This share has ended.");
+  const link = await meta.selectFrom("share_links as l").innerJoin("orgs as o", "o.id", "l.org_id").select(["l.id", "l.org_id", "l.side", "l.status", "l.created_by", "l.settings", "o.slug"]).where("l.id", "=", shareLinkId).executeTakeFirst();
+  if (!link || (link.settings as {purpose?: string} | null)?.purpose === "own" || link.side !== "share" || link.status !== "active") throw new Error("This share has ended.");
   if (!link.created_by) throw new Error("This share space has nobody to view it as.");
   const expires = new Date(Date.now() + VIEW_MINUTES * 60_000);
   const row = await meta
@@ -38,7 +38,7 @@ export async function mintShareView(shareLinkId: string, viewerName: string | nu
 /** The owner's side: ask for a grant, and say where to open it. */
 export async function requestShareView(ownerLinkId: string, viewerName: string | null): Promise<{ url: string; expires_at: string }> {
   const link = (await getShareLink(ownerLinkId)) as ShareLinkRow | null;
-  if (!link || link.side !== "owner" || link.status !== "active" || !link.peer_link_id) throw new Error("This share is not live.");
+  if (!link || (link.settings as {purpose?: string} | null)?.purpose === "own" || link.side !== "owner" || link.status !== "active" || !link.peer_link_id) throw new Error("This share is not live.");
   if (!link.peer_url) {
     const got = await mintShareView(link.peer_link_id, viewerName);
     return { url: `/view-as#t=${encodeURIComponent(got.token)}&w=${encodeURIComponent(got.slug)}`, expires_at: got.expires_at };

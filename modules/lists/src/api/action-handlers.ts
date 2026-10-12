@@ -22,6 +22,11 @@ interface AddItemArgs {
   title?: string;
   qty?: string;
   note?: string;
+  /** Checking the line off adds it back to the source record's stock: the
+   *  person put it on the list to buy it again ("Add to list" on a part
+   *  running low). Kept on the line, so the gesture that asked is the consent
+   *  (#6062), never a workspace-wide switch. */
+  restocks?: boolean;
 }
 
 export function registerListActionHandlers(): void {
@@ -98,7 +103,7 @@ export function registerListActionHandlers(): void {
     // what lets checking the item off close the loop back to stock (see the
     // food-cluster `item.checked → inventory:adjust-stock` wire).
     const metadata =
-      ctx.entity ? { source_ref: { kind: ctx.entity.kind, id: ctx.entity.id } } : {};
+      ctx.entity ? { source_ref: { kind: ctx.entity.kind, id: ctx.entity.id }, ...(args.restocks === true ? { restocks: true } : {}) } : {};
     const row = await db
       .insertInto("lists_items")
       .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })

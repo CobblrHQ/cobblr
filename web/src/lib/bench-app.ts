@@ -204,7 +204,9 @@ export const CATALOGING_BENCH_HTML = String.raw`
         '<div class="cb-sub">A photo is captured + attached (for you, and for Phase-2 vision). Phase 1 renders it from the measurements.</div>'+
         '<div class="cb-row"><canvas class="cb-canvas" id="cb-cv"></canvas><div class="cb-spacer"></div>'+pedal('Capture photo')+'</div>';
       drawTool(document.getElementById('cb-cv'),{dia:item.captured.diameter_mm,flutes:item.captured.flute_count,end:item.captured.end_type,mat:item.captured.material});
-      bind(advance);
+      // The capture IS the photo the record keeps: commit sends it with the
+      // create, so the saved tool opens with this picture (#5922).
+      bind(function(){var cv=document.getElementById('cb-cv');if(cv&&cv.toBlob){cv.toBlob(function(b){item.photo=b||null;advance();},'image/png');}else advance();});
     } else if(st.k==='locate'){
       stage.innerHTML=head+'<div class="cb-prompt">Done. Put it in:</div>'+
         '<div class="cb-row"><span class="cb-bin">📦 '+item.bin+'</span><div class="cb-spacer"></div>'+pedal('Bin it + commit')+'</div>'+
@@ -231,7 +233,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
   // the deterministic spec we composed. Generic modules, app-side wiring.
   function commit(){
     var p=document.getElementById('cb-pedal'); if(p){p.disabled=true;p.textContent='Committing…';}
-    var c=item.captured, floor=specName(c), bin=item.bin;
+    var c=item.captured, floor=specName(c), bin=item.bin, photo=item.photo||null;
     var fields={}; Object.keys(c).forEach(function(k){if(k[0]!=='_')fields[k]=c[k];});
     fields.bin=bin;
     var measurements={diameter_mm:c.diameter_mm,shank_dia_mm:c.shank_dia_mm,overall_length_mm:c.overall_length_mm,flute_length_mm:c.flute_length_mm,weight_g:c.weight_g};
@@ -243,7 +245,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
       var ai = !!(id && id.identified && id.name);
       var name = ai ? id.name : floor;
       var mfr = (id && id.brand) ? id.brand : undefined;
-      return SDK.invoke('inventory:create-item',{args:{instance:'tooling',name:name,manufacturer:mfr,fields:fields}})
+      return SDK.invoke('inventory:create-item',{args:{instance:'tooling',name:name,manufacturer:mfr,fields:fields},photo:photo,photoName:floor.replace(/[^a-z0-9.]+/gi,'-')+'.png'})
         .then(function(cr){var res=(cr&&cr.result)||cr||{}; addLog(res.name||name,bin,ai); showResult(res.name||name,bin,ai);});
     }).catch(function(){addLog(floor,bin,false);showResult(floor,bin,false);});
   }

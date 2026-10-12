@@ -24,6 +24,7 @@ import {
 } from "../detectors/engine.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import { parseBambuLan } from "../jobs-core.js";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const failureRouter = Router({ mergeParams: true });
 
@@ -38,10 +39,10 @@ failureRouter.get(
 
 const ConfigBody = z.object({
   enabled: z.boolean().optional(),
-  threshold: z.number().min(0.1).max(0.99).optional(),
-  sample_interval_sec: z.number().int().min(5).max(600).optional(),
+  threshold: z.number().min(0.1).max(0.99).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  sample_interval_sec: z.number().int().min(5).max(600).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   auto_pause: z.boolean().optional(),
-  backend: z.enum(["auto", "edge", "llm", "detector"]).optional(),
+  backend: z.enum(["auto", "edge", "llm", "detector"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   detector_id: z.string().uuid().nullable().optional(),
 });
 // AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
@@ -147,7 +148,7 @@ const DetectorBody = z.object({
   key: z.string().min(1).max(64),
   label: z.string().min(1).max(120),
   base_url: z.string().min(1).max(500),
-  api_key: z.string().max(4000).optional(),
+  api_key: optionalText(4000),
   config: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
 });
@@ -205,8 +206,8 @@ failureRouter.post(
 );
 
 const DetectorPatch = z.object({
-  label: z.string().min(1).max(120).optional(),
-  base_url: z.string().min(1).max(500).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_url: z.string().min(1).max(500).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   api_key: z.string().max(4000).nullable().optional(), // null clears the token
   config: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
@@ -398,8 +399,8 @@ failureRouter.post(
 const MirrorBody = z.object({
   connection_id: z.string().min(1),
   /** Which printer within the connection (required for perDevice types, e.g. Bambu's serial). */
-  device_id: z.string().optional(),
-  name: z.string().max(120).optional(),
+  device_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  name: z.string().max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   watch: z.boolean().optional(),
   /** After mirroring, disable Cobblr's own connection so it stops polling the
    *  printer (the detector owns it now). Only for single-printer connections —

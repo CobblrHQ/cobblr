@@ -93,6 +93,7 @@ export function ScanResolversTab() {
                       {r.enabled ? "Disable" : "Enable"}
                     </button>
                     <button
+                      aria-label={r.builtin ? "Override" : "Edit"}
                       onClick={() => setEditing(r)}
                       className="p-1.5 rounded border border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100"
                       title={r.builtin ? "Override" : "Edit"}
@@ -101,6 +102,7 @@ export function ScanResolversTab() {
                     </button>
                     {!r.builtin && (
                       <button
+                        aria-label="Remove"
                         onClick={async () => {
                           if (
                             await confirm({

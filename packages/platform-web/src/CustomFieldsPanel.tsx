@@ -347,7 +347,7 @@ export function FieldValueEditor({
   const control = fieldControl(def);
   const inner =
     control === "secret" ? (
-      <div className="space-y-1"><label className="block text-sm">{def.display_label}</label><SecretField value={value} field={def.name} kind={kind} recordId={entityId} onCommit={onCommit} /></div>
+      <div role="group" aria-label={def.display_label} className="space-y-1"><div className="block text-sm">{def.display_label}</div><SecretField value={value} field={def.name} kind={kind} recordId={entityId} onCommit={onCommit} /></div>
     ) : control === "computed" ? (
       // Read-only, value derived server-side at resolve time.
       <ComputedRow def={def} value={value} fallbackValue={fallbackValue} />
@@ -642,10 +642,13 @@ function ServerManagedRow({ def, value }: { def: PlatformFieldDef; value: unknow
 export function MemberSelect({
   value,
   onChange,
+  label,
   className,
 }: {
   value: unknown;
   onChange: (v: string | null) => void;
+  /** The field's name, for a screen reader and voice control (#5912). */
+  label: string;
   className?: string;
 }) {
   const { api, orgSlug } = usePlatformWeb();
@@ -672,6 +675,7 @@ export function MemberSelect({
 
   return (
     <select
+      aria-label={label}
       value={items.some((m) => m.user_id === current) ? current : ""}
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
       className={"input " + (className ?? "")}
@@ -695,9 +699,12 @@ export function RelationSelect({
   refKind,
   value,
   onChange,
+  label,
   className,
 }: {
   refKind: string;
+  /** The field's name, for a screen reader and voice control (#5912). */
+  label: string;
   value: unknown;
   onChange: (v: string | null) => void;
   className?: string;
@@ -736,6 +743,7 @@ export function RelationSelect({
 
   return (
     <select
+      aria-label={label}
       value={current}
       onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
       className={"input " + (className ?? "")}
@@ -769,7 +777,7 @@ function RelationRow({
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
-      <RelationSelect refKind={def.ref_kind ?? ""} value={value} onChange={(v) => onCommit(v)} />
+      <RelationSelect refKind={def.ref_kind ?? ""} label={def.display_label} value={value} onChange={(v) => onCommit(v)} />
     </label>
   );
 }
@@ -793,9 +801,9 @@ function PeopleRow({
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
       {kind === "person" ? (
-        <PersonSelect value={value} onChange={(v) => onCommit(v)} className="w-full" />
+        <PersonSelect value={value} label={def.display_label} onChange={(v) => onCommit(v)} className="w-full" />
       ) : (
-        <MemberSelect value={value} onChange={(v) => onCommit(v)} className="w-full" />
+        <MemberSelect value={value} label={def.display_label} onChange={(v) => onCommit(v)} className="w-full" />
       )}
     </label>
   );

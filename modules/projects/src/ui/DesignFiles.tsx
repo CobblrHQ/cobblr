@@ -273,6 +273,7 @@ export function DesignFiles({ designId }: { designId: string }) {
                 </span>
               )}
               <button
+                aria-label="Remove"
                 type="button"
                 onClick={() => {
                   void confirm({

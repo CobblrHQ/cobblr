@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 import sharp from "sharp";
 import { platform, type FilesDriver, type WorkspaceFolder } from "@cobblr/platform-contract";
 import type { FileKind, FileVariants } from "../db.js";
-import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { PERSONAL_READER_PLACE, PersonalDocumentRefused, readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
 import { sniffType } from "@cobblr/platform-contract/sniff-type";
 
 // Default storage root: <repo>/_files. Overridable per-deploy.
@@ -195,10 +195,10 @@ export async function assertSharedFileSource(source: FileSourceIn, claimedMime: 
   const kept = key ? ordinaryRecently.get(key) : undefined;
   if (key && kept !== undefined && Date.now() - kept < ORDINARY_TTL_MS) return;
   const size = source instanceof Uint8Array ? source.length : source.size;
-  if (mime !== "application/pdf" && size > 25 * 1024 * 1024) throw new Error("This may be a personal document. Read it in Personal documents instead of shared Files.");
+  if (mime !== "application/pdf" && size > 25 * 1024 * 1024) throw new PersonalDocumentRefused(`This may be a personal document, so it was not saved to shared Files. Read it with ${PERSONAL_READER_PLACE}.`);
   const onDisk = !(source instanceof Uint8Array);
   const read = await readPersonalDocument({ bytes: onDisk ? mime === "application/pdf" ? head : await readFile(source.path) : source, mime, ...(onDisk && mime === "application/pdf" ? { path: source.path } : {}) });
-  if (read.privacy === "personal") throw new Error("This is a personal document. Read it in Personal documents instead of shared Files.");
+  if (read.privacy === "personal") throw new PersonalDocumentRefused();
   if (key) {
     ordinaryRecently.set(key, Date.now());
     if (ordinaryRecently.size > 500) ordinaryRecently.delete(ordinaryRecently.keys().next().value as string);

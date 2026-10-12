@@ -383,9 +383,14 @@ function yarnsIn(block: string, whole: string): YarnNeed[] {
       const anyBrand = /\b(of your choice|any (?:brand|yarn))\b/i.test(flat);
       const brandSplit = used ? splitBrand(used[1]!) : { brand: null, product: null };
       const named = [brandSplit.brand ?? brandSplit.product, used?.[2]?.trim()].filter(Boolean).join(" ");
+      // The length printed on the yarn's own line ("Yarn: 100 m of worsted
+      // weight wool"), never another line's figure (#5898).
+      const yarnLine = block.split("\n").find((l) => /\byarn\b/i.test(l) && !/\b(?:hook|needle)s?\b/i.test(l)) ?? null;
+      const length = yarnLine ? lengthOf(yarnLine) : null;
       out.push(
         need({
           weight,
+          ...(length ? { length_m: length } : {}),
           fiber: fiberNearYarn(flat) ?? fiberNearYarn(whole),
           ...(anyBrand
             ? { label: named ? `Designer used ${named}` : null }
@@ -489,7 +494,12 @@ function notionsIn(block: string): NotionNeed[] {
       // "safety eyes or buttons": the second is an alternative, not a need.
       if (/\bor\s+$/i.test(item.slice(0, hit.index ?? 0))) continue;
       if (out.some((o) => o.name === n.name)) continue;
-      const lead = item.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b/i);
+      // The count opening the line, or printed right before the notion's own
+      // words after a heading ("Notions: 2 black safety eyes", #5898). A
+      // size ("size 8 mm") is never a count.
+      const lead =
+        item.match(/^(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\b/i) ??
+        item.slice(0, hit.index ?? 0).match(/(?:^|[\s:,(])(\d+|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+(?:[a-z]+\s+){0,2}$/i);
       const quantity = lead ? (NUMBER_WORDS[lead[1]!.toLowerCase()] ?? Number(lead[1])) : null;
       const mm = item.match(/(\d+(?:\.\d+)?)\s*mm\b/i);
       out.push({ name: n.name, quantity: Number.isFinite(quantity) ? quantity : null, size_mm: mm && /eyes|buttons?/i.test(item) ? Number(mm[1]) : null });

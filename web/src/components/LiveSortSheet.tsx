@@ -396,6 +396,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
           End session
         </button>
         <button
+          title="Close (session stays resumable)"
           type="button"
           onClick={onClose}
           aria-label="Close (session stays resumable)"

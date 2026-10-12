@@ -20,7 +20,7 @@ import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backupOffers, backupSummary, type BackupOffer } from "../lib/connection-backup";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
-import { useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { useToast, useConfirm, usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
 import { YourAiDefaults } from "../components/YourAiDefaults";
 import { TestConnectionButton, VerificationBadge, VerificationLine } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
@@ -79,9 +79,17 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   // ("Connect a slicer" on a Make): ?add=service&capability=slice.model opens
   // Add a service already asking for that job.
   const [initialParams] = useSearchParams();
-  const [adding, setAdding] = useState<false | { provider: string | null; capability?: string | null }>(() =>
+  // Reconnect on a record's library sends ?add=service&provider=adapter:<id>
+  // &label=&address=: the form opens on that same library, its name and
+  // address filled, asking only for the token again (#5876).
+  const [adding, setAdding] = useState<false | { provider: string | null; capability?: string | null; label?: string | null; address?: string | null }>(() =>
     initialParams.get("add") === "service"
-      ? { provider: "service", capability: initialParams.get("capability") }
+      ? {
+          provider: /^adapter:[a-z0-9-]+$/.test(initialParams.get("provider") ?? "") ? initialParams.get("provider") : "service",
+          capability: initialParams.get("capability"),
+          label: initialParams.get("label"),
+          address: initialParams.get("address"),
+        }
       : startAdding
         ? { provider: null }
         : false,
@@ -221,6 +229,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
             </div>
             <div className="flex items-center shrink-0">
               <button
+                aria-label={editing?.id === c.id ? "Close" : "Edit routing"}
                 type="button"
                 onClick={() => {
                   setEditing((cur) => (cur?.id === c.id ? null : c));
@@ -239,6 +248,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                 <TestConnectionButton test={() => api.testStoredConnection(c.id)} invalidate={[aiAvailabilityKeys.connections()]} className="text-[11px] px-2 py-1 rounded border border-line dark:border-slate-700 text-faint hover:text-accent" />
               )}
               <button
+                aria-label="Remove"
                 type="button"
                 onClick={() => void removeConnection(c)}
                 className="text-faint hover:text-ember-500 p-1.5"
@@ -274,6 +284,8 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
         <ConnectionForm
           key={`new-${adding.provider ?? ""}`}
           initialProviderId={adding.provider}
+          initialLabel={adding.label ?? null}
+          initialAddress={adding.address ?? null}
           wantCapability={adding.capability ?? null}
           providers={providers}
           orgs={orgs}
@@ -339,12 +351,17 @@ function ConnectionForm({
   others,
   existing,
   initialProviderId = null,
+  initialLabel = null,
+  initialAddress = null,
   wantCapability = null,
   onDone,
   onCancel,
 }: {
   /** The provider the add form opens on (Add a service: "service"). */
   initialProviderId?: string | null;
+  /** A library connected again: its name and address, never its token. */
+  initialLabel?: string | null;
+  initialAddress?: string | null;
   /** The job a service is being connected for, when a page sent the person here. */
   wantCapability?: string | null;
   providers: AiProviderDef[];
@@ -378,12 +395,12 @@ function ConnectionForm({
   const [picked, setPicked] = useState<string | null>(initialPick(existing, initialProviderId));
   const providerId = picked ?? providers[0]?.id ?? "";
   const setProviderId = setPicked;
-  const [label, setLabel] = useState(existing?.label ?? "");
+  const [label, setLabel] = useState(existing?.label ?? initialLabel ?? "");
   // Pre-fill the NON-SECRET fields (base_url, choices like transit / mcp_relay,
   // model) from the saved connection so the form shows what's actually stored —
   // a dropdown especially must reflect its saved value, not snap to the default.
   // Secrets aren't returned; they stay blank ("unchanged").
-  const [creds, setCreds] = useState<Record<string, string>>(existing?.credential_values ?? {});
+  const [creds, setCreds] = useState<Record<string, string>>(existing?.credential_values ?? (initialAddress ? { base_url: initialAddress } : {}));
   // Per-workspace routing: org_id → mode. Absence = "Off". Seeded from the
   // connection's saved routes; a dynamic-scope (legacy) connection seeds from
   // its global mode applied to whichever workspaces it currently reaches.
@@ -522,7 +539,7 @@ function ConnectionForm({
         <h2 className="text-sm font-medium text-content dark:text-slate-300 flex-1">
           {isEdit ? "Edit connection" : isService ? "Add a service" : "Add a connection"}
         </h2>
-        <button type="button" onClick={onCancel} className="text-faint hover:text-content p-1" title="Cancel">
+        <button aria-label="Cancel" type="button" onClick={onCancel} className="text-faint hover:text-content p-1" title="Cancel">
           <X size={15} />
         </button>
       </div>
@@ -632,7 +649,7 @@ function ConnectionForm({
                 return next;
               });
             return (
-              <div key={o.id} className="flex items-center gap-2 p-2">
+              <div key={o.id} className="flex flex-wrap items-center gap-2 p-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-content dark:text-mortar-200 truncate">{o.name}</div>
                   {cur === "workspace-default" && !owns && (
@@ -648,66 +665,47 @@ function ConnectionForm({
                         </span>{" "}
                         is already powering this workspace.
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => setTakeOver((p) => ({ ...p, [o.id]: true }))}
-                        className={
-                          "rounded px-1.5 py-0.5 border transition " +
-                          (takeOver[o.id]
-                            ? "border-cobble-500 bg-cobble-600 text-white font-medium"
-                            : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-cobble-400")
-                        }
-                      >
-                        Use this one first
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTakeOver((p) => ({ ...p, [o.id]: false }))}
-                        className={
-                          "rounded px-1.5 py-0.5 border transition " +
-                          (!takeOver[o.id]
-                            ? "border-cobble-500 bg-cobble-600 text-white font-medium"
-                            : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-cobble-400")
-                        }
-                      >
-                        Keep {incumbentFor(o.id)!.label || "the other"} first
-                      </button>
+                      {/* Which goes first is a pick of two: a radio group with
+                          the pick marked, never told by colour alone (#6045). */}
+                      <SegmentedChoice
+                        label={`Which connection goes first in ${o.name}`}
+                        value={takeOver[o.id] ? "this" : "other"}
+                        onChange={(v) => setTakeOver((p) => ({ ...p, [o.id]: v === "this" }))}
+                        options={[
+                          { value: "this", label: "Use this one first" },
+                          { value: "other", label: `Keep ${incumbentFor(o.id)!.label || "the other"} first` },
+                        ]}
+                      />
                     </div>
                   )}
                 </div>
-                <div className="flex shrink-0 rounded-md border border-line dark:border-slate-600 overflow-hidden text-[11px] font-medium">
-                  {(oauth
-                    ? ([
-                        [null, "Off"],
-                        ["workspace-default", "Feeds this workspace"],
-                      ] as Array<[ConnRouteMode | null, string]>)
-                    : ([
-                        [null, "Off"],
-                        ["my-calls", "Just me"],
-                        ["workspace-default", "Share"],
-                      ] as Array<[ConnRouteMode | null, string]>)).map(([val, lbl]) => {
-                    const activeSeg = (val ?? "off") === (cur ?? "off");
-                    return (
-                      <button
-                        key={lbl}
-                        type="button"
-                        onClick={() => {
-                          // A mailbox feeds exactly one workspace: a parcel lands once.
-                          if (oauth && val) setPerWs({ [o.id]: val });
-                          else set(val);
-                        }}
-                        className={
-                          "px-2.5 py-1 transition " +
-                          (activeSeg
-                            ? "bg-cobble-600 text-white"
-                            : "bg-surface dark:bg-slate-900 text-muted hover:bg-subtle dark:hover:bg-slate-800")
-                        }
-                      >
-                        {lbl}
-                      </button>
-                    );
-                  })}
-                </div>
+                {/* Off / Just me / Share: a radio group named for this
+                    workspace, the pick marked with a check as well as its
+                    fill, so whether the key is off, yours alone or offered to
+                    everyone is never told by colour alone (#6045). */}
+                <SegmentedChoice
+                  className="shrink-0"
+                  label={`How ${o.name} uses this connection`}
+                  value={cur ?? "off"}
+                  onChange={(v) => {
+                    const val = v === "off" ? null : (v as ConnRouteMode);
+                    // A mailbox feeds exactly one workspace: a parcel lands once.
+                    if (oauth && val) setPerWs({ [o.id]: val });
+                    else set(val);
+                  }}
+                  options={
+                    oauth
+                      ? [
+                          { value: "off", label: "Off" },
+                          { value: "workspace-default", label: "Feeds this workspace" },
+                        ]
+                      : [
+                          { value: "off", label: "Off" },
+                          { value: "my-calls", label: "Just me" },
+                          { value: "workspace-default", label: "Share" },
+                        ]
+                  }
+                />
               </div>
             );
               })}

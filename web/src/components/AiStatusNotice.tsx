@@ -165,6 +165,7 @@ export function AiOffNotice({
   }
   return (
     <div
+      data-notice="ai-off"
       className={
         "rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-content dark:text-mortar-100 flex items-start gap-2 " +
         (compact ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm")

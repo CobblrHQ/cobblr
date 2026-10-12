@@ -4,14 +4,19 @@ import type { WorkOrderView } from "./work-orders.js";
 export interface LineAvailability {
   line_id: string;
   needed: number;
+  /** How much of what is still owed the shelf covers: never the stock. */
   in_stock: number;
+  /** What the record has on the shelf now, whatever this line takes (#6002). */
+  on_hand: number;
+  /** The unit both are counted in ("m", "each"), or null. */
+  unit: string | null;
   being_made: number;
   short: number;
   make_qty: number;
 }
 
 export async function orderAvailability(orgId: string, lines: FulfilLine[], workOrders: WorkOrderView[]): Promise<LineAvailability[]> {
-  const { take } = await planFulfilment(orgId, lines);
+  const { take, onHand } = await planFulfilment(orgId, lines);
   const pending = new Map<string, number>();
   const planned = new Map<string, number>();
   for (const w of workOrders) {
@@ -27,6 +32,7 @@ export async function orderAvailability(orgId: string, lines: FulfilLine[], work
     const short = needed - in_stock - being_made;
     // Asking again replaces an open work order's total, so retain what it
     // already promises rather than replacing it with just the extra parts.
-    return { line_id: l.id, needed, in_stock, being_made, short, make_qty: (planned.get(l.part_id!) ?? 0) + short };
+    const shelf = onHand.get(l.part_id!);
+    return { line_id: l.id, needed, in_stock, on_hand: shelf?.on_hand ?? 0, unit: shelf?.unit ?? null, being_made, short, make_qty: (planned.get(l.part_id!) ?? 0) + short };
   });
 }

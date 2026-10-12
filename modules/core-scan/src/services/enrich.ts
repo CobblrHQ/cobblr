@@ -250,7 +250,30 @@ interface PhotoNameResult {
   visionRan: boolean;
 }
 
-async function nameFromPhoto(ctx: EnrichContext): Promise<PhotoNameResult> {
+/** Names a row was given by the item itself, never by a catalog. */
+const ITEM_NAMED_SOURCES = new Set(["photo", "workspace"]);
+
+/** Drop a catalog's name, brand, model and picture from a row whose code no
+ *  catalog can know (a shop's own barcode, #6100). Nothing a person gave,
+ *  nothing read off the item, and no picture the person chose is touched. */
+async function clearCatalogIdentity(ctx: EnrichContext, lockedImg: { url: string | null; file_id: string | null } | null): Promise<void> {
+  const row = await ctx.db.selectFrom("core_scan_inbox_items").select(["suggested_name", "suggested_metadata"]).where("id", "=", ctx.itemId).executeTakeFirst();
+  const meta = (row?.suggested_metadata ?? {}) as { source?: unknown };
+  const source = typeof meta.source === "string" ? meta.source : null;
+  const fromCatalog = !!row?.suggested_name && !!source && !ITEM_NAMED_SOURCES.has(source) && !personNameOf(row.suggested_metadata);
+  if (!fromCatalog && lockedImg) return;
+  await ctx.db
+    .updateTable("core_scan_inbox_items")
+    .set({
+      ...(fromCatalog ? { suggested_name: null, suggested_manufacturer: null, suggested_sku: null } : {}),
+      ...(lockedImg ? {} : { catalog_image_url: null, catalog_image_file_id: null }),
+      updated_at: new Date(),
+    })
+    .where("id", "=", ctx.itemId)
+    .execute();
+}
+
+async function nameFromPhoto(ctx: EnrichContext, opts: { note?: string; meta?: Record<string, unknown> } = {}): Promise<PhotoNameResult> {
   const row = await ctx.db
     .selectFrom("core_scan_inbox_items")
     .select(["image_file_id"])
@@ -308,9 +331,10 @@ async function nameFromPhoto(ctx: EnrichContext): Promise<PhotoNameResult> {
               photo_observed_for: row.image_file_id,
             }
           : {}),
+        ...(opts.meta ?? {}),
       }) as never,
       ai_confidence: String(Math.min(identity.confidence, 0.7)),
-      ai_notes: "No catalog or web hit — named from your photo.",
+      ai_notes: opts.note ?? "No catalog or web hit — named from your photo.",
       ai_suggested_at: new Date(),
       updated_at: new Date(),
     })
@@ -472,7 +496,8 @@ interface EnrichContext {
  *  (scan-copy.ts), re-exported so the route test can assert the consequence
  *  by the words the person reads. */
 export { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";
-import { STORE_CODE_NOTE as STORE_CODE_WORDS } from "@cobblr/platform-contract/scan-copy";
+import { STORE_CODE_NOTE as STORE_CODE_WORDS, STORE_CODE_FILED_NOTE, STORE_CODE_PHOTO_NOTE } from "@cobblr/platform-contract/scan-copy";
+import { displayName, personNameOf } from "@cobblr/platform-contract/display-identity";
 
 /** Identify a scanned or pasted code. A title the person shared with it
  *  (services/shared-title.ts) is already their name for the row; here it
@@ -612,8 +637,43 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
     // provider is asked and neither cache is written: the number is meaningful
     // only inside that shop, so any catalog hit would be a coincidence, and
     // the shared cache would then serve that coincidence to every workspace.
-    // FINAL (ai_suggested_at) so it never sits in the retry loop. Naming it
-    // on the card re-routes it through the matchmaker like a typed item.
+    // Its name comes from the item itself (#6100): this workspace's own
+    // filing of the same code first (the same shop's label means the same
+    // thing here), then the photo and its label. Only with neither does it
+    // ask to be named. FINAL (ai_suggested_at) so it never sits in the retry
+    // loop. Naming it on the card re-routes it through the matchmaker.
+    // A name and picture an earlier global lookup wrote are some other shop's
+    // product, so they go (the J. Jill skirt on the cumin); a person's name,
+    // a photo read, this workspace's filing and a picture the person chose
+    // stay.
+    await clearCatalogIdentity(ctx, lockedImg);
+    const filed = await ctx.db
+      .selectFrom("core_scan_inbox_items")
+      .select(["suggested_name", "suggested_manufacturer", "suggested_metadata"])
+      .where("barcode_text", "=", ctx.upc)
+      .where("status", "=", "resolved")
+      .where("id", "!=", ctx.itemId)
+      .orderBy("updated_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const filedName = filed ? displayName(filed) : null;
+    if (filedName) {
+      await ctx.db
+        .updateTable("core_scan_inbox_items")
+        .set({
+          suggested_name: filedName,
+          suggested_manufacturer: filed!.suggested_manufacturer,
+          suggested_metadata: identityMeta({ source: "workspace", code_type: "store-code" }) as never,
+          ai_confidence: "0.8",
+          ai_notes: STORE_CODE_FILED_NOTE,
+          ai_suggested_at: new Date(),
+          updated_at: new Date(),
+        })
+        .where("id", "=", ctx.itemId)
+        .execute();
+      return;
+    }
+    if (hasScanPhoto && (await nameFromPhoto(ctx, { note: STORE_CODE_PHOTO_NOTE, meta: { code_type: "store-code" } })).named) return;
     await ctx.db
       .updateTable("core_scan_inbox_items")
       .set({

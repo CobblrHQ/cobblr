@@ -1,5 +1,5 @@
-// PERMANENT RECONCILE — a field a bundle owns carries the role that bundle's
-// current manifest declares.
+// PERMANENT RECONCILE — a field a bundle owns carries the role, and the fact
+// scope (model or unit, #6013), that bundle's current manifest declares.
 //
 // BORN WITH: applyValidatedBundle (an install writes each field's role from the manifest it installs)
 //
@@ -21,7 +21,7 @@
 // called outside its own bundle. Meta-only: no tenant pool opens.
 
 import { listFlagshipManifests } from "../lib/flagship-bundles.js";
-import { planFieldRoleHeals, type OwnedFieldDef } from "./bundle-field-roles-plan.js";
+import { planFactScopeHeals, planFieldRoleHeals, type OwnedFieldDef } from "./bundle-field-roles-plan.js";
 
 /** One pass over every workspace's bundle-owned fields. Returns how many
  *  roles it filled; a current install costs one meta query and writes nothing. */
@@ -42,5 +42,17 @@ export async function reconcileBundleFieldRoles(): Promise<number> {
     // Guarded again in the write: a role set since the read is never replaced.
     await meta.updateTable("module_field_defs").set({ field_role: h.field_role }).where("id", "=", h.id).where("field_role", "is", null).execute();
   }
-  return heals.length;
+  // The same for a field's fact scope: a release that says bed size is a
+  // fact about the model reaches the printers already installed.
+  const unscoped = await meta
+    .selectFrom("module_field_defs")
+    .select(["id", "bundle_id", "name", "fact_scope"])
+    .where("bundle_id", "is not", null)
+    .where("fact_scope", "is", null)
+    .execute();
+  const scopes = planFactScopeHeals(unscoped as Array<{ id: string; bundle_id: string; name: string; fact_scope: string | null }>, bundles, catalog);
+  for (const h of scopes) {
+    await meta.updateTable("module_field_defs").set({ fact_scope: h.fact_scope }).where("id", "=", h.id).where("fact_scope", "is", null).execute();
+  }
+  return heals.length + scopes.length;
 }

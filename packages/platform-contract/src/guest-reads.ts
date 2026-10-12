@@ -34,6 +34,7 @@ export const GUEST_READS: Readonly<Record<string, GuestRead>> = {
   "/:slug/calendar/events": { grant: "always", why: "a pinned calendar view" },
   "/:slug/modules/core-views/views": { grant: "always", why: "the portal finds its pinned views among the workspace's shared views" },
   "/:slug/modules/core-apps/apps": { grant: "always", why: "the portal's app launcher" },
+  "/:slug/modules/core-apps/apps/:app": { grant: "always", why: "opening an app the launcher lists; the app's own check decides who may (#6044)" },
   "/:slug/modules/core-apps/apps/:app/data/:key": { grant: "always", why: "an app in the portal reads its own state; the app decides who may open it" },
   "/:slug/modules/core-file-preview/renderers": { grant: "always", why: "how a file is previewed, the same for everyone" },
   "/:slug/modules/core-views/views/:id/data": { grant: "pinned-view", why: "the records a view pinned in the portal shows" },
@@ -64,15 +65,37 @@ export function matchKey<T>(key: string, table: Readonly<Record<string, T>>): { 
   return null;
 }
 
-/** Could a guest's GET of this path ever be answered? `path` is what the web
- *  asks, "/orgs/<slug>/...", with or without a query. A router mounted whole
- *  is keyed by the server with a trailing slash, so both spellings are tried.
- *  True does not mean it will be: an entry for what the portal shares is
- *  decided by the server against the share. False means it never will. */
-export function guestMayAsk(path: string): boolean {
+/** What a workspace's portal shares with its guests: the views pinned there
+ *  and the kinds of record those views show. The server works it out for its
+ *  gate, and sends it to a guest with their membership (GET /me), so a guest's
+ *  page can judge an entry that holds only for what is shared, too (#5992). */
+export interface PortalShares {
+  views: string[];
+  kinds: string[];
+}
+
+/** Could a guest's GET of this path be answered? `path` is what the web asks,
+ *  "/orgs/<slug>/...", with or without a query. A router mounted whole is
+ *  keyed by the server with a trailing slash, so both spellings are tried.
+ *  Without `shares`, true does not mean it will be: an entry for what the
+ *  portal shares is decided by the server. With them, a pinned view or kind
+ *  outside the share is false here as it is there; a file's record kinds are
+ *  only known to the server, so that entry stays true. False means it never
+ *  will be answered. */
+export function guestMayAsk(path: string, shares?: PortalShares | null): boolean {
   const bare = path.replace(/[?#].*$/, "");
   const m = /^\/orgs\/[^/]+(\/.*)?$/.exec(bare);
   if (!m) return true;
   const rest = (m[1] ?? "").replace(/\/+$/, "");
-  return matchKey(`/:slug${rest}`, GUEST_READS) !== null || matchKey(`/:slug${rest}/`, GUEST_READS) !== null;
+  const found = matchKey(`/:slug${rest}`, GUEST_READS) ?? matchKey(`/:slug${rest}/`, GUEST_READS);
+  if (!found) return false;
+  if (!shares) return true;
+  switch (found.entry.grant) {
+    case "pinned-view":
+      return shares.views.includes(found.params.id ?? "");
+    case "pinned-kind":
+      return shares.kinds.includes(found.params.kind ?? "");
+    default:
+      return true;
+  }
 }

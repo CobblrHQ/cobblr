@@ -114,6 +114,20 @@ export function quantitySuffix(
   return def.symbol;
 }
 
+/** Whether an amount kept in this unit may be a fraction: 0.25 kg, 1.5 m.
+ *  A counted unit (each, packs, a table's own "ball") takes whole numbers. A
+ *  unit typed before the vocabulary has loaded may be either, so it is let
+ *  through as measured: a fraction typed for a count is visible and fixed by
+ *  the person, while a measured 0.25 rounded to 1 takes four times the stock
+ *  without a word (#5962). */
+export function isMeasuredUnit(raw: string | null | undefined, units: PlatformUnitDef[]): boolean {
+  const q = (raw ?? "").trim().toLowerCase();
+  if (!q || q === "each") return false;
+  const def = resolveUnit(q, units);
+  if (def) return def.category !== "count";
+  return units.length === 0;
+}
+
 /** The workspace vocabulary as a consumption gauge reads it
  *  (@cobblr/platform-contract/consumption-gauge): which unit a string is,
  *  whether it is a measure, and conversion, all from this one catalog. */

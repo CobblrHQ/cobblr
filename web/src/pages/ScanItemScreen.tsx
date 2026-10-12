@@ -339,7 +339,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
                 >
                   {p.barcode.pending ? "Looking up…" : "Save & re-run"}
                 </button>
-                <button type="button" onClick={p.barcode.onCancel} aria-label="Cancel barcode edit" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-faint">
+                <button title="Cancel barcode edit" type="button" onClick={p.barcode.onCancel} aria-label="Cancel barcode edit" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-faint">
                   <X size={16} />
                 </button>
               </span>

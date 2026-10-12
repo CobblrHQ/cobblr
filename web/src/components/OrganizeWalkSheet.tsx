@@ -183,6 +183,7 @@ export function OrganizeWalkSheet({
           )}
         </div>
         <button
+          title="Close the walk"
           type="button"
           onClick={onClose}
           aria-label="Close the walk"

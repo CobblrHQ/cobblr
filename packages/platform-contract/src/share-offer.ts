@@ -1,3 +1,4 @@
+import type { TitleVariants } from "@cobblr/platform-contract/display-identity";
 import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 // Things handed over between the two sides of a share
 // (docs/design-decisions/share-spaces.md §6).
@@ -33,6 +34,10 @@ export interface OfferedThing {
   kind_words?: string | null;
   quantity?: number | null;
   notes?: string | null;
+  /** A titled work's other forms (original, translation, transliteration),
+   *  so the copy reads in each person's own title format as the source did
+   *  (#5958): kept under the same key on the arriving row and the record. */
+  title_variants?: TitleVariants | null;
   /** The collection it was kept in on the giver's side: its module and, for
    *  a collection of its own ("3d-printers"), the instance. The receiver files
    *  it where they keep the same collection, the most specific first (#4682);
@@ -79,6 +84,12 @@ export function readInboxOffer(metadata: unknown): InboxOfferMark | null {
   if (typeof o.offer_id !== "string" || typeof o.from !== "string") return null;
   const state = (OFFER_STATES as readonly string[]).includes(String(o.state)) ? (o.state as OfferState) : "offered";
   return { offer_id: o.offer_id, from: o.from, state, ...(o.own === true ? { own: true, needs: Array.isArray(o.needs) ? o.needs.filter((n): n is string => typeof n === "string") : [], mode: o.mode === "move" ? "move" : "copy" } : {}) };
+}
+
+/** A row that came from the person's own other workspace (a copy or move),
+ *  whose count files as it is, 0 included (filed-quantity.ts, #5959). */
+export function isOwnCopy(metadata: unknown): boolean {
+  return readInboxOffer(metadata)?.own === true;
 }
 
 /** What a giver's record carries while it is offered. */
@@ -154,14 +165,17 @@ export function mapOfferedFields(
     }
     const matches = fields.filter((f) => f.type !== "computed" && (fieldMap[label] ? f.name === fieldMap[label] : key(f.display_label || f.name) === key(label) || key(f.name) === key(label)));
     const f = matches.length === 1 ? matches[0] : undefined;
-    const fits = f && (f.type === "number" ? typeof value === "number" && Number.isFinite(value) : f.type === "boolean" ? typeof value === "boolean" : ["text", "textarea", "url", "select", "date", "datetime"].includes(f.type) ? typeof value === "string" || value instanceof Date : true);
+    // A stored number often arrives as text ("1.000": numeric columns are read
+    // as strings), and is still the number it says (#5933: Quantity never fit).
+    const asNumber = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+    const fits = f && (f.type === "number" ? Number.isFinite(asNumber) : f.type === "boolean" ? typeof value === "boolean" : ["text", "textarea", "url", "select", "date", "datetime"].includes(f.type) ? typeof value === "string" || value instanceof Date : true);
     const choiceFits = f?.type !== "select" || !f.choices?.length || (typeof value === "string" && f.choices.includes(value));
     if (!f || !fits || !choiceFits || used.has(f.name)) {
       out.missing.push(label);
       out.mappings.push({ from: label, to: null });
     } else {
       used.add(f.name);
-      out.values[f.name] = value;
+      out.values[f.name] = f.type === "number" ? asNumber : value;
       out.mappings.push({ from: label, to: f.display_label || f.name });
     }
   }

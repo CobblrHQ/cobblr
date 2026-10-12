@@ -21,6 +21,7 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { stockMoved } from "./stock-moved.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const allocationsRouter = Router({ mergeParams: true });
 
@@ -67,8 +68,8 @@ const AllocCreate = z.object({
   target_module: z.string().min(1).max(80),
   target_entity_type: z.string().min(1).max(80),
   target_entity_id: z.string().min(1).max(120),
-  reason: z.string().max(500).optional(),
-  target_line: z.string().min(1).max(120).optional(),
+  reason: optionalText(500),
+  target_line: optionalField(z.string().min(1).max(120)),
 });
 
 const StatusChange = z.object({
@@ -132,6 +133,8 @@ export async function reserveAllocation(
     action: "allocation_reserved",
     ref: { module: "inventory", entityType: "allocation", entityId: inserted.id },
     diff: {
+      // A reservation is of a part: every feed names and opens the part.
+      subject: { kind: "inventory:part", id: d.part_id },
       part_id: d.part_id,
       qty: d.qty,
       target: `${d.target_module}/${d.target_entity_type}/${d.target_entity_id}`,
@@ -280,7 +283,7 @@ export async function settleAllocation(
     userId,
     action,
     ref: { module: "inventory", entityType: "allocation", entityId: result.next.id },
-    diff: { part_id: result.partId, qty: result.qty },
+    diff: { subject: { kind: "inventory:part", id: result.partId }, part_id: result.partId, qty: result.qty },
   });
   platform().events.emit(status === "consumed" ? "inventory.allocation.consumed" : "inventory.allocation.released", {
     orgId,

@@ -4,13 +4,14 @@
 // not a count, so a record never says it has a Vault document to someone
 // who may not see it.
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "react-router-dom";
 import { Lock } from "lucide-react";
 import { useLater, useToast, type EntityDetailPanelCtx } from "@cobblr/platform-web";
 import { api } from "../../lib/api";
 
 export function RecordVaultDocuments({ ctx }: { ctx: EntityDetailPanelCtx }) {
+  const headingId = useId();
   const toast = useToast();
   const later = useLater();
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,8 +37,8 @@ export function RecordVaultDocuments({ ctx }: { ctx: EntityDetailPanelCtx }) {
     }
   };
   return (
-    <section className="rounded-xl border border-line bg-surface p-4 space-y-2" aria-labelledby="record-vault-documents">
-      <h2 id="record-vault-documents" className="text-sm font-semibold flex items-center gap-2">
+    <section className="rounded-xl border border-line bg-surface p-4 space-y-2" aria-labelledby={headingId}>
+      <h2 id={headingId} className="text-sm font-semibold flex items-center gap-2">
         <Lock size={14} className="text-accent" aria-hidden /> In the Vault
       </h2>
       <ul className="space-y-1">

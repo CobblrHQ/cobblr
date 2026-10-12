@@ -1,4 +1,4 @@
-import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, SegmentedChoice, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 // /configuration/maintenance — workspace-wide service log. The
 // core-maintenance module (foundational) attaches polymorphic
 // entries to any entity; the embedded UI on each entity's detail
@@ -74,31 +74,28 @@ export function MaintenancePage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1">
-          {(
+        <SegmentedChoice
+          label="Which upkeep to show"
+          value={kind}
+          onChange={setKind}
+          options={(
             [
               ["scheduled", "Scheduled", CalendarClock],
               ["history", "History", History],
               ["all", "All", Wrench],
             ] as const
-          ).map(([k, label, Icon]) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded transition ${
-                kind === k
-                  ? "bg-cobble-600 text-white"
-                  : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-              }`}
-              data-testid={`maint-tab-${k}`}
-            >
-              <Icon size={13} /> {label}
-            </button>
-          ))}
-        </div>
+          ).map(([k, label, Icon]) => ({
+            value: k,
+            testId: `maint-tab-${k}`,
+            label: (
+              <span className="inline-flex items-center gap-1.5">
+                <Icon size={13} aria-hidden /> {label}
+              </span>
+            ),
+          }))}
+        />
         {kind === "scheduled" && (
-          <select
+          <select aria-label="Due within"
             value={String(dueWithin)}
             onChange={(e) =>
               setDueWithin(
@@ -246,6 +243,7 @@ function MaintenanceCard({
             </button>
           )}
           <button
+            aria-label="Edit"
             onClick={onEdit}
             className="text-faint hover:text-accent transition p-1"
             title="Edit"
@@ -254,6 +252,7 @@ function MaintenanceCard({
             <Pencil size={14} />
           </button>
           <button
+            aria-label="Delete"
             onClick={onDelete}
             className="text-faint hover:text-ember-500 transition p-1"
             title="Delete"

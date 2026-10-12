@@ -25,10 +25,13 @@ import type { Insertable, Kysely, Transaction } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ADDED_BY_KEY, addedByFromRequest, type AddedBy } from "@cobblr/platform-contract/scan-source";
 import type { CoreScanDB, CoreScanInboxItemsTable } from "../db.js";
+import { mergeMeta } from "./metadata.js";
 import { classifyScanCode } from "./scan-router.js";
 import { enrichBarcodeItem } from "./enrich.js";
 import { refreshCatalogImageByName } from "./enrich-photo.js";
 import { identifyTypedIdentifier } from "./identify-identifier.js";
+import { findTracked } from "./entity-match.js";
+import { matchQuery, trackedMatchStamp } from "./tracked-stamp.js";
 
 export type RowShape =
   | "barcode"
@@ -246,12 +249,28 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
     },
     opts.door,
   );
-  const plan = intakePlan(shape, opts.add);
+  let plan = intakePlan(shape, opts.add);
+  // A code the workspace already holds is answered from its own records, at
+  // once: no catalog chain, no web, no AI (#6003). The scanner showed
+  // "Looking up..." for seconds on a tea box its owner already tracks, while
+  // the network named something his own record already names. Only a code
+  // nobody here holds goes out to look.
+  const held = shape === "barcode" && v.barcode_text ? await heldByCode(opts.orgId, v) : null;
+  if (held) plan = plan.filter((p) => p !== "identify-code");
   // Who added it, when it was not the person's own hand: the session's
   // header says so once ("Added by Claude", scan-source.ts).
   const addedBy = shape === "import" ? null : addedByFromRequest((await Promise.resolve(platform().auth?.requestSource?.()).catch(() => null)) ?? null);
-  const values: InsertValues =
+  const stamped: InsertValues =
     shape === "import" ? v : { ...v, suggested_metadata: stampShape(v.suggested_metadata, shape, addedBy) as never };
+  const values: InsertValues = held
+    ? {
+        ...stamped,
+        suggested_name: v.suggested_name ?? held.title,
+        ai_confidence: "1",
+        ai_suggested_at: new Date(),
+        suggested_metadata: JSON.stringify({ ...(JSON.parse(String(stamped.suggested_metadata ?? "{}")) as Record<string, unknown>), tracked_match: held.stamp, identified_by: "your_records" }) as never,
+      }
+    : stamped;
   const row = (await opts.db
     .insertInto("core_scan_inbox_items")
     .values(values)
@@ -268,7 +287,7 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
     });
   }
 
-  const ctx: PassContext = { ...opts, row, shape };
+  const ctx: PassContext = { ...opts, row, shape, held: !!held };
   let inline: IntakeResult["inline"] = "none";
   if (opts.settle) {
     await runPasses(ctx, plan);
@@ -294,6 +313,64 @@ interface PassContext extends IntakeOpts {
   /** The row is gone from the inbox (a pack split into its parts): the
    *  passes after this one have nothing to do. */
   done?: boolean;
+  /** Named from the workspace's own record at insert: no identify is coming,
+   *  so the match runs now rather than waiting for one. */
+  held?: boolean;
+}
+
+/** The mark a session-free check leaves. 2: the exact-title rule below; a
+ *  row marked `true` was checked under the looser one and is asked again. */
+export const OWN_MATCH_CHECKED = 2;
+
+const sameWords = (a: string | null | undefined, b: string | null | undefined): boolean => {
+  const n = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9.]+/g, " ").trim();
+  return !!n(a) && n(a) === n(b);
+};
+
+/** The workspace's own record for a row made with no session, stamped the
+ *  way the card reads a match. With no matchmaker to vouch for it, only the
+ *  sure answers count: the row's code, or a record named exactly as the row
+ *  is. One shared word is not a name here: a spool in "light apricot" was
+ *  stamped as the Apricot Jasmine Tea you have (#6004). Checked once; a
+ *  stamp an earlier, looser check wrote is taken back. A failed lookup is
+ *  logged and the row stays unmatched, filed as new only after a person
+ *  looks. */
+export async function stampOwnRecordMatch(db: Kysely<CoreScanDB>, orgId: string, id: string): Promise<boolean> {
+  const row = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirst();
+  if (!row || row.status !== "pending") return false;
+  try {
+    const found = await findTracked(orgId, matchQuery(row as never, null, null));
+    const named = found.name_matches.filter((m) => sameWords(m.title, row.suggested_name));
+    const stamp = trackedMatchStamp({ barcode_matches: found.barcode_matches, name_matches: named });
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: mergeMeta({ own_match_checked: OWN_MATCH_CHECKED, ...(stamp ? { tracked_match: stamp } : {}) }, stamp ? [] : ["tracked_match"]) as never })
+      .where("id", "=", id)
+      .execute();
+    return !!stamp;
+  } catch (err) {
+    console.error(`[core-scan] own-record match for ${id} failed:`, (err as Error).message);
+    return false;
+  }
+}
+
+/** The workspace's own record for this code, by its barcode or identifier
+ *  fields (local and indexed; never a name guess), stamped the way the card
+ *  reads a match. Null when nothing here holds it, or the lookup failed: a
+ *  failed lookup must fall through to the network, never block the scan. */
+async function heldByCode(orgId: string, v: InsertValues): Promise<{ title: string; stamp: ReturnType<typeof trackedMatchStamp> } | null> {
+  try {
+    // The row as it will be inserted, asked the one way every match is: with
+    // no name yet, only the code (and a part number the person gave) can match.
+    const row = { barcode_text: v.barcode_text ?? null, suggested_name: v.suggested_name ?? null, suggested_manufacturer: v.suggested_manufacturer ?? null, suggested_metadata: typeof v.suggested_metadata === "string" ? JSON.parse(v.suggested_metadata) : (v.suggested_metadata ?? null) };
+    const found = await findTracked(orgId, matchQuery(row as never, null, null));
+    if (!found.barcode_matches.length) return null;
+    const stamp = trackedMatchStamp({ barcode_matches: found.barcode_matches, name_matches: [] });
+    return { title: found.barcode_matches[0]!.title, stamp };
+  } catch (err) {
+    console.error("[core-scan] own-record lookup failed; asking the network:", (err as Error).message);
+    return null;
+  }
 }
 
 /** The passes in order, each awaited before the next, every one detached
@@ -334,14 +411,18 @@ async function runPass(ctx: PassContext, pass: IntakePass): Promise<void> {
       return;
     }
     case "match": {
-      if (!ctx.token) return;
+      // With no session (a boot heal's split, any background door) the
+      // matchmaker cannot run, but the workspace's own records can still be
+      // asked: a pack's white spool is the white spool you have (#6004).
+      if (!ctx.token) return void (await stampOwnRecordMatch(ctx.db as Kysely<CoreScanDB>, ctx.orgId, ctx.row.id));
       const r = matchRunners();
       // A shape whose identify lands later and out of band (the barcode race
       // past its budget, the photo wire) is matched once it has a name; a
       // shape whose name is on the row already is matched now.
       // A settled plan has already awaited its identify, so a barcode or a
       // url is matched now; only a photo's identify is still out on the wire.
-      if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token, settle: true });
+      if (ctx.held) await r.match({ ...common, token: ctx.token, ...(ctx.settle ? { settle: true } : {}) });
+      else if (ctx.settle && ctx.shape !== "photo") await r.match({ ...common, token: ctx.token, settle: true });
       else if (ctx.shape === "barcode" || ctx.shape === "url" || ctx.shape === "photo") r.matchWhenEnriched({ ...common, token: ctx.token });
       else await r.match({ ...common, token: ctx.token });
       return;

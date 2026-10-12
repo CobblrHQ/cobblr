@@ -65,7 +65,7 @@ export function ConfigPageHeader() {
   const Icon = here.icon;
   return (
     <header className="mb-5">
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <Icon size={22} className="mt-0.5 shrink-0 text-accent dark:text-cobble-300" aria-hidden />
         <div className="min-w-0 flex-1">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
@@ -74,7 +74,10 @@ export function ConfigPageHeader() {
           <p className="page-subtitle mt-0.5">{here.description}</p>
         </div>
         {ctx?.actions ? (
-          <div className="shrink-0 flex items-center gap-2">{ctx.actions}</div>
+          // On a phone a page's actions take their own row under the title and
+          // wrap there; beside it, a count and two buttons ran the page wider
+          // than the screen.
+          <div className="flex flex-wrap items-center gap-2 max-md:w-full md:shrink-0" data-testid="config-header-actions">{ctx.actions}</div>
         ) : null}
       </div>
     </header>

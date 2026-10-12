@@ -7,6 +7,7 @@ import { EntityPhoto } from "@cobblr/platform-web";
 // same words. Before, the dashboard spoke and the Activity page showed
 // "tag_created tag:277fddb0" over a raw JSON diff; the ids and the diff are
 // still on the page, one tap down, for whoever needs them.
+import { SubjectLink } from "./SubjectLink";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -57,7 +58,7 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
   const href = !auto && e.entity_kind && e.entity_id ? routeFor(e.entity_kind, e.entity_id) : null;
   if (e.summary && e.subject) return (
     <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
-      <Link to={e.subject.href} className="hover:underline" data-testid="activity-item-link">{e.summary}</Link>
+      <SubjectLink href={e.subject.href} className="hover:underline" testId="activity-item-link">{e.summary}</SubjectLink>
       {(e.repeats ?? 1) > 1 && <span> ×{e.repeats}</span>}
     </span>
   );

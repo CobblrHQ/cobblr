@@ -15,7 +15,7 @@ export default defineModule({
   name: "core-documents",
   aliases: ["core-library"],
   maturity: "beta",
-  version: "0.2.4",
+  version: "0.2.8",
   displayName: "Libraries",
   description:
     "The things you keep in other apps, like receipts and manuals in Paperless-ngx or games in RomM, matched to the records they belong to and linked where you can open them.",
@@ -40,6 +40,8 @@ export default defineModule({
       registerCopyCompletion();
       const { registerLibraryPairingPresentationHeal } = await import("./heal-pairing-presentations.js");
       registerLibraryPairingPresentationHeal();
+      const { registerCopiesOnTheirRecordsHeal } = await import("./heal-copies-on-their-records.js");
+      registerCopiesOnTheirRecordsHeal();
     },
   },
 
@@ -103,7 +105,7 @@ export default defineModule({
         runBy: "member",
         examples: ["keep a copy of the manual in Cobblr"],
         label: "Bring a copy into Cobblr",
-        description: "Copy a library item's file into Cobblr, attached to this record, so it is in Cobblr's backup too. Only a library that offers library.copy can. Pass `connection_id` and `ref`.",
+        description: "Copy a library item's file into Cobblr, attached to this record, so it is in Cobblr's backup too. Only a library that offers library.copy can. Pass `connection_id` and `ref`. A personal document (a bill of sale, a registration) is refused from shared Files: pass `to: \"vault\"` to keep it in the person's own Vault, linked to this record, instead.",
         icon: "download",
         // DELIBERATELY universal: a file can be attached to any record.
         appliesTo: { any: true },
@@ -112,6 +114,7 @@ export default defineModule({
         argsSchema: {
           connection_id: { label: "The library's connection id", type: "text", required: true },
           ref: { label: "The item's ref", type: "text", required: true },
+          to: { label: "Where to keep it: files (shared) or vault (the person's own, for a personal document)", type: "text" },
         },
         userInvokable: false,
       },

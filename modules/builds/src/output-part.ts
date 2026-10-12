@@ -1,11 +1,15 @@
 // The part a build makes, by name. A build with no output part consumes its
 // components and adds nothing to stock, so the product a shop makes never
 // becomes stock it can sell. When the person names what the build makes (by
-// default, the build's own name), the build links the inventory part with
-// that name, or makes one with nothing in stock yet. Through the platform's
-// entity seams only: builds never reads inventory's tables.
+// default, the build's own name), the build links the stocked record with
+// that name in whichever collection holds it, or makes one with nothing in
+// stock yet. Through the platform's entity seams only: builds never reads
+// inventory's tables. It once looked in the default collection alone, so a
+// record kept in Home Inventory was "used" by making a second one (#5892).
 
 import { platform } from "@cobblr/platform-contract";
+import { collectionsSentence } from "@cobblr/platform-contract/stock-search";
+import { componentsNamed } from "./component-search.js";
 
 const PART = "inventory:part";
 
@@ -23,9 +27,9 @@ export async function resolveOutputPart(orgId: string, name: string): Promise<Ou
   if (!(await platform().entities.listable(orgId, PART))) return off;
   const writer = await platform().entities.getWriter(orgId, PART);
   if (!writer) return off;
-  const found = await platform().entities.list(orgId, PART, { q: wanted, limit: 50 });
-  const same = found.items.find((p) => String(p.title ?? "").trim().toLowerCase() === wanted.toLowerCase());
-  if (same) return { ok: true, partId: same.id, created: false };
+  const same = await componentsNamed(orgId, wanted);
+  if (same.length === 1) return { ok: true, partId: same[0]!.id, created: false };
+  if (same.length > 1) return { ok: false, reason: `${same.length} records are named ${wanted}, in ${collectionsSentence(same)}. Pick the one this build makes.` };
   const id = await writer.create(orgId, { name: wanted, qty: 0 });
   return { ok: true, partId: id, created: true };
 }

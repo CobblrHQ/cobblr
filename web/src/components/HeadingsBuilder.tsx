@@ -176,6 +176,7 @@ export function HeadingsBuilder() {
               </span>
               <div className="flex-1" />
               <button
+                aria-label="Delete heading"
                 onClick={async () => {
                   const ok = await confirm({
                     title: `Delete "${h.name}"?`,
@@ -201,6 +202,7 @@ export function HeadingsBuilder() {
                 >
                   {labelFor(m.target_kind, m.target_id)}
                   <button
+                    aria-label="Remove from heading"
                     onClick={() =>
                       removeMember.mutate({
                         target_kind: m.target_kind,

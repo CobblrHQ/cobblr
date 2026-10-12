@@ -272,6 +272,7 @@ function PresentationRow({
       {!hidden && <Eye size={14} className="text-faint" />}
       {onFields && (
         <button
+          aria-label="Fields - relabel / show-hide this thing's fields"
           type="button"
           onClick={onFields}
           title="Fields - relabel / show-hide this thing's fields"
@@ -281,6 +282,7 @@ function PresentationRow({
         </button>
       )}
       <button
+        aria-label="Edit"
         type="button"
         onClick={onEdit}
         title="Edit"
@@ -290,6 +292,7 @@ function PresentationRow({
       </button>
       {o && (
         <button
+          aria-label="Reset to manifest default"
           type="button"
           onClick={onReset}
           title="Reset to manifest default"
@@ -991,6 +994,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 className="flex-1 px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               />
               <button
+                aria-label={hidden ? "Show on the form" : "Hide from the form"}
                 type="button"
                 title={hidden ? "Show on the form" : "Hide from the form"}
                 onClick={() => save.mutate({ name: f.name, display_label: o?.display_label ?? null, hidden: !hidden })}
@@ -999,7 +1003,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
                 {hidden ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
               {o && (
-                <button type="button" title="Reset to default" onClick={() => reset.mutate(f.name)} className="text-faint hover:text-ember-500 p-1">
+                <button aria-label="Reset to default" type="button" title="Reset to default" onClick={() => reset.mutate(f.name)} className="text-faint hover:text-ember-500 p-1">
                   <RotateCcw size={13} />
                 </button>
               )}

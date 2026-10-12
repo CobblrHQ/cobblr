@@ -18,8 +18,21 @@ export interface ActivityChange {
   to: unknown;
 }
 
-/** Bookkeeping that is not a change anyone made. */
-const NOT_A_CHANGE = new Set(["updated_at", "created_at", "id", "org_id", "instance", "metadata", "fields", "search_vector"]);
+/** The one rule for what is not a person's field (#5863): bookkeeping, and
+ *  columns the database or a heal pass works out from the fields a person did
+ *  change (a search text, a hash of the text, the readings taken from it).
+ *  None is a change anyone made, so a record's History, the activity feed's
+ *  sentences and Cobb's read of the log never name one. DERIVED_FIELDS are
+ *  the worked-out half; a column Postgres generates is held to it by
+ *  lint:history-hides-derived-columns. */
+export const DERIVED_FIELDS: ReadonlySet<string> = new Set(["search_vector", "search_blob", "measures", "measures_key", "measures_for", "stock_revision"]);
+export const INTERNAL_FIELDS: ReadonlySet<string> = new Set([
+  "updated_at", "created_at", "id", "org_id", "instance", "metadata", "fields",
+  ...DERIVED_FIELDS,
+]);
+
+/** True for a field no person sees or edits as such (INTERNAL_FIELDS). */
+export const isInternalField = (field: string): boolean => INTERNAL_FIELDS.has(field);
 
 const bagOf = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 
@@ -43,7 +56,7 @@ export function changesOf(before: unknown, patch: unknown): ActivityChange[] {
   const now = bagOf(patch);
   const out: ActivityChange[] = [];
   for (const [field, to] of Object.entries(now)) {
-    if (to === undefined || NOT_A_CHANGE.has(field)) continue;
+    if (to === undefined || isInternalField(field)) continue;
     if (!same(was[field], to)) out.push({ field, from: plain(was[field]), to: plain(to) });
   }
   const wasBag = bagOf(was.metadata);
@@ -56,8 +69,10 @@ export function changesOf(before: unknown, patch: unknown): ActivityChange[] {
   return out;
 }
 
-/** An activity row's changes, when it has them (older rows do not). */
+/** An activity row's changes, when it has them (older rows do not). A row
+ *  logged before the rule kept its derived columns; they are left out here,
+ *  so no reader ever sees them. */
 export function changesIn(diff: unknown): ActivityChange[] | null {
   const c = bagOf(diff).changes;
-  return Array.isArray(c) ? (c as ActivityChange[]) : null;
+  return Array.isArray(c) ? (c as ActivityChange[]).filter((x) => x.custom || !isInternalField(x.field)) : null;
 }

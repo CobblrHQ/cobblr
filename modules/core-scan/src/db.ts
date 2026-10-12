@@ -304,6 +304,18 @@ export interface CoreScanDB {
   core_scan_station_moves: CoreScanStationMovesTable;
   core_scan_station_scans: CoreScanStationScansTable;
   core_scan_station_actions: CoreScanStationActionsTable;
+  core_scan_model_facts: CoreScanModelFactsTable;
+}
+
+/** What the workspace learned about a model (#6013, migrations/0043). */
+export interface CoreScanModelFactsTable {
+  kind: string;
+  model_key: string;
+  field: string;
+  value: ColumnType<unknown, string, string>;
+  source: string;
+  from_item_id: string | null;
+  updated_at: ColumnType<Date, Date | undefined, Date | undefined>;
 }
 
 /** A Station's settings (#4640, migrations/0037). */

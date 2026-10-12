@@ -1,3 +1,4 @@
+import { renewalDocumentTypeIn } from "@cobblr/platform-contract/renewal-document-types";
 import { looksLikeBillOfSale } from "./bill-of-sale.js";
 import sharp from "sharp";
 import { inflateSync } from "node:zlib";
@@ -10,13 +11,15 @@ import { platform } from "@cobblr/platform-contract";
 import { mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DocumentInput, PersonalDocumentField, PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
+import { FIELDS_FOR_KIND, type DocumentInput, type PersonalDocumentField, type PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import { checkDigitValid, repairVin } from "./vin-decode.js";
 import { ocrImageText } from "./ocr.js";
 import { parseCsvReceipt, parseCsvRows } from "./receipt-deterministic.js";
 
 const run = promisify(execFile);
-const FIELDS: PersonalDocumentField[] = ["vin", "plate", "expires", "amount", "reference"];
+/** The label an AI is asked to answer each field under: the ones
+ *  extractPersonalFields reads back. */
+const ANSWER_LABEL: Record<PersonalDocumentField, string> = { vin: "VIN", plate: "Plate", expires: "Expires", amount: "Fee", reference: "Confirmation", make: "Make", model: "Model", year: "Year" };
 const PERSONAL = /\b(registration|renewal|vin|plate|vehicle|bill of sale|certificate of title|odometer|licen[cs]e|passport|social security|ssn|policy number|insurance|medical|patient|tax return|tax form|form w-?2|form 1040|bank statement|account statement|account number|routing number|iban|swift code|diagnosis|prescription|identity|id card|driver information|driver record|date of birth)\b|\b\d{3}-\d{2}-\d{4}\b/i;
 const ORDINARY = /\b(receipt|subtotal|sales tax|product|ingredients|nutrition|yarn|cotton|polyester|wool|barcode|isbn|manual|knit(?:ting)?|crochet|sewing|pattern|stitch|upc|ean)\b/i;
 function manufacturingTable(text: string, header: string): boolean {
@@ -90,6 +93,10 @@ function day(raw: string): string | null {
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d
     ? `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}` : null;
 }
+/** A labelled value up to the next label printed on the same row. */
+function untilNextLabel(raw: string | undefined): string | undefined {
+  return raw?.split(/\s+(?=[A-Za-z][A-Za-z .#/'-]{0,30}?:)/)[0]?.trim();
+}
 export function extractPersonalFields(text: string): PersonalDocumentRead["fields"] {
   const out: PersonalDocumentRead["fields"] = {};
   const labelledVins = [...text.toUpperCase().matchAll(/\b(?:VIN|VEHICLE IDENTIFICATION NUMBER)(?:[ \t]+(?:NUMBER|NO\.?|#))?[ \t]*[:#-]?[ \t]*([A-Z0-9][A-Z0-9 \t-]{15,30})\b/g)]
@@ -106,7 +113,9 @@ export function extractPersonalFields(text: string): PersonalDocumentRead["field
   const reference = /\b(?:confirmation|reference)(?:\s+(?:number|no\.?|#))?\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,39})\b/i.exec(text);
   if (reference) out.reference = reference[1]!;
   for (const key of ["make", "model", "year"] as const) {
-    const value = new RegExp(`\\b${key}\\s*:\\s*([^\\n\\r]+)`, "i").exec(text)?.[1]?.trim();
+    // A form prints several labels on one row ("Year: 2021   Make: Toyota
+    // Model: Tacoma"): a value ends where the next "Label:" begins (#5838).
+    const value = untilNextLabel(new RegExp(`\\b${key}\\s*:\\s*([^\\n\\r]+)`, "i").exec(text)?.[1]);
     if (value && (key !== "year" || /^\d{4}$/.test(value))) out[key] = value;
   }
   return out;
@@ -388,13 +397,17 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   const fields = privacy === "personal" ? extractPersonalFields(text) : {};
   const sources: PersonalDocumentRead["sources"] = Object.fromEntries(Object.keys(fields).map((key) => [key, "code"]));
   let sentTo: string | null = null;
-  if (privacy === "personal" && input.assist && FIELDS.some((field) => !fields[field])) {
-    const missing = FIELDS.filter((field) => !fields[field]);
+  const kind: PersonalDocumentRead["kind"] = privacy === "normal" ? "ordinary" : looksLikeBillOfSale(text) ? "bill-of-sale" : /registration/i.test(text) ? "registration" : "personal";
+  // Only what this kind of paper carries can be missing, or be asked of an
+  // AI: a bill of sale has no plate to check (#5839).
+  const wanted = FIELDS_FOR_KIND[kind];
+  if (privacy === "personal" && input.assist && wanted.some((field) => !fields[field])) {
+    const missing = wanted.filter((field) => !fields[field]);
     try {
       // FREE-TEXT: labelled lines (VIN:, Plate:), read by extractPersonalFields
       const answer = await platform().ai.invoke({ orgId: input.assist.orgId, userId: input.assist.userId,
         privacy: "personal", capability: "personal-document-read", input: {
-          prompt: `Copy only these missing fields as printed: ${missing.join(", ")}. Reply as labelled lines (VIN:, Plate:, Expires:, Fee:, Confirmation:). Do not guess.\n${text}`,
+          prompt: `Copy only these missing fields as printed: ${missing.join(", ")}. Reply as labelled lines (${missing.map((field) => `${ANSWER_LABEL[field]}:`).join(", ")}). Do not guess.\n${text}`,
           ...(firstPage ? { image_b64: Buffer.from(firstPage).toString("base64"), image_media_type: "image/png" } : input.mime.startsWith("image/") ? { image_b64: Buffer.from(input.bytes).toString("base64"), image_media_type: input.mime } : {}),
         } });
       const filled = extractPersonalFields(answer.text);
@@ -408,8 +421,15 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
       for (const field of missing) if (filled[field]) { fields[field] = filled[field]; sources[field] = cloud ? "cloud-ai" : "local-ai"; }
     } catch (error) { needsLocalConnection = refusalCodeOf(error) === "no_provider"; }
   }
-  const missing = FIELDS.filter((field) => !fields[field]);
-  return { privacy, kind: privacy === "normal" ? "ordinary" : looksLikeBillOfSale(text) ? "bill-of-sale" : /registration/i.test(text) ? "registration" : "personal", fields,
+  const missing = wanted.filter((field) => !fields[field]);
+  // A bill of sale shows only what a sale carries: its "Fee:" is a
+  // documentary fee, not the price, which the purchase filing reads line by
+  // line (the review's sale showed "Amount 80.00").
+  if (kind === "bill-of-sale") {
+    for (const key of Object.keys(fields) as PersonalDocumentField[]) if (!wanted.includes(key)) { delete fields[key]; delete sources[key]; }
+  }
+  return { privacy, kind, fields,
+    ...(privacy === "personal" && renewalDocumentTypeIn(text) ? { renewalType: renewalDocumentTypeIn(text)!.id } : {}),
     sources, missing,
     message: privacy === "normal" ? "This is an ordinary document." : missing.length
       ? `${readWhere(sentTo)} Please check ${missing.join(", ")}; they could not be read.${needsLocalConnection ? " Connect a local AI in Configuration, AI to help with the missing fields." : ""}${sentNote(sentTo)}`

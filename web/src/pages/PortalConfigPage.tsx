@@ -260,6 +260,8 @@ export function PortalConfigPage() {
               <button
                 type="button"
                 onClick={() => move(v.id, -1)}
+                aria-label={`Move ${v.name} up`}
+                title={`Move ${v.name} up`}
                 disabled={i === 0}
                 className="text-faint hover:text-accent transition p-1 disabled:opacity-30"
               >
@@ -268,12 +270,15 @@ export function PortalConfigPage() {
               <button
                 type="button"
                 onClick={() => move(v.id, 1)}
+                aria-label={`Move ${v.name} down`}
+                title={`Move ${v.name} down`}
                 disabled={i === pinnedViews.length - 1}
                 className="text-faint hover:text-accent transition p-1 disabled:opacity-30"
               >
                 <ChevronDown size={12} />
               </button>
               <button
+                aria-label="Unpin"
                 type="button"
                 onClick={() => setPinnedIds((p) => p.filter((x) => x !== v.id))}
                 className="text-faint hover:text-ember-500 transition p-1"

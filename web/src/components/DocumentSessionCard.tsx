@@ -61,7 +61,8 @@ export function DocumentSessionCard({
         <button
           type="button"
           onClick={() => onOpen(fileId)}
-          title={name}
+          title={`Open ${name}`}
+          aria-label={`Open ${name}`}
           className="block h-20 w-16 shrink-0 overflow-hidden rounded border border-line dark:border-slate-700 bg-mortar-50/60 dark:bg-slate-800"
         >
           {/* photo-frame: the receipt photo a session was read from, shown whole */}
@@ -97,17 +98,22 @@ export function DocumentSessionCard({
 
 /** The document as a chip in the session's header: a tiny first page for a
  *  PDF or a photo, a page icon otherwise, and what it is with its lines. The
- *  words stand down on a phone; the picture is still the tap. */
+ *  words stand down on a phone; the picture is still the tap, and the chip's
+ *  pill goes with the words: in dark mode its fill outranked the phone's
+ *  "transparent" and drew a 44 px disc behind a 12 px icon (#6095). */
 export function SessionDocumentChip({
   slug,
   fileId,
   name,
   words,
   onOpen,
+  phoneHidden,
 }: {
   slug: string;
   fileId: string;
   name: string;
+  /** Off a phone's strip where the session's ... carries it instead (#5931). */
+  phoneHidden?: boolean;
   /** "eBay email · 1 line" (documentChipWords). */
   words: string;
   onOpen: (fileId: string) => void;
@@ -126,7 +132,7 @@ export function SessionDocumentChip({
       }}
       title={`Open ${name}`}
       aria-label={`Open ${name}`}
-      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-muted hover:text-accent hover:border-accent transition max-sm:border-0 max-sm:bg-transparent max-sm:px-0.5"
+      className={`${phoneHidden ? "max-sm:hidden " : ""}inline-flex shrink-0 items-center gap-1 rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-1.5 py-0.5 text-muted hover:text-accent hover:border-accent transition max-sm:!border-0 max-sm:!bg-transparent max-sm:px-0.5`}
     >
       {isPhoto && photo ? (
         // photo-frame: the receipt photo the session was read from, tiny
@@ -156,6 +162,7 @@ export function SessionAddedByChip({ by, words, open, onToggle }: { by: AddedBy;
         onToggle();
       }}
       aria-expanded={open}
+      aria-label={words}
       title={words}
       className="inline-flex min-w-0 shrink-[100000] items-center gap-1 text-cobble-700 dark:text-cobble-300 hover:text-accent transition"
     >

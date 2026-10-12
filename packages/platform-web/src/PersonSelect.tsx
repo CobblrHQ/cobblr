@@ -44,10 +44,13 @@ export function usePersonName(value: unknown, enabled: boolean): string | null {
 export function PersonSelect({
   value,
   onChange,
+  label,
   className,
 }: {
   value: unknown;
   onChange: (v: string | null) => void;
+  /** The field's name, for a screen reader and voice control (#5912). */
+  label: string;
   className?: string;
 }) {
   const { api, orgSlug } = usePlatformWeb();
@@ -123,6 +126,7 @@ export function PersonSelect({
   const known = items.some((p) => p.id === current);
   return (
     <select
+      aria-label={label}
       value={current}
       onChange={(e) => {
         if (e.target.value === ADD) {

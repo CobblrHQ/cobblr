@@ -32,9 +32,9 @@ const CreateBody = z.object({
   icon: z.string().max(80).nullable().optional(),
 });
 const UpdateBody = z.object({
-  name: z.string().min(1).max(80).optional(),
+  name: z.string().min(1).max(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   icon: z.string().max(80).nullable().optional(),
-  position: z.number().int().optional(),
+  position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 const MemberBody = z.object({
   target_kind: z.enum(["module", "instance"]),

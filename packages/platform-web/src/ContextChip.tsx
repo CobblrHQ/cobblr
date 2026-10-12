@@ -36,7 +36,7 @@ export function ContextChip({
             type="button"
             onClick={onRemove}
             className="shrink-0 opacity-60 hover:opacity-100"
-            title="Don't include this"
+            title="Remove: don't include this"
             aria-label="Remove from context"
           >
             <X className="w-3 h-3" />

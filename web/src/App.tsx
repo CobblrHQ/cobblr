@@ -59,7 +59,7 @@ const BringPage = lazy(() => import("./pages/BringPage").then((m) => ({ default:
 const EndingPreview = lazy(() => import("./pages/EndingPreview").then((m) => ({ default: m.EndingPreview })));
 import { useSandboxEnded } from "./lib/sandbox-session";
 const StartAppPage = lazy(() => import("./pages/StartAppPage").then((m) => ({ default: m.StartAppPage })));
-import { FeedbackWidget } from "./components/FeedbackWidget";
+const FeedbackWidget = lazy(() => import("./components/FeedbackWidget").then((m) => ({ default: m.FeedbackWidget })));
 const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
 const InviteAcceptPage = lazy(() => import("./pages/InviteAcceptPage").then((m) => ({ default: m.InviteAcceptPage })));
 const JoinPage = lazy(() => import("./pages/JoinPage").then((m) => ({ default: m.JoinPage })));
@@ -680,7 +680,7 @@ function ActiveOrgScopedRoutes() {
       <InstalledRenderers />
       {/* Always-on feedback button for every signed-in user — except the
           operator console, where the operator IS the recipient. */}
-      {!onAdmin && !fullSide && <FeedbackWidget />}
+      {!onAdmin && !fullSide && <Suspense fallback={null}><FeedbackWidget /></Suspense>}
       {/* The strip that says what kind of workspace this is: a sandbox's
           countdown and Keep button, a trial's "yours until", nothing at all
           for a kept or self-hosted one.

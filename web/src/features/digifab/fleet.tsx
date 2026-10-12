@@ -37,7 +37,7 @@ import { HomeNetworkHint } from "../../components/HomeNetworkHint";
 import { useHosted } from "../../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
-import { useLater, Lightbox, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput, NumberField } from "@cobblr/platform-web";
+import { useLater, Lightbox, SegmentedChoice, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput, NumberField } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
 import { capitalise, machineWords, type MachineWords } from "../../lib/machine-words";
@@ -394,7 +394,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
                 <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{i === 0 ? "First machine" : `Machine ${i + 1}`}</span>
                 <div className="flex-1" />
                 {machines.length > 1 && (
-                  <button type="button" onClick={() => setMachines((ms) => ms.filter((x) => x.key !== m.key))} title="Remove machine" className="text-faint hover:text-ember-500 transition">
+                  <button aria-label="Remove machine" type="button" onClick={() => setMachines((ms) => ms.filter((x) => x.key !== m.key))} title="Remove machine" className="text-faint hover:text-ember-500 transition">
                     <Trash2 size={13} />
                   </button>
                 )}
@@ -908,26 +908,22 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
       <div className="flex items-center gap-2 flex-wrap">
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Fleet</h2>
         {/* Operator buckets — clickable filters, Bambu-style ("what do I do?"). */}
-        <div className="flex items-center gap-1">
-          {chips.map((c) => (
-            (c.n > 0 || c.key === "all") && (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => setBucket(c.key)}
-                className={
-                  "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] transition " +
-                  (bucket === c.key
-                    ? "bg-cobble-600 text-white"
-                    : "border border-line dark:border-slate-600 text-muted hover:border-accent hover:text-accent")
-                }
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
-                {c.label} {c.n}
-              </button>
-            )
-          ))}
-        </div>
+        <SegmentedChoice
+          label="Which machines"
+          value={bucket}
+          onChange={setBucket}
+          options={chips
+            .filter((c) => c.n > 0 || c.key === "all")
+            .map((c) => ({
+              value: c.key,
+              label: (
+                <span className="inline-flex items-center gap-1.5">
+                  <span aria-hidden className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
+                  {c.label} {c.n}
+                </span>
+              ),
+            }))}
+        />
         <div className="flex-1" />
         <button
           type="button"
@@ -937,19 +933,16 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
         >
           {selecting ? "Done" : "Select"}
         </button>
-        <div className="inline-flex rounded border border-line dark:border-slate-600 overflow-hidden">
-          {([["cards", "Cards"], ["dense", "Compact"], ["cams", "Cameras"]] as const).map(([m, label]) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => pickMode(m)}
-              className={"text-[11px] px-2 py-0.5 transition " + (mode === m ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}
-              title={m === "cams" ? "Webcam wall: every machine's camera" : m === "dense" ? "Compact cards (fit more machines)" : "Full cards"}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <SegmentedChoice
+          label="How to show the fleet"
+          value={mode}
+          onChange={pickMode}
+          options={[
+            { value: "cards", label: "Cards" },
+            { value: "dense", label: "Compact" },
+            { value: "cams", label: "Cameras" },
+          ]}
+        />
         {fleet.isFetching && <RefreshCw size={13} className="animate-spin text-faint" />}
       </div>
       {(() => {
@@ -1449,7 +1442,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
             ) : null}
           </div>
           <div className="px-2 py-1.5 flex items-center gap-2">
-            {selecting && <input type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
+            {selecting && <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
             <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
             <span className="text-xs font-medium text-content dark:text-mortar-100 truncate">{title ?? d.name}</span>
             <span className="flex-1" />
@@ -1471,7 +1464,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
         <div className="p-1.5">
           <div className="flex items-center gap-1">
-            {selecting && <input type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
+            {selecting && <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${st.dot}`} />
             <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-[11px] font-medium text-content dark:text-mortar-100 truncate hover:text-accent text-left flex-1 min-w-0" title={title ?? d.name}>
               {title ?? d.name}
@@ -1501,7 +1494,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       <div className="p-2.5">
       {selecting && (
         <div className="flex items-center gap-1.5 mb-1">
-          <input type="checkbox" checked={!!selected} readOnly />
+          <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly />
           <span className="text-[10px] text-faint">select</span>
         </div>
       )}
@@ -1533,6 +1526,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 break-words whitespace-normal leading-snug hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
         <div className="flex-1" />
         <button
+          aria-label={d.camera_url ? "Edit camera URL" : "Add a camera URL"}
           onClick={() => { setCamUrl(d.camera_url ?? ""); setCamOpen((o) => !o); }}
           title={d.camera_url ? "Edit camera URL" : "Add a camera URL"}
           className={`p-0.5 transition ${d.camera_url ? "text-accent" : "text-faint hover:text-accent"}`}
@@ -1611,7 +1605,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
             className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
           <button onClick={() => camera.mutate(camUrl.trim() || null)} disabled={camera.isPending} className="text-[11px] rounded bg-cobble-600 hover:bg-cobble-700 text-white px-1.5 py-0.5 disabled:opacity-50">Save</button>
-          {d.camera_url && <button onClick={() => camera.mutate(null)} disabled={camera.isPending} title="Remove" className="text-faint hover:text-ember-500 p-0.5"><X size={12} /></button>}
+          {d.camera_url && <button aria-label="Remove" onClick={() => camera.mutate(null)} disabled={camera.isPending} title="Remove" className="text-faint hover:text-ember-500 p-0.5"><X size={12} /></button>}
         </div>
       )}
       {camOpen && (
@@ -1717,17 +1711,18 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
             )}
             {/* Cockpit live-control: pause / resume the running print. */}
             {!laser && job.status === "printing" && (
-              <button onClick={() => ctrl.mutate("pause")} disabled={ctrl.isPending} title="Pause print" className="text-faint hover:text-accent transition p-0.5 disabled:opacity-50">
+              <button aria-label="Pause print" onClick={() => ctrl.mutate("pause")} disabled={ctrl.isPending} title="Pause print" className="text-faint hover:text-accent transition p-0.5 disabled:opacity-50">
                 <Pause size={13} />
               </button>
             )}
             {!laser && job.status === "paused" && (
-              <button onClick={() => ctrl.mutate("resume")} disabled={ctrl.isPending} title="Resume print" className="text-amber-600 hover:text-amber-700 transition p-0.5 disabled:opacity-50">
+              <button aria-label="Resume print" onClick={() => ctrl.mutate("resume")} disabled={ctrl.isPending} title="Resume print" className="text-amber-600 hover:text-amber-700 transition p-0.5 disabled:opacity-50">
                 <Play size={13} />
               </button>
             )}
             {!laser && (job.status === "printing" || job.status === "paused" || job.status === "sent") && (
               <button
+                aria-label="Stop print"
                 onClick={async () => {
                   if (await confirmStop({ title: `Stop the print on ${d.name}?`, message: "Cancels the job. Where the manager supports it the printer aborts; otherwise stop it at the machine.", confirmLabel: "Stop print", destructive: true })) stop.mutate();
                 }}
@@ -1846,19 +1841,13 @@ function JogPad({
       {/* Step selector */}
       <div className="flex flex-col gap-1">
         <span className="text-[9px] font-mono uppercase text-faint">Step</span>
-        {steps.map((sMm) => (
-          <button
-            key={sMm}
-            type="button"
-            onClick={() => onStep(sMm)}
-            className={
-              "px-2 py-1 rounded text-xs border transition " +
-              (step === sMm ? "bg-cobble-600 text-white border-cobble-600" : "border-line dark:border-slate-600 text-muted hover:border-accent")
-            }
-          >
-            {sMm}mm
-          </button>
-        ))}
+        <SegmentedChoice
+          stack
+          label="Step"
+          value={String(step)}
+          onChange={(v) => onStep(Number(v))}
+          options={steps.map((sMm) => ({ value: String(sMm), label: `${sMm}mm` }))}
+        />
       </div>
     </div>
   );
@@ -2084,7 +2073,7 @@ function FileRow({
       <div className="flex items-center gap-2">
         <div className="w-10 h-10 shrink-0 rounded border border-line dark:border-slate-700 overflow-hidden">
           {/* EXTERNAL-IMAGE-OK: a gcode-embedded thumbnail (data: URI) or the vendor cover URL. */}
-          <button type="button" className="block cursor-zoom-in" disabled={!thumb} onClick={() => thumb && onZoom?.(thumb)}>
+          <button type="button" className="block cursor-zoom-in" disabled={!thumb} onClick={() => thumb && onZoom?.(thumb)} aria-label={`Zoom ${niceTitle ?? file.name}`} title={`Zoom ${niceTitle ?? file.name}`}>
             <EntityPhoto src={thumb} alt="" size={40} fit="contain" placeholder={<span className="text-faint text-[9px]">{visible && fq.isFetching ? "…" : ""}</span>} />
           </button>
         </div>
@@ -2595,7 +2584,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
                   {detail.data?.lan?.camera ? (
                     <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
                   ) : (
-                    <button type="button" className="block w-full cursor-zoom-in" onClick={() => setLightbox(machineImg!)}>
+                    <button type="button" className="block w-full cursor-zoom-in" onClick={() => setLightbox(machineImg!)} aria-label={`Zoom ${device.name}`} title={`Zoom ${device.name}`}>
                       <EntityPhoto src={machineImg} alt={device.name} aspect="16/9" className="rounded-lg border border-line dark:border-slate-700" />
                     </button>
                   )}

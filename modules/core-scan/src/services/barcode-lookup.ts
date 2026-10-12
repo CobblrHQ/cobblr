@@ -612,26 +612,14 @@ export async function tryBidb(upc: string): Promise<ProviderResult> {
  */
 export { gtinChecksumOk, isbn10ChecksumOk };
 
-/** GS1 restricted-circulation numbers: EAN-13 prefixes 02, 04 and 20 to 29
- *  (a 12-digit UPC-A leading 2 or 4 is the same code with its leading 0
- *  dropped; a GTIN-14 carries a packaging indicator ahead of the 13). They are
- *  a shop's own labels: variable-weight deli and produce, loyalty stubs, an
- *  in-store SKU. The number means something only inside the shop that printed
- *  it, so no global catalog can know it, and any hit is a coincidence in
- *  somebody's database. A synthetic 2000000000015 typed into Scan resolved to
- *  a real milk product and sat in the inbox as an identification (2026-09-12).
- *  The checksum is still required: a mis-read of a real product's code is a
- *  mis-read, not a store code. EAN-8 is left alone here. */
-export function hasStoreCodePrefix(code: string): boolean {
-  const c = code.trim();
-  if (!/^\d{12,14}$/.test(c)) return false;
-  const gtin13 = c.length === 12 ? `0${c}` : c.length === 14 ? c.slice(1) : c;
-  return /^(02|04|2[0-9])/.test(gtin13);
-}
-
-export function isStoreCode(code: string): boolean {
-  return hasStoreCodePrefix(code) && gtinChecksumOk(code.trim());
-}
+/** A shop's own barcode (GS1 restricted circulation): EAN-13 20 to 29 and
+ *  02 / 04, UPC-A 2… / 4…, a GTIN-14 of one, and EAN-8 2… (and 0… that is not a
+ *  real UPC-E). The one rule lives in the contract (store-codes.ts), so the
+ *  classifier, the lookups, both caches and the review card read the same
+ *  ranges. EAN-8 used to be left out here, and 20446079 on a jar of cumin
+ *  was looked up globally and renamed a wool skirt (#6100). */
+export { hasStoreCodePrefix, isStoreCode } from "@cobblr/platform-contract/store-codes";
+import { isStoreCode } from "@cobblr/platform-contract/store-codes";
 
 /** What a store's own label is stamped with the moment it is inserted:
  *  the verdict is known from the prefix alone, so the row never spends a

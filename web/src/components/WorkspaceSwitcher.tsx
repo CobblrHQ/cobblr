@@ -363,7 +363,7 @@ function WorkspaceRow({
         <button
           onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
           className="px-2 shrink-0 text-accent dark:text-cobble-300 group-hover:opacity-0 transition-opacity"
-          title="Default workspace - opens on a fresh device. Click to unset."
+          title="Unset default workspace (the one a fresh device opens)"
           aria-label="Unset default workspace"
         >
           <Star size={13} className="fill-current" />
@@ -378,7 +378,7 @@ function WorkspaceRow({
           <button
             onClick={(e) => { e.stopPropagation(); onSetDefault(); }}
             className={"px-2 transition " + (o.is_default ? "text-accent dark:text-cobble-300" : "text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300")}
-            title={o.is_default ? "Default workspace. Click to unset." : `Make ${o.name} the default a fresh device opens into`}
+            title={o.is_default ? "Unset default workspace (the one a fresh device opens)" : `Set ${o.name} as the default a fresh device opens into`}
             aria-label={o.is_default ? "Unset default workspace" : "Set as default workspace"}
           >
             <Star size={13} className={o.is_default ? "fill-current" : ""} />
@@ -386,6 +386,7 @@ function WorkspaceRow({
         )}
         {onRename && (
           <button
+            aria-label={`Rename ${o.name}`}
             onClick={(e) => { e.stopPropagation(); onRename(); }}
             className="px-2 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
             title={`Rename ${o.name}`}
@@ -395,6 +396,7 @@ function WorkspaceRow({
         )}
         {onManage && (
           <button
+            aria-label={`Manage members + invites for ${o.name}`}
             onClick={(e) => { e.stopPropagation(); onManage(); }}
             className="pl-2 pr-3 text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-300 transition"
             title={`Manage members + invites for ${o.name}`}

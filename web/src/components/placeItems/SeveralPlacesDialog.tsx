@@ -77,11 +77,11 @@ export function SeveralPlacesDialog({
             </label>
           )}
           <div className="flex items-center gap-2">
-            <button type="button" className={btn} aria-label="Move one fewer" disabled={qty <= 1} onClick={() => step(setQty, -1, max)}>
+            <button title="Move one fewer" type="button" className={btn} aria-label="Move one fewer" disabled={qty <= 1} onClick={() => step(setQty, -1, max)}>
               <Minus size={14} />
             </button>
             <span className="min-w-[2rem] text-center font-mono tabular-nums">{fmt(qty)}</span>
-            <button type="button" className={btn} aria-label="Move one more" disabled={qty >= max} onClick={() => step(setQty, 1, max)}>
+            <button title="Move one more" type="button" className={btn} aria-label="Move one more" disabled={qty >= max} onClick={() => step(setQty, 1, max)}>
               <Plus size={14} />
             </button>
             <button
@@ -98,11 +98,11 @@ export function SeveralPlacesDialog({
         <div className="rounded-md border border-line dark:border-slate-700 p-3 space-y-2">
           <div className="font-medium text-content dark:text-mortar-100">Add as another place</div>
           <div className="flex items-center gap-2">
-            <button type="button" className={btn} aria-label="Count one fewer here" disabled={addQty <= 1} onClick={() => step(setAddQty, -1, 9999)}>
+            <button title="Count one fewer here" type="button" className={btn} aria-label="Count one fewer here" disabled={addQty <= 1} onClick={() => step(setAddQty, -1, 9999)}>
               <Minus size={14} />
             </button>
             <span className="min-w-[2rem] text-center font-mono tabular-nums">{fmt(addQty)}</span>
-            <button type="button" className={btn} aria-label="Count one more here" onClick={() => step(setAddQty, 1, 9999)}>
+            <button title="Count one more here" type="button" className={btn} aria-label="Count one more here" onClick={() => step(setAddQty, 1, 9999)}>
               <Plus size={14} />
             </button>
             <button

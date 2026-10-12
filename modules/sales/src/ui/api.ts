@@ -89,6 +89,8 @@ export interface PartOption {
   subtitle?: string;
   /** The collection it is in, shown so two of the same name can be told apart. */
   collection?: string;
+  /** The unit its count is kept in ("each", "m"): how much a line may ask for. */
+  unit?: string | null;
 }
 
 /** A way on from a refused fulfilment: make the missing parts, or ship what
@@ -293,7 +295,7 @@ export class SalesApi {
   async searchParts(q: string): Promise<PartOption[]> {
     const url = `/api/v1/orgs/${this.slug}/modules/sales/stock?q=${encodeURIComponent(q)}`;
     const res = await workspaceFetch(url, { headers: this.headers() });
-    const data = await this.parse<{ items: Array<{ id: string; kind: string; title: string; subtitle?: string; collection: string }> }>(res);
-    return data.items.map((i) => ({ id: i.id, kind: i.kind, title: i.title, subtitle: i.subtitle, collection: i.collection }));
+    const data = await this.parse<{ items: Array<{ id: string; kind: string; title: string; subtitle?: string; collection: string; unit?: string | null }> }>(res);
+    return data.items.map((i) => ({ id: i.id, kind: i.kind, title: i.title, subtitle: i.subtitle, collection: i.collection, unit: i.unit ?? null }));
   }
 }

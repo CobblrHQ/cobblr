@@ -220,6 +220,7 @@ function LinkRow({
       )}
       {canEdit && (
         <button
+          aria-label="Edit expiry"
           onClick={() => setEditExpiryOpen(true)}
           className="text-faint hover:text-accent transition"
           title="Edit expiry"

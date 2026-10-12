@@ -1,7 +1,7 @@
 {
   "cobblr.community.3d-printers": {
-    "version": "0.3.5",
-    "hash": "8e3e24c25f5865fe591bcaea12a345a895b24913dbb7d7ca8f89ff2b634dba16"
+    "version": "0.3.6",
+    "hash": "5bdbc5c218c01e621ed3ca2e27146aa1ba37ed990e48fa9f0db5fec1c9547595"
   },
   "cobblr.community.bookshelf": {
     "version": "0.3.2",
@@ -24,8 +24,8 @@
     "hash": "8319dbb0fd76611ebd1b7d8c1c5b49e4cb44f88963fb6ecbed3ebae0e5a504d2"
   },
   "cobblr.community.laser-cutters": {
-    "version": "0.3.4",
-    "hash": "00d9c6a666bedb5035b9f0ed5e8642fb0ff94a8ecd8919e774d325c69a9e1af1"
+    "version": "0.3.5",
+    "hash": "3f25c92eb5505d555fee867b5316cbc2038cd3ab6c67d702b4b358b82d8a041f"
   },
   "cobblr.community.lego": {
     "version": "0.7.0",
@@ -60,8 +60,8 @@
     "hash": "f641ed9f1861f4e262edec5da8e397b7b2c8ef7760e7e2d889e117210c623dcc"
   },
   "cobblr.flagship.cnc-tooling": {
-    "version": "0.2.5",
-    "hash": "16ab0747c47c2135ac7048601ea4e31913712b2b1e461fc48c639540741efeb0"
+    "version": "0.2.6",
+    "hash": "45339d4eb06e22d359a48e9331fd3e0f80628351fddbf86bf38d0f5ea7e31f3f"
   },
   "cobblr.flagship.collections": {
     "version": "0.3.5",

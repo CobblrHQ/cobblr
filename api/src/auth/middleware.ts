@@ -6,6 +6,7 @@
 // person and are they still active."
 
 import { isMcpProxyCall } from "./mcp-proxy.js";
+import { isSelfCall } from "../platform/self-fetch.js";
 import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
 import { verifySession } from "./jwt.js";
@@ -358,8 +359,11 @@ export async function requireAuth(
         // A connector's access token is for the MCP endpoint (its audience).
         // That endpoint reaches REST through this api with its proxy secret
         // (mcp-proxy.ts); from anywhere else the token is refused, so a token
-        // copied out of a connector is not a general API key.
-        if (resolved.audience && !isMcpProxyCall(req.headers)) {
+        // copied out of a connector is not a general API key. A route serving
+        // that call reaches the api's own routes in-process with the same
+        // token (selfFetch), and those are the same call: refused, an MCP
+        // add_thing read no lists and routed a book nowhere (#6037).
+        if (resolved.audience && !isMcpProxyCall(req.headers) && !isSelfCall(req)) {
           res.status(401).json({ error: { code: "wrong_audience", message: "This token is for the MCP endpoint only." } });
           return;
         }

@@ -10,6 +10,7 @@
 // that out so the wire engine knows which tenant to scope to.
 
 import { fireEvent } from "./wires.js";
+import { runOutsideRequestScope } from "../lib/request-context.js";
 
 export type EventHandler<T = unknown> = (payload: T) => void | Promise<void>;
 
@@ -101,9 +102,10 @@ export async function emit<T>(eventName: string, payload: T): Promise<void> {
     }
   }
   if (p && typeof p.orgId === "string" && observers.length) {
+    const orgId = p.orgId;
     for (const fn of observers) {
       try {
-        fn(eventName, p.orgId);
+        runOutsideRequestScope(() => fn(eventName, orgId));
       } catch (err) {
         console.error(`[events] observer failed for ${eventName}:`, err);
       }

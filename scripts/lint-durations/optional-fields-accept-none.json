@@ -1,0 +1,10 @@
+{
+  "lint": "lint:optional-fields-accept-none",
+  "run": "node scripts/lint-optional-fields-accept-none.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 1588,
+  "recorded": "2026-10-12",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

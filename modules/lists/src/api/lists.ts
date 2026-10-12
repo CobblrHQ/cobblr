@@ -20,6 +20,7 @@ import { goodUntil, shelfLifeDaysOf, startsFreshLot } from "@cobblr/platform-con
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const listsRouter = Router({ mergeParams: true });
 
@@ -28,7 +29,7 @@ const jsonb = (v: unknown) => sql`${JSON.stringify(v ?? {})}::jsonb`;
 // ── lists ───────────────────────────────────────────────────────────────────
 const ListCreate = z.object({
   title: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
+  description: optionalText(2000),
   metadata: z.record(z.unknown()).optional(),
 });
 const ListUpdate = ListCreate.partial();
@@ -92,13 +93,22 @@ listsRouter.post(
  *  life come through the entities door; a record with no shelf life is dated
  *  but not given a use-by. Null when the check-off restocks nothing, or adds to
  *  a stocked record without a restock wire. */
+/** A wire effect that adds stock back: the thing "+N to stock when checked" says. */
+const isRestock = (e: WireEffect) => /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0;
+
+/** The restock a line carries itself, in a wire effect's words. The record's
+ *  own module does it, from the check-off event's `restocks`. */
+function lineRestock(kind: string): WireEffect {
+  return { binding_id: "line", action_id: "line:adjust-stock", action_label: "Add it back to stock", source_kind: kind, args: { delta: 1, restock: true } };
+}
+
 async function willDate(
   orgId: string,
   ref: { kind: string; id: string },
   effects: WireEffect[],
   actorId: string | null,
 ): Promise<WillDate | null> {
-  const restock = effects.find((e) => /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0);
+  const restock = effects.find(isRestock);
   if (!restock) return null;
   let fields: Record<string, unknown> = {};
   try {
@@ -163,7 +173,8 @@ listsRouter.get(
     const effectsByKind = new Map<string, WireEffect[]>();
     const annotated = [];
     for (const it of items) {
-      const ref = ((it.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {}).source_ref;
+      const meta = (it.metadata as { source_ref?: { kind?: string; id?: string }; restocks?: boolean } | null) ?? {};
+      const ref = meta.source_ref;
       if (!ref?.kind || !ref.id || it.checked) {
         annotated.push(it);
         continue;
@@ -173,7 +184,12 @@ listsRouter.get(
         effects = await platform().wires.effectsOf(ctx.org.id, "lists.item.checked", ref.kind);
         effectsByKind.set(ref.kind, effects);
       }
-      annotated.push({ ...it, on_check: effects, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, effects, sessionUser(req)?.id ?? null) });
+      // A line put there to buy again restocks its record on its own (#6062):
+      // said here like a wire's effect, once, and only where no wire already
+      // restocks that kind (the source module skips it then, too).
+      const own = meta.restocks === true && !effects.some(isRestock) ? [lineRestock(ref.kind)] : [];
+      const all = [...effects, ...own];
+      annotated.push({ ...it, on_check: all, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, all, sessionUser(req)?.id ?? null) });
     }
     res.json({ ...list, items: annotated });
   }),
@@ -248,19 +264,19 @@ listsRouter.post(
 const ItemCreate = z.object({
   list_id: z.string().uuid(),
   title: z.string().min(1).max(300),
-  note: z.string().max(2000).optional(),
-  qty: z.string().max(64).optional(),
+  note: optionalText(2000),
+  qty: optionalText(64),
   metadata: z.record(z.unknown()).optional(),
 });
 const ItemUpdate = z.object({
-  title: z.string().min(1).max(300).optional(),
-  note: z.string().max(2000).optional(),
-  qty: z.string().max(64).optional(),
+  title: z.string().min(1).max(300).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  note: optionalText(2000),
+  qty: optionalText(64),
   checked: z.boolean().optional(),
   /** How many were bought, stated with the check. The wires that restock the
    *  line's record and file its purchase take this over their fixed amount;
    *  the row shows that amount as the default and lets it be corrected. */
-  quantity: z.number().int().positive().max(100_000).optional(),
+  quantity: optionalField(z.number().int().positive().max(100_000)),
   /** "I'm getting this" / "never mind". The claimer is always the caller — a
    *  claim is a statement about yourself, never an assignment handed to someone
    *  else, so there is no user id in the body to spoof. */
@@ -363,7 +379,7 @@ listsRouter.patch(
       // source kind works the same with zero changes here. On uncheck — or a
       // line with no source_ref — the key is absent and the wire engine resolves
       // no source entity and fires nothing (a clean no-op).
-      const meta = (row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {};
+      const meta = (row.metadata as { source_ref?: { kind?: string; id?: string }; restocks?: boolean } | null) ?? {};
       const ref = meta.source_ref;
       // Through the BASE kind for the same reason the wire engine reads it that
       // way: a line seeded from an INSTANCE record carries `supplies:item`,
@@ -388,6 +404,9 @@ listsRouter.patch(
         // amount is a wire's fixed arg (adjust-stock's delta, record-event's
         // qty_delta) takes a stated quantity over it; see those handlers.
         ...(parsed.data.checked && parsed.data.quantity !== undefined ? { quantity: parsed.data.quantity } : {}),
+        // The line was put there to buy again: the record's own module adds
+        // it back to stock (#6062), and who checked it is who restocked.
+        ...(sourceKey && meta.restocks === true ? { restocks: true, actorId: sessionUser(req)?.id ?? null } : {}),
       });
     }
     if (parsed.data.claimed !== undefined) {

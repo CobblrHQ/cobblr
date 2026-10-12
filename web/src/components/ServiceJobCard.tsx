@@ -199,7 +199,7 @@ function NeedsInput({ slug, needs, busy, onAnswer }: { slug: string; needs: Need
           ))}
         </div>
       ) : (
-        <textarea className="mt-2 w-full font-mono text-[12px] rounded border border-line dark:border-slate-700 bg-transparent p-2" rows={4} value={raw} onChange={(e) => setRaw(e.target.value)} />
+        <textarea aria-label="Raw JSON" className="mt-2 w-full font-mono text-[12px] rounded border border-line dark:border-slate-700 bg-transparent p-2" rows={4} value={raw} onChange={(e) => setRaw(e.target.value)} />
       )}
       {bad && <div className="text-[12px] text-red-700 dark:text-red-400">That is not valid JSON.</div>}
       <button
@@ -228,7 +228,7 @@ function JobPicture({ slug, fileId, name }: { slug: string; fileId: string; name
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} aria-label={`Open ${name}`} className="block cursor-zoom-in">
+      <button title={`Open ${name}`} type="button" onClick={() => setOpen(true)} aria-label={`Open ${name}`} className="block cursor-zoom-in">
         <EntityPhoto
           src={api.fileRawUrl(slug, fileId, "medium")}
           alt={name}

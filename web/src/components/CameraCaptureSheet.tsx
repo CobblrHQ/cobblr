@@ -171,6 +171,7 @@ export function CameraCaptureSheet({
             </span>
           )}
           <button
+            title="Cancel"
             type="button"
             onClick={close}
             aria-label="Cancel"

@@ -39,6 +39,8 @@ export interface ActionBody {
   entityId?: string;
   bindingId?: string;
   args?: Record<string, unknown>;
+  /** The original held by this screen, uploaded outside the JSON arguments. */
+  document?: File;
   /** The code of the action label the press came from: the door checks it and
    *  the history says "via label" (#3897). */
   label?: string;

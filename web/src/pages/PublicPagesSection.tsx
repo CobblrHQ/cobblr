@@ -175,10 +175,12 @@ function PublicPageRow({ slug, page, onEdit }: { slug: string; page: PublicPageI
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600" data-testid="public-link-url" />
+                  <input readOnly aria-label="Public link" value={url} onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600" data-testid="public-link-url" />
                   <button
                     type="button"
                     className={btn}
+                    aria-label={copied === l.id ? "Copied" : "Copy link"}
+                    title={copied === l.id ? "Copied" : "Copy link"}
                     onClick={async () => {
                       await navigator.clipboard?.writeText(url).catch(() => undefined);
                       setCopied(l.id);

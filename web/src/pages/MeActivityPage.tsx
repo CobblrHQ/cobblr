@@ -8,6 +8,7 @@ import { activityVerb } from "../lib/activity-words";
 import { useEffect, useMemo, useRef } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { SubjectLink } from "../components/SubjectLink";
 import { useAuth } from "../auth/AuthContext";
 import { api, type CrossOrgActivityEntry } from "../lib/api";
 import { QueryError } from "../components/QueryError";
@@ -75,6 +76,7 @@ export function MeActivityPage() {
         </span>
         <div className="flex-1" />
         <select
+          aria-label="Workspace"
           value={orgFilter ?? ""}
           onChange={(e) => setOrgFilter(e.target.value || null)}
           className="min-w-0 max-w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
@@ -144,25 +146,19 @@ export function MeActivityPage() {
 }
 
 function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
-  const diff = (e.diff ?? {}) as Record<string, unknown>;
-  const title =
-    typeof diff.name === "string"
-      ? diff.name
-      : typeof diff.title === "string"
-        ? diff.title
-        : null;
-  const action = activityVerb(e.action);
-  // No per-row workspace pill — the workspace now lives in the section header
-  // (grouped by day + workspace). Wrap, don't truncate: the entity name is the
-  // point of the row ("created White Board", not "created White Bo…").
+  // The row as its workspace's feed says it, opening what it is about: the
+  // record by its name, a module by its name, never the stored kind (#5906).
+  // No per-row workspace pill: the workspace is the section header. Wrap,
+  // don't truncate: the name is the point of the row.
   return (
-    <li className="px-4 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm">
-      <span className="shrink-0 text-content dark:text-mortar-200">{action}</span>
+    <li className="px-4 py-2 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm" data-testid="my-activity-row">
       <span className="text-content dark:text-mortar-100 break-words min-w-0">
-        {title ?? (
-          <span className="font-mono text-xs text-faint">
-            {e.entity_type ?? e.action}
-          </span>
+        {e.summary && e.subject ? (
+          <SubjectLink href={e.subject.href} className="hover:underline" testId="activity-item-link">
+            {e.summary}
+          </SubjectLink>
+        ) : (
+          `${activityVerb(e.action)} something`
         )}
       </span>
       <span className="font-mono text-[10px] text-faint shrink-0 ml-auto">
@@ -171,4 +167,3 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
     </li>
   );
 }
-

@@ -7,7 +7,7 @@
 // list of query keys that drifts from the screens reading them (#3582).
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { refreshStockViews } from "@cobblr/platform-web";
+import { RECORD_HISTORY_KEY, refreshContainerCounts, refreshStockThresholds, refreshStockViews } from "@cobblr/platform-web";
 import { subscribeAiAvailability, subscribeWorkspaceShape, subscribeWorkspaceWrite } from "./api";
 import { aiAvailabilityKeys } from "./ai-availability-keys";
 import { navCountKeys } from "../components/useNavBadges";
@@ -31,6 +31,13 @@ export function useWorkspaceShapeRefresh(): void {
         // How much there is and where it is kept: whichever client wrote, every
         // view of stock or places reads again (#4431, #4440).
         void refreshStockViews(qc);
+        // How much a list, place or collection holds: its empty state and its
+        // count, under whatever key a screen read it (#6080).
+        void refreshContainerCounts(qc);
+        // When a thing runs low (a Minimum raised), and the History that says
+        // it changed: every view of either, under whatever key (#6101).
+        void refreshStockThresholds(qc);
+        void qc.invalidateQueries({ queryKey: [RECORD_HISTORY_KEY] });
       }),
     [qc],
   );

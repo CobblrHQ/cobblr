@@ -632,7 +632,7 @@ export function CustomFieldInput({
   }
   if (control === "member" || control === "person") {
     const Picker = control === "member" ? MemberSelect : PersonSelect;
-    return <Field label={label}><Picker value={value} onChange={onChange} />{help}</Field>;
+    return <Field label={label}><Picker value={value} label={def.display_label} onChange={onChange} />{help}</Field>;
   }
   if (control === "address") {
     return <Field label={label}><AddressPicker label={def.display_label} value={value} startEditing onCommit={onChange} />{help}</Field>;
@@ -646,6 +646,7 @@ export function CustomFieldInput({
       <Field label={def.required ? `${def.display_label} *` : def.display_label}>
         <RelationSelect
           refKind={def.ref_kind ?? ""}
+          label={def.display_label}
           value={value}
           onChange={(v) => onChange(v)}
         />

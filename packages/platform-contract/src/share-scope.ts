@@ -110,6 +110,9 @@ export interface ClassifiableField {
   money?: "cents" | "amount" | null;
   /** The owner marked it private. */
   private?: boolean | null;
+  /** The record works it out itself (a stock reading, a count of uses):
+   *  nobody writes it, so nobody proposes a value for it either. */
+  read_only?: boolean | null;
 }
 
 /** Native columns that are money or private whatever a kind calls them. */

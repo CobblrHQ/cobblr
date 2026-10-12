@@ -52,6 +52,7 @@ export interface StocktakePlan {
 
 const PART = "inventory:part";
 const MAX_SCOPE = 2000;
+const SCOPE_BATCH = 1000;
 const kindOf = (instance: string) => (instance === "inventory" ? PART : `${instance}:item`);
 const db = async (orgId: string) => (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
 
@@ -74,33 +75,52 @@ function parseScope(raw: unknown): StocktakeScope {
 export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope: StocktakeScope; label: string; items: StocktakeItem[] }> {
   const scope = parseScope(rawScope);
   const t = await db(orgId);
-  let q = t
-    .selectFrom("inventory_parts")
-    .select(["id", "name", "qty", "unit", "image_path", "instance", "created_at", "metadata"])
-    .where("archived", "=", false)
-    .orderBy("created_at", "desc")
-    .limit(MAX_SCOPE + 1);
-  if ("ids" in scope) q = q.where("id", "in", scope.ids);
-  else if (scope.instance) q = q.where("instance", "=", scope.instance);
-  const rows = await q.execute();
-  if (rows.length > MAX_SCOPE) throw new ActionRefusal(`That is more than ${MAX_SCOPE} records. Take stock one place at a time.`);
+  const base = () => {
+    let q = t
+      .selectFrom("inventory_parts")
+      .select(["id", "name", "qty", "unit", "image_path", "instance", "created_at", "metadata"])
+      .where("archived", "=", false);
+    if (!("ids" in scope) && scope.instance) q = q.where("instance", "=", scope.instance);
+    return q;
+  };
+  const tooMany = () => new ActionRefusal(`That is more than ${MAX_SCOPE} records. Take stock one place at a time.`);
+  type Row = Awaited<ReturnType<ReturnType<typeof base>["execute"]>>[number];
 
   let label: string;
-  let inScope = rows;
+  let inScope: Row[];
   if ("ids" in scope) {
-    label = `the ${countOf(rows.length, "thing")} you picked`;
+    inScope = await base().where("id", "in", scope.ids).orderBy("created_at", "desc").limit(MAX_SCOPE + 1).execute();
+    if (inScope.length > MAX_SCOPE) throw tooMany();
+    label = `the ${countOf(inScope.length, "thing")} you picked`;
   } else {
-    const paths = await platform().placement.pathsOf({ orgId, containees: rows.map((r) => ({ kind: PART, id: r.id })) });
-    const pathOf = (id: string) => paths.get(`${PART}:${id}`) ?? [];
+    let keep: (path: Array<{ id: string }>) => boolean;
     if ("place_id" in scope) {
       const place = await platform().entities.lookup(orgId, "core-locations:location", scope.place_id);
       if (!place) throw new ActionRefusal("That place no longer exists.");
       label = place.title;
-      inScope = rows.filter((r) => pathOf(r.id).some((step) => step.id === scope.place_id));
+      keep = (path) => path.some((step) => step.id === scope.place_id);
     } else {
       label = "the things with no place";
-      inScope = rows.filter((r) => pathOf(r.id).length === 0);
+      keep = (path) => path.length === 0;
     }
+    // The cap is on what is in the scope, not on the workspace: the records
+    // are read a batch at a time and kept by where they are. Reading the
+    // first 2000 of the workspace refused every place in a workspace past
+    // 2000, a shelf of two included (the standing walk workspace, 2026-10-11).
+    inScope = [];
+    let after: string | null = null;
+    for (;;) {
+      let q = base().orderBy("id").limit(SCOPE_BATCH);
+      if (after) q = q.where("id", ">", after);
+      const batch = await q.execute();
+      if (!batch.length) break;
+      const paths = await platform().placement.pathsOf({ orgId, containees: batch.map((r) => ({ kind: PART, id: r.id })) });
+      for (const r of batch) if (keep(paths.get(`${PART}:${r.id}`) ?? [])) inScope.push(r);
+      if (inScope.length > MAX_SCOPE) throw tooMany();
+      if (batch.length < SCOPE_BATCH) break;
+      after = batch[batch.length - 1]!.id;
+    }
+    inScope.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
   return {
     scope,
@@ -210,7 +230,9 @@ export async function runStocktake(orgId: string, userId: string | null, input: 
       scope_label: plan.label,
       kept: JSON.stringify(plan.kept.map(ref)) as never,
       gone: JSON.stringify(plan.gone.map(ref)) as never,
-      counted: JSON.stringify(plan.counted.map((c) => ({ ...ref(c), before: c.before, after: c.after }))) as never,
+      // The unit with the amounts: "7.9 left, was 8.4" of a ribbon in metres
+      // reads as a count of seven things (#6036).
+      counted: JSON.stringify(plan.counted.map((c) => ({ ...ref(c), before: c.before, after: c.after, unit: c.unit }))) as never,
       created_by: userId,
     })
     .returning("id")
@@ -293,13 +315,20 @@ export async function readStocktake(orgId: string, id: string) {
   const t = await db(orgId);
   const row = await t.selectFrom("inventory_stocktakes").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) return null;
+  // A stocktake written before the unit was kept with its counts takes the
+  // record's own unit, so its history says what the amounts are in too.
+  const counted = (row.counted ?? []) as Array<{ id: string; kind: string; title: string; before: number; after: number; unit?: string | null }>;
+  const missing = counted.filter((c) => !c.unit).map((c) => c.id);
+  const units = missing.length
+    ? new Map((await t.selectFrom("inventory_parts").select(["id", "unit"]).where("id", "in", missing).execute()).map((p) => [p.id, p.unit]))
+    : new Map<string, string>();
   return {
     id: row.id,
     label: row.scope_label,
     scope: row.scope,
     kept: row.kept,
     gone: row.gone,
-    counted: row.counted,
+    counted: counted.map((c) => ({ ...c, unit: c.unit || units.get(c.id) || "" })),
     created_at: new Date(row.created_at).toISOString(),
     created_by: row.created_by,
     undone_at: row.undone_at ? new Date(row.undone_at).toISOString() : null,

@@ -20,7 +20,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { catalogRecording, catalogReplayDir } from "./catalog-replay.js";
 
-export type WebCassetteKind = "text" | "images" | "library";
+export type WebCassetteKind = "text" | "images" | "library" | "store";
 
 /** Replaying: a replay dir is set and this is not a recording session. */
 export function replayingWeb(): boolean {

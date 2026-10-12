@@ -2,6 +2,72 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-12
+
+### Improvements
+- The admin console's Health tab shows what each kind of request costs the deployment: calls, CPU, time and memory per route, and how often one workspace calls it a day
+- A forwarded store order splits its known packs into their spools, names its store from the email, and its cards name tables and shops in words
+- A wire can message someone in your workspace when something runs out, through their own notification channels, with words that name the thing.
+- Automations can email someone outside your workspace when something runs out, only from your workspace's own email sender, only after an owner turns it on, within daily limits, with a link that stops it.
+- Two printers of the same model waiting in your Scan Inbox both get the model's facts, such as its bed size, while each keeps its own seller and upgrades.
+- A line split into its parts stays in the inbox as their parent, saying how it was split and whether the parts add up
+- A wire can be about one record, a category, a tag or a saved view, and on a stock count about it being used, running out or falling below a number, firing once each time it crosses the line. A stock record's When this runs out… sets one up.
+
+### Fixes
+- A bill of sale's preview now reads it as a sale. It shows the VIN, year, make and model and asks only about those, never about a plate, an expiry or a confirmation number a sale doesn't have, and it no longer suggests connecting an AI to find them. A row printing several labels ("Year: 2021 Make: Toyota Model: Tacoma") now gives each its own value, the documentary fee is no longer shown as the price, and after you file the purchase the card no longer also says the original has not been saved.
+- An AI connection is marked Verified only once it has answered: saving or testing it now asks one tiny question with the model it will use, not just whether the key can list models. A model your account cannot use, such as an older Gemini model for a new Google account, reads Model not available in the provider's own words, and names the default model that does answer.
+- A document in your library that is plainly about a different vehicle or device is no longer offered as a match. When its VIN or serial number isn't this record's, the suggestion says so ("Not this record's: VIN … on it is not this record's") and offers only "Link anyway", never "matched by model". A year that disagrees is shown as a warning beside the match. Existing suggestions are checked again on their own.
+- A guest opening a record or scanning a label no longer sets off requests the workspace turns down: the page asks only for what the portal shares with them.
+- A long workspace name is cut short in the member portal's header instead of pushing the page wider than a phone
+- Saving an AI connection with a model your account cannot use no longer says "The provider rejected this key". The dialog now reads "This model is not available on this key": the key works, and it says to clear the Model field to use the default that answers, or to choose another model. The provider's own words follow, for reference.
+- When a lookup finds a name for an item and your photo clearly shows something else, the found name is no longer kept: the item keeps the name it had (or stays unnamed for you to name), the card says what was found and why it was not used, and that barcode's answer counts against it in the shared barcode database.
+- A page that fails to load on a patchy connection tries again on its own, then says "Couldn't load this page" with a Retry button, instead of staying blank. A page left open across an update gets the new version the same way.
+- Bringing a copy of a personal document, such as a bill of sale, from a connected library like Paperless no longer ends at a refusal. The record says it's a personal document, so it can't be a shared file, and offers "Keep it in your Vault instead": the copy goes into your own Vault, in Personal documents, encrypted and listed on the record. Shared Files still never hold it.
+- A thing's Price history lists only orders you actually placed. A draft order made automatically when stock ran low no longer shows as a purchase, and the next draft takes its usual amount and vendor from what you last bought, never from a cancelled order or another draft.
+- A document Paperless sends through its workflow now shows on a record you have open without a reload, and the setup says when Cobblr last heard from Paperless
+- On a phone, a list line's restock note ("+1 to stock when checked, dated today") sits on its own line under the item and reads as a sentence, instead of being squeezed into a narrow column under I'll get it.
+- An inbox item whose short barcode is right but whose name may be another product's now says so: "A shop's own barcode: names found online may be other products", asks "Is this the right name?" with the name read off your photo as one tap, and offers Edit name. "Fix the barcode" appears only when the barcode itself looks misread. The confidence beside Source data is said in words.
+- A connection's Off / Just me / Share choice, and "Use this one first", now mark the picked option with a check as well as its colour, and a screen reader announces each workspace's choice as a named group with the pick selected. Every pick-of-a-few control in the app gets the same check mark, and slightly larger tap targets.
+- A bill of sale can no longer be filed as the wrong vehicle. A VIN now counts only when its check digit is right; when the VIN on the page won't read, Cobblr asks you to type it instead of naming the car from the year and model printed beside it, and nothing is filed until you do. A car found only by its year, make and model, with no VIN read, is offered as a question ("Is this your Civic? Matched by name; the VIN didn't read; check it's this car"), and nothing is filled until you say it is. If the page reader stops partway, you're told so and can read the page again; it's never treated as a blank page.
+- Scanning something you keep by measure, like a plank in metres, now says the unit: "You already have Red cedar timber plank 8.4 m", "You have 8.4 m → 9.4 m" and "+1 m". Counted things keep their plain numbers, so the two never read alike.
+- A shop's own short barcode (an 8-digit code starting with 2, like a store's own jar of spices) is no longer looked up in global catalogs, which answered with some other shop's product: a jar of ground cumin was renamed a wool skirt. It is named from your photo and its label, or from how you filed the same code before. Items already named that way are re-checked from their photos, and Revert puts back what they said.
+- A stocktake's history says what its counts are in, so a ribbon counted from 8.4 m to 7.9 m reads "7.9 m left, was 8.4 m". What's still here? shows each amount in its unit too, never "8.4 ms" or "3 eaches".
+- A pattern's yarn requirement is named for what it is: a yarn you set to blue now reads "Worsted yarn, blue", not just "blue".
+- An Inventory CSV import keeps a Barcode column (or UPC, EAN, GTIN), so scanning an imported thing finds it straight away instead of looking it up as unknown. Export writes the barcode back out.
+- A thing you put on a list with Add to list, because it was running low, now goes back into stock when you check it off, and the line says how much before you check it. This works with Inventory and Lists alone, without the Groceries bundle, and checking the same line again does not add it twice.
+- The Cataloging Bench keeps the photo it captures: the saved tool opens with it. A tool the bench commits, or a record a spreadsheet import makes, now starts its History with who made it.
+- A thing said to be a book goes to the installed Bookshelf from the assistant and over MCP, as a scanned book does.
+- Bring back on a thing a friend took now says who took it and when, and to ask them to give it back, from every place the button is.
+- The Calendar is in All apps and search, and Menu & surfaces can now add any app to your menu, including on a phone.
+- On a phone, the OpenAPI page's Copy and Download buttons and the Actions page's long descriptions stay on the screen instead of pushing the page sideways
+- The dashboard's Add all offers only what the Scan Inbox would add: a scan held for a look stays out and is named as waiting.
+- Workshop stock follows every change to a record's stock straight away: Stock arrived, restocking from another place, opening a unit and the rest, not only Use some. It no longer shows the old remaining amount until a reload.
+- A guest lands in an app they can open, and Back from an app opens All apps instead of the same app again.
+- Every record's own page shows its History, Links, Photos and files and Tags on a phone too, including a vendor and a customer.
+- Every icon button now shows a tooltip that says what it does, and a project's Status, Priority and task size are named for screen readers and voice control.
+- Every record an Inventory CSV import makes says so in its own History; the activity feed still shows the import as one line.
+- Another editor on a record is told whose Vault holds a private copy, and a teammate's working library is no longer called disconnected.
+- On a phone, a list line's edit, fields and remove buttons are each big enough to tap without hitting the one beside it, and easier to see. The icons stay small.
+- Members who don't run a workspace can now see which AI answers each kind of work there: Configuration → AI shows them the workspace's order, read-only, under the note that the page is for the workspace's admins. Before, they saw only the note, even when Your account's "Change the order" sent them there. A step that names another member's own "Just me" connection now reads as that person's own connection instead of "A connection no longer here".
+- Reminder buttons in Your notifications and the bell now wrap to fit a phone.
+- A pattern's materials list keeps the amounts it prints: "100 m of worsted weight wool" now reads as 100 m, and "2 black safety eyes" as two, with no AI. Read again no longer brings back a second copy of a requirement you corrected: your corrected card stays as it is, once, and a card you picked a yarn for gains only what it was missing.
+- Changing a thing's Minimum updates its Workshop stock panel at once: the low-stock threshold, Low stock and the Add to list button follow the new Minimum, and History shows the change, without a reload.
+- Typed filament scans respect different colours, and match choices distinguish a type from a spool and let you keep a new item.
+- A lookup that renames a scanned item wrongly can now be undone. The "Lookup updated" toast has Undo, and every step in the item's History that changed it has Put back, which restores the name, brand, barcode, pictures and kind together. History says what each step changed in plain words ("Looked up again: name changed from … to …") and lists a step that changed nothing once. The assistant can do the same with put_back_scan_item.
+- Scanning a barcode you already have shows its card at once: your own records are checked before any lookup goes out.
+- On the camera scanner, a message never covers the barcode field, Scan or the buttons under them.
+- On the scanner, Used it up lets you choose how many before you confirm, and the card stays until you do.
+- A shared Pattern arrives as a Pattern on the friend's Patterns page, with its PDF.
+- A shared Pattern now arrives in the friend's share space, and Share is no longer offered for what a share cannot carry.
+- Lists of sizes in a picker run smallest to largest: the hook gauges read 1.0, 1.5, 2.0 up to 10.0 mm instead of putting 10.0 mm after 1.5 mm. Fractions such as 3/8 and 1 1/2 in sort by size too.
+- Small tool labels on drawer plans no longer clip, and zoom controls make packed tools easier to inspect.
+- A scan station in Open or Print mode says what its scans do, instead of File's steps for places and holders.
+- The quantity stepper's − and + are easier to hit on a phone, and every quick tap counts, even while the last one is still saving.
+- The scan inbox no longer opens with a "Personal documents" box above everything. A registration, bill of sale or insurance card dropped, pasted or uploaded in the inbox opens on its private card by itself, with no failed card or error beside it. To read one on purpose, choose Read a personal document in the inbox's ⋯ menu or at the top of the Vault.
+- A yarn's Total length in By weight counts what is left in its opened skeins: two full skeins of 200 m and one opened at 150 m read 550 m, not 400.
+- Exit on a View as session returns to the operator console instead of your own dashboard, the announcements page fits a phone, and a person who does not run the instance sees why the console is not for them
+- An owner whose friend only opened a shared record no longer has a Stock edit to decide.
+
 ## 2026-10-11
 
 ### Features

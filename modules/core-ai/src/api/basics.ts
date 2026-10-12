@@ -31,6 +31,7 @@ import {
   isBuiltinKey,
   builtinDefaultPosition,
 } from "../basics-store.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const basicsRouter = Router({ mergeParams: true });
 
@@ -82,14 +83,14 @@ const BasicCreate = z.object({
   reply: z.string().trim().min(1).max(4000),
   enabled: z.boolean().optional(),
   // Set to override a built-in (snapshotting its fields); omit for a custom rule.
-  builtin_key: z.string().min(1).optional(),
+  builtin_key: optionalField(z.string().min(1)),
 });
 const BasicUpdate = z.object({
-  intent: z.string().trim().min(1).max(120).optional(),
+  intent: z.string().trim().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   keywords: Keywords.optional(),
-  reply: z.string().trim().min(1).max(4000).optional(),
+  reply: z.string().trim().min(1).max(4000).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   enabled: z.boolean().optional(),
-  position: z.number().int().optional(),
+  position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // GET /basics — the effective ruleset (built-ins overlaid with overrides + customs).
@@ -453,8 +454,8 @@ const CommandCreate = z.object({
     action_id: z.string().max(120).nullish(),
     payload: z.record(z.unknown()),
   })).min(1).max(5),
-  repeat_field: z.string().max(60).optional(),
-  repeat_shape: z.string().max(120).optional(),
+  repeat_field: optionalText(60),
+  repeat_shape: optionalText(120),
 });
 
 function asLearned(row: {

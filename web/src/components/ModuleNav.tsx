@@ -569,6 +569,7 @@ function ModuleGroupChip({
         </NavLink>
       )}
       <button
+        title={parent.groupLabel || `${parent.displayName} categories`}
         type="button"
         onClick={(e) => {
           e.preventDefault();
@@ -676,6 +677,7 @@ function ModuleGroupChip({
 export function ConfigurationLink() {
   return (
     <NavLink
+      aria-label="Workspace configuration"
       to="/configuration"
       className={({ isActive }) =>
         "rounded transition p-1.5 shrink-0 " +

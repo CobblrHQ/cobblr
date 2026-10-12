@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.74.2",
+  version: "0.75.1",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -55,6 +55,11 @@ export default defineModule({
       // heal-unconfirmed-identifiers.ts for when this call goes.
       const { registerUnconfirmedIdentifiersHeal } = await import("./heal-unconfirmed-identifiers.js");
       registerUnconfirmedIdentifiersHeal();
+      // Boot-time heal: an emailed session read before #5722 is named for its
+      // shop and numbered from the email it kept - see the DONE WHEN in
+      // heal-forwarded-session-identity.ts for when this call goes.
+      const { registerForwardedSessionIdentityHeal } = await import("./heal-forwarded-session-identity.js");
+      registerForwardedSessionIdentityHeal();
       // Boot-time heal: a record filed from a scan before the commit wrote
       // the barcode and the name's facts gets them, and so does its type -
       // see the DONE WHEN in heal-scanned-type-facts.ts for when this goes.
@@ -65,10 +70,19 @@ export default defineModule({
       // WHEN in heal-picture-colour.ts for when this call goes.
       const { registerPictureColourHeal } = await import("./heal-picture-colour.js");
       registerPictureColourHeal();
+      // Boot-time heal: an emailed order's lines read with no store get the
+      // store its body names, and their store pass (DONE WHEN in
+      // heal-forwarded-store-host.ts).
+      const { registerForwardedStoreHostHeal } = await import("./heal-forwarded-store-host.js");
+      registerForwardedStoreHostHeal();
       const { registerUnsavedCatalogChoicesHeal } = await import("./heal-unsaved-catalog-choices.js");
       registerUnsavedCatalogChoicesHeal();
       const { registerUnfoundedPlaceSuggestionsHeal } = await import("./heal-unfounded-place-suggestions.js");
       registerUnfoundedPlaceSuggestionsHeal();
+      // What a waiting row knows about its model reaches the model's other
+      // waiting rows (heal-model-facts.ts, PERMANENT RECONCILE, #6013).
+      const { registerModelFactsHeal } = await import("./heal-model-facts.js");
+      registerModelFactsHeal();
       // A read the AI could not do for a passing reason (busy, a limit) is
       // asked again when it answers (hint-without-ai.ts).
       const { registerAiRerunSweep } = await import("./services/hint-without-ai.js");
@@ -83,6 +97,11 @@ export default defineModule({
       // heal-stock-pictures.ts for when this call goes.
       const { registerStockPictureHeal } = await import("./heal-stock-pictures.js");
       registerStockPictureHeal();
+      // Boot-time heal: a pending row with a shop's own barcode that a global
+      // catalog named is re-judged from its photo - see the DONE WHEN in
+      // heal-store-code-names.ts for when this call goes (#6100).
+      const { registerStoreCodeNameHeal } = await import("./heal-store-code-names.js");
+      registerStoreCodeNameHeal();
       // Boot-time heal: every pending photo row gets its picture's hash, so a
       // pair of the same picture is offered as one - see the DONE WHEN in
       // heal-picture-hashes.ts for when this call goes.

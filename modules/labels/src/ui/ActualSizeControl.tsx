@@ -109,7 +109,7 @@ export function ActualSizeControl({
           </div>
 
           <div className="relative ml-auto shrink-0">
-            <button type="button" onClick={() => setWhy((v) => !v)} title="Why calibrate?" className="text-faint hover:text-accent transition">
+            <button aria-label="Why calibrate?" type="button" onClick={() => setWhy((v) => !v)} title="Why calibrate?" className="text-faint hover:text-accent transition">
               <HelpCircle size={14} />
             </button>
             {why && (

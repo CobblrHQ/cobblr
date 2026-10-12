@@ -1,0 +1,1874 @@
+{
+  "query": "https://kingroon.com/products/10kg-petg-filament-1-75mm-3d-print-materials.js",
+  "results": {
+    "status": 200,
+    "body": {
+      "title": "KINGROON PETG Filament 1.75mm",
+      "handle": "10kg-petg-filament-1-75mm-3d-print-materials",
+      "options": [
+        {
+          "name": "Warehouse",
+          "values": [
+            "US",
+            "EU",
+            "CA",
+            "MX",
+            "UK",
+            "AU"
+          ]
+        },
+        {
+          "name": "Size",
+          "values": [
+            "10KG"
+          ]
+        },
+        {
+          "name": "Color",
+          "values": [
+            "Multicolor",
+            "Multicolor-1",
+            "white",
+            "black",
+            "gray",
+            "red",
+            "yellow",
+            "blue",
+            "green",
+            "pink",
+            "orange",
+            "silver",
+            "transparent",
+            "grass green",
+            "mint green",
+            "sky blue",
+            "light apricot",
+            "cyan",
+            "light Pink",
+            "Peony Pink",
+            "Lemon Yellow",
+            "Wood Color",
+            "Carrot Orange",
+            "Ocean Blue",
+            "Porcelain Blue",
+            "Bamboo Green",
+            "Olive Green",
+            "Navy Blue",
+            "Dark Green",
+            "Skin",
+            "Brown",
+            "Transparent Pink",
+            "Purple",
+            "Multicolor 2"
+          ]
+        }
+      ],
+      "variants": [
+        {
+          "id": 44502357213402,
+          "title": "US / 10KG / Multicolor",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0377.jpg?v=1768291506"
+          }
+        },
+        {
+          "id": 48221726802138,
+          "title": "US / 10KG / Multicolor-1",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Multicolor-1",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0775.jpg?v=1784087750"
+          }
+        },
+        {
+          "id": 43410473189594,
+          "title": "US / 10KG / white",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "white",
+          "price": 10999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG016Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44502357311706,
+          "title": "US / 10KG / black",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "black",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG027Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 44502357704922,
+          "title": "US / 10KG / gray",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "gray",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/petg_8b83ad6a-fabd-4ac0-b778-81f9bfbb0132.jpg?v=1769849589"
+          }
+        },
+        {
+          "id": 44241853055194,
+          "title": "US / 10KG / red",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "red",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG018Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 44241854660826,
+          "title": "US / 10KG / yellow",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG026Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 44241854824666,
+          "title": "US / 10KG / blue",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG019Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44241851351258,
+          "title": "US / 10KG / green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47322595000538,
+          "title": "US / 10KG / pink",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG028Y-1CH_-10.jpg?v=1789035657"
+          }
+        },
+        {
+          "id": 44290956427482,
+          "title": "US / 10KG / orange",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG021Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 44343776051418,
+          "title": "US / 10KG / silver",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "silver",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG029Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 44353920663770,
+          "title": "US / 10KG / transparent",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "transparent",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG023Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47322316046554,
+          "title": "US / 10KG / grass green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "grass green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG002Y-1CH_578ae28c-961a-4471-bbb7-01071fedd06d.jpg?v=1779430009"
+          }
+        },
+        {
+          "id": 47322316767450,
+          "title": "US / 10KG / mint green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "mint green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG001Y-1CH_bedc954d-8590-42c2-b4fd-a4ee8b413c10.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48172616876250,
+          "title": "US / 10KG / sky blue",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47322317586650,
+          "title": "US / 10KG / light apricot",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "light apricot",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG006Y-1CH_03d9e4c5-f648-4bbe-9d88-8f8f227fc2ad.jpg?v=1779430010"
+          }
+        },
+        {
+          "id": 47322317619418,
+          "title": "US / 10KG / cyan",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "cyan",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG007Y-1CH_036732c2-972c-41da-ae75-3460dbb1f777.jpg?v=1779430011"
+          }
+        },
+        {
+          "id": 47322323091674,
+          "title": "US / 10KG / light Pink",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "light Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG003Y-1CH_695eba6b-95de-4ff7-8f0b-bd2604768336.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48577922498778,
+          "title": "US / 10KG / Peony Pink",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922531546,
+          "title": "US / 10KG / Lemon Yellow",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922564314,
+          "title": "US / 10KG / Wood Color",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922597082,
+          "title": "US / 10KG / Carrot Orange",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577922629850,
+          "title": "US / 10KG / Ocean Blue",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922662618,
+          "title": "US / 10KG / Porcelain Blue",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922695386,
+          "title": "US / 10KG / Bamboo Green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922728154,
+          "title": "US / 10KG / Olive Green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922760922,
+          "title": "US / 10KG / Navy Blue",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922793690,
+          "title": "US / 10KG / Dark Green",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922826458,
+          "title": "US / 10KG / Skin",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922859226,
+          "title": "US / 10KG / Brown",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922891994,
+          "title": "US / 10KG / Transparent Pink",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577922924762,
+          "title": "US / 10KG / Purple",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48519251198170,
+          "title": "US / 10KG / Multicolor 2",
+          "option1": "US",
+          "option2": "10KG",
+          "option3": "Multicolor 2",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0445_C0500.jpg?v=1787909216"
+          }
+        },
+        {
+          "id": 46582266364122,
+          "title": "EU / 10KG / Multicolor",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0377.jpg?v=1768291506"
+          }
+        },
+        {
+          "id": 44502345908442,
+          "title": "EU / 10KG / white",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "white",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG016Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44502353674458,
+          "title": "EU / 10KG / black",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "black",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG027Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 46582265544922,
+          "title": "EU / 10KG / gray",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "gray",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/petg_8b83ad6a-fabd-4ac0-b778-81f9bfbb0132.jpg?v=1769849589"
+          }
+        },
+        {
+          "id": 46582265675994,
+          "title": "EU / 10KG / red",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "red",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG018Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 46582265905370,
+          "title": "EU / 10KG / blue",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG019Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 46582266167514,
+          "title": "EU / 10KG / green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48578191982810,
+          "title": "EU / 10KG / pink",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG028Y-1CH_-10.jpg?v=1789035657"
+          }
+        },
+        {
+          "id": 46582266298586,
+          "title": "EU / 10KG / silver",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "silver",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG029Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 47146833051866,
+          "title": "EU / 10KG / transparent",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "transparent",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG023Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47322316079322,
+          "title": "EU / 10KG / grass green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "grass green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG002Y-1CH_578ae28c-961a-4471-bbb7-01071fedd06d.jpg?v=1779430009"
+          }
+        },
+        {
+          "id": 47322316800218,
+          "title": "EU / 10KG / mint green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "mint green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG001Y-1CH_bedc954d-8590-42c2-b4fd-a4ee8b413c10.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48172616941786,
+          "title": "EU / 10KG / sky blue",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47322317652186,
+          "title": "EU / 10KG / light apricot",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "light apricot",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG006Y-1CH_03d9e4c5-f648-4bbe-9d88-8f8f227fc2ad.jpg?v=1779430010"
+          }
+        },
+        {
+          "id": 47322317684954,
+          "title": "EU / 10KG / cyan",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "cyan",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG007Y-1CH_036732c2-972c-41da-ae75-3460dbb1f777.jpg?v=1779430011"
+          }
+        },
+        {
+          "id": 47322323124442,
+          "title": "EU / 10KG / light Pink",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "light Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG003Y-1CH_695eba6b-95de-4ff7-8f0b-bd2604768336.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48577922957530,
+          "title": "EU / 10KG / Peony Pink",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577922990298,
+          "title": "EU / 10KG / Lemon Yellow",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923023066,
+          "title": "EU / 10KG / Wood Color",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923055834,
+          "title": "EU / 10KG / Carrot Orange",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577923088602,
+          "title": "EU / 10KG / Ocean Blue",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923121370,
+          "title": "EU / 10KG / Porcelain Blue",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923154138,
+          "title": "EU / 10KG / Bamboo Green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923186906,
+          "title": "EU / 10KG / Olive Green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923219674,
+          "title": "EU / 10KG / Navy Blue",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923252442,
+          "title": "EU / 10KG / Dark Green",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923285210,
+          "title": "EU / 10KG / Skin",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923317978,
+          "title": "EU / 10KG / Brown",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923350746,
+          "title": "EU / 10KG / Transparent Pink",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923383514,
+          "title": "EU / 10KG / Purple",
+          "option1": "EU",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338908942554,
+          "title": "CA / 10KG / Multicolor",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0377.jpg?v=1768291506"
+          }
+        },
+        {
+          "id": 47338908516570,
+          "title": "CA / 10KG / white",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "white",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG016Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338908549338,
+          "title": "CA / 10KG / black",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "black",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG027Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 47338908582106,
+          "title": "CA / 10KG / gray",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "gray",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/petg_8b83ad6a-fabd-4ac0-b778-81f9bfbb0132.jpg?v=1769849589"
+          }
+        },
+        {
+          "id": 47338908614874,
+          "title": "CA / 10KG / red",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "red",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG018Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 47338943480026,
+          "title": "CA / 10KG / yellow",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG026Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 47338908647642,
+          "title": "CA / 10KG / blue",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG019Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338908680410,
+          "title": "CA / 10KG / green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338943512794,
+          "title": "CA / 10KG / orange",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG021Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 47338908713178,
+          "title": "CA / 10KG / silver",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "silver",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG029Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 47338908745946,
+          "title": "CA / 10KG / transparent",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "transparent",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG023Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338908778714,
+          "title": "CA / 10KG / grass green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "grass green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG002Y-1CH_578ae28c-961a-4471-bbb7-01071fedd06d.jpg?v=1779430009"
+          }
+        },
+        {
+          "id": 47338908811482,
+          "title": "CA / 10KG / mint green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "mint green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG001Y-1CH_bedc954d-8590-42c2-b4fd-a4ee8b413c10.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48172617007322,
+          "title": "CA / 10KG / sky blue",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 47338908844250,
+          "title": "CA / 10KG / light apricot",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "light apricot",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG006Y-1CH_03d9e4c5-f648-4bbe-9d88-8f8f227fc2ad.jpg?v=1779430010"
+          }
+        },
+        {
+          "id": 47338908877018,
+          "title": "CA / 10KG / cyan",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "cyan",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG007Y-1CH_036732c2-972c-41da-ae75-3460dbb1f777.jpg?v=1779430011"
+          }
+        },
+        {
+          "id": 47338908909786,
+          "title": "CA / 10KG / light Pink",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "light Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG003Y-1CH_695eba6b-95de-4ff7-8f0b-bd2604768336.jpg?v=1779430008"
+          }
+        },
+        {
+          "id": 48577923416282,
+          "title": "CA / 10KG / Peony Pink",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923449050,
+          "title": "CA / 10KG / Lemon Yellow",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923481818,
+          "title": "CA / 10KG / Wood Color",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923514586,
+          "title": "CA / 10KG / Carrot Orange",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577923547354,
+          "title": "CA / 10KG / Ocean Blue",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923580122,
+          "title": "CA / 10KG / Porcelain Blue",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923612890,
+          "title": "CA / 10KG / Bamboo Green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923645658,
+          "title": "CA / 10KG / Olive Green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923678426,
+          "title": "CA / 10KG / Navy Blue",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923711194,
+          "title": "CA / 10KG / Dark Green",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923743962,
+          "title": "CA / 10KG / Skin",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923776730,
+          "title": "CA / 10KG / Brown",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923809498,
+          "title": "CA / 10KG / Transparent Pink",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923842266,
+          "title": "CA / 10KG / Purple",
+          "option1": "CA",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44264755069146,
+          "title": "MX / 10KG / Multicolor",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/C0377.jpg?v=1768291506"
+          }
+        },
+        {
+          "id": 43410473386202,
+          "title": "MX / 10KG / white",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "white",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG016Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44502359638234,
+          "title": "MX / 10KG / black",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "black",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG027Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 44264738848986,
+          "title": "MX / 10KG / red",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "red",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG018Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 44264707850458,
+          "title": "MX / 10KG / yellow",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG026Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 44264707227866,
+          "title": "MX / 10KG / green",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44264712208602,
+          "title": "MX / 10KG / orange",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG021Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 43410473451738,
+          "title": "MX / 10KG / silver",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "silver",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG029Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 48172617072858,
+          "title": "MX / 10KG / sky blue",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577923875034,
+          "title": "MX / 10KG / Peony Pink",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923907802,
+          "title": "MX / 10KG / Lemon Yellow",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923940570,
+          "title": "MX / 10KG / Wood Color",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577923973338,
+          "title": "MX / 10KG / Carrot Orange",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577924006106,
+          "title": "MX / 10KG / Ocean Blue",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924038874,
+          "title": "MX / 10KG / Porcelain Blue",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924071642,
+          "title": "MX / 10KG / Bamboo Green",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924104410,
+          "title": "MX / 10KG / Olive Green",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924137178,
+          "title": "MX / 10KG / Navy Blue",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924169946,
+          "title": "MX / 10KG / Dark Green",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924202714,
+          "title": "MX / 10KG / Skin",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924235482,
+          "title": "MX / 10KG / Brown",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924268250,
+          "title": "MX / 10KG / Transparent Pink",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924301018,
+          "title": "MX / 10KG / Purple",
+          "option1": "MX",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44093773807834,
+          "title": "UK / 10KG / Multicolor",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/4_6c1f52ba-1baf-45d5-b096-95c4c7b1eac4.jpg?v=1756881275"
+          }
+        },
+        {
+          "id": 46593221230810,
+          "title": "UK / 10KG / white",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "white",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG016Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48275495649498,
+          "title": "UK / 10KG / black",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "black",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG027Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 46593227391194,
+          "title": "UK / 10KG / gray",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "gray",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/petg_8b83ad6a-fabd-4ac0-b778-81f9bfbb0132.jpg?v=1769849589"
+          }
+        },
+        {
+          "id": 46593238106330,
+          "title": "UK / 10KG / yellow",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG026Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 43961033326810,
+          "title": "UK / 10KG / blue",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG019Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 43961030213850,
+          "title": "UK / 10KG / green",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 44241853186266,
+          "title": "UK / 10KG / orange",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG021Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 46593238696154,
+          "title": "UK / 10KG / silver",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "silver",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG029Y-1CH-_-10.jpg?v=1789030390"
+          }
+        },
+        {
+          "id": 43834818396378,
+          "title": "UK / 10KG / transparent",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "transparent",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG023Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48172617138394,
+          "title": "UK / 10KG / sky blue",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924333786,
+          "title": "UK / 10KG / Peony Pink",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924366554,
+          "title": "UK / 10KG / Lemon Yellow",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924399322,
+          "title": "UK / 10KG / Wood Color",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924432090,
+          "title": "UK / 10KG / Carrot Orange",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577924464858,
+          "title": "UK / 10KG / Ocean Blue",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924497626,
+          "title": "UK / 10KG / Porcelain Blue",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924530394,
+          "title": "UK / 10KG / Bamboo Green",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924563162,
+          "title": "UK / 10KG / Olive Green",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924595930,
+          "title": "UK / 10KG / Navy Blue",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924628698,
+          "title": "UK / 10KG / Dark Green",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924661466,
+          "title": "UK / 10KG / Skin",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924694234,
+          "title": "UK / 10KG / Brown",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924727002,
+          "title": "UK / 10KG / Transparent Pink",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924759770,
+          "title": "UK / 10KG / Purple",
+          "option1": "UK",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 46912215941338,
+          "title": "AU / 10KG / Multicolor",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Multicolor",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/4_6c1f52ba-1baf-45d5-b096-95c4c7b1eac4.jpg?v=1756881275"
+          }
+        },
+        {
+          "id": 46912216039642,
+          "title": "AU / 10KG / red",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "red",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG018Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 46912216072410,
+          "title": "AU / 10KG / yellow",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG026Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 46912216105178,
+          "title": "AU / 10KG / blue",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG019Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 46912216137946,
+          "title": "AU / 10KG / green",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG020Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 46912216170714,
+          "title": "AU / 10KG / orange",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG021Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48172617203930,
+          "title": "AU / 10KG / sky blue",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "sky blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG013Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924792538,
+          "title": "AU / 10KG / Peony Pink",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Peony Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG044-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924825306,
+          "title": "AU / 10KG / Lemon Yellow",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Lemon Yellow",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG045Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924858074,
+          "title": "AU / 10KG / Wood Color",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Wood Color",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG008Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577924890842,
+          "title": "AU / 10KG / Carrot Orange",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Carrot Orange",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG042-1CH_-10.jpg?v=1789030393"
+          }
+        },
+        {
+          "id": 48577924923610,
+          "title": "AU / 10KG / Ocean Blue",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Ocean Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG041Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924956378,
+          "title": "AU / 10KG / Porcelain Blue",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Porcelain Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG040Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577924989146,
+          "title": "AU / 10KG / Bamboo Green",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Bamboo Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG046Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577925021914,
+          "title": "AU / 10KG / Olive Green",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Olive Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG011Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577925054682,
+          "title": "AU / 10KG / Navy Blue",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Navy Blue",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG043-1CH_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577925087450,
+          "title": "AU / 10KG / Dark Green",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Dark Green",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG014Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577925120218,
+          "title": "AU / 10KG / Skin",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Skin",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG025Y-1CH-_-10.jpg?v=1789030392"
+          }
+        },
+        {
+          "id": 48577925152986,
+          "title": "AU / 10KG / Brown",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Brown",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG037Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577925185754,
+          "title": "AU / 10KG / Transparent Pink",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Transparent Pink",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG005Y-1CH-_-10.jpg?v=1789030391"
+          }
+        },
+        {
+          "id": 48577925218522,
+          "title": "AU / 10KG / Purple",
+          "option1": "AU",
+          "option2": "10KG",
+          "option3": "Purple",
+          "price": 11999,
+          "featured_image": {
+            "src": "https://cdn.shopify.com/s/files/1/0612/4784/8666/files/KR-PETG024Y-1CH-_-10.jpg?v=1789030391"
+          }
+        }
+      ]
+    }
+  }
+}

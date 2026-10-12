@@ -3,6 +3,9 @@
   "version": "0.3.0",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "*.css"
+  ],
   "description": "Home-agnostic Bluetooth thermal-label core: pure ESC/POS raster protocol (Phomemo M-series), a Web Bluetooth transport, an escalating printer self-test sequence, and a harvestable printer-profile registry. Consumed by the standalone printer self-test site today and by in-app label printing later \u2014 so both drive identical hardware behaviour.",
   "main": "src/index.ts",
   "types": "src/index.ts",

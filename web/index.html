@@ -72,6 +72,9 @@
          same-origin script rather than inline blocks, because the CSP is
          script-src 'self' and inline is what it refuses (#3300). -->
     <script src="/prepaint.js"></script>
+    <!-- A page whose own code fails to load retries, then says so with a
+         Retry button, never a blank page (boot-guard.js, #5966). -->
+    <script src="/boot-guard.js"></script>
   </head>
   <body>
     <div id="root"></div>

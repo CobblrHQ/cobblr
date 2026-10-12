@@ -30,7 +30,7 @@ import { redirectNote } from "@cobblr/platform-contract/ai-models";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
-import { Modal, MoneyInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, MoneyInput, SegmentedChoice, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { formatMoney, formatStoredMoney, toCents } from "@cobblr/platform-contract/money";
 import { capabilityLabel } from "../lib/ai-capability-labels";
 import { connectionsNotUsedIn, routesWith } from "../lib/unused-connections";
@@ -192,6 +192,7 @@ export function AiPage() {
                   )}
                   {row || canPin(cap) ? (
                     <button
+                      title={`Change what ${capabilityLabel(cap)} uses`}
                       type="button"
                       onClick={() => setEditingCapability(cap)}
                       aria-label={`Change what ${capabilityLabel(cap)} uses`}
@@ -388,6 +389,7 @@ function ProviderRow({
         <div className="flex items-center gap-1">
           <TestConnectionButton test={() => api.testAiProvider(activeSlug, provider.id)} invalidate={[aiAvailabilityKeys.providers(activeSlug)]} />
           <button
+            aria-label="Edit"
             type="button"
             onClick={onEdit}
             className="p-1.5 text-muted hover:text-content dark:hover:text-slate-200 rounded hover:bg-subtle dark:hover:bg-slate-800"
@@ -404,6 +406,7 @@ function ProviderRow({
             {provider.enabled ? "Disable" : "Enable"}
           </button>
           <button
+            aria-label="Remove"
             type="button"
             onClick={async () => {
               const ok = await confirm({
@@ -487,36 +490,38 @@ function ProviderAddModal({
         }}
       >
         <div>
-          <label className="block text-sm font-medium mb-1">Provider</label>
-          <select
-            value={pickedId}
-            onChange={(e) => {
-              setPickedId(e.target.value);
-              setCreds({});
-            }}
-            className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-          >
-            {catalogue.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">Provider</span>
+            <select
+              value={pickedId}
+              onChange={(e) => {
+                setPickedId(e.target.value);
+                setCreds({});
+              }}
+              className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+            >
+              {catalogue.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
           {picked && (
             <div className="text-xs text-muted mt-1">
               Supports: {Object.keys(picked.capabilities).join(", ")}
             </div>
           )}
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Label</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Label</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             placeholder={picked?.label ?? ""}
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
-        </div>
+        </label>
         {picked?.setup && <ProviderSetupSteps setup={picked.setup} />}
         {picked &&
           <CredentialFields
@@ -528,9 +533,9 @@ function ProviderAddModal({
             hintFor={(k, v) => k === "transit" && v.startsWith("bridge") && <WorkspaceBridgeHint />}
           />}
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <span className="block text-sm font-medium mb-1">
             Monthly budget USD (optional)
-          </label>
+          </span>
           <MoneyInput value={budget} storage="cents" live onCommit={setBudget} placeholder="e.g. 10" ariaLabel="Monthly budget" className="text-sm" />
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -611,18 +616,18 @@ function ProviderEditModal({
           saveM.mutate(false);
         }}
       >
-        <div>
-          <label className="block text-sm font-medium mb-1">Label</label>
+        <label className="block">
+          <span className="block text-sm font-medium mb-1">Label</span>
           <input
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className="w-full px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
           />
-        </div>
+        </label>
         <div>
-          <label className="block text-sm font-medium mb-1">
+          <span className="block text-sm font-medium mb-1">
             Monthly budget USD (blank = unlimited)
-          </label>
+          </span>
           <MoneyInput value={budget} storage="cents" live onCommit={setBudget} ariaLabel="Monthly budget" className="text-sm" />
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -828,8 +833,8 @@ export function CapabilityDefaultModal({
             saveM.mutate();
           }}
         >
-          <div>
-            <label className="block text-sm font-medium mb-1">Provider</label>
+          <label className="block">
+            <span className="block text-sm font-medium mb-1">Provider</span>
             <select
               value={choice}
               onChange={(e) => {
@@ -864,10 +869,10 @@ export function CapabilityDefaultModal({
                 </optgroup>
               )}
             </select>
-          </div>
+          </label>
           <div>
             <div className="mb-1 flex items-baseline justify-between gap-2">
-              <label className="block text-sm font-medium">Model</label>
+              <span className="block text-sm font-medium">Model</span>
               {reported && (
                 <button type="button" onClick={retryModels} disabled={refreshing} className="text-xs text-muted underline hover:text-content disabled:opacity-50" data-refresh-models>
                   {refreshing ? "Refreshing…" : "Refresh models"}
@@ -885,6 +890,7 @@ export function CapabilityDefaultModal({
               </div>
             )}
             <select
+              aria-label="Model"
               value={model}
               onChange={(e) => setModel(e.target.value)}
               disabled={supportedModels.length === 0}
@@ -1416,18 +1422,15 @@ function AiActivitySection({ slug }: { slug: string }) {
     <section className="space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">AI activity</h2>
-        <div className="flex rounded-md border border-line dark:border-slate-700 overflow-hidden text-xs">
-          {(["mine", "workspace"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => setScope(s)}
-              className={"px-3 py-1 transition " + (scope === s ? "bg-cobble-600 text-white" : "text-muted hover:text-accent")}
-            >
-              {s === "mine" ? "My calls" : "Whole workspace"}
-            </button>
-          ))}
-        </div>
+        <SegmentedChoice
+          label="Whose AI calls"
+          value={scope}
+          onChange={setScope}
+          options={[
+            { value: "mine", label: "My calls" },
+            { value: "workspace", label: "Whole workspace" },
+          ]}
+        />
       </div>
       <p className="text-xs text-faint dark:text-slate-500">
         Every AI call you made - the chat, Build, scan, summaries - with the full prompt + response. {scope === "workspace" ? "Showing everyone's (owner/admin)." : "Showing yours."}

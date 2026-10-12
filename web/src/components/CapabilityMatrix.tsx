@@ -276,6 +276,7 @@ export function CapabilityMatrix({
                   >
                     <button
                       type="button"
+                      aria-expanded={open}
                       onClick={() =>
                         setOpenGroups((prev) => ({ ...(prev ?? {}), [g.module]: !open }))
                       }
@@ -318,19 +319,26 @@ export function CapabilityMatrix({
                             <td key={c.key} className={cellBase}>
                               <button
                                 type="button"
+                                role="checkbox"
+                                aria-checked={on}
+                                aria-label={`${a.label} for ${c.role.name}`}
                                 disabled={roleCap.isPending}
                                 onClick={() => roleCap.mutate({ role: c.role, action_id: a.action_id, on: !on })}
-                                title={on ? `Remove from ${c.role.name}` : `Add to ${c.role.name}`}
+                                title={`${a.label} for ${c.role.name}`}
                                 data-action-id={a.action_id}
                                 data-granted={on}
-                                className={
-                                  "w-6 h-6 rounded inline-flex items-center justify-center transition disabled:opacity-50 " +
-                                  (on
-                                    ? "bg-cobble-600 text-white hover:bg-cobble-700"
-                                    : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
-                                }
+                                className="group min-h-11 min-w-11 inline-flex items-center justify-center disabled:opacity-50"
                               >
-                                {on && <Check size={12} />}
+                                <span
+                                  className={
+                                    "w-6 h-6 rounded inline-flex items-center justify-center transition " +
+                                    (on
+                                      ? "bg-cobble-600 text-white group-hover:bg-cobble-700"
+                                      : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 group-hover:border-accent")
+                                  }
+                                >
+                                  {on && <Check size={12} aria-hidden />}
+                                </span>
                               </button>
                             </td>
                           );
@@ -354,21 +362,28 @@ export function CapabilityMatrix({
                           <td key={c.key} className={cellBase}>
                             <button
                               type="button"
+                              role="checkbox"
+                              aria-checked={granted}
+                              aria-label={`${a.label} for ${c.label} directly`}
                               disabled={grant.isPending}
                               onClick={() =>
                                 grant.mutate({ user_id: c.member.id, action_id: a.action_id, on: !granted })
                               }
-                              title={granted ? "Revoke this direct grant" : `Grant to ${c.label} directly`}
+                              title={`${a.label} for ${c.label} directly`}
                               data-action-id={a.action_id}
                               data-granted={granted}
-                              className={
-                                "w-6 h-6 rounded inline-flex items-center justify-center transition disabled:opacity-50 " +
-                                (granted
-                                  ? "bg-cobble-600 text-white hover:bg-cobble-700"
-                                  : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 hover:border-accent")
-                              }
+                              className="group min-h-11 min-w-11 inline-flex items-center justify-center disabled:opacity-50"
                             >
-                              {granted && <Check size={12} />}
+                              <span
+                                className={
+                                  "w-6 h-6 rounded inline-flex items-center justify-center transition " +
+                                  (granted
+                                    ? "bg-cobble-600 text-white group-hover:bg-cobble-700"
+                                    : "border border-line dark:border-slate-600 text-faint dark:text-slate-600 group-hover:border-accent")
+                                }
+                              >
+                                {granted && <Check size={12} aria-hidden />}
+                              </span>
                             </button>
                           </td>
                         );

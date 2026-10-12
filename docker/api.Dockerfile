@@ -45,6 +45,7 @@ COPY modules/assets/package.json ./modules/assets/
 COPY modules/records/package.json ./modules/records/
 COPY modules/core-recurrence/package.json ./modules/core-recurrence/
 COPY modules/core-activity-log/package.json ./modules/core-activity-log/
+COPY modules/core-calendar/package.json ./modules/core-calendar/
 COPY modules/core-notifications/package.json ./modules/core-notifications/
 COPY modules/core-healthcheck/package.json ./modules/core-healthcheck/
 COPY modules/core-tags/package.json ./modules/core-tags/

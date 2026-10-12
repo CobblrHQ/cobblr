@@ -1,5 +1,5 @@
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
-import { perReadRequest } from "../lib/request-context.js";
+import { forgetPerRequest, perReadRequest } from "../lib/request-context.js";
 // The ONE place that answers "which custom field defs apply to this entity kind?"
 //
 // Two kinds of row live in module_field_defs:
@@ -307,7 +307,7 @@ export type CreateFieldDefResult =
  *  semantic rules that need context (relation target, trait scopes, the
  *  unique-name collision) are decided here, ONCE, with typed refusals both
  *  surfaces phrase to their own callers. */
-export async function createFieldDef(
+async function createFieldDefNow(
   orgId: string,
   input: FieldDefCreateInput,
 ): Promise<CreateFieldDefResult> {
@@ -505,7 +505,7 @@ export type UpdateFieldDefResult =
 
 /** Change one field def — the shared body of PATCH /field-defs/:id and the
  *  platform:edit-field action. */
-export async function updateFieldDef(
+async function updateFieldDefNow(
   orgId: string,
   id: string,
   patch: FieldDefPatchInput,
@@ -669,7 +669,7 @@ export type DeleteFieldDefResult =
  *  platform:remove-field action. Values already recorded stay on the records:
  *  the def is what goes, so re-adding the field under the same name brings them
  *  back into view. */
-export async function deleteFieldDef(orgId: string, id: string): Promise<DeleteFieldDefResult> {
+async function deleteFieldDefNow(orgId: string, id: string): Promise<DeleteFieldDefResult> {
   const deleted = await meta
     .deleteFrom("module_field_defs")
     .where("id", "=", id)
@@ -816,4 +816,34 @@ export async function privateFieldNames(orgId: string, kind: string): Promise<Se
     .where("entity_kind", "in", kinds)
     .execute();
   return new Set(rows.filter((r) => (r.overrides as FieldOverrideBlob | null)?.private === true).map((r) => r.name));
+}
+
+/** What a request remembered about a workspace's field definitions (its
+ *  fields, their scopes, which are secret): forgotten once one changes, so a
+ *  send that adds Author and then maps the record sees Author (#5933). */
+const forgetFieldDefs = (orgId: string) =>
+  forgetPerRequest((key) => /^(entity-field-defs|field-scopes|secret-defs):/.test(key) && key.startsWith(`${key.split(":")[0]}:${orgId}:`));
+
+export async function createFieldDef(...args: Parameters<typeof createFieldDefNow>): ReturnType<typeof createFieldDefNow> {
+  try {
+    return await createFieldDefNow(...args);
+  } finally {
+    forgetFieldDefs(args[0]);
+  }
+}
+
+export async function updateFieldDef(...args: Parameters<typeof updateFieldDefNow>): ReturnType<typeof updateFieldDefNow> {
+  try {
+    return await updateFieldDefNow(...args);
+  } finally {
+    forgetFieldDefs(args[0]);
+  }
+}
+
+export async function deleteFieldDef(...args: Parameters<typeof deleteFieldDefNow>): ReturnType<typeof deleteFieldDefNow> {
+  try {
+    return await deleteFieldDefNow(...args);
+  } finally {
+    forgetFieldDefs(args[0]);
+  }
 }

@@ -22,7 +22,7 @@ export function LayoutPrintPage() {
     <div data-testid="layout-print" className="min-h-screen bg-white p-8 text-black">
       {/* Landscape, and drawn in real millimetres to fit letter and A4 alike. */}
       <style>{`@media print { .no-print { display: none !important; } @page { size: landscape; margin: 10mm; } body { background: white; } }`}</style>
-      <div className="mb-3 flex items-baseline gap-3">
+      <div className="mb-3 flex flex-wrap items-baseline gap-3">
         <h1 className="m-0 text-xl font-semibold">
           {room?.name}: {draft.name}
         </h1>

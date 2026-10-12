@@ -66,8 +66,12 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error(`[error-boundary:${this.props.scope ?? "app"}]`, error, info.componentStack);
     if (isChunkLoadError(error)) {
-      const kicked = reloadForStaleChunk();
-      // Reload was suppressed by the loop guard — show the real fallback.
+      // The boot guard (web/public/boot-guard.js) owns what a failed load does,
+      // at the start and for a page: retry soon, then after a backoff, then say
+      // so with Retry (#5966). Without it (a test), reload once as before.
+      const guard = (window as { __cobblrLoadFailed?: (o: { app: true }) => "retrying" | "failed" }).__cobblrLoadFailed;
+      const kicked = guard ? guard({ app: true }) === "retrying" : reloadForStaleChunk();
+      // Gave up: show the plain message and its Retry.
       if (!kicked) this.setState({ reloading: false });
     }
   }
@@ -77,7 +81,32 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.reloading) {
       return (
         <div className="m-6 max-w-2xl rounded-xl border border-line bg-surface/70 p-6 text-sm text-muted dark:border-slate-700 dark:bg-slate-900">
-          Updating to the latest version…
+          Loading again…
+        </div>
+      );
+    }
+    // A page whose code did not arrive (a network blip, or a deploy that
+    // replaced it): what to do about it, never the raw error.
+    if (isChunkLoadError(this.state.error)) {
+      return (
+        <div role="alert" data-testid="load-failed" className="m-6 max-w-md rounded-xl border border-line bg-surface p-6 text-center dark:border-slate-700 dark:bg-slate-900">
+          <p className="text-lg font-semibold text-content dark:text-mortar-100">Couldn&apos;t load this page.</p>
+          <p className="mt-1 text-sm text-muted dark:text-slate-400">Check your connection, then try again.</p>
+          <button
+            type="button"
+            data-testid="get-latest-version"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem("cobblr:load-retries");
+              } catch {
+                /* private mode */
+              }
+              void getLatestVersion();
+            }}
+            className="mt-4 rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700"
+          >
+            Retry
+          </button>
         </div>
       );
     }
@@ -97,16 +126,6 @@ export class ErrorBoundary extends Component<Props, State> {
           {this.state.error.message}
         </pre>
         <div className="mt-3 flex gap-2">
-          {isChunkLoadError(this.state.error) && (
-            <button
-              type="button"
-              data-testid="get-latest-version"
-              onClick={() => void getLatestVersion()}
-              className="rounded bg-cobble-600 px-3 py-1.5 text-sm text-white hover:bg-cobble-700"
-            >
-              Get the latest version
-            </button>
-          )}
           <button
             type="button"
             onClick={() => this.setState({ error: null })}

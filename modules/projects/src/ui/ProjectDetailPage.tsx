@@ -212,6 +212,7 @@ export function ProjectDetailPage() {
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">
           <ProjectInput
+            aria-label={`${noun} name`}
             value={project.data.name}
             commitOn="blur"
             onCommit={(v) => {
@@ -289,15 +290,15 @@ export function ProjectDetailPage() {
           </Labelled>
         </div>
 
-        <div>
-          <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
+        <label className="block">
+          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
             description
-          </label>
+          </span>
           <DescriptionField
             value={project.data.description ?? ""}
             onCommit={(v) => updateProject.mutate({ description: v || null })}
           />
-        </div>
+        </label>
 
         {/* Custom + Pillar-E contributed fields (workshop-mods etc.).
             Without this, migrated mod metadata — substate, energy,
@@ -397,12 +398,12 @@ function Labelled({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex gap-2 items-center">
-      <label className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+    <label className="flex gap-2 items-center">
+      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
         {label}
-      </label>
+      </span>
       {children}
-    </div>
+    </label>
   );
 }
 
@@ -465,11 +466,13 @@ function NewTaskInline({ projectId }: { projectId: string }) {
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="new task…"
+        aria-label="New task"
         className="input flex-1 min-w-0 max-sm:basis-full"
       />
       <select
         value={energy}
         onChange={(e) => setEnergy(e.target.value as "small" | "medium" | "large")}
+        aria-label="Task size"
         className="input !w-auto text-xs"
       >
         <option value="small">small</option>
@@ -578,15 +581,16 @@ function TaskRow({
       />
       {onMove && (
         <span className="hover-reveal inline-flex">
-          <button type="button" aria-label={`Move ${task.title} up`} disabled={!canUp} onClick={() => onMove(-1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
+          <button title={`Move ${task.title} up`} type="button" aria-label={`Move ${task.title} up`} disabled={!canUp} onClick={() => onMove(-1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
             <ChevronUp size={14} />
           </button>
-          <button type="button" aria-label={`Move ${task.title} down`} disabled={!canDown} onClick={() => onMove(1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
+          <button title={`Move ${task.title} down`} type="button" aria-label={`Move ${task.title} down`} disabled={!canDown} onClick={() => onMove(1)} className="p-0.5 text-faint hover:text-accent disabled:opacity-30">
             <ChevronDown size={14} />
           </button>
         </span>
       )}
       <button
+        title="Delete task"
         aria-label="Delete task"
         onClick={async () => {
           const ok = await confirm({ title: `Delete "${task.title}"?`, message: "This can't be undone.", confirmLabel: "Delete", destructive: true });

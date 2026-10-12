@@ -1,10 +1,13 @@
-import { PersonalDocumentReader } from "../components/PersonalDocumentReader";
+import { ReadPersonalDocumentModal } from "../components/PersonalDocumentReader";
+import { SplitLineGroup } from "../components/SplitLineGroup";
+import { splitLayoutOf, type SplitParent } from "../lib/splitLayout";
 import { ScanningInBanner } from "../components/OrderLineUnits";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan — the inbox review queue, photo-inbox-grade.
 import { createPortal } from "react-dom";
 import { FileEverythingSheet } from "../components/FileEverythingSheet";
 import { ScanSessionTheme } from "../components/ScanSessionTheme";
+import { SessionMetaLine, SessionOrderRef } from "./SessionOrderLine";
 import { SessionPlaceChip } from "../components/SessionPlaceChip";
 import { SessionHeadline } from "../components/SessionHeadline";
 import { SCAN_PICKER_ACCEPT, ScanPickerInput, useScanIntake } from "../components/ScanPhotoPicker";
@@ -57,6 +60,9 @@ import {
   type AddedBy,
 } from "@cobblr/platform-contract/scan-source";
 import { documentChipLine, documentStateWords, readAgainWords } from "../lib/documentState";
+import { inboxShown } from "../lib/inboxShown";
+import { InboxDocuments } from "../components/InboxDocuments";
+import { inboxSearchWords } from "@cobblr/platform-contract/scan-search";
 import { } from "../lib/scanRerun";
 import { } from "../lib/identifySentence";
 import { } from "../lib/namelessCard";
@@ -382,7 +388,7 @@ function ScanDrivePanel({ drive }: { drive: ScanDrive }) {
   if (!drive.on) return null;
   const printing = drive.mode === "print";
   return (
-    <div className="inline-flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1 text-xs">
+    <div data-notice="scan-drive" className="inline-flex items-center gap-2 rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-2.5 py-1 text-xs">
       {printing ? (
         <Tag size={14} className="text-accent shrink-0" />
       ) : (
@@ -533,6 +539,7 @@ export function ScanPage() {
   // "Same thing twice" - the pairs that already exist. Filing stops NEW ones;
   // nothing but a review removes the ones created before it could.
   const [showDuplicates, setShowDuplicates] = useState(false);
+  const [readingPersonal, setReadingPersonal] = useState(false);
   // File everything: the plan-first bulk filer (#2444). Scoped to one receipt
   // session from its row, or the whole pending inbox from the header menu.
   const [fileEverything, setFileEverything] = useState<{ batchId: string | null; defaultLocationId: string | null; scope: string } | null>(null);
@@ -660,6 +667,12 @@ export function ScanPage() {
   }, [list.data]);
   // Session labels by batch id, merged across pages — drives the group header
   // ("Receipt · <vendor>", "emailed <when>") instead of a bare timestamp.
+  // The lines this page's parts came from (#6067), from every page loaded.
+  const splitParents = useMemo(() => {
+    const m: Record<string, SplitParent> = {};
+    for (const p of list.data?.pages ?? []) Object.assign(m, p.split_parents ?? {});
+    return m;
+  }, [list.data]);
   const batchMeta = useMemo(() => {
     const m: Record<string, ScanBatchMeta> = {};
     for (const p of list.data?.pages ?? []) Object.assign(m, p.batches ?? {});
@@ -735,23 +748,7 @@ export function ScanPage() {
   // delete); everything ambiguous therefore stays a search.
   const omniIntent = classifyOmni(searchQ, scanOrigins);
   // Only PLAIN WORDS filter - a half-typed barcode must not empty the list.
-  const searchTokens =
-    omniIntent.kind === "text" ? omniIntent.value.toLowerCase().split(/\s+/).filter(Boolean) : [];
-  const matchesSearch = (it: ScanInboxItem): boolean => {
-    if (!searchTokens.length) return true;
-    const hay = [
-      it.suggested_name,
-      it.barcode_text,
-      it.ai_notes,
-      it.suggested_manufacturer,
-      it.scan_area,
-      it.suggested_sku,
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return searchTokens.every((tok) => hay.includes(tok));
-  };
+  const searchTokens = omniIntent.kind === "text" ? inboxSearchWords(omniIntent.value) : [];
   // A filed row stays where it was, saying where it went (lib/filedRows.ts):
   // until the next scan, leaving the inbox, or its ✕. Never on a timer.
   const filed = useFiledRows(activeSlug, items);
@@ -771,8 +768,39 @@ export function ScanPage() {
       setUndoingId(null);
     }
   };
-  const searched = searchTokens.length ? items.filter(matchesSearch) : items;
-  const visibleItems = searched;
+  // The name of the file each document session was read from. A session that
+  // has not been read has no other name: its title is the file's, never
+  // "not read yet" (#4523). Asked of every session the page holds, not only
+  // the ones on screen, because a search finds a failed read by its file.
+  const sourceFileIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          [...Object.values(batchMeta), ...Object.values(rowlessSessions)]
+            .map((m) => m.source_file_id)
+            .filter((id): id is string => !!id),
+        ),
+      ],
+    [batchMeta, rowlessSessions],
+  );
+  const sourceFileQueries = useQueries({
+    queries: sourceFileIds.map((id) => ({
+      queryKey: sessionFileKey(activeSlug, id),
+      queryFn: () => api.getFile(activeSlug, id),
+      staleTime: 5 * 60_000,
+      retry: false,
+    })),
+  });
+  const sourceFileNames = new Map<string, string>();
+  sourceFileIds.forEach((id, i) => {
+    const f = sourceFileQueries[i]?.data;
+    if (f?.filename) sourceFileNames.set(id, f.filename);
+  });
+  // What the search leaves: rows AND the sessions with no rows (inboxShown).
+  // The list, the gallery and every count below read this one answer.
+  const shown = inboxShown(items, rowlessSessions, searchTokens, sourceFileNames);
+  const visibleItems = shown.items;
+  const shownSessions = shown.sessions;
   const visibleIds = useMemo(() => new Set(visibleItems.map((i) => i.id)), [visibleItems]);
   const twins = useMemo(() => twinsOf(visibleItems), [visibleItems]);
   const pendingPictures = usePendingPictures(activeSlug);
@@ -874,6 +902,7 @@ export function ScanPage() {
               </span>
             </div>
             <button
+              aria-label="Not the same - keep separate"
               type="button"
               title="Not the same - keep separate"
               onClick={() => setDismissedCombine((s) => new Set(s).add(sig))}
@@ -1030,7 +1059,7 @@ export function ScanPage() {
         g.dateReading = { date_convention: meta.date_convention ?? null, date_decided_by: meta.date_decided_by ?? null, date_printed: meta.date_printed ?? null };
       }
     }
-    for (const [id, meta] of Object.entries(rowlessSessions)) {
+    for (const [id, meta] of Object.entries(shownSessions)) {
       if (byBatch.has(id)) continue;
       const v = sessionVerdict(meta, { pending: 0, ever: 0 });
       if (v.kind !== "failed" && v.kind !== "in_flight") continue;
@@ -1038,7 +1067,15 @@ export function ScanPage() {
       groups.push({ key: id, isBatch: true, batchId: id, items: [], shown: [], latest: Number.isFinite(t) ? t : 0, lastTouched: 0, area: null, label: meta.label ?? null, origin: meta.origin ?? null, originFrom: meta.origin_from ?? null, vendor: meta.vendor ?? null, sourceFileId: meta.source_file_id ?? null, orderRef: meta.order_ref ?? null, trackingNumber: meta.tracking_number ?? null, shipmentState: meta.shipment_state ?? null, shipmentDescription: meta.shipment_description ?? null, shipmentLocation: meta.shipment_location ?? null, verdict: v, dateReading: null });
     }
     return groups.sort((a, b) => b.latest - a.latest);
-  }, [shownItems, filedIds, batchMeta, rowlessSessions]);
+  }, [shownItems, filedIds, batchMeta, shownSessions]);
+  // The documents the search left that have no rows to hang on (a read that
+  // failed or is under way): the list draws them as sessions, the gallery as
+  // a section of their own, and the caption counts them.
+  const shownDocuments = sessionGroups.filter((g) => g.items.length === 0 && g.shown.length === 0);
+  const documentCount = Object.values(rowlessSessions).filter((m) => {
+    const v = sessionVerdict(m, { pending: 0, ever: 0 }).kind;
+    return v === "failed" || v === "in_flight";
+  }).length;
 
   // The category label each item's SESSION agreed on, by item id.
   //
@@ -1058,26 +1095,6 @@ export function ScanPage() {
   // Every group (session or day) carries a meaningful time header now, so show
   // them whenever we're grouping at all.
   const showSessionHeaders = sessionGroups.length > 0;
-  // The name of the file each document session was read from. A session that
-  // has not been read has no other name: its title is the file's, never
-  // "not read yet" (#4523).
-  const sourceFileIds = useMemo(
-    () => [...new Set(sessionGroups.map((g) => g.sourceFileId).filter((id): id is string => !!id))],
-    [sessionGroups],
-  );
-  const sourceFileQueries = useQueries({
-    queries: sourceFileIds.map((id) => ({
-      queryKey: sessionFileKey(activeSlug, id),
-      queryFn: () => api.getFile(activeSlug, id),
-      staleTime: 5 * 60_000,
-      retry: false,
-    })),
-  });
-  const sourceFileNames = new Map<string, string>();
-  sourceFileIds.forEach((id, i) => {
-    const f = sourceFileQueries[i]?.data;
-    if (f?.filename) sourceFileNames.set(id, f.filename);
-  });
   // Where each session came from, said once (platform-contract scan-source,
   // #4581): its document by what it is, and who added it. The cards read the
   // same answer, so a card repeats it only when its own source differs.
@@ -2338,8 +2355,13 @@ export function ScanPage() {
 
   return (
     <ScanTwinsContext.Provider value={twins}>
-    <div className="space-y-3 max-w-4xl mx-auto">
-      <PersonalDocumentReader />
+    <div data-scan-inbox className="space-y-3 max-w-4xl mx-auto">
+      {/* Nothing but the counts and the actions sits above the first row (the
+          owner, 2026-10-12: a "Personal documents" box sat here on every
+          visit). Its reader is "Read a personal document" in the ⋯ menu, and
+          the inbox's doors take a personal document there by themselves.
+          Guarded by e2e/walks/the-scan-inbox-starts-with-its-rows.json. */}
+      <ReadPersonalDocumentModal open={readingPersonal} onClose={() => setReadingPersonal(false)} />
       {/* A session opened from an order line ("Scan the items", #5734). */}
       {batchId && <ScanningInBanner batchId={batchId} />}
       {/* ── ONE header row ───────────────────────────────────────────────────
@@ -2693,6 +2715,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             </button>
           ) : searchQ ? (
             <button
+              title="Clear search"
               type="button"
               onClick={(e) => {
                 e.preventDefault();
@@ -2708,6 +2731,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // Covering the row means the way out has to be visible: an empty
             // field closes on blur, but nothing on screen said so.
             <button
+              title="Close search"
               type="button"
               onClick={(e) => {
                 e.preventDefault();
@@ -2740,6 +2764,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             two were the other way round (reported 2026-08-10). */}
         {!omniOpen && (
           <button
+            title="Search the inbox"
             type="button"
             onClick={() => {
               setOmniOpen(true);
@@ -2839,6 +2864,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
               .catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)))
           }
           onUploadReceipt={() => receiptRef.current?.click()}
+          onReadPersonalDocument={() => setReadingPersonal(true)}
           onExport={() => setExportOpen(true)}
           onImport={() => setImportOpen(true)}
           receiptAddress={receiptAddress}
@@ -2855,7 +2881,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       <AiOffNotice status={aiStatus} needs="identify" />
 
       <ScanDrivePanel drive={scanDrive} />
-      <div className="flex flex-wrap gap-x-4 gap-y-1">
+      <div data-inbox-actions className="flex flex-wrap gap-x-4 gap-y-1">
         <Link className="inline-block text-sm text-accent underline" to="/scan/stations">Scan stations</Link>
         {/* A tablet and a scanner as a station of its own (#4640). */}
         <Link className="inline-block text-sm text-accent underline" to="/configuration/devices?tab=stations">Open a station on a tablet</Link>
@@ -2864,7 +2890,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
       {target && (
-        <div className="rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-content dark:text-mortar-100 flex items-center gap-2">
+        <div data-notice="scanning-into" className="rounded-md border border-cobble-400 dark:border-cobble-600 bg-cobble-50 dark:bg-cobble-900/30 px-3 py-2 text-sm text-content dark:text-mortar-100 flex items-center gap-2">
           <ScanLine size={15} className="text-accent shrink-0" />
           Scanning into <strong>{target.label}</strong>  - each confirm adds it to that table.
         </div>
@@ -2875,7 +2901,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           a failed fetch told a user with 80 pending scans that they had none,
           and they re-scanned things they already had (2026-08-25 audit). */}
       {list.isError && !list.isLoading && (
-        <div className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6 text-center">
+        <div data-notice="inbox-error" className="rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6 text-center">
           <div className="text-sm text-red-800 dark:text-red-300">
             {/* failure-copy: list.isError, the inbox request itself failed. */}
             Couldn't load your scan inbox. Your items are still there.
@@ -2897,7 +2923,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </OverlayLayer>
       )}
       <ScanPendingPictures slug={activeSlug} rowIds={visibleIds} />
-      {!list.isLoading && !list.isError && shownItems.length === 0 && Object.keys(rowlessSessions).length === 0 && pendingPictures.length === 0 && (
+      {!list.isLoading && !list.isError && searchTokens.length === 0 && shownItems.length === 0 && Object.keys(rowlessSessions).length === 0 && pendingPictures.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
@@ -2937,6 +2963,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         <div
           className="flex flex-row items-center gap-2 sm:gap-3 max-sm:text-[13px] max-sm:py-1.5 rounded-lg border border-cobble-400 dark:border-cobble-600 border-l-4 border-l-cobble-500 dark:border-l-cobble-400 bg-cobble-100 dark:bg-cobble-900 shadow-sm px-3 py-2.5 text-sm"
           data-testid="putaway-strip"
+          data-inbox-counts
         >
           <span className="min-w-0 flex-1 truncate font-semibold text-content dark:text-mortar-100">
             <span className="mr-1.5">📦</span>
@@ -3181,7 +3208,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       )}
 
       {sessionActive && !batchId && !activeSessionInList && (
-        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-muted">
+        <div data-inbox-counts className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-muted">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
           <span className="text-content dark:text-mortar-100 font-medium">
             Scan session active
@@ -3216,7 +3243,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           LIST, so they sit with it rather than in the page header. That also
           takes four controls out of a row that had eighteen. */}
       {items.length > 0 && (
-        <div className="flex items-center gap-2 text-xs -mb-1">
+        <div data-inbox-actions className="flex items-center gap-2 text-xs -mb-1">
           {(unfiledCount > 0 || readyCount > 0) && (
             <HeaderMenu
               width={248}
@@ -3263,15 +3290,16 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             <span className="text-faint dark:text-slate-500" data-testid="filter-caption">
               {facet === "waiting" ? staleCount : reviewCount} of {totalPending} shown
             </span>
-          ) : searchTokens.length > 0 && visibleItems.length !== items.length ? (
+          ) : searchTokens.length > 0 && (visibleItems.length !== items.length || shownDocuments.length !== documentCount) ? (
             <span className="text-faint dark:text-slate-500" data-testid="filter-caption">
               {visibleItems.length} of the {items.length} loaded match
+              {shownDocuments.length > 0 ? `, and ${shownDocuments.length === 1 ? "1 document" : `${shownDocuments.length} documents`}` : ""}
             </span>
           ) : null}
           {/* Filtered to NOTHING: without this the list under "0 of 81 shown"
               was a blank void, and the tiny counter is easy to miss. One click
               back to everything. */}
-          {items.length > 0 && visibleItems.length === 0 && (
+          {(items.length > 0 || documentCount > 0) && visibleItems.length === 0 && shownDocuments.length === 0 && (
             <button
               type="button"
               onClick={() => {
@@ -3402,9 +3430,6 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             </button>
           </div>
         )}
-        <p className="hidden sm:block text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
-          Paste or drop a picture, or a product's name and link, anywhere on this page to add it.
-        </p>
         <SeriesBanner slug={activeSlug} items={visibleItems.filter((i) => i.status === "pending")} />
         {(() => {
           // Each card, with the combine offer injected just above the first item
@@ -3459,13 +3484,31 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           };
           // Gallery view: a flat photo-tile grid for visual triage; a tap opens
           // the full card pre-expanded in a modal.
+          // The documents with no rows (a failed or running read) stand above
+          // the tiles with their Read again, as the list keeps them (#6034).
           if (galleryView) {
             return (
-              <div className={TILE_GRID}>
-                {visibleItems.map((it) => (
-                  <GalleryTile key={it.id} item={it} slug={activeSlug} onOpen={() => setGalleryFocusId(it.id)} />
-                ))}
-              </div>
+              <>
+                <InboxDocuments
+                  slug={activeSlug}
+                  documents={shownDocuments.map((g) => ({
+                    key: g.key,
+                    batchId: g.batchId!,
+                    fileId: g.sourceFileId,
+                    name: sessionSourceOf(g).docName ?? g.label ?? "Document",
+                    state: documentStateWords(g.verdict, g.items),
+                    verdict: g.verdict,
+                  }))}
+                  readingBatch={reparse.isPending ? reparseBatch : null}
+                  onReadAgain={(id) => reparse.mutate(id)}
+                  onOpen={setViewSource}
+                />
+                <div className={TILE_GRID}>
+                  {visibleItems.map((it) => (
+                    <GalleryTile key={it.id} item={it} slug={activeSlug} onOpen={() => setGalleryFocusId(it.id)} />
+                  ))}
+                </div>
+              </>
             );
           }
           // Flat list when there's nothing to group by (scoped ?batch view).
@@ -3617,6 +3660,21 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // carrier state outranks it there; this is what fills the usual gap
             // before any carrier has said anything.
             const trackingArrival = arrivalOf(g.items);
+            // The single-session page's strip on a phone (#5931): every control
+            // there is a 44px target, so the receipt, Read again and Review plan
+            // move into the session's ... and the date and the count keep the
+            // line. Reachable in one more tap, never gone.
+            const canReadAgain = isReceiptSession && !!g.batchId && !!g.sourceFileId;
+            const canReviewPlan = busy === 0 && pendingInSession > 0 && g.isBatch && !!g.batchId;
+            const phoneTucks = !!batchId && (docChip || canReadAgain || canReviewPlan);
+            const openPlan = () => {
+              const first = g.items.find((it) => it.status === "pending");
+              setFileEverything({
+                batchId: g.batchId!,
+                defaultLocationId: first?.target_location_id ?? (fileBin || null),
+                scope: g.sourceFileId ? "this receipt" : "this session",
+              });
+            };
             return (
               <div key={g.key} id={g.batchId ? `s-${g.batchId}` : undefined} className="space-y-2 scroll-mt-24">
                 {/* ONE row, always, and it FITS. No `flex-wrap`, no scrolling:
@@ -3656,16 +3714,24 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     time or the receipt's label, the order number, the count)
                     folds into the name span and truncates before a control
                     ever wraps; the full label is the title and the open view.
-                    The filing trio (location, file, open) stays last. */}
+                    The filing trio (location, file, open) stays last.
+                    On a phone every control on this one line is a finger's
+                    target, 44 by 44, while its icon or pill stays small: the
+                    box grows, never the ink (#5903). Under 360px the boxes
+                    keep the height and give back the width, so the date and
+                    the count still fit beside five controls. Walks:
+                    a-phone-session-strip-has-finger-sized-controls. */}
                 <div
                   data-session-header
                   data-testid="scan-session-header"
                   // gap-1.5, not gap-2: eleven gaps across this row, so the
                   // half-step is most of a control's width back.
-                  className="flex w-full items-center gap-1.5 max-sm:gap-1 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-1.5 max-sm:py-0 text-left text-xs"
+                  className={`flex w-full items-center gap-1.5 max-sm:gap-0 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-0 max-sm:py-0 text-left text-xs max-sm:[&>button]:min-h-11 ${batchId ? "max-sm:[&>button]:min-w-11 max-sm:[&>a]:min-w-11" : "min-[360px]:max-sm:[&>button]:min-w-11 min-[360px]:max-sm:[&>a]:min-w-11 max-[359px]:[&>a]:px-1"} max-sm:[&>button]:justify-center max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:justify-center`}
                 >
                   {/* Burst select-all: grab the whole session for the
-                      bulk toolbar (location / confirm / discard). */}
+                      bulk toolbar (location / confirm / discard). The label
+                      is its finger's target on a phone; the box stays small. */}
+                  <label className={`contents max-sm:inline-flex max-sm:h-11 ${batchId ? "max-sm:w-11" : "min-[360px]:max-sm:w-11 max-[359px]:px-1.5"} max-sm:shrink-0 max-sm:items-center max-sm:justify-center max-sm:cursor-pointer`} onClick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     checked={allGroupSelected}
@@ -3685,6 +3751,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     // two unrelated jobs.
                     className="shrink-0 -ml-1 mr-1 max-sm:ml-0 max-sm:mr-0 h-3.5 w-3.5 accent-cobble-600 cursor-pointer"
                   />
+                  </label>
                   {/* The CHEVRON collapses, and nothing else does. The name
                       used to be inside the collapse button, so reading the
                       session's title and folding it away were the same gesture —
@@ -3717,7 +3784,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         slug={activeSlug}
                         fileId={g.sourceFileId}
                         onOpen={setViewSource}
-                        title="Receipt - open the photo or file its lines were read from"
+                        title="Open the original receipt: the photo or file its lines were read from"
                         aria-label="Open the original receipt"
                         className="shrink-0 text-faint hover:text-accent transition"
                       >
@@ -3797,6 +3864,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     </SessionIdentity>
                   {docChip && (
                     <SessionDocumentChip
+                      phoneHidden={!!batchId}
                       slug={activeSlug}
                       fileId={g.sourceFileId!}
                       name={source.docName!}
@@ -3883,7 +3951,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       session read as nagging). "Do these belong together?"
                       costs nothing until pressed; it also surfaces on its own
                       below, but only on evidence of a shared theme. */}
-                  {g.batchId && (themeOffer || mergeInto) && (
+                  {g.batchId && (themeOffer || mergeInto || phoneTucks) && (
                     <HeaderMenu
                       width={264}
                       align="right"
@@ -3895,7 +3963,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                             toggle();
                           }}
                           aria-label="Session actions"
-                          title="More for this session"
+                          title="Session actions"
                           data-testid="session-menu"
                           // Its touch size comes from its OWN box, 32 by 44 on
                           // a phone, clear of its neighbours. At 18px it sat on
@@ -3906,7 +3974,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           // over a 16px box lay over File, so a tap on File
                           // opened this menu (#3717). No overlay: a target
                           // never reaches past its own box.
-                          className="shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:w-8 max-sm:p-0 text-faint hover:text-accent"
+                          className={`${themeOffer || mergeInto ? "" : "sm:hidden "}shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:min-w-11 max-sm:p-0 text-faint hover:text-accent`}
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -3914,6 +3982,19 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     >
                       {({ close }) => (
                         <>
+                          {phoneTucks && (
+                            <div className="sm:hidden">
+                              {canReviewPlan && (
+                                <MenuItem icon={<Zap size={13} />} label="Review plan" hint="What gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm." onClick={() => { close(); openPlan(); }} />
+                              )}
+                              {docChip && (
+                                <MenuItem icon={<ReceiptText size={13} />} label={`Open ${source.docName}`} onClick={() => { close(); setViewSource(g.sourceFileId!); }} />
+                              )}
+                              {canReadAgain && (
+                                <MenuItem icon={<RotateCcw size={13} />} label="Read again" hint="Read the original again, replacing the lines still pending" disabled={reparse.isPending && reparseBatch === g.batchId} onClick={() => { close(); reparse.mutate(g.batchId!); }} />
+                              )}
+                            </div>
+                          )}
                           {themeOffer && (
                             <MenuItem
                               icon={<Sparkles size={13} />}
@@ -4012,8 +4093,9 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       // the strips differ session to session for no visible
                       // reason (the owner, #2982). It stays on the open view
                       // and beside a failed read's reason.
-                      className={`${batchId ? "" : "max-sm:hidden "}shrink-0 inline-flex items-center gap-1 text-faint hover:text-accent transition disabled:opacity-50 max-sm:rounded-full max-sm:border max-sm:border-line/70 dark:max-sm:border-slate-700/70 max-sm:px-2 max-sm:py-1.5`}
+                      className="max-sm:hidden group shrink-0 inline-flex items-center justify-center text-faint hover:text-accent transition disabled:opacity-50"
                     >
+                      <span className="inline-flex items-center gap-1 max-sm:rounded-full max-sm:border max-sm:border-line/70 dark:max-sm:border-slate-700/70 max-sm:px-2 max-sm:py-1.5">
                       <RotateCcw
                         size={11}
                         className={reparse.isPending && reparseBatch === g.batchId ? "animate-spin" : ""}
@@ -4023,6 +4105,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           word appears on a wide desk. The title and aria-label
                           say what it does at every width. */}
                       <span className="hidden 2xl:inline">Read again</span>
+                    </span>
                     </button>
                   )}
                   {/* Tracking number — beside the order number because they
@@ -4290,12 +4373,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       disabled={bulkBusy}
                       onClick={(e) => {
                         e.stopPropagation();
-                        const first = g.items.find((it) => it.status === "pending");
-                        setFileEverything({
-                          batchId: g.batchId,
-                          defaultLocationId: first?.target_location_id ?? (fileBin || null),
-                          scope: g.sourceFileId ? "this receipt" : "this session",
-                        });
+                        openPlan();
                       }}
                       title="Shows a plan first: what gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm."
                       aria-label="Choose for each"
@@ -4303,12 +4381,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       // plan door for every session, and the File N dialog
                       // carries it per session ("Review the plan first"). The
                       // single-session page has no strip, so it keeps the button.
-                      className={`${batchId ? "" : "max-sm:hidden "}shrink-0 inline-flex items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 hover:border-accent disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-accent`}
+                      className="max-sm:hidden group shrink-0 inline-flex items-center justify-center disabled:opacity-50"
                     >
+                      <span className="inline-flex items-center gap-1 rounded-md border border-cobble-300 dark:border-cobble-700 group-hover:border-accent px-2 py-1 text-[11px] font-medium text-accent">
                       {/* On a phone the label says what OPENS: a plan to review,
                           not a file. "File" beside "File 2" was the owner's own
                           finding (#2982): two doors with one word. */}
                       <Zap size={11} /> <span className="sm:hidden">Review plan</span><span className="hidden lg:inline">Choose for each…</span>
+                    </span>
                     </button>
                   )}
                   {busy > 0 ? (
@@ -4358,8 +4438,9 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                               willInstallLabels.length ? `, installing ${willInstallLabels.join(" and ")} on the way` : ""
                             }${dupeClause}${placingClause}${fallbackClause}`
                       }
-                      className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-2 py-1 text-[11px] font-medium text-white"
+                      className="group shrink-0 inline-flex items-center justify-center disabled:opacity-50"
                     >
+                      <span className="inline-flex items-center gap-1 rounded-md bg-cobble-600 group-hover:bg-cobble-700 px-2 py-1 text-[11px] font-medium text-white">
                       {/* Say what the tap will DO. It used to read "File all 3
                           into Clothing" even when nothing had a location yet, so
                           it promised to file and then asked instead - the label
@@ -4370,7 +4451,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                               a location is still to be chosen; saying "Place &"
                               as well made one action look like two (reported
                               2026-08-20). Tapping it still opens the picker. */}
-                          <MapPin size={11} />
+                          {/* Not on a phone: the place chip beside it already
+                              wears the pin, and the strip needs the width
+                              for its 44px targets (#5903). */}
+                          <MapPin size={11} className="max-sm:hidden" />
                           {/* ONE text node. Each of these used to be its own
                               flex child, so the container's gap-1 landed between
                               "File", "all" and the count on top of the spaces
@@ -4431,6 +4515,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           ) : null}
                         </>
                       )}
+                    </span>
                     </button>
                   ) : pendingInSession > 0 && sessionAction.reviews === 0 && sessionAction.blocked > 0 ? (
                     // Nothing here is this person's to look at: every row is
@@ -4482,16 +4567,20 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 </div>
                 {!collapsed && (
                   <div className="space-y-2">
-                  {busy === 0 && readyIds.length > 0 && (() => {
+                  {(() => {
                     // What the button cannot hold, and a phone has no tooltip:
                     // every destination, what turning a collection on means,
-                    // and the session's place (#4577).
-                    const caption = sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems)));
-                    return caption ? (
-                      <div data-testid="session-add-caption" className="px-2.5 text-[11px] text-muted dark:text-slate-400">
-                        {caption}
-                      </div>
-                    ) : null;
+                    // and the session's place (#4577); and which order it is,
+                    // its number the link to the purchase. One line (#6095).
+                    const caption = busy === 0 && readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : null;
+                    return (
+                      <SessionMetaLine
+                        parts={[
+                          caption && <span data-testid="session-add-caption">{caption}</span>,
+                          isReceiptSession && g.batchId && <SessionOrderRef orderRef={g.orderRef} purchaseId={batchMeta[g.batchId]?.purchases_order_id} />,
+                        ]}
+                      />
+                    );
                   })()}
                     {/* The header's "Added by", opened: when, and how. */}
                     {source.addedBy && addedByOpen === g.key && (
@@ -4525,7 +4614,21 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         configureAiHref={`/w/${activeSlug}/configuration/ai`}
                       />
                     )}
-                    {g.shown.map(card)}
+                    {splitLayoutOf(g.shown, splitParents).map((e) =>
+                      e.kind === "item" ? (
+                        card(e.item)
+                      ) : (
+                        <SplitLineGroup
+                          key={`split:${e.parentId}`}
+                          parentId={e.parentId}
+                          summary={e.summary}
+                          parentCard={e.parentItem ? card(e.parentItem) : null}
+                          parts={e.parts}
+                          renderPart={card}
+                          onAddAll={(ids) => confirmItemsToTheirCandidate(ids)}
+                        />
+                      ),
+                    )}
                     {/* Merge lives INSIDE the expanded session (reveal-to-use),
                         not on the collapsed header where its old ↓ was mistaken
                         for the accordion and folded sessions by accident. It's a
@@ -4589,6 +4692,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             );
           });
         })()}
+        {/* After the rows, never above them: nothing but the counts and actions
+            sits above the first row (e2e/walks/the-scan-inbox-starts-with-its-rows). */}
+        <p className="hidden sm:block text-xs text-faint dark:text-slate-500" data-testid="paste-anywhere-hint">
+          Paste or drop a picture, or a product's name and link, anywhere on this page to add it.
+        </p>
         {/* Infinite-scroll sentinel — pulls the next page as it nears the view. */}
         {hasNextPage && (
           <div ref={loadMoreRef} className="py-4 text-center text-xs text-faint">

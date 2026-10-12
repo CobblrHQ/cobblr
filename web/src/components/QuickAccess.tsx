@@ -91,6 +91,7 @@ export function QuickAccess({ activeSlug }: { activeSlug: string }) {
                   <span className="font-display text-lg font-bold text-content dark:text-mortar-100">Quick Access</span>
                 </div>
                 <button
+                  title="Close"
                   type="button"
                   onClick={() => setOpen(false)}
                   aria-label="Close"

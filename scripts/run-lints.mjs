@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
-import { fetchManifests, latestPasses, lintRoots, lintRootsKey, lintSalt, mergeManifest, rootIds, rootsUnchanged } from "./lib/lint-verdicts.mjs";
+import { fetchManifests, latestPasses, lintRoots, lintRootsKey, lintSalt, mergeManifest, rootIds, rootsUnchanged, verdictMode } from "./lib/lint-verdicts.mjs";
 import { record as recordVerdicts, recordShadow } from "./lib/verdict-cache.mjs";
 import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -104,13 +104,12 @@ async function main() {
   // read, loaded or probed, each directory it listed, globbed or asked git about) has the object id it had
   // when the lint last passed, and whose variables are as they were, is not run again. One
   // `git cat-file --batch-check` keys the suite (v1 replayed every observation: 644 s, 2026-10-10).
-  // COBBLR_LINT_VERDICTS: "on" reuses; "shadow" (CI's default until a day of shadow runs shows no miss)
-  // keys every lint, says what it would reuse, runs them all and reports any would-be reuse that failed;
-  // "off" does nothing. A scheduled or dispatched run (COBBLR_VERDICT_CACHE=off, the release's) is shadow
-  // whatever is set. Never --record or --only. Fails open: no store, a dirty tree, any error: every lint runs.
-  const mode = process.env.COBBLR_LINT_VERDICTS || (process.env.CI ? "shadow" : "off");
+  // The mode (lib/lint-verdicts.mjs verdictMode): "on" reuses, a pull request's default since a day of
+  // shadow runs showed no miss; "shadow" keys every lint, says what it would reuse, runs them all and
+  // reports any would-be reuse that failed, main's default so it stays the backstop; "off" does nothing.
+  // Never --record or --only. Fails open: no store, a dirty tree, any error: every lint runs.
+  const { mode, shadow } = verdictMode(process.env);
   const cacheOn = (process.env.CI || process.env.COBBLR_VERDICT_FORCE) && (mode === "on" || mode === "shadow") && !record && !only;
-  const shadow = mode === "shadow" || process.env.COBBLR_VERDICT_CACHE === "off";
   let vctx = null;
   /** @type {Map<string, string>} lint -> the run its reusable pass came from */
   const reusable = new Map();
@@ -124,8 +123,12 @@ async function main() {
     }
     if (vctx) {
       const t0 = Date.now();
+      // THE CACHE NEVER COSTS MORE THAN IT SAVES: keying has a deadline, past which it gives up and every lint
+      // runs, as on any other error. On a box without /ts-cache it fetched ~1,400 manifests one by one and
+      // keyed for 832 s before 59 s of lints (run 45526, #5761); 46 of aurora's 135 runs in two days.
+      const deadline = t0 + Number(process.env.COBBLR_VERDICT_KEY_BUDGET_MS || 60_000);
       const latest = await latestPasses(names);
-      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { dir: process.env.COBBLR_VERDICT_MANIFESTS || (existsSync("/ts-cache") ? "/ts-cache/lint-manifests-v2" : undefined) });
+      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { deadline, dir: process.env.COBBLR_VERDICT_MANIFESTS || (existsSync("/ts-cache") ? "/ts-cache/lint-manifests-v2" : undefined) });
       const candidates = [];
       for (const n of names) for (const pass of latest[n] ?? []) {
         const m = manifests.get(pass.manifest);
@@ -138,7 +141,10 @@ async function main() {
         if (key && key === pass.key) reusable.set(n, pass.run);
       }
       const ms = Date.now() - t0;
-      if (shadow) console.log(`[verdicts] shadow: every lint runs; ${reusable.size} of ${names.length} would have been reused (keyed in ${(ms / 1000).toFixed(1)}s), and any of those that fails is a shadow miss`);
+      if (Date.now() > deadline) {
+        console.log(`[verdicts] off: keying ran past its ${((deadline - t0) / 1000).toFixed(0)} s budget (${(ms / 1000).toFixed(1)} s, ${manifests.size} manifests fetched); every lint runs`);
+        reusable.clear();
+      } else if (shadow) console.log(`[verdicts] shadow: every lint runs; ${reusable.size} of ${names.length} would have been reused (keyed in ${(ms / 1000).toFixed(1)}s), and any of those that fails is a shadow miss`);
       else {
         reusedNames = [...reusable.keys()];
         const byRun = new Map();
@@ -152,7 +158,7 @@ async function main() {
     try {
       const t0 = Date.now();
       const latest = await latestPasses(names);
-      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), {});
+      const manifests = await fetchManifests(Object.values(latest).flat().map((p) => p.manifest), { deadline: t0 + 30_000 });
       const candidates = [];
       for (const n of names) for (const pass of latest[n] ?? []) {
         const m = manifests.get(pass.manifest);

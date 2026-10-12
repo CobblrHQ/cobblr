@@ -2,7 +2,7 @@
   "lint": "lint:feed-quiet-is-own-workspace",
   "run": "node scripts/lint-feed-quiet-is-own-workspace.ts",
   "rows": [
-    "generic-web-component"
+    "integration-test"
   ],
   "ms": 766,
   "recorded": "2026-10-06",

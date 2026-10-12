@@ -27,6 +27,7 @@ import type { PatternNeedKind, PatternNeedSource, ProjectsDB } from "../db.js";
 import { latestPatternFileId } from "./pattern-photo.js";
 import { NOTIONS, readPatternMaterials, weightFromWords, type NotionNeed, type PatternMaterials, type ToolNeed, type YarnNeed } from "./pattern-materials.js";
 import { storePatternText } from "./pattern-text.js";
+import { planReread, readKeys, type Surviving } from "./pattern-reread.js";
 import { namedAfterFile, patternTitle } from "./pattern-title.js";
 
 export interface PatternNeed {
@@ -262,11 +263,13 @@ async function writeNeeds(
       .where("project_id", "=", projectId)
       .executeTakeFirst();
     let position = Number(kept?.p ?? -1) + 1;
-    const rows = [
+    // What survived the clear-out (corrected, picked, listed, finished) is
+    // merged with by which line of the read it is, never made again (#5900).
+    const survivors = (await trx.selectFrom("projects_pattern_needs").selectAll().where("project_id", "=", projectId).where("read_key", "is not", null).execute()) as unknown as Surviving[];
+    const lines = [
       ...m.yarns.map((y) => ({
         project_id: projectId,
         kind: "yarn" as const,
-        position: position++,
         label: y.label,
         brand: y.brand,
         product: y.product,
@@ -282,26 +285,13 @@ async function writeNeeds(
         source,
         pattern_file_id: fileId,
       })),
-      ...m.tools.map((t) => ({
-        project_id: projectId,
-        kind: t.kind,
-        position: position++,
-        size_mm: t.size_mm,
-        size_label: t.size_label,
-        source,
-        pattern_file_id: fileId,
-      })),
-      ...m.notions.map((n) => ({
-        project_id: projectId,
-        kind: "notion" as const,
-        position: position++,
-        label: n.name,
-        quantity: n.quantity,
-        size_mm: n.size_mm,
-        source,
-        pattern_file_id: fileId,
-      })),
+      ...m.tools.map((t) => ({ project_id: projectId, kind: t.kind, size_mm: t.size_mm, size_label: t.size_label, source, pattern_file_id: fileId })),
+      ...m.notions.map((n) => ({ project_id: projectId, kind: "notion" as const, label: n.name, quantity: n.quantity, size_mm: n.size_mm, source, pattern_file_id: fileId })),
     ];
+    const keys = readKeys(lines);
+    const plan = planReread(lines.map((l, i) => ({ ...l, read_key: keys[i]! })), survivors);
+    for (const f of plan.fill) await trx.updateTable("projects_pattern_needs").set(f.set as never).where("id", "=", f.id).execute();
+    const rows = plan.insert.map((r) => ({ ...r, position: position++ }));
     if (rows.length) await trx.insertInto("projects_pattern_needs").values(rows as never).execute();
   });
 }

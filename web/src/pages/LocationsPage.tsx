@@ -445,20 +445,24 @@ export function LocationsPage() {
           // The room or container open on the plan goes along (#4557).
           to={placeItemsHref(params.get(SPACE_PARAM))}
           data-testid="place-items-link"
-          title="Drag things onto the floor plan, to the exact place each one lives"
+          aria-label="Place items"
+          title="Place items: drag things onto the floor plan, to the exact place each one lives"
           className="inline-flex shrink-0 items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <PackageOpen size={14} /> <span className="hidden sm:inline">Place items</span>
         </Link>
         <button
           onClick={exportCsv}
-          title="Download all locations as a CSV"
+          aria-label="Export"
+          title="Export: download all locations as a CSV"
           className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <Download size={14} /> <span className="hidden sm:inline">Export</span>
         </button>
         <button
           onClick={() => setImportOpen(true)}
+          aria-label="Import"
+          title="Import locations from a file"
           className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <Upload size={14} /> <span className="hidden sm:inline">Import</span>
@@ -896,6 +900,7 @@ function LocationCard({
             {node.kind}
           </span>
           <button
+            aria-label="Add child"
             type="button"
             onClick={() => onAddChild(node.id)}
             title="Add child"
@@ -904,6 +909,7 @@ function LocationCard({
             <Plus size={14} />
           </button>
           <button
+            aria-label="Edit"
             type="button"
             onClick={() => onEdit(node)}
             title="Edit"
@@ -1077,6 +1083,7 @@ function ZoneCard({
           className="absolute -top-3 right-3 inline-flex items-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5"
         >
           <button
+            aria-label="Add child"
             type="button"
             onClick={() => onAddChild(node.id)}
             title="Add child"
@@ -1085,6 +1092,7 @@ function ZoneCard({
             <Plus size={12} />
           </button>
           <button
+            aria-label="Edit"
             type="button"
             onClick={() => onEdit(node)}
             title="Edit"
@@ -1232,6 +1240,7 @@ function RunCard({
           title={`Select all ${count} ${noun}`}
         />
         <button
+          title={open ? `Collapse ${label}` : `Expand ${label}`}
           type="button"
           onClick={() => card.onToggleRun(run.id)}
           aria-expanded={open}

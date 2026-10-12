@@ -350,7 +350,59 @@ function codeOf(s: string | undefined): string | null {
  *  a serial or barcode printed on the item is the record itself; a model
  *  number is its kind of thing; the name's words in the title are the common
  *  case, a receipt titled "Dishwasher". */
-export function scoreItemMatch(facts: RecordFacts, item: Pick<LibraryItem, "title" | "excerpt" | "match" | "ids" | "attributes">): { score: number; because: string | null } {
+export function scoreItemMatch(
+  facts: RecordFacts,
+  item: Pick<LibraryItem, "title" | "excerpt" | "match" | "ids" | "attributes">,
+): { score: number; because: string | null; conflict?: string; warning?: string } {
+  const matched = matchScore(facts, item);
+  // A VIN or serial printed on the item that is not this record's is
+  // another thing's paperwork, however well its model or name agrees: shown,
+  // with the conflict said, and never as a match (#5870). A year that
+  // disagrees only warns: a dealer prints the model year, a person the year
+  // they bought it.
+  const { conflict, warning } = identityConflicts(facts, item);
+  if (conflict) return { score: matched.score, because: null, conflict };
+  return warning && matched.because ? { ...matched, warning } : matched;
+}
+
+const VIN = /\b[A-HJ-NPR-Z0-9]{17}\b/g;
+const isVin = (s: string | undefined) => !!s && /^[A-HJ-NPR-Z0-9]{17}$/i.test(s.trim());
+const SERIAL_LABEL = /\b(?:serial(?:\s+(?:number|no\.?|#))?|s\/n)\s*[:#]?\s*([A-Z0-9][A-Z0-9-]{3,})/i;
+const YEAR_LABEL = /\b(?:model\s+)?year\s*[:#]?\s*((?:19|20)\d{2})\b/i;
+
+/** What the item says about WHICH thing it is that this record contradicts:
+ *  a VIN or a labelled serial that is not the record's (a conflict), or a
+ *  year that is not (a warning). Only what the item actually prints is
+ *  judged; an item that names no VIN, serial or year contradicts nothing. */
+export function identityConflicts(facts: RecordFacts, item: Pick<LibraryItem, "title" | "excerpt">): { conflict: string | null; warning: string | null } {
+  const said = `${item.title ?? ""}\n${item.excerpt ?? ""}`;
+  const upper = said.toUpperCase();
+  const recordVin = [facts.serial, ...(facts.identifiers ?? []), ...Object.values(facts.fields ?? {})].find(isVin)?.trim().toUpperCase();
+  let conflict: string | null = null;
+  if (recordVin) {
+    const vins = [...new Set(upper.match(VIN) ?? [])];
+    if (vins.length && !vins.includes(recordVin)) conflict = `VIN ${vins[0]} on it is not this record's (${recordVin})`;
+  }
+  if (!conflict && facts.serial && !isVin(facts.serial)) {
+    const printed = SERIAL_LABEL.exec(said)?.[1];
+    if (printed && codeOf(printed) !== codeOf(facts.serial)) conflict = `serial ${printed} on it is not this record's (${facts.serial.trim()})`;
+  }
+  const recordYear = Object.entries(facts.fields ?? {}).find(([k, v]) => /^(model_?)?year$/i.test(k) && /^(19|20)\d{2}$/.test(v.trim()))?.[1].trim();
+  let warning: string | null = null;
+  if (recordYear) {
+    // A year printed as a label, or right before the record's maker or model
+    // ("2014 Toyota Tacoma").
+    const names = [facts.brand, facts.model].flatMap((n) => (n ? [n.trim().split(/\s+/)[0]!.replace(/[^a-z0-9]/gi, "")] : [])).filter((n) => n.length >= 2);
+    const beside = names.length ? new RegExp(`\\b((?:19|20)\\d{2})\\s+(?:${names.join("|")})\\b`, "i").exec(said)?.[1] : undefined;
+    const year = YEAR_LABEL.exec(said)?.[1] ?? beside;
+    if (year && year !== recordYear) warning = `It says ${year}; this record says ${recordYear}.`;
+  }
+  return { conflict, warning };
+}
+
+/** The match before any conflict: shared ids, attributes, the item's own
+ *  claim, then the rule. */
+function matchScore(facts: RecordFacts, item: Pick<LibraryItem, "title" | "excerpt" | "match" | "ids" | "attributes">): { score: number; because: string | null } {
   const shared = sharedId(facts, item.ids);
   if (shared) return { score: 1, because: `${shared} id` };
   // The record says it is something the item is not (an SNES cartridge, a

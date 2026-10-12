@@ -21,12 +21,13 @@ import { restore as restoreDeletedSource, forget as forgetDeletedTarget, get as 
 import { currentActor } from "../lib/request-context.js";
 import { hereUrl } from "./share-links.js";
 import { humanFieldLabel } from "@cobblr/platform-contract/display-identity";
-import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { kindHoldable, writerFor } from "./kind-writer.js";
 
 export interface SendRequest {
   entity_kind: string;
   ids: string[];
   target_org: string;
+  connection_id?: string;
   collection?: string | null;
   mode: "copy" | "move";
   field_map?: Record<string, string | null>;
@@ -99,11 +100,13 @@ export async function sendTargets(orgId: string, userId: string) {
     }
     targets.push({ id: row.id, slug: row.slug, name: row.name, role: row.role, collections });
   }
+  const connected = await import("./record-send-connected.js");
+  const remote = await connected.connectedTargets(orgId, userId);
   const sends = (await listOffers(orgId, userId))
-    .filter((o) => o.send_mode && o.direction === "out")
+    .filter((o) => (o.send_mode || o.send_file?.connected) && o.direction === "out")
     .slice(0, 20)
-    .map((o) => ({ id: o.id, title: o.title, to: o.peer_name, mode: o.send_mode, status: o.status, sent_at: o.created_at, can_undo: o.can_undo === true }));
-  return { targets, sends };
+    .map((o) => ({ id: o.send_file?.connected ? o.send_file.id : o.id, connected: o.send_file?.connected, can_restore: o.send_file?.can_restore, title: o.title, to: o.peer_name, mode: o.send_mode, status: o.status, sent_at: o.created_at, can_undo: o.can_undo === true || o.send_file?.can_remote_undo === true }));
+  return { targets: [...targets, ...remote.targets], sends, connection_refusals: remote.refused };
 }
 
 async function sendThing(orgId: string, userId: string, kind: string, id: string, viewer: EntityViewer, includeSecrets: boolean): Promise<OfferedThing> {
@@ -150,6 +153,30 @@ async function sendThing(orgId: string, userId: string, kind: string, id: string
   return { ...thing, manufacturer: hidden.has("manufacturer") ? null : thing.manufacturer, model: hidden.has("model") ? null : thing.model, notes: hidden.has("notes") ? null : thing.notes, fields: {}, photos: [], send: { version: 1, mode: "copy", origin: { instance: hereUrl(), org: orgId, kind, id }, module_version: mod?.version ?? "0", kind_version: (await listKindsForOrg(orgId)).find((k) => k.id === kind)?.version ?? "1", values, references, files, needs: omitted, target_kind: null, mapped: {}, location: typeof f.location_id === "string" ? f.location_id : null } };
 }
 
+/** What a send makes of each source field in the target, worked out ONCE
+ *  for the preview and the commit (#5933): the preview maps only what the
+ *  commit will make, and the commit makes only what the preview showed. A
+ *  field is there already, comes with the collection the send creates (its
+ *  native fields), will be created (its definition checked now, so nothing
+ *  the preview mapped is refused at Confirm), or cannot be added, with why. */
+type FieldPlan = Array<{ def: DefinedField; state: "there" | "with-collection" | "create" | "cannot"; why?: string }>;
+function fieldPlan(sourceDefs: DefinedField[], existing: DefinedField[], kind: string, opts: { createCollection: boolean; add: string[] }): FieldPlan {
+  return sourceDefs.filter((d) => d.type !== "computed").map((d) => {
+    if (existing.some((e) => e.name === d.name)) return { def: d, state: "there" as const };
+    if (opts.createCollection && d.native) return { def: d, state: "with-collection" as const };
+    if (!opts.createCollection && !opts.add.includes(d.display_label || d.name)) return { def: d, state: "cannot" as const, why: "not added" };
+    const body = createBody(d, kind);
+    return body.success ? { def: d, state: "create" as const } : { def: d, state: "cannot" as const, why: body.error.issues[0]?.message ?? "its definition does not fit" };
+  });
+}
+/** A field's definition as the target's field-def door takes it: a stored
+ *  definition's empty keys are absent, never null ("choices: null" is what
+ *  refused every custom field at Confirm). */
+function createBody(d: DefinedField, kind: string) {
+  const clean = Object.fromEntries(Object.entries({ ...d, native: false, entity_kind: kind, required: false }).filter(([, v]) => v !== null && v !== undefined));
+  return FieldDefCreate.safeParse(clean);
+}
+
 async function prepare(orgId: string, userId: string, p: SendRequest) {
   const source = await membership(orgId, userId);
   const target = await membership(p.target_org, userId);
@@ -168,7 +195,7 @@ async function prepare(orgId: string, userId: string, p: SendRequest) {
     const writer = await sendWriter(source.id, p.entity_kind, userId);
     if (!canUndoOwnMove(writer)) throw new SendError("This collection can be copied, but cannot yet be moved safely.");
   }
-  const things: Array<{ thing: OfferedThing; preview: SendItemPreview; defs: DefinedField[] }> = [];
+  const things: Array<{ thing: OfferedThing; preview: SendItemPreview; defs: DefinedField[]; plan: FieldPlan; kind: string; createCollection: boolean }> = [];
   for (const id of p.ids) {
     const thing = await sendThing(source.id, userId, p.entity_kind, id, viewer, !!p.include_secrets);
     const s = thing.send!;
@@ -194,25 +221,25 @@ async function prepare(orgId: string, userId: string, p: SendRequest) {
     s.target_kind = match?.id ?? null;
     const defs = match ? await sendFieldDefs(target.id, match.id) : [];
     const sourceDefs = await sendFieldDefs(source.id, p.entity_kind);
-    const virtual = [...defs];
-    if (p.create_matching && !match) virtual.push(...sourceDefs);
     for (const label of p.add_fields ?? []) {
-      const field = sourceDefs.find((d) => (d.display_label || d.name) === label);
-      if (!field) throw new SendError(`There is no source field called ${label}.`);
-      if (!virtual.some((d) => d.name === field.name)) virtual.push({ ...field, native: false });
+      if (!sourceDefs.some((d) => (d.display_label || d.name) === label)) throw new SendError(`There is no source field called ${label}.`);
     }
+    const plan = fieldPlan(sourceDefs, defs, p.collection ?? match?.id ?? p.entity_kind, { createCollection: !!(p.create_matching && !match), add: p.add_fields ?? [] });
+    const virtual = [...defs, ...plan.filter((f) => f.state === "with-collection" || f.state === "create").map((f) => f.def)];
+    const cannot = plan.filter((f) => f.state === "cannot" && f.why !== "not added");
     if ((p.create_matching || p.add_fields?.length) && !roleSatisfies(target.role, ["admin"])) throw new SendError("An owner or admin can create the matching collection or add fields there.");
     const mapped = mapOfferedFields(s.values, virtual, p.field_map);
     s.mapped = mapped.values;
     s.field_map = p.field_map;
     const collectionName = match ? match.display_name_plural || match.display_name : p.create_matching ? sourceShape?.display_name_plural || sourceShape?.display_name || thing.kind_words || null : null;
-    const needs = [...(match || p.create_matching ? [] : ["Choose or create a matching collection"]), ...mapped.missing.map((f) => `${f} has no field in ${collectionName ?? "the target collection"}`)];
+    const whyNot = (label: string) => cannot.find((f) => (f.def.display_label || f.def.name) === label)?.why;
+    const needs = [...(match || p.create_matching ? [] : ["Choose or create a matching collection"]), ...mapped.missing.map((f) => whyNot(f) ? `${f} cannot be added to ${collectionName ?? "the target collection"}: ${whyNot(f)}` : `${f} has no field in ${collectionName ?? "the target collection"}`)];
     if (s.location && !p.location && p.placement !== "unplaced") needs.push("Choose a placement in this workspace");
     s.location = p.location ?? null;
     s.needs = [...s.needs, ...needs];
     const previous = await findSendArrival(target.id, s.origin, {userId, role: target.role});
     const preview: SendItemPreview = { id, name: thing.name, collection: collectionName, mappings: mapped.mappings, missing: mapped.missing, dropped: [...mapped.dropped, ...s.needs.filter((n) => !needs.includes(n))], needs, duplicate: previous?.id ?? null, files: s.files.length, arrival: needs.length ? "inbox" : "collection" };
-    things.push({ thing, preview, defs });
+    things.push({ thing, preview, defs, plan, kind: p.collection ?? match?.id ?? p.entity_kind, createCollection: !!(p.create_matching && !match) });
   }
   const room = platform().scan.offerIntake()?.room;
   const blocked = room ? await room(target.id, { userId, orgSlug: target.slug }, { count: things.length, bytes: things.reduce((sum, i) => sum + i.thing.send!.files.reduce((n, f) => n + Buffer.byteLength(f.data, "base64"), 0), 0) }) : [];
@@ -220,6 +247,7 @@ async function prepare(orgId: string, userId: string, p: SendRequest) {
 }
 
 export async function previewSend(orgId: string, userId: string, p: SendRequest): Promise<SendPreview> {
+  if (p.connection_id) return (await import("./record-send-connected.js")).previewConnectedSend(orgId, userId, p);
   const plan = await prepare(orgId, userId, p);
   return { blocked: plan.blocked, target: plan.target, can_include_secrets: plan.canSecrets, items: plan.things.map((i) => i.preview) };
 }
@@ -246,6 +274,7 @@ export async function recordOwnSendFiling(orgId: string, offerId: string, inboxI
 
 export async function sendRecords(orgId: string, userId: string, p: SendRequest) {
   if (p.dry_run) return previewSend(orgId, userId, p);
+  if (p.connection_id) return (await import("./record-send-connected.js")).sendConnectedRecords(orgId, userId, p);
   return runSerialised(`record-send:${orgId}`, async () => {
     if (p.request_id) {
       const done = await meta.selectFrom("share_offers").selectAll().where("batch", "=", p.request_id).where("created_by", "=", userId).execute();
@@ -348,7 +377,10 @@ export async function sendRecords(orgId: string, userId: string, p: SendRequest)
   });
 }
 
-export async function undoSend(orgId: string, userId: string, offerId: string) {
+export async function undoSend(orgId: string, userId: string, offerId: string, restore = false) {
+  const connected = await (await import("./record-send-connected.js")).undoConnectedSend(orgId, userId, offerId, restore);
+  if (connected) return connected;
+  if (restore) throw new SendError("That send has no connected source to restore.");
   return runSerialised(`record-send:${orgId}`, () => undoSendUnlocked(orgId, userId, offerId));
 }
 export async function undoFileArrival(orgId: string, userId: string, offerId: string, checkOnly = false, locked = false) {
@@ -433,10 +465,12 @@ async function prepareTargetShape(orgId: string, userId: string, p: SendRequest)
   if (!roleSatisfies(target.role, ["admin"])) throw new SendError("You cannot change the target collection's fields.");
   const source = await resolveKind(orgId, p.entity_kind);
   const module = source.base.split(":")[0]!;
-  const planned = await prepare(orgId, userId, p);
-  const match = planned.things[0]?.thing.send?.target_kind;
-  let kind = p.collection ?? match ?? p.entity_kind;
-  if (p.create_matching && !match) {
+  // The preview's own plan: what it mapped is what is made, nothing more, and
+  // it is all decided before the target changes at all.
+  const planned = (await prepare(orgId, userId, p)).things[0];
+  if (!planned) return;
+  const kind = planned.kind;
+  if (planned.createCollection) {
     await enableModuleForOrg(target.id, module, { userId });
     if (source.instance && !(await getInstance(target.id, source.instance))) {
       const own = await getInstance(orgId, source.instance);
@@ -447,13 +481,12 @@ async function prepareTargetShape(orgId: string, userId: string, p: SendRequest)
       await upsertOverride({ orgId: target.id, targetKind: "instance", targetId: source.instance, config });
     }
   }
-  const defs = await sendFieldDefs(orgId, p.entity_kind);
   const existing = await sendFieldDefs(target.id, kind);
-  for (const d of defs) {
-    if (d.type === "computed" || existing.some((e) => e.name === d.name) || (!p.create_matching && !p.add_fields?.includes(d.display_label || d.name))) continue;
-    const parsed = FieldDefCreate.safeParse({ ...d, native: false, entity_kind: kind, required: false });
-    if (!parsed.success) throw new SendError(`The ${d.display_label} field needs configuring in the target first.`);
-    const result = await createFieldDef(target.id, parsed.data);
+  for (const f of planned.plan) {
+    if (f.state !== "create" || existing.some((e) => e.name === f.def.name)) continue;
+    const body = createBody(f.def, kind);
+    if (!body.success) throw new SendError(`The ${f.def.display_label} field needs configuring in the target first.`);
+    const result = await createFieldDef(target.id, body.data);
     if (!result.ok) throw new SendError(result.message);
   }
 }
@@ -487,32 +520,10 @@ async function sendFieldDefs(orgId: string, kind: string): Promise<DefinedField[
 async function sendWriter(orgId: string, kind: string, userId: string): Promise<EntityWriter | null> {
   const native = await platform().entities.getWriter(orgId, kind);
   if (native) return native;
-  const history = await getHistoryWriterFor(orgId, kind);
-  const shape = (await listKindsForOrg(orgId)).find((k) => k.id === kind);
-  if (!history || !shape?.endpoints?.create || !shape.endpoints.update || !shape.endpoints.delete) return null;
-  const org = await membership(orgId, userId);
-  const token = await platform().auth.mintSession({userId});
-  const call = async (method: string, endpoint: string, id?: string, fields?: Record<string, unknown>) => {
-    const path = endpoint.replace(/\{id\}/g, id ?? "");
-    const response = await apiFetch(`${selfOrigin()}/api/v1/orgs/${org.slug}/modules/${shape.module_name}${path}`, {
-      method, headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
-      ...(fields ? {body: JSON.stringify(fields)} : {}), signal: AbortSignal.timeout(30_000),
-    });
-    const body = await response.json().catch(() => null) as {id?: string; error?: {message?: string}} | null;
-    if (!response.ok) throw new SendError(body?.error?.message ?? "The collection could not complete this send.");
-    return body;
-  };
-  return {
-    create: async (_org, fields) => {
-      const body = await call("POST", shape.endpoints!.create!, undefined, fields);
-      if (!body?.id) throw new SendError("The collection did not confirm the new record.");
-      return body.id;
-    },
-    update: async (_org, id, fields) => { await call("PATCH", shape.endpoints!.update!, id, fields); },
-    delete: async (_org, id) => { await call("DELETE", shape.endpoints!.delete!, id); },
-    snapshot: history.snapshot.bind(history), read: history.snapshot.bind(history), restore: history.restore.bind(history),
-    snapshotDeletion: history.snapshotDeletion?.bind(history), restoreDeletion: history.restoreDeletion?.bind(history),
-  };
+  // Through the kind's endpoints, only into a workspace of the sender's own.
+  if (!(await kindHoldable(orgId, kind))) return null;
+  await membership(orgId, userId);
+  return writerFor(orgId, kind, userId, (m) => new SendError(m));
 }
 
 async function refuseUnsentDependents(orgId: string, kind: string, id: string, userId: string): Promise<void> {

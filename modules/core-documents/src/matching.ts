@@ -133,7 +133,15 @@ export async function noteFacts(db: Db, kind: string, id: string, facts: RecordF
 
 /** Keep a suggestion, unless the item is linked to that record already
  *  or the person said no to it. */
-export async function suggest(db: Db, row: { kind: string; id: string }, holder: ServiceConnectionHolder, doc: LibraryItem, score: number, because: string | null): Promise<void> {
+export async function suggest(
+  db: Db,
+  row: { kind: string; id: string },
+  holder: ServiceConnectionHolder,
+  doc: LibraryItem,
+  score: number,
+  because: string | null,
+  said: { conflict?: string; warning?: string } = {},
+): Promise<void> {
   const linked = await db
     .selectFrom("core_documents_linked")
     .select("ref")
@@ -145,15 +153,16 @@ export async function suggest(db: Db, row: { kind: string; id: string }, holder:
   const forUser = holder.shared ? null : holder.ownerUserId;
   await sql`
     insert into core_documents_suggestions
-      (record_kind, record_id, connection_id, ref, title, created, tags, open_url, has_thumb, score, because, for_user_id,
+      (record_kind, record_id, connection_id, ref, title, created, tags, open_url, has_thumb, score, because, conflict, warning, for_user_id,
        item_type, item_type_label, subtitle, open_label)
     values
       (${row.kind}, ${row.id}, ${holder.credentialId}, ${doc.ref}, ${doc.title}, ${doc.created ?? null}, ${JSON.stringify(doc.tags ?? [])}::jsonb,
-       ${doc.open_url ?? null}, ${doc.has_thumb === true}, ${score}, ${because}, ${forUser},
+       ${doc.open_url ?? null}, ${doc.has_thumb === true}, ${score}, ${because}, ${said.conflict ?? null}, ${said.warning ?? null}, ${forUser},
        ${doc.type}, ${doc.type_label}, ${doc.subtitle ?? null}, ${doc.open_label ?? null})
     on conflict (record_id, connection_id, ref, coalesce(for_user_id::text, ''))
     do update set title = excluded.title, created = excluded.created, tags = excluded.tags, open_url = excluded.open_url,
       has_thumb = excluded.has_thumb, score = greatest(core_documents_suggestions.score, excluded.score), because = excluded.because,
+      conflict = excluded.conflict, warning = excluded.warning,
       item_type = excluded.item_type, item_type_label = excluded.item_type_label, subtitle = excluded.subtitle, open_label = excluded.open_label
   `.execute(db);
 }
@@ -172,9 +181,9 @@ export async function matchRecordOn(orgId: string, db: Db, row: { kind: string; 
   const docs = [...found, ...byId];
   const kept: string[] = [];
   for (const doc of docs) {
-    const { score, because } = scoreItemMatch(row.facts, doc);
+    const { score, because, ...said } = scoreItemMatch(row.facts, doc);
     if (score < SUGGEST_AT) continue;
-    await suggest(db, row, holder, doc, score, because);
+    await suggest(db, row, holder, doc, score, because, said);
     kept.push(doc.ref);
   }
   let stale = db
@@ -239,9 +248,9 @@ export async function matchItems(db: Db, holder: ServiceConnectionHolder, docs: 
   for (const doc of docs) {
     for (const r of records) {
       const facts = (typeof r.facts === "string" ? JSON.parse(r.facts) : r.facts) as RecordFacts;
-      const { score, because } = scoreItemMatch(facts, doc);
+      const { score, because, ...said } = scoreItemMatch(facts, doc);
       if (score < SUGGEST_AT) continue;
-      await suggest(db, { kind: r.record_kind, id: r.record_id }, holder, doc, score, because);
+      await suggest(db, { kind: r.record_kind, id: r.record_id }, holder, doc, score, because, said);
       made++;
     }
   }

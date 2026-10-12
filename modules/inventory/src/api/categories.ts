@@ -7,12 +7,13 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, slugify } from "./util.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const categoriesRouter = Router({ mergeParams: true });
 
 const CategoryCreate = z.object({
   name: z.string().min(1).max(120),
-  color: z.string().regex(/^#[0-9a-fA-F]{3,8}$/).optional(),
+  color: optionalField(z.string().regex(/^#[0-9a-fA-F]{3,8}$/)),
   parent_id: z.string().uuid().nullable().optional(),
 });
 

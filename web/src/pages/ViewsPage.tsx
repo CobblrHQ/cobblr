@@ -17,7 +17,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { ViewEmptyState } from "../components/ViewEmptyState";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, FileDown, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, FileDown, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
@@ -129,6 +129,7 @@ export function ViewsPage() {
               {v.pinned && " · pinned"}
             </span>
             <button
+              aria-label={v.pinned ? "Unpin from dashboard" : "Pin to dashboard"}
               onClick={(e) => {
                 e.stopPropagation();
                 pinToggle.mutate({ id: v.id, pinned: !v.pinned });
@@ -143,6 +144,7 @@ export function ViewsPage() {
               {v.pinned ? <Pin size={14} /> : <PinOff size={14} />}
             </button>
             <button
+              aria-label="Edit"
               onClick={(e) => {
                 e.stopPropagation();
                 setEditing(v);
@@ -153,6 +155,7 @@ export function ViewsPage() {
               <Pencil size={14} />
             </button>
             <button
+              aria-label="Delete"
               onClick={async (e) => {
                 e.stopPropagation();
                 const ok = await confirm({
@@ -1143,6 +1146,7 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
   return (
     <>
       <div className="mb-2 flex items-center justify-between gap-3">
+        {/* COLOUR-NOT-STATE: the label itself turns to Done while the steppers are out. */}
         <button
           type="button"
           onClick={() => { setEditing((v) => !v); setLastAction(null); }}
@@ -1817,6 +1821,35 @@ export function HeatmapRenderer({ items, cfg }: { items: ViewRow[]; cfg: Record<
   );
 }
 
+const VIEW_LAYOUTS = ["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const;
+type ViewLayout = (typeof VIEW_LAYOUTS)[number];
+
+/** A view's layout: one of nine, a radio group whose pick is marked with a
+ *  check as well as its fill, never told by colour alone (#6086). */
+function LayoutPicker({ value, onChange }: { value: ViewLayout; onChange: (t: ViewLayout) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Layout" className="flex flex-wrap gap-1">
+      {VIEW_LAYOUTS.map((t) => (
+        <button
+          key={t}
+          type="button"
+          role="radio"
+          aria-checked={value === t}
+          onClick={() => onChange(t)}
+          className={`min-h-11 flex-1 inline-flex items-center justify-center gap-1 px-3 text-xs rounded transition ${
+            value === t
+              ? "bg-cobble-600 text-white"
+              : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
+          }`}
+        >
+          {value === t && <Check size={12} strokeWidth={2.5} aria-hidden data-picked-mark />}
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CreateViewModal({
   slug,
   onClose,
@@ -1952,25 +1985,10 @@ function CreateViewModal({
             autoFocus
           />
         </label>
-        <label className="block">
+        <div>
           <div className="text-xs text-muted mb-1">Layout</div>
-          <div className="flex flex-wrap gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setViewType(t)}
-                className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
-                  viewType === t
-                    ? "bg-cobble-600 text-white"
-                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </label>
+          <LayoutPicker value={viewType} onChange={setViewType} />
+        </div>
         {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>
@@ -2229,25 +2247,10 @@ export function EditViewModal({
           Collection: <span>{editLabels.collection(view.entity_kind)}</span>{" "}
           (locked)
         </div>
-        <label className="block">
+        <div>
           <div className="text-xs text-muted mb-1">Layout</div>
-          <div className="flex flex-wrap gap-1">
-            {(["list", "table", "kanban", "trend", "calendar", "gantt", "gallery", "heatmap", "vending"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setViewType(t)}
-                className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
-                  viewType === t
-                    ? "bg-cobble-600 text-white"
-                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
-        </label>
+          <LayoutPicker value={viewType} onChange={setViewType} />
+        </div>
         {(viewType === "calendar" || viewType === "heatmap") && (
           <label className="block">
             <div className="text-xs text-muted mb-1">Date field</div>

@@ -54,6 +54,7 @@ export function ChoicesInput({ value, onChange, placeholder }: Props) {
           >
             {c}
             <button
+              title={`Remove ${c}`}
               type="button"
               onClick={() => onChange(value.filter((x) => x !== c))}
               className="rounded-full p-0.5 text-faint hover:text-ember-500 transition"

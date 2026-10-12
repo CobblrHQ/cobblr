@@ -267,7 +267,7 @@ function WaitsOn({ task, dependencies: given, onChanged }: { task: Task; depende
             <span className="flex-1 min-w-0 truncate">
               {d.depends_on_task_id ? d.blocker_title ?? "a deleted task" : `${d.target_entity_type ?? "record"} ${d.target_entity_id?.slice(0, 8) ?? ""}`}
             </span>
-            <button type="button" aria-label="Stop waiting on this" className="text-faint hover:text-ember-600" onClick={() => drop.mutate(d.id)}>
+            <button title="Stop waiting on this" type="button" aria-label="Stop waiting on this" className="text-faint hover:text-ember-600" onClick={() => drop.mutate(d.id)}>
               <X size={13} />
             </button>
           </li>
@@ -332,7 +332,7 @@ function Checklist({ items: saved, onSave: save }: { items: ChecklistItem[]; onS
               onChange={() => onSave(items.map((x) => (x.id === it.id ? { ...x, done: !x.done } : x)))}
             />
             <span className={"flex-1 min-w-0 break-words " + (it.done ? "line-through text-faint" : "")}>{it.text}</span>
-            <button type="button" aria-label={`Remove ${it.text}`} className="text-faint hover:text-ember-600" onClick={() => onSave(items.filter((x) => x.id !== it.id))}>
+            <button title={`Remove ${it.text}`} type="button" aria-label={`Remove ${it.text}`} className="text-faint hover:text-ember-600" onClick={() => onSave(items.filter((x) => x.id !== it.id))}>
               <X size={13} />
             </button>
           </li>

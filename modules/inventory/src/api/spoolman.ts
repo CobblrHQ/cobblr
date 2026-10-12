@@ -7,6 +7,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
 import type { InventoryDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const spoolmanRouter = Router({ mergeParams: true });
 
@@ -63,7 +64,7 @@ spoolmanRouter.get(
 const ConnCreate = z.object({
   label: z.string().min(1).max(120),
   base_url: z.string().url().max(500),
-  api_key: z.string().max(500).optional(),
+  api_key: optionalText(500),
 });
 // AI-REACH: holds or mints credentials; the assistant must never handle these
 spoolmanRouter.post(

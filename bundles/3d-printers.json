@@ -1,13 +1,18 @@
 {
   "manifest": {
     "id": "cobblr.community.3d-printers",
-    "version": "0.3.5",
+    "version": "0.3.6",
     "name": "3D Printers",
     "description": "A 3D Printers tracker: your printers with hotend, extruder, board, firmware, bed size, and local IP. It's a named view of your machines, so each printer still drives prints, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-10-06",
-    "changelog": "A printer added by name alone (a Bambu Lab P1P, a Prusa MK4) is recognised as a 3D printer and lands in 3D Printers, from its maker and model.",
+    "released_at": "2026-10-12",
+    "changelog": "A printer's bed size is a fact about its model: once one printer of a model has it, every printer of that model waiting in your inbox gets it too. What was fitted to one printer (its hotend, extruder, mainboard, firmware) stays with that printer.",
     "releases": [
+      {
+        "version": "0.3.6",
+        "released_at": "2026-10-12",
+        "notes": "A printer's bed size is a fact about its model: once one printer of a model has it, every printer of that model waiting in your inbox gets it too. What was fitted to one printer (its hotend, extruder, mainboard, firmware) stays with that printer."
+      },
       {
         "version": "0.3.5",
         "released_at": "2026-10-06",
@@ -105,6 +110,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "hotend",
+            "fact_scope": "instance",
             "display_label": "Hotend",
             "type": "text",
             "position": 10,
@@ -123,6 +129,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "extruder",
+            "fact_scope": "instance",
             "display_label": "Extruder",
             "type": "text",
             "position": 11,
@@ -141,6 +148,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "board",
+            "fact_scope": "instance",
             "display_label": "Mainboard",
             "type": "text",
             "position": 12,
@@ -158,6 +166,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "firmware",
+            "fact_scope": "instance",
             "display_label": "Firmware",
             "type": "text",
             "position": 13,
@@ -173,6 +182,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "bed_size",
+            "fact_scope": "model",
             "display_label": "Bed size (mm)",
             "type": "text",
             "position": 14,

@@ -41,6 +41,7 @@ import {
   type OrganizeInputItem,
   type OrganizePlan,
 } from "../services/organize-plan.js";
+import { optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 /**
  * The display names a stored plan carries for its own items.
@@ -519,7 +520,7 @@ const ApplyBody = z.object({
     .array(
       z.object({
         group_id: z.string().uuid(),
-        location_id: z.string().uuid().optional(),
+        location_id: optionalUuid(),
         new_location: z
           .object({
             name: z.string().min(1).max(120),

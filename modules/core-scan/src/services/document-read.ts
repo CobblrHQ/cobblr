@@ -23,9 +23,9 @@
 import sharp from "sharp";
 import { platform } from "@cobblr/platform-contract";
 import { refusalCodeOf } from "@cobblr/platform-contract/ai-refusal";
-import { isSaleDocumentLabel, readBillOfSale, readDocumentFigures, readVin } from "./bill-of-sale.js";
+import { isSaleDocumentLabel, readBillOfSale, readDocumentFigures, readVinAsPrinted } from "./bill-of-sale.js";
 import { checkBillOfSale, confirmVinCandidate, fieldsToCheck, looksLikeWords, NO_FIGURES, type DocumentVerdict } from "./document-checks.js";
-import { decodeVin, vinTitle } from "./vin-decode.js";
+import { checkDigitValid, decodeVin, vinModelYear, vinTitle } from "./vin-decode.js";
 import { decodeCacheKey, readDecodeCache, writeDecodeCache } from "./decode-cache.js";
 import type { DecodeResult } from "./identifier-registry.js";
 import type { ParsedReceipt } from "./receipt-shared.js";
@@ -175,7 +175,8 @@ export interface CheckedDocument {
 
 /** Check a read and let a proved VIN set what the vehicle is. */
 export async function checkAndSettle(orgId: string, receipt: ParsedReceipt, text: string, now: Date = new Date()): Promise<CheckedDocument> {
-  const raw = readVin(text);
+  // The VIN as printed: the checks prove it, or try a look-alike swap.
+  const raw = readVinAsPrinted(text);
   let verdict = checkBillOfSale(receipt, raw, readDocumentFigures(text), now);
   let decoded: DecodeResult | null = null;
   if (verdict.vin_candidate) {
@@ -190,6 +191,20 @@ export async function checkAndSettle(orgId: string, receipt: ParsedReceipt, text
   if (!verdict.vin) return { receipt, verdict };
   decoded ??= await decodeVinFor(orgId, verdict.vin);
   return { receipt: withVinAuthority(receipt, verdict.vin, verdict.vin_year, decoded), verdict };
+}
+
+/** A read made right by the VIN a person typed, when it passes its check
+ *  digit: the vehicle database names it, as a proved VIN on the page would,
+ *  and the VIN's doubt (and the name it replaced) is withdrawn. Null for a
+ *  typed VIN that fails its check (#5921). */
+export async function settleWithTypedVin(orgId: string, receipt: ParsedReceipt, typed: string, now: Date = new Date()): Promise<ParsedReceipt | null> {
+  const vin = typed.trim().toUpperCase().replace(/[\s-]/g, "");
+  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin) || !checkDigitValid(vin)) return null;
+  const decoded = await decodeVinFor(orgId, vin);
+  const settled = withVinAuthority(receipt, vin, vinModelYear(vin, now), decoded);
+  const fields = (receipt.checks?.fields ?? []).filter((f) => f !== "vin" && f !== "name" && f !== "make" && f !== "model" && f !== "year");
+  const { checks: _checks, ...rest } = settled;
+  return fields.length ? { ...rest, checks: { ...receipt.checks!, fields, why: [] } } : rest;
 }
 
 /** The page read by the workspace's document model, or why not. `busy`: every document model is busy now. `limit`: its allowance is used

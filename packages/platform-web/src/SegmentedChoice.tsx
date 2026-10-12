@@ -6,9 +6,12 @@
 // (see SEGMENTED_MAX). It is a radiogroup for assistive tech: role=radiogroup,
 // each button role=radio with aria-checked, one tab stop (the selected option),
 // and the arrow keys move and select. Options wrap onto the next line on a
-// phone rather than shrinking or scrolling sideways.
+// phone rather than shrinking or scrolling sideways. The picked option carries
+// a check mark as well as its fill, so it is told apart without its colour
+// (#6045: Off / Just me / Share on a connection read by colour alone).
 
 import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import { Check } from "lucide-react";
 
 /** Beyond this many options a row of buttons is the wrong control. */
 export const SEGMENTED_MAX = 5;
@@ -89,12 +92,15 @@ export function SegmentedChoice<T extends string>({
             }}
             onKeyDown={(e) => onKey(e, i)}
             className={
-              "min-h-10 rounded-lg border px-3 py-1.5 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 " +
+              "min-h-11 rounded-lg border px-3 py-1.5 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 " +
               (stack ? "w-full " : "") +
               (picked ? fill : "border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:border-cobble-400")
             }
           >
-            <span className="block">{o.label}</span>
+            <span className="flex items-center gap-1">
+              {picked && <Check size={14} strokeWidth={2.5} aria-hidden data-picked-mark className="shrink-0" />}
+              <span>{o.label}</span>
+            </span>
             {o.hint && (
               <span className={"block text-[11px] font-normal " + (picked ? "text-white/85" : "text-muted dark:text-slate-400")}>{o.hint}</span>
             )}

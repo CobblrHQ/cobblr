@@ -84,7 +84,21 @@ function entryPoints(name: string): string[] {
       : pkg.main
         ? [[".", pkg.main]]
         : [];
-  return targets
+  // A subpath pattern ("./*": "./src/*.ts", which keeps every new file out of package.json) is
+  // every file it matches, so the same entry points are loaded as when each was listed; a file an
+  // explicit entry already names is that entry.
+  const named = new Set(targets.map(([, t]) => firstPath(t)).filter((t): t is string => !!t && !t.includes("*")).map((t) => t.replace(/^\.\//, "")));
+  const expanded = targets.flatMap(([key, target]): Array<[string, unknown]> => {
+    const path = firstPath(target);
+    if (!key.includes("*") || !path) return [[key, target]];
+    const [kPre, kPost] = key.split("*") as [string, string];
+    const [tPre, tPost] = path.replace(/^\.\//, "").split("*") as [string, string];
+    return globSync(`${dir}/${tPre}*${tPost}`)
+      .map((f) => f.slice(dir.length + 1))
+      .filter((f) => !named.has(f) && !/\.(test|d)\.ts$/.test(f) && !f.slice(tPre.length, f.length - tPost.length).includes("/"))
+      .map((f): [string, unknown] => [`${kPre}${f.slice(tPre.length, f.length - tPost.length)}${kPost}`, `./${f}`]);
+  });
+  return expanded
     .filter(([, target]) => {
       const path = firstPath(target);
       return !!path && /(^|\/)src\//.test(path);

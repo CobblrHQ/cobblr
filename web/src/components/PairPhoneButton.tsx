@@ -70,7 +70,8 @@ export function PairPhoneButton({
           type="button"
           data-tour={dataTour}
           onClick={() => setOpen(true)}
-          title="Scan with your phone instead"
+          aria-label="Pair phone"
+          title="Pair phone: scan with your phone instead"
           className={
             className ??
             "shrink-0 inline-flex items-center gap-1.5 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:border-cobble-400 dark:hover:border-cobble-600 transition"

@@ -4,6 +4,7 @@ scope: core-scan
 date: 2026-10-11
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
 ui: none (a split pack's lines already say where their colours came from; nothing new to press)
+docs_published: 2026-10-12
 ---
 A mixed pack someone has filed is known to the next person who orders it, so their order splits into its spools with no AI.
 

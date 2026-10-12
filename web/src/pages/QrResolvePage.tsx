@@ -24,6 +24,7 @@ import { useEffect, useRef, useState } from "react";
 import { QrCode, ScanLine } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
 import { api, getToken } from "../lib/api";
+import { makesBackgroundWrites, rememberRole } from "../lib/acting-role";
 import { PublicBrand, PublicRecordCard, type PublicFrame, type PublicRecord } from "./PublicPageView";
 
 interface ResolveResult {
@@ -50,7 +51,11 @@ async function memberOf(slug: string): Promise<{ member: boolean; name: string |
   if (!getToken()) return { member: false, name: null };
   try {
     const me = await api.me();
-    return { member: me.orgs.some((o) => o.slug === slug), name: me.user.display_name || null };
+    const org = me.orgs.find((o) => o.slug === slug);
+    // Outside the workspace's own pages, so its role is remembered here,
+    // before anything is asked of it (lib/acting-role.ts).
+    if (org) rememberRole(org.slug, org.role, org.portal_shares);
+    return { member: !!org, name: me.user.display_name || null };
   } catch {
     return { member: false, name: null };
   }
@@ -117,7 +122,7 @@ export function QrResolvePage() {
           return;
         }
         if (body.mode === "navigate" && body.detail_path) {
-          if (body.org_slug && body.entity_kind && body.entity_id && getToken()) {
+          if (body.org_slug && body.entity_kind && body.entity_id && getToken() && makesBackgroundWrites(body.org_slug)) {
             await api.requestLight(body.org_slug, { kind: body.entity_kind, id: body.entity_id }, "label-scanned").catch(() => undefined);
           }
           // The whole point: a scanned label lands on the thing it's

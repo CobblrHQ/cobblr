@@ -410,3 +410,19 @@ export function collidingIds(items: Array<{ id: string; rect: FpRect }>): Set<st
   }
   return hit;
 }
+
+/** How many cells of a grid a size takes: every cell it reaches into, so a
+ *  20 mm socket on a 42 mm grid takes one, never "0" (#5990). A size that is
+ *  a whole number of cells takes exactly that many (84 mm is 2 of 42, not 3). */
+export function gridCells(mm: number, grid: number): number {
+  if (!(grid > 0) || !(mm > 0)) return 0;
+  return Math.max(1, Math.ceil(mm / grid - 1e-6));
+}
+
+/** The grid note beside a footprint's sizes: the cells it takes, and in
+ *  words what that means. */
+export function gridCellsNote(rect: { w_mm: number; d_mm: number }, grid: number): { text: string; title: string } {
+  const w = gridCells(rect.w_mm, grid);
+  const d = gridCells(rect.d_mm, grid);
+  return { text: `${w} × ${d} u`, title: `Takes ${w} × ${d} cells of the ${grid} mm grid` };
+}

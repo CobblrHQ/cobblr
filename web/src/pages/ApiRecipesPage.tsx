@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Copy, Check, KeyRound, Info, Boxes, Terminal, Download } from "lucide-react";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useLater, downloadBlob, useToast, usePageTitle, SearchInput } from "@cobblr/platform-web";
+import { useLater, downloadBlob, useToast, usePageTitle, SearchInput, SegmentedChoice } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 import { moduleIcon } from "../lib/module-icon";
 
@@ -429,7 +429,7 @@ export function ApiRecipesPage() {
                 ))}
                 {wizExp === "custom" && (
                   <span className="inline-flex items-center gap-1.5">
-                    <input
+                    <input aria-label="Days"
                       type="number"
                       min="1"
                       value={customDays}
@@ -480,7 +480,7 @@ export function ApiRecipesPage() {
                 {minting ? "Minting…" : "Generate scoped token"}
               </button>
               {token && (
-                <button onClick={() => copy("tok", token)} className="rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm text-muted hover:text-content">
+                <button onClick={() => copy("tok", token)} aria-label={copied === "tok" ? "Copied" : "Copy token"} title={copied === "tok" ? "Copied" : "Copy token"} className="rounded-md border border-line dark:border-slate-600 px-3 py-2 text-sm text-muted hover:text-content">
                   {copied === "tok" ? <Check size={14} /> : <Copy size={14} />}
                 </button>
               )}
@@ -506,17 +506,12 @@ export function ApiRecipesPage() {
                     <Download size={13} /> Download all
                   </button>
                 )}
-                <div className="inline-flex rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 p-0.5">
-                  {LANGS.map((l) => (
-                    <button
-                      key={l.id}
-                      onClick={() => setLang(l.id)}
-                      className={"rounded px-3 py-1.5 text-sm transition " + (lang === l.id ? "bg-cobble-600 text-white" : "text-muted dark:text-slate-300 hover:text-content")}
-                    >
-                      {l.label}
-                    </button>
-                  ))}
-                </div>
+                <SegmentedChoice
+                  label="Language"
+                  value={lang}
+                  onChange={setLang}
+                  options={LANGS.map((l) => ({ value: l.id, label: l.label }))}
+                />
               </div>
             </div>
 

@@ -18,6 +18,7 @@ import { useState } from "react";
 import type { FileIntakeDecl } from "@cobblr/platform-contract";
 import { FileIntake, type IntakeLine } from "./FileIntake";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { workspaceFetch } from "./acting-role";
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -85,7 +86,7 @@ export function TableFileIntake({
 
   async function makeRecords(lines: IntakeLine[]) {
     const t = token();
-    const res = await fetch(`/api/v1/orgs/${encodeURIComponent(orgSlug)}/instances/${encodeURIComponent(instance)}/file-intake`, {
+    const res = await workspaceFetch(`/api/v1/orgs/${encodeURIComponent(orgSlug)}/instances/${encodeURIComponent(instance)}/file-intake`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
       body: JSON.stringify({ lines, values }),

@@ -14,6 +14,7 @@
 // VIN decode (the code, year, make, model), so filing it fills the record's
 // own fields by meaning, through the same doors a scan uses.
 
+import { checkDigitValid } from "./vin-decode.js";
 import type { RoledFacts } from "@cobblr/platform-contract";
 import { buildReceipt, type ParsedReceipt } from "./receipt-shared.js";
 import { moneyValue } from "@cobblr/platform-contract/receipt-totals";
@@ -80,10 +81,12 @@ function labelled(lines: string[], label: RegExp): string | null {
 
 const VIN = /\b([A-HJ-NPR-Z0-9]{17})\b/;
 
-/** The VIN: seventeen characters with no I, O or Q, preferring one printed
- *  beside a VIN label. OCR reads an O for a 0, so that one confusion is put
- *  right before the check. */
-export function readVin(text: string): string | null {
+/** The VIN AS PRINTED: seventeen characters with no I, O or Q, preferring
+ *  one printed beside a VIN label. OCR reads an O for a 0, so that one
+ *  confusion is put right. Not proved: only the checks read this (they try a
+ *  look-alike swap against the vehicle database); everything else takes
+ *  readVin. */
+export function readVinAsPrinted(text: string): string | null {
   const lines = text.split(/\r?\n/);
   const near = labelled(lines, /\b(?:VIN|vehicle\s+identification\s+(?:number|no\.?))\b/i);
   const candidates = [near, text].filter((s): s is string => !!s);
@@ -94,6 +97,16 @@ export function readVin(text: string): string | null {
     if (m && /\d/.test(m[1]!) && /[A-Z]/.test(m[1]!)) return m[1]!;
   }
   return null;
+}
+
+/** The VIN, only when it passes its check digit (ISO 3779's ninth
+ *  character, as North America requires it). A VIN that fails names no
+ *  vehicle, is decoded to nothing and is matched to nothing: CI's misread
+ *  form became "2014 HONDA WATCU 4" from the words printed beside one
+ *  (#5921). */
+export function readVin(text: string): string | null {
+  const printed = readVinAsPrinted(text);
+  return printed && checkDigitValid(printed) ? printed : null;
 }
 
 /** A sale date as ISO, from a labelled date on the form. */

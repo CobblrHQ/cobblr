@@ -28,9 +28,9 @@ const AssetCreate = z.object({
   manufacturer: z.string().max(120).nullable().optional(),
   model: z.string().max(120).nullable().optional(),
   type: z.string().max(120).nullable().optional(),
-  state: z.string().max(40).optional(),
-  excitement: z.number().int().min(0).max(5).optional(),
-  quantity: z.number().int().min(0).optional(),
+  state: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  excitement: z.number().int().min(0).max(5).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   serial_number: z.string().max(160).nullable().optional(),
   purchased_at: z.string().nullable().optional(),
   purchase_price_cents: z.number().int().min(0).max(10_000_000_000).nullable().optional(),

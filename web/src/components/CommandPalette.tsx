@@ -24,11 +24,8 @@ import { SearchIncomplete } from "./SearchIncomplete";
 import { openSheetImport } from "../lib/sheet-import";
 import { useExactHits } from "../lib/useExactHits";
 
-/** Anything (the mobile bar, the palette) can ask for the quick-add sheet. */
-export const OPEN_ADD_SHEET_EVENT = "cobblr:open-add-sheet";
-/** Programmatic opener (the full-sidebar foot's search button uses it — a
- *  centered palette beats a cramped popover anchored in a 208px column). */
-export const OPEN_PALETTE_EVENT = "cobblr:open-palette";
+import { OPEN_ADD_SHEET_EVENT, OPEN_PALETTE_EVENT, hostGone, hostLoaded } from "./palette-events";
+export { OPEN_ADD_SHEET_EVENT, OPEN_PALETTE_EVENT };
 
 interface ActionRow {
   id: string;
@@ -80,9 +77,11 @@ export function CommandPalette() {
     window.addEventListener("keydown", onKey);
     const onOpenEvt = () => setOpen(true);
     window.addEventListener(OPEN_PALETTE_EVENT, onOpenEvt);
+    if (hostLoaded(OPEN_PALETTE_EVENT)) setOpen(true);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener(OPEN_PALETTE_EVENT, onOpenEvt);
+      hostGone(OPEN_PALETTE_EVENT);
     };
   }, []);
   useEffect(() => {

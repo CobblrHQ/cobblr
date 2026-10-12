@@ -664,6 +664,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       entity_kind: { label: "Record kind", type: "text", required: true },
       ids: { label: "Record ids", type: "list", required: true },
       target_org: { label: "Target workspace id or slug", type: "text", required: true },
+      connection_id: { label: "Connection id from send_targets for another Cobblr", type: "text" },
       collection: { label: "Target collection kind", type: "text" },
       create_matching: { label: "Create a matching collection if needed", type: "boolean" },
       add_fields: { label: "Source field labels to add in the target", type: "list" },
@@ -680,9 +681,9 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines
     group: "share", id: "platform:undo-send", run_by: "member", min_role: "guest", label: "Undo a workspace send",
-    description: "Remove a received copy and restore the source of your own workspace send.",
+    description: "Undo your workspace send. Across Cobblrs, undo the import there first, then restore the source here with restore_source.",
     icon: "undo", scope: "workspace", invoke_handler: "platform.undo-send", user_invokable: true, undoable: false,
-    args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true } }, version: "0.1.1",
+    args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true }, restore_source: { label: "Restore the source here after connected import Undo", type: "boolean" } }, version: "0.1.1",
   },
   {
     // UI-SCREEN: /scan

@@ -69,6 +69,12 @@ html[data-covering-open]::after {
     backdrop-filter: blur(4px);
   }
 }
+/* A surface that owns the bottom edge (the camera scanner) has its own
+ * controls there: no strip over them (#6003). Two attributes outrank one. */
+html[data-overlay-open][data-overlay-owns-bottom]::after,
+html[data-covering-open][data-overlay-owns-bottom]::after {
+  content: none;
+}
 .fc-popover {
   position: fixed;
 }

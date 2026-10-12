@@ -27,6 +27,7 @@ import {
 import { signExportToken } from "../services/export-token.js";
 import { rowPictures } from "@cobblr/platform-contract/scan-pictures";
 import { withGroupImages } from "../services/group-image.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const exportRouter = Router({ mergeParams: true });
 
@@ -206,10 +207,10 @@ exportRouter.get(
 
 const PostBody = z.object({
   ids: z.array(z.string().min(1)).max(5000).optional(),
-  status: z.enum(["all", "pending", "discarded"]).optional(),
-  batch: z.string().min(1).optional(),
-  photo_mode: z.enum(["link", "embed", "none"]).optional(),
-  ttl_ms: z.number().int().min(MIN_TTL_MS).max(MAX_TTL_MS).optional(),
+  status: z.enum(["all", "pending", "discarded"]).optional(), // none-refused-ok: a column that cannot hold null
+  batch: optionalField(z.string().min(1)),
+  photo_mode: optionalField(z.enum(["link", "embed", "none"])),
+  ttl_ms: optionalField(z.number().int().min(MIN_TTL_MS).max(MAX_TTL_MS)),
 });
 
 // The rich export the modal drives: an explicit selection + chosen photo mode.

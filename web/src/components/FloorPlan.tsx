@@ -12,11 +12,12 @@ import { RecordFormModal, Modal, isShortcut, useImageSrc, useToast } from "@cobb
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Flame, Grid3x3, LayoutGrid, Loader2, MapPin, Pencil, Plus, Printer, Redo2, RotateCw, ScanLine, Sparkles, Tag, Undo2, X } from "lucide-react";
+import { Check, Flame, Grid3x3, LayoutGrid, Loader2, MapPin, Pencil, Plus, Printer, Redo2, RotateCw, ScanLine, Sparkles, Tag, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { diffPlaces, historyKey, planHistoryFor, type PlanChange, type PlanStep } from "../lib/planHistory";
 import { ApiError, api, type Location, type TagAttachment, type TagRecord } from "../lib/api";
 import { totalUsage, useLocationUsage } from "../lib/useLocationUsage";
 import {
+  gridCellsNote,
   SNAP_MM,
   clampRect,
   collidingIds,
@@ -39,6 +40,7 @@ import {
   type FpRect,
   type FpWall,
 } from "../lib/floorplanGeometry";
+import { fitsIn, labelFor, shortLabel } from "../lib/layoutBoard";
 import { formatLength, parseLength, type LengthUnit } from "../lib/lengthUnits";
 import { gridNames, gridRects } from "../lib/gridFill";
 import { OUTLINE_PRESETS, byAreaDesc, pointsAttr, readFill, readOutline } from "../lib/planDecor";
@@ -94,6 +96,8 @@ interface PlanEntity {
   kind: string;
   id: string;
   name: string;
+  /** Its own short name, when its kind has one: what a small box says. */
+  short_name?: string | null;
   image_path: string | null;
   location_id: string | null;
   metadata: Record<string, unknown>;
@@ -214,6 +218,13 @@ function PlanFor({
   const toast = useToast();
   const navigate = useNavigate();
   const planRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [viewportPx, setViewportPx] = useState(0);
+  useEffect(() => {
+    setZoom(1);
+    viewportRef.current?.scrollTo?.({ left: 0, top: 0 });
+  }, [room.id]);
 
   const locs = useQuery({
     queryKey: ["core-locations", slug],
@@ -234,7 +245,16 @@ function PlanFor({
     hasOwnLayout(self.metadata) ||
     items.some((l) => l.parent_id === room.id && readRect(l.metadata));
   const bound = ownsLayout ? readBound(self.metadata) : null;
-  const heightCap = usePlanHeightCap(planRef, capVh, !!bound);
+  const heightCap = usePlanHeightCap(viewportRef, capVh, !!bound);
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const measure = () => setViewportPx(el.clientWidth);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [bound?.w_mm, bound?.d_mm]);
   // Place mode (a place-items view wraps the plan): every place is a target
   // and the plan itself is not edited.
   const placing = usePlacing();
@@ -310,6 +330,7 @@ function PlanFor({
       kind: r.kind,
       id: r.id,
       name: r.name,
+      short_name: r.short_name,
       image_path: r.image_path,
       location_id: r.location_id,
       metadata: r.metadata,
@@ -594,9 +615,11 @@ function PlanFor({
     },
     onSuccess: (saved, p) => {
       if (saved && typeof saved === "object" && "metadata" in saved) patchCached(p.id, (saved as Location).metadata ?? p.metadata);
+      settleMeta(`place:${p.id}`, p.metadata);
       void qc.invalidateQueries({ queryKey: ["location", slug, room.id] });
     },
     onError: (e, p, ctx) => {
+      settleMeta(`place:${p.id}`, p.metadata);
       if (ctx?.before) patchCached(p.id, ctx.before as Record<string, unknown>);
       toast.error(e instanceof ApiError ? e.message : String(e));
     },
@@ -607,33 +630,66 @@ function PlanFor({
     },
   });
 
+  // The freshest copy of each record's plan data: what the last write sent,
+  // until the read it set off brings it back. A width then a depth typed one
+  // after the other, faster than a render, built the depth on the record as
+  // the plan last READ it and sent the old width back with it (#5950). Every
+  // write here starts from this, set in the same call that sends the write,
+  // so the next one builds on it however quickly it follows.
+  const pendingMeta = useRef(new Map<string, Record<string, unknown>>());
+  const freshMeta = (key: string, read: Record<string, unknown> | null | undefined) => pendingMeta.current.get(key) ?? read ?? {};
+  const rememberMeta = (key: string, metadata: Record<string, unknown>) => pendingMeta.current.set(key, metadata);
+  /** The read caught up: let the record's own copy answer again, unless a
+   *  newer write has replaced this one since. */
+  const settleMeta = (key: string, metadata: Record<string, unknown>) => {
+    if (pendingMeta.current.get(key) === metadata) pendingMeta.current.delete(key);
+  };
+
   // Every write goes through the geometry seam (withRect / withBound /
   // withDecor), which keeps the rest of the blob: a drag never strips
   // decoration, and moving a toolbox on the floor never stretches its face.
   const rectFor = (loc: Location, rect: FpRect | null) => {
-    const laidOut = hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0;
-    return withRect(loc.metadata, rect, { keepFace: loc.kind !== "area" && laidOut });
+    const base = freshMeta(`place:${loc.id}`, loc.metadata);
+    const laidOut = hasOwnLayout(base) || (placedByOwner.get(loc.id)?.length ?? 0) > 0;
+    return withRect(base, rect, { keepFace: loc.kind !== "area" && laidOut });
   };
   const saveRect = (loc: Location, rect: FpRect | null) => {
+    const base = freshMeta(`place:${loc.id}`, loc.metadata);
     const metadata = rectFor(loc, rect);
-    const was = readRect(loc.metadata);
+    const was = readRect(base);
     note(!rect ? `Took ${loc.name} off the plan` : !was ? `Put ${loc.name} on the plan` : was.rot !== rect.rot ? `Turned ${loc.name}` : was.x_mm === rect.x_mm && was.y_mm === rect.y_mm ? `Resized ${loc.name}` : `Moved ${loc.name}`, [
-      { kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } },
+      { kind: "place", id: loc.id, before: { metadata: base }, after: { metadata } },
     ]);
-    saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
+    rememberMeta(`place:${loc.id}`, metadata);
+    saveMeta.mutate({ id: loc.id, before: base, metadata });
+  };
+  /** One size of a placed location, onto its freshest rect. */
+  const resizePlace = (loc: Location, patch: Partial<FpRect>) => {
+    const rect = readRect(freshMeta(`place:${loc.id}`, loc.metadata));
+    if (rect) saveRect(loc, { ...rect, ...patch });
   };
   /** Patch decoration keys (fill/outline) on a placed location's blob. */
   const patchLocFloorplan = (loc: Location, patch: Record<string, unknown>, previousGroup?: string) => {
-    const metadata = withDecor(loc.metadata, patch);
-    const before = previousGroup === undefined ? loc.metadata : withDecor(loc.metadata, { outline_tag_id: previousGroup });
+    const base = freshMeta(`place:${loc.id}`, loc.metadata);
+    const metadata = withDecor(base, patch);
+    const before = previousGroup === undefined ? base : withDecor(base, { outline_tag_id: previousGroup });
     note(`Changed how ${loc.name} looks`, [{ kind: "place", id: loc.id, before: { metadata: before }, after: { metadata } }]);
-    saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
+    rememberMeta(`place:${loc.id}`, metadata);
+    saveMeta.mutate({ id: loc.id, before: base, metadata });
   };
   const saveBound = (next: FpBound, label = `Changed the outline of ${room.name}`) => {
     const self = byId.get(room.id) ?? room;
-    const metadata = withBound(self.metadata, next, self.kind === "area" ? "area" : "container");
-    note(label, [{ kind: "place", id: room.id, before: { metadata: self.metadata }, after: { metadata } }]);
-    saveMeta.mutate({ id: room.id, before: self.metadata, metadata });
+    const base = freshMeta(`place:${room.id}`, self.metadata);
+    const metadata = withBound(base, next, self.kind === "area" ? "area" : "container");
+    note(label, [{ kind: "place", id: room.id, before: { metadata: base }, after: { metadata } }]);
+    rememberMeta(`place:${room.id}`, metadata);
+    saveMeta.mutate({ id: room.id, before: base, metadata });
+  };
+  /** One size of the room (or face) itself, onto its freshest outline. */
+  const resizeBound = (patch: Partial<FpBound>) => {
+    const self = byId.get(room.id) ?? room;
+    const current = readBound(freshMeta(`place:${room.id}`, self.metadata));
+    if (current) saveBound({ ...current, ...patch });
   };
 
   const rename = useMutation({
@@ -676,22 +732,53 @@ function PlanFor({
     for (const k of Object.keys(body)) before[k] = k === "metadata" ? (ent.metadata ?? {}) : k === "location_id" ? ent.location_id : null;
     note(label, [{ kind: "record", path, before, after: body }]);
   };
-  const invalidateEntities = () => {
-    void qc.invalidateQueries({ queryKey: ["kind-list", slug] });
-  };
+  /** The listed thing as it is about to be, in the list it was read from, so
+   *  the next edit builds on this one rather than on the copy the plan last
+   *  read: a width, then a depth, typed one after the other, sent the width
+   *  back as it was and kept only the depth (#5950). Places already did this
+   *  (saveMeta's patchCached); things on the plan did not. */
+  const patchEntityCached = (ent: PlanEntity, next: Record<string, unknown>) =>
+    qc.setQueryData<{ items: Array<Record<string, unknown>> }>(["kind-list", slug, ent.kind], (old) =>
+      old ? { ...old, items: old.items.map((r) => (r.id === ent.id ? { ...r, ...next } : r)) } : old,
+    );
   const saveEntity = useMutation({
-    mutationFn: (p: { ent: PlanEntity; body: Record<string, unknown>; label?: string }) =>
+    mutationFn: (p: { ent: PlanEntity; body: Record<string, unknown>; label?: string; next?: Record<string, unknown> }) =>
       patchEntity(p.ent, p.body),
-    onSuccess: (_r, p) => {
-      if (p.label) toast.success(p.label);
-      invalidateEntities();
+    onMutate: async (p) => {
+      if (!p.next) return {};
+      await qc.cancelQueries({ queryKey: ["kind-list", slug, p.ent.kind] });
+      const was = qc.getQueryData<{ items: Array<Record<string, unknown>> }>(["kind-list", slug, p.ent.kind])?.items.find((r) => r.id === p.ent.id);
+      patchEntityCached(p.ent, p.next);
+      return { was };
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onSuccess: async (_r, p) => {
+      if (p.label) toast.success(p.label);
+      await qc.invalidateQueries({ queryKey: ["kind-list", slug] });
+      const sent = p.next?.metadata;
+      if (sent && typeof sent === "object") settleMeta(`${p.ent.kind}:${p.ent.id}`, sent as Record<string, unknown>);
+    },
+    onError: (e, p, ctx) => {
+      const sent = p.next?.metadata;
+      if (sent && typeof sent === "object") settleMeta(`${p.ent.kind}:${p.ent.id}`, sent as Record<string, unknown>);
+      if (ctx?.was) patchEntityCached(p.ent, ctx.was);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
-  const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) => {
-    const metadata = withRect(ent.metadata, rect);
-    noteEntity(rect ? `Put ${ent.name} on the plan` : `Took ${ent.name} off the plan`, ent, { metadata });
-    saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(ent.metadata, metadata) } });
+  const entKey = (ent: PlanEntity) => `${ent.kind}:${ent.id}`;
+  /** A write to a thing's plan data, built on its freshest copy. */
+  const saveEntityMeta = (ent: PlanEntity, label: string, change: (base: Record<string, unknown>) => Record<string, unknown>) => {
+    const base = freshMeta(entKey(ent), ent.metadata);
+    const metadata = change(base);
+    noteEntity(label, { ...ent, metadata: base }, { metadata });
+    rememberMeta(entKey(ent), metadata);
+    saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(base, metadata) }, next: { metadata } });
+  };
+  const saveEntityRect = (ent: PlanEntity, rect: FpRect | null) =>
+    saveEntityMeta(ent, rect ? `Put ${ent.name} on the plan` : `Took ${ent.name} off the plan`, (base) => withRect(base, rect));
+  /** One size of a thing on the plan, onto its freshest rect. */
+  const resizeEntity = (ent: PlanEntity, patch: Partial<FpRect>) => {
+    const rect = readRect(freshMeta(entKey(ent), ent.metadata));
+    if (rect) saveEntityRect(ent, { ...rect, ...patch });
   };
 
   function startEntityDrag(e: React.PointerEvent, ent: PlanEntity, rect: FpRect, mode: "move" | "resize") {
@@ -738,14 +825,17 @@ function PlanFor({
             rectToSave = rebaseRect(last, region, tBound);
           }
         }
-        const meta = withRect(ent.metadata, rectToSave);
+        const base = freshMeta(entKey(ent), ent.metadata);
+        const meta = withRect(base, rectToSave);
         const moved = targetLocId !== ent.location_id;
         const next = { metadata: meta, ...(moved ? { location_id: targetLocId } : {}) };
-        noteEntity(moved ? `Moved ${ent.name} into ${byId.get(targetLocId!)?.name ?? room.name}` : mode === "move" ? `Moved ${ent.name}` : `Resized ${ent.name}`, ent, next);
+        noteEntity(moved ? `Moved ${ent.name} into ${byId.get(targetLocId!)?.name ?? room.name}` : mode === "move" ? `Moved ${ent.name}` : `Resized ${ent.name}`, { ...ent, metadata: base }, next);
+        rememberMeta(entKey(ent), meta);
         saveEntity.mutate({
           ent,
-          body: { metadata: jsonbPatchBetween(ent.metadata, meta), ...(moved ? { location_id: targetLocId } : {}) },
+          body: { metadata: jsonbPatchBetween(base, meta), ...(moved ? { location_id: targetLocId } : {}) },
           label: moved ? `Moved into ${byId.get(targetLocId!)?.name ?? room.name}` : undefined,
+          next,
         });
       }
     };
@@ -841,12 +931,14 @@ function PlanFor({
             const label = zid ? (targetLoc?.name ?? "zone") : room.name;
             // The move and the re-file are one step: undo puts it back in
             // its old place on its old parent, together.
+            const base = freshMeta(`place:${loc.id}`, loc.metadata);
             const metadata = rectFor(loc, rectToSave);
             note(`Moved ${loc.name} into ${label}`, [
-              { kind: "place", id: loc.id, before: { parent_id: loc.parent_id, metadata: loc.metadata }, after: { parent_id: target, metadata } },
+              { kind: "place", id: loc.id, before: { parent_id: loc.parent_id, metadata: base }, after: { parent_id: target, metadata } },
             ]);
             reparent.mutate({ id: loc.id, parent_id: target, label });
-            saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
+            rememberMeta(`place:${loc.id}`, metadata);
+            saveMeta.mutate({ id: loc.id, before: base, metadata });
             return;
           }
         }
@@ -1032,9 +1124,48 @@ function PlanFor({
   const flags = onFloor ? planFlags({ room: { ...bound, walls: allWalls }, items: floorItems }) : [];
   const flagsOf = (id: string) => flags.filter((f) => f.ids.includes(id));
 
+  const fitWidth = viewportPx > 0
+    ? Math.min(viewportPx, bound.view === "front" && sized.fits.length > 0
+      ? 512 : heightCap != null ? Math.round(heightCap * bound.w_mm / bound.d_mm) : viewportPx)
+    : null;
+  const fitPlan = () => {
+    setZoom(1);
+    viewportRef.current?.scrollTo?.({ left: 0, top: 0 });
+  };
+
   const content = (
     <div className="space-y-3">
       <SectionHead room={room} edit={edit} title={headTitle}>
+        <span className="inline-flex items-center gap-1" data-testid="plan-zoom">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            title="Zoom out"
+            disabled={zoom === 1}
+            onClick={() => setZoom((v) => Math.max(1, v / 2))}
+            className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-md border border-line text-muted hover:text-content disabled:opacity-40"
+          >
+            <ZoomOut size={16} />
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            title="Zoom in"
+            disabled={zoom === 16}
+            onClick={() => setZoom((v) => Math.min(16, v * 2))}
+            className="min-h-11 min-w-11 inline-flex items-center justify-center rounded-md border border-line text-muted hover:text-content disabled:opacity-40"
+          >
+            <ZoomIn size={16} />
+          </button>
+          <button
+            type="button"
+            title="Fit the whole plan"
+            onClick={fitPlan}
+            className="min-h-11 min-w-11 rounded-md border border-line px-2 text-xs text-muted hover:text-content"
+          >
+            Fit
+          </button>
+        </span>
         {!placing && (
         <>
         <button
@@ -1176,6 +1307,7 @@ function PlanFor({
           </span>
         )}
         {!placing && (
+        // COLOUR-NOT-STATE: the label itself turns to a check and Done while editing.
         <button
           type="button"
           onClick={() => {
@@ -1230,19 +1362,25 @@ function PlanFor({
 
       {/* ── the plan ── */}
       <div
+        ref={viewportRef}
+        data-testid="plan-viewport"
+        className="max-w-full overflow-auto"
+        style={zoom > 1 ? { maxHeight: heightCap ?? `${capVh}dvh` } : undefined}
+      >
+      <div
         ref={planRef}
         data-grid={gridOn && pitch ? pitch.label : undefined}
         // A rack's face with things on its shelves is drawn wide enough to
         // read (a phone's whole width, at most 32rem), and the page scrolls
         // down it: three printers on a shelf stay readable instead of the
         // face shrinking until the whole rack fits the screen.
-        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${bound.view === "front" && sized.fits.length > 0 ? "!w-[min(100%,32rem)]" : ""} ${gridOn ? "bg-[linear-gradient(to_right,rgba(100,116,139,.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(100,116,139,.22)_1px,transparent_1px)]" : edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
+        className={`relative mx-auto border-2 border-slate-400 dark:border-slate-500 rounded bg-subtle/40 dark:bg-[#0d1526] select-none ${zoom === 1 && bound.view === "front" && sized.fits.length > 0 ? "!w-[min(100%,32rem)]" : ""} ${gridOn ? "bg-[linear-gradient(to_right,rgba(100,116,139,.22)_1px,transparent_1px),linear-gradient(to_bottom,rgba(100,116,139,.22)_1px,transparent_1px)]" : edit ? "bg-[radial-gradient(circle,rgba(100,116,139,.25)_1px,transparent_1px)]" : ""}`}
         style={{
           aspectRatio: `${bound.w_mm} / ${bound.d_mm}`,
           // The whole room on one screen: as wide as it can be while its
           // bottom wall stays above the fold, measured from where it starts.
           width:
-            heightCap != null
+            fitWidth != null ? fitWidth * zoom : heightCap != null
               ? `min(100%, ${Math.round(heightCap * (bound.w_mm / bound.d_mm))}px)`
               : `min(100%, calc(${capVh}dvh * ${(bound.w_mm / bound.d_mm).toFixed(4)}))`,
           // Edit-mode dots sit at the layout's REAL pitch — a 42mm Gridfinity
@@ -1596,9 +1734,23 @@ function PlanFor({
           const key = `${ent.kind}:${ent.id}`;
           const r = live?.id === key ? live.rect : rect;
           const selected = sel?.type === "entity" && sel.id === ent.id;
+          const wPx = r.w_mm / bound.w_mm * planPx;
+          const hPx = r.d_mm / bound.w_mm * planPx;
+          const label = planPx > 0 ? labelFor(ent.name, shortLabel(ent.name, ent.short_name), Math.max(0, wPx - 6), Math.max(0, hPx - 4), 5.6, 12) : ent.name;
+          const tight = planPx > 0 && !fitsIn(label, Math.floor((wPx - 10) / 5.6), Math.floor((hPx - 6) / 12));
           return (
             <div
               key={key}
+              data-plan-thing={ent.name}
+              role="button"
+              tabIndex={0}
+              aria-label={ent.name}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.currentTarget.click();
+                }
+              }}
               onPointerDown={(e) => startEntityDrag(e, ent, r, "move")}
               onClick={(e) => {
                 if (edit) {
@@ -1611,7 +1763,7 @@ function PlanFor({
               }}
               title={holdsLabel(ent.kind, ent.id) ? `${ent.name} · ${holdsLabel(ent.kind, ent.id)}` : ent.name}
               data-collides={colliding.has(key) ? "true" : undefined}
-              className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight px-1 py-0.5 text-content dark:text-slate-200
+              className={`absolute rounded-md border border-cobble-500/70 dark:border-cobble-400/60 bg-cobble-50/60 dark:bg-cobble-900/30 overflow-hidden text-[10px] leading-tight ${tight ? "p-0" : "px-1 py-0.5"} text-content dark:text-slate-200
                 ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent"}
                 ${colliding.has(key) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
                 ${selected ? "ring-1 ring-accent border-accent" : ""}`}
@@ -1623,7 +1775,15 @@ function PlanFor({
               }}
             >
               <RectDecor imagePath={ent.image_path} fp={ent.metadata?.floorplan as Record<string, unknown> | undefined} />
-              <span className="relative">{ent.name}</span>
+              {/* A compact identifier must fit both axes without HTML wrapping;
+                  its padding cannot consume the tiny physical footprint. */}
+              <span className={tight ? "absolute -inset-px flex items-center justify-center" : "relative"} data-thing-name="">
+                {tight ? (
+                  <svg aria-hidden="true" viewBox={`0 0 ${Math.max(1, label.length) * 6} 14`} className="h-full w-full" style={{ maxWidth: Math.max(1, label.length) * 6, maxHeight: 14 }}>
+                    <text x="0" y="10" fontSize="10" fill="currentColor" textLength={Math.max(1, label.length) * 6} lengthAdjust="spacingAndGlyphs">{label}</text>
+                  </svg>
+                ) : label}
+              </span>
               {holdsLabel(ent.kind, ent.id) && (
                 <span data-holds className="relative block text-[9px] text-faint">{holdsLabel(ent.kind, ent.id)}</span>
               )}
@@ -1664,6 +1824,7 @@ function PlanFor({
           <GapReadout room={bound} walls={allWalls} box={live.rect} others={floorItems.filter((i) => i.id !== live.id)} />
         )}
       </div>
+      </div>
       <ShelfFitList fits={sized.fits} names={new Map(shelvesHere.map((s) => [s.loc.id, s.loc.name]))} rack={room.name} />
       <PlanFlagList flags={flags} />
       {sized.unsized.length > 0 && !placing && (
@@ -1677,6 +1838,7 @@ function PlanFor({
       {addSizes && (
         <AddSizesDialog slug={slug} things={sized.unsized} placeable={placeable} placeableKinds={placeableKinds} onClose={() => setAddSizes(false)} />
       )}
+
       {/* What each colour on the plan means: the places that carry it. A
           colour is the person's own grouping, never the only label. */}
       {groupField && pinGroups.length > 0 && (
@@ -1714,11 +1876,8 @@ function PlanFor({
           grid={bound.grid_mm}
           secondAxis={view === "front" ? "tall" : "deep"}
           onRect={saveEntityRect}
-          onDecor={(ent, patch) => {
-            const metadata = withDecor(ent.metadata, patch);
-            noteEntity(`Changed how ${ent.name} looks`, ent, { metadata });
-            saveEntity.mutate({ ent, body: { metadata: jsonbPatchBetween(ent.metadata, metadata) } });
-          }}
+          onDecor={(ent, patch) => saveEntityMeta(ent, `Changed how ${ent.name} looks`, (base) => withDecor(base, patch))}
+          onResize={resizeEntity}
         />
       )}
       {sel?.type !== "entity" && (
@@ -1731,7 +1890,9 @@ function PlanFor({
           sel={sel}
           byId={byId}
           onBound={saveBound}
+          onResizeBound={resizeBound}
           onRect={(loc, r) => saveRect(loc, r)}
+          onResizePlace={resizePlace}
           onFloorplanPatch={patchLocFloorplan}
           onDeleteWall={(idx) => {
             const next = [...(bound.walls ?? [])];
@@ -1750,12 +1911,14 @@ function PlanFor({
             // No face yet: give it one on the spot (as wide as it stands,
             // three quarters as tall), so adding drawers is one step; its
             // size is in the face's own panel when it is not right.
-            const r = readRect(loc.metadata);
-            const hasFace = hasOwnLayout(loc.metadata) || items.some((l) => l.parent_id === loc.id && readRect(l.metadata));
+            const base = freshMeta(`place:${loc.id}`, loc.metadata);
+            const r = readRect(base);
+            const hasFace = hasOwnLayout(base) || items.some((l) => l.parent_id === loc.id && readRect(l.metadata));
             if (r && !hasFace) {
-              const metadata = withBound(loc.metadata, { w_mm: r.w_mm, d_mm: Math.max(300, snap(r.w_mm * 0.75, 50)), view: "front", unit: unit === "ft" ? "in" : unit }, "container");
-              note(`Gave ${loc.name} a front`, [{ kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } }]);
-              saveMeta.mutate({ id: loc.id, before: loc.metadata, metadata });
+              const metadata = withBound(base, { w_mm: r.w_mm, d_mm: Math.max(300, snap(r.w_mm * 0.75, 50)), view: "front", unit: unit === "ft" ? "in" : unit }, "container");
+              note(`Gave ${loc.name} a front`, [{ kind: "place", id: loc.id, before: { metadata: base }, after: { metadata } }]);
+              rememberMeta(`place:${loc.id}`, metadata);
+              saveMeta.mutate({ id: loc.id, before: base, metadata });
             }
             setPeekStart("drawers");
             setPeekId(loc.id);
@@ -1978,7 +2141,9 @@ function EditPanel({
   sel,
   byId,
   onBound,
+  onResizeBound,
   onRect,
+  onResizePlace,
   onFloorplanPatch,
   onDeleteWall,
   onRename,
@@ -1995,7 +2160,12 @@ function EditPanel({
   sel: Sel;
   byId: Map<string, Location>;
   onBound: (b: FpBound, label?: string) => void;
+  /** One size of the room or face: the parent merges it onto the freshest
+   *  outline, so two sizes typed one after the other both stay (#5950). */
+  onResizeBound: (patch: Partial<FpBound>) => void;
   onRect: (loc: Location, r: FpRect | null) => void;
+  /** One size of a placed location, merged onto its freshest rect. */
+  onResizePlace: (loc: Location, patch: Partial<FpRect>) => void;
   onFloorplanPatch: (loc: Location, patch: Record<string, unknown>, previousGroup?: string) => void;
   onDeleteWall: (idx: number) => void;
   onRename: (loc: Location, name: string) => void;
@@ -2110,8 +2280,8 @@ function EditPanel({
             Add drawers
           </button>
         )}
-        <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, w_mm: v })} />
-        <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(loc, { ...rect, d_mm: v })} />
+        <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onResizePlace(loc, { w_mm: v })} />
+        <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onResizePlace(loc, { d_mm: v })} />
         {loc.kind !== "area" && view === "plan" && !rect.wall_mounted && (
           <button
             type="button"
@@ -2133,8 +2303,8 @@ function EditPanel({
           />
         )}
         {bound.grid_mm && (
-          <span className="font-mono text-[10px] text-faint" title={`in ${bound.grid_mm}mm grid units`}>
-            {Math.round(rect.w_mm / bound.grid_mm)} × {Math.round(rect.d_mm / bound.grid_mm)} u
+          <span className="font-mono text-[10px] text-faint" title={gridCellsNote(rect, bound.grid_mm).title} data-testid="plan-grid-cells">
+            {gridCellsNote(rect, bound.grid_mm).text}
           </span>
         )}
         {loc.kind !== "area" && (
@@ -2172,13 +2342,13 @@ function EditPanel({
         label="wide"
         mm={bound.w_mm}
         unit={unit}
-        onCommit={(v, typed) => onBound({ ...bound, w_mm: v, ...(typed ? { unit: typed } : {}) })}
+        onCommit={(v, typed) => onResizeBound({ w_mm: v, ...(typed ? { unit: typed } : {}) })}
       />
       <DimInput
         label={secondAxis}
         mm={bound.d_mm}
         unit={unit}
-        onCommit={(v, typed) => onBound({ ...bound, d_mm: v, ...(typed ? { unit: typed } : {}) })}
+        onCommit={(v, typed) => onResizeBound({ d_mm: v, ...(typed ? { unit: typed } : {}) })}
       />
       <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
         view
@@ -2318,7 +2488,7 @@ function OpeningEditor({ wall, o, room, unit, onChange, onRemove }: { wall: FpWa
         </>
       )}
       {kind === "window" && <DimInput label="sill" mm={o.sill_mm ?? DEFAULT_SILL_MM} unit={unit} onCommit={(v) => onChange({ ...o, sill_mm: v })} />}
-      <button type="button" onClick={onRemove} className="text-faint hover:text-ember-500" title="Remove it">
+      <button aria-label="Remove it" type="button" onClick={onRemove} className="text-faint hover:text-ember-500" title="Remove it">
         <X size={12} />
       </button>
     </span>
@@ -2935,7 +3105,7 @@ function DecorControls({
               type="button"
               aria-label={`Colour: ${PLAN_COLOUR_STYLE[c].label}`}
               aria-pressed={colour === c}
-              title={PLAN_COLOUR_STYLE[c].label}
+              title={`Colour: ${PLAN_COLOUR_STYLE[c].label}`}
               onClick={() => onPatch({ color: c })}
               className={`h-6 w-6 rounded-full ${PLAN_COLOUR_STYLE[c].swatch} ${colour === c ? "ring-2 ring-offset-1 ring-accent dark:ring-offset-slate-800" : ""}`}
             />
@@ -2982,6 +3152,7 @@ function EntityPanel({
   grid,
   secondAxis,
   onRect,
+  onResize,
   onDecor,
 }: {
   ent: PlanEntity | null;
@@ -2989,6 +3160,8 @@ function EntityPanel({
   grid: number | undefined;
   secondAxis: string;
   onRect: (ent: PlanEntity, r: FpRect | null) => void;
+  /** One size, merged onto the thing's freshest rect (#5950). */
+  onResize: (ent: PlanEntity, patch: Partial<FpRect>) => void;
   onDecor: (ent: PlanEntity, patch: Record<string, unknown>) => void;
 }) {
   if (!ent) return null;
@@ -3001,11 +3174,11 @@ function EntityPanel({
       <span className="font-mono text-[10px] uppercase tracking-widest text-faint">
         {ent.kind.split(":")[1]}
       </span>
-      <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onRect(ent, { ...rect, w_mm: v })} />
-      <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onRect(ent, { ...rect, d_mm: v })} />
+      <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onResize(ent, { w_mm: v })} />
+      <DimInput label={secondAxis} mm={rect.d_mm} unit={unit} onCommit={(v) => onResize(ent, { d_mm: v })} />
       {grid && (
-        <span className="font-mono text-[10px] text-faint" title={`in ${grid}mm grid units`}>
-          {Math.round(rect.w_mm / grid)} × {Math.round(rect.d_mm / grid)} u
+        <span className="font-mono text-[10px] text-faint" title={gridCellsNote(rect, grid).title} data-testid="plan-grid-cells">
+          {gridCellsNote(rect, grid).text}
         </span>
       )}
       <DecorControls fp={fp} onPatch={(patch) => onDecor(ent, patch)} />

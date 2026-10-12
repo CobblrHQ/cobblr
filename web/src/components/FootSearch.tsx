@@ -3,7 +3,7 @@
 // full row on Search. It opens the same ⌘K palette every other door opens.
 import { useState } from "react";
 import { Search } from "lucide-react";
-import { OPEN_PALETTE_EVENT } from "./CommandPalette";
+import { OPEN_PALETTE_EVENT } from "./palette-events";
 import { noteSearchUsed, searchHintShown } from "../lib/moreApps";
 
 /** Search in the sidebar foot: the icon that ends the Scan | Build row, or a

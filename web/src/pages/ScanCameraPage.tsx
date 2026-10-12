@@ -37,7 +37,7 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Hash, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
-import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack, useEscapeToClose, usePasteImage } from "@cobblr/platform-web";
+import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack, useEscapeToClose, usePasteImage, registerBottomChrome } from "@cobblr/platform-web";
 import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
 import { captureRoute } from "../lib/captureRoute";
@@ -128,7 +128,8 @@ export function ScanCameraPage() {
   // access, the feedback bubble) had no idea the scanner was up and floated
   // over the viewfinder (the operator: "it def does not belong anywhere in the camera
   // scanner").
-  useOverlayOpenFlag();
+  // Its own controls run to the bottom edge: no strip under the toasts there.
+  useOverlayOpenFlag(true, "covering", { ownsBottom: true });
   // Preserve the instance-scan target (?into=…) so the modal + return keep it.
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -1748,6 +1749,16 @@ export function ScanCameraPage() {
     ro.observe(bottom);
     return () => ro.disconnect();
   }, []);
+  // The bottom controls (the barcode field and Scan, Assign, the shutter,
+  // Done) join the page's bottom dock, so every toast, from this page or
+  // from a card inside it, sits above them rather than on them (#6003: "Took
+  // 1 from ..." covered the strip under the field). The camera's own words go
+  // through showFilingNote (lint:camera-no-toast); this holds for the rest.
+  // Walk: e2e/walks/a-toast-never-covers-the-scanners-controls.json.
+  useEffect(() => {
+    const el = bottomChromeRef.current;
+    return el ? registerBottomChrome(el) : undefined;
+  }, []);
   const [viewH, setViewH] = useState(() => (typeof window === "undefined" ? 800 : window.innerHeight));
   useEffect(() => {
     const onResize = () => setViewH(window.innerHeight);
@@ -2433,6 +2444,7 @@ export function ScanCameraPage() {
               Resume session ({resumable.count} {resumable.count === 1 ? "item" : "items"})
             </button>
             <button
+              title="Dismiss resume"
               type="button"
               onClick={() => {
                 setResumable(null);
@@ -2513,6 +2525,7 @@ export function ScanCameraPage() {
       {/* ── bottom chrome: session chip + manual UPC + action bar ────── */}
       <div
         ref={bottomChromeRef}
+        data-testid="camera-bottom-chrome"
         className="absolute bottom-0 inset-x-0 p-4 space-y-3"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
@@ -2576,6 +2589,7 @@ export function ScanCameraPage() {
                     <Check size={18} /> Done, next
                   </button>
                   <button
+                    aria-label="Skip - leave it unsorted for now"
                     type="button"
                     onClick={() => setSortEntry(null)}
                     title="Skip - leave it unsorted for now"
@@ -2912,7 +2926,7 @@ export function ScanCameraPage() {
             title={
               plusMode
                 ? "Add a photo to this item - the sheet gets out of the way and the next shot attaches"
-                : "Photograph the item (no barcode needed)"
+                : "Take a photo of the item (no barcode needed)"
             }
             className={
               "w-[72px] h-[72px] rounded-full disabled:opacity-40 flex items-center justify-center shadow-lg " +
@@ -2971,7 +2985,7 @@ export function ScanCameraPage() {
               <div className="text-sm font-semibold text-content dark:text-mortar-100 flex-1 min-w-0 truncate">
                 Where does this one go?
               </div>
-              <button type="button" onClick={() => setPlacingItem(null)} className="text-faint hover:text-content dark:hover:text-mortar-100">
+              <button type="button" onClick={() => setPlacingItem(null)} aria-label="Close" title="Close" className="text-faint hover:text-content dark:hover:text-mortar-100">
                 <X size={16} />
               </button>
             </div>

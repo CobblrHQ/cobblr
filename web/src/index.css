@@ -91,7 +91,18 @@
      Inherit the page text colour instead; any explicit text-* utility
      on the control still wins. */
   input, textarea, select { color: inherit; }
+  /* A <select> is as wide as its longest option, so one long workspace
+     name ran Your notifications 80px past a phone (#5991). It never grows
+     past its row; the chosen option's text is cut inside the box instead,
+     and any explicit width utility still wins. */
+  select { max-width: 100%; }
   body {
+    /* A word too long for its box breaks rather than pushing the page wider
+       than a phone: an action's description listing
+       "file_copied/file_confirmed/hoop_mounted/..." ran /actions 25px past
+       the screen. break-word, not anywhere: it never narrows a box's
+       min-content size, so nothing that fits today wraps differently. */
+    overflow-wrap: break-word;
     /* Subtle paper grain — brand identity calls for slight imperfection
        over algorithmic-perfect flat. Faded in dark mode where lit
        texture would be wrong. */
@@ -183,6 +194,35 @@
 }
 
 @layer components {
+  /* Rendered Markdown (the `prose` wrapper of the shared Markdown component,
+     chat answers, notifications, bundle readmes). The Tailwind Typography
+     plugin is not installed, so the wrapper's `prose-*` classes style nothing
+     and Preflight's reset showed a heading as body text and a list without its
+     bullets (#6069). These rules are what `prose` means here; compact on
+     purpose. lint:prose-is-styled keeps them in place. */
+  .prose > :first-child { margin-top: 0; }
+  .prose > :last-child { margin-bottom: 0; }
+  .prose h1 { @apply mt-3 mb-1.5 text-lg font-semibold; }
+  .prose h2 { @apply mt-3 mb-1 text-base font-semibold; }
+  .prose h3,
+  .prose h4,
+  .prose h5,
+  .prose h6 { @apply mt-2.5 mb-1 text-sm font-semibold; }
+  .prose ul { @apply my-1.5 list-disc pl-5; }
+  .prose ol { @apply my-1.5 list-decimal pl-5; }
+  .prose li { @apply my-0.5; }
+  .prose li > ul,
+  .prose li > ol { @apply my-0.5; }
+  .prose strong { @apply font-semibold; }
+  .prose a { @apply text-accent underline; }
+  .prose blockquote { @apply my-2 border-l-2 border-line pl-3 text-muted; }
+  .prose hr { @apply my-3 border-line; }
+  .prose pre { @apply my-2 overflow-x-auto rounded-md border border-line bg-subtle p-2 text-xs; }
+  .prose :not(pre) > code { @apply rounded bg-subtle px-1 py-0.5 text-[0.9em]; }
+  .prose table { @apply my-2 block max-w-full overflow-x-auto text-sm; }
+  .prose th,
+  .prose td { @apply border border-line px-2 py-1 text-left; }
+
   /* Page subtitle — the descriptive line under a page <h1>. One spot to
      tune the size/tone for every page. (Count/id chips by a title use a
      smaller meta style, not this.) */

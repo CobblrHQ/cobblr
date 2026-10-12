@@ -19,6 +19,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { applyToLinkedEntity, type DevicePayload } from "./action-handlers.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const ingestRouter = Router({ mergeParams: true });
 
@@ -28,13 +29,13 @@ const IngestBody = z.object({
   /** The logical device id on the chip ("scale", "badge", "beam"). */
   device: z.string().min(1).max(128),
   kind: z.enum(["reading", "scanned", "counted"]),
-  value: z.number().optional(),
-  unit: z.string().max(32).optional(),
-  tag: z.string().max(256).optional(),
-  count: z.number().int().optional(),
-  delta: z.number().int().optional(),
+  value: optionalField(z.number()),
+  unit: optionalText(32),
+  tag: optionalText(256),
+  count: optionalField(z.number().int()),
+  delta: optionalField(z.number().int()),
   /** When the device sampled it (ISO-8601); defaults to receipt time. */
-  at: z.string().datetime().optional(),
+  at: optionalField(z.string().datetime()),
 });
 
 const EVENT_BY_KIND = {

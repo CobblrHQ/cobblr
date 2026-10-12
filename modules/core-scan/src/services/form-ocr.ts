@@ -33,6 +33,7 @@ import sharp from "sharp";
 import { ocrAvailable } from "./ocr.js";
 import { lineKind, NOT_A_LINE, UNIT_LINE } from "./charge-lines.js";
 import { FORM_SUM } from "./bill-of-sale.js";
+import { OcrFailed } from "./ocr-failed.js";
 import { looksLikeWords } from "./document-checks.js";
 import { checkDigitValid, isShapeValidVin } from "./vin-decode.js";
 
@@ -42,7 +43,22 @@ const TIMEOUT_MS = 60_000;
  *  nothing. Never enlarged: a smaller scan is read at its own size. */
 const MAX_WIDTH = 2600;
 
-function run(args: string[], input: Buffer): Promise<string> {
+/** One engine run, asked again once when it fails (a run killed on a busy
+ *  box often finishes the second time); a second failure is OcrFailed, never
+ *  an empty read (#5921). */
+async function run(args: string[], input: Buffer): Promise<string> {
+  try {
+    return await runOnce(args, input);
+  } catch {
+    try {
+      return await runOnce(args, input);
+    } catch (err) {
+      throw new OcrFailed(err);
+    }
+  }
+}
+
+function runOnce(args: string[], input: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       BIN,
@@ -302,7 +318,7 @@ async function readCut(
     .toBuffer();
   const psm = String(opts.psm ?? (mode === "block" ? 6 : 7));
   const dpi = String(Math.round(page.dpi * (opts.scale ?? 2)));
-  const tsv = await run(["stdin", "stdout", "--psm", psm, "--dpi", dpi, "-l", "eng", "-c", `tessedit_char_whitelist=${whitelist}`, "tsv"], cut).catch(() => "");
+  const tsv = await run(["stdin", "stdout", "--psm", psm, "--dpi", dpi, "-l", "eng", "-c", `tessedit_char_whitelist=${whitelist}`, "tsv"], cut);
   const words = parseTsv(tsv).filter((w) => w.conf < 0 || w.conf >= MIN_WORD_CONF);
   const out = linesOf(words).map((l) => l.text.replace(/\s+/g, " ").trim()).filter(Boolean);
   if (process.env.COBBLR_FORM_OCR_DEBUG_DIR) await sharp(cut).toFile(`${process.env.COBBLR_FORM_OCR_DEBUG_DIR}/cut-${left}-${top}.png`).catch(() => {});
@@ -364,7 +380,7 @@ async function readCutWords(page: PreparedPage, box: { left: number; top: number
   const height = Math.min(page.height - top, Math.round(box.height));
   if (width < 20 || height < 12) return [];
   const cut = await sharp(opts.image === "layout" ? page.layout : page.png).rotate().extract({ left, top, width, height }).resize({ width: Math.round(width * scale), kernel: "lanczos3" }).png().toBuffer();
-  const tsv = await run(["stdin", "stdout", "--psm", String(opts.psm ?? 6), "--dpi", String(Math.round(page.dpi * scale)), "-l", "eng", "tsv"], cut).catch(() => "");
+  const tsv = await run(["stdin", "stdout", "--psm", String(opts.psm ?? 6), "--dpi", String(Math.round(page.dpi * scale)), "-l", "eng", "tsv"], cut);
   return parseTsv(tsv)
     .filter((w) => w.conf < 0 || w.conf >= MIN_WORD_CONF)
     .map((w) => ({ ...w, left: left + w.left / scale, top: top + w.top / scale, width: w.width / scale, height: w.height / scale }));
@@ -412,8 +428,8 @@ export async function ocrFormText(bytes: Buffer | Uint8Array): Promise<FormRead 
   const t0 = performance.now();
   const page = await prepareFormPage(bytes);
   const [auto, sparse] = await Promise.all([
-    run(["stdin", "stdout", "--psm", "3", "--dpi", String(page.dpi), "-l", "eng", "tsv"], page.layout).catch(() => ""),
-    run(["stdin", "stdout", "--psm", "11", "--dpi", String(page.dpi), "-l", "eng", "tsv"], page.layout).catch(() => ""),
+    run(["stdin", "stdout", "--psm", "3", "--dpi", String(page.dpi), "-l", "eng", "tsv"], page.layout),
+    run(["stdin", "stdout", "--psm", "11", "--dpi", String(page.dpi), "-l", "eng", "tsv"], page.layout),
   ]);
   const autoLines = linesOf(parseTsv(auto));
   const sparseLines = linesOf(parseTsv(sparse));

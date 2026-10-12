@@ -18,6 +18,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { tenantDb, tenantContext, type DigifabDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const edgeSharesRouter = Router({ mergeParams: true });
 
@@ -65,7 +66,7 @@ const Create = z.object({
   label: z.string().min(1).max(120),
   scope: z.enum(["read", "write"]),
   instance_ids: z.array(z.string().min(1)).min(1).max(100),
-  expires_in_days: z.number().int().min(1).max(365).optional(),
+  expires_in_days: optionalField(z.number().int().min(1).max(365)),
 });
 
 // POST / — mint a grant. Validates the picked machines are this workspace's own

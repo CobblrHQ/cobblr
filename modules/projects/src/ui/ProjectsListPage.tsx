@@ -243,8 +243,8 @@ export function ProjectsListPage() {
         title={`New ${noun}`}
       >
         <form onSubmit={submit} className="space-y-4 p-1">
-          <div>
-            <label className="block text-xs font-medium text-muted dark:text-slate-400 mb-1">Name</label>
+          <label className="block">
+            <span className="block text-xs font-medium text-muted dark:text-slate-400 mb-1">Name</span>
             <input
               autoFocus
               value={name}
@@ -252,7 +252,7 @@ export function ProjectsListPage() {
               placeholder={`${noun} name…`}
               className="input w-full"
             />
-          </div>
+          </label>
           {/* The instance's custom fields (Designs: pattern link + category).
               Keyed off the INSTANCE kind (designs:item) — using projects:project
               would fetch the base kind's defs and show none of them. */}

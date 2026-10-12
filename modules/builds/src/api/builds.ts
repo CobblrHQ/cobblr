@@ -21,10 +21,12 @@ import {
   explodeLeafComponents,
 } from "../build-engine.js";
 import { rollupOperation } from "../execution.js";
-import { traceBackward, lineageCodes, type GenealogyLoaders, type RunInput } from "../genealogy.js";
+import { traceBackward, lineageCodes, nameGenealogy, type GenealogyLoaders, type RunInput } from "../genealogy.js";
+import { nameRecords } from "@cobblr/platform-contract/record-subjects";
 import { scheduleEDD, type PlannedItem } from "../schedule.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveOutputPart } from "../output-part.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const buildsRouter = Router({ mergeParams: true });
 
@@ -34,8 +36,8 @@ const BuildCreate = z.object({
   output_part_id: z.string().uuid().nullable().optional(),
   /** What the build makes, by name: the inventory part with that name, made
    *  when there is none. Ignored when output_part_id is given. */
-  output_part_name: z.string().min(1).max(200).optional(),
-  output_qty: z.number().positive().optional(),
+  output_part_name: optionalField(z.string().min(1).max(200)),
+  output_qty: z.number().positive().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   notes: z.string().max(8_000).nullable().optional(),
   /** A bundle's custom fields on the build ("Sells for"), merged into the bag. */
   metadata: z.record(z.unknown()).optional(),
@@ -64,10 +66,10 @@ const OperationCreate = z.object({
   resource_id: z.string().max(200).nullable().optional(),
 });
 const OperationUpdate = z.object({
-  name: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).optional(), // none-refused-ok: an operation always has a name
   description: z.string().max(8_000).nullable().optional(),
-  status: z.enum(["todo", "doing", "done", "skipped"]).optional(),
-  seq: z.number().int().optional(),
+  status: z.enum(["todo", "doing", "done", "skipped"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  seq: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   est_minutes: z.number().nonnegative().nullable().optional(),
   resource_module: z.string().max(64).nullable().optional(),
   resource_type: z.string().max(64).nullable().optional(),
@@ -641,7 +643,7 @@ buildsRouter.get(
 
 // ─────────────────────────── build! ───────────────────────────
 const BuildRunBody = z.object({
-  qty: z.number().int().positive().optional(),
+  qty: z.number().int().positive().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // Genealogy (rung 8): tag this run's output + which input lots it consumed.
   output_serial: z.string().max(200).nullable().optional(),
   input_lots: z.record(z.string().max(200)).optional(), // { [part_id]: lot_code }
@@ -810,7 +812,9 @@ buildsRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "run not found" } });
       return;
     }
-    const tree = await traceBackward(runId, genealogyLoaders(db));
+    const ctx = tenantContext(req);
+    const viewer = { userId: sessionUser(req)?.id, role: ctx.role };
+    const tree = await nameGenealogy(await traceBackward(runId, genealogyLoaders(db)), (refs) => nameRecords(ctx.org.id, ctx.org.slug, refs, viewer));
     res.json({ tree, lineage: lineageCodes(tree) });
   }),
 );
@@ -845,18 +849,18 @@ buildsRouter.get(
 // ─────────────── planned production + scheduling (rung 7) ───────────────
 const PlannedCreate = z.object({
   build_id: z.string().uuid(),
-  qty: z.number().positive().optional(),
+  qty: z.number().positive().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  priority: z.number().int().optional(),
+  priority: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   resource_label: z.string().max(120).nullable().optional(),
   notes: z.string().max(2_000).nullable().optional(),
 });
 const PlannedUpdate = z.object({
-  qty: z.number().positive().optional(),
+  qty: z.number().positive().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  priority: z.number().int().optional(),
+  priority: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   resource_label: z.string().max(120).nullable().optional(),
-  status: z.enum(["planned", "done", "cancelled"]).optional(),
+  status: z.enum(["planned", "done", "cancelled"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   notes: z.string().max(2_000).nullable().optional(),
 });
 

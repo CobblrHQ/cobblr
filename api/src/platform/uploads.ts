@@ -1,5 +1,5 @@
 import { trueType } from "@cobblr/platform-contract/sniff-type";
-import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { PERSONAL_READER_PLACE, readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 // The one upload door (platform().http.upload, @cobblr/platform-contract/upload).
 //
@@ -212,13 +212,13 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
           const mime = trueType(head.subarray(0, length), file.mimetype);
           if (!/^(?:image\/|application\/pdf|text\/)/.test(mime)) return next();
           if (file.size > 25 * 1024 * 1024 && mime !== "application/pdf") {
-            rs.status(409).json({ error: { code: "personal_document", message: "This document is too large to check privately here. Keep your copy and use a PDF or photo under 25 MB in Personal documents." } });
+            rs.status(409).json({ error: { code: "personal_document", message: `This document is too large to check privately here. Keep your copy and use a PDF or photo under 25 MB with ${PERSONAL_READER_PLACE}.` } });
             return;
           }
           const read = await readPersonalDocument({ bytes: mime === "application/pdf" ? head.subarray(0, length) : await readFile(file.path), mime, assist: { orgId, userId: rq.session?.id }, ...(mime === "application/pdf" ? { path: file.path } : {}) });
           if (read.privacy === "normal") return next();
           rs.setHeader("Cache-Control", "no-store");
-          rs.status(409).json({ error: { code: "personal_document", message: "This is a personal document. Read it with Personal documents in the scan inbox. It has not been saved to shared Files or sent to a cloud AI.", details: read } });
+          rs.status(409).json({ error: { code: "personal_document", message: `This is a personal document. It has not been saved to shared Files or sent to a cloud AI; read it with ${PERSONAL_READER_PLACE}.`, details: read } });
         })().catch(next);
         return;
       }

@@ -154,6 +154,7 @@ function CatalogCard({
           </span>
         )}
         <button
+          aria-label="Delete catalog"
           type="button"
           onClick={onDelete}
           title="Delete catalog"

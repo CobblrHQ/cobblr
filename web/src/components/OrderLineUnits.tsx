@@ -36,6 +36,14 @@ export function OrderLineUnits({ item }: { item: ScanInboxItem }) {
   const units = item.source_kind === "receipt" && item.status === "pending" ? lineUnitsOf(item) : null;
   const received = Number(meta.line_received ?? 0);
   const [offOpen, setOffOpen] = useState(false);
+  // The scans already counted toward a line of the same thing, listed under
+  // it the way a split line's parts are (#6067).
+  const [slotsOpen, setSlotsOpen] = useState(false);
+  const slots = useQuery({
+    queryKey: ["order-line-slots", activeSlug, item.id, received],
+    queryFn: () => api.orderLineSlots(activeSlug, { line_id: item.id }),
+    enabled: slotsOpen && received > 0,
+  });
   const [offCount, setOffCount] = useState(1);
   const [offName, setOffName] = useState("");
   const toggle = useRowMutation(() => api.setLineUnits(activeSlug, item.id, units?.mode === "same" ? "different" : "same"));
@@ -63,9 +71,15 @@ export function OrderLineUnits({ item }: { item: ScanInboxItem }) {
           </span>
           {units.mode === "same" && received > 0 && (
             <>
-              <span className="text-xs text-muted" data-testid="line-received">
-                · {lineReceivedSentence(received, units.count)}
-              </span>
+              <button
+                type="button"
+                className="inline-flex min-h-8 items-center gap-1 text-xs text-muted hover:text-content"
+                aria-expanded={slotsOpen}
+                onClick={() => setSlotsOpen((o) => !o)}
+                data-testid="line-received"
+              >
+                · {lineReceivedSentence(received, units.count)} {slotsOpen ? "▾" : "▸"}
+              </button>
               <button type="button" className={pill} disabled={takeBack.isPending} onClick={() => takeBack.mutate()}>
                 Take the last one back
               </button>
@@ -85,6 +99,17 @@ export function OrderLineUnits({ item }: { item: ScanInboxItem }) {
             </button>
           )}
         </div>
+      )}
+      {units && slotsOpen && received > 0 && (
+        <ul className="ml-2 space-y-1 rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900/40 p-2" data-testid="line-received-units">
+          {slots.isLoading && <li className="text-xs text-faint">Loading the scans counted toward it…</li>}
+          {slots.isError && <li className="text-xs text-amber-700 dark:text-amber-400">{slots.error instanceof Error ? slots.error.message : "The scans could not be listed."}</li>}
+          {(slots.data?.units ?? []).map((u, i) => (
+            <li key={u.id} className="text-xs text-content dark:text-mortar-100" data-testid="line-received-unit">
+              {i + 1}. {u.name ?? "A scan"}
+            </li>
+          ))}
+        </ul>
       )}
       {units && offOpen && (
         <form

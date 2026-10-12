@@ -61,6 +61,10 @@ function ChainDims({ racks, bound, m, font, thin }: { racks: Array<{ x_mm: numbe
   );
 }
 
+/** True millimetres on paper; on a screen narrower than the drawing it
+ *  shrinks to fit, so the page never scrolls sideways on a phone. */
+const TO_SCALE = "block h-auto max-w-full text-black print:max-w-none";
+
 function Floor({ board, bound }: { board: Board; bound: FpBound }) {
   const s = printScale(bound.w_mm, bound.d_mm);
   const m = MARGIN * s;
@@ -78,7 +82,7 @@ function Floor({ board, bound }: { board: Board; bound: FpBound }) {
         width={`${(bound.w_mm + 2 * m) / s}mm`}
         height={`${(bound.d_mm + 2 * m) / s}mm`}
         viewBox={`${-m} ${-m} ${bound.w_mm + 2 * m} ${bound.d_mm + 2 * m}`}
-        className="block text-black"
+        className={TO_SCALE}
         fontFamily="Helvetica, Arial, sans-serif"
       >
         <rect x={0} y={0} width={bound.w_mm} height={bound.d_mm} fill="none" stroke="black" strokeWidth={0.8 * s} />
@@ -231,7 +235,7 @@ function RackFront({ rack }: { rack: BoardRack }) {
           {rack.name}
           {rack.planned ? " (planned)" : ""}: front, {n(face.w_mm)} × {n(face.d_mm)}, scale 1:{s}
         </p>
-        <svg width={`${face.w_mm / s}mm`} height={`${face.d_mm / s}mm`} viewBox={`0 0 ${face.w_mm} ${face.d_mm}`} className="block text-black" fontFamily="Helvetica, Arial, sans-serif">
+        <svg width={`${face.w_mm / s}mm`} height={`${face.d_mm / s}mm`} viewBox={`0 0 ${face.w_mm} ${face.d_mm}`} className={TO_SCALE} fontFamily="Helvetica, Arial, sans-serif">
           <rect x={0} y={0} width={face.w_mm} height={face.d_mm} fill="white" stroke="black" strokeWidth={0.6 * s} />
           {rack.shelves.map((sh) => (
             <g key={sh.id}>

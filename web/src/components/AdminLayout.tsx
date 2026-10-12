@@ -12,9 +12,12 @@
 // tables stay readable. See docs/modules/member-portal-and-permissions.md.
 
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
+import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { ArrowLeft, LogOut, Moon, ShieldCheck, Sun } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
+import { api } from "../lib/api";
+import { finishEndingImpersonation } from "../lib/impersonation";
 import { useTheme } from "../theme/ThemeContext";
 import { ADMIN_GROUP_ORDER, ADMIN_SECTIONS } from "../lib/adminSections";
 
@@ -62,6 +65,12 @@ function AdminNavRow({ section }: { section: (typeof ADMIN_SECTIONS)[number] }) 
 export function AdminLayout() {
   const { user, loading, logout } = useAuth();
   const { theme, toggle } = useTheme();
+  // A View as session Exit left behind is ended here, once its page is gone.
+  useEffect(() => {
+    void finishEndingImpersonation((s) =>
+      api.request("PATCH", `/super-admin/impersonations/${s.session_id}`, { ended: true }),
+    );
+  }, []);
 
   // Wait for /me hydration before judging access — a direct load / fresh login
   // otherwise flashes "denied"/redirect until auth resolves.
@@ -73,12 +82,25 @@ export function AdminLayout() {
     );
   }
   // Platform-operator only. The API already 403s non-admins on /super-admin/*;
-  // this keeps them out of the shell entirely. FULL navigation, not an
-  // in-router <Navigate>: the console is its own top-level router whose
-  // catch-all is /admin/overview — an SPA redirect to "/" would loop.
+  // this keeps them out of the shell entirely, and says so. It used to send
+  // them to "/" with no word, which then sent them on to their workspace: two
+  // reloads for a typed address, and a page that was neither (the admin walk's
+  // role pass read it mid-redirect). A plain link, not an in-router
+  // <Navigate>: the console is its own top-level router whose catch-all is
+  // /admin/overview, so an SPA redirect to "/" would loop.
   if (!user?.is_platform_admin) {
-    window.location.replace("/");
-    return null;
+    return (
+      <main id={MAIN_ID} className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-950 px-4" data-testid="admin-not-for-you">
+        <div className="max-w-sm text-center space-y-3">
+          <ShieldCheck size={28} className="mx-auto text-faint" aria-hidden />
+          <h1 className="text-lg font-semibold text-content dark:text-mortar-100">This page is for the people who run this Cobblr</h1>
+          <p className="text-sm text-muted">Your account does not run it, so there is nothing here for you.</p>
+          <a href="/" className="inline-flex min-h-10 items-center rounded bg-cobble-600 px-4 text-sm font-medium text-white hover:bg-cobble-700">
+            Go to your workspace
+          </a>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -166,13 +188,13 @@ export function AdminLayout() {
               super-admin
             </span>
             <div className="flex-1" />
-            <a href="/" className="text-faint hover:text-content transition p-1" title="Back to your workspace">
+            <a aria-label="Back to your workspace" href="/" className="text-faint hover:text-content transition p-1" title="Back to your workspace">
               <ArrowLeft size={14} />
             </a>
-            <button onClick={toggle} className="text-faint hover:text-content transition p-1">
+            <button onClick={toggle} aria-label={theme === "dark" ? "Light theme" : "Dark theme"} title={theme === "dark" ? "Light theme" : "Dark theme"} className="text-faint hover:text-content transition p-1">
               {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
             </button>
-            <button onClick={logout} className="text-faint hover:text-ember-500 transition p-1">
+            <button onClick={logout} aria-label="Sign out" title="Sign out" className="text-faint hover:text-ember-500 transition p-1">
               <LogOut size={14} />
             </button>
           </div>

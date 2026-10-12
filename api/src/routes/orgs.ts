@@ -1,8 +1,6 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { activityPresentation, type ActivitySubject } from "@cobblr/platform-contract/activity-summary";
-import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
-import { activityFileContexts } from "../platform/activity-context.js";
-import { applyServedTitle } from "../platform/served-title.js";
+import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
+import { nameActivityRows } from "../platform/activity-subjects.js";
 import { currencyFromLocale, isCurrency } from "@cobblr/platform-contract/money";
 import { getHistoryWriterFor } from "../platform/history-store.js";
 // /api/v1/orgs/* — org-scoped routes. Composes requireAuth +
@@ -38,22 +36,10 @@ import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppD
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleRetiredError } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
-import { baseKindOf, lookupMany } from "../platform/entities.js";
+import { baseKindOf } from "../platform/entities.js";
 import { publicHistoryDiff, historyBag } from "../platform/record-history.js";
 import { historyVisibilityForKind, restoreHistoryVersion, HistoryRestoreError } from "../platform/history-restore.js";
 import { describeChanges } from "../platform/history-describe.js";
-
-/** The kind a resolved record is FILED under: `<instance>:item` for a record
- *  in a named instance (read off its instance field, else its detail route,
- *  the same seam the scan matcher's toMatch reads), the module kind
- *  otherwise. */
-function collectionKindOf(r: { fields?: Record<string, unknown>; detailUrl?: string | null }, moduleKind: string): string {
-  const inst = r.fields?.instance;
-  const moduleName = moduleKind.split(":")[0];
-  if (typeof inst === "string" && inst && inst !== moduleName) return `${inst}:item`;
-  const m = /^\/instances\/([^/]+)\//.exec(r.detailUrl ?? "");
-  return m?.[1] ? `${m[1]}:item` : moduleKind;
-}
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 import { encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { markRequestReadOnly } from "../lib/request-context.js";
@@ -107,7 +93,7 @@ const CreateOrgBody = z.object({
   // and the /auth/signup app branch — so all three create-paths agree. Without
   // it, a plain workspace (the default). `manifest` is the usual test/operator
   // override; production resolves the bundle from the registry server-side.
-  app: z.string().min(1).optional(),
+  app: z.string().min(1).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   manifest: z.unknown().optional(),
   /** Optional workspace blueprint (routes/blueprint.ts manifest) applied
    *  right after provisioning — "a friend sent me their setup; make me a new
@@ -926,88 +912,22 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     };
     const userById = new Map(userRows.map((u) => [u.id, u]));
 
-    // Resolve a display title for each entry from its LIVE record, so the feed
-    // reads "updated · RailCore 300ZL" instead of the bare "machine" type. Only
-    // module-owned records whose diff carries no name (creates already do); a
-    // deleted record won't resolve and the UI falls back to the entity_type.
-    const titleByEntity = new Map<string, string>(); // `${entity_type}:${entity_id}` → title
-    // The COLLECTION the record lives in, from the live record: a part filed
-    // in the bookshelf instance is a book, and the feed should say so. The
-    // log row carries only the module's type ("part"), which is how a burst
-    // of shelved books read "3 parts" (2026-09-12). Resolved for every
-    // module-owned entry, not only the untitled ones, because the collection
-    // is a property of the record, not of the diff.
-    const kindByEntity = new Map<string, string>();
-    const toResolve = new Map<string, { kind: string; entityId: string; needsTitle: boolean }>();
-    for (const i of items) {
-      if (!i.module_name || !i.entity_id) continue;
-      const d = (i.diff ?? {}) as Record<string, unknown>;
-      const titled = typeof d.name === "string" || typeof d.title === "string" || typeof d.label === "string";
-      const key = `${i.entity_type}:${i.entity_id}`;
-      // One record, several rows: it needs its title looked up if ANY of them
-      // carries none. The last row used to decide for all, so "created BANANAS"
-      // (titled) left the newer "took one of" row reading only "part" (#3994).
-      toResolve.set(key, {
-        kind: `${i.module_name}:${i.entity_type}`,
-        entityId: i.entity_id,
-        needsTitle: (toResolve.get(key)?.needsTitle ?? false) || !titled,
-      });
-    }
-    const contexts = await activityFileContexts(req.tenant!.db, items);
-    const refs = [...toResolve.values()].map(ref => ({ kind: ref.kind, id: ref.entityId }));
-    for (const i of items) {
-      const ref = historyBag(historyBag(i.diff).subject);
-      if (typeof ref.kind === "string" && typeof ref.id === "string") refs.push({ kind: ref.kind, id: ref.id });
-    }
-    for (const context of contexts.values()) {
-      const ref = context.record ?? (context.scan?.kind && context.scan.recordId ? { kind: context.scan.kind, id: context.scan.recordId } : null);
-      if (ref) refs.push(ref);
-    }
-    const resolved = (await lookupMany(req.tenant!.org.id, refs, { userId: req.session!.id, role: req.tenant!.role })).map(applyServedTitle);
-    const recordByRef = new Map(resolved.map(r => [`${r.kind}:${r.id}`, r]));
-    for (const ref of refs) {
-      if (recordByRef.has(`${ref.kind}:${ref.id}`)) continue;
-      const record = resolved.find(r => r.id === ref.id && collectionKindOf(r, r.kind) === ref.kind);
-      if (record) recordByRef.set(`${ref.kind}:${ref.id}`, record);
-    }
-    const subjectByEntry = new Map<number, ActivitySubject>();
-    const contextDiffByEntry = new Map<number, Record<string, unknown>>();
-    for (const i of items) {
-      const base = i.module_name ? `${i.module_name}:${i.entity_type}` : null;
-      const r = base ? recordByRef.get(`${base}:${i.entity_id}`) : undefined;
-      const key = `${i.entity_type}:${i.entity_id}`;
-      if (r) {
-        if (toResolve.get(key)?.needsTitle && r.title) titleByEntity.set(key, r.title);
-        kindByEntity.set(key, collectionKindOf(r, base!));
-      }
-      const context = contexts.get(`${i.action}:${i.entity_id}`);
-      const declared = historyBag(historyBag(i.diff).subject);
-      const ref = (typeof declared.kind === "string" && typeof declared.id === "string" ? { kind: declared.kind, id: declared.id } : null) ?? context?.record ?? (context?.scan?.kind && context.scan.recordId ? { kind: context.scan.kind, id: context.scan.recordId } : null);
-      const target = ref ? recordByRef.get(`${ref.kind}:${ref.id}`) : r;
-      const targetKind = target ? collectionKindOf(target, target.kind) : context?.scan ? null : base;
-      const thumbnail = context?.photoId
-        ? `/api/v1/orgs/${req.tenant!.org.slug}/modules/core-files/files/${context.photoId}/raw?variant=thumb`
-        : target?.image_path?.startsWith("/files/") ? `/api/v1/orgs/${req.tenant!.org.slug}/modules/core-files${target.image_path}` : target?.image_path ?? null;
-      const slug = encodeURIComponent(req.tenant!.org.slug);
-      const href = target && targetKind ? `/w/${slug}${target.detailUrl ?? openRecordPath(targetKind, target.id)}`
-        : context?.scan ? `/w/${slug}/scan?item=${encodeURIComponent(context.scan.id)}` : null;
-      if (href) subjectByEntry.set(i.id, { href, title: target?.title ?? context?.scan?.name ?? context?.scan?.barcode ?? "a photo", kind: targetKind, id: target?.id ?? context?.scan?.id ?? i.entity_id, thumbnail });
-      else if (r && base) subjectByEntry.set(i.id, { href: `/w/${slug}${r.detailUrl ?? openRecordPath(base, r.id)}`, title: r.title, kind: base, id: r.id, thumbnail });
-      if (context?.scan) contextDiffByEntry.set(i.id, { scan: { ...context.scan, name: target?.title ?? context.scan.name } });
-      else if (context?.record && target) contextDiffByEntry.set(i.id, { record: { ...context.record, name: target.title } });
-    }
+    // Each row's subject named and linked, by the one namer every door the
+    // log is read through shares (activity-subjects.ts, #5906).
+    const names = await nameActivityRows(req.tenant!.org, req.tenant!.db, { userId: req.session!.id, role: req.tenant!.role }, items);
+    const kindOf = (i: { id: number; module_name: string | null; entity_type: string }): string | undefined => names.get(i.id)?.kind ?? undefined;
 
     const visibilityByKind = new Map<string, ReturnType<typeof historyVisibilityForKind>>();
     const writersByKind = new Map<string, ReturnType<typeof getHistoryWriterFor>>();
     for (const i of items) {
-      const kind = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
+      const kind = kindOf(i) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
       if (!visibilityByKind.has(kind)) {
         visibilityByKind.set(kind, historyVisibilityForKind(req.tenant!.org.id, kind, req.session!.id, req.tenant!.role));
       }
       if (roleSatisfies(req.tenant!.role, ["owner", "admin"]) && Object.keys(historyBag(historyBag(i.diff).version_before)).length && !writersByKind.has(kind)) writersByKind.set(kind, getHistoryWriterFor(req.tenant!.org.id, kind));
     }
     const shown = await Promise.all(items.map(async i => {
-      const kind = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
+      const kind = kindOf(i) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
       const hidden = (await visibilityByKind.get(kind)!)(i.diff);
       return { ...i, diff: publicHistoryDiff(i.diff, hidden), restorable: !!Object.keys(historyBag(historyBag(i.diff).version_before)).length && !!await writersByKind.get(kind) };
     }));
@@ -1019,7 +939,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       req.tenant!.org.slug,
       shown.map((i) => {
         const base = i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type;
-        const coll = kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? (entityKind || null);
+        const coll = kindOf(i) ?? (entityKind || null);
         return { action: i.action, diff: i.diff, kinds: coll && coll !== base ? [coll, base] : [base] };
       }),
     ).catch((err) => {
@@ -1027,11 +947,6 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       return items.map(() => []);
     });
 
-    const workspaceRowTitle = (i: { entity_type: string; entity_id: string; action: string }): string | null => {
-      if (i.entity_type === "org_module") return getModuleEntry(i.entity_id)?.manifest.displayName || null;
-      if (i.entity_type === "user" || i.action === "member_joined") return req.tenant!.org.name;
-      return null;
-    };
     res.json({
       items: shown.map((i, n) => {
         const entry = {
@@ -1040,8 +955,8 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
         // Rows about the workspace itself have no record to resolve: a module
         // is said by its name ("turned on Lists"), an account joining by the
         // workspace it joined, never by the internal type ("org module").
-        entity_title: titleByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? workspaceRowTitle(i),
-        entity_kind: kindByEntity.get(`${i.entity_type}:${i.entity_id}`) ?? null,
+        entity_title: names.get(i.id)?.title ?? null,
+        entity_kind: names.get(i.id)?.kind ?? null,
         actor: i.user_id
           ? {
               id: i.user_id,
@@ -1051,7 +966,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
           : null,
         token: i.api_token_id ? tokenFor(i.api_token_id) : null,
         };
-        const presentation = activityPresentation({ ...entry, diff: { ...historyBag(entry.diff), ...contextDiffByEntry.get(i.id) } }, req.tenant!.org.slug, req.session!.id, subjectByEntry.get(i.id));
+        const presentation = activityPresentation({ ...entry, diff: { ...historyBag(entry.diff), ...names.get(i.id)?.contextDiff } }, req.tenant!.org.slug, req.session!.id, names.get(i.id)?.subject);
         return { ...entry, ...presentation };
       }),
       total,

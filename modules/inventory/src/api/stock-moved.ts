@@ -58,6 +58,11 @@ export async function stockMoved(db: Kysely<InventoryDB>, orgId: string, m: Stoc
     partId: m.partId,
     delta: m.delta,
     newQty: m.newQty,
+    // The count before the change, so a wire can fire on a CROSSING (ran
+    // out, fell below 3) once, not again on every scan already below the
+    // line (#6070, contract wire-narrowing.ts).
+    oldQty: m.newQty - m.delta,
+    ...(m.minQty != null ? { minQty: m.minQty } : {}),
     reason: m.reason ?? undefined,
   });
 

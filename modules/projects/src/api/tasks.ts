@@ -16,6 +16,7 @@ import { assigneeOf, tellAssignee } from "./assignee.js";
 import { makeNextOccurrence } from "./repeat.js";
 import { writeTaskOrder } from "./order.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 export const tasksRouter = Router({ mergeParams: true });
 
@@ -32,7 +33,7 @@ const TaskCreate = z.object({
   project_id: z.string().uuid().nullable().optional(),
   title: z.string().min(1).max(320),
   description: z.string().max(8_000).nullable().optional(),
-  status: z.enum(TASK_STATUSES).optional(),
+  status: z.enum(TASK_STATUSES).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   priority: z.enum(PRIORITIES).nullable().optional(),
   energy: z.enum(ENERGIES).nullable().optional(),
   due_date: z.string().nullable().optional().refine((v) => !v || instantFromInput(v) !== null, { message: "Give a day (YYYY-MM-DD) or a date and time." }),
@@ -66,11 +67,11 @@ const ListQuery = z.object({
 });
 
 const DependencyCreate = z.object({
-  depends_on_task_id: z.string().uuid().optional(),
-  target_module: z.string().min(1).max(80).optional(),
-  target_entity_type: z.string().min(1).max(80).optional(),
-  target_entity_id: z.string().min(1).max(120).optional(),
-  note: z.string().max(500).optional(),
+  depends_on_task_id: optionalUuid(),
+  target_module: optionalField(z.string().min(1).max(80)),
+  target_entity_type: optionalField(z.string().min(1).max(80)),
+  target_entity_id: optionalField(z.string().min(1).max(120)),
+  note: optionalText(500),
 });
 
 // AI-REACH: exempt — dashboard-only count; Cobb reads tasks and dependencies.

@@ -4,7 +4,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { usePageTitle } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { stationApi, stationKeys } from "../lib/scan-stations";
-import type { StationMode } from "@cobblr/platform-contract/scan-station";
+import { stationModeHelp, stationUsesPlace, type StationMode } from "@cobblr/platform-contract/scan-station";
 import QRCode from "qrcode";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -59,16 +59,17 @@ export function ScanStationsPage() {
     </div>
     {error && <p role="alert" className="text-ember-600 dark:text-ember-400">{error.message}</p>}
     {mine === false ? <p role="alert" className="text-ember-600 dark:text-ember-400">That station is not yours in this workspace.</p> : !id ? <>
-      <p className="text-muted">Scan a place, then things to put away. A station remembers the place for ten idle minutes. Review or undo what it did here.</p>
+      <p className="text-muted">A station does one thing with every scan. File puts things into the place scanned before them, and remembers that place for ten idle minutes. Print queues labels. Open opens records. Review or undo what it did here.</p>
       <form className="space-y-3 rounded-lg border border-line dark:border-slate-600 p-4" onSubmit={(e) => { e.preventDefault(); change.mutate({ type: "create" }); }}>
         <label className="block">Station name<input className={input} value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} /></label>
         <label className="block">What scans do<select className={input} value={mode} onChange={(e) => setMode(e.target.value as StationMode)}>{modes.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label>
+        <p className="text-sm text-muted">{stationModeHelp(mode)}</p>
         <button className={button} disabled={change.isPending} type="submit">Add station</button>
       </form>
       {devices.isLoading && <p role="status">Getting stations…</p>}
       <ul className="space-y-3">{devices.data?.items.map((s) => <li key={s.id} className="rounded-lg border border-line dark:border-slate-600 p-4">
         <Link to={`/scan/stations/${s.id}`} className="font-semibold text-accent underline">{s.name}</Link>
-        <p className="text-sm text-muted">{modes.find((m) => m.value === s.mode)?.label}{s.context ? ` into ${s.context.name}` : ""}</p>
+        <p className="text-sm text-muted">{modes.find((m) => m.value === s.mode)?.label}{s.context && stationUsesPlace(s.mode) ? ` into ${s.context.name}` : ""}</p>
       </li>)}</ul>
     </> : sessionId ? <>
       <Link className="text-accent underline" to={`/scan/stations/${id}`}>Back to station</Link>
@@ -87,9 +88,9 @@ export function ScanStationsPage() {
         </li>)}</ol>
       </> : <p role="status">Getting session…</p>}
     </> : d ? <>
-      <p>Next things go into <strong>{d.context?.name || "a place you scan"}</strong>.</p>
+      {stationUsesPlace(d.mode) && <p>Next things go into <strong>{d.context?.name || "a place you scan"}</strong>.</p>}
       <label className="block">What scans do<select className={input} value={d.mode} disabled={change.isPending} onChange={(e) => change.mutate({ type: "mode", value: e.target.value as StationMode })}>{modes.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label>
-      <p className="text-sm text-muted">Scan a holder once to put it away. Scan it twice in a row to put things inside it. Scan any place to leave the holder.</p>
+      <p className="text-sm text-muted" data-testid="station-mode-help">{stationModeHelp(d.mode)}</p>
       <label className="block">Station ID<input className={input} readOnly value={d.id} /></label>
       <p className="text-sm text-muted">Copy this ID into the relay’s existing setup portal. Use an API token for your account and this workspace. The same station works with a barcode reader or an NFC reader.</p>
       <div className="flex flex-wrap gap-3">

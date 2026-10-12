@@ -22,7 +22,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
+import { SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -332,7 +332,7 @@ function WorkspacesTab() {
               <td className="px-3 py-2">
                 {/* The plan IS the disable switch — withTenant 403s every
                     tenant call for plan=disabled, so this select is honest. */}
-                <select
+                <select aria-label="Plan"
                   value={w.plan}
                   onChange={(e) => setPlan.mutate({ id: w.id, plan: e.target.value as "free" | "paid" | "disabled" })}
                   disabled={setPlan.isPending}
@@ -350,6 +350,7 @@ function WorkspacesTab() {
               </td>
               <td className="px-3 py-2 text-right">
                 <button
+                  aria-label="Delete workspace (hard delete - drops its tenant DB)"
                   onClick={() => void handleDelete(w)}
                   disabled={del.isPending}
                   className="text-faint hover:text-ember-500 transition p-1"
@@ -786,6 +787,11 @@ function HealthTab() {
     queryFn: () => api.superAdminSandboxCpu(),
     refetchInterval: 5_000,
   });
+  const compute = useQuery({
+    queryKey: ["super-admin-compute-stats"],
+    queryFn: () => api.superAdminComputeStats(),
+    refetchInterval: 30_000,
+  });
   const tel = useQuery({
     queryKey: ["super-admin-sandbox-telemetry"],
     queryFn: () => api.superAdminSandboxTelemetry(),
@@ -948,6 +954,60 @@ function HealthTab() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+          Compute per route
+        </h2>
+        {compute.data && compute.data.rows.length === 0 && (
+          <div className="text-xs text-faint italic">No requests since the api started.</div>
+        )}
+        {compute.data && compute.data.rows.length > 0 && (
+          <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
+            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-faint">
+              since {new Date(compute.data.since).toLocaleString()} · {compute.data.routes_seen} routes ·{" "}
+              {Math.round(compute.data.cpu_total_ms / 1000)}s CPU
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-subtle/30 dark:bg-slate-800/20">
+                  <tr>
+                    <Th>Route</Th>
+                    <Th right>Calls</Th>
+                    <Th right>CPU share</Th>
+                    <Th right>CPU ms p50 / p95</Th>
+                    <Th right>Wall ms p50 / p95</Th>
+                    <Th right>Memory growth</Th>
+                    <Th right>Per workspace a day p95 / max</Th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line dark:divide-slate-800">
+                  {compute.data.rows.map((r) => (
+                    <tr key={r.route}>
+                      <td className="px-3 py-1.5 text-xs font-mono text-content dark:text-mortar-100 break-all">{r.route}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">{r.calls.toLocaleString()}</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">{Math.round(r.cpu_share * 100)}%</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">
+                        {r.cpu_ms.samples ? `${r.cpu_ms.p50} / ${r.cpu_ms.p95}` : `≤${r.cpu_ms_overlapped.p50} / ≤${r.cpu_ms_overlapped.p95}`}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">
+                        {r.wall_ms.p50} / {r.wall_ms.p95}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">{r.rss_growth_max_mb} MB</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs">
+                        {r.per_workspace_day.workspaces ? `${r.per_workspace_day.p95} / ${r.per_workspace_day.max}` : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-4 py-2 text-[10px] text-faint">
+              CPU from requests that ran alone; ≤ marks an upper bound from overlapping ones.
+            </div>
           </div>
         )}
       </div>
@@ -1125,7 +1185,7 @@ function MarketplaceTab() {
               </div>
               <div className="shrink-0 flex flex-col items-end gap-1">
                 {m.versions.length > 1 && (
-                  <select
+                  <select aria-label="Version"
                     value={pickedVersion}
                     onChange={(e) =>
                       setSelectedVersion((s) => ({ ...s, [m.name]: e.target.value }))
@@ -1321,8 +1381,8 @@ function InvitesTab() {
               {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
             </div>
             <div className="flex items-center gap-2">
-              <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
-              <button onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
+              <input aria-label="Sign-in link" readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
+              <button aria-label="Copy" onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
             </div>
           </div>
         )}
@@ -1348,7 +1408,7 @@ function InvitesTab() {
                 <td className="px-3 py-1.5 text-muted">{inv.expires_at ? new Date(inv.expires_at).toLocaleDateString() : "never"}</td>
                 <td className="px-3 py-1.5 text-right">
                   {inv.status === "open" && (
-                    <button onClick={async () => { if (await confirm({ title: "Revoke invite?", message: "The link stops working immediately.", destructive: true })) revoke.mutate(inv.id); }} className="text-faint hover:text-ember-500 transition" title="Revoke"><Trash2 size={13} /></button>
+                    <button aria-label="Revoke" onClick={async () => { if (await confirm({ title: "Revoke invite?", message: "The link stops working immediately.", destructive: true })) revoke.mutate(inv.id); }} className="text-faint hover:text-ember-500 transition" title="Revoke"><Trash2 size={13} /></button>
                   )}
                 </td>
               </tr>
@@ -1405,8 +1465,8 @@ function WaitlistTab() {
             {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
           </div>
           <div className="flex items-center gap-2">
-            <input readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
-            <button onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
+            <input aria-label="Sign-in link" readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
+            <button aria-label="Copy" onClick={() => { void navigator.clipboard?.writeText(freshLink); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy"><Copy size={14} /></button>
           </div>
         </div>
       )}
@@ -1435,7 +1495,7 @@ function WaitlistTab() {
                       <button onClick={() => approve.mutate(w.id)} disabled={approve.isPending} className="inline-flex items-center gap-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-1 text-[11px] font-medium transition disabled:opacity-50" title="Mint + email an invite">
                         <UserPlus size={12} /> Approve
                       </button>
-                      <button onClick={async () => { if (await confirm({ title: "Dismiss signup?", message: `${w.email} won't be invited (they can sign up again later).`, destructive: true })) dismiss.mutate(w.id); }} className="ml-2 text-faint hover:text-ember-500 transition" title="Dismiss">
+                      <button aria-label="Dismiss" onClick={async () => { if (await confirm({ title: "Dismiss signup?", message: `${w.email} won't be invited (they can sign up again later).`, destructive: true })) dismiss.mutate(w.id); }} className="ml-2 text-faint hover:text-ember-500 transition" title="Dismiss">
                         <X size={13} />
                       </button>
                     </>
@@ -1700,23 +1760,16 @@ function BarcodeCacheTab() {
         <b> Per-workspace</b> shows the local mirrors: who scanned what, where. Click a row for every
         field we captured, including the raw provider payload.
       </p>
-      <div className="inline-flex rounded-lg border border-line dark:border-slate-700 overflow-hidden text-xs">
-        {([["shared", "Instance-wide (deduped)"], ["workspaces", "Per-workspace mirrors"], ["review", "Proposed corrections"]] as const).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setLayer(id)}
-            className={
-              "px-3 py-1.5 font-medium transition " +
-              (layer === id
-                ? "bg-cobble-600 text-white"
-                : "bg-surface dark:bg-slate-900 text-muted hover:text-accent")
-            }
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedChoice
+        label="Which lookup layer"
+        value={layer}
+        onChange={setLayer}
+        options={[
+          { value: "shared", label: "Instance-wide (deduped)" },
+          { value: "workspaces", label: "Per-workspace mirrors" },
+          { value: "review", label: "Proposed corrections" },
+        ]}
+      />
       {layer === "review" && <BarcodeReviewSection />}
       {layer !== "review" && (<>
       <div className="flex flex-wrap items-end gap-2">
@@ -1888,6 +1941,7 @@ function ScanEvalTab() {
                 <td className="px-3 py-1.5 text-faint whitespace-nowrap cursor-pointer" onClick={() => setDetail(c)}>{c.note ?? ""}</td>
                 <td className="px-3 py-1.5 text-right whitespace-nowrap">
                   <button
+                    aria-label="Delete"
                     onClick={async () => {
                       if (await confirm({ title: "Delete eval case?", message: "This removes the captured case. It does not affect the committed entity.", destructive: true })) del.mutate(c);
                     }}
@@ -1989,11 +2043,11 @@ function AnnouncementsTab() {
           className="rounded-xl border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-2"
         >
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent">post an update</div>
-          <div className="flex gap-2">
-            <select
+          <div className="flex flex-wrap gap-2">
+            <select aria-label="Category"
               value={effectivePostCat}
               onChange={(e) => setPostCat(e.target.value)}
-              className="text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
+              className="min-w-0 max-w-full text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
             >
               {composable.map((a) => (
                 <option key={a.key} value={a.key}>{a.label}</option>
@@ -2003,7 +2057,7 @@ function AnnouncementsTab() {
               value={postTitle}
               onChange={(e) => setPostTitle(e.target.value)}
               placeholder="Title - e.g. “📦 New: Yarn bundle v0.4”"
-              className="flex-1 text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
+              className="flex-1 basis-48 min-w-0 text-sm rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5"
             />
           </div>
           <textarea
@@ -2041,6 +2095,7 @@ function AnnouncementsTab() {
               <input
                 type="checkbox"
                 className="sr-only peer"
+                aria-label={`Post ${a.label} announcements`}
                 checked={a.enabled}
                 onChange={(e) => update.mutate({ key: a.key, body: { enabled: e.target.checked } })}
               />

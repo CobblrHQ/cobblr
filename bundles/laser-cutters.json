@@ -2,13 +2,18 @@
   "manifest": {
     "id": "cobblr.community.laser-cutters",
     "catalog": "extended",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "name": "Laser Cutters",
     "description": "A Laser Cutters tracker: tube type, wattage, bed size, cooling, focal length. A named view of your machines, so each cutter still drives jobs, fleet status, and maintenance.",
     "author": "Cobblr community",
-    "released_at": "2026-10-07",
-    "changelog": "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed.",
+    "released_at": "2026-10-12",
+    "changelog": "A laser cutter's bed size is a fact about its model: once one cutter of a model has it, every cutter of that model waiting in your inbox gets it too.",
     "releases": [
+      {
+        "version": "0.3.5",
+        "released_at": "2026-10-12",
+        "notes": "A laser cutter's bed size is a fact about its model: once one cutter of a model has it, every cutter of that model waiting in your inbox gets it too."
+      },
       {
         "version": "0.3.4",
         "released_at": "2026-10-07",
@@ -85,6 +90,7 @@
           {
             "entity_kind": "machines:machine",
             "name": "bed_size_laser",
+            "fact_scope": "model",
             "display_label": "Bed size (mm)",
             "type": "text",
             "position": 22,

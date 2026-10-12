@@ -51,6 +51,13 @@ export interface BlockedAction {
   selfApply?: boolean;
 }
 
+/** An action's refusal that carries the sheet's shape, as opposed to a bare
+ *  sentence or another field that happens to be called `blocked`. */
+export function isBlockedAction(x: unknown): x is BlockedAction {
+  const b = x as Partial<BlockedAction> | null;
+  return !!b && typeof b === "object" && typeof b.sentence === "string" && Array.isArray(b.remedies) && typeof b.requestable === "boolean";
+}
+
 /** Remedies the caller's own role may apply without asking anyone: turning
  *  on an app is what an owner or admin does on the Modules screen. A
  *  capability or a bundle install stays an ask, so a refusal never quietly

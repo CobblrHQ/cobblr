@@ -135,7 +135,7 @@ export function FileDetailPage() {
       )}
       <section aria-label="Preview" className="rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-900/40 p-2">
         {f.kind === "image" ? (
-          <button type="button" onClick={() => setViewing(true)} aria-label={`Open ${f.filename}`} className="relative block w-full aspect-[4/3] max-h-[70vh] cursor-zoom-in">
+          <button title={`Open ${f.filename}`} type="button" onClick={() => setViewing(true)} aria-label={`Open ${f.filename}`} className="relative block w-full aspect-[4/3] max-h-[70vh] cursor-zoom-in">
             <EntityPhoto src={api.fileRawUrl(activeSlug, f.id, "medium")} alt={f.filename} fill fit="contain" />
           </button>
         ) : canPreviewFile(f.filename) ? (

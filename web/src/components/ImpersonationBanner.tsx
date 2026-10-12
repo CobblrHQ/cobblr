@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShieldAlert, Eye, Pencil, X } from "lucide-react";
 import { api } from "../lib/api";
-import { useImpersonation, setImpersonationMode, clearImpersonation } from "../lib/impersonation";
+import { useImpersonation, setImpersonationMode, leaveImpersonation, endAndLeaveImpersonation } from "../lib/impersonation";
 import { BackdropLayer, FloatingChrome, OverlayLayer } from "@cobblr/platform-web";
 
 const BAR_H = 36;
@@ -38,10 +38,7 @@ export function ImpersonationBanner() {
 
   // Auto-end the moment the grant expires — clear + return to the console.
   useEffect(() => {
-    if (imp && expired) {
-      clearImpersonation();
-      window.location.assign("/admin");
-    }
+    if (imp && expired) leaveImpersonation("/admin");
   }, [imp, expired]);
 
   if (!imp || expired) return null;
@@ -66,16 +63,11 @@ export function ImpersonationBanner() {
     }
   };
 
-  const exit = async () => {
+  const exit = () => {
     setBusy(true);
-    try {
-      await api.request("PATCH", `/super-admin/impersonations/${imp.session_id}`, { ended: true });
-    } catch {
-      /* quiet: ending is best-effort; the token expires regardless */
-    }
-    clearImpersonation();
-    window.location.assign("/admin");
+    endAndLeaveImpersonation("/admin");
   };
+
 
   const accent = write ? "bg-red-600" : "bg-amber-600";
   const ring = write ? "ring-red-500" : "ring-amber-500";

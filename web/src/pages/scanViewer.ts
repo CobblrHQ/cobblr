@@ -28,11 +28,16 @@ export interface ScanViewerInput {
   /** Every module this deployment has, with whether it is on here, or null
    *  while it loads (nothing blocks). */
   modules?: ReadonlyArray<{ name: string; enabled?: boolean }> | null;
+  /** Every table in the workspace by its name, or null while it loads. */
+  instances?: ReadonlyArray<{ instance_name: string; display_name?: string | null }> | null;
 }
 
 /** The resolver's context for this person over this workspace's tables. */
-export function scanViewerContext({ role, caps, menu, modules }: ScanViewerInput): ScanRowStateContext {
+export function scanViewerContext({ role, caps, menu, modules, instances }: ScanViewerInput): ScanRowStateContext {
   return {
+    // A re-buy's table may be one the menu does not offer; it is still named
+    // as the workspace names it, never by its id (#6004).
+    ...(instances ? { tableNames: instances } : {}),
     // The workspace's tables as the contract reads them: the label of a
     // table a person chose (#3062) and, through the fit shape the menu
     // entries carry, the better-table question by the router's own rule
@@ -76,5 +81,12 @@ export function useScanViewer(menu: readonly ScanMenuEntry[] | null | undefined)
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
-  return scanViewerContext({ role: activeOrg?.role, caps: myCaps.data ?? null, menu, modules: orgModules.data?.items ?? null });
+  // The same cached list every page that names a table reads.
+  const instances = useQuery({
+    queryKey: ["instances", activeSlug],
+    queryFn: () => api.listInstances(activeSlug),
+    enabled: !!activeSlug,
+    staleTime: 30_000,
+  });
+  return scanViewerContext({ role: activeOrg?.role, caps: myCaps.data ?? null, menu, modules: orgModules.data?.items ?? null, instances: instances.data?.items ?? null });
 }

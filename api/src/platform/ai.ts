@@ -1,4 +1,5 @@
-import { readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { withGenerationCheck } from "@cobblr/platform-contract/ai-verify";
+import { PERSONAL_READER_PLACE, readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
 // core-ai platform service.
 //
 // Three responsibilities mirroring core-integrations:
@@ -84,7 +85,9 @@ async function orgSlugOf(orgId: string): Promise<string | null> {
 const providers = new Map<string, AiProviderDef>();
 
 export function registerProvider(p: AiProviderDef): void {
-  providers.set(p.id, p);
+  // Every provider's verify generates once, with the model it answers with:
+  // a models list is not verification (#6024, ai-verify.ts).
+  providers.set(p.id, withGenerationCheck(p));
 }
 
 // Pluggable entitlement guard. Open core registers none (allow-all →
@@ -584,7 +587,7 @@ export const invoke: PlatformAi["invoke"] = async (req) => {
   if (AI_JOB_PRIVACY[req.capability] === "personal") req = { ...req, privacy: "personal", provider_id: undefined };
   if (req.privacy !== "personal" && typeof req.input.image_b64 === "string") {
     const classified = await readPersonalDocument({ bytes: Buffer.from(req.input.image_b64, "base64"), mime: String(req.input.image_media_type || "image/jpeg") });
-    if (classified.privacy === "personal") throw aiRefusal("no_provider", "This is a personal document. Read it with Personal documents in the scan inbox; it cannot use the ordinary vision job.");
+    if (classified.privacy === "personal") throw aiRefusal("no_provider", `This is a personal document, so it cannot use the ordinary vision job. Read it with ${PERSONAL_READER_PLACE}.`);
   }
   const { result: r, asked: tried, current } = await askInOrder<TriedProvider, { rowId?: string; providerId?: string; model?: string; requested?: string; label?: string }, Awaited<ReturnType<typeof invokeRaw>>>({
     max: MAX_PROVIDERS_PER_CALL,

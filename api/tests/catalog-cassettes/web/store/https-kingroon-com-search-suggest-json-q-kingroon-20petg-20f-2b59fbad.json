@@ -1,0 +1,34 @@
+{
+  "query": "https://kingroon.com/search/suggest.json?q=kingroon%20petg%20filament%201.75mm&resources%5Btype%5D=product&resources%5Blimit%5D=5",
+  "results": {
+    "status": 200,
+    "body": {
+      "resources": {
+        "results": {
+          "products": [
+            {
+              "title": "KINGROON PETG Filament 1.75mm",
+              "handle": "10kg-petg-filament-1-75mm-3d-print-materials"
+            },
+            {
+              "title": "Kingroon PLA / PETG Filament 1.75mm For The Canada",
+              "handle": "10kg-pla-filament-1-75mm-for-the-ca"
+            },
+            {
+              "title": "10kg 1.75mm PLA/PETG Filament 1.75mm",
+              "handle": "10kg-1-75mm-white-pla-3d-printing-filament"
+            },
+            {
+              "title": "KINGROON PETG Basic",
+              "handle": "kingroon-petg-basic"
+            },
+            {
+              "title": "KINGROON PLA Filament 1.75mm",
+              "handle": "10kg-pla-filament-1-75mm"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

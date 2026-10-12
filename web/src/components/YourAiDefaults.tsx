@@ -280,7 +280,7 @@ export function JobRow({
                       {(grip) => (
                         <div className="flex flex-wrap items-center gap-1.5 rounded border border-line dark:border-slate-700 p-1.5">
                           {grip && (
-                            <span {...grip} className="cursor-grab touch-none text-faint" aria-label={`Drag ${s.label} to reorder`} data-drag-step>
+                            <span {...grip} className="cursor-grab touch-none text-faint" aria-label={`Drag ${s.label} to reorder`} title={`Drag ${s.label} to reorder`} data-drag-step>
                               <GripVertical className="h-4 w-4" />
                             </span>
                           )}
@@ -325,10 +325,11 @@ export function JobRow({
                             {s.model}
                           </span>
                           <span className="ml-auto flex shrink-0 gap-0.5">
-                            <button type="button" className={ICON_BUTTON} disabled={pending || i === 0} onClick={() => move(i, -1)} aria-label={`Ask ${s.label} earlier for ${jobName}`}>
+                            <button title={`Ask ${s.label} earlier for ${jobName}`} type="button" className={ICON_BUTTON} disabled={pending || i === 0} onClick={() => move(i, -1)} aria-label={`Ask ${s.label} earlier for ${jobName}`}>
                               <ArrowUp className="h-4 w-4" />
                             </button>
                             <button
+                              title={`Ask ${s.label} later for ${jobName}`}
                               type="button"
                               className={ICON_BUTTON}
                               disabled={pending || i === job.steps.length - 1}
@@ -337,7 +338,7 @@ export function JobRow({
                             >
                               <ArrowDown className="h-4 w-4" />
                             </button>
-                            <button type="button" className={ICON_BUTTON} disabled={pending} onClick={() => onSave(steps.filter((_, j) => j !== i))} aria-label={`Stop asking ${s.label} for ${jobName}`}>
+                            <button title={`Stop asking ${s.label} for ${jobName}`} type="button" className={ICON_BUTTON} disabled={pending} onClick={() => onSave(steps.filter((_, j) => j !== i))} aria-label={`Stop asking ${s.label} for ${jobName}`}>
                               <X className="h-4 w-4" />
                             </button>
                           </span>

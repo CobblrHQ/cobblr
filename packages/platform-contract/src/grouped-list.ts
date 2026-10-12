@@ -39,6 +39,10 @@ export interface GroupPlan {
   currency: string;
   values?: Record<string, RawBuilder<unknown>>;
   numbers?: Record<string, RawBuilder<number>>;
+  /** Added to a per-unit field's value x quantity, per record: what is left
+   *  of the units already opened, which the count no longer holds (a yarn's
+   *  opened skein, #5897). */
+  plus?: Record<string, RawBuilder<number>>;
   where?: RawBuilder<boolean>;
   search?: string;
   search_fields?: string[];
@@ -85,7 +89,8 @@ export function groupedListSql<O>(source: SelectQueryBuilder<any, any, O>, plan:
     const amount = f.money ? sql`coalesce(${raw}->>'amount', ${raw} #>> '{}')` : sql`(${raw} #>> '{}')`;
     // MONEY-OK: normalize native minor units into main units in the database aggregation, before the shared formatter reads the result.
     const one = plan.numbers?.[f.name] ?? (f.money === "cents" ? sql`case when jsonb_typeof(${raw}) = 'object' then ${numeric(amount)} else ${numeric(amount)} / 100 end` : numeric(amount));
-    const number = f.times ? sql`(${one}) * (${plan.numbers?.[f.times] ?? numeric(textValue(f.times))})` : one;
+    const times = f.times ? sql`(${one}) * (${plan.numbers?.[f.times] ?? numeric(textValue(f.times))})` : null;
+    const number = times ? (plan.plus?.[f.name] ? sql`coalesce(${times}, 0) + coalesce(${plan.plus[f.name]}, 0)` : times) : one;
     const metadataCurrency = sql`coalesce(${sql.join(moneyCurrencyPaths(f.name).map((path) => sql`nullif(data->'metadata' #>> ${path}::text[], '')`))})`;
     const chosenCurrency = sql`coalesce(nullif(${raw}->>'currency', ''), ${metadataCurrency})`;
     const currency = f.money ? sql`case when ${chosenCurrency} ~ '^[A-Za-z]{3}$' then upper(${chosenCurrency}) else ${plan.currency} end` : sql`null::text`;

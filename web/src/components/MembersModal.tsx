@@ -10,7 +10,7 @@ import {
   ApiError, api,
   type OrgMembership, type WorkspaceInvite, type WorkspaceMember, type WorkspacePerson,
 } from "../lib/api";
-import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, SegmentedChoice, useToast, useConfirm } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePrefill } from "../lib/prefill";
 import { printJoinSheet } from "../lib/joinSheet";
@@ -320,7 +320,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                     </div>
                   </div>
                   {isAdminish && !isSelf ? (
-                    <select
+                    <select aria-label="Role"
                       value={m.role}
                       onChange={(e) =>
                         updateRole.mutate({
@@ -343,6 +343,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   )}
                   {isAdminish && !isSelf && (
                     <button
+                      aria-label="Remove member"
                       onClick={() => handleRemoveMember(m)}
                       className="text-faint hover:text-ember-500 transition"
                       title="Remove member"
@@ -453,6 +454,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       </button>
                     )}
                     <button
+                      aria-label="Copy invite link"
                       onClick={() => copyInviteLink(inv)}
                       className="text-faint hover:text-accent transition"
                       title="Copy invite link"
@@ -460,6 +462,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       <Copy size={12} />
                     </button>
                     <button
+                      aria-label="Revoke"
                       onClick={() => revokeInvite.mutate(inv.id)}
                       className="text-faint hover:text-ember-500 transition"
                       title="Revoke"
@@ -486,26 +489,15 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
             {/* Two genuinely different invites. Owners get both (when self-serve
                 invites are open); admins can only add people to THIS workspace. */}
             {canInviteToPlatform && (
-              <div className="inline-flex rounded-lg border border-line dark:border-slate-700 p-0.5 text-xs">
-                {([
-                  ["workspace", "Join this workspace"],
-                  ["platform", "Start their own Cobblr"],
-                ] as const).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setInviteKind(k)}
-                    className={
-                      "px-3 py-1.5 rounded-md font-medium transition " +
-                      (inviteKind === k
-                        ? "bg-cobble-600 text-white"
-                        : "text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800")
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <SegmentedChoice
+                label="What the invite is for"
+                value={inviteKind}
+                onChange={setInviteKind}
+                options={[
+                  { value: "workspace", label: "Join this workspace" },
+                  { value: "platform", label: "Start their own Cobblr" },
+                ]}
+              />
             )}
 
             {inviteKind === "workspace" && (

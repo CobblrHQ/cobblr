@@ -15,21 +15,22 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUserId, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const matchToCatalogRouter = Router({ mergeParams: true });
 
 const Body = z.object({
   catalog_id: z.string().uuid(),
   user_entity: z.record(z.unknown()),
-  image_url: z.string().url().optional(),
+  image_url: optionalField(z.string().url()),
   /** Override the configured default for this capability. */
-  provider_id: z.string().optional(),
-  model: z.string().optional(),
+  provider_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  model: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** Skip the LLM step and just return candidates. Useful from
    *  scripts that do their own ranking. */
   candidates_only: z.boolean().optional(),
   /** How many candidates to retrieve. Default 10. */
-  top_k: z.number().int().positive().max(50).optional(),
+  top_k: optionalField(z.number().int().positive().max(50)),
 });
 
 // AI-REACH: this module IS the assistant; match-to-catalog is a capability the scan flow calls, and the assistant reaches catalogs through core-catalogs:match-to-catalog

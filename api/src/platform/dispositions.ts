@@ -10,6 +10,7 @@ import { handedRecord } from "./handed-record.js";
 // kind the same. History keeps it: the record is never deleted.
 
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
+import { dayLabel } from "@cobblr/platform-contract/day";
 
 import { platform } from "@cobblr/platform-contract";
 import {
@@ -126,12 +127,19 @@ export async function bringBack(
   const handed = (await Promise.all(found.map((e) => handedRecord(orgId, e.id)))).find(Boolean);
   if (handed) {
     const who = handed.who ?? "the person you gave it to";
+    // When they took it, in the asker's own day (#4736).
+    const at = handed.taken_at ?? handed.decided_at;
+    const on = at ? ` on ${dayLabel(await platform().accounts.dayFor(userId, { now: new Date(at) }), { year: "numeric", month: "long", day: "numeric" })}` : "";
+    const sentence = handed.target_org_id ? `${handed.title} went to ${who}${on}.` : `${who} took ${handed.title}${on}.`;
+    const reason = handed.target_org_id
+      ? "Undo the send in Sharing to return both sides together."
+      : `Ask ${who} to give it back: their Send back returns it here and takes it out of theirs, both at once.`;
     return {
       ok: false,
-      error: `${who} has ${handed.title} now. ${handed.target_org_id ? "Undo the send to bring it back." : "They can Send it back."}`,
+      error: `${sentence} ${reason}`,
       blocked: {
-        sentence: `${who} has ${handed.title} now.`, remedies: [], requestable: false,
-        reason: handed.target_org_id ? "Undo the send in Sharing to return both sides together." : `Ask ${who} to press Send back.`,
+        sentence, remedies: [], requestable: false,
+        reason,
         approvers: { count: 0, names: [] }, pending: null,
       },
     };

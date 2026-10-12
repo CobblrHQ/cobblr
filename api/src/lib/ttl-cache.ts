@@ -56,7 +56,8 @@ export function ttlCache<V>(ttlMs: number, now: () => number = Date.now): TtlCac
       const p = load().then(
         (value) => {
           if (loading.get(key) === p) loading.delete(key);
-          if (gen(key) === startedAt) done.set(key, { at: now(), value });
+          // ttl 0 is single-flight only: share the asks in flight, keep nothing.
+          if (ttlMs > 0 && gen(key) === startedAt) done.set(key, { at: now(), value });
           return value;
         },
         (err) => {

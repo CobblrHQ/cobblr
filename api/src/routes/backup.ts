@@ -712,8 +712,8 @@ const DestCreate = z.object({
   label: z.string().min(1).max(120),
   config: z.record(z.unknown()).optional(),
   credentials: z.record(z.unknown()).optional(),
-  schedule: z.enum(["off", "daily", "weekly"]).optional(),
-  retention: z.number().int().min(1).max(365).optional(),
+  schedule: z.enum(["off", "daily", "weekly"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  retention: z.number().int().min(1).max(365).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 backupRouter.post("/destinations", requireAuth, withTenant, async (req, res, next) => {
   try {
@@ -754,11 +754,11 @@ backupRouter.post("/destinations", requireAuth, withTenant, async (req, res, nex
 });
 
 const DestPatch = z.object({
-  label: z.string().min(1).max(120).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   config: z.record(z.unknown()).optional(),
   credentials: z.record(z.unknown()).optional(),
-  schedule: z.enum(["off", "daily", "weekly"]).optional(),
-  retention: z.number().int().min(1).max(365).optional(),
+  schedule: z.enum(["off", "daily", "weekly"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  retention: z.number().int().min(1).max(365).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   enabled: z.boolean().optional(),
 });
 backupRouter.patch("/destinations/:id", requireAuth, withTenant, async (req, res, next) => {

@@ -66,11 +66,15 @@ function count(n: number, name: string): string {
 
 /** What is on hand for each part the lines draw from. A part that no longer
  *  resolves is on hand at zero: it cannot be shipped. */
-async function readOnHand(orgId: string, partIds: string[]): Promise<Map<string, { name: string; on_hand: number; href: string | null } | null>> {
-  const out = new Map<string, { name: string; on_hand: number; href: string | null } | null>();
+/** What a stocked record has on the shelf, in the unit it keeps its count in. */
+export interface OnHand { name: string; on_hand: number; unit: string | null; href: string | null }
+
+async function readOnHand(orgId: string, partIds: string[]): Promise<Map<string, OnHand | null>> {
+  const out = new Map<string, OnHand | null>();
   for (const id of partIds) {
     const ent = await platform().entities.lookup(orgId, "inventory:part", id);
-    out.set(id, ent ? { name: ent.title, on_hand: Math.max(0, Number(ent.fields?.qty ?? 0) || 0), href: ent.detailUrl ?? null } : null);
+    const unit = typeof ent?.fields?.unit === "string" && ent.fields.unit.trim() ? ent.fields.unit.trim() : null;
+    out.set(id, ent ? { name: ent.title, on_hand: Math.max(0, Number(ent.fields?.qty ?? 0) || 0), unit, href: ent.detailUrl ?? null } : null);
   }
   return out;
 }
@@ -79,9 +83,9 @@ async function readOnHand(orgId: string, partIds: string[]): Promise<Map<string,
 export async function planFulfilment(
   orgId: string,
   lines: FulfilLine[],
-): Promise<{ take: Map<string, number>; shortages: Shortage[] }> {
+): Promise<{ take: Map<string, number>; shortages: Shortage[]; onHand: Map<string, OnHand | null> }> {
   const stocked = lines.filter((l) => l.part_id && remaining(l) > 0);
-  const partIds = [...new Set(stocked.map((l) => l.part_id!))];
+  const partIds = [...new Set(lines.filter((l) => l.part_id).map((l) => l.part_id!))];
   const onHand = await readOnHand(orgId, partIds);
   const left = new Map(partIds.map((id) => [id, onHand.get(id)?.on_hand ?? 0]));
   const take = new Map<string, number>();
@@ -111,7 +115,7 @@ export async function planFulfilment(
       });
     }
   }
-  return { take, shortages };
+  return { take, shortages, onHand };
 }
 
 /** The sentence a person reads when an order is short. */

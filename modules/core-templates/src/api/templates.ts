@@ -20,7 +20,7 @@ const TemplateCreate = z.object({
   description: z.string().max(2_000).nullable().optional(),
   defaults: z.record(z.unknown()).optional(),
   default_tags: z.array(z.string().min(1)).max(50).optional(),
-  position: z.number().int().optional(),
+  position: z.number().int().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 const TemplateUpdate = TemplateCreate.partial();

@@ -10,7 +10,7 @@
 // the phone's version is the camera's Sort mode), Fill missing photos,
 // Export, Drive this screen, the Auto-pick and First-look
 // toggles, Same thing twice (docs/design-decisions/scan-inbox-device-split.md §3.1).
-import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap } from "lucide-react";
+import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap, Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
@@ -28,6 +28,9 @@ export interface ScanInboxMenuProps {
   onLiveSort: () => void;
   onFillPhotos: () => void;
   onUploadReceipt: () => void;
+  /** "Read a personal document": the reader the inbox once kept as a box at
+   *  its top, reachable on purpose here (and as the Vault's main action). */
+  onReadPersonalDocument: () => void;
   onExport: () => void;
   onImport: () => void;
   receiptAddress: string | null;
@@ -53,7 +56,7 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
       width={264}
       align="right"
       trigger={({ toggle }) => (
-        <button type="button" onClick={toggle} aria-label="More inbox actions" className={p.triggerClassName}>
+        <button title="More inbox actions" type="button" onClick={toggle} aria-label="More inbox actions" className={p.triggerClassName}>
           <MoreHorizontal size={15} />
         </button>
       )}
@@ -131,6 +134,17 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
             onClick={() => {
               close();
               p.onUploadReceipt();
+            }}
+          />
+          {/* The inbox's own doors already take a personal document to its
+              private card; this is for reading one on purpose. */}
+          <MenuItem
+            icon={<Lock size={14} />}
+            label="Read a personal document"
+            hint="A registration, bill of sale or insurance, kept private"
+            onClick={() => {
+              close();
+              p.onReadPersonalDocument();
             }}
           />
           {!handheld && (

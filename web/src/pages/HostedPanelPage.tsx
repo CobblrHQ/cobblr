@@ -200,8 +200,9 @@ export function HostedPanelPage() {
           if (b.kind === "input") {
             return (
               <div key={i}>
-                <label className="block text-sm font-medium mb-1">{b.label}</label>
+                <span className="block text-sm font-medium mb-1">{b.label}</span>
                 <SecretInput
+                aria-label={b.label}
                   secret={b.secret}
                   value={inputs[b.key] ?? b.value ?? ""}
                   placeholder={b.placeholder}
@@ -234,20 +235,22 @@ export function HostedPanelPage() {
           // select
           return (
             <div key={i}>
-              <label className="block text-sm font-medium mb-1">{b.label}</label>
-              <select
-                value={b.value ?? ""}
-                onChange={(e) => actionM.mutate({ action: b.action, value: e.target.value })}
-                disabled={actionM.isPending}
-                className="w-full max-w-sm px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
-              >
-                {b.placeholder && <option value="">{b.placeholder}</option>}
-                {b.options.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+              <label className="block">
+                <span className="block text-sm font-medium mb-1">{b.label}</span>
+                <select
+                  value={b.value ?? ""}
+                  onChange={(e) => actionM.mutate({ action: b.action, value: e.target.value })}
+                  disabled={actionM.isPending}
+                  className="w-full max-w-sm px-2 py-1.5 text-sm rounded border dark:border-slate-700 bg-surface dark:bg-slate-900"
+                >
+                  {b.placeholder && <option value="">{b.placeholder}</option>}
+                  {b.options.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {b.hint && <div className="text-xs text-amber-600 mt-1">{b.hint}</div>}
             </div>
           );

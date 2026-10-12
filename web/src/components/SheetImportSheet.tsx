@@ -340,20 +340,22 @@ function SheetCard({ plan, busy, override, onChange }: { plan: SheetPlanView; bu
       {plan.include && (
         <>
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-muted dark:text-slate-400">Goes to</label>
-            <select
-              value={target.id}
-              onChange={(e) => onChange({ target: e.target.value })}
-              disabled={busy}
-              className="w-full rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-2 text-sm"
-            >
-              <option value={target.id}>{targetChoiceLabel(target)}</option>
-              {plan.alternatives.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {targetChoiceLabel(a)}
-                </option>
-              ))}
-            </select>
+            <label className="block space-y-1.5">
+              <span className="block text-xs font-medium text-muted dark:text-slate-400">Goes to</span>
+              <select
+                value={target.id}
+                onChange={(e) => onChange({ target: e.target.value })}
+                disabled={busy}
+                className="w-full rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-2 text-sm"
+              >
+                <option value={target.id}>{targetChoiceLabel(target)}</option>
+                {plan.alternatives.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {targetChoiceLabel(a)}
+                  </option>
+                ))}
+              </select>
+            </label>
             {target.status === "new" && (
               <input
                 // DRAFT-OK: a name typed for a collection that does not exist yet; it goes to the server on blur, and the key remounts it on the plan's answer

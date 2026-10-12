@@ -9,6 +9,7 @@ import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js
 import { TagRestoreRefused, deleteTagKept, mergeTagKept, restoreTag } from "../tag-writes.js";
 import { isQuiet, quietReason, rankTags, type TagUsage } from "../relevance.js";
 import { attachTag, createTag, detachTag, ensureTag, TagNameTaken, updateTag, type Writer } from "../tag-writes.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 const writer = (req: Parameters<typeof tenantContext>[0]): Writer => ({ orgId: tenantContext(req).org.id, userId: sessionUser(req)?.id ?? null });
 
@@ -34,8 +35,8 @@ const TagMerge = z.object({ into_tag_id: z.string().uuid() });
 
 
 const AttachBody = z.object({
-  tag_name: z.string().min(1).max(60).optional(),
-  tag_id: z.string().uuid().optional(),
+  tag_name: optionalField(z.string().min(1).max(60)),
+  tag_id: z.string().uuid().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   color: z.string().max(40).nullable().optional(),
   source_module: z.string().min(1).max(80),
   source_type: z.string().min(1).max(80),

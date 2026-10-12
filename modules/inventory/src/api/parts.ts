@@ -1,4 +1,5 @@
 import { stockViews } from "./stock-shapes.js";
+import { logPartCreated } from "./part-created.js";
 import { stockUnitRefusal } from "../stock-unit.js";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // /parts — full CRUD plus the stock-adjust endpoint.
@@ -162,8 +163,8 @@ const PartCreate = z.object({
   description: z.string().max(8_000).nullable().optional(),
   category_id: z.string().uuid().nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
-  qty: z.number().nonnegative().optional(),
-  unit: z.string().max(40).optional(),
+  qty: z.number().nonnegative().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  unit: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // Nullable: clearing a cost / reorder point is a legitimate edit (the columns
   // are nullable and the write path handles null); without it an inline cell
   // blanking Min gets a 400 and the value can never be unset from a list.
@@ -173,7 +174,7 @@ const PartCreate = z.object({
   supplier_url: z.string().url().max(500).nullable().optional(),
   image_path: z.string().max(500).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
-  state: z.enum(["active", "draft", "needs_review"]).optional(),
+  state: z.enum(["active", "draft", "needs_review"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
   // An ESTIMATE, not a count. Setting it is what turns a record into an
   // assortment ("roughly 50 adapters"); clearing it turns the estimate off.
@@ -928,6 +929,10 @@ partsRouter.get(
       "serial_number",
       "model_number",
       "supplier_url",
+      // Where a scan looks for the product's code, written back by the
+      // importer's barcode column. A table with its own barcode field writes
+      // it once, as that field.
+      ...(ownFields.some((f) => f.name === "barcode") ? [] : ["barcode"]),
       "warranty_expires",
       "lifetime_warranty",
       "warranty_details",
@@ -965,6 +970,7 @@ partsRouter.get(
         r.serial_number ?? "",
         r.model_number ?? "",
         r.supplier_url ?? "",
+        ...(ownFields.some((f) => f.name === "barcode") ? [] : [String((r.metadata as Record<string, unknown> | null)?.barcode ?? "")]),
         r.warranty_expires ?? "",
         r.lifetime_warranty ? "true" : "false",
         r.warranty_details ?? "",
@@ -1322,13 +1328,7 @@ partsRouter.post(
       }
     }
 
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "part_created",
-      ref: { module: "inventory", entityType: "part", entityId: inserted.id },
-      diff: { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) },
-    });
+    await logPartCreated(ctx.org.id, inserted.id, { name: inserted.name, qty: inserted.qty, instance: instanceOf(req) }, session.id);
     await platform().events.emit("inventory.part.created", {
       orgId: ctx.org.id,
       partId: inserted.id,

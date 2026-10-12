@@ -1,10 +1,12 @@
 import { useState } from "react";
+import { useStockWrites } from "./stock-writes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MutationError } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function MaterialPanel({ id }: { id: string }) {
   const { api } = useInventory();
+  const stock = useStockWrites();
   const qc = useQueryClient();
   const [mode, setMode] = useState<"gross_g" | "used_mm">("gross_g");
   const [value, setValue] = useState("");
@@ -14,7 +16,7 @@ export function MaterialPanel({ id }: { id: string }) {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["inventory-material", id] }); void qc.invalidateQueries({ queryKey: ["inventory-part", id] }); },
   });
   const save = useMutation({
-    mutationFn: () => api.measureMaterial(id, { [mode]: Number(value) }),
+    mutationFn: () => stock.measureMaterial(id, { [mode]: Number(value) }),
     onSuccess: () => { setValue(""); void qc.invalidateQueries({ queryKey: ["inventory-material", id] }); void qc.invalidateQueries({ queryKey: ["inventory-part", id] }); void qc.invalidateQueries({ queryKey: ["inventory-parts"] }); void qc.invalidateQueries({ queryKey: ["inventory-consumption", id] }); void qc.invalidateQueries({ queryKey: ["inventory-family"] }); },
   });
   if (query.isError) return <p role="alert">Could not read the filament measurements.</p>;

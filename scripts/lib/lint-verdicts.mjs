@@ -21,6 +21,16 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 /** The files whose change alters how every lint runs or is judged. */
 export const LINT_RUNNER = ["scripts/run-lints.mjs", "scripts/lib/lint-command.mjs", "scripts/lib/ts-resolve.mjs", "scripts/lib/lint-inputs.cjs", "scripts/lib/lint-reads.cjs", "scripts/lib/lint-verdicts.mjs", "scripts/lib/verdict-cache.mjs", "pnpm-lock.yaml", "package.json", "tsconfig.json", "tsconfig.base.json"];
 
+/** PURE. Whether this run reuses lint verdicts. A pull request reuses ("on", #5761, 2026-10-12: 105 shadow
+ *  runs, 0 misses, median 128 of 487 lints reusable); a push to main runs every lint and keys them in
+ *  shadow, so main stays the backstop and keeps looking for misses; outside CI nothing. COBBLR_LINT_VERDICTS
+ *  overrides; a scheduled or dispatched run (COBBLR_VERDICT_CACHE=off, the release's) is shadow whatever
+ *  is set. */
+export function verdictMode(env) {
+  const mode = env.COBBLR_LINT_VERDICTS || (env.CI ? (env.GITHUB_EVENT_NAME === "pull_request" ? "on" : "shadow") : "off");
+  return { mode, shadow: mode === "shadow" || env.COBBLR_VERDICT_CACHE === "off" };
+}
+
 /**
  * One manifest from the lines every process of a lint wrote: the union, sorted, so the same
  * observations always make the same manifest.
@@ -82,7 +92,7 @@ export function envOf(files, sources) {
 }
 
 /** Manifests by hash, from a cache directory when there, else the sink (and kept). */
-export async function fetchManifests(hashes, { url = process.env.CI_SINK_URL || "http://workshop:8767", dir }) {
+export async function fetchManifests(hashes, { url = process.env.CI_SINK_URL || "http://workshop:8767", dir, deadline = Infinity }) {
   const out = new Map();
   const want = [...new Set(hashes)];
   const cacheDir = dir && (() => {
@@ -93,7 +103,7 @@ export async function fetchManifests(hashes, { url = process.env.CI_SINK_URL || 
       return null;
     }
   })();
-  const todo = [];
+  let todo = [];
   for (const h of want) {
     const f = cacheDir && join(cacheDir, `${h}.json`);
     if (f && existsSync(f)) {
@@ -104,15 +114,31 @@ export async function fetchManifests(hashes, { url = process.env.CI_SINK_URL || 
     }
     todo.push(h);
   }
-  for (let i = 0; i < todo.length; i += 16) {
+  const keep = (h, text) => {
+    if (sha(text) !== h) return;
+    try {
+      out.set(h, JSON.parse(text));
+      if (cacheDir) writeFileSync(join(cacheDir, `${h}.json`), text);
+    } catch {}
+  };
+  const left = () => Math.max(1, Math.min(20_000, deadline - Date.now()));
+  // One request for all of them (#5761: one by one, 1,400 took 832 s from a box with a 4 s round trip).
+  for (let i = 0; i < todo.length && Date.now() < deadline; i += 5000) {
+    try {
+      const r = await fetch(`${url}/verdicts/manifests`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ hashes: todo.slice(i, i + 5000) }), signal: AbortSignal.timeout(left()) });
+      if (!r.ok) break; // a store from before the bulk route: one by one below
+      for (const [h, text] of Object.entries((await r.json()).manifests ?? {})) keep(h, text);
+    } catch {
+      break;
+    }
+  }
+  todo = todo.filter((h) => !out.has(h));
+  // One by one only for what the bulk answer could not give, and never past the deadline.
+  for (let i = 0; i < todo.length && Date.now() < deadline; i += 16) {
     await Promise.all(todo.slice(i, i + 16).map(async (h) => {
       try {
-        const r = await fetch(`${url}/verdicts/manifest/${h}`, { signal: AbortSignal.timeout(15_000) });
-        if (!r.ok) return;
-        const text = await r.text();
-        if (sha(text) !== h) return;
-        out.set(h, JSON.parse(text));
-        if (cacheDir) writeFileSync(join(cacheDir, `${h}.json`), text);
+        const r = await fetch(`${url}/verdicts/manifest/${h}`, { signal: AbortSignal.timeout(Math.min(15_000, left())) });
+        if (r.ok) keep(h, await r.text());
       } catch {}
     }));
   }

@@ -10,12 +10,17 @@ import { termsRouter, endRenewalRoute } from "./terms.js";
 import { asyncHandler } from "./util.js";
 import { tick } from "../sweeper.js";
 import { registerMaintenanceHandlers } from "./handlers.js";
+import { documentRenewalsRouter } from "./document-renewals.js";
+import { registerRenewDocumentAction } from "./renew-document-action.js";
+
+registerRenewDocumentAction();
 
 const router = Router({ mergeParams: true });
 router.use("/entries", entriesRouter);
 router.use("/reminders", remindersRouter);
 router.use("/schedules", schedulesRouter);
 router.use("/terms", termsRouter);
+router.use("/document-renewals", documentRenewalsRouter);
 // AI-ACTION: core-maintenance:end-renewal
 router.post("/schedules/:id/end", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "core-maintenance:end-renewal"))) return;

@@ -95,19 +95,20 @@ export function PortalLayout() {
         <div className="max-w-5xl mx-auto px-5 py-3 flex items-center gap-3 min-w-0">
           <Link
             to={`/portal/${slug}`}
-            className="flex items-center gap-2 shrink-0 hover:opacity-80 transition min-w-0"
+            className="flex items-center gap-2 hover:opacity-80 transition min-w-0"
           >
             {headerLogo && (
               <img
                 src={headerLogo}
                 alt=""
-                className="w-7 h-7 rounded object-cover border border-line dark:border-slate-700"
+                className="w-7 h-7 shrink-0 rounded object-cover border border-line dark:border-slate-700"
                 style={skin ? { borderColor: "var(--app-border)" } : undefined}
               />
             )}
             <span
-              className="font-display font-extrabold text-content dark:text-mortar-100 truncate"
+              className="min-w-0 font-display font-extrabold text-content dark:text-mortar-100 truncate"
               style={textStyle(skin)}
+              title={headerName}
             >
               {headerName}
             </span>
@@ -137,6 +138,7 @@ export function PortalLayout() {
                 toggle would just fight it — hide it when themed. */}
             {!skin && (
               <button
+                aria-label={theme === "dark" ? "Switch to light" : "Switch to dark"}
                 onClick={toggle}
                 className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5"
                 title={theme === "dark" ? "Switch to light" : "Switch to dark"}
@@ -159,6 +161,7 @@ export function PortalLayout() {
               </button>
             )}
             <button
+              aria-label="Sign out"
               onClick={logout}
               className="text-faint dark:text-slate-500 hover:text-ember-500 transition p-1.5"
               style={mutedStyle(skin)}

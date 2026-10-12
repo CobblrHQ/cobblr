@@ -12,6 +12,7 @@
 // See docs/design-decisions/holdings-and-units.md ("One page for a type and
 // its things").
 
+import { logPartCreated } from "./part-created.js";
 import { materialTotals } from "./material-ledger.js";
 import { materialNumbers, type MaterialNumbers } from "../material-numbers.js";
 import { Router, type Request } from "express";
@@ -452,9 +453,9 @@ familiesRouter.get(
 );
 
 const AddChild = z.object({
-  type_id: z.string().uuid().optional(),
+  type_id: z.string().uuid().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   new_type: z.object({ name: z.string().min(1).max(200), manufacturer: z.string().max(200).nullable().optional(), metadata: z.record(z.unknown()).optional() }).optional(),
-  qty: z.number().min(0).optional(),
+  qty: z.number().min(0).optional(), // none-refused-ok: the quantity feeds a required number
   unit: z.string().max(40).nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
   name: z.string().max(200).nullable().optional(),
@@ -494,13 +495,7 @@ familiesRouter.post(
       type = (existing as unknown as Row | undefined) ?? (await addType(db, orgId, fam, a.new_type!));
     }
     const id = await addChild(db, orgId, sessionUser(req).id, fam, type!, a);
-    await platform().activity.log({
-      orgId,
-      userId: sessionUser(req).id,
-      action: "part_created",
-      ref: { module: "inventory", entityType: "part", entityId: id },
-      diff: { name: type!.name, under: type!.id },
-    });
+    await logPartCreated(orgId, id, { name: type!.name, under: type!.id }, sessionUser(req).id);
     res.status(201).json({ id, type_id: type!.id });
   }),
 );

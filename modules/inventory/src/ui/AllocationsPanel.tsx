@@ -2,6 +2,7 @@
 // inline consume + release controls on the reserved ones, and a
 // "new reservation" form at the bottom.
 
+import { useStockWrites } from "./stock-writes";
 import { MutationError, SearchInput } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { collectionLabelFor } from "@cobblr/platform-contract/kind-label";
@@ -12,6 +13,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 
 export function AllocationsPanel({ partId }: { partId: string }) {
   const { api } = useInventory();
+  const stock = useStockWrites();
   const qc = useQueryClient();
   const list = useQuery({
     queryKey: ["inventory-allocations", partId],
@@ -20,7 +22,7 @@ export function AllocationsPanel({ partId }: { partId: string }) {
 
   const setStatus = useMutation({
     mutationFn: (v: { id: string; status: "consumed" | "released" }) =>
-      api.setAllocationStatus(v.id, v.status),
+      stock.setAllocationStatus(v.id, v.status),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-allocations", partId] });
       void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });

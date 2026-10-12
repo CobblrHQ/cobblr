@@ -41,6 +41,9 @@ export interface CoverageSurface {
   source: string | null;
   /** The dimensions that apply to it; absent means all of them. */
   applicable?: string[];
+  /** Dimensions left out of `applicable` on purpose, each with why (a page
+   *  opened signed out has no workspace role). Not owed, so not counted. */
+  na?: Record<string, string>;
   /** A page's route pattern, when the row is a page. */
   path?: string;
   /** The files that make the surface what it is (the page component, the

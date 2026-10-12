@@ -223,7 +223,10 @@ export function MenuItem({
   return (
     <button
       type="button"
-      role="menuitem"
+      // An on/off row IS the switch: a menu checkbox with its state, so the
+      // drawn switch inside it is decoration, not a second unnamed control.
+      role={state === "on" || state === "off" ? "menuitemcheckbox" : "menuitem"}
+      {...(state === "on" || state === "off" ? { "aria-checked": state === "on", "data-toggle-row": "" } : {})}
       disabled={disabled}
       onClick={onClick}
       className="flex w-full items-start gap-2.5 px-3 py-1.5 text-left text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50 transition"
@@ -245,8 +248,7 @@ export function MenuItem({
           on/off state now renders a real switch; any other state stays text. */}
       {state === "on" || state === "off" ? (
         <span
-          role="switch"
-          aria-checked={state === "on"}
+          aria-hidden="true"
           className={
             "ml-auto mt-0.5 shrink-0 inline-flex h-4 w-7 items-center rounded-full transition " +
             (state === "on" ? "bg-cobble-600" : "bg-mortar-300 dark:bg-slate-600")

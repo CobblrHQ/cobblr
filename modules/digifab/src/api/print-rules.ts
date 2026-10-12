@@ -41,7 +41,7 @@ function channelCreds(d: z.infer<typeof ChannelCreate>): Record<string, unknown>
     : { webhook_url: d.webhook_url };
 }
 const ChannelPatch = z.object({
-  label: z.string().min(1).max(80).optional(),
+  label: z.string().min(1).max(80).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   webhook_url: DISCORD_WEBHOOK.optional(),
   enabled: z.boolean().optional(),
 });

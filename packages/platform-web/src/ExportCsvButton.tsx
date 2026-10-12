@@ -37,7 +37,7 @@ export function ExportCsvButton({ kind, q }: { kind: string; q?: string }) {
       type="button"
       disabled={busy}
       data-testid="collection-export"
-      title="Download this list as a spreadsheet (CSV)"
+      title="Export as a spreadsheet: download this list (CSV)"
       aria-label="Export as a spreadsheet"
       className={`${headerButton()} disabled:opacity-50`}
       onClick={async () => {

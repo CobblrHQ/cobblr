@@ -18,6 +18,7 @@ import { raisePersonalDocument } from "./personal-documents";
 import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
 import { noteWorkspaceWrite } from "./workspace-writes";
 import { CONNECTION_LOST_MESSAGE, megabytes } from "@cobblr/platform-contract/upload";
+import { makesBackgroundWrites } from "./acting-role";
 
 export class UploadError extends Error {
   constructor(
@@ -46,13 +47,20 @@ function slugOf(url: string): string | null {
  *  report is not a second failure to show. */
 function reportConnectionLost(url: string, opts: SendUploadOptions): void {
   const slug = slugOf(url);
-  if (!slug) return;
+  if (!slug || !makesBackgroundWrites(decodeURIComponent(slug))) return;
   const path = url.replace(/^[a-z]+:\/\/[^/]+/i, "");
   void fetch(`/api/v1/orgs/${slug}/uploads/connection-lost`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}) },
     body: JSON.stringify({ route: path, size_bytes: opts.file?.size ?? null, mime_type: opts.file?.type || null }),
   }).catch(() => undefined);
+}
+
+/** Whether a refusal carries a personal document's read, so the upload
+ *  door opens its card (the only place its values live). */
+function opensPersonalCard(body: { error?: { code?: string; details?: unknown } } | null): body is { error: { code: "personal_document"; details: PersonalDocumentRead } } {
+  const read = body?.error?.details as PersonalDocumentRead | undefined;
+  return body?.error?.code === "personal_document" && read?.privacy === "personal" && !!read.fields && !!read.sources && Array.isArray(read.missing) && typeof read.message === "string";
 }
 
 /** POST a multipart form. Resolves with the response for ANY answer (a
@@ -65,8 +73,9 @@ export async function sendUpload(url: string, form: FormData, opts: SendUploadOp
     if (res.ok) noteWorkspaceWrite(url);
     if (res.status === 409) {
       const body = await res.clone().json().catch(() => null) as { error?: { code?: string; details?: PersonalDocumentRead } } | null;
-      const read = body?.error?.details, orgSlug = slugOf(url);
-      if (orgSlug && body?.error?.code === "personal_document" && read?.privacy === "personal" && read.fields && read.sources && Array.isArray(read.missing) && typeof read.message === "string") {
+      const orgSlug = slugOf(url);
+      if (orgSlug && opensPersonalCard(body)) {
+        const read = body.error.details;
         const original = opts.file || form.get("file");
         raisePersonalDocument({ orgSlug, read, file: original instanceof Blob ? original : null });
       }
@@ -89,10 +98,13 @@ function parseJson(text: string): unknown {
 
 /** A refused upload's code and sentence: the api's own, or, for a proxy's
  *  page, one that names the file's size. */
-export async function uploadErrorOf(res: Response, file?: File | Blob | null): Promise<{ code: string; message: string }> {
+export async function uploadErrorOf(res: Response, file?: File | Blob | null): Promise<{ code: string; message: string; personalCardOpened?: true }> {
   const text = await res.text().catch(() => "");
-  const body = parseJson(text) as { error?: { code?: string; message?: string } } | null;
-  if (body?.error?.message) return { code: body.error.code ?? "upload_failed", message: body.error.message };
+  const body = parseJson(text) as { error?: { code?: string; message?: string; details?: unknown } } | null;
+  // A personal document's read values never ride on the error: they live only
+  // in its transient card, which clears on close. The error says only that
+  // the card was opened, so a caller does not report a failure beside it.
+  if (body?.error?.message) return { code: body.error.code ?? "upload_failed", message: body.error.message, ...(opensPersonalCard(body) ? { personalCardOpened: true as const } : {}) };
   if (res.status === 413) {
     const size = file?.size ? `This file is about ${megabytes(file.size)}, ` : "This file is ";
     return { code: "file_too_large", message: `${size}more than this server lets through in one upload.` };

@@ -37,7 +37,7 @@ const TokenCreate = z.object({
   entity_kind: z.string().min(1),
   entity_id: z.string().uuid(),
   mode: z.enum(["navigate", "action"]).default("navigate"),
-  action_id: z.string().optional(),
+  action_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   auth: z.enum(["public", "session"]).default("session"),
   config: z.record(z.unknown()).optional(),
   /** Days until expiry; null = never. */

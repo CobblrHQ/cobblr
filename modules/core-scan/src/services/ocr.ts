@@ -57,6 +57,7 @@
 // The result is memoised by the bytes' hash for a few minutes, so the
 // second ask costs nothing, and a concurrent ask for the same image joins
 // the run in flight instead of starting another.
+import { OcrFailed } from "./ocr-failed.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
@@ -285,16 +286,32 @@ export async function ocrImageText(
      *  pictures is no such photo, and a sheet of photos always looked like it
      *  needed the second pass, doubling the privacy check on every pattern. */
     framePassOnly?: boolean;
+    /** A document's read: an engine that fails throws OcrFailed instead of
+     *  answering "read nothing", so a failure is never taken for an empty
+     *  page (#5921). A product photo, where OCR only helps, leaves it off. */
+    strict?: boolean;
   } = {},
 ): Promise<OcrResult | null> {
   if (!(await ocrAvailable())) return null;
-  if (options.private) return readImageText(bytes, options.framePassOnly).catch(() => null);
+  if (options.private) return readImageText(bytes, options.framePassOnly).catch((err: unknown) => {
+    if (options.strict) throw new OcrFailed(err);
+    return null;
+  });
   const key = createHash("sha1").update(bytes).digest("hex");
   const now = Date.now();
   const kept = memo.get(key);
   if (kept && now - kept.at < MEMO_TTL_MS) return kept.result;
+  // A read already running for the same picture is joined, with the same
+  // rule for a failed engine as below.
   const running = inFlight.get(key);
-  if (running) return running;
+  if (running) {
+    const got = await running;
+    if (got instanceof OcrFailed) {
+      if (options.strict) throw got;
+      return null;
+    }
+    return got;
+  }
   // Only an ANSWER is kept: the text, or "read nothing" (a product photo).
   // An engine that failed or timed out is not an answer about the image,
   // and keeping it would serve the failure to the parser a moment later.
@@ -306,18 +323,23 @@ export async function ocrImageText(
     })
     .catch((err: unknown) => {
       console.warn(`[core-scan] OCR failed: ${(err as Error).message}`);
-      return null;
+      return new OcrFailed(err);
     });
   inFlight.set(key, p);
   try {
-    return await p;
+    const got = await p;
+    if (got instanceof OcrFailed) {
+      if (options.strict) throw got;
+      return null;
+    }
+    return got;
   } finally {
     inFlight.delete(key);
   }
 }
 
 const memo = new Map<string, { at: number; result: OcrResult | null }>();
-const inFlight = new Map<string, Promise<OcrResult | null>>();
+const inFlight = new Map<string, Promise<OcrResult | null | OcrFailed>>();
 
 /** The read itself, both passes. Only ocrImageText calls this; it is what the
  *  memo above keeps to once per image. Null is "read nothing"; a failed

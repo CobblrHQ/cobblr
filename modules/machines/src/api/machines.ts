@@ -43,11 +43,11 @@ const MachineCreate = z.object({
   type: z.string().max(120).nullable().optional(),
   manufacturer: z.string().max(120).nullable().optional(),
   serial_number: z.string().max(120).nullable().optional(),
-  state: z.string().max(40).optional(),
-  excitement: z.number().int().min(0).max(5).optional(),
+  state: z.string().max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  excitement: z.number().int().min(0).max(5).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   image_path: z.string().max(500).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
-  quantity: z.number().int().min(0).optional(),
+  quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });

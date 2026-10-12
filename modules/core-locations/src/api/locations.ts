@@ -10,6 +10,7 @@ import { DUPLICATE_SIBLING, duplicateSiblingMessage, siblingNamed } from "./sibl
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { deletePlace, hasPlacesInside, restoreDeletedPlace, whatGoesWith } from "./place-delete.js";
 import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const locationsRouter = Router({ mergeParams: true });
 
@@ -26,8 +27,8 @@ const LocationCreate = z.object({
   // import. Without it, anything holding a name had to search first, and a
   // caller who simply sent `parent` had it dropped by this schema and got a
   // top-level location while being told it worked.
-  parent: z.string().min(1).max(160).optional(),
-  kind: z.enum(["container", "area"]).optional(),
+  parent: optionalField(z.string().min(1).max(160)),
+  kind: z.enum(["container", "area"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
   description: z.string().max(8_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
@@ -492,7 +493,7 @@ locationsRouter.post(
 const MoveEverythingBody = z.object({
   to: z.string().min(1).max(200),
   // Set for a thing that holds things (a Backpack); a place when absent.
-  to_kind: z.string().min(1).max(120).optional(),
+  to_kind: optionalField(z.string().min(1).max(120)),
   places: z.boolean().optional(),
   then_delete: z.boolean().optional(),
 });

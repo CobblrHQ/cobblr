@@ -500,6 +500,8 @@ interface UnitVocabularyRow {
  *  so the model is told the same thing the Scan page shows the user. */
 interface ScanInboxRow {
   id?: string;
+  /** Where it came from: a part of a split line carries split_from (#6067). */
+  suggested_metadata?: unknown;
   suggested_name?: string | null;
   suggested_manufacturer?: string | null;
   barcode_text?: string | null;
@@ -542,10 +544,17 @@ async function listTarget(
   return { error: `no list called "${said}"; make it first (platform:create-instance) or name one the app shows` };
 }
 
+/** The line an inbox part was split from, as the inbox shows it (#6067). */
+type SplitParentWords = { name?: string | null; how_words?: string | null; check?: string | null; headline?: string | null };
+
 function summarizeScanItem(
   it: ScanInboxRow,
   batches: Record<string, { label?: string | null }>,
+  splitParents: Record<string, SplitParentWords> = {},
 ): Record<string, unknown> {
+  const meta = (it.suggested_metadata ?? {}) as { split_from?: unknown; split_off_from?: unknown };
+  const parentId = typeof meta.split_from === "string" ? meta.split_from : typeof meta.split_off_from === "string" ? meta.split_off_from : null;
+  const parent = parentId ? splitParents[parentId] : undefined;
   // Where it is headed: the route already chosen, else the matchmaker's top
   // candidate (what filing it would create, and under which category).
   const top = Array.isArray(it.suggested_candidates)
@@ -571,6 +580,9 @@ function summarizeScanItem(
     has_destination: !!(it.target_location_id || it.target_container_id),
     ...(it.scan_area ? { scanned_in: it.scan_area } : {}),
     ...(session ? { session } : {}),
+    // One part of a line that came apart: which line, how, and whether the
+    // parts add up, as the inbox shows it over its parts.
+    ...(parent ? { part_of: { line: parent.name ?? null, split: parent.headline ?? null, how: parent.how_words ?? null, check: parent.check ?? null } } : {}),
   };
 }
 
@@ -769,7 +781,19 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     id: "wires",
     path: "/wires",
     label: "Automations (wires)",
-    prefill: {},
+    // The composer opens already narrowed (#6070): "message Sam when the
+    // coffee runs out" is the stock event, "ran-out" and the coffee's id.
+    prefill: {
+      kind: "the record kind the automation is about (e.g. inventory:part or pantry:item)",
+      event: "the event that runs it; a count changing is inventory.stock.changed",
+      change: "for a count: used, ran-out, below (with below=N) or reorder-point",
+      below: "the number for change=below",
+      record: "one record's id, to narrow the automation to that record",
+      record_name: "that record's name, shown in place of the id",
+      category: "a category name, to narrow it to records filed under it",
+      tag: "a tag name, to narrow it to records carrying it",
+      view: "a shared saved view's id, to narrow it to the records the view shows",
+    },
     why: "building an automation is consented in the composer, not a card; switching one on or off is an action",
     covered_by: ["platform:set-wire-enabled"],
   },
@@ -1618,7 +1642,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         // arrives with title null. Reading just `title` therefore reported every
         // creation as its bare type ("created vendor"), which is the exact
         // failure the route's own title-resolution exists to prevent.
-        what: a.subject?.title ?? a.entity_title ?? a.title ?? nameFromDiff(a.diff) ?? a.entity_type,
+        what: a.subject?.title ?? a.entity_title ?? a.title ?? nameFromDiff(a.diff) ?? "a record",
         kind: a.module_name ? `${a.module_name}:${a.entity_type}` : a.entity_type,
         id: a.entity_id,
         // "system" and "api_token" are as much a part of the answer as a person:
@@ -1866,6 +1890,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       type InboxBody = {
         items?: ScanInboxRow[];
         batches?: Record<string, { label?: string | null }>;
+        split_parents?: Record<string, SplitParentWords>;
         total?: number;
         partial?: string;
         next_cursor?: string | null;
@@ -1880,7 +1905,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         const res = await fetchPage(limit, st?.c);
         if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read the scan inbox"));
         const body = res.body as InboxBody;
-        const items = (body.items ?? []).map((it) => summarizeScanItem(it, body.batches ?? {}));
+        const items = (body.items ?? []).map((it) => summarizeScanItem(it, body.batches ?? {}, body.split_parents ?? {}));
         const next = typeof body.next_cursor === "string" && body.next_cursor ? { f: facet, l: limit, c: body.next_cursor } : null;
         return toolOk({
           items,
@@ -1896,6 +1921,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       // would answer "you don't have one" about an item further down.
       const all: ScanInboxRow[] = [];
       const batches: Record<string, { label?: string | null }> = {};
+      const splitParents: Record<string, SplitParentWords> = {};
       let total: number | undefined;
       let cursor: string | undefined;
       let scannedAll = false;
@@ -1905,6 +1931,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         const body = res.body as InboxBody;
         all.push(...(body.items ?? []));
         Object.assign(batches, body.batches ?? {});
+        Object.assign(splitParents, body.split_parents ?? {});
         if (typeof body.total === "number") total = body.total;
         cursor = typeof body.next_cursor === "string" && body.next_cursor ? body.next_cursor : undefined;
         if (!cursor) {
@@ -1921,7 +1948,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const page = matched.slice(offset, offset + limit);
       const end = offset + page.length;
       return toolOk({
-        items: page.map((it) => summarizeScanItem(it, batches)),
+        items: page.map((it) => summarizeScanItem(it, batches, splitParents)),
         ...(typeof total === "number" ? { total_in_facet: total } : {}),
         matched: matched.length,
         ...(scannedAll ? {} : { note: `searched the newest ${countOf(all.length, "capture")} only; narrow the facet to reach older ones` }),

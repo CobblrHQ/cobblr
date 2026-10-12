@@ -42,7 +42,7 @@ type Action = NonNullable<CrossOrgNotificationEntry["actions"]>[number];
 function RowText({ text }: { text: string }) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return (
-    <span className="text-xs text-content dark:text-mortar-100 break-words">
+    <span className="min-w-0 max-w-full text-xs text-content dark:text-mortar-100 [overflow-wrap:anywhere]">
       {parts.map((p, i) =>
         p.startsWith("**") && p.endsWith("**") ? <strong key={i}>{p.slice(2, -2)}</strong> : <span key={i}>{p}</span>,
       )}
@@ -91,7 +91,7 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
         e.stopPropagation();
         press.mutate({ actionId: a.id, rowKey });
       }}
-      className={STYLES[a.style ?? "secondary"]}
+      className={"max-w-full [overflow-wrap:anywhere] " + STYLES[a.style ?? "secondary"]}
     >
       {label}
     </button>
@@ -110,7 +110,7 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
               {done[key] ? (
                 <span className="text-[11px] text-muted dark:text-slate-400">{done[key]}</span>
               ) : (
-                <span className="flex items-center gap-1.5 shrink-0">{acts.map((a) => buttonFor(a, key, a.short ?? a.label))}</span>
+                <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">{acts.map((a) => buttonFor(a, key, a.short ?? a.label))}</span>
               )}
             </div>
           );

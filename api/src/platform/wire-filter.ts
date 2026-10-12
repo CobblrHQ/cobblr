@@ -14,6 +14,8 @@
 //              { "path": "material",     "op": "eq",  "value": "PLA" } ] }
 //
 // Ops: eq neq lt lte gt gte contains not_contains empty not_empty.
+// `in` narrows the wire to records (one record, a category, a tag, a saved
+// view; wire-records.ts), checked before the conditions.
 // Comparison is numeric when BOTH sides parse as numbers, else string
 // (case-insensitive for eq/neq/contains). A missing path is `empty`.
 
@@ -30,9 +32,23 @@ export const WireConditionSchema = z.object({
    *  over `value`. */
   valuePath: z.string().min(1).max(200).optional(),
 });
-export const WireFilterSchema = z.object({
-  all: z.array(WireConditionSchema).min(1).max(10),
-});
+/** Which records the wire is about (#6070, wire-narrowing.ts): one record,
+ *  a category, a tag or a saved view. At most one; none = every record. */
+export const WireRecordsSchema = z
+  .object({
+    record: z.string().trim().min(1).max(200).optional(),
+    category: z.string().trim().min(1).max(200).optional(),
+    tag: z.string().trim().min(1).max(200).optional(),
+    view: z.string().trim().min(1).max(200).optional(),
+  })
+  .strict()
+  .refine((r) => Object.values(r).filter((v) => v !== undefined).length === 1, { message: "name exactly one of record, category, tag or view" });
+export const WireFilterSchema = z
+  .object({
+    all: z.array(WireConditionSchema).min(1).max(10).optional(),
+    in: WireRecordsSchema.optional(),
+  })
+  .refine((f) => !!f.all || !!f.in, { message: "a filter needs conditions (all) or records (in)" });
 export type WireFilter = z.infer<typeof WireFilterSchema>;
 
 /** Parse an unknown `filter` payload. null/undefined/{} → null (no filter);
@@ -77,7 +93,7 @@ function norm(v: unknown): string {
   return String(v ?? "").trim().toLowerCase();
 }
 
-function checkOne(actual: unknown, op: WireFilter["all"][number]["op"], expected: unknown): boolean {
+function checkOne(actual: unknown, op: z.infer<typeof WireConditionSchema>["op"], expected: unknown): boolean {
   switch (op) {
     case "empty":
       return isEmpty(actual);
@@ -122,7 +138,7 @@ function checkOne(actual: unknown, op: WireFilter["all"][number]["op"], expected
  *  after.x neq before.x); otherwise against the static `value`. */
 export function passesWireFilter(filter: WireFilter | null, data: Record<string, unknown>): boolean {
   if (!filter) return true;
-  return filter.all.every((c) => {
+  return (filter.all ?? []).every((c) => {
     const expected = c.valuePath !== undefined ? resolvePath(data, c.valuePath) : c.value;
     return checkOne(resolvePath(data, c.path), c.op, expected);
   });

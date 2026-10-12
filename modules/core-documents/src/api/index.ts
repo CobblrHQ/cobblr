@@ -16,8 +16,8 @@ import { platform } from "@cobblr/platform-contract";
 import { LIBRARY_ITEM_KIND, LIBRARY_LINK_REL, libraryTargetId } from "@cobblr/platform-contract/library";
 import { roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import type { CoreDocumentsDB } from "../db.js";
-import { getOn, noteFacts, nudge, pushSetupOf, readFacts } from "../matching.js";
-import { abilitiesOf, copyItem, LibraryRefusal, findFresh, linkItem, systemsFor, unlinkItem } from "../service.js";
+import { getOn, holdersOf, noteFacts, nudge, pushSetupOf, readFacts } from "../matching.js";
+import { abilitiesOf, copyItem, LibraryRefusal, findFresh, healLinks, linkItem, systemsFor, unlinkItem } from "../service.js";
 import { registerLibraryActions } from "./actions.js";
 
 registerLibraryActions();
@@ -75,7 +75,12 @@ router.get(
     const can = await abilitiesOf(orgId);
     // The pairing is the link; this table is its picture. A link taken away
     // anywhere else (the API, the assistant) is gone from the panel too.
-    const rows = await db.selectFrom("core_documents_linked").selectAll().where("record_id", "=", r.id).orderBy("linked_at", "desc").execute();
+    let rows = await db.selectFrom("core_documents_linked").selectAll().where("record_id", "=", r.id).orderBy("linked_at", "desc").execute();
+    // Reconnecting a library makes a new connection: the links made through
+    // the old one move to it here, so they read connected at once (#5876).
+    if (rows.some((l) => !systems.some((s) => s.credentialId === l.connection_id)) && (await healLinks(orgId, db, userId, r, rows, systems)) > 0) {
+      rows = await db.selectFrom("core_documents_linked").selectAll().where("record_id", "=", r.id).orderBy("linked_at", "desc").execute();
+    }
     const live = rows.length
       ? new Set(
           (
@@ -92,6 +97,18 @@ router.get(
         )
       : new Set<string>();
     const linked = rows.filter((l) => live.has(libraryTargetId(l.connection_id, l.ref)));
+    // What is true for THIS person (#5936): a library another member keeps to
+    // themselves still works, it is only not theirs to ask; a copy kept in a
+    // Vault is in the Vault of whoever asked for it.
+    const holders = new Map((await holdersOf(orgId)).map((h) => [h.credentialId, h]));
+    const othersLibrary = (id: string) => {
+      const h = holders.get(id);
+      return h && !h.shared && h.ownerUserId !== userId ? h.ownerUserId : null;
+    };
+    const names = await platform().accounts.displayNames(orgId, [
+      ...new Set(linked.flatMap((l) => [othersLibrary(l.connection_id), l.copied_vault_file_id && l.copy_requested_by !== userId ? l.copy_requested_by : null].filter((x): x is string => !!x))),
+    ]);
+    const someone = (id: string | null) => (id ? (names[id] ?? "another member") : null);
     let suggestions = await db
       .selectFrom("core_documents_suggestions")
       .selectAll()
@@ -146,8 +163,18 @@ router.get(
         written_back: l.written_back,
         copied_at: l.copied_at?.toISOString() ?? null,
         copied_filename: l.copied_filename,
+        // The local copy, so the record opens it without the library (#5873).
+        copied_file_id: l.copied_file_id,
+        // Only the person whose Vault it is gets the file; anyone else is told
+        // whose it is.
+        copied_vault_file_id: l.copy_requested_by === userId ? l.copied_vault_file_id : null,
+        vault_of: l.copied_vault_file_id && l.copy_requested_by !== userId ? someone(l.copy_requested_by) : null,
+        // Connected, and another member's own: not this person's to reconnect.
+        library_of: usable.has(l.connection_id) ? null : someone(othersLibrary(l.connection_id)),
+        // What Reconnect opens on: the same program at the same address.
+        ...(usable.has(l.connection_id) || othersLibrary(l.connection_id) ? {} : { reconnect: { provider: l.library_provider, address: l.library_address } }),
       })),
-      suggestions: suggestions.map((s) => ({ connection_id: s.connection_id, ref: s.ref, type: s.item_type, type_label: s.item_type_label, title: s.title, subtitle: s.subtitle, created: s.created, tags: s.tags, open_url: s.open_url, open_label: s.open_label, has_thumb: s.has_thumb, because: s.because, score: s.score })),
+      suggestions: suggestions.map((s) => ({ connection_id: s.connection_id, ref: s.ref, type: s.item_type, type_label: s.item_type_label, title: s.title, subtitle: s.subtitle, created: s.created, tags: s.tags, open_url: s.open_url, open_label: s.open_label, has_thumb: s.has_thumb, because: s.because, conflict: s.conflict, warning: s.warning, score: s.score })),
       matching: known?.status === "queued",
       matched_at: known?.matched_at ?? null,
       // The background asked and got no answer: the panel says so with a
@@ -174,6 +201,9 @@ router.post(
 );
 
 const DocBody = z.object({ connection_id: z.string().min(1).max(200), ref: z.string().min(1).max(200), write_back: z.boolean().optional() });
+/** `to: "vault"` keeps a personal document in the requester's Vault, the
+ *  supported place for what shared Files refuse (#5871). */
+const CopyBody = DocBody.extend({ to: z.enum(["files", "vault"]).optional() });
 
 // AI-ACTION: core-documents:link-item
 // UI-REACH: the library panel's Link beside a suggestion or a Find result
@@ -256,12 +286,12 @@ router.post(
   "/records/:kind/:id/copies",
   handler(async (req, res) => {
     if (!(await requireCapability(req, res, "core-documents:copy-item"))) return;
-    const b = DocBody.safeParse(req.body ?? {});
+    const b = CopyBody.safeParse(req.body ?? {});
     if (!b.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "connection_id and ref are required" } });
+      res.status(400).json({ error: { code: "invalid_body", message: "connection_id and ref are required; to is \"files\" or \"vault\"" } });
       return;
     }
-    res.status(202).json({ job: await copyItem(tenantOf(req).org.id, userOf(req), record(req), b.data.connection_id, b.data.ref) });
+    res.status(202).json({ job: await copyItem(tenantOf(req).org.id, userOf(req), record(req), b.data.connection_id, b.data.ref, { to: b.data.to }) });
   }),
 );
 

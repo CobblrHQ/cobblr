@@ -2,7 +2,12 @@
 // the shape /auth/login returns so the web can reuse the same hook.
 
 import { childTerms } from "../auth/token-lineage.js";
-import { OPERATOR_ONLY_ACTIONS } from "../platform/activity.js";
+import { OPERATOR_ONLY_ACTIONS, IMPORT_ROW } from "../platform/activity.js";
+import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
+import { nameActivityRows } from "../platform/activity-subjects.js";
+import { describeChanges } from "../platform/history-describe.js";
+import { historyBag } from "../platform/record-history.js";
+import { getTenantDb } from "../db/tenant.js";
 import { forgetTimeZone } from "../platform/person-day.js";
 import { TITLE_FORMATS, type TitleFormat } from "@cobblr/platform-contract/display-identity";
 import { Router, type Request, type Response, type NextFunction } from "express";
@@ -57,6 +62,7 @@ import {
 import { ORG_ROLES, ORG_ROLE_RANK, roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const meRouter = Router();
 
@@ -224,7 +230,7 @@ meRouter.post("/me/verify-email/resend", requireAuth, async (req, res, next) => 
 // implications (auth token still valid; OIDC link still works; etc.)
 // — not in v0.1.
 const MeUpdate = z.object({
-  display_name: z.string().min(1).max(160).optional(),
+  display_name: z.string().min(1).max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // Per-user theme; null clears back to device/OS default.
   theme_pref: z.enum(["light", "dark"]).nullable().optional(),
   /** true = mark the tour seen now. false = clear it, so "Take the tour" from
@@ -669,11 +675,15 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
       // Operator-side records (a support "View as") never reach a member's feed.
       .where("a.action", "not in", [...OPERATOR_ONLY_ACTIONS])
       .where("a.action", "not like", "impersonation\\_%")
+      // A bulk write's rows are its records' History; the feed shows the
+      // write's one summary line (#5963).
+      .where(sql<boolean>`coalesce(a.diff->>${IMPORT_ROW}, '') <> 'true'`)
       .$if(!!orgFilter, (q) => q.where("o.slug", "=", orgFilter!));
     let q = mine
       .select([
         "a.id as id",
         "a.action as action",
+        "a.user_id as user_id",
         "a.module_name as module",
         "a.entity_type as entity_type",
         "a.entity_id as entity_id",
@@ -682,6 +692,7 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
         "o.id as org_id",
         "o.name as org_name",
         "o.slug as org_slug",
+        "m.role as role",
       ])
       .orderBy(sql`date_trunc('milliseconds', a.occurred_at)`, "desc")
       .orderBy("a.id", "desc")
@@ -698,7 +709,37 @@ meRouter.get("/me/activity", requireAuth, async (req, res, next) => {
     const next_cursor = hasMore && last ? encodeKeysetCursor(last.occurred_at, last.id) : null;
     // The total is the count of this same list, filters and all.
     const totalRow = await mine.select(({ fn }) => fn.countAll<number>().as("n")).executeTakeFirst();
-    res.json({ items, next_cursor, total: Number(totalRow?.n ?? items.length) });
+    // Each row said and named as its workspace's own feed says it: the
+    // record's name and a link to it, a module by its name, never the stored
+    // kind (#5906). One workspace at a time, as that workspace's member.
+    const byOrg = new Map<string, typeof items>();
+    for (const i of items) byOrg.set(i.org_id, [...(byOrg.get(i.org_id) ?? []), i]);
+    const shown = new Map<number, Record<string, unknown>>();
+    for (const rows of byOrg.values()) {
+      const first = rows[0]!;
+      const org = { id: first.org_id, slug: first.org_slug, name: first.org_name };
+      const ref = rows.map((i) => ({ id: Number(i.id), action: i.action, module_name: i.module, entity_type: i.entity_type, entity_id: i.entity_id, diff: i.diff }));
+      try {
+        const db = await getTenantDb(org.id);
+        const names = await nameActivityRows(org, db, { userId, role: first.role }, ref);
+        const said = await describeChanges(org.id, org.slug, ref.map((i) => ({ action: i.action, diff: i.diff, kinds: [names.get(i.id)?.kind, i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type].filter((k, n, all): k is string => !!k && all.indexOf(k) === n) }))).catch(() => ref.map(() => []));
+        ref.forEach((i, n) => {
+          const named = names.get(i.id);
+          const entry = { ...i, user_id: userId, entity_title: named?.title ?? null, entity_kind: named?.kind ?? null, said: said[n] ?? [] };
+          const p = activityPresentation({ ...entry, diff: { ...historyBag(i.diff), ...named?.contextDiff } }, org.slug, userId, named?.subject);
+          shown.set(i.id, { entity_title: entry.entity_title, entity_kind: entry.entity_kind, said: entry.said, summary: p.summary, verb: p.verb, subject: p.subject });
+        });
+      } catch (err) {
+        // A workspace that cannot be read right now still lists its rows,
+        // in the words activityPresentation has for each kind.
+        console.error("[me/activity] naming rows failed:", (err as Error).message);
+        for (const i of ref) {
+          const p = activityPresentation({ ...i, user_id: userId }, org.slug, userId);
+          shown.set(i.id, { summary: p.summary, verb: p.verb, subject: p.subject });
+        }
+      }
+    }
+    res.json({ items: items.map(({ role: _role, ...i }) => ({ ...i, ...shown.get(Number(i.id)) })), next_cursor, total: Number(totalRow?.n ?? items.length) });
   } catch (err) {
     next(err);
   }
@@ -713,9 +754,9 @@ const WindowBody = z.object({
   channel: z.string().min(1).max(40),
   mode: z.enum(["immediate", "daily"]),
   /** Minutes past local midnight. 480 = 08:00. */
-  deliver_at_minute: z.number().int().min(0).max(1439).optional(),
+  deliver_at_minute: z.number().int().min(0).max(1439).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** IANA zone. 08:00 has to mean 08:00 where the person is. */
-  timezone: z.string().min(1).max(64).optional(),
+  timezone: z.string().min(1).max(64).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** The cadence for DATED things — expiring today, service due, running low —
    *  as opposed to the one above, which governs things that just happened.
    *
@@ -723,8 +764,8 @@ const WindowBody = z.object({
    *  follow the same rule as everything else. Omitting it leaves the stored
    *  value alone, so a client that has never heard of the split cannot reset
    *  somebody's morning brief by saving an unrelated preference. */
-  schedule_mode: z.enum(["inherit", "immediate", "daily"]).optional(),
-  schedule_deliver_at_minute: z.number().int().min(0).max(1439).optional(),
+  schedule_mode: z.enum(["inherit", "immediate", "daily"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  schedule_deliver_at_minute: z.number().int().min(0).max(1439).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 meRouter.get("/me/delivery-windows", requireAuth, async (req, res, next) => {
@@ -1566,21 +1607,21 @@ meRouter.post(
 const TokenCreate = z.object({
   name: z.string().min(1).max(120),
   /** ISO timestamp; if omitted, the token never expires. */
-  expires_at: z.string().datetime().optional(),
+  expires_at: z.string().datetime().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** Capability scopes. Omitted/empty = unrestricted (legacy full access).
    *  Unknown keys are dropped server-side (sanitizeScopes). */
   scopes: z.array(z.string().max(80)).max(20).optional(),
   /** Provenance — the surface that minted this (e.g. "api-recipes"). */
-  source: z.string().max(60).optional(),
+  source: z.string().max(60).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** Provenance payload — the wizard's answers ({ kind, action, org }). */
   meta: z.record(z.unknown()).optional(),
   /** The one workspace this token may reach (id or slug). Omit for every
    *  workspace you belong to. */
-  workspace: z.string().min(1).max(120).optional(),
+  workspace: optionalField(z.string().min(1).max(120)),
   /** look | change | full (token-access.ts). Omitted: `change` when the
    *  token names a workspace, and the legacy full access when it names none,
    *  so a script that minted tokens before this keeps getting what it got. */
-  access: z.enum(TOKEN_ACCESS).optional(),
+  access: z.enum(TOKEN_ACCESS).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // The capability scopes a token can be minted with (secret-free; for the

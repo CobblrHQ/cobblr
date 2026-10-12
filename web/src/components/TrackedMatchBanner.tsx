@@ -23,6 +23,7 @@ import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api
 import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useBestTrackedMatch } from "./RepurchaseControls";
+import { useMatchAmount } from "../lib/useMatchAmount";
 import { ScanCountBlock } from "./ScanCountBlock";
 import { AddPlaceBlock } from "./AddPlaceBlock";
 
@@ -53,17 +54,24 @@ const pill =
   "inline-flex items-center gap-1 rounded-full border border-emerald-400 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30 px-2.5 py-1 text-xs font-medium disabled:opacity-50";
 
 function MatchTitle({ match, where, title, sameOne }: { match: TrackedMatch | null; where: string | null; title: string; sameOne?: boolean }) {
+  const { held } = useMatchAmount(match?.unit);
   return (
     <>
       <span className="font-medium text-content dark:text-mortar-100">
         {sameOne ? "Is this the same one? " : "You already have "}
         <span className="break-words">{title}</span>
-        {match?.qty != null && !sameOne && <span className="text-muted"> ×{match.qty}</span>}
+        {match?.qty != null && !sameOne && <span className="text-muted"> {held(match.qty)}</span>}
       </span>
       {match?.subtitle && <span className="text-muted"> · {match.subtitle}</span>}
       {where && <span className="text-muted"> · 📍{where}</span>}
     </>
   );
+}
+
+/** One candidate's amount in the "which one" list, in its own unit. */
+function HeldAmount({ qty, unit }: { qty: number; unit?: string | null }) {
+  const { held } = useMatchAmount(unit);
+  return <span className="shrink-0 opacity-75">{held(qty)}</span>;
 }
 
 /** The closed inbox card's line. The row is stamped with the match's title at
@@ -119,7 +127,9 @@ export function TrackedMatchLine({
           ) : (
             <>
               <MatchTitle match={match} where={where} title={match?.title ?? fallbackTitle} />
-              <span className="text-[11px] text-faint"> · {by === "identifier" ? `same ${match?.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name"}</span>
+              {/* A vehicle found by name while its VIN did not read is a question
+                  only, and says so (#5921). */}
+              <span className={`text-[11px] ${(match as { confirm?: string | null } | null)?.confirm ? "text-amber-700 dark:text-amber-300" : "text-faint"}`} data-match-confirm={(match as { confirm?: string | null } | null)?.confirm ? "" : undefined}> · {(match as { confirm?: string | null } | null)?.confirm ?? (by === "identifier" ? `same ${match?.matched_label || "identifier"}` : exact ? "same barcode" : "matched by name")}</span>
             </>
           )}
         </div>
@@ -339,6 +349,7 @@ export function TrackedMatchBanner({
           )}
         </div>
         <button
+          aria-label="Not the same - keep this as a new item"
           type="button"
           title="Not the same - keep this as a new item"
           onClick={() => keepSeparate.mutate()}
@@ -368,7 +379,7 @@ export function TrackedMatchBanner({
               >
                 <span className="truncate">{m.title}</span>
                 {m.subtitle && <span className="shrink-0 opacity-75">· {m.subtitle}</span>}
-                {m.qty != null && <span className="shrink-0 opacity-75">×{m.qty}</span>}
+                {m.qty != null && <HeldAmount qty={m.qty} unit={m.unit} />}
               </button>
             ))}
           </div>

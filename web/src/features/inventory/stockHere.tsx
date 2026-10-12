@@ -19,7 +19,7 @@ import { AlertTriangle } from "lucide-react";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
 import type { Day } from "@cobblr/platform-contract/day";
 import { api, getToken, type StockPlaceRow } from "../../lib/api";
-import { StockStepper } from "@cobblr/platform-web";
+import { StockStepper, refreshAfterStockChange } from "@cobblr/platform-web";
 import { useKindLabels } from "../../lib/useKindLabels";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { InventoryApi, WhatsStillHereButton } from "@cobblr/inventory/ui";
@@ -42,7 +42,7 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
   const inside = r.location_id && r.location_id !== here ? r.location_name : null;
   const step = async (delta: number) => {
     const out = await api.stockAdjustAt(slug, r.instance, r.id, delta);
-    void qc.invalidateQueries({ queryKey: ["stock-at", slug] });
+    void refreshAfterStockChange(qc, [r.id]);
     return Number(out.qty);
   };
   return (

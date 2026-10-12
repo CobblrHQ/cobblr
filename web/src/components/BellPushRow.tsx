@@ -7,13 +7,13 @@
 // off. Settings is in every state (#5774: it used to vanish at Turn on). A
 // Turn on that did not finish says what failed and what to do, with Try again
 // (#5810: a refused registration used to bring back the same button, silent).
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { AlertTriangle, BellRing, Smartphone, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Modal, StatusRow } from "@cobblr/platform-web";
 import { dismissInstall } from "../lib/install-app";
 import { usePushHere } from "../lib/usePushHere";
-import { InstallWalkBody } from "./InstallWalk";
+const InstallWalkBody = lazy(() => import("./InstallWalk").then((m) => ({ default: m.InstallWalkBody })));
 
 export const BELL_PUSH_DISMISSED_KEY = "cobblr.push.bell-offer-dismissed";
 export const NOTIFICATION_SETTINGS_PATH = "/me/communication";
@@ -42,7 +42,7 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
   const dismiss = (
     <button
       type="button"
-      title="Not now"
+      title="Hide this offer for now"
       aria-label="Hide this offer on this device"
       className="ml-auto text-faint hover:text-content dark:text-slate-500 dark:hover:text-mortar-200"
       onClick={() => {
@@ -85,7 +85,9 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
             </button>
             {walking && (
               <Modal open onClose={() => setWalking(false)} size="sm">
-                <InstallWalkBody route={route} onDone={() => setWalking(false)} onNotNow={() => { dismissInstall(); setWalking(false); }} />
+                <Suspense fallback={null}>
+                  <InstallWalkBody route={route} onDone={() => setWalking(false)} onNotNow={() => { dismissInstall(); setWalking(false); }} />
+                </Suspense>
               </Modal>
             )}
           </>

@@ -172,6 +172,7 @@ import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
+import { voidReadOnlyShareSuggestionsAtBoot } from "./platform/heal-void-share-suggestions.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
@@ -427,7 +428,7 @@ async function boot() {
     deletedRecords,
     dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
-    activity: { log: activity.log, registerHistoryWriter },
+    activity: { log: activity.log, logMany: activity.logMany, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),
@@ -838,6 +839,11 @@ async function boot() {
       link: async (orgId, userId, fileId, record) => {
         const { linkVaultFile } = await import("./platform/vault.js");
         await linkVaultFile(orgId, userId, fileId, record);
+      },
+      remove: async (orgId, userId, fileId) => {
+        const { deleteVaultFile, VaultError } = await import("./platform/vault.js");
+        try { await deleteVaultFile(orgId, userId, fileId); }
+        catch (error) { if (!(error instanceof VaultError && error.status === 404)) throw error; }
       },
       countFor: async (orgId, userId, record) => {
         const { vaultDocumentsFor } = await import("./platform/vault.js");
@@ -2077,6 +2083,7 @@ async function boot() {
   // instance; opens no tenant pools. See platform/reconcile-tenant-roles.ts.
   const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
   await T("reconcileShareSpaces", reconcileShareSpaces());
+  await T("voidReadOnlyShareSuggestions", voidReadOnlyShareSuggestionsAtBoot());
   if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
     console.log(
       `[cobblr-api] orphaned tenant roles: ${roleSweep.dropped} dropped, ${roleSweep.skippedBroken} left for investigation`,

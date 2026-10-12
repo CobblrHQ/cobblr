@@ -53,7 +53,7 @@ const ResolveSpec = z
 const RuleBody = z.object({
   name: z.string().min(1).max(120),
   enabled: z.boolean().optional(),
-  position: z.number().int().min(0).max(100_000).optional(),
+  position: z.number().int().min(0).max(100_000).optional(), // none-refused-ok: a column that cannot hold null
   match: MatchSpec,
   extract: ExtractSpec,
   resolve: ResolveSpec,

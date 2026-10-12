@@ -102,7 +102,7 @@ export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: 
           {scope.rules.map((r, i) => (
             <li key={i} className="flex items-center gap-2 rounded border border-line px-2 py-1 text-sm dark:border-slate-600" data-testid="share-rule">
               <span className="min-w-0 flex-1">{r.type === "collection" ? `All ${kindName(r.entity_kind)}` : `${kindName(r.entity_kind)} whose ${r.field} is "${r.equals}"`}</span>
-              <button type="button" aria-label="Remove" onClick={() => setRules(scope.rules.filter((_, j) => j !== i))} className="text-muted hover:text-ember-600">
+              <button title="Remove" type="button" aria-label="Remove" onClick={() => setRules(scope.rules.filter((_, j) => j !== i))} className="text-muted hover:text-ember-600">
                 <X size={14} />
               </button>
             </li>
@@ -110,7 +110,7 @@ export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: 
           {scope.picks.length > 0 && (
             <li className="flex items-center gap-2 rounded border border-line px-2 py-1 text-sm dark:border-slate-600">
               <span className="min-w-0 flex-1">{scope.picks.length} picked one by one</span>
-              <button type="button" aria-label="Remove" onClick={() => setScope({ ...scope, picks: [] })} className="text-muted hover:text-ember-600">
+              <button title="Remove" type="button" aria-label="Remove" onClick={() => setScope({ ...scope, picks: [] })} className="text-muted hover:text-ember-600">
                 <X size={14} />
               </button>
             </li>

@@ -296,6 +296,9 @@ export function register(): void {
 
   platform().ai.registerProvider({
     id: REPLAY_PROVIDER_ID,
+    // Its test IS a recording of a verify, generation included (the cassette
+    // below): the registry does not add a live one (ai-verify.ts).
+    generatesInTest: true,
     label: "Replay (recorded, for tests)",
     describeCredentials: () => ({}),
     // NOT auto-selected. Credential-less providers are picked up by any
@@ -404,7 +407,7 @@ export function register(): void {
             : key.startsWith("nomodel-")
               ? "model_unavailable"
               : null;
-      if (!reason) return { ok: true, models: ["replay-model"] };
+      if (!reason) return { ok: true, models: ["replay-model"], model: "replay-model" };
       return { ok: false, reason, error: providerSentence(reason, { provider: "replay", retryAfterSec: reason === "quota" ? 30 : undefined }) };
     },
   });

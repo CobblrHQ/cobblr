@@ -67,6 +67,7 @@ export function ScanDiagPanel({
       <div className="flex items-center gap-2 pb-2">
         <span className="flex-1 text-cobble-300 font-semibold">scan diagnostics</span>
         <button
+          title="Re-measure"
           type="button"
           onClick={() => { resetDecodeStats(); setStats(decodeStats()); load(); }}
           aria-label="Re-measure"
@@ -92,6 +93,7 @@ export function ScanDiagPanel({
           <Copy size={12} /> {copied ? "copied" : "copy"}
         </button>
         <button
+          title="Close diagnostics"
           type="button"
           onClick={onClose}
           aria-label="Close diagnostics"

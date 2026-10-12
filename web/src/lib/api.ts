@@ -1,6 +1,8 @@
+import type { FactScope } from "@cobblr/platform-contract/fact-scope";
 import type {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
 import type {ServerBridgeState} from "@cobblr/platform-contract/server-bridge";
 import type { PersonalDocumentRead } from "@cobblr/platform-contract/personal-documents";
+import { entityEndpointPath } from "@cobblr/platform-contract/entity-endpoints";
 import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cutter-program";
 import type { StockView, StockDetail } from "@cobblr/inventory/ui";
 import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/laser-setup";
@@ -24,8 +26,8 @@ import { AI_AVAILABILITY_WRITE } from "./ai-availability-keys";
 import { markSandboxEnded } from "./sandbox-session";
 import { busySentence, parseRetryAfter } from "./request-wait";
 import { announceScanFiled, type ScanFiledChange } from "./scanFiled";
-import { isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
-import type { ApprovalRemedy, BlockedAction } from "@cobblr/platform-contract/blocked-action";
+import { awaitBlockedAction, carriesOnItself, isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
+import { approvalDedupeKey, isBlockedAction, type ApprovalRemedy, type BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import type { CommunityLinkId } from "@cobblr/platform-contract/community-links";
 import { dayHere } from "@cobblr/platform-contract/day";
 import type { TokenAccess } from "@cobblr/platform-contract/token-access";
@@ -35,6 +37,7 @@ import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
+import { isPageLeaving } from "./page-leaving";
 import { GUEST_NOT_SHARED, refusedForGuest } from "./acting-role";
 import { counted } from "./in-flight";
 import { bodyOf, type ImportRun, type SheetsBody, type SheetsPlan, type UndoReport } from "./sheet-import";
@@ -48,6 +51,16 @@ import { walkPages } from "./list-pages";
 import { getShareViewToken, setShareViewToken } from "./share-view";
 import { getStationTokenOverride } from "./station-token";
 import type { StationActionRun, StationLookup, StationMove, StationRecordNow, StationSettings, StationStockOp } from "@cobblr/platform-contract/station-screen";
+
+export interface RenewalDocumentCandidate { kind: string; id: string; title: string; expiry: string | null; values: PersonalDocumentRead["fields"] }
+export interface RenewalDocumentPlan {
+  type: { id: string; label: string; expiryField: string; folder: string; recordLabel: string };
+  candidates: RenewalDocumentCandidate[];
+  records: RenewalDocumentCandidate[];
+  collections: Array<{ kind: string; label: string; fields: Record<string, { name: string; type: string; native: boolean }>; titleField: string }>;
+  complete: boolean;
+  matched: { kind: string; id: string } | null;
+}
 
 const TOKEN_KEY = "cobblr.token";
 
@@ -91,7 +104,7 @@ export async function fetchCsv(path: string): Promise<{ blob: Blob; filename: st
 }
 
 export interface ShareOfferItem {
-  send_file?: {id: string;transport: "file-export" | "file-import";state: string;can_download: boolean;can_undo: boolean};
+  send_file?: {id: string;transport: "file-export" | "file-import";state: string;can_download: boolean;can_undo: boolean;connected?: boolean;can_remote_undo?: boolean;can_restore?: boolean};
   id: string;
   direction: "out" | "in";
   title: string;
@@ -241,7 +254,7 @@ async function sendUploadCounted<T>(url: string, form: FormData, file: File | nu
   }
   if (!res.ok) {
     const e = await uploadErrorOf(res, file);
-    throw new ApiError(res.status, e.code, e.message);
+    throw new ApiError(res.status, e.code, e.message, e.personalCardOpened ? { personalCardOpened: true } : undefined);
   }
   return (await res.json()) as T;
 }
@@ -390,7 +403,26 @@ export { subscribeDeletedRecord } from "@cobblr/platform-web";
 
 /** Every request the app makes, counted while it is in flight (in-flight.ts). */
 function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-  return counted(() => sendRequest<T>(method, path, body, extraHeaders));
+  return carryingOn<T>(method, path, body, extraHeaders, null);
+}
+
+/** A refusal whose switch the person holds waits for them, uncounted (it is
+ *  their choice, not the network): turned on, the same request runs again and
+ *  its answer, done or a second refusal, is what the caller gets (#5890). */
+async function carryingOn<T>(method: string, path: string, body: unknown, extraHeaders: Record<string, string> | undefined, applied: string | null): Promise<T> {
+  try {
+    return await counted(() => sendRequest<T>(method, path, body, extraHeaders));
+  } catch (e) {
+    const refused = e instanceof ApiError ? carriesOnItself(e.blocked, method, path, body) : null;
+    if (!refused || !(e instanceof ApiError) || !e.blocked) throw e;
+    const key = approvalDedupeKey(e.blocked.remedies);
+    if (key === applied) {
+      raiseBlockedAction({ blocked: e.blocked, refused, subject: null });
+      throw e;
+    }
+    if ((await awaitBlockedAction({ blocked: e.blocked, refused, subject: null })) !== "applied") throw e;
+    return carryingOn<T>(method, path, body, extraHeaders, key);
+  }
 }
 
 async function sendRequest<T>(
@@ -401,6 +433,9 @@ async function sendRequest<T>(
 ): Promise<T> {
   // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
   if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
+  // The page is going, with other credentials than it ran on (leaving View
+  // as, opening a share's View as): it asks nothing more (page-leaving.ts).
+  if (isPageLeaving()) return new Promise<T>(() => {});
   const headers: Record<string, string> = { ...(extraHeaders ?? {}) };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   // Kept for the blocked-action sheet: `body` is shadowed by the response
@@ -497,7 +532,7 @@ async function sendRequest<T>(
     // started (main.tsx, the mutation cache), never here, or the sheet would
     // open on every page (#4687).
     const viewRefusal = err?.code === "share_view_read_only";
-    if (res.status >= 400 && res.status < 500 && err?.blocked && isMutating(method) && !viewRefusal) {
+    if (res.status >= 400 && res.status < 500 && err?.blocked && isMutating(method) && !viewRefusal && !carriesOnItself(err.blocked, method, path, sent)) {
       raiseBlockedAction({ blocked: err.blocked, refused: refusedRequestFor(method, path, sent), subject: null });
     }
     // A route that answers `{ok:false,message}` is still TELLING us why. Reading
@@ -598,6 +633,9 @@ export interface OrgMembership {
   name: string;
   slug: string;
   role: OrgRoleName;
+  /** A guest's only: what the workspace's portal shares, so a guest's page
+   *  asks only for reads the server answers (#5992). */
+  portal_shares?: import("@cobblr/platform-contract/guest-reads").PortalShares | null;
   /** When the workspace was made. Absent from an older server. */
   created_at?: string;
   /** "share": a workspace someone shared with you (Settings → Sharing). */
@@ -1409,10 +1447,25 @@ export interface DocumentRow {
   has_thumb: boolean;
   /** Linked: the system it is in. */
   system?: string;
+  /** What on it says it is another thing's (a VIN that is not this record's):
+   *  shown, never a match (#5870). */
+  conflict?: string | null;
+  /** A softer disagreement (a year), shown beside the match. */
+  warning?: string | null;
   written_back?: boolean;
   /** A library copy that finished and is attached to this record. */
   copied_at?: string | null;
   copied_filename?: string | null;
+  copied_file_id?: string | null;
+  /** The copy is in this person's Vault (a personal document, #5871). */
+  copied_vault_file_id?: string | null;
+  /** The copy is in someone else's Vault: their name (#5936). */
+  vault_of?: string | null;
+  /** Linked through another member's own library, which still works: their
+   *  name. Not this person's to reconnect (#5936). */
+  library_of?: string | null;
+  /** A disconnected link: the library to connect again. */
+  reconnect?: { provider: string | null; address: string | null };
   /** Suggested: what made it a match ("serial", "model", "name"). */
   because?: string | null;
   score?: number;
@@ -2464,6 +2517,12 @@ export const api = {
 
   listEntityKinds: (slug: string) =>
     request<{ items: PlatformEntityKind[] }>("GET", `/orgs/${slug}/entity-kinds`),
+  createKindRecord: async (slug: string, kind: string, fields: Record<string, unknown>): Promise<{ id: string }> => {
+    const kinds = await request<{ items: PlatformEntityKind[] }>("GET", `/orgs/${slug}/entity-kinds`);
+    const path = entityEndpointPath(kinds.items.find(item => item.id === kind), "create");
+    if (!path) throw new Error("This collection does not offer adding a record here.");
+    return request<{ id: string }>("POST", `/orgs/${slug}/${path}`, fields);
+  },
   lookupEntity: (slug: string, kind: string, id: string) =>
     request<PlatformResolvedEntity>("GET", `/orgs/${slug}/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`),
   /** Generic entity list — the data source for relation-field pickers and any
@@ -2641,13 +2700,14 @@ export const api = {
   decideTidySuggestion: (slug: string, id: string, decision: "later" | "never" | "done") => request<{ ok: boolean }>("POST", `/orgs/${slug}/tidy-suggestions/${id}/decision`, { decision }),
   invokeAction: (
     slug: string,
-    { label, ...body }: {
+    { label, document, ...body }: {
       actionId: string;
       /** Left out for an action on the workspace (scope "workspace"). */
       entityKind?: string;
       entityId?: string;
       bindingId?: string;
       args?: Record<string, unknown>;
+      document?: File;
       /** A scanned action label's code: the door checks it and the history
        *  says "via label" (#3897). */
       label?: string;
@@ -2659,10 +2719,22 @@ export const api = {
     // refusal is raised HERE, once, with the handler's reason. Every existing
     // caller's catch then shows why instead of a false confirmation, and no
     // future caller has to remember to unwrap the envelope.
-    request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body, label ? { "x-cobblr-label": label } : undefined).then(
+    (document ? (() => {
+      const form = new FormData();
+      form.set("payload", JSON.stringify(body));
+      form.set("file", document);
+      return upload<{ ok: boolean; result: unknown }>(`/api/v1/orgs/${slug}/actions/invoke`, form, document);
+    })() : request<{ ok: boolean; result: unknown }>("POST", `/orgs/${slug}/actions/invoke`, body, label ? { "x-cobblr-label": label } : undefined)).then(
       (res) => {
-        const inner = res.result as { ok?: unknown; error?: unknown; skipped?: unknown } | null;
+        const inner = res.result as { ok?: unknown; error?: unknown; skipped?: unknown; blocked?: unknown } | null;
         if (inner && typeof inner === "object" && inner.ok === false) {
+          // A refusal that says who and what would work opens the one
+          // refusal sheet here, for every caller: a surface that only
+          // toasted, or looked for it in the wrong place, left it unsaid
+          // (#4736, Bring back from the record's Actions menu). `told` lets
+          // a caller skip its own toast.
+          const blocked = isBlockedAction(inner.blocked) ? inner.blocked : null;
+          if (blocked) raiseBlockedAction({ blocked, refused: null, subject: null });
           // Declined (nothing applied: "already confirmed") is thrown too, so
           // no caller mistakes it for done, but marked, so a surface can say
           // it calmly rather than as a failure (action-result.ts, #3141).
@@ -2672,6 +2744,7 @@ export const api = {
           throw Object.assign(
             new Error(typeof inner.error === "string" && inner.error.trim() ? inner.error : "That action couldn't run."),
             inner.skipped === true ? { declined: true as const } : {},
+            blocked ? { blocked, told: true as const } : {},
             { result: inner },
           );
         }
@@ -3381,12 +3454,17 @@ export const api = {
     const form = new FormData(); form.set("file", file);
     return upload<PersonalDocumentRead>(`/api/v1/orgs/${slug}/modules/core-scan/personal-documents/read`, form, file);
   },
+  planRenewalDocument: (slug: string, documentType: string, fields: PersonalDocumentRead["fields"]) =>
+    request<RenewalDocumentPlan>("POST", `/orgs/${slug}/modules/core-maintenance/document-renewals/plan`, { document_type: documentType, fields }),
   /** File a bill of sale's vehicle purchase from the personal path (#5331):
    *  read again on the server, filed, never stored. With `record`, it fills
    *  that vehicle instead of making an inbox item. */
-  fileBillOfSale: (slug: string, file: File, record?: { kind: string; id: string }) => {
+  /** `vin`: the VIN the person typed when the page's would not read
+   *  (#5921); the server files only on a VIN that passes its check digit. */
+  fileBillOfSale: (slug: string, file: File, record?: { kind: string; id: string }, opts: { vin?: string } = {}) => {
     const form = new FormData(); form.set("file", file);
     if (record) { form.set("kind", record.kind); form.set("id", record.id); }
+    if (opts.vin) form.set("vin", opts.vin);
     return upload<BillOfSaleFiled>(`/api/v1/orgs/${slug}/modules/core-scan/personal-documents/bill-of-sale`, form, file);
   },
   uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
@@ -4384,6 +4462,9 @@ export const api = {
   revokeShareLink: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
   /** What has been handed over through this workspace's shares, and who it
    *  can hand things to from here. */
+  ownConnections: (slug: string) => request<import("@cobblr/platform-web").OwnConnections>("GET", `/orgs/${slug}/own-connections`),
+  connectCobblr: (slug: string, where?: number) => request<{id: string;invite_url: string}>("POST", `/orgs/${slug}/share-links`, {purpose: "own", where}),
+  revokeOwnConnection: (slug: string, id: string) => request("POST", `/orgs/${slug}/share-links/${id}/revoke`, {}),
   sendTargets: (slug: string) => request<import("@cobblr/platform-web").WorkspaceSendTargets>("GET", `/orgs/${slug}/records/send-targets`),
   previewSendFile: (slug: string,p: {entity_kind: string;ids: string[];mode: "copy" | "move"}) => request<import("@cobblr/platform-web").SendFileExportPreview>("POST",`/orgs/${slug}/records/send/file`,{...p,dry_run: true}),
   exportSendFile: (slug: string,p: {entity_kind: string;ids: string[];mode: "copy" | "move";request_id?: string}) => request<{id: string;download_path: string;summary: string}>("POST",`/orgs/${slug}/records/send/file`,p),
@@ -4394,8 +4475,8 @@ export const api = {
   confirmSendFile: (slug: string,receipt: import("@cobblr/platform-contract/send-file").SendReceipt,dry_run = false) => request<{summary: string;items?: number;mode?: string;target?: {name: string;instance: string;person: string}}>("POST",`/orgs/${slug}/records/send/file/confirm`,{receipt,dry_run}),
   restoreSendFileSource: (slug: string,receipt: import("@cobblr/platform-contract/send-file").SendReceipt,dry_run = false) => request<{summary: string;items?: number;target?: {name: string;instance: string;person: string}}>("POST",`/orgs/${slug}/records/send/file/restore`,{receipt,dry_run}),
   previewSend: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<import("@cobblr/platform-web").WorkspaceSendPreview>("POST", `/orgs/${slug}/records/send`, { ...p, dry_run: true }),
-  sendRecords: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<{ summary: string; offer_ids: string[] }>("POST", `/orgs/${slug}/records/send`, p),
-  undoSend: (slug: string, id: string) => request("POST", `/orgs/${slug}/records/send/${id}/undo`, {}),
+  sendRecords: (slug: string, p: import("@cobblr/platform-web").WorkspaceSendRequest) => request<{ summary: string; offer_ids: string[]; connected?: boolean }>("POST", `/orgs/${slug}/records/send`, p),
+  undoSend: (slug: string, id: string, restore = false) => request<{summary?: string;restore_available?: boolean}>("POST", `/orgs/${slug}/records/send/${id}/undo`, {restore_source: restore}),
   listShareOffers: (slug: string) => request<{ items: ShareOfferItem[]; targets: Array<{ link_id: string; to: string }> }>("GET", `/orgs/${slug}/share-offers`),
   /** The shares of this workspace's own things, and which hold this record. */
   recordShares: (slug: string, kind?: string, id?: string) =>
@@ -4483,9 +4564,9 @@ export const api = {
     request<{ status: ShareEditItem["status"] }>("POST", `/orgs/${slug}/share-links/${id}/edits/${editId}/${decision}`),
   /** Who an invite is from, asked of the Cobblr that made it. */
   previewShareInvite: (invite: string) =>
-    request<{ owner_name: string | null; workspace_name: string; for_email?: string | null; from_host: string | null }>("POST", "/share-links/preview", { invite }),
+    request<{ owner_name: string | null; workspace_name: string; for_email?: string | null; from_host: string | null; purpose?: "own" }>("POST", "/share-links/preview", { invite }),
   /** Accept an invite on this Cobblr: makes the share space, returns its slug. */
-  acceptShareInvite: (invite: string) => request<{ org_id: string; slug: string }>("POST", "/share-links/accept", { invite }),
+  acceptShareInvite: (invite: string, target_org?: string) => request<{ org_id: string; slug: string }>("POST", "/share-links/accept", { invite, target_org }),
   listWorkspaceLinks: () =>
     request<{ items: WorkspaceLinkItem[] }>("GET", "/me/links"),
   createWorkspaceLink: (body: {
@@ -4537,7 +4618,9 @@ export const api = {
   dismissDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string }) =>
     request<{ ok: true }>("POST", `${documentsPath(slug, kind, id)}/dismiss`, doc),
   rematchDocuments: (slug: string, kind: string, id: string) => request<{ ok: true }>("POST", `${documentsPath(slug, kind, id)}/rematch`, {}),
-  copyDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string }) =>
+  /** `to: "vault"` keeps a personal document in the person's own Vault,
+   *  linked to the record, where shared Files refuse it (#5871). */
+  copyDocument: (slug: string, kind: string, id: string, doc: { connection_id: string; ref: string; to?: "files" | "vault" }) =>
     request<{ job: { id: string; status: string } }>("POST", `${documentsPath(slug, kind, id)}/copies`, doc),
   documentThumbPath: (slug: string, doc: { connection_id: string; ref: string }) =>
     `/orgs/${slug}/modules/core-documents/thumb?connection_id=${encodeURIComponent(doc.connection_id)}&ref=${encodeURIComponent(doc.ref)}`,
@@ -4969,6 +5052,9 @@ export const api = {
       /** Receipt sessions with no rows on any page: a failed or in-flight read
        *  (the failure is a state on the session, never an item). */
       sessions?: Record<string, ScanBatchMeta>;
+      /** The lines this page's parts were split from (#6067), each with how
+       *  it came apart: the parent the parts sit under. */
+      split_parents?: Record<string, import("./splitLayout").SplitParent>;
       next_cursor?: string | null;
       total?: number;
     }>("GET", `/orgs/${slug}/modules/core-scan/inbox${qs ? "?" + qs : ""}`);
@@ -6843,6 +6929,28 @@ export const api = {
   // Per-workspace + per-module sandbox CPU usage in the current
   // accounting window. `pct` is used_ms / quota_ms_per_window so
   // 1.0+ means the workspace is at or over its budget.
+  // What each route costs this deployment since the api started (#5424): wall time, CPU (`cpu_ms` from
+  // requests that ran alone, `cpu_ms_overlapped` an upper bound from the rest), memory growth and calls
+  // per workspace per day. The heaviest by total CPU first.
+  superAdminComputeStats: (limit = 60) =>
+    request<{
+      since: string;
+      uptime_s: number;
+      routes_seen: number;
+      cpu_total_ms: number;
+      rows: Array<{
+        route: string;
+        calls: number;
+        errors_5xx: number;
+        wall_ms: { p50: number; p95: number; max: number; samples: number };
+        cpu_ms: { p50: number; p95: number; max: number; samples: number };
+        cpu_ms_overlapped: { p50: number; p95: number; max: number; samples: number };
+        cpu_share: number;
+        rss_growth_max_mb: number;
+        per_workspace_day: { workspaces: number; p50: number; p95: number; max: number };
+      }>;
+    }>("GET", `/super-admin/compute-stats?limit=${limit}`),
+
   superAdminSandboxCpu: () =>
     request<{
       window_ms: number;
@@ -7027,6 +7135,8 @@ export interface ScanBatchMeta {
   vendor?: string | null;
   source_file_id: string | null;
   order_ref: string | null;
+  /** The purchase this session's order was filed on. */
+  purchases_order_id?: string | null;
   tracking_number: string | null;
   shipment_state: string | null;
   shipment_description: string | null;
@@ -8047,6 +8157,8 @@ export interface ScannerQueueSummary {
     updates?: Record<string, { kind: string; id: string; instance: string | null }>;
   }>;
   residual: number;
+  /** Scans with a home the Inbox holds for a person: never in an Add all. */
+  held?: number;
   offered: number;
 }
 
@@ -8288,6 +8400,8 @@ export interface TrackedMatch {
   instance: string | null;
   noun: string;
   qty: number | null;
+  /** The unit its amount is kept in ("m", "each"), when the record says. */
+  unit?: string | null;
   location_id: string | null;
   /** The stock you already have is past its expiry date, per this kind's
    *  expiry-role field. Lets a re-purchase be recorded as waste instead of
@@ -9923,6 +10037,11 @@ export interface CrossOrgActivityEntry {
   org_id: string;
   org_name: string;
   org_slug: string;
+  /** The row as a sentence ("You reserved Review Blue Owl") and what it is
+   *  about, named and linked: the same namer as the workspace's feed. */
+  summary?: string;
+  verb?: string;
+  subject?: { href: string; title: string; kind: string | null; id: string; thumbnail: string | null };
 }
 
 export interface VaultPerson { id: string; name: string }
@@ -10248,6 +10367,9 @@ export interface ActionArgSpec {
   required?: boolean;
   picker?: "service-capability";
   schema_from?: string;
+  /** What it picks from, filled by the server for a `choicesFrom` argument
+   *  (the workspace's people for a "who"). */
+  choices?: Array<{ value: string; label: string }>;
 }
 
 /** A workspace action a wire runs once per event on no record. */
@@ -10590,6 +10712,9 @@ export interface PlatformBundleManifest {
     /** A number or money field: how it adds up in a group's summary
      *  (lint:bundle-number-fields-say-how-they-add-up requires the answer). */
     aggregate?: "sum" | "per_unit" | "none";
+    /** A fact about the model (every unit shares it) or this unit
+     *  (@cobblr/platform-contract/fact-scope, #6013). */
+    fact_scope?: FactScope;
   }[];
   /** Presentation overrides for a kind's native fields (relabel / hide). */
   field_overrides?: {
@@ -10905,7 +11030,8 @@ export interface Stocktake {
   label: string;
   kept: Array<{ id: string; kind: string; title: string }>;
   gone: Array<{ id: string; kind: string; title: string }>;
-  counted: Array<{ id: string; kind: string; title: string; before: number; after: number }>;
+  /** `unit`: what the amounts are in ("m", "each"), so they read as measures. */
+  counted: Array<{ id: string; kind: string; title: string; before: number; after: number; unit: string }>;
   created_at: string;
   undone_at: string | null;
 }

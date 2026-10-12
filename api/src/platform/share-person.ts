@@ -1,3 +1,4 @@
+import { isOwnLink } from "./share-sync.js";
 // Who a share is with, as an entry on the owner's People list
 // (docs/design-decisions/share-spaces.md §9).
 //
@@ -16,7 +17,7 @@ import { addPerson, listPeople } from "./people.js";
  *  share that is not live, or whose person has no name to go by. */
 export async function sharePerson(linkId: string): Promise<{ id: string; name: string } | null> {
   const link = await meta.selectFrom("share_links").select(["org_id", "side", "status", "peer_name", "settings"]).where("id", "=", linkId).executeTakeFirst();
-  if (!link || link.side !== "owner" || link.status !== "active") return null;
+  if (!link || isOwnLink(link) || link.side !== "owner" || link.status !== "active") return null;
   const said = ((link.settings ?? {}) as { person_id?: unknown }).person_id;
   const people = await listPeople(link.org_id);
   const kept = typeof said === "string" ? people.find((p) => p.id === said) : undefined;

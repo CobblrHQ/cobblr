@@ -109,25 +109,25 @@ const SignupBody = z.object({
   display_name: z.string().min(1).max(120),
   // Captcha token (e.g. Cloudflare Turnstile). Verified server-side only when a
   // captcha provider is configured (the trial tier); ignored otherwise.
-  captcha_token: z.string().max(4096).optional(),
+  captcha_token: optionalText(4096),
   // Optional when `app` is set — a managed-app signup names the workspace
   // after the app (the consumer never picks a workspace name).
-  org_name: z.string().min(1).max(120).optional(),
+  org_name: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** The link or QR that sent the person here (`?source=`), recorded on the
    *  account's signed_up event. Cleaned, never refused (signup-source.ts). */
-  source: z.string().max(100).optional(),
+  source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** Single-use signup-invite token. When public signup is disabled, a
    *  valid token authorises this registration (the invite-only gate). */
-  invite_token: z.string().max(200).optional(),
+  invite_token: optionalText(200),
   /** A share invite (/share/join#<token>) the person is signing up to accept.
    *  From this Cobblr or one it trusts, it counts as their invitation when
    *  public signup is off (#4737). */
-  share_invite: z.string().min(8).max(4000).optional(),
+  share_invite: optionalField(z.string().min(8).max(4000)),
   /** Managed-app signup ("Cobblr for Yarn"): provision the user's first (only)
    *  workspace AS this app — install its flagship bundle + lock it into app
    *  mode — instead of a generic workspace. `manifest` is the app's bundle
    *  (caller-supplied for now; server-side registry fetch is the follow-up). */
-  app: z.string().min(1).optional(),
+  app: z.string().min(1).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   manifest: z.unknown().optional(),
 });
 
@@ -136,8 +136,8 @@ const LoginBody = z.object({
   password: z.string().min(1).max(128),
   // Where an account whose address is still unconfirmed comes back to after the
   // fresh link this sends it: the app and source the page was opened with.
-  app: z.string().min(1).max(40).optional(),
-  source: z.string().max(100).optional(),
+  app: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 /** Candidate slugs in preference order: the bare name, then `-2`, `-3`, … on
@@ -425,7 +425,7 @@ authRouter.post("/signup", async (req, res, next) => {
 
     // ── abuse guards ── both no-op unless configured (the trial box turns them
     // on); run before any DB work so a bot never touches the invite/user path.
-    const captcha = await captchaVerdict(body.captcha_token, req);
+    const captcha = await captchaVerdict(body.captcha_token ?? undefined, req);
     if (captcha !== "pass") return captchaRefusal(res, captcha);
     if (blockDisposableEnabled() && isDisposableEmail(email)) {
       return res.status(400).json({
@@ -880,10 +880,10 @@ const IdentityCallbackBody = z.object({
   // The managed app the person asked for on /start/<app>, carried through the
   // hand-off so a NEW account is provisioned as it. Unknown values are
   // ignored (see identity-provision.ts); a stale link must not strand a sign-in.
-  app: z.string().min(1).max(40).optional(),
+  app: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   // The link or QR that sent the person to sign up, carried on return_to the
   // way `app` is. Recorded on a NEW account only; cleaned, never refused.
-  source: z.string().max(100).optional(),
+  source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 type AdoptResult =
@@ -1112,9 +1112,9 @@ const IdentitySignupBody = z.object({
   email: z.string().email().max(255),
   password: z.string().min(8).max(128),
   display_name: z.string().trim().min(1).max(120),
-  captcha_token: z.string().max(4096).optional(),
-  app: z.string().min(1).max(40).optional(),
-  source: z.string().max(100).optional(),
+  captcha_token: optionalText(4096),
+  app: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   /** The form says, beside Create account, that making the account agrees to
    *  the account's terms (linked). True records that agreement with the account
    *  service, so confirming the address does not stop on a terms page. */
@@ -1131,7 +1131,7 @@ authRouter.post("/identity/signup", async (req, res, next) => {
     if (overLimit(signupLimiter, req)) return rateLimited(res);
     const body = IdentitySignupBody.parse(req.body);
     const email = body.email.toLowerCase().trim();
-    const captcha = await captchaVerdict(body.captcha_token, req);
+    const captcha = await captchaVerdict(body.captcha_token ?? undefined, req);
     if (captcha !== "pass") return captchaRefusal(res, captcha);
     if (blockDisposableEnabled() && isDisposableEmail(email)) {
       return res.status(400).json({
@@ -1267,6 +1267,7 @@ import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
 import { inviteStatus, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { vapidKeys } from "../platform/push-keys.js";
+import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 /** True when this instance has its Web Push key pair, false when it has none,
  *  null when the answer could not be read (said in the log, never a false). */

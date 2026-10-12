@@ -178,6 +178,7 @@ function Step({ step, n, busy, onAct }: { step: ServiceRunStep; n: number; busy:
       {buttons.length > 0 && (
         <div className="flex flex-wrap gap-2 mt-2">
           {buttons.map((b) => (
+            // COLOUR-NOT-STATE: a primary action beside a secondary one, not a pick.
             <button
               key={b}
               type="button"

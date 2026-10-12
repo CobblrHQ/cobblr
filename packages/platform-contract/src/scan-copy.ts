@@ -19,6 +19,12 @@ export const CARD_SENTENCE_MAX = 70;
  *  review reason, and the sheet's state. One sentence, read everywhere. */
 export const STORE_CODE_NOTE = "A store's own code, nothing to look up. Name it to file it.";
 
+/** A shop's own code named from the item itself (#6100): from the photo and
+ *  its label, or from this workspace's own filing of the same code, never
+ *  from a global catalog, which answers with some other shop's product. */
+export const STORE_CODE_PHOTO_NOTE = "A shop's own barcode, so it was named from your photo, not looked up.";
+export const STORE_CODE_FILED_NOTE = "A shop's own barcode, named as you filed it here before.";
+
 /** The why, for the title or tooltip beside it. A title, not a card line,
  *  which is what the lint's `_TITLE` exemption says. */
 export const STORE_CODE_TITLE =
@@ -293,3 +299,7 @@ export function photoCheckIsLive(
   const at = row.updated_at == null ? NaN : new Date(row.updated_at).getTime();
   return Number.isFinite(at) && now - at < PHOTO_CHECK_LIVE_MS;
 }
+
+/** A match only a person settles (#5921): "Is this the 2019 Honda Civic?
+ *  Matched by name; the VIN didn't read; check it's this car." */
+export const CONFIRM_MATCH_SENTENCE = "Is this {title}? {why}.";

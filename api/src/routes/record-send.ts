@@ -7,6 +7,7 @@ import { SendError, previewSend, sendRecords, sendTargets, undoSend } from "../p
 
 export const SendBody = z.object({
   entity_kind: z.string().min(1).max(120), ids: z.array(z.string().uuid()).min(1).max(200),
+  connection_id: z.string().uuid().optional(),
   target_org: z.string().min(1).max(120), collection: z.string().max(120).nullable().optional(),
   mode: z.enum(["copy", "move"]), field_map: z.record(z.string().nullable()).optional(),
   placement: z.literal("unplaced").optional(),
@@ -37,6 +38,6 @@ recordSendRouter.post("/:slug/records/send", requireAuth, withTenant, async (req
 // GATE: undoing a send is its sender's own, whatever the mode was, as above (#5170).
 recordSendRouter.post("/:slug/records/send/:id/undo", requireAuth, withTenant, async (req, res, next) => {
   if (!requireRole(req, res, "guest")) return;
-  try { res.json(await undoSend(req.tenant!.org.id, req.session!.id, String(req.params.id))); }
+  try { res.json(await undoSend(req.tenant!.org.id, req.session!.id, String(req.params.id), req.body?.restore_source === true)); }
   catch (err) { if (err instanceof SendError) { res.status(409).json({ error: { code: "undo_refused", message: err.message } }); return; } next(err); }
 });

@@ -15,6 +15,7 @@ import {
 } from "@cobblr/platform-contract/scan-count";
 import { api, ApiError, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useMatchAmount } from "../lib/useMatchAmount";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 export interface ScanCountDone {
@@ -98,7 +99,11 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
       const now = r.new_qty != null ? ` (now ${r.new_qty})` : "";
       const said =
         v.mode === "set" ? `Set ${r.entity_title} to ${v.value}` : v.value > 0 ? `Added ${v.value} to ${r.entity_title}` : `Took ${-v.value} from ${r.entity_title}`;
-      if (v.undo) {
+      // A take that empties the shelf offers the shopping list first: the
+      // thing worth doing next. Any other take is offered back (Undo).
+      if (r.low && listsOn) {
+        toast.action(`${said}${now}`, { actionLabel: "Add to shopping list", onAction: () => addToList(r.entity_title), duration: 10_000 });
+      } else if (v.undo) {
         toast.action(`${said}${now}`, {
           actionLabel: "Undo",
           duration: 10_000,
@@ -113,8 +118,6 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
             }
           },
         });
-      } else if (r.low && listsOn) {
-        toast.action(`${said}${now}`, { actionLabel: "Add to shopping list", onAction: () => addToList(r.entity_title), duration: 10_000 });
       } else {
         toast.success(`${said}${now}`);
       }
@@ -128,10 +131,12 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
 /** The words on the button that saves a count: the contract's own "+1 more"
  *  for adding (so the card, the phone row and the session never name one
  *  action two ways), "Take 1", "Set total to 10". */
-export function scanCountVerb(mode: ScanCountMode, value: number, have: number): string {
-  if (mode === "set") return value === have ? `Already ${have}` : `Set total to ${value}`;
-  if (value > 0) return `+${value} more`;
-  if (value < 0) return `Take ${-value}`;
+/** The save button's words. `amount` says a measured amount in its unit
+ *  ("8.4 m"); a count keeps its plain number and "+1 more" (useMatchAmount). */
+export function scanCountVerb(mode: ScanCountMode, value: number, have: number, amount: (n: number) => string = String, measured = false): string {
+  if (mode === "set") return value === have ? `Already ${amount(have)}` : `Set total to ${amount(value)}`;
+  if (value > 0) return measured ? `+${amount(value)}` : `+${value} more`;
+  if (value < 0) return `Take ${amount(-value)}`;
   return "Nothing to change";
 }
 
@@ -159,6 +164,7 @@ export function ScanCountBlock({
   const perishable = worn.on.has("perishable");
   const stock = worn.on.has("stock");
   const have = Math.max(0, match.qty ?? 0);
+  const { amount, measured } = useMatchAmount(match.unit);
   const [mode, setMode] = useState<ScanCountMode>(initialMode);
   const [value, setValue] = useState(() => scanCountStart(initialMode, have, sessionMode, scanned));
   const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, sessionMode, scanned)));
@@ -228,7 +234,7 @@ export function ScanCountBlock({
       </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor || (mode === "change" && have === 0)} onClick={() => put(value - 1)} className={step}>
+        <button title={mode === "set" ? "One fewer in total" : "One less"} type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor || (mode === "change" && have === 0)} onClick={() => put(value - 1)} className={step}>
           <Minus size={15} />
         </button>
         <TypeableNumber
@@ -253,31 +259,47 @@ export function ScanCountBlock({
           onRevert={(was) => put(was)}
           className="h-10 w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
         />
-        <button type="button" aria-label={mode === "set" ? "One more in total" : "One more"} onClick={() => put(value + 1)} className={step}>
+        <button title={mode === "set" ? "One more in total" : "One more"} type="button" aria-label={mode === "set" ? "One more in total" : "One more"} onClick={() => put(value + 1)} className={step}>
           <Plus size={15} />
         </button>
         <span data-testid="count-result" className={`min-w-0 text-sm ${tone.result}`}>
           {mode === "change" ? (
             <>
-              You have {have} → <strong className="tabular-nums">{result}</strong>
+              You have {amount(have)} → <strong className="tabular-nums">{amount(result)}</strong>
             </>
           ) : (
             <>
-              Total will be <strong className="tabular-nums">{result}</strong> <span className="text-muted">(was {have})</span>
+              Total will be <strong className="tabular-nums">{amount(result)}</strong> <span className="text-muted">(was {amount(have)})</span>
             </>
           )}
           {where && <span className="text-muted"> · {where}</span>}
         </span>
       </div>
+      {/* A reason sets up a take of one, and nothing is saved until the
+          take is confirmed: the stepper makes it two, and Take 2 saves it.
+          It used to take one on the tap and close the card, so the owner had
+          no way to say "two" (#6003). */}
       {takingReasons.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5" aria-label="Take one">
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="Take some">
           {takingReasons.map((r) => (
             <button
               key={r}
               type="button"
+              aria-pressed={mode === "change" && value < 0 && reason === r}
               disabled={have === 0 || save.isPending}
-              onClick={() => save.mutate({ mode: "change", value: -1, reason: r, undo: true })}
-              className="inline-flex min-h-10 items-center rounded-full border border-line dark:border-slate-600 px-2.5 py-1 text-xs text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-900 disabled:opacity-40"
+              onClick={() => {
+                if (mode !== "change" || value >= 0) {
+                  setMode("change");
+                  setValue(-1);
+                  setText(shown("change", -1));
+                }
+                setReason(r);
+              }}
+              className={`inline-flex min-h-10 items-center rounded-full border px-2.5 py-1 text-xs disabled:opacity-40 ${
+                mode === "change" && value < 0 && reason === r
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-line dark:border-slate-600 text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-900"
+              }`}
             >
               {SCAN_COUNT_REASON_LABEL[r]}
             </button>
@@ -306,10 +328,11 @@ export function ScanCountBlock({
         type="button"
         data-testid="scan-count-save"
         disabled={!body || save.isPending || (mode === "set" && value === have)}
-        onClick={() => save.mutate({ mode, value, reason })}
+        // A take is offered back with Undo, whichever way it was set up.
+        onClick={() => save.mutate({ mode, value, reason, undo: mode === "change" && value < 0 })}
         className={`inline-flex min-h-10 items-center justify-center rounded-full px-3 py-1 text-sm font-medium disabled:opacity-50 ${tone.save}`}
       >
-        {save.isPending ? "Saving…" : scanCountVerb(mode, value, have)}
+        {save.isPending ? "Saving…" : scanCountVerb(mode, value, have, amount, measured)}
       </button>
     </div>
   );

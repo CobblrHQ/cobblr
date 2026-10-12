@@ -965,7 +965,7 @@ export function SortingPlanView({
                                   return next;
                                 })
                               }
-                              title="Not related - leave it out of this group (it stays in the inbox)"
+                              title="Split it out: not related, it stays in the inbox"
                               className="text-faint hover:text-content transition shrink-0"
                               aria-label="Split this item out of the group"
                             >

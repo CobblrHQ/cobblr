@@ -6,8 +6,10 @@
 // through the workspace's egress policy.
 
 import { platform } from "@cobblr/platform-contract";
+import { catalogRecording } from "./catalog-replay.js";
+import { readWebCassette, replayingWeb, writeWebCassette } from "./web-replay.js";
 import { storeVariantOf } from "@cobblr/platform-contract/same-product";
-import { forwardedSender, lineVariant, sameTitle, storeHostOf, type StoreProduct, type StoreVariant } from "@cobblr/platform-contract/store-product";
+import { forwardedSender, isNotAStore, lineVariant, sameTitle, storeHostInText, storeHostOf, type StoreProduct, type StoreVariant } from "@cobblr/platform-contract/store-product";
 
 export type StoreFetch = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
 
@@ -20,21 +22,46 @@ const MAX_HANDLES = 3;
 const CACHE_MS = 30 * 60_000;
 const cache = new Map<string, { at: number; product: StoreProduct | null; why: string | null }>();
 
-const guarded = (orgId: string): StoreFetch => (url) =>
+const live = (orgId: string): StoreFetch => (url) =>
   platform().egress.guardedFetch(orgId, url, { headers: { "user-agent": UA, accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+
+/** A store's public data through the web door's cassettes (web-replay.ts):
+ *  under replay a recorded answer, or a 404 when none was recorded, and the
+ *  network never; under recording the live answer, written down. A test of
+ *  a store read is the same every run (#6004). */
+const guarded = (orgId: string): StoreFetch => async (url) => {
+  if (replayingWeb()) {
+    const c = readWebCassette<{ status: number; body: unknown }>("store", url);
+    return c ? { ok: c.status >= 200 && c.status < 300, status: c.status, json: async () => c.body } : { ok: false, status: 404, json: async () => null };
+  }
+  const r = await live(orgId)(url);
+  if (!catalogRecording()) return r;
+  const body = await r.json().catch(() => null);
+  writeWebCassette("store", url, { status: r.status, body });
+  return { ok: r.ok, status: r.status, json: async () => body };
+};
 
 /** The store a receipt came from: a forward's original sender, else the
  *  address it came from. Null when neither names a store's own domain. */
 export async function storeHostForReceipt(orgId: string, fileId: string | null, from: string | null): Promise<string | null> {
+  let text: string | null = null;
   if (fileId) {
     const file = await platform().files.read(orgId, fileId, "original").catch(() => null);
-    if (file && (/^text\//.test(file.mimeType) || file.mimeType === "")) {
-      const text = new TextDecoder().decode(file.bytes.slice(0, 200_000));
-      const sender = forwardedSender(text);
-      if (sender) return storeHostOf(sender.email);
-    }
+    if (file && (/^text\//.test(file.mimeType) || file.mimeType === "")) text = new TextDecoder().decode(file.bytes.slice(0, 200_000));
   }
-  return storeHostOf(from);
+  return storeHostOfEmail(text, from);
+}
+
+/** The store an email came from: a forward's original sender, else its own
+ *  sender; and when that is a mail service (a Shopify notice), the store its
+ *  body names. A forwarded Kingroon order named no store, so its packs were
+ *  never read or split (#6004). */
+export function storeHostOfEmail(text: string | null, from: string | null): string | null {
+  const sender = forwardedSender(text);
+  const direct = storeHostOf(sender?.email ?? from);
+  // A carrier's own notice (UPS, Amazon Logistics) is not from a shop.
+  if (isNotAStore(direct)) return null;
+  return direct ?? storeHostInText(text, from);
 }
 
 /** The product and variant an order line bought, from the store's page. */

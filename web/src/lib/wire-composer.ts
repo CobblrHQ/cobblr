@@ -143,6 +143,11 @@ export interface WirePreviewInput {
   target?: WireTarget;
   /** The wire acts on no record: it runs once per event or tick. */
   recordless?: boolean;
+  /** A stock wire's change, said as a person says it ("runs out"). */
+  stockPhrase?: string | null;
+  /** Which records, said as a person says it ("Coffee", "a Pantry item
+   *  tagged “coffee”"); absent = any record of the kind. */
+  whose?: string | null;
 }
 
 /** A readable one-liner describing what the wire will do. */
@@ -161,7 +166,8 @@ export function describeWire(i: WirePreviewInput): string {
   const doPart = `“${i.actionLabel}”${onTarget}`;
   switch (i.triggerType) {
     case "event":
-      return `When the event ${i.triggerEvent ? `“${i.triggerEvent}”` : "(pick one)"} fires → ${doPart}.`;
+      if (i.stockPhrase) return `When ${i.whose || withArticle(src)} ${i.stockPhrase} → ${doPart}.`;
+      return `When the event ${i.triggerEvent ? `“${i.triggerEvent}”` : "(pick one)"} fires${i.whose ? ` for ${i.whose}` : ""} → ${doPart}.`;
     case "on-create":
       return `When ${withArticle(src)} is created → ${doPart}.`;
     case "on-update":
@@ -239,3 +245,7 @@ export function serviceInputValues(input: unknown): Record<string, string> {
 /** What a wire on a service job's event can read, as {{event.*}} tokens. A
  *  finished job's answer is {{event.output.<field>}}, named by that service. */
 export const SERVICE_EVENT_TOKENS = ["event.capability", "event.status", "event.jobId", "event.hop"] as const;
+
+// A new wire started from elsewhere (#6070): the address shape lives in the
+// contract, where the inventory module's own pages reach it too.
+export { wirePrefillHref, wirePrefillFromParams, type WirePrefillParams } from "@cobblr/platform-contract/wire-narrowing";

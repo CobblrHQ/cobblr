@@ -84,7 +84,7 @@ export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: strin
         // same contract as restore and un-confirm.
         resolved_at: null,
         ai_notes: priorNotes,
-        suggested_metadata: mergeMeta({}, ["split_into", "split_prior_notes", "order_line_split", "pack_split", "line_units"]) as never,
+        suggested_metadata: mergeMeta({}, ["split_into", "split_prior_notes", "order_line_split", "pack_split", "line_units", "split_how"]) as never,
         updated_at: now,
       })
       .where("id", "=", parent.id)

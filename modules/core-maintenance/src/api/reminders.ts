@@ -5,13 +5,14 @@ import { z } from "zod";
 import type { Kysely } from "kysely";
 import { tenantDb, type CoreMaintenanceDB } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const remindersRouter = Router({ mergeParams: true });
 export const CadenceBody = z.object({ overdue_every: z.enum(["day", "week", "month", "off"]) });
 export const NagBody = z.object({
   mode: z.enum(["snooze", "stop", "resume"]),
-  until: z.string().datetime().optional(),
-  duration: z.enum(["week", "month"]).optional(),
+  until: optionalField(z.string().datetime()),
+  duration: optionalField(z.enum(["week", "month"])),
 }).refine((d) => d.mode !== "snooze" || !!d.until || !!d.duration, "Choose when reminders resume");
 
 export async function changeNag(db: Kysely<CoreMaintenanceDB>, id: string, d: z.infer<typeof NagBody>) {

@@ -110,6 +110,7 @@ export function DriverPackages({ slug, hasBridge }: { slug: string; hasBridge: b
               {d.bridgeId && <span className="text-faint">· {d.bridgeId}</span>}
               <span className="flex-1" />
               <button
+                title={`Remove ${d.kind}`}
                 type="button"
                 aria-label={`Remove ${d.kind}`}
                 onClick={async () => {

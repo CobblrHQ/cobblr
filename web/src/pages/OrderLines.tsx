@@ -95,7 +95,7 @@ export function AddOrderLine({ slug, order }: { slug: string; order: Order }) {
     <form onSubmit={submit} className="mt-2 rounded-lg border border-line dark:border-slate-700 p-3 space-y-2" aria-label="Add a line">
       <label className="block">
         <span className="block text-xs text-muted mb-1">Item you keep (optional)</span>
-        <RelationSelect refKind="inventory:part" value={partId} onChange={setPartId} className="w-full" />
+        <RelationSelect refKind="inventory:part" label="Part" value={partId} onChange={setPartId} className="w-full" />
       </label>
       <label className="block">
         <span className="block text-xs text-muted mb-1">What it is</span>

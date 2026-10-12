@@ -164,6 +164,16 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
  *  instance's owning module + its registered instance resolver, bound to the
  *  instance name. Returns a plain EntityResolver, or null. Mirrors
  *  instanceFallbackResolver (the list twin). */
+// Single-flight, not a cache (ttl 0): a list resolving its rows at once asks
+// these the same question once per row, and every row's ask used to be its
+// own meta query. GET /labels/queue with 60 labels held the whole meta pool on
+// staging, and the requests waiting behind it answered 503 (#5875). Concurrent
+// identical asks now share one query; nothing is kept once it answers, so a
+// write is never followed by a stale read.
+const instanceModuleInFlight = ttlCache<{ module_name: string } | undefined>(0);
+const linkedSourcesInFlight = ttlCache<Array<{ id: string; slug: string; name: string }>>(0);
+const namedInstancesInFlight = ttlCache<Array<{ instance_name: string }>>(0);
+
 async function instanceFallbackEntityResolver(
   orgId: string,
   kind: string,
@@ -171,12 +181,14 @@ async function instanceFallbackEntityResolver(
   const m = /^([a-z0-9][a-z0-9-]*):item$/.exec(kind);
   if (!m) return null;
   const instanceName = m[1]!;
-  const row = await meta
-    .selectFrom("workspace_module_instances")
-    .select(["module_name"])
-    .where("org_id", "=", orgId)
-    .where("instance_name", "=", instanceName)
-    .executeTakeFirst();
+  const row = await instanceModuleInFlight.get(`${orgId}:${instanceName}`, () =>
+    meta
+      .selectFrom("workspace_module_instances")
+      .select(["module_name"])
+      .where("org_id", "=", orgId)
+      .where("instance_name", "=", instanceName)
+      .executeTakeFirst(),
+  );
   if (!row) return null;
   const fn = instanceResolvers.get(row.module_name);
   if (fn) return (oid, id) => fn(oid, instanceName, id);
@@ -564,7 +576,15 @@ const ROLE_RANK = ORG_ROLE_RANK as Record<string, number>;
  *  → role-restricted links are excluded entirely (conservative for
  *  system callers like scheduled scanners). viewerUserId set
  *  → join through org_memberships, compare ranks. */
-async function activeLinkedSources(
+function activeLinkedSources(
+  targetOrgId: string,
+  kind: string,
+  viewerUserId?: string,
+): Promise<Array<{ id: string; slug: string; name: string }>> {
+  return linkedSourcesInFlight.get(`${targetOrgId}:${kind}:${viewerUserId ?? ""}`, () => loadActiveLinkedSources(targetOrgId, kind, viewerUserId));
+}
+
+async function loadActiveLinkedSources(
   targetOrgId: string,
   kind: string,
   viewerUserId?: string,
@@ -1158,13 +1178,15 @@ async function probeNamedInstance(
   module: string,
   id: string,
 ): Promise<{ instance: string; entity: ResolvedEntity } | null> {
-  const insts = await meta
-    .selectFrom("workspace_module_instances")
-    .select(["instance_name"])
-    .where("org_id", "=", orgId)
-    .where("module_name", "=", module)
-    .where("is_default", "=", false)
-    .execute();
+  const insts = await namedInstancesInFlight.get(`${orgId}:${module}`, () =>
+    meta
+      .selectFrom("workspace_module_instances")
+      .select(["instance_name"])
+      .where("org_id", "=", orgId)
+      .where("module_name", "=", module)
+      .where("is_default", "=", false)
+      .execute(),
+  );
   for (const inst of insts) {
     const hit = await lookup(orgId, `${inst.instance_name}:item`, id).catch(() => null);
     if (hit) return { instance: inst.instance_name, entity: hit };

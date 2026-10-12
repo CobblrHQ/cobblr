@@ -56,7 +56,7 @@ export function FiledRowView({
             <CheckCircle size={14} className="shrink-0" /> {words.headline}
           </div>
         </div>
-        <button type="button" onClick={onDismiss} aria-label="Close" className="shrink-0 self-start p-1 text-faint hover:text-content">
+        <button title="Close" type="button" onClick={onDismiss} aria-label="Close" className="shrink-0 self-start p-1 text-faint hover:text-content">
           <X size={16} />
         </button>
       </div>
@@ -117,7 +117,7 @@ export function FiledSummaryView({ slug, rows, onDismiss }: { slug: string; rows
             );
           })}
         </p>
-        <button type="button" onClick={onDismiss} aria-label="Close" className="shrink-0 p-0.5 text-faint hover:text-content">
+        <button title="Close" type="button" onClick={onDismiss} aria-label="Close" className="shrink-0 p-0.5 text-faint hover:text-content">
           <X size={16} />
         </button>
       </div>

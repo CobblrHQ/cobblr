@@ -19,6 +19,7 @@ import { INTERVAL_UNITS, describeRule, hasCalendar, hasCounter, nextRenewalExpir
 import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { TermFields, termValues } from "../term-fields.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -368,19 +369,21 @@ export async function updateSchedule(db: Kysely<CoreMaintenanceDB>, orgId: strin
 
 export const RenewBody = z.object({
   ...TermFields,
-  file_id: z.string().uuid().optional(),
+  file_id: z.string().uuid().optional(), // none-refused-ok: the renewal records one document or none, and the recorder takes no null
   new_expiry: DateOnly.optional(),
-  performed_at: z.string().datetime().optional(),
+  expected_expiry: DateOnly.optional(),
+  performed_at: optionalField(z.string().datetime()),
   notes: z.string().max(4000).nullable().optional(),
 });
 
 export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string, userId: string | null, s: ScheduleRow, d: z.infer<typeof RenewBody>) {
   if (!s.anchor) throw new MaintenanceRefusal("Choose a renewal schedule");
   if (d.file_id && !(await platform().files.describe(orgId, [d.file_id]))?.length) throw new MaintenanceRefusal("Choose a file in this workspace");
-  const entry = await db.transaction().execute(async (tx) => {
+  const run = async (tx: Kysely<CoreMaintenanceDB>) => {
     const current = await tx.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).forUpdate().executeTakeFirstOrThrow();
     if (current.ended_at) throw new MaintenanceRefusal("This renewal chain has ended. Add a new renewal to start again.");
     const state = await renewalState(orgId, current);
+    if (d.expected_expiry && state.current_expiry?.toISOString().slice(0, 10) !== d.expected_expiry) throw new MaintenanceRefusal("The expiry changed while you were checking this document. Read the renewal again.");
     if (d.new_expiry && d.term_end && d.new_expiry !== d.term_end) throw new MaintenanceRefusal("Choose one term end date");
     const end = d.term_end ?? d.new_expiry;
     const expiry = end ? new Date(end + "T12:00:00Z") : nextRenewalExpiry(state);
@@ -392,13 +395,16 @@ export async function renewSchedule(db: Kysely<CoreMaintenanceDB>, orgId: string
       ...term, performed_by: userId, notes: d.notes ?? null,
       scheduled_at: state.current_expiry,
     } as never).returningAll().executeTakeFirstOrThrow();
-    await rollForward(tx, orgId, entry, expiry);
-    return entry;
-  });
+    const occurrence = await tx.selectFrom("core_maintenance_entries").select(["nag_stopped_at", "nag_snoozed_until", "last_notified_at"]).where("schedule_id", "=", current.id).where("performed_at", "is", null).executeTakeFirst();
+    const rolled = await rollForward(tx, orgId, entry, expiry);
+    return { entry, was: rolled?.was ?? null, occurrence: occurrence ?? null };
+  };
+  const renewed = db.isTransaction ? await run(db) : await db.transaction().execute(run);
+  const { entry } = renewed;
   if (d.file_id) await platform().files.attach(orgId, { fileId: d.file_id, source_module: "core-maintenance", source_type: "entry", source_id: entry.id, role: "receipt" });
   await platform().activity.log({ orgId, userId, action: "term_created", ref: { module: "core-maintenance", entityType: "term", entityId: entry.id }, diff: { name: entry.name, term_start: entry.term_start, term_end: entry.term_end } });
   const updated = await db.selectFrom("core_maintenance_schedules").selectAll().where("id", "=", s.id).executeTakeFirstOrThrow();
-  return { entry, schedule: await present(orgId, updated) };
+  return { entry, schedule: await present(orgId, updated), was: renewed.was, occurrence: renewed.occurrence };
 }
 
 // AI-REACH: action core-maintenance:renew

@@ -118,7 +118,7 @@ export function ActiveOrgProvider({
     return resolveHandle(urlHandle, orgs);
   }, [urlHandle, orgs, imp]);
   // In render, before any page below starts a query (lib/acting-role.ts).
-  if (org) rememberRole(org.slug, org.role);
+  if (org) rememberRole(org.slug, org.role, org.portal_shares);
 
   // If the URL handle doesn't resolve to a membership (deleted, revoked, wrong
   // account, typo, or a shared/placeholder slug like a docs link), go where the

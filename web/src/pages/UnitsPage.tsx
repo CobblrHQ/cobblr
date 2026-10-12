@@ -190,7 +190,7 @@ function UnitList({ title, rows, slug, deletable }: { title: string; rows: UnitD
                   <span className="font-mono text-content dark:text-mortar-100">{u.symbol}</span>
                   <span className="text-faint dark:text-slate-400">{u.plural}</span>
                   {deletable && (
-                    <button type="button" onClick={() => del.mutate(u.code)} className="text-faint hover:text-ember-500 transition" title="Remove">
+                    <button aria-label="Remove" type="button" onClick={() => del.mutate(u.code)} className="text-faint hover:text-ember-500 transition" title="Remove">
                       <Trash2 size={11} />
                     </button>
                   )}

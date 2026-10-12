@@ -22,7 +22,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler } from "./util.js";
-import { summarizePriceHistory, type PricePoint } from "../price-stats.js";
+import { PURCHASED_STATUSES, summarizePriceHistory, type PricePoint } from "../price-stats.js";
 
 export const itemsRouter = Router({ mergeParams: true });
 
@@ -86,9 +86,10 @@ itemsRouter.get(
         "o.status as order_status",
       ])
       .select(purchasedAt.as("purchased_at"))
-      // A cancelled order was never paid for — counting it as a price would
-      // report a change that never happened.
-      .where("o.status", "!=", "cancelled");
+      // A part's price history is what was bought: a cancelled order was never
+      // paid for, and a planned one is a draft nobody has bought yet
+      // (price-stats.ts). One order's own lines leave out only a cancelled one.
+      .where("o.status", part_id ? "in" : "not in", part_id ? [...PURCHASED_STATUSES] : ["cancelled"]);
 
     if (part_id) q = q.where("i.part_id", "=", part_id);
     if (order_id) q = q.where("i.order_id", "=", order_id);

@@ -115,7 +115,7 @@ function TemplateValue({ label, value, required, onChange }: { label: string; va
   </fieldset>;
   if (value !== null && typeof value === "object") return <fieldset className="rounded border border-line p-3"><legend className="text-sm">{words}</legend><TemplateFields values={value as Record<string, unknown>} onChange={onChange} /></fieldset>;
   if (typeof value === "boolean") return <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />{words}</label>;
-  if (label === "project id") return <label className="block text-sm">Project<RelationSelect refKind="projects:project" value={value} onChange={onChange} /></label>;
-  if (label === "location id") return <label className="block text-sm">Location<RelationSelect refKind="core-locations:location" value={value} onChange={onChange} /></label>;
+  if (label === "project id") return <label className="block text-sm">Project<RelationSelect refKind="projects:project" label="Project" value={value} onChange={onChange} /></label>;
+  if (label === "location id") return <label className="block text-sm">Location<RelationSelect refKind="core-locations:location" label="Location" value={value} onChange={onChange} /></label>;
   return <label className="block text-sm">{words}<input className="input mt-1" required={required} type={valueType === "number" ? "number" : "text"} step={valueType === "number" ? "any" : undefined} value={value == null ? "" : String(value)} onChange={(e) => onChange(valueType === "number" ? (e.target.value === "" ? null : Number(e.target.value)) : e.target.value)} /></label>;
 }

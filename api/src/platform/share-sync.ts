@@ -44,7 +44,13 @@ export type ShareLinkRow = {
   send_key_encrypted: string | null;
   receive_key_id: string | null;
   receive_secret_encrypted: string | null;
+  settings?: unknown;
+  created_by?: string | null;
 };
+
+export function isOwnLink(link: {settings?: unknown}): boolean {
+  return (link.settings as {purpose?: string} | null)?.purpose === "own";
+}
 
 type OpHandler = (link: ShareLinkRow, payload: Record<string, unknown>) => Promise<void>;
 const HANDLERS = new Map<string, OpHandler>();
@@ -82,6 +88,8 @@ const linkCols = [
   "send_key_encrypted",
   "receive_key_id",
   "receive_secret_encrypted",
+  "settings",
+  "created_by",
 ] as const;
 
 export async function getShareLink(id: string): Promise<ShareLinkRow | null> {
@@ -340,6 +348,7 @@ export async function applyShareOps(link: ShareLinkRow, body: unknown): Promise<
   const applied: string[] = [];
   for (const o of ops) {
     if (!o || typeof o.key !== "string" || typeof o.op !== "string") throw new ShareApplyError(400, "bad_op", "A change without a key or a name.");
+    if (isOwnLink(link) && !["link.hello", REVOKED_OP].includes(o.op)) throw new ShareApplyError(403, "connection_only", "This connection only sends selected records; it does not share a workspace.");
     const seen = await meta.selectFrom("share_received").select("key").where("link_id", "=", link.id).where("key", "=", o.key).executeTakeFirst();
     if (seen) {
       applied.push(o.key);
@@ -375,6 +384,7 @@ export async function verifyShareRequest(p: {
   if (p.rawBody === undefined) throw new ShareApplyError(500, "raw_body_missing", "This door does not keep the request's exact bytes, so no signature can be checked.");
   const link = await getShareLink(p.linkId);
   if (!link || !link.receive_key_id || !link.receive_secret_encrypted) throw new ShareApplyError(404, "unknown_share", "No such share.");
+  if (isOwnLink(link) && !/\/(own-send|ops)(?:\?|$)/.test(p.pathAndQuery)) throw new ShareApplyError(403, "connection_only", "This connection does not grant a view of the workspace.");
   const secret = decryptCreds(link.receive_secret_encrypted);
   const r = verifyServiceRequest({
     headers: p.headers,

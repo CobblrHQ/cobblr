@@ -37,6 +37,7 @@ import {
   type ProviderRow,
 } from "../platform/oidc.js";
 import { buildAuthResponse, provisionOrgForUser } from "./auth.js";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 const startLimiter = makeIpLimiter(60_000, 30);
 const redeemLimiter = makeIpLimiter(60_000, 30);
@@ -207,10 +208,10 @@ const ProviderBody = z.object({
   issuer: z.string().url().max(500),
   client_id: z.string().min(1).max(500),
   /** Write-only. Omitted on an update: unchanged. "" clears it (a public client). */
-  client_secret: z.string().max(2000).optional(),
-  scopes: z.string().max(500).optional(),
-  email_claim: z.string().min(1).max(100).optional(),
-  groups_claim: z.string().min(1).max(100).optional(),
+  client_secret: optionalText(2000),
+  scopes: z.string().max(500).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  email_claim: z.string().min(1).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  groups_claim: z.string().min(1).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   allow_signup: z.boolean().optional(),
   signup_groups: z.array(z.string().min(1).max(200)).max(50).optional(),
   group_roles: z.array(GroupRole).max(200).optional(),

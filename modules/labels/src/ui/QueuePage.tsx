@@ -1318,6 +1318,7 @@ export function QueuePage() {
                       onChange={(n) => setQty.mutate({ id: it.id, qty: n })}
                     />
                     <button
+                      aria-label="Remove from queue"
                       onClick={() => remove.mutate(it.id)}
                       className="text-faint dark:text-slate-600 hover:text-ember-500 transition shrink-0"
                       title="Remove from queue"
@@ -1549,7 +1550,7 @@ function EditableLabel({
   };
   return (
     <span className="flex items-center gap-1 flex-1 min-w-0">
-      <input
+      <input aria-label="Name"
         autoFocus
         value={draft}
         onChange={(e) => setDraft(e.target.value)}

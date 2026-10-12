@@ -10,6 +10,7 @@ import { useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShar
 // flip it on with just a URL param read — the wiring is already
 // in place for `columns = base + lens.contributedFieldDefs`.
 
+import { compareChoices } from "@cobblr/platform-contract/choice-order";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -177,7 +178,7 @@ export function MachinesPage({
       name,
       label: orgModules.data?.items.find((m) => m.name === name)?.displayName ?? name,
     }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .sort((a, b) => compareChoices(a.label, b.label));
 
   // Filter machines: with a lens, show only rows that have any of
   // the lens's fields populated. Without a lens, show all.
@@ -235,7 +236,7 @@ export function MachinesPage({
   }, [stateKey, hiddenStates]);
   const [stateMenuOpen, setStateMenuOpen] = useState(false);
   const allStates = useMemo(
-    () => [...new Set(rows.map((m) => m.state).filter((s): s is string => !!s))].sort((a, b) => a.localeCompare(b)),
+    () => [...new Set(rows.map((m) => m.state).filter((s): s is string => !!s))].sort(compareChoices),
     [rows],
   );
 

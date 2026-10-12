@@ -163,6 +163,7 @@ export function TagsSection({
             <TagIcon size={10} style={{ color: a.tag_color ?? undefined }} />
             <span>{a.tag_name}</span>
             <button
+              aria-label="Detach"
               onClick={() => detach.mutate(a.id)}
               className="text-faint hover:text-ember-500 transition"
               title="Detach"
@@ -648,7 +649,7 @@ export function FilesSection({
             selected={ph.isMain}
             selectedLabel="Main photo"
             onClick={() => setLightbox(i)}
-            title={ph.filename}
+            title={`See ${ph.filename}`}
             aria-label={`See ${ph.filename}`}
             faceClassName="bg-subtle dark:bg-slate-800"
             topLeft={<PhotoSourceBadge source={ph.source} />}

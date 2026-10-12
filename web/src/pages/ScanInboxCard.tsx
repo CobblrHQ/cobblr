@@ -10,6 +10,9 @@ import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useIma
 // Extracted from ScanPage.tsx (which had grown past ten thousand lines)
 // with no change in behaviour; the page renders one InboxCard per item and
 // owns the queue, the session chrome and the page-level menu.
+import { leadWords } from "../lib/lead-words";
+import { useMatchAmount } from "../lib/useMatchAmount";
+import { isOwnCopy } from "@cobblr/platform-contract/share-offer";
 import { ScanOfferStrip } from "./ScanOfferStrip";
 import { readInboxOffer } from "@cobblr/platform-contract/share-offer";
 import { addedByCardWords, cardSaysAddedBy, codeSourceNote, codeSourceOf, type AddedBy } from "@cobblr/platform-contract/scan-source";
@@ -1089,6 +1092,7 @@ export function InboxCard({
   useEffect(() => setRowChange(rowScanned), [rowScanned]);
   const rowCount = useScanCountSave(item.id, restockMatch ?? NO_COUNTED_MATCH);
   const rowHave = Math.max(0, restockMatch?.qty ?? 0);
+  const rowAmount = useMatchAmount(restockMatch?.unit);
   const commitBusy = quickConfirm.isPending || quickMerge.isPending;
   const runCommit = () => (rowState.action.kind === "merge" ? quickMerge.mutate() : quickConfirm.mutate());
   // "Ask an admin": the blocked row's button. The server explains what is
@@ -2072,6 +2076,7 @@ export function InboxCard({
                   confirm: "Locked into the barcode database",
                   combine: "Combined similar items",
                   "undo-rerun": "Undid the re-run",
+                  "store-code": "Named again from its photo: a shop's own barcode",
                 };
                 // "Re-ran the lookup with AI" is written when the run STARTS,
                 // so on its own it claims something the run may never have
@@ -2236,6 +2241,7 @@ export function InboxCard({
                     {rerun.isPending ? "Looking up…" : "Save & re-run"}
                   </button>
                   <button
+                    title="Cancel barcode edit"
                     type="button"
                     onClick={() => setEditingBarcode(false)}
                     className="text-faint hover:text-content"
@@ -2255,7 +2261,7 @@ export function InboxCard({
                         setBarcodeDraft(item.barcode_text ?? "");
                         setEditingBarcode(true);
                       }}
-                      title="Fix the barcode - saving re-runs the lookup on the corrected code"
+                      title="Edit the barcode - saving re-runs the lookup on the corrected code"
                       aria-label="Edit the barcode"
                       className="text-faint hover:text-accent transition"
                     >
@@ -2415,7 +2421,7 @@ export function InboxCard({
     const brand = item.suggested_manufacturer?.trim() || creatorOf(item);
     if (brand) segs.push(brand);
     const shop = (item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor;
-    if (!item.suggested_manufacturer && shop?.trim()) segs.push(`from ${shop.trim()}`);
+    if (!item.suggested_manufacturer && shop?.trim()) segs.push(leadWords("from", shop));
     if (item.suggested_sku) segs.push(item.suggested_sku);
     const filedInto = item.target_location_id ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id) : null;
     if (filedInto) segs.push(`📍 ${filingLabel(filedInto)}`);
@@ -2474,7 +2480,7 @@ export function InboxCard({
           photo={thumb}
           name={shownName ?? ""}
           working={phoneWorking}
-          quantity={receiptUnread || restockMatch || item.status !== "pending" ? null : { value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
+          quantity={receiptUnread || restockMatch || item.status !== "pending" ? null : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }}
           commit={
             dest && item.status === "pending" && oneTap && !restockMatch
               ? {
@@ -2775,7 +2781,7 @@ export function InboxCard({
                 ? null
                 : restockMatch
                   ? { value: rowChange, busy: rowCount.isPending, onChange: (n) => setRowChange(Math.max(-rowHave, n)), signed: { floor: -rowHave } }
-                  : { value: Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }
+                  : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }
             }
             chips={chips}
             commit={
@@ -2792,8 +2798,8 @@ export function InboxCard({
                             : rowState.action.kind === "blocked" && rowState.ask?.length
                               ? "ask"
                               : "review",
-                    label: restockMatch ? scanCountVerb("change", rowChange, rowHave) : rowState.action.label,
-                    destination: restockMatch ? `${restockMatch.title}: ${rowHave} → ${scanCountResult("change", rowHave, rowChange)}` : updating ? `${updating.title} in ${dest.label}` : dest.label,
+                    label: restockMatch ? scanCountVerb("change", rowChange, rowHave, rowAmount.amount, rowAmount.measured) : rowState.action.label,
+                    destination: restockMatch ? `${restockMatch.title}: ${rowAmount.amount(rowHave)} → ${rowAmount.amount(scanCountResult("change", rowHave, rowChange))}` : updating ? `${updating.title} in ${dest.label}` : dest.label,
                     tentative: tentativeRoute && !updating,
                     reason: rowState.sentence ?? rowState.action.title,
                     busy: commitBusy || askToFile.isPending,
@@ -3120,13 +3126,13 @@ export function InboxCard({
               // it, and a tin of branded beans from the same receipt would then
               // claim the supermarket made it.
               const boughtFrom = (item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor;
-              if (!brand && boughtFrom?.trim()) segs.push(`from ${boughtFrom.trim()}`);
+              if (!brand && boughtFrom?.trim()) segs.push(leadWords("from", boughtFrom));
               // WHO sold it, when the receipt named someone other than the shop -
               // a marketplace order has both, and they are different facts. Kept
               // by the parser since receipts shipped and shown nowhere until now.
               const soldBy = (item.suggested_metadata as { receipt_seller?: string } | null)?.receipt_seller;
               // A thing handed over is from someone, not sold: its strip says who.
-              if (soldBy?.trim() && soldBy.trim() !== boughtFrom?.trim() && !readInboxOffer(item.suggested_metadata)) segs.push(`sold by ${soldBy.trim()}`);
+              if (soldBy?.trim() && soldBy.trim() !== boughtFrom?.trim() && !readInboxOffer(item.suggested_metadata)) segs.push(leadWords("sold by", soldBy));
               if (item.suggested_sku) segs.push(item.suggested_sku);
               // Where it's being FILED — the bin set by "Set location" (bulk or
               // per-item). This is target_location_id, the authoritative
@@ -3137,8 +3143,8 @@ export function InboxCard({
               const filedInto = item.target_location_id
                 ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id)
                 : null;
-              if (filedInto) segs.push(<span className="text-accent">📍 {filingLabel(filedInto)}</span>);
-              else if (item.scan_area) segs.push(`📍${item.scan_area}`);
+              if (filedInto) segs.push(<span className="inline-block text-accent">📍 {filingLabel(filedInto)}</span>);
+              else if (item.scan_area) segs.push(<span className="inline-block">📍 {item.scan_area}</span>);
               const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
               if (ps) segs.push(<span className="text-accent">{ps}-pack</span>);
               const bs = (item.suggested_metadata as { box_state?: string } | null)?.box_state;
@@ -3952,7 +3958,7 @@ export function InboxCard({
                 onClick={toggle}
                 aria-expanded={open}
                 aria-label="More item tools"
-                title="Split, retake, box state, turn into a bin"
+                title="More item tools: split, retake, box state, turn into a bin"
                 className="text-faint hover:text-accent p-1"
               >
                 <MoreHorizontal size={14} />
@@ -4021,6 +4027,7 @@ export function InboxCard({
               )}
           </HeaderMenu>
           <button
+            aria-label={replayNoAi ? "Replaying…" : aiWorking ? "AI is working…" : "Rerun lookup"}
             type="button"
             onClick={() => rerun.mutate(undefined)}
             // Re-run needs SOMETHING to look up again — a barcode, a photo, OR a
@@ -4035,6 +4042,7 @@ export function InboxCard({
           </button>
           {!planContext && (
             <button
+              aria-label="Discard (recoverable from Recently deleted)"
               type="button"
               onClick={() => discard.mutate()}
               disabled={discard.isPending}
@@ -4049,7 +4057,7 @@ export function InboxCard({
             onClick={() => (planContext && onCollapse ? onCollapse() : expanded ? setExpanded(false) : expandOnly())}
             aria-label={expanded ? "Collapse" : "Expand"}
             aria-expanded={expanded}
-            title={expanded ? "Collapse" : "Details"}
+            title={expanded ? "Collapse" : "Expand the details"}
             className="text-faint hover:text-accent p-1"
           >
             <ChevronDown
@@ -4087,7 +4095,8 @@ export function InboxCard({
                   <button
                     type="button"
                     onClick={() => openZoom("catalog")}
-                    title="View full size"
+                    aria-label="View the catalog photo full size"
+                    title="View the catalog photo full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center cursor-zoom-in"
                   >
                     {/* A SQUARE frame charged every photo the same height. A
@@ -4143,6 +4152,7 @@ export function InboxCard({
               {yoursImg && yoursImg !== catalogImg && (
                 <figure className="flex-1 min-w-0">
                   <button
+                    aria-label="View full size"
                     type="button"
                     onClick={() => openZoom("yours")}
                     title="View full size"

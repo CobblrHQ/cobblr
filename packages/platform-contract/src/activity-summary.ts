@@ -281,12 +281,49 @@ export function activityActor(e: SummaryEntry, viewerId?: string): string {
   return "Cobblr";
 }
 
+/** What a row is about when nothing names it (its record gone, or one the
+ *  reader may not see): words a person uses, never the stored kind (#5906:
+ *  "reserved allocation", "turned on org_module", "linked pairing"). One
+ *  table; a kind it does not list is "a record". The stored type never
+ *  reaches a sentence, which a-row-never-says-its-stored-kind.test.ts holds. */
+export const KIND_WORDS: Readonly<Record<string, string>> = {
+  membership: "the workspace",
+  org: "the workspace",
+  user: "an account",
+  org_module: "an app",
+  allocation: "a reservation",
+  pairing: "a link",
+  workspace_link: "a link to another workspace",
+  api_token: "an API token",
+  invite: "an invitation",
+  binding: "a connection",
+  bundle: "a collection",
+  approval_request: "a request for approval",
+  send: "a sent file",
+  field_def: "a field",
+  workspace_role: "a role",
+  person: "someone",
+  carry: "a trial's records",
+  action: "an action",
+  service_job: "a service job",
+  sandbox: "a sandbox",
+  personal_documents_reader: "personal documents",
+  instance: "a collection",
+  blueprint: "a blueprint",
+  backup: "a backup",
+  "ai-model": "an AI model",
+  ai_job_order: "the AI job order",
+  ai_job_defaults: "the AI defaults",
+  wire: "an automation",
+  tag: "a tag",
+  file: "a file",
+};
+export const kindWords = (entityType: string): string => KIND_WORDS[entityType] ?? "a record";
+
 export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: string, resolved?: ActivitySubject): ActivityPresentation {
   const d = bag(e.diff);
   const actor = activityActor(e, viewerId);
-  // A membership's subject is the workspace: the type's own name made "Robin
-  // joined membership" on the Activity page.
-  let title = named(d) ?? e.entity_title ?? (e.entity_type === "membership" ? "the workspace" : e.entity_type.replaceAll("_", " "));
+  let title = named(d) ?? e.entity_title ?? kindWords(e.entity_type);
   const kind = e.entity_kind ?? (e.module_name ? `${e.module_name}:${e.entity_type}` : null);
   let subject: ActivitySubject = resolved ?? { title, kind, id: e.entity_id, thumbnail: null,
     href: `/w/${encodeURIComponent(slug)}${kind ? openRecordPath(kind, e.entity_id) : "/activity"}` };

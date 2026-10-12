@@ -209,6 +209,7 @@ export function AppsConfigPage() {
                 </div>
               </div>
               <a
+                aria-label="Open app in the portal"
                 href={`/portal/${slug}/app/${a.slug}`}
                 target="_blank"
                 rel="noreferrer"
@@ -219,6 +220,7 @@ export function AppsConfigPage() {
                 <ExternalLink size={13} />
               </a>
               <button
+                aria-label="Delete app"
                 type="button"
                 onClick={(e) => { e.stopPropagation(); void remove(a); }}
                 className="text-faint hover:text-ember-500 p-1"
@@ -242,7 +244,7 @@ export function AppsConfigPage() {
           ) : (
             <div className="space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <input
+                <input aria-label="App name"
                   value={editing.name}
                   onChange={(e) => setEditing({ ...editing, name: e.target.value })}
                   className="text-lg font-semibold bg-transparent border-b border-line dark:border-slate-700 focus:outline-none focus:border-accent text-content dark:text-mortar-100 flex-1"
@@ -289,19 +291,20 @@ export function AppsConfigPage() {
                 <div key={pi} className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-3">
                   <div className="flex items-center gap-2">
                     <input
+                      aria-label="Page title"
                       value={page.title}
                       onChange={(e) => updatePage(pi, { title: e.target.value })}
                       className="text-sm font-medium bg-transparent border-b border-line dark:border-slate-700 focus:outline-none flex-1"
                     />
-                    <button type="button" onClick={() => removePage(pi)} className="text-faint hover:text-ember-500 p-1">
+                    <button type="button" onClick={() => removePage(pi)} aria-label="Remove page" title="Remove page" className="text-faint hover:text-ember-500 p-1">
                       <Trash2 size={12} />
                     </button>
                   </div>
                   {page.blocks.map((block, bi) => (
                     <div key={bi} className="rounded border border-line dark:border-slate-800 bg-subtle/40 dark:bg-slate-800/40 p-2 flex items-start gap-2">
                       <div className="flex flex-col gap-0.5 pt-0.5">
-                        <button type="button" onClick={() => moveBlock(pi, bi, -1)} className="text-faint hover:text-accent"><ArrowUp size={11} /></button>
-                        <button type="button" onClick={() => moveBlock(pi, bi, 1)} className="text-faint hover:text-accent"><ArrowDown size={11} /></button>
+                        <button type="button" onClick={() => moveBlock(pi, bi, -1)} aria-label="Move block up" title="Move block up" className="text-faint hover:text-accent"><ArrowUp size={11} /></button>
+                        <button type="button" onClick={() => moveBlock(pi, bi, 1)} aria-label="Move block down" title="Move block down" className="text-faint hover:text-accent"><ArrowDown size={11} /></button>
                       </div>
                       <div className="flex-1 min-w-0">
                         <BlockEditor
@@ -314,7 +317,7 @@ export function AppsConfigPage() {
                           appTheme={editing.theme ?? null}
                         />
                       </div>
-                      <button type="button" onClick={() => removeBlock(pi, bi)} className="text-faint hover:text-ember-500 p-1">
+                      <button type="button" onClick={() => removeBlock(pi, bi)} aria-label="Remove block" title="Remove block" className="text-faint hover:text-ember-500 p-1">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -396,13 +399,13 @@ function BlockEditor({
   const labelCls = "text-[10px] font-mono uppercase tracking-widest text-faint";
   const inputCls = "w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const ViewSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
-    <select value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
+    <select aria-label="View" value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
       <option value=""> - pick a view - </option>
       {views.map((v) => (<option key={v.id} value={v.id}>{v.name} ({v.entity_kind})</option>))}
     </select>
   );
   const KindSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
-    <select value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
+    <select aria-label="Kind" value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>
       <option value=""> - pick a kind - </option>
       {kinds.map((k) => (<option key={k} value={k}>{k}</option>))}
     </select>
@@ -411,7 +414,7 @@ function BlockEditor({
     <div className="space-y-1">
       <div className={labelCls}>{block.type}</div>
       {block.type === "markdown" && (
-        <textarea value={block.body} onChange={(e) => onChange({ ...block, body: e.target.value })} rows={2} className={inputCls} />
+        <textarea aria-label="Markdown" value={block.body} onChange={(e) => onChange({ ...block, body: e.target.value })} rows={2} className={inputCls} />
       )}
       {block.type === "view" && (
         <ViewSelect value={block.view_id} onPick={(v) => onChange({ ...block, view_id: v })} />
@@ -419,7 +422,7 @@ function BlockEditor({
       {block.type === "stat" && (
         <div className="flex gap-1">
           <ViewSelect value={block.view_id} onPick={(v) => onChange({ ...block, view_id: v })} />
-          <select value={block.agg} onChange={(e) => onChange({ ...block, agg: e.target.value as "count" | "sum" })} className={inputCls + " w-24"}>
+          <select aria-label="Aggregate" value={block.agg} onChange={(e) => onChange({ ...block, agg: e.target.value as "count" | "sum" })} className={inputCls + " w-24"}>
             <option value="count">count</option>
             <option value="sum">sum</option>
           </select>
@@ -454,7 +457,7 @@ function BlockEditor({
             <code className="font-mono">cobblr.get('/modules/…')</code> (org-relative, GET-only,
             capability + H2 scoped).
           </div>
-          <textarea
+          <textarea aria-label="HTML"
             value={block.html}
             onChange={(e) => onChange({ ...block, html: e.target.value })}
             rows={6}
