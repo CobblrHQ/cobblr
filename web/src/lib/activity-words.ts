@@ -178,6 +178,8 @@ export const FEED_VERBS: Readonly<Record<string, string>> = {
   // A stocktake is one row for the whole run; its title is the place.
   stocktake_taken: "took stock of",
   stocktake_undone: "undid the stocktake of",
+  recount_applied: "finished the recount of",
+  recount_undone: "undid the recount of",
   record_gone: "marked gone",
   // A thing that left, and came back (platform:mark-gone / bring-back).
   record_sold: "sold",

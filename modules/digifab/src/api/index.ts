@@ -1,3 +1,4 @@
+import { registerPanelPresence } from "../panel-presence.js";
 import { reflowProfilesRouter, registerReflowProfiles } from "./reflow-profiles.js";
 import {largeFormatRouter} from "./large-format.js";
 import {registerLargeFormatActions} from "../large-format/actions.js";
@@ -84,6 +85,7 @@ registerCncOutcomeAction();
 registerCncPlacementAction();
 registerResinControlAction();
 registerStopAction();
+registerPanelPresence();
 registerRevokeStationAction();
 registerResinPostprocessAction();
 registerLaserSetupAction();

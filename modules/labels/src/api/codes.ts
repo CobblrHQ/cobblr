@@ -51,8 +51,12 @@ codesRouter.get(
     }
     // Enrich with the entity's title + deep link so the caller can jump to it.
     const ctx = tenantContext(req);
-    const ent = await platform().entities.lookup(ctx.org.id, hit.entity_kind, hit.entity_id).catch(() => null);
-    res.json({ ...hit, title: ent?.title ?? null, detail_url: ent?.detailUrl ?? null });
+    const entities = platform().entities;
+    const [title, detailUrl] = await Promise.all([
+      entities.titleForEntity(ctx.org.id, hit.entity_kind, hit.entity_id).catch(() => null),
+      entities.detailPathForEntity(ctx.org.id, hit.entity_kind, hit.entity_id).catch(() => undefined),
+    ]);
+    res.json({ ...hit, title, detail_url: detailUrl ?? null });
   }),
 );
 

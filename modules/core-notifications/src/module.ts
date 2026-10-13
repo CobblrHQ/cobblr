@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-notifications",
-  version: "0.2.0",
+  version: "0.2.3",
   displayName: "Notifications",
   description:
     "Get told about what matters to you, in the app and through the channels you choose.",
@@ -46,7 +46,7 @@ export default defineModule({
         runBy: "member",
         label: "Message someone",
         description:
-          "Send a short message to a person in the workspace through their own notification channels (in the app, push, email, Discord, as they chose). The message may use the record's fields ({{name}}, {{quantity}}, {{unit}}) and {{event.actor.display_name}}; left empty it says the record is used up and asks for more. Wire it to a record running out to ask someone to get more.",
+          "Send a short message to a person in the workspace through their own notification channels (in the app, push, email, Discord, as they chose). The message may use the record's fields ({{name}}, {{quantity}}, {{unit}}) and {{event.actor.display_name}}; left empty it says the record is used up and asks for more. Someone on the People list who is not a member is emailed, or texted when `via` is text, through the workspace's own sender, only from an automation and once an owner or admin allowed it. Wire it to a record running out to ask someone to get more.",
         examples: ["tell Sam when the coffee runs out", "message me when we are out of milk"],
         // DELIBERATELY universal: anything a workspace keeps can be the
         // subject of a message, and the record only fills the words.
@@ -55,6 +55,15 @@ export default defineModule({
         argsSchema: {
           to: { label: "Who", type: "text", required: true, choicesFrom: "people" },
           message: { label: "What to say (empty: “<name> is used up. Could you get more?”)", type: "text" },
+          reply_link: { label: "Someone outside the workspace can answer: Got it, or Bought it (it goes on the shopping list)", type: "boolean" },
+          via: {
+            label: "How someone outside the workspace gets it",
+            type: "text",
+            choices: [
+              { value: "email", label: "Email" },
+              { value: "text", label: "Text message" },
+            ],
+          },
         },
         userInvokable: false,
       },

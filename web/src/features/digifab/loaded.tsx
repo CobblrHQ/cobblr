@@ -6,9 +6,10 @@
 // shelf. A finished print takes each filament's grams off the spool in its
 // slot, so the job needs no spool picked.
 //
-// Three ways to load: Load… on a slot (search your things), Scan a spool (the
-// camera, for a phone), or a scanner gun: while this page is open, a scanned
-// spool label loads it instead of opening its page.
+// One control loads: Load a spool on a slot opens a search of your things
+// with the camera's Scan beside it (for a phone). A scanner gun works too:
+// while this page is open, a scanned spool label loads it instead of opening
+// its page. A single-slot printer with nothing loaded is one line (#6337).
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -86,11 +87,54 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const bySlot = new Map(loaded.map((l) => [l.slot, l.thing]));
   const firstEmpty = Array.from({ length: slots }, (_, i) => String(i + 1)).find((s) => !bySlot.has(s)) ?? "1";
 
+  const sheets = (
+    <>
+      <PickThing
+        open={picking != null}
+        slug={slug}
+        slot={picking ?? "1"}
+        onClose={() => setPicking(null)}
+        onPick={async (t) => {
+          const slot = picking ?? undefined;
+          setPicking(null);
+          try {
+            toast.success(await load({ kind: t.kind, id: t.id, label: t.title }, slot));
+          } catch (e) {
+            toast.error(e instanceof ApiError ? e.message : String(e));
+          }
+        }}
+        onScan={() => {
+          setScanning(picking ?? firstEmpty);
+          setPicking(null);
+        }}
+      />
+      <ScanOneSheet
+        open={scanning != null}
+        title={`Scan a spool for slot ${scanning ?? firstEmpty}`}
+        hint="Point the camera at the spool's label."
+        onCode={(code) => void scanned(code, scanning ?? "")}
+        onClose={() => setScanning(null)}
+      />
+    </>
+  );
+
+  if (slots === 1 && loaded.length === 0) {
+    return (
+      <section className="flex flex-wrap items-center gap-x-2 rounded-lg border border-line dark:border-slate-700 px-3 py-1 text-sm" data-testid="loaded-spools">
+        <span className="font-semibold text-content dark:text-mortar-100">Loaded filament</span>
+        <span className="text-muted dark:text-slate-400">none</span>
+        <button type="button" className="ml-auto min-h-11 px-2 text-accent" onClick={() => setPicking("1")}>
+          Load a spool
+        </button>
+        {sheets}
+      </section>
+    );
+  }
+
   return (
     <section className="rounded-lg border border-line dark:border-slate-700" data-testid="loaded-spools">
       <header className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-line dark:border-slate-700">
         <h3 className="flex-1 text-sm font-semibold text-content dark:text-mortar-100">Loaded filament</h3>
-        {ctx.hints?.station !== "printer" && <WorkspaceLink className="min-h-11 flex items-center px-2 text-sm text-accent" slug={slug} to={`${stationPath}`}>Open printer station</WorkspaceLink>}
         <label className="text-xs text-muted dark:text-slate-400">
           Slots{" "}
           <select
@@ -112,9 +156,6 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
             ))}
           </select>
         </label>
-        <button type="button" className="min-h-11 px-3 rounded-md bg-cobble-600 text-white text-sm" onClick={() => setScanning(firstEmpty)}>
-          Scan a spool
-        </button>
       </header>
       <ul className="divide-y divide-line dark:divide-slate-700">
         {Array.from({ length: slots }, (_, i) => String(i + 1)).map((slot) => {
@@ -144,7 +185,7 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                 <>
                   <span className="flex-1 text-faint dark:text-slate-500 italic">Nothing loaded</span>
                   <button type="button" className="min-h-11 text-sm text-accent px-2" onClick={() => setPicking(slot)}>
-                    Load…
+                    Load a spool
                   </button>
                 </>
               )}
@@ -154,33 +195,14 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       </ul>
       <p className="px-3 py-2 text-[11px] text-muted dark:text-slate-400 border-t border-line dark:border-slate-700">
         A finished print takes each filament's grams off the spool in its slot. With a scanner, scan a spool's label while this page is open to load it.
+        {ctx.hints?.station !== "printer" && (
+          <>
+            {" "}
+            <WorkspaceLink className="text-accent" slug={slug} to={stationPath}>Open printer station</WorkspaceLink>
+          </>
+        )}
       </p>
-      <PickThing
-        open={picking != null}
-        slug={slug}
-        slot={picking ?? "1"}
-        onClose={() => setPicking(null)}
-        onPick={async (t) => {
-          const slot = picking ?? undefined;
-          setPicking(null);
-          try {
-            toast.success(await load({ kind: t.kind, id: t.id, label: t.title }, slot));
-          } catch (e) {
-            toast.error(e instanceof ApiError ? e.message : String(e));
-          }
-        }}
-        onScan={() => {
-          setScanning(picking ?? firstEmpty);
-          setPicking(null);
-        }}
-      />
-      <ScanOneSheet
-        open={scanning != null}
-        title={`Scan a spool for slot ${scanning ?? firstEmpty}`}
-        hint="Point the camera at the spool's label."
-        onCode={(code) => void scanned(code, scanning ?? "")}
-        onClose={() => setScanning(null)}
-      />
+      {sheets}
     </section>
   );
 }

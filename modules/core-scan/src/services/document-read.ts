@@ -141,19 +141,25 @@ async function decodeVinFor(orgId: string, vin: string): Promise<DecodeResult> {
 
 /** The unit line made right by its VIN: the year from the VIN, the make and
  *  model and the name from the vehicle database. What the page printed stays
- *  where the database is silent. */
-function withVinAuthority(receipt: ParsedReceipt, vin: string, year: number | null, decoded: DecodeResult | null): ParsedReceipt {
-  const unit = receipt.items[0];
-  if (!unit) return receipt;
-  const prior = (unit as { decoded?: { fields?: Record<string, unknown> } }).decoded?.fields ?? {};
+ *  where the database is silent, unless the page misread the vehicle
+ *  (`pageNamesIt` false: a VIN the person typed over the page's): then its
+ *  year, make, model and name never stand, and a database that cannot name
+ *  it leaves "<year> vehicle" (#6255). */
+function withVinAuthority(receipt: ParsedReceipt, vin: string, year: number | null, decoded: DecodeResult | null, pageNamesIt = true): ParsedReceipt {
+  const first = receipt.items[0];
+  if (!first) return receipt;
+  const { manufacturer: _m, model: _model, ...unread } = first as typeof first & { manufacturer?: unknown; model?: unknown };
+  const unit = (pageNamesIt ? first : unread) as typeof first;
+  const prior = pageNamesIt ? ((unit as { decoded?: { fields?: Record<string, unknown> } }).decoded?.fields ?? {}) : {};
   const hit = decoded && (decoded.outcome === "hit" || decoded.outcome === "partial") ? decoded.fields : {};
   const fields: Record<string, string | number> = {};
   for (const [k, val] of Object.entries({ ...prior, ...hit })) if (typeof val === "string" || typeof val === "number") fields[k] = val;
   fields.vin = vin;
   if (year) fields.year = year;
   const named = hit.make || hit.model ? vinTitle(fields) : "";
-  const facts = { ...((unit as { facts?: Record<string, unknown> }).facts ?? {}), ...(year ? { "year-made": year } : {}) };
-  const description = named || (looksLikeWords(unit.description) ? unit.description : `${year ?? ""} vehicle`.trim());
+  const { "year-made": _pageYear, ...pageFacts } = (unit as { facts?: Record<string, unknown> }).facts ?? {};
+  const facts = { ...(pageNamesIt ? (unit as { facts?: Record<string, unknown> }).facts ?? {} : pageFacts), ...(year ? { "year-made": year } : {}) };
+  const description = named || (pageNamesIt && looksLikeWords(unit.description) ? unit.description : `${year ?? ""} vehicle`.trim());
   const items = [
     {
       ...unit,
@@ -201,9 +207,17 @@ export async function settleWithTypedVin(orgId: string, receipt: ParsedReceipt, 
   const vin = typed.trim().toUpperCase().replace(/[\s-]/g, "");
   if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin) || !checkDigitValid(vin)) return null;
   const decoded = await decodeVinFor(orgId, vin);
-  const settled = withVinAuthority(receipt, vin, vinModelYear(vin, now), decoded);
+  const settled = withVinAuthority(receipt, vin, vinModelYear(vin, now), decoded, false);
   const fields = (receipt.checks?.fields ?? []).filter((f) => f !== "vin" && f !== "name" && f !== "make" && f !== "model" && f !== "year");
   const { checks: _checks, ...rest } = settled;
+  // The database could not name it: the VIN is proved, the name is only its
+  // year, and the person is asked to check it rather than told it is done.
+  if (decoded.outcome !== "hit" && decoded.outcome !== "partial") {
+    const why = decoded.outcome === "unavailable"
+      ? "The vehicle database could not be reached, so the vehicle is named from its VIN's year only."
+      : "The vehicle database does not know this VIN, so the vehicle is named from its year only.";
+    return { ...rest, checks: { ...(receipt.checks ?? {}), fields: [...fields, "name"], why: [why] } };
+  }
   return fields.length ? { ...rest, checks: { ...receipt.checks!, fields, why: [] } } : rest;
 }
 

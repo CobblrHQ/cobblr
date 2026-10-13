@@ -1,0 +1,10 @@
+{
+  "lint": "lint:new-actions-from-the-template",
+  "run": "node scripts/lint-new-actions-from-the-template.ts",
+  "rows": [
+    "entity-action"
+  ],
+  "ms": 1458,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

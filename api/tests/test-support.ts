@@ -12,6 +12,8 @@
 // lint:test-support-through-the-helper keeps every test on it.
 
 import { BASE } from "./helpers.js";
+import type { TenantSweepRunResult } from "@cobblr/platform-contract";
+import { settledSweepRound } from "../../scripts/lib/settled-sweep-round.mjs";
 
 export interface TestSupportInit {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -62,9 +64,32 @@ export async function testSupportJson<T = unknown>(path: string, init: TestSuppo
   return (await (await testSupport(path, init)).json()) as T;
 }
 
+/** Await one real pass for one workspace before inspecting its writes. A
+ * skipped or failed visit cannot stand in for completed test setup. */
+export async function testSupportSweep(name: string, orgId: string): Promise<TenantSweepRunResult> {
+  const result = await testSupportJson<TenantSweepRunResult>("run-sweep", { body: { name, org_id: orgId } });
+  if (result.skipped || result.failed !== 0 || result.visited !== 1 || result.results?.length !== 1 || result.results[0]?.orgId !== orgId) {
+    throw new Error(`${name} did not complete for ${orgId}: ${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
 /** The address of the CI push service's box `box` (#5267): what a test
  *  "device" subscribes with, so Web Push sends there and the test reads it
  *  back through testSupport(`push-service/${box}`). */
 export function testPushServiceEndpoint(box: string): string {
   return `${BASE}/api/v1/test-support/push-service/${encodeURIComponent(box)}`;
+}
+
+/** Every registered sweep, one round, for one workspace. A pass the scheduler is walking at that moment
+ *  holds its lock and is skipped, which the door answers as 500: that round is asked again until no
+ *  pass is skipped (scripts/lib/settled-sweep-round.mjs). A pass that FAILED throws at once. */
+export async function testSupportSweepRound(orgId: string, deadlineMs = 90_000): Promise<{ passes: number; failed: unknown[] }> {
+  return settledSweepRound(
+    async () => {
+      const res = await testSupport("run-all-sweeps", { body: { org_id: orgId }, allow: [500] });
+      return { status: res.status, body: (await res.json()) as { passes: number; failed: Array<{ name: string; skipped: boolean; failures: unknown[] }> } };
+    },
+    { deadlineMs },
+  );
 }

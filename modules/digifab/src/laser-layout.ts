@@ -6,8 +6,8 @@ export type Rect = { x: number; y: number; width: number; height: number };
 /** A sheet to nest onto. `free_regions` is its usable leftover, each region
  *  [outline, ...holes] (inventory's sheet geometry); an older reading has only
  *  free_rectangles and used_outlines. */
-export type Sheet = { id: string; width: number; height: number; revision: number; free_rectangles: Rect[]; free_regions?: Point[][][]; used_outlines?: Point[][]; outline?: Point[]; cut_capacity?: { shapes: number; vertices: number; sources: number } };
-export type Placement = Rect & { rotated: boolean; number: number; footprint: Rect; angle?: number; translation?: Point; footprint_outline?: Point[] };
+export type Sheet = { id: string; width: number; height: number; revision: number; free_rectangles: Rect[]; free_regions?: Point[][][]; used_outlines?: Point[][]; nest_obstacles?: Point[][]; outline?: Point[]; cut_capacity?: { shapes: number; vertices: number; sources: number } };
+export type Placement = Rect & { rotated: boolean; number: number; footprint: Rect; angle?: number; translation?: Point; footprint_outline?: Point[]; locked?: boolean; mirrored?: boolean; design?: Design; extra?: boolean };
 export type LayoutSheet = Sheet & { parts: Placement[]; remaining: Rect[]; nesting?: "outline" | "rectangle"; /** Why a part with an outline was nested by rectangle, said on the sheet. */ nesting_note?: string; nest_ms?: number; utilisation?: number };
 export function canRecordCuts(capacity: Sheet["cut_capacity"], rectangles: Rect[], outlines?: Point[][]): boolean {
  const shapes = outlines?.length ?? rectangles.length;
@@ -89,6 +89,7 @@ export function orderedLaserLayers(design: Design, profiles: Record<string, Prof
 }
 export function transformPlacedPoint(p: Point, part: Placement, height: number): Point {
  if (part.translation && part.angle != null) {
+  p = part.mirrored ? {...p,x:-p.x} : p;
   const rad=part.angle*Math.PI/180,c=Math.cos(rad),s=Math.sin(rad);
   return {x:part.translation.x+p.x*c-p.y*s,y:part.translation.y+p.x*s+p.y*c};
  }
@@ -98,9 +99,9 @@ export function generateProject(design: Design, sheet: LayoutSheet, profiles: Re
  const layers = orderedLaserLayers(design, profiles);
  const settings = layers.map(l => `<CutSetting type="${l.operation === "engrave" ? "Scan" : "Cut"}">${Object.entries({ index: l.index, name: l.layer, speed: l.speed, minPower: l.min_power, maxPower: l.max_power, numPasses: l.passes, runBlower: Number(l.air_assist), zOffset: l.focus_offset, doOutput: 1, priority: l.index, interval: 0.1, enableLaser1: 1 }).map(([k, v]) => `<${k} Value="${esc(String(v))}"/>`).join("")}</CutSetting>`).join("");
  let estimated_sec = 0;
- const shapes = sheet.parts.flatMap(part => design.paths.map(path => {
+ const shapes = sheet.parts.flatMap(part => (part.design ?? design).paths.map(path => {
   const l = layers.find(p => p.layer === path.layer)!;
-  const transform = (p: Point): Point => transformPlacedPoint(p,part,design.height);
+  const transform = (p: Point): Point => transformPlacedPoint(p,part,(part.design ?? design).height);
   const points = path.points.map(p => ({ ...transform(p), ...(p.c0 ? { c0: transform(p.c0) } : {}), ...(p.c1 ? { c1: transform(p.c1) } : {}) }));
   const verts = points.map(p => `V${n(p.x)} ${n(p.y)}${p.c0 ? `c0x${n(p.c0.x)}c0y${n(p.c0.y)}` : "c0x1"}${p.c1 ? `c1x${n(p.c1.x)}c1y${n(p.c1.y)}` : "c1x1"}`).join("");
   const count = points.length - (path.closed ? 0 : 1);
@@ -111,7 +112,7 @@ export function generateProject(design: Design, sheet: LayoutSheet, profiles: Re
    return `${path.curves?.[i] ? "B" : "L"}${i} ${(i + 1) % points.length}`;
   }).join("");
   if (l.operation === "engrave") estimated_sec += design.width * design.height * l.passes / (0.1 * l.speed);
-  return `<Shape Type="Path" CutIndex="${l.index}"><XForm>1 0 0 1 0 0</XForm><VertList>${verts}</VertList><PrimList>${prims}</PrimList></Shape>`;
+  return `<Shape Type="Path" CutIndex="${l.index}" Name="cobblr-part-${part.number}"><XForm>1 0 0 1 0 0</XForm><VertList>${verts}</VertList><PrimList>${prims}</PrimList></Shape>`;
  })).join("");
  return { xml: `<?xml version="1.0" encoding="UTF-8"?><LightBurnProject AppVersion="1.7.03" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False"><UIPrefs><Optimize_ByLayer Value="1"/><Optimize_InnerToOuter Value="1"/><Optimize_ByPriority Value="1"/></UIPrefs>${settings}${shapes}</LightBurnProject>`, layers, estimated_sec: Math.ceil(estimated_sec) };
 }
@@ -144,15 +145,19 @@ export function importProfiles(view: ProjectView): Array<Profile & { source: Rec
  });
 }
 export function generateNestedSvg(design: Design, sheet: LayoutSheet): string {
- const paths = design.paths.map(path=>{
+ const paths = (drawing: Design) => drawing.paths.map(path=>{
   let d=`M${path.points[0]!.x} ${path.points[0]!.y}`;
   for(let i=0;i<path.points.length-(path.closed?0:1);i++) {
    const a=path.points[i]!,b=path.points[(i+1)%path.points.length]!;
    d+=path.curves?.[i]&&a.c1&&b.c0?`C${a.c1.x} ${a.c1.y} ${b.c0.x} ${b.c0.y} ${b.x} ${b.y}`:`L${b.x} ${b.y}`;
   }
-  return `<path data-layer="${esc(path.layer)}" d="${d}${path.closed?"Z":""}"/>`;
+  return `${d}${path.closed?"Z":""}`;
+ }).join(" ");
+ const parts=sheet.parts.map(p=>{
+  const drawing=p.design??design,tx=(point:Point)=>transformPlacedPoint(point,p,drawing.height);
+  const placed={...drawing,paths:drawing.paths.map(path=>({...path,points:path.points.map(point=>({...tx(point),...(point.c0?{c0:tx(point.c0)}:{}),...(point.c1?{c1:tx(point.c1)}:{})}))}))};
+  return `<path id="cobblr-${p.number}" data-part-id="${p.number}" data-layer="${esc(drawing.paths[0]!.layer)}" d="${paths(placed)}"/>`;
  }).join("");
- const parts=sheet.parts.map(p=>`<g transform="${p.translation&&p.angle!=null?`translate(${p.translation.x} ${p.translation.y}) rotate(${p.angle})`:p.rotated?`translate(${p.x+design.height} ${p.y}) rotate(90)`:`translate(${p.x} ${p.y})`}">${paths}</g>`).join("");
  return `<svg xmlns="http://www.w3.org/2000/svg" width="${sheet.width}mm" height="${sheet.height}mm" viewBox="0 0 ${sheet.width} ${sheet.height}"><g transform="translate(0 ${sheet.height}) scale(1 -1)" fill="none" stroke="black" stroke-width="0.1">${parts}</g></svg>`;
 }
 

@@ -2,7 +2,7 @@ import { SaxesParser } from "saxes";
 import svgpath from "svgpath";
 import type { Design, Point } from "./laser-layout.js";
 const MAX_POINTS = 20000;
-function normalise(paths: Design["paths"]): Design {
+export function normalise(paths: Design["paths"]): Design {
  const all = paths.flatMap(p => p.points.flatMap(v => [v, ...(v.c0 ? [v.c0] : []), ...(v.c1 ? [v.c1] : [])]));
  if (!paths.length || all.length > MAX_POINTS || !all.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))) throw new Error("The drawing is empty, too large or has invalid coordinates.");
  const minX = Math.min(...all.map(p => p.x)), minY = Math.min(...all.map(p => p.y));
@@ -45,9 +45,15 @@ const length = (value: string | undefined): number | null => {
  const scale: Record<string, number> = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, px: 25.4 / 96 };
  return Number(m[1]) * scale[m[2] ?? "px"]!;
 };
-export function parseSvg(text: string): Design {
+export function transformPaths(paths:Design["paths"], transform:string):Design["paths"] {
+ const basis=pathGeometry("M0 0L1 0L0 1", "basis", transform)[0]!.points;
+ const [origin,x,y]=basis as [Point,Point,Point];
+ const tx=(p:Point):Point=>({x:origin.x+p.x*(x.x-origin.x)+p.y*(y.x-origin.x),y:origin.y+p.x*(x.y-origin.y)+p.y*(y.y-origin.y)});
+ return paths.map(path=>({...path,points:path.points.map(p=>({...tx(p),...(p.c0?{c0:tx(p.c0)}:{}),...(p.c1?{c1:tx(p.c1)}:{})}))}));
+}
+export function parseSvg(text: string, onPath?: (paths: Design["paths"], id: string | undefined) => void, absolute = false, storedPart?: (id:string)=>Design["paths"]|undefined): Design {
  const paths: Design["paths"] = [];
- const stack: Array<{ transform: string; stroke: string; fill: string; ignore: boolean }> = [];
+ const stack: Array<{ transform: string; stroke: string; fill: string; ignore: boolean; id?: string }> = [];
  let root = false, scale = `scale(${25.4 / 96} ${-25.4 / 96})`;
  const parser = new SaxesParser({ xmlns: false });
  parser.on("doctype", () => { throw new Error("SVG document types and external entities are not supported."); });
@@ -62,11 +68,14 @@ export function parseSvg(text: string): Design {
     if (box.length !== 4 || !box.every(Number.isFinite) || box[2]! <= 0 || box[3]! <= 0) throw new Error("SVG viewBox is invalid.");
     const sx = (length(a.width) ?? box[2]! * 25.4 / 96) / box[2]!, sy = (length(a.height) ?? box[3]! * 25.4 / 96) / box[3]!;
     if (Math.abs(sx - sy) > 1e-6) throw new Error("Use the same horizontal and vertical SVG scale.");
-    scale = `scale(${sx} ${-sy}) translate(${-box[0]!} ${-box[1]!})`;
+    scale = `${absolute ? `translate(0 ${length(a.height) ?? box[3]! * sy}) ` : ""}scale(${sx} ${-sy}) translate(${-box[0]!} ${-box[1]!})`;
    }
   }
-  const ctx = { transform: `${parent?.transform ?? scale} ${a.transform ?? ""}`, stroke: a.stroke ?? style.stroke ?? parent?.stroke ?? "none", fill: a.fill ?? style.fill ?? parent?.fill ?? "black", ignore: parent?.ignore || ["defs", "metadata", "title", "desc"].includes(name) || style.display === "none" || a.display === "none" };
+  const ownId=/^cobblr-(?:part-)?(\d+)$/.exec(a.id??"")?.[1]??a["data-part-id"];
+  const ctx = { id: ownId ?? parent?.id, transform: `${parent?.transform ?? scale} ${a.transform ?? ""}`, stroke: a.stroke ?? style.stroke ?? parent?.stroke ?? "none", fill: a.fill ?? style.fill ?? parent?.fill ?? "black", ignore: parent?.ignore || ["defs", "metadata", "title", "desc"].includes(name) || style.display === "none" || a.display === "none" };
   stack.push(ctx);
+  const stored=ownId&&!ctx.ignore?storedPart?.(ownId):undefined;
+  if(stored){const geometry=transformPaths(stored,ctx.transform);paths.push(...geometry);onPath?.(geometry,ownId);ctx.ignore=true;return;}
   if (a["clip-path"] || a.mask || style["clip-path"] || a.filter || style.filter) throw new Error("Flatten masks, filters and clipping before uploading.");
   if (a["stroke-dasharray"] || style["stroke-dasharray"]) throw new Error("Convert dashed strokes to separate paths before uploading.");
   if (a.class || a["marker-start"] || a["marker-end"] || a["marker-mid"] || style["marker-start"] || style["marker-end"] || style["marker-mid"] || a["vector-effect"]) throw new Error("Flatten CSS classes, markers and vector effects before uploading.");
@@ -80,7 +89,8 @@ export function parseSvg(text: string): Design {
   else if (name === "circle" || name === "ellipse") { const x = val("cx"), y = val("cy"), rx = name === "circle" ? val("r") : val("rx"), ry = name === "circle" ? rx : val("ry"); d = `M${x - rx} ${y}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0z`; }
   else if (name !== "path") throw new Error(`Unsupported SVG element ${name}. Convert text, images and referenced shapes to paths first.`);
   if (!d) throw new Error("A drawing path has no geometry.");
-  paths.push(...pathGeometry(d, ctx.stroke !== "none" ? ctx.stroke : ctx.fill, ctx.transform));
+  const geometry = pathGeometry(d, a["data-layer"] ?? (ctx.stroke !== "none" ? ctx.stroke : ctx.fill), ctx.transform);
+  paths.push(...geometry); onPath?.(geometry, ctx.id);
  });
  parser.on("closetag", () => { stack.pop(); });
  parser.write(text).close();

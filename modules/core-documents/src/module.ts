@@ -15,7 +15,7 @@ export default defineModule({
   name: "core-documents",
   aliases: ["core-library"],
   maturity: "beta",
-  version: "0.2.8",
+  version: "0.2.10",
   displayName: "Libraries",
   description:
     "The things you keep in other apps, like receipts and manuals in Paperless-ngx or games in RomM, matched to the records they belong to and linked where you can open them.",

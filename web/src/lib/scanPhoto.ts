@@ -38,13 +38,6 @@ export interface ScanPhotoItem {
   barcode_text?: string | null;
 }
 
-/** Is the row's own photo a picture of the ITEM (it was identified from it),
- *  rather than a frame of a barcode? Then nothing found for it automatically
- *  may take its place (#4037). */
-export function ownPhotoIsTheItem(item: ScanPhotoItem | null | undefined): boolean {
-  return !!item?.image_file_id && item.source_kind === "photo" && !item.barcode_text;
-}
-
 /** Is the catalog art still unverified against the user's photo? Drives the
  *  "checking" labels — NOT the ordering (see photoOrder). */
 export function photoUnverified(item: ScanPhotoItem | null | undefined): boolean {
@@ -61,18 +54,21 @@ export function photoMismatched(item: ScanPhotoItem | null | undefined): boolean
   return !!(item?.suggested_metadata as { photo_mismatch?: unknown } | null)?.photo_mismatch;
 }
 
-/** Preference order for THIS item, most-preferred first. Only a CONFIRMED
- *  mismatch demotes the catalog art; a pending check shows it optimistically
- *  (with `pending` telling the caller to label it "checking").
+/** Preference order for THIS item, most-preferred first: the catalog
+ *  picture, then yours (the owner, #2982: "Catalog first, then yours"). Only
+ *  a CONFIRMED mismatch demotes the catalog art; a pending check shows it
+ *  optimistically (with `pending` telling the caller to label it "checking").
  *
- *  Except over a photo of the item itself. A row identified from its own
- *  photo keeps that photo first, and a picture a lookup found for its name is
- *  offered beside it, never swapped in: a slim silver flashlight's card showed
- *  a yellow-handled lantern that shared its brand and a colour word (#4037).
- *  A picture the person chose there leads, as everywhere. */
+ *  Every surface reads this one order: the strip's thumbnail, the item
+ *  screen's pair and the tile. #4037 made a photographed row lead with its
+ *  own photo here, while the item screen kept Catalog first, so the strip and
+ *  the detail showed two different pictures for one row (#6099: "Wrong image
+ *  shown on strip. I've complained about all this stuff repeatedly."). The
+ *  flashlight that #4037 was about is still kept: a found picture that does
+ *  not look like the photo is refused or set aside by its colours
+ *  (withhold-picture.ts), and then there is no catalog picture to lead. */
 export function photoOrder(item: ScanPhotoItem | null | undefined): PhotoRole[] {
   if (photoMismatched(item)) return ["yours", "frame", "catalog"];
-  if (ownPhotoIsTheItem(item) && !catalogChosen(item)) return ["yours", "catalog", "frame"];
   return ["catalog", "yours", "frame"];
 }
 

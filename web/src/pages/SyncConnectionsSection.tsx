@@ -14,14 +14,17 @@ import { HomeNetworkHint } from "../components/HomeNetworkHint";
 import { useHosted } from "../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { SettingsSection } from "../components/SettingsSection";
+import { SyncAsks, SyncRuleSelect } from "../components/SyncAsks";
+import { CONFLICT_POLICY_LABELS } from "@cobblr/platform-contract/sync-merge";
 
-type PlanAction = "create" | "update" | "link" | "unchanged" | "delete";
+type PlanAction = "create" | "update" | "link" | "unchanged" | "delete" | "ask";
 const ACTION_LABEL: Record<PlanAction, string> = {
   create: "create",
   link: "merge",
   update: "update",
   unchanged: "unchanged",
   delete: "remove",
+  ask: "ask you",
 };
 const ACTION_BADGE: Record<PlanAction, string> = {
   create: "border-emerald-500/50 text-emerald-700 dark:text-emerald-400",
@@ -29,6 +32,7 @@ const ACTION_BADGE: Record<PlanAction, string> = {
   update: "border-amber-500/50 text-amber-700 dark:text-amber-400",
   unchanged: "border-line dark:border-slate-700 text-faint dark:text-slate-500",
   delete: "border-ember-500/50 text-ember-700 dark:text-ember-400",
+  ask: "border-ember-500/50 text-ember-700 dark:text-ember-400",
 };
 const ACTION_TEXT: Record<PlanAction, string> = {
   create: "text-emerald-600 dark:text-emerald-400",
@@ -36,7 +40,9 @@ const ACTION_TEXT: Record<PlanAction, string> = {
   update: "text-amber-600 dark:text-amber-400",
   unchanged: "text-faint dark:text-slate-500",
   delete: "text-ember-600 dark:text-ember-400",
+  ask: "text-ember-600 dark:text-ember-400",
 };
+const DECISION_WORDS = { write: "written", keep: "yours kept", ask: "asks you" } as const;
 
 function fmtVal(v: unknown): string {
   if (v === null || v === undefined) return "—";
@@ -144,7 +150,7 @@ function FieldList({ fields, dim }: { fields: Record<string, unknown>; dim?: boo
 // merge/update, the existing entity it links into — so you can verify both sides.
 function PlanRow({ it }: { it: ImportPlanItem }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = !!it.fields || !!it.match?.fields;
+  const hasDetail = !!it.fields || !!it.match?.fields || !!it.changes?.length || !!it.candidates?.length;
   return (
     <div className="border-b border-line/40 dark:border-slate-700/40 last:border-0">
       <button
@@ -161,6 +167,21 @@ function PlanRow({ it }: { it: ImportPlanItem }) {
         )}
         {hasDetail && <span className="text-faint dark:text-slate-500 shrink-0 w-3 text-center">{open ? "−" : "+"}</span>}
       </button>
+      {open && hasDetail && it.candidates?.length ? (
+        <p className="px-2.5 pb-1 text-[10px] text-muted dark:text-slate-400">
+          Could be {it.candidates.map((c) => `"${c.name}"`).join(" or ")}. Nothing is made or linked until you say which, after the sync runs.
+        </p>
+      ) : null}
+      {open && it.changes?.length ? (
+        <ul data-testid="plan-changes" className="px-2.5 pb-2 space-y-0.5">
+          {it.changes.map((c) => (
+            <li key={c.field} className="text-[10px] leading-snug text-content dark:text-mortar-200">
+              <span className="font-mono text-faint dark:text-slate-500">{c.field.replace(/^metadata\./, "")}</span> here {fmtVal(c.ours)}, source {fmtVal(c.theirs)}:{" "}
+              <strong>{DECISION_WORDS[c.decision]}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {open && hasDetail && (
         <div className="px-2.5 pb-2 grid grid-cols-2 gap-3">
           {it.fields && (
@@ -909,6 +930,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
                   not imported
                 </span>
                 <div className="flex-1" />
+                <SyncRuleSelect slug={activeSlug} connId={conn.id} entityType={t.key} value={state?.conflict_policy ?? "cobblr"} />
                 <button
                   onClick={() => setPreviewKey(t.key)}
                   className="text-[11px] text-accent hover:underline shrink-0"
@@ -919,7 +941,8 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
             );
           }
           return (
-            <div key={t.key} className="flex items-center gap-2 text-xs">
+            <div key={t.key}>
+            <div className="flex items-center gap-2 text-xs">
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input
                   type="checkbox"
@@ -945,12 +968,15 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
                       : `${state.last_synced_count ?? 0} synced`}
                 </span>
               )}
+              <SyncRuleSelect slug={activeSlug} connId={conn.id} entityType={t.key} value={state?.conflict_policy ?? "cobblr"} />
               <button
                 onClick={() => setPreviewKey(t.key)}
                 className="text-[11px] text-accent hover:underline shrink-0"
               >
                 Preview &amp; sync →
               </button>
+            </div>
+            {state && <SyncAsks slug={activeSlug} connId={conn.id} entityType={t.key} state={state} />}
             </div>
           );
         })}
@@ -980,13 +1006,18 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
           {previewQ.data?.plan && (
             <div className="space-y-3">
               <div className="flex flex-wrap gap-1.5">
-                {(["create", "link", "update", "unchanged", "delete"] as const)
-                  .filter((a) => previewQ.data!.plan!.counts[a] > 0)
+                {(["create", "link", "update", "ask", "unchanged", "delete"] as const)
+                  .filter((a) => (previewQ.data!.plan!.counts[a] ?? 0) > 0)
                   .map((a) => (
                     <span key={a} className={`text-[11px] px-2 py-0.5 rounded border ${ACTION_BADGE[a]}`}>
                       {previewQ.data!.plan!.counts[a]} {ACTION_LABEL[a]}
                     </span>
                   ))}
+                {previewQ.data.plan.policy && (
+                  <span className="text-[11px] px-2 py-0.5 rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400">
+                    If they differ: {CONFLICT_POLICY_LABELS[previewQ.data.plan.policy]}
+                  </span>
+                )}
                 {previewQ.data.plan.counts.total === 0 && (
                   <span className="text-[11px] text-muted dark:text-slate-400">Nothing to {previewApproved ? "sync" : "import"}  - the source is empty.</span>
                 )}

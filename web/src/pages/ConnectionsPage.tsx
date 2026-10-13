@@ -229,7 +229,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
             </div>
             <div className="flex items-center shrink-0">
               <button
-                aria-label={editing?.id === c.id ? "Close" : "Edit routing"}
+                aria-label={editing?.id === c.id ? "Close" : "Edit connection"}
                 type="button"
                 onClick={() => {
                   setEditing((cur) => (cur?.id === c.id ? null : c));
@@ -239,7 +239,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
                   "p-1.5 transition " +
                   (editing?.id === c.id ? "text-accent" : "text-faint hover:text-accent")
                 }
-                title={editing?.id === c.id ? "Close" : "Edit routing"}
+                title={editing?.id === c.id ? "Close" : "Edit connection"}
                 aria-expanded={editing?.id === c.id}
               >
                 <Pencil size={14} />

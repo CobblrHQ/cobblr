@@ -196,7 +196,42 @@ export interface InventoryStocktakesTable {
   undone_by: string | null;
 }
 
+export interface InventoryRecountsTable {
+  id: Generated<string>;
+  scope: import("./recount.js").RecountScope;
+  scope_label: string;
+  status: Generated<"open" | "applied" | "undone" | "abandoned">;
+  created_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+  truth: Generated<boolean>;
+  applied: import("./recount-reconcile.js").RecountApplied | null;
+  applied_at: Date | null;
+  applied_by: string | null;
+  undone_at: Date | null;
+  undone_by: string | null;
+}
+
+export interface InventoryRecountScansTable {
+  id: Generated<string>;
+  recount_id: string;
+  record_id: string | null;
+  like_id: string | null;
+  /** The type it reads as, in the collection's parent (Filament Types). */
+  like_type_id: Generated<string | null>;
+  matched_by: "picked" | "barcode" | "label" | "new";
+  title: string;
+  barcode: string | null;
+  attributes: Generated<Record<string, string>>;
+  place_id: string | null;
+  amount: string | null;
+  scanned_by: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface InventoryDB {
+  inventory_recounts: InventoryRecountsTable;
+  inventory_recount_scans: InventoryRecountScansTable;
   inventory_stocktakes: InventoryStocktakesTable;
   inventory_paste_storage: { part_id: string; state: import("./paste-lifecycle.js").PasteClock; revision: Generated<number>; updated_at: Generated<Date> };
   inventory_stock: { part_id: string; config: import("./stock-shapes.js").StockConfig; shape: Generated<import("./stock-shapes.js").StockShape>; used: Generated<string>; revision: Generated<number>; updated_at: Generated<Date> };

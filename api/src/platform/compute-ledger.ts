@@ -9,6 +9,12 @@
 // CPU is the process's, so a request that overlapped another is charged for both. Each request knows
 // whether anything else ran while it did; `cpu_ms` is read from the ones that ran alone, and
 // `cpu_ms_overlapped` from the rest (an upper bound). Worker threads (nesting) are in the process's CPU.
+//
+// A route's share of CPU is its own cost, measured alone, times its calls: never the process's CPU while
+// it was open. The first day on the hosted surfaces charged a 25-second edge long-poll with everything else
+// the process did meanwhile, 46% of one hosted surface's CPU for a request that waits. A route that never ran alone
+// has no share (`cpu_share: null`), rather than a wrong one. Per-callback timing (async hooks) would say
+// exactly, and cost every request about half again in promise-heavy code, so it is not done here.
 
 const MAX_ROUTES = 400;
 const SAMPLES = 500;
@@ -18,7 +24,8 @@ interface RouteTally {
   wall: number[];
   cpuSolo: number[];
   cpuOverlapped: number[];
-  cpuTotal: number;
+  soloSum: number;
+  soloN: number;
   rssGrowthMax: number;
   errors: number;
   perWorkspaceDay: Map<string, Map<string, number>>;
@@ -93,14 +100,17 @@ export function record(
     if (routes.size >= MAX_ROUTES) key = "other";
     t = routes.get(key);
     if (!t) {
-      t = { calls: 0, wall: [], cpuSolo: [], cpuOverlapped: [], cpuTotal: 0, rssGrowthMax: 0, errors: 0, perWorkspaceDay: new Map(), seen: 0 };
+      t = { calls: 0, wall: [], cpuSolo: [], cpuOverlapped: [], soloSum: 0, soloN: 0, rssGrowthMax: 0, errors: 0, perWorkspaceDay: new Map(), seen: 0 };
       routes.set(key, t);
     }
   }
   t.calls++;
   keep(t.wall, m.wallMs);
   keep(m.overlapped ? t.cpuOverlapped : t.cpuSolo, m.cpuMs);
-  t.cpuTotal += m.cpuMs;
+  if (!m.overlapped) {
+    t.soloSum += m.cpuMs;
+    t.soloN++;
+  }
   t.rssGrowthMax = Math.max(t.rssGrowthMax, m.rssGrowth);
   if (m.failed) t.errors++;
   if (workspace) {
@@ -133,14 +143,18 @@ export interface ComputeRow {
   wall_ms: { p50: number; p95: number; max: number; samples: number };
   cpu_ms: { p50: number; p95: number; max: number; samples: number };
   cpu_ms_overlapped: { p50: number; p95: number; max: number; samples: number };
-  cpu_share: number;
+  /** Its measured-alone CPU times its calls, as a share of every route's; null when it never ran alone. */
+  cpu_share: number | null;
+  /** Its mean CPU measured alone, times its calls, in ms; null when it never ran alone. */
+  cpu_estimated_ms: number | null;
   rss_growth_max_mb: number;
   per_workspace_day: { workspaces: number; p50: number; p95: number; max: number };
 }
 
 /** Every route seen since the api started, the heaviest by total CPU first. */
-export function computeStats(limit = 60): { since: string; uptime_s: number; routes_seen: number; cpu_total_ms: number; rows: ComputeRow[] } {
-  const total = [...routes.values()].reduce((s, t) => s + t.cpuTotal, 0);
+export function computeStats(limit = 60): { since: string; uptime_s: number; routes_seen: number; cpu_total_ms: number; cpu_estimated_ms: number; rows: ComputeRow[] } {
+  const estimate = (t: RouteTally) => (t.soloN ? (t.soloSum / t.soloN) * t.calls : null);
+  const total = [...routes.values()].reduce((s, t) => s + (estimate(t) ?? 0), 0);
   const rows = [...routes.entries()]
     .map(([route, t]): ComputeRow => {
       const perDay = [...t.perWorkspaceDay.values()].flatMap((d) => [...d.values()]).sort((a, b) => a - b);
@@ -151,20 +165,29 @@ export function computeStats(limit = 60): { since: string; uptime_s: number; rou
         wall_ms: spread(t.wall),
         cpu_ms: spread(t.cpuSolo),
         cpu_ms_overlapped: spread(t.cpuOverlapped),
-        cpu_share: total ? Math.round((t.cpuTotal / total) * 1000) / 1000 : 0,
+        cpu_share: estimate(t) === null ? null : total ? Math.round((estimate(t)! / total) * 1000) / 1000 : 0,
+        cpu_estimated_ms: estimate(t) === null ? null : Math.round(estimate(t)!),
         rss_growth_max_mb: round(t.rssGrowthMax / 1024 / 1024),
         per_workspace_day: { workspaces: new Set([...t.perWorkspaceDay.values()].flatMap((d) => [...d.keys()])).size, p50: pct(perDay, 0.5), p95: pct(perDay, 0.95), max: perDay.at(-1) ?? 0 },
       };
     })
-    .sort((a, b) => b.cpu_share - a.cpu_share || b.calls - a.calls)
+    .sort((a, b) => (b.cpu_share ?? -1) - (a.cpu_share ?? -1) || b.calls - a.calls)
     .slice(0, Math.max(1, Math.min(400, limit)));
-  return { since: since.toISOString(), uptime_s: Math.round(process.uptime()), routes_seen: routes.size, cpu_total_ms: Math.round(total), rows };
+  return { since: since.toISOString(), uptime_s: Math.round(process.uptime()), routes_seen: routes.size, cpu_total_ms: Math.round(processCpuMs()), cpu_estimated_ms: Math.round(total), rows };
+}
+
+/** The process's own CPU since the ledger started: everything, requests or not. */
+let cpuAtStart = process.cpuUsage();
+function processCpuMs(): number {
+  const c = process.cpuUsage(cpuAtStart);
+  return (c.user + c.system) / 1000;
 }
 
 /** For a test: start again. */
 export function resetComputeLedger(): void {
   routes.clear();
   since = new Date();
+  cpuAtStart = process.cpuUsage();
   inFlight = 0;
   started = 0;
 }

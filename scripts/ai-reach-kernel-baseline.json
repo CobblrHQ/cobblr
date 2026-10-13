@@ -15,8 +15,6 @@
     "pairings.ts DELETE /:x": "needs an unlink action, the inverse of linking two records",
     "pairings.ts PATCH /:x": "needs an action to change what a link between two records says",
     "pairings.ts POST /": "needs a link action to connect two records, such as a part and the project that uses it",
-    "people.ts PATCH /:x": "needs an action to edit a person on the people list",
-    "people.ts POST /": "needs an action to add a person to the people list",
     "people.ts POST /:x/hand-off": "needs an action that hands one person's things to another, after the person's yes",
     "people.ts POST /:x/invite": "needs an action that sends a sign-up invitation, after the person's yes, since it emails someone",
     "platform.ts DELETE /:x/bindings/:x": "needs an action to remove an automation (a wire), shown before it goes",

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { wirePrefillFromParams } from "../lib/wire-composer";
 import { usePrefill } from "../lib/prefill";
+import { wireSentence } from "../lib/wireSentence";
 import { STOCK_CHANGED_EVENT, readStockChange, readWireRecords, stockChangePhrase, type NarrowingCondition } from "@cobblr/platform-contract/wire-narrowing";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -108,6 +109,15 @@ export function BindingsPage() {
                 onClick={() => setSelected(b)}
                 className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
               >
+                {(() => {
+                  const said = wireSentence(b);
+                  return said.headline ? (
+                    <div className="mb-1">
+                      <div className="text-sm text-content dark:text-mortar-100" data-testid="wire-said">{said.headline}</div>
+                      {said.given && <div className="text-xs text-muted dark:text-slate-400" data-testid="wire-given">{said.given}</div>}
+                    </div>
+                  ) : null;
+                })()}
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="font-mono text-xs text-accent dark:text-cobble-300">{b.source_kind}</span>
                   <span className="text-faint">→</span>
@@ -278,6 +288,8 @@ function narrowingLine(b: PlatformBinding): string | null {
     if (phrase) parts.push(`when it ${phrase}`);
   }
   const r = readWireRecords(f?.in);
+  // A wire on one record names it in its sentence above (wireSentence).
+  if (r?.record && b.said?.record) return null;
   if (r?.record) parts.push("one record");
   if (r?.category) parts.push(`in “${r.category}”`);
   if (r?.tag) parts.push(`tagged “${r.tag}”`);

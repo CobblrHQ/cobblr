@@ -74,6 +74,8 @@ export { MutationError, errorSentence } from "./MutationError";
 export { PasswordInput, SecretInput, AddressInput, NOT_A_LOGIN, type PasswordInputProps } from "./PasswordInput";
 export { NounChoiceButtons, nounChoiceHeading } from "./NounChoice";
 export { SegmentedChoice, SEGMENTED_MAX, type SegmentedOption } from "./SegmentedChoice";
+export { rovingRadio, type RovingRadioProps } from "./roving-radio";
+export { useCloseToOrigin } from "./close-to-origin";
 export { BulkActionBar } from "./BulkActionBar";
 export { lazyOverlay } from "./lazy-overlay";
 export { useTickedRows, tickedRowsKey, type ClearForUndo } from "./ticked-rows";
@@ -181,6 +183,9 @@ export {
   KERNEL_PANELS,
   type EntityDetailPanelCtx,
   type ContributedPanelSpec,
+  type PanelRecordShape,
+  panelShows,
+  collectionNameOf,
   type DetailPanelComponent,
   ContributedViewToolbar,
   registerViewToolbar,
@@ -204,7 +209,7 @@ export { QuantityField, MEASURED_MIN, type QuantityFieldProps } from "./Quantity
 export { AmountControl } from "./AmountControl";
 export { StockStepper } from "./StockStepper";
 export { NumberStepper, type NumberStepperProps } from "./NumberStepper";
-export { TypeableNumber } from "./TypeableNumber";
+export { TypeableNumber, readTypedNumber } from "./TypeableNumber";
 export { StickyBottomBar } from "./StickyBottomBar";
 export type {
   FieldRendererId,

@@ -305,6 +305,16 @@ export interface CoreScanDB {
   core_scan_station_scans: CoreScanStationScansTable;
   core_scan_station_actions: CoreScanStationActionsTable;
   core_scan_model_facts: CoreScanModelFactsTable;
+  core_scan_item_revisions: CoreScanItemRevisionsTable;
+}
+
+/** A scan row's fields before a rewrite replaced them (#6100, migrations/0044). */
+export interface CoreScanItemRevisionsTable {
+  id: Generated<string>;
+  item_id: string;
+  action: string;
+  before: ColumnType<Record<string, unknown>, string, string>;
+  created_at: Generated<Date>;
 }
 
 /** What the workspace learned about a model (#6013, migrations/0043). */

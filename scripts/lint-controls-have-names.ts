@@ -141,6 +141,7 @@ export function check(file: string, src: string): Violation[] {
     if (ts.isJsxSelfClosingElement(n)) return isIconTag(n.tagName.getText(sf));
     if (ts.isParenthesizedExpression(n)) return isIcon(n.expression);
     if (ts.isJsxExpression(n)) return !!n.expression && isIcon(n.expression);
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return isIcon(n.right);
     if (ts.isConditionalExpression(n)) return isIcon(n.whenTrue) && isIcon(n.whenFalse);
     return false;
   };

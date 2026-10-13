@@ -520,12 +520,16 @@ function TaskRow({
   });
 
   const done = task.status === "done";
+  const completionLabel = `${done ? "Reopen" : "Complete"} ${task.title}`;
   const blocked = (task.blocked_deps ?? 0) > 0;
   const due = dueState(task.due_date, task.status, localToday());
 
   return (
     <li className="flex flex-wrap items-center gap-2 py-1.5 group">
       <button
+        type="button"
+        aria-label={completionLabel}
+        title={completionLabel}
         onClick={() => setStatus.mutate(done ? "todo" : "done")}
         className={
           "w-4 h-4 rounded border flex items-center justify-center shrink-0 transition " +

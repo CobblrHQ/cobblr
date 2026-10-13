@@ -126,6 +126,22 @@ function ThingBox({ t, bound, editable, onDrop, print, pxPerMm }: { t: BoardThin
   );
 }
 
+function UnsizedChip({ t, editable, onDrop, print }: { t: BoardThing; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  return (
+    <span
+      ref={ref}
+      data-layout-unsized={t.id}
+      data-moved={t.moved ? "true" : undefined}
+      title={t.size ? `${t.name}: no floor position yet` : `${t.name}: no size yet, so it cannot be checked for fit`}
+      onPointerDown={editable ? (e) => startThingDrag(e, t.key, ref.current!, onDrop) : undefined}
+      className={`relative inline-block max-w-full rounded border border-dashed px-2 py-1 text-xs break-words ${print ? "border-black text-black" : "border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-slate-200"} ${editable ? "cursor-grab touch-none select-none" : ""}`}
+    >
+      {t.name} {t.size ? "(no floor position)" : "(no size)"}
+    </span>
+  );
+}
+
 function RackFace({ rack, editable, onDrop, print, maxHeight, faceWidth }: { rack: BoardRack; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean; maxHeight: number; faceWidth?: number }) {
   const face = rack.face!;
   const width = faceWidth ?? faceWidthPx(face, maxHeight);
@@ -383,6 +399,15 @@ export function LayoutBoard({
                 print={print}
               />
             ))}
+            {board.floor.filter((t) => !t.size && t.position).map((t) => (
+              <span
+                key={t.key}
+                data-layout-unsized-pin={t.id}
+                title={`${t.name}: no size yet`}
+                className={`pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 ${print ? "border-black bg-white" : "border-accent bg-surface dark:bg-slate-900"}`}
+                style={{ left: pct(t.position!.x_mm, b.w_mm), top: pct(t.position!.y_mm, b.d_mm) }}
+              />
+            ))}
             {live && editable && <GapReadout room={b} walls={board.room.walls} box={live.rect} others={onFloor.filter((o) => o.id !== live.id)} />}
             {board.floor.filter((t) => t.rect).map((t) => (
               <ThingBox key={t.key} t={t} bound={b} editable={editable} onDrop={onDrop} print={print} pxPerMm={null} />
@@ -391,6 +416,14 @@ export function LayoutBoard({
           </div>
           {print && <ScaleBar bound={b} />}
           {!print && <PlanFlagList flags={board.flags} />}
+        </section>
+      )}
+      {board.floor.some((t) => !t.rect) && (
+        <section className="space-y-1" data-layout-floor-unmeasured="">
+          <h3 className={`text-xs font-medium ${print ? "text-black" : "text-muted dark:text-slate-400"}`}>On the floor, not drawn to size</h3>
+          <div className="flex flex-wrap gap-2">
+            {board.floor.filter((t) => !t.rect).map((t) => <UnsizedChip key={t.key} t={t} editable={editable} onDrop={onDrop} print={print} />)}
+          </div>
         </section>
       )}
       {faces.length > 0 && (
@@ -403,6 +436,14 @@ export function LayoutBoard({
           </div>
         </section>
       )}
+      {board.racks.flatMap((r) => r.shelves.filter((s) => s.unsized.length).map((s) => (
+        <section key={s.id} className="space-y-1" data-layout-shelf-unmeasured={s.id}>
+          <h3 className={`text-xs font-medium ${print ? "text-black" : "text-muted dark:text-slate-400"}`}>{r.name}, {nameUnder(s.name, r.name)}: not drawn to size</h3>
+          <div className="flex flex-wrap gap-2">
+            {s.unsized.map((t) => <UnsizedChip key={t.key} t={t} editable={editable} onDrop={onDrop} print={print} />)}
+          </div>
+        </section>
+      )))}
     </div>
   );
 }

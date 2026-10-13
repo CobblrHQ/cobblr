@@ -255,6 +255,16 @@ export interface MatchCandidate {
   basis?: "noun" | "keywords" | "fallback";
 }
 
+/** How a stored route was earned, read back for a replay. */
+function provenanceOf(cand: Record<string, unknown>): Pick<MatchCandidate, "heuristic" | "basis" | "learned" | "ai_fallback"> {
+  return {
+    ...(cand.heuristic === true ? { heuristic: true as const } : {}),
+    ...(cand.basis === "noun" || cand.basis === "keywords" || cand.basis === "fallback" ? { basis: cand.basis } : {}),
+    ...(cand.learned === "single" || cand.learned === "confident" ? { learned: cand.learned } : {}),
+    ...(cand.ai_fallback !== undefined ? { ai_fallback: cand.ai_fallback as MatchCandidate["ai_fallback"] } : {}),
+  };
+}
+
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.min(1, Math.max(0, n));
@@ -1435,6 +1445,11 @@ export async function runMatchmaker(
       ...(entry.bundle_external_id ? { bundle_external_id: entry.bundle_external_id } : {}),
       ...(entry.from_bundles?.[0] ? { from_bundle: entry.from_bundles[0] } : {}),
       ...(Object.keys(placeFields).length ? { place_fields: placeFields } : {}),
+      // A REPLAY re-refines what the row already holds, so how each route was
+      // earned travels with it (#6210): a keyword route replayed is still a
+      // keyword route, and its score is never stamped as how sure we are of
+      // what the thing is. Only under replay: a model reply never sets these.
+      ...(replay ? provenanceOf(cand) : {}),
     };
     const dedupeKey = `${entry.module}::${entry.instance ?? ""}`;
     const prevIdx = emitted.get(dedupeKey);

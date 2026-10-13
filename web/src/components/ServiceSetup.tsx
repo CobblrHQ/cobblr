@@ -18,7 +18,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type ServicePreview } from "../lib/api";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
-import { AddressInput, SecretInput } from "@cobblr/platform-web";
+import { rovingRadio, AddressInput, SecretInput } from "@cobblr/platform-web";
 
 /** What each effect means, in words a person reads before trusting it. */
 export const EFFECT_WORDS: Record<ServicePreview["capabilities"][number]["effect"], { label: string; tone: string }> = {
@@ -106,10 +106,11 @@ export function ServiceSetup({
           {[
             { value: "", label: "At an address" },
             { value: "bridge", label: "On my network, through my bridge" },
-          ].map((o) => (
+          ].map((o, i) => (
             <button
               key={o.label}
               type="button"
+              {...rovingRadio(i, viaBridge ? 1 : 0)}
               role="radio"
               aria-checked={viaBridge === (o.value === "bridge")}
               onClick={() => change("transit", o.value)}

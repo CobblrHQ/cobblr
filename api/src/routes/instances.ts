@@ -106,9 +106,9 @@ const FileIntakeBody = z.object({
       z.object({
         status: z.string().max(40),
         filename: z.string().min(1).max(500),
-        path: z.string().max(1000).optional(),
-        file_id: z.string().max(100).optional(),
-        mime_type: z.string().max(200).optional(),
+        path: z.string().max(1000).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+        file_id: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+        mime_type: z.string().max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
       }),
     )
     .max(2000),
@@ -266,7 +266,7 @@ const DemoteBody = z.object({
   parent_instance: z.string().min(1),
   /** The category the demoted items take on. Defaults to the instance's display
    *  name — it IS the category, that's why it was promoted. */
-  category: z.string().min(1).max(60).optional(),
+  category: z.string().min(1).max(60).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // AI-ACTION: platform:demote-category

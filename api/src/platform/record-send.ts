@@ -15,7 +15,7 @@ import { hiddenFieldsFor } from "./field-scope-projection.js";
 import { provisionInstance, getInstance } from "./instances.js";
 import { enableModuleForOrg } from "../modules/enable.js";
 import { createFieldDef, FieldDefCreate } from "./field-defs.js";
-import { getOverrideConfig, upsertOverride } from "./entity-kind-overrides.js";
+import { upsertOverride } from "./entity-kind-overrides.js";
 import { runSerialised } from "./exclusive.js";
 import { restore as restoreDeletedSource, forget as forgetDeletedTarget, get as getDeletedSource, exclusive as lockDeletedSource } from "./deleted-records.js";
 import { currentActor } from "../lib/request-context.js";
@@ -477,8 +477,28 @@ async function prepareTargetShape(orgId: string, userId: string, p: SendRequest)
       if (!own) throw new SendError("The source collection no longer exists.");
       const made = await provisionInstance({ orgId: target.id, moduleName: module, instanceName: own.instance_name, displayName: own.display_name });
       if (!made.ok) throw new SendError(made.message);
-      const config = await getOverrideConfig(orgId, "instance", source.instance);
-      await upsertOverride({ orgId: target.id, targetKind: "instance", targetId: source.instance, config });
+      // How the collection reads and looks (its noun, its plural, its icon,
+      // its layout) lives on the override row keyed module:instance, the key
+      // every reader uses. Read and written under the bare name, the copy got
+      // none of it: a Bookshelf whose books were "Bookshelves" and that a
+      // scanned ISBN passed by (#6155).
+      const key = `${module}:${source.instance}`;
+      const look = await meta
+        .selectFrom("entity_kind_overrides")
+        .select(["display_label", "display_label_plural", "icon", "config"])
+        .where("org_id", "=", orgId)
+        .where("target_kind", "=", "instance")
+        .where("target_id", "=", key)
+        .executeTakeFirst();
+      await upsertOverride({
+        orgId: target.id,
+        targetKind: "instance",
+        targetId: key,
+        displayLabel: look?.display_label ?? undefined,
+        displayLabelPlural: look?.display_label_plural ?? undefined,
+        icon: look?.icon ?? undefined,
+        config: ((look?.config as Record<string, unknown> | null) ?? {}),
+      });
     }
   }
   const existing = await sendFieldDefs(target.id, kind);

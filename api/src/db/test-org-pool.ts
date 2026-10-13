@@ -259,8 +259,10 @@ export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promis
   return { token, userId: row.owner_user_id, orgId: row.org_id, slug: row.slug };
 }
 
-export async function poolStatus(): Promise<{ available: number; taken: number; total: number }> {
-  if (!env.COBBLR_TEST_ORG_POOL) return { available: 0, taken: 0, total: 0 };
+/** The pool's counts, and `fresh`: workspaces that are not the pool's (a sign-up that found it dry provisioned
+ *  its own). Read before and after a suite, the difference is the suite's fallbacks (scripts/ci/pool-demand.mjs). */
+export async function poolStatus(): Promise<{ available: number; taken: number; total: number; fresh: number }> {
+  if (!env.COBBLR_TEST_ORG_POOL) return { available: 0, taken: 0, total: 0, fresh: 0 };
   const rows = await meta
     .selectFrom("test_org_pool")
     .select(["status"])
@@ -270,5 +272,6 @@ export async function poolStatus(): Promise<{ available: number; taken: number; 
   const by = Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
   const available = by.available ?? 0;
   const taken = by.taken ?? 0;
-  return { available, taken, total: available + taken };
+  const fresh = await sql<{ n: string }>`select count(*)::text as n from orgs o where not exists (select 1 from test_org_pool p where p.org_id = o.id)`.execute(meta);
+  return { available, taken, total: available + taken, fresh: Number(fresh.rows[0]?.n ?? 0) };
 }

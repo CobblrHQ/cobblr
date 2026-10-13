@@ -1,3 +1,4 @@
+import type { ScanPurpose } from "@cobblr/platform-contract/scan-triage";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan/camera — full-screen immersive scanner, production-grade.
 //
@@ -209,6 +210,8 @@ export function ScanCameraPage() {
   const [cameraDead, setCameraDead] = useState(false);
   const cameraDeadRef = useRef(false);
   const [pendingBarcode, setPendingBarcode] = useState<string | null>(null);
+  const pendingPurposeRef = useRef<ScanPurpose | null>(null);
+  const purposeRef = useRef<ScanPurpose>("arrival");
   // While armed for ＋Photo/Retake the scanner must not auto-detect: the label
   // you're photographing usually HAS a barcode on it, and a detection would
   // create a separate item mid-append (the orphan case).
@@ -289,6 +292,7 @@ export function ScanCameraPage() {
   const [failedShot, setFailedShot] = useState<{
     blob: Blob;
     stamps: {
+      purpose: ScanPurpose;
       areaName: string | null;
       areaId: string | null;
       container: { kind: string; id: string } | null;
@@ -450,7 +454,7 @@ export function ScanCameraPage() {
   } | null>(null);
   // Move mode: scanning something already tracked (single exact
   // barcode match) auto-moves it into the active bin instead of triaging.
-  const [moveMode, setMoveMode] = useState(() => localStorage.getItem("cobblr-scan-move-mode") === "1");
+  const [moveMode, setMoveMode] = useState(() => localStorage.getItem("cobblr-scan-move-mode") === "1" && localStorage.getItem("cobblr-scan-count-mode") !== "1" && localStorage.getItem("cobblr-scan-sort-mode") !== "1" && params.get("sort") !== "1");
   const toggleMoveMode = useCallback(() => {
     setMoveMode((v) => {
       localStorage.setItem("cobblr-scan-move-mode", v ? "0" : "1");
@@ -461,7 +465,7 @@ export function ScanCameraPage() {
   // opens its count in Set total, so the number you type is the number on
   // the shelf, filed as a correction. Everywhere else a scan starts in Change
   // by, what is in your hands (#3884). Remembered like Move and Sort.
-  const [countMode, setCountMode] = useState(() => localStorage.getItem("cobblr-scan-count-mode") === "1");
+  const [countMode, setCountMode] = useState(() => localStorage.getItem("cobblr-scan-count-mode") === "1" && params.get("sort") !== "1");
   // In-session MOVE HISTORY ("↶ Undo last N"): every auto/manual move
   // pushes here; each undo pops the most recent and re-files the entity where
   // it was — repeated taps walk back through the whole run. Only moves with a
@@ -631,8 +635,14 @@ export function ScanCameraPage() {
       localStorage.setItem("cobblr-scan-sort-mode", "1");
       return true;
     }
-    return localStorage.getItem("cobblr-scan-sort-mode") === "1";
+    return !countMode && localStorage.getItem("cobblr-scan-sort-mode") === "1";
   });
+  purposeRef.current = countMode ? "count" : sortMode ? "sort" : moveMode ? "move" : "arrival";
+  useEffect(() => {
+    localStorage.setItem("cobblr-scan-count-mode", countMode ? "1" : "0");
+    localStorage.setItem("cobblr-scan-sort-mode", sortMode ? "1" : "0");
+    localStorage.setItem("cobblr-scan-move-mode", moveMode ? "1" : "0");
+  }, [countMode, sortMode, moveMode]);
   // Consume-once: ?sort=1 armed Sort mode above (into state + localStorage), so
   // strip it from the URL. Otherwise it persisted and re-armed Sort mode on every
   // refresh, overriding the user later toggling it OFF (the same class of bug as
@@ -792,6 +802,7 @@ export function ScanCameraPage() {
           // NOTE: no target_location_id — sort mode ROUTES; the active-bin
           // stamp would make every scan read as already-placed.
           const item = await api.scanBarcode(activeSlug, {
+            purpose: "sort",
             barcode: raw,
             source_kind: "barcode",
             image_file_id: imageFileId,
@@ -1164,6 +1175,7 @@ export function ScanCameraPage() {
 
       // Sort mode with a directive on screen keeps the camera LIVE while we
       // resolve — a bin label there is the retarget gesture, not a navigation.
+      const detectedPurpose = purposeRef.current;
       const sortRetarget = sortModeRef.current && !!sortEntryRef.current;
 
       // A native Cobblr label. What it points at decides what happens
@@ -1244,6 +1256,7 @@ export function ScanCameraPage() {
               handleSortScan(raw);
               return;
             }
+            pendingPurposeRef.current = detectedPurpose;
             setPendingBarcode(raw);
             setPhase("result");
           } catch {
@@ -1254,6 +1267,7 @@ export function ScanCameraPage() {
               handleSortScan(raw);
               return;
             }
+            pendingPurposeRef.current = detectedPurpose;
             setPendingBarcode(raw);
             setPhase("result");
           }
@@ -1267,6 +1281,7 @@ export function ScanCameraPage() {
         handleSortScan(raw);
         return;
       }
+      pendingPurposeRef.current = detectedPurpose;
       setPendingBarcode(raw);
       setPhase("result");
     },
@@ -1800,6 +1815,7 @@ export function ScanCameraPage() {
 
   // Modal closed → re-arm the scanner (or back to idle if the camera stopped).
   const rearm = useCallback(() => {
+    pendingPurposeRef.current = null;
     setPendingBarcode(null);
     setResultItem(null);
     setIngestBusy(false);
@@ -1835,6 +1851,7 @@ export function ScanCameraPage() {
         ensureBatchId(),
       ]);
       const item = await api.scanBarcode(activeSlug, {
+        purpose: stamps.purpose,
         source_kind: "photo",
         image_file_id: rec.id,
         scan_area: stamps.areaName ?? undefined,
@@ -1860,7 +1877,7 @@ export function ScanCameraPage() {
   // (lib/captureRoute.ts). The image door used to save its own shot here and
   // made a second draft while the camera was armed.
   const landCapture = useCallback(
-    async (blob: Blob, stamps: { areaName: string | null; areaId: string | null; container: typeof containerBinRef.current }, plan: DoorPlan | null) => {
+    async (blob: Blob, stamps: NonNullable<typeof failedShot>["stamps"], plan: DoorPlan | null) => {
       const armed = armRef.current;
       const route = captureRoute(!!armed, plan);
       if (route.kind === "route-qr") {
@@ -1871,6 +1888,7 @@ export function ScanCameraPage() {
         // The image is the frame the code was read off: it rides the inbox
         // row as the person's photo, the way a live frame does.
         frameBlobRef.current = Promise.resolve(blob);
+        pendingPurposeRef.current = stamps.purpose;
         setPendingBarcode(route.code);
         setPhase("result");
         showFilingNote(`Read ${route.code} off the image`);
@@ -1985,7 +2003,8 @@ export function ScanCameraPage() {
     // name never rebind it), and the ref is always the live binding.
     const areaIdNow = areaIdRef.current;
     const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
-    const stamps = {
+    const stamps: NonNullable<typeof failedShot>["stamps"] = {
+      purpose: countMode ? "count" : sortMode ? "sort" : moveMode ? "move" : "arrival",
       areaName: loc ? (loc.short_name ?? loc.name) : null,
       areaId: areaIdNow,
       container: containerBinRef.current,
@@ -2006,7 +2025,7 @@ export function ScanCameraPage() {
     } finally {
       setShutterBusy(false);
     }
-  }, [landCapture, shutterBusy, noteError, planFromStill]);
+  }, [landCapture, shutterBusy, noteError, planFromStill, countMode, moveMode, sortMode]);
 
   // THE IMAGE DOOR (a test door, #2891): an image file stands in for a live
   // frame, for a reviewer with no camera. The same decoder the live loop
@@ -2028,7 +2047,7 @@ export function ScanCameraPage() {
         const areaIdNow = areaIdRef.current;
         const loc = (locsRef.current ?? []).find((l) => l.id === areaIdNow);
         const wasArmed = !!armRef.current;
-        await landCapture(blob, { areaName: loc ? (loc.short_name ?? loc.name) : null, areaId: areaIdNow, container: containerBinRef.current }, plan);
+        await landCapture(blob, { purpose: countMode ? "count" : sortMode ? "sort" : moveMode ? "move" : "arrival", areaName: loc ? (loc.short_name ?? loc.name) : null, areaId: areaIdNow, container: containerBinRef.current }, plan);
         if (!wasArmed && plan.kind === "photo") showFilingNote("Taken from the image; identifying it…");
       } catch (e) {
         noteError(e);
@@ -2036,7 +2055,7 @@ export function ScanCameraPage() {
         setShutterBusy(false);
       }
     },
-    [landCapture, noteError, showFilingNote, shutterBusy],
+    [landCapture, noteError, showFilingNote, shutterBusy, countMode, moveMode, sortMode],
   );
 
   // The + shutter: while a sheet blocks the viewfinder the shutter can't
@@ -2084,6 +2103,7 @@ export function ScanCameraPage() {
     ingestKeyRef.current = key;
     setIngestBusy(true);
     const barcode = pendingBarcode;
+    const purpose = pendingPurposeRef.current ?? purposeRef.current;
     void (async () => {
       try {
         const frame = await (frameBlobRef.current ?? Promise.resolve(null)).catch(() => null);
@@ -2097,6 +2117,7 @@ export function ScanCameraPage() {
             : Promise.resolve(null),
         ]);
         const it = await api.scanBarcode(activeSlug, {
+          purpose,
           barcode,
           scan_area: areaIdRef.current
             ? ((locsRef.current ?? []).find((l) => l.id === areaIdRef.current)?.short_name ??
@@ -2191,7 +2212,10 @@ export function ScanCameraPage() {
     // must stay CARDS on a phone rather than claiming the screen - declared
     // once here instead of per modal (see platform-web/live-surface.tsx).
     <LiveSurfaceProvider>
-    <div ref={shellRef} className="fixed inset-0 z-40 bg-black">
+    {/* From under the bars that reserve the top (a new version, offline, an
+        operator viewing as you), never over them: one laid over the mode strip
+        took its presses (#6247). */}
+    <div ref={shellRef} className="fixed inset-x-0 bottom-0 z-40 bg-black" style={{ top: "var(--top-chrome-height, 0px)" }}>
       <video
         ref={videoRef}
         playsInline
@@ -2301,6 +2325,7 @@ export function ScanCameraPage() {
       */}
       <div
         ref={topChromeRef}
+        data-testid="camera-top-chrome"
         className="absolute top-0 inset-x-0 flex items-center gap-1.5 p-4"
         style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
       >
@@ -2377,7 +2402,11 @@ export function ScanCameraPage() {
             no triage stop (needs an area set to have somewhere to move to). */}
         <button
           type="button"
-          onClick={toggleMoveMode}
+          onClick={() => {
+            if (!moveMode && countMode) toggleCountMode();
+            if (!moveMode && sortMode) toggleSortMode();
+            toggleMoveMode();
+          }}
           aria-pressed={moveMode}
           title="Move mode: scanning something you already track moves it to the active area"
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
@@ -2392,6 +2421,7 @@ export function ScanCameraPage() {
           type="button"
           onClick={() => {
             if (!sortMode && countMode) toggleCountMode();
+            if (!sortMode && moveMode) toggleMoveMode();
             toggleSortMode();
           }}
           aria-pressed={sortMode}
@@ -2409,6 +2439,7 @@ export function ScanCameraPage() {
           type="button"
           onClick={() => {
             if (!countMode && sortMode) toggleSortMode();
+            if (!countMode && moveMode) toggleMoveMode();
             toggleCountMode();
           }}
           aria-pressed={countMode}
@@ -2872,6 +2903,7 @@ export function ScanCameraPage() {
           <ManualScanField
             ownOrigins={scanOrigins}
             onLookup={(code) => {
+              pendingPurposeRef.current = purposeRef.current;
               setPendingBarcode(code);
               setPhase("result");
             }}

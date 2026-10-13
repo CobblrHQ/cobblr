@@ -11,7 +11,7 @@ import { useNavLayout } from "../lib/nav-mode";
 import { useTheme } from "../theme/ThemeContext";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { LAYOUT_OPTIONS, tourStepsFor, type StepContext, type TourStep } from "./tour.config";
-import { OverlayLayer, useEscapeToClose, isShortcut } from "@cobblr/platform-web";
+import { rovingRadio, OverlayLayer, useEscapeToClose, isShortcut } from "@cobblr/platform-web";
 import { dismissInstall, installRoute, readInstallEnv, shouldOfferInstall } from "../lib/install-app";
 import { InstallWalkBody } from "../components/InstallWalk";
 
@@ -190,12 +190,13 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
           <h3 className="text-center text-lg font-bold">{step.title}</h3>
           <p className={`text-center text-sm mt-1.5 ${muted}`}>{step.body}</p>
           {step.kind === "chooseLayout" && <div className="flex flex-col gap-2 mt-4" role="radiogroup" aria-label="Desktop layout">
-            {LAYOUT_OPTIONS.map((o) => {
+            {LAYOUT_OPTIONS.map((o, i) => {
               const sel = navLayout === o.id;
               return (
                 <button
                   key={o.id}
                   type="button"
+                  {...rovingRadio(i, LAYOUT_OPTIONS.findIndex((x) => x.id === navLayout))}
                   role="radio"
                   aria-checked={sel}
                   onClick={o.apply}

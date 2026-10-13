@@ -1,3 +1,5 @@
+import { wiresSaid } from "../platform/wire-said.js";
+import { presentPanels } from "../platform/panel-presence.js";
 import { markRequestReadOnly } from "../lib/request-context.js";
 import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 import { makeSlidingWindowLimiter } from "@cobblr/platform-contract/rate-limit";
@@ -41,7 +43,7 @@ import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { actionGateOf } from "../platform/action-gates.js";
 import { issueUndos, issuedUndoFor, spendIssuedUndo } from "../platform/issued-undos.js";
-import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
+import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester, wireCheckRefusal, typedWireArgs } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
@@ -1198,6 +1200,24 @@ platformOrgRouter.get(
   },
 );
 
+// Which presence-declared record panels have something to show on one
+// record (#6337): a machine with a kiln profile shows its firing logs
+// wherever it is filed; a 3D printer without one shows none.
+platformOrgRouter.get("/:slug/panel-presence", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+    const id = typeof req.query.id === "string" ? req.query.id : "";
+    if (!kind || !id) {
+      res.status(400).json({ error: { code: "missing_record", message: "kind and id are required" } });
+      return;
+    }
+    const collection = typeof req.query.collection === "string" && req.query.collection ? req.query.collection : null;
+    res.json({ present: await presentPanels(req.tenant!.org.id, kind, id, collection) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 platformOrgRouter.get(
   "/:slug/bindings",
   requireAuth,
@@ -1214,10 +1234,14 @@ platformOrgRouter.get(
       // one stored before the save check existed (never_runs), or one on an
       // event nothing sends any more (trigger_silent).
       const declared = declaredWireEvents();
+      // Each wire in words beside its ids: the record it watches, the
+      // action's label and its arguments (#6110).
+      const said = await wiresSaid(req.tenant!.org.id, rows);
       const items = [];
-      for (const r of rows) {
+      for (const [n, r] of rows.entries()) {
         items.push({
           ...r,
+          said: said[n],
           never_runs: await lifecycleWireRefusal(req.tenant!.org.id, r.source_kind, r.trigger_type),
           trigger_silent: r.trigger_type === "event" && !!r.trigger_event && !declared.has(r.trigger_event),
         });
@@ -1290,10 +1314,20 @@ platformOrgRouter.post(
         res.status(400).json({ error: { code: "wire_never_runs", message: dead } });
         return;
       }
+      const cannot = await wireCheckRefusal(parsed.data.action_id, req.tenant!.org.id, parsed.data.args ?? {});
+      if (cannot) {
+        res.status(400).json({ error: { code: "wire_cannot_run", message: cannot } });
+        return;
+      }
+      // Saved as the action reads it: a boolean as a boolean (#6130).
+      parsed.data.args = (await typedWireArgs(parsed.data.action_id, parsed.data.args)) ?? undefined;
       const inserted = await meta
         .insertInto("entity_action_bindings")
         .values({
           org_id: req.tenant!.org.id,
+          // Who made it: an automation that reaches outside the workspace
+          // names this person as having set it up (#6070).
+          created_by: req.session?.id ?? null,
           source_kind: parsed.data.source_kind,
           action_id: parsed.data.action_id,
           trigger_type: parsed.data.trigger_type,
@@ -1401,9 +1435,30 @@ platformOrgRouter.patch(
           }
         }
       }
+      // A changed action or arguments is checked as a new wire is (#6070).
+      if (parsed.data.action_id !== undefined || parsed.data.args !== undefined) {
+        const was = await meta
+          .selectFrom("entity_action_bindings")
+          .select(["action_id", "args"])
+          .where("id", "=", id)
+          .where("org_id", "=", req.tenant!.org.id)
+          .executeTakeFirst();
+        if (was) {
+          const cannot = await wireCheckRefusal(parsed.data.action_id ?? was.action_id, req.tenant!.org.id, parsed.data.args !== undefined ? parsed.data.args ?? {} : was.args ?? {});
+          if (cannot) {
+            res.status(400).json({ error: { code: "wire_cannot_run", message: cannot } });
+            return;
+          }
+        }
+      }
       // Build the SET only from supplied keys; jsonb columns (filter/args/target)
       // serialise the same way the create route does.
       const d = parsed.data;
+      if (d.args) {
+        // Saved as the action reads it: a boolean as a boolean (#6130).
+        const actionId = d.action_id ?? (await meta.selectFrom("entity_action_bindings").select("action_id").where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst())?.action_id;
+        if (actionId) d.args = (await typedWireArgs(actionId, d.args)) ?? d.args;
+      }
       const setObj: Record<string, unknown> = { updated_at: new Date() };
       if (d.source_kind !== undefined) setObj.source_kind = d.source_kind;
       if (d.action_id !== undefined) setObj.action_id = d.action_id;

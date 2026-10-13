@@ -1,3 +1,5 @@
+import { AdjustLayout } from "../layout-adjustments.js";
+import { adjustLaserPlan } from "./layout-adjustments.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { LaserSetupRequestSchema } from "@cobblr/platform-contract/laser-setup";
 import { runLaserSetup } from "../laser-setup.js";
@@ -8,7 +10,7 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext, tenantDb } from "../db.js";
+import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { parseDesign } from "../laser-design.js";
 import { ProfileSchema } from "../laser-layout.js";
@@ -99,4 +101,13 @@ laserRouter.post("/nest", asyncHandler(async (req,res)=>{
  if (!(await requireCapability(req, res, "digifab:laser-batch"))) return;
  const p=NestDrawing.safeParse(req.body);if(!p.success)return badBody(res,p.error);
  try { res.json(await nestDrawing(tenantDb(req),tenantContext(req).org.id,p.data)); } catch(e) { refuse(res,e); }
+}));
+
+// AI-ACTION: digifab:laser-batch
+laserRouter.post("/plans/:id/adjust", asyncHandler(async (req,res)=>{
+ // ADMIN-ONLY: layout adjustments use the same admin floor as laser planning
+ if (!(await requireCapability(req,res,"digifab:laser-batch"))) return;
+ const parsed=AdjustLayout.safeParse(req.body);if(!parsed.success)return badBody(res,parsed.error);
+ const context=tenantContext(req);
+ try {res.json(await adjustLaserPlan(tenantDb(req),context.org.id,sessionUser(req)?.id ?? null,req.params.id!,parsed.data));}catch(error){refuse(res,error);}
 }));

@@ -11,6 +11,7 @@
 import { createHash } from "node:crypto";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import type { ScanPurpose } from "@cobblr/platform-contract/scan-triage";
 import type { CoreScanDB } from "../db.js";
 
 /** How long a repeat counts as the same paste rather than a second copy. */
@@ -29,12 +30,14 @@ export async function recentTwin(
   db: Kysely<CoreScanDB>,
   hash: string,
   now: Date = new Date(),
+  purpose: ScanPurpose = "arrival",
 ): Promise<{ id: string } | null> {
   const since = new Date(now.getTime() - SAME_PICTURE_WINDOW_MS);
   const row = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id"])
     .where("status", "=", "pending")
+    .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", purpose)
     .where("created_at", ">=", since)
     .where(sql<boolean>`suggested_metadata->>'image_sha256' = ${hash}`)
     .orderBy("created_at", "desc")

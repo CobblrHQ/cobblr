@@ -5,14 +5,9 @@
 # read every module. Keep each under ~5s; a slow smoke test is a tax on every PR.
 # Read by scripts/ci-affected.mjs; checked by lint:test-affects.
 core-healthcheck.test.ts
-signup-gate.test.ts
 tenant-isolation.test.ts
-org-roles.test.ts
-token-scopes.test.ts
-require-scope.test.ts
 module-crud.test.ts
 wire-events.test.ts
-install-postcondition.test.ts
 entity-kinds-enabled-only.test.ts
 list-skips-disabled-modules.test.ts
 all-bundles-validate.test.ts

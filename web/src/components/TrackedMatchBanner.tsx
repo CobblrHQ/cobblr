@@ -18,7 +18,7 @@ import { catalogChosen } from "../lib/scanPhoto";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, HelpCircle, ExternalLink, MapPin, X } from "lucide-react";
-import { useToast } from "@cobblr/platform-web";
+import { rovingRadio, useToast } from "@cobblr/platform-web";
 import { api, ApiError, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useTrackedMatchList } from "../lib/useTrackedMatchList";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -38,11 +38,13 @@ import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
 import { PaperworkThisOne, isPaperworkMatch } from "./PaperworkThisOne";
-import { scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { scanPurpose, scanPurposeReview, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
 import { countOf } from "@cobblr/platform-contract/plural";
+import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
+import { useKindLabels } from "../lib/useKindLabels";
 /** "license_plate" → "License plate" — a friendly label for a raw field key
  *  (no field-def lookup needed for a quick merge preview). */
 function humanizeField(key: string): string {
@@ -103,7 +105,9 @@ export function TrackedMatchLine({
   // assume it IS the same thing for the open card, where the comparison is.
   const by = match?.matched_by ?? scanTrackedMatch(item)?.matched_by ?? null;
   const exact = by === "barcode" || by === "identifier";
-  const possible = !scanRowState(item).merge;
+  const purpose = scanPurpose(item);
+  const inventoryCheck = purpose !== "arrival";
+  const possible = !inventoryCheck && !scanRowState(item).merge;
   return (
     <div className="mt-1.5 space-y-1.5 text-xs" onClick={(e) => e.stopPropagation()} data-match={possible ? "possible" : "exact"}>
       <div className="flex min-w-0 items-start gap-1.5">
@@ -142,8 +146,9 @@ export function TrackedMatchLine({
         // would add to the place it is kept already.
         null
       ) : (
-        counted && !possible && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={scanAddCount(item.quantity)} />
+        counted && !possible && (purpose === "arrival" || purpose === "count") && <ScanCountBlock itemId={item.id} match={counted} where={where} scanned={scanAddCount(item.quantity)} initialMode={purpose === "count" ? "set" : "change"} confirmsCount={purpose === "count"} />
       )}
+      {inventoryCheck && <p role="status">{scanPurposeReview(item)}</p>}
       <div className="flex flex-wrap items-center gap-1.5">
         {possible ? (
           <button
@@ -201,7 +206,9 @@ export function TrackedMatchBanner({
     mode: "add-qty" | "replace" | "link-barcode" | "move" | "merge-fields" | "count",
   ) => void;
 }) {
+  const purpose = scanPurpose(item);
   const { activeSlug } = useActiveOrg();
+  const kindLabels = useKindLabels(activeSlug);
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -281,13 +288,13 @@ export function TrackedMatchBanner({
   const autoFired = useRef(false);
   const barcodeMatches = matches.data?.barcode_matches ?? [];
   useEffect(() => {
-    if (!autoMove || autoFired.current || !locationId || !matches.isFetched) return;
+    if (purpose === "count" || !autoMove || autoFired.current || !locationId || !matches.isFetched) return;
     if (barcodeMatches.length === 1 && barcodeMatches[0]!.location_id !== locationId) {
       autoFired.current = true;
       attach.mutate({ m: barcodeMatches[0]!, mode: "move" });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoMove, locationId, matches.isFetched, barcodeMatches.length]);
+  }, [purpose, autoMove, locationId, matches.isFetched, barcodeMatches.length]);
 
   if (dismissed || !best) return null;
   const exact = best.matched_by === "barcode" || best.matched_by === "identifier";
@@ -368,21 +375,31 @@ export function TrackedMatchBanner({
               <button
                 key={`${m.kind}:${m.id}`}
                 type="button"
+                {...rovingRadio(i, chosen ? cards.indexOf(chosen) : -1)}
                 role="radio"
                 aria-checked={m === chosen}
                 onClick={() => setPicked(i)}
-                className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
+                className={`inline-flex max-w-full min-h-11 items-center gap-1 rounded-full border px-2.5 py-1 text-xs ${
                   m === chosen
                     ? "border-emerald-600 bg-emerald-600 text-white"
                     : "border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 hover:bg-emerald-100/60 dark:hover:bg-emerald-900/30"
                 }`}
               >
-                <span className="truncate">{m.title}</span>
+                <span className="min-w-0 break-words">{m.title}</span>
+                <span className="shrink-0 opacity-75">· {kindLabels.noun(fieldKindOf(m))}</span>
                 {m.subtitle && <span className="shrink-0 opacity-75">· {m.subtitle}</span>}
                 {m.qty != null && <HeldAmount qty={m.qty} unit={m.unit} />}
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => keepSeparate.mutate()}
+            disabled={keepSeparate.isPending}
+            className="text-xs text-muted underline decoration-dotted underline-offset-2 min-h-11"
+          >
+            None of these - keep as a new item
+          </button>
         </div>
       )}
       {canMerge && (
@@ -437,7 +454,7 @@ export function TrackedMatchBanner({
                 }
               >
                 <MapPin size={11} /> {p.location_name ?? "No place set"}
-                {p.qty != null ? <span className="font-mono opacity-80"> · {p.qty}</span> : null}
+                {p.qty != null ? <span className="opacity-80"> · {p.qty}</span> : null}
               </button>
             ))}
           </div>
@@ -454,13 +471,14 @@ export function TrackedMatchBanner({
           scanned={Math.max(1, item.quantity || 1)}
         />
       )}
-      {best.qty != null && (!several || picked) && !isPaperworkMatch(item, best) && !newPlaceOf(item) && (
+      {best.qty != null && (purpose === "arrival" || purpose === "count") && (!several || picked) && !isPaperworkMatch(item, best) && !newPlaceOf(item) && (
         <ScanCountBlock
           itemId={item.id}
           match={best}
           scanned={scanAddCount(item.quantity)}
           where={where}
-          initialMode={countMode}
+          initialMode={purpose === "count" ? "set" : countMode}
+          confirmsCount={purpose === "count"}
           sessionMode={sessionMode}
           onDone={(r, m) => onAttached?.(r, m, "count")}
         />

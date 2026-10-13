@@ -260,6 +260,7 @@ export function createApp(): AppHandles {
       const scope = currentRequestScope();
       if (scope) scope.label = requestLabel(req.method, req.path, req.header("x-test-file"));
       if (probe && /^[\w-]{1,64}$/.test(probe)) {
+        if (scope && env.COBBLR_TEST_ORG_POOL && req.header("x-meta-probe-cold") === "1") scope.coldTtlCaches = true;
         res.on("finish", () => {
           if (scope) rememberProbe(probe, scope);
         });

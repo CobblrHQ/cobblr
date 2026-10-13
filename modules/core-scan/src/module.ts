@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.75.1",
+  version: "0.75.7",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -102,6 +102,11 @@ export default defineModule({
       // heal-store-code-names.ts for when this call goes (#6100).
       const { registerStoreCodeNameHeal } = await import("./heal-store-code-names.js");
       registerStoreCodeNameHeal();
+      // Boot-time heal: a pending row a photo read named with a run-on
+      // description is set back to nameless - see the DONE WHEN in
+      // heal-prose-names.ts for when this call goes (#6100).
+      const { registerProseNameHeal } = await import("./heal-prose-names.js");
+      registerProseNameHeal();
       // Boot-time heal: every pending photo row gets its picture's hash, so a
       // pair of the same picture is offered as one - see the DONE WHEN in
       // heal-picture-hashes.ts for when this call goes.

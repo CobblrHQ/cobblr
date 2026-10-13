@@ -50,11 +50,18 @@ export interface ContributedPanelSpec {
    *  here, against the trait values the collection wears (real and trial
    *  axes): a panel with traits shows where every listed one is worn. */
   appliesTo?: { traits?: string[] } | { any: true } | null;
+  /** The collections it belongs on ("3d-printers"); see `presence`. */
+  collections?: string[] | null;
+  /** Shows on a record its module says has its data (panelPresence). */
+  presence?: boolean | null;
   /** Disclosure: the face this panel belongs to. A face a person hid takes
    *  its panels off the record; eligibility above is untouched. */
   face?: string | null;
   placement?: "summary" | "details";
 }
+
+export { panelShows, collectionNameOf, type PanelRecordShape } from "./panel-shows";
+import { panelShows, collectionNameOf, type PanelRecordShape } from "./panel-shows";
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
 
@@ -188,6 +195,14 @@ export function ContributedDetailPanels({
   placement?: "summary" | "details";
 }) {
   const all = useContributedDetailPanels(target, universal, baseTarget);
+  const { api, orgSlug } = usePlatformWeb();
+  const asksPresence = all.some((p) => p.presence) && !!ctx.entityId && !!api.panelPresence;
+  const presence = useQuery({
+    queryKey: ["panel-presence", orgSlug, ctx.kind ?? target, ctx.entityId, ctx.hints?.collection ?? null],
+    queryFn: () => api.panelPresence!(orgSlug, ctx.kind ?? target, ctx.entityId, ctx.hints?.collection ?? null),
+    enabled: asksPresence,
+    staleTime: 60_000,
+  });
   // What the record wears is its collection's, when the host names one: a
   // Licences & subscriptions record is an inventory part whose collection is
   // unique and kept, and reading the base kind's faces (fungible stock) kept
@@ -198,13 +213,15 @@ export function ContributedDetailPanels({
   // the record; "Price history" is `traits: ["fungible"]` and has nothing to
   // say on a catalog. Absent traits = the old rule, target alone. Every listed
   // trait must be worn, which is the matcher's cross-axis AND.
-  const panels = all.filter((p) => {
-    const traits = p.appliesTo && "traits" in p.appliesTo ? p.appliesTo.traits : undefined;
-    const eligible = !traits?.length || worn.has("*") || traits.every((t) => worn.has(t));
-    // Then the person's choice: a hidden face hides its panels.
-    const shown = !p.face || on.has(p.face as never);
-    return eligible && shown && (!placement || (p.placement ?? "details") === placement);
-  });
+  // Then the person's choice: a hidden face hides its panels. A panel that
+  // names its collections or its presence shows only there (#6337).
+  const shape: PanelRecordShape = {
+    collection: collectionNameOf(collection),
+    worn,
+    facesOn: on as ReadonlySet<string>,
+    present: new Set(presence.data?.present ?? []),
+  };
+  const panels = all.filter((p) => panelShows(p, shape, placement));
   if (panels.length === 0) return null;
   return (
     <>

@@ -28,8 +28,8 @@
 // Run: npx tsx scripts/lint-node-resolves.ts
 
 import { readFileSync, globSync } from "node:fs";
+import { readRepoFile, repoFilesContaining } from "./lib/repo-files.ts";
 import { execFile } from "node:child_process";
-import { availableParallelism } from "node:os";
 
 const RESOLUTION_ERRORS = [
   "ERR_MODULE_NOT_FOUND",
@@ -145,10 +145,13 @@ for (const dep of deps) {
 // touches — flagging those would be noise, and a noisy lint gets muted.
 const SERVER_SIDE = /^modules\/[^/]+\/src\/(?!ui\/)/;
 const moduleImports = new Map<string, string>(); // specifier -> first module using it
-for (const f of globSync("modules/*/src/**/*.ts")) {
+// Only the files that mention a workspace package are read (9d2f5b33e).
+for (const f of repoFilesContaining("@cobblr/", [":(glob)modules/*/src/**/*.ts"])) {
   if (!SERVER_SIDE.test(f)) continue;
   const owner = f.split("/")[1] ?? f;
-  for (const line of readFileSync(f, "utf8").split("\n")) {
+  const src = readRepoFile(f);
+  if (src === null) continue;
+  for (const line of src.split("\n")) {
     // `import type` is erased before node ever sees it, so it cannot fail to
     // load. Counting it flagged a browser-only package that no server entry
     // actually imports.
@@ -171,18 +174,42 @@ for (const [spec, owner] of moduleImports) {
   jobs.push({ spec, cwd: `modules/${owner}`, label: `${spec}  (imported by modules/${owner})`, sayThrow: false });
 }
 
-function load(job: Job): Promise<void> {
+// One node per working directory, importing every entry point there in turn.
+// A node per entry point re-read every shared dependency once per entry: the
+// reads grew with each package until the lint went past its read budget and
+// turned main red (9d2f5b33e). In one process the module cache reads each file
+// once, and each import still reports its own error code.
+const LOAD_ALL = `
+const out = [];
+for (const spec of JSON.parse(process.argv[1])) {
+  try { await import(spec); out.push({ spec }); }
+  catch (e) { out.push({ spec, code: e && e.code, msg: String((e && e.message) || e).split("\\n")[0] }); }
+}
+process.stdout.write(JSON.stringify(out));
+`;
+
+function loadAll(cwd: string, group: Job[]): Promise<void> {
   return new Promise((resolve) => {
     execFile(
       process.execPath,
-      ["--input-type=module", "-e", `await import(${JSON.stringify(job.spec)})`],
-      { cwd: job.cwd, timeout: 30_000, maxBuffer: 16 * 1024 * 1024 },
-      (err, _stdout, stderrOut) => {
-        if (err) {
-          const stderr = String(stderrOut ?? "");
-          const code = BOOT_LOAD_ERRORS.find((c) => stderr.includes(c));
-          const line = stderr.split("\n").find((l) => l.includes("Error")) ?? stderr.split("\n")[0] ?? "";
-          if (code) failures.push({ spec: job.label, code, msg: line.trim().slice(0, 160) });
+      ["--input-type=module", "-e", LOAD_ALL, JSON.stringify(group.map((j) => j.spec))],
+      { cwd, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout, stderrOut) => {
+        let results: Array<{ spec: string; code?: string; msg?: string }> = [];
+        try {
+          results = JSON.parse(String(stdout || "[]"));
+        } catch {
+          // The process itself failed (a crash at import that killed it): say
+          // so for every entry it was asked to load, rather than nothing.
+          const line = String(stderrOut ?? err ?? "").split("\n").find((l) => l.includes("Error")) ?? "the loader died";
+          for (const job of group) failures.push({ spec: job.label, code: "LOADER_DIED", msg: line.trim().slice(0, 160) });
+          return resolve();
+        }
+        for (const r of results) {
+          const job = group.find((j) => j.spec === r.spec)!;
+          if (!r.code && !r.msg) continue;
+          const code = BOOT_LOAD_ERRORS.find((c) => r.code === c || (r.msg ?? "").includes(c));
+          if (code) failures.push({ spec: job.label, code, msg: `Error [${r.code}]: ${r.msg ?? ""}`.trim().slice(0, 160) });
           else if (job.sayThrow) console.log(`  (${job.spec} resolved but threw at import time, not a resolution problem)`);
         }
         resolve();
@@ -192,13 +219,9 @@ function load(job: Job): Promise<void> {
 }
 void (async () => {
 {
-  const width = Math.max(2, Math.min(8, Math.floor(availableParallelism() / 2)));
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: width }, async () => {
-      while (next < jobs.length) await load(jobs[next++]!);
-    }),
-  );
+  const byCwd = new Map<string, Job[]>();
+  for (const job of jobs) byCwd.set(job.cwd, [...(byCwd.get(job.cwd) ?? []), job]);
+  await Promise.all([...byCwd].map(([cwd, group]) => loadAll(cwd, group)));
   failures.sort((x, y) => x.spec.localeCompare(y.spec));
 }
 
@@ -221,8 +244,12 @@ const rootDeps = new Set([
   ...Object.keys(rootPkg.devDependencies ?? {}),
 ]);
 const scriptImports: string[] = [];
-for (const file of globSync("scripts/**/*.ts")) {
-  const src = readFileSync(file, "utf8");
+// Only the scripts that mention a workspace package at all are read: reading
+// every script to find them grew with scripts/ until the lint went over its
+// read budget (9d2f5b33e).
+for (const file of repoFilesContaining("@cobblr/", [":(glob)scripts/**/*.ts"])) {
+  const src = readRepoFile(file);
+  if (src === null) continue;
   // A real import STATEMENT, anchored to the start of a line. Several lints
   // print `import { x } from "@cobblr/..."` inside their own error text to tell
   // you what to write instead; matching those made the first version of this

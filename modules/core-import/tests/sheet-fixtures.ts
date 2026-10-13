@@ -103,7 +103,7 @@ export function bookListEdited(): { buf: Uint8Array; filename: string } {
 
 /** No location column: the place is a section heading above its rows. Best
  *  before written as text, day first, the way most of the world writes it. */
-export function pantryList(): { buf: Uint8Array; filename: string } {
+export function pantryList(opts: { bestBefore?: string } = {}): { buf: Uint8Array; filename: string } {
   const rows: Row[] = [
     ["Item", "Qty", "Best before", "Opened"],
     ["Fridge"],
@@ -118,6 +118,9 @@ export function pantryList(): { buf: Uint8Array; filename: string } {
     ["Chickpeas", "3 cans", "15/08/2027", "no"],
     ["Olive oil", "750 ml", "20/05/2026", "yes"],
   ];
+  if (opts.bestBefore) {
+    for (const row of rows.slice(1)) if (row.length > 1) row[2] = new Date(`${opts.bestBefore}T12:00:00Z`);
+  }
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, sheet(rows), "Pantry");
   return { buf: bytes(wb, "xlsx"), filename: "pantry.xlsx" };

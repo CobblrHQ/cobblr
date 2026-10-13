@@ -213,7 +213,7 @@ feedbackRouter.post("/", async (req, res, next) => {
         // a chat server whose membership is not theirs to see — but the consequence is
         // an item sitting in a queue no one is watching. On any instance it also covers
         // an expired or broken webhook, which until now failed silently.
-        if (!posted.delivered) {
+        if (!posted.delivered && !posted.skipped) {
           await notifyOperators({
             subject: `[Cobblr] New ${parsed.data.type} feedback`,
             text: [

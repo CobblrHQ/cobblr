@@ -273,10 +273,13 @@ export const PLACEMENT: PlacementRow[] = [
     what: "something a person or the assistant can DO to a record",
     keywords: ["action", "invoke", "button that does something", "cobb can do", "wire target"],
     dir: "modules/<name>/src/",
-    exemplar: "modules/labels/src/api/handlers.ts",
+    exemplar: "modules/core-notifications/src/api/message-someone-action.ts",
     why: "An action is the only door that both a person, a wire and the assistant can come through, so capability belongs there rather than in a bespoke route.",
     lints: ["lint:ai-reach", "lint:ai-reach-routes", "lint:ai-coverage", "lint:action-predicates", "lint:action-copy-no-internal-nouns", "lint:list-args-take-arrays"],
-    notes: ["A mutating route with no action must carry `// AI-REACH: <reason>` at the route."],
+    notes: [
+      'START WITH `pnpm run new action <module> <slug> --group … --label "…" --description "…" --example "…" --test "<the consequence>"`: it writes the manifest entry, the handler at src/api/<slug>-action.ts (failing until written), the api test, and regenerates. lint:new-actions-from-the-template holds an action added by hand (#6236).',
+      "A mutating route with no action must carry `// AI-REACH: <reason>` at the route.",
+    ],
   },
   {
     id: "side-panel-door",
@@ -299,7 +302,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "A card reads the action's planner; with none it falls back to the action's label and its argument labels, which are written for the assistant to fill in, so a person confirming a change reads help text instead of what will happen.",
     lints: [],
     notes: [
-      "Say what changes in the person's words (\"Turn off the Yarn feature\"), then what stays and what goes. api/tests/a-confirm-card-reads-its-arguments-as-words.test.ts holds the fallback.",
+      "Say what changes in the person's words (\"Turn off the Yarn feature\"), then what stays and what goes. scripts/lib/a-confirm-card-reads-its-arguments-as-words.test.ts holds the fallback.",
     ],
   },
   {
@@ -413,6 +416,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "One suite, 389 files, 4 minutes: a test that does not say what it covers runs on every change, and one that says it wrong never runs on the change that breaks it.",
     lints: ["lint:test-affects", "lint:test-durations", "lint:test-budget-covers-signup", "lint:wall-clock-assertions"],
     notes: [
+      'START WITH `pnpm run new test "<the consequence>" --for <the file you changed>`: it picks the cheapest suite, the existing file to join or a new one, and writes what the test lints ask (the affects line, the worn timeout, a workspace of its own).',
       "First line: `// affects: <module>, <module>` or `always` or `kernel`. `node scripts/test-affects.mjs --infer <file>` proposes one from the routes the test hits.",
       "Test the consequence you fear, not the mechanism you built; name it after what it costs when wrong (docs/architecture/platform-spec.md §14.1a).",
       "Under ~5s if it belongs in api/tests/smoke.list; a slow smoke test is a tax on every PR.",
@@ -427,6 +431,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "Pure decisions are tested where they live; anything needing a tenant database is an integration test in api/tests/.",
     lints: ["lint:hook-timeouts", "lint:test-path-starts-with-its-own-bin", "lint:test-timeout-worn", "lint:web-image-reads-what-it-copies", "lint:hook-returns-nothing"],
     notes: [
+      'START WITH `pnpm run new test "<the consequence>" --for <the file you changed>`: it picks the cheapest suite, the existing file to join or a new one, and writes what the test lints ask (the affects line, the worn timeout, a workspace of its own).',
       "Name it after the CONSEQUENCE, not the mechanism, and prove it red before you trust it green.",
       "Keep the db out of the import graph: a test that imports a file which eagerly imports cobblr_meta dies before it reaches its subject.",
     ],

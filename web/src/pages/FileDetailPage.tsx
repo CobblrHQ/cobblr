@@ -76,6 +76,7 @@ export function FileDetailPage() {
 
   if (file.isLoading) return <div className="text-sm text-muted">Loading…</div>;
   if (!file.data) {
+    // 404-is: a-state: a file link can outlive the file
     const gone = file.error instanceof ApiError && file.error.status === 404;
     return (
       <div className="space-y-3" data-testid="file-missing">

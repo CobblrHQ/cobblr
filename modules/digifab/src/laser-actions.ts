@@ -1,3 +1,5 @@
+import { AdjustLayout } from "./layout-adjustments.js";
+import { adjustLaserPlan } from "./api/layout-adjustments.js";
 import type { Kysely } from "kysely";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
 import { z } from "zod";
@@ -19,6 +21,7 @@ export function registerLaserActions(): void {
    if (args.operation === "plan") return { ok: true, ...await createLaserPlan(db, ctx.orgId, Plan.parse(fields)) };
    if (args.operation === "nest") return { ok: true, ...await nestDrawing(db, ctx.orgId, NestDrawing.parse(fields)) };
    const id = z.string().uuid().parse(args.id);
+   if (args.operation === "adjust") return { ok: true, ...await adjustLaserPlan(db, ctx.orgId, ctx.userId, id, AdjustLayout.parse(fields)) as Record<string,unknown> };
    if (args.operation === "update_profile") return { ok: true, ...await updateLaserProfile(db, id, ProfileSchema.parse(fields)) };
    if (args.operation === "queue") return { ok: true, ...await acceptLaserPlan(db, ctx.orgId, id) };
    if (args.operation === "discard") return await discardLaserPlan(db, id);

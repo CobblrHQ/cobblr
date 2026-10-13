@@ -1408,6 +1408,28 @@ export const CAPABILITIES: Capability[] = [
     use: "needsScanReview() from @cobblr/platform-contract/scan-triage",
   },
   {
+    kind: "owns",
+    id: "inventory-reconcile-engine",
+    what: "what taking stock does to a record: marking it gone, setting what was counted, and putting either back",
+    why: "\"What's still here?\" and the recount of a collection each had their own copy of gone, counted and undo, and the spec for the recount (#6302) asks for one engine with the one-place sheet as its smallest case",
+    owner: "modules/inventory/src/reconcile-engine.ts",
+    scope: ["modules/inventory/src/stocktake*.ts", "modules/inventory/src/recount*.ts"],
+    detect: /dispositions\.(markGone|bringBack)\(|\bwithBatches\(/,
+    use: "markAllGone / bringAllBack / setCount / unsetCount from modules/inventory/src/reconcile-engine.ts",
+  },
+  {
+    kind: "owns",
+    id: "scan-match-tier",
+    what: "choosing which of a scan's matches it chooses among: the code tier over the name tier",
+    why: "the web chooser joined the barcode matches and the name matches into one list while the stamp took the code tier alone, so a count scan of the one record holding its barcode asked \"This could be any of 4 things you have. Which is it?\" over three look-alikes found by name (#6248)",
+    owner: "packages/platform-contract/src/scan-triage.ts",
+    scope: ["modules/core-scan/src/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx", "packages/workspace-tools/src/**/*.ts"],
+    // One line that picks between, or joins, the two tiers: a ternary, a
+    // concat or a spread. `??` and `?.` are not a ternary.
+    detect: /barcode_matches[^\n]*(\.concat\(|[^?]\?[^?.]|[\])]\s*,\s*\.\.\.)[^\n]*name_matches/,
+    use: "scanMatchTier() from @cobblr/platform-contract/scan-triage",
+  },
+  {
     kind: "requires-prop",
     id: "scan-card:session-reconciled-category",
     what: "telling a scan card the category its SESSION agreed on",

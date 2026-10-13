@@ -11,14 +11,14 @@
 //   spool is never offered to a Multicolor line, a black one never to an
 //   orange line.
 
+import { displayName } from "@cobblr/platform-contract/display-identity";
 import { sql, type Kysely } from "kysely";
 import { lineTakesAUnit, lineUnitsOf } from "@cobblr/platform-contract/line-units";
-import { sameProduct } from "@cobblr/platform-contract/same-product";
+import { orderLineOverlap, type OrderLineProduct } from "./order-line-product.js";
 import type { CoreScanDB } from "../db.js";
 import { mergeMeta } from "./metadata.js";
-import { nameOverlap, tokens } from "./entity-match.js";
+import { tokens } from "./entity-match.js";
 import { fillLine } from "./line-slots.js";
-import { statedColoursOf } from "./picture-agrees.js";
 
 export interface LineOffer {
   line_id: string;
@@ -26,13 +26,13 @@ export interface LineOffer {
 }
 
 /** The open line this scan is most like, with the words it is offered in. */
-export async function lineOfferFor(db: Kysely<CoreScanDB>, row: { id: string; suggested_name: string | null }): Promise<LineOffer | null> {
-  const name = row.suggested_name ?? "";
+export async function lineOfferFor(db: Kysely<CoreScanDB>, row: OrderLineProduct & { id: string }): Promise<LineOffer | null> {
+  const name = displayName(row) ?? "";
   const want = tokens(name);
   if (want.length === 0) return null;
   const lines = await db
     .selectFrom("core_scan_inbox_items")
-    .select(["id", "suggested_name", "quantity", "suggested_metadata", "scan_batch_id", "created_at"])
+    .select(["id", "suggested_name", "quantity", "suggested_metadata", "scan_batch_id", "created_at", "source_kind"])
     .where("source_kind", "=", "receipt")
     .where("status", "=", "pending")
     .where("quantity", ">", 1 as never)
@@ -40,19 +40,13 @@ export async function lineOfferFor(db: Kysely<CoreScanDB>, row: { id: string; su
     .orderBy("created_at", "desc")
     .limit(300)
     .execute();
-  const mine = statedColoursOf({ name });
   let best: { line: (typeof lines)[number]; shared: number } | null = null;
   for (const line of lines) {
     if (line.id === row.id) continue;
     const m = (line.suggested_metadata ?? {}) as { line_received?: unknown; line_offer_declined_by?: unknown };
     if (!lineTakesAUnit(lineUnitsOf(line), Number(m.line_received ?? 0))) continue;
-    const o = nameOverlap(want, line.suggested_name ?? "");
+    const o = orderLineOverlap(row, line);
     if (!o.pass) continue;
-    if (sameProduct({ name }, { name: line.suggested_name }).verdict === "different") continue;
-    // Two names that each say a colour and share none are two things: a
-    // black spool is never one of an orange line's units.
-    const lineColours = statedColoursOf({ name: line.suggested_name });
-    if (mine.size > 0 && lineColours.size > 0 && ![...mine].some((c) => lineColours.has(c))) continue;
     if (!best || o.shared > best.shared) best = { line, shared: o.shared };
   }
   if (!best) return null;

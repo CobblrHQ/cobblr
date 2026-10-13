@@ -989,7 +989,9 @@ function HealthTab() {
                     <tr key={r.route}>
                       <td className="px-3 py-1.5 text-xs font-mono text-content dark:text-mortar-100 break-all">{r.route}</td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">{r.calls.toLocaleString()}</td>
-                      <td className="px-3 py-1.5 text-right font-mono text-xs">{Math.round(r.cpu_share * 100)}%</td>
+                      <td className="px-3 py-1.5 text-right font-mono text-xs" title={r.cpu_share === null ? "Never ran alone, so its own CPU is not measured" : undefined}>
+                        {r.cpu_share === null ? "-" : `${Math.round(r.cpu_share * 100)}%`}
+                      </td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">
                         {r.cpu_ms.samples ? `${r.cpu_ms.p50} / ${r.cpu_ms.p95}` : `≤${r.cpu_ms_overlapped.p50} / ≤${r.cpu_ms_overlapped.p95}`}
                       </td>
@@ -1006,7 +1008,7 @@ function HealthTab() {
               </table>
             </div>
             <div className="px-4 py-2 text-[10px] text-faint">
-              CPU from requests that ran alone; ≤ marks an upper bound from overlapping ones.
+              CPU from requests that ran alone; ≤ marks an upper bound from overlapping ones. A share is a route's cost alone times its calls; "-" when it never ran alone.
             </div>
           </div>
         )}

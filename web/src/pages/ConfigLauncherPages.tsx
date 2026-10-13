@@ -11,13 +11,12 @@
 // nav shortcuts) — those genuinely are dialogs opened over something else.
 
 import type { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
 import { FolderPlus } from "lucide-react";
 import { ModulePickerModal } from "../components/ModulePickerModal";
 import { MembersModal } from "../components/MembersModal";
 import { NewThingFunnelModal } from "../components/NewThingFunnelModal";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { usePageTitle } from "@cobblr/platform-web";
+import { useCloseToOrigin, usePageTitle } from "@cobblr/platform-web";
 
 /** A heading for a launcher route the settings shell does NOT know about.
  *
@@ -40,14 +39,14 @@ function PageHead({ icon, title, blurb }: { icon: ReactNode; title: string; blur
 
 export function ConfigModulesPage() {
   usePageTitle("Modules");
-  const navigate = useNavigate();
+  const closeToBuild = useCloseToOrigin("/configuration/s/build");
   return (
     <div>
       <ModulePickerModal
         open
         inline
         chromeless
-        onClose={() => navigate("/configuration/s/build")}
+        onClose={closeToBuild}
       />
     </div>
   );
@@ -55,7 +54,7 @@ export function ConfigModulesPage() {
 
 export function ConfigMembersPage({ focus }: { focus?: "invite" } = {}) {
   usePageTitle(focus === "invite" ? "Invite someone" : "Members");
-  const navigate = useNavigate();
+  const closeToPeople = useCloseToOrigin("/configuration/s/people");
   const { activeSlug } = useActiveOrg();
   return (
     <div>
@@ -65,7 +64,7 @@ export function ConfigMembersPage({ focus }: { focus?: "invite" } = {}) {
         chromeless
         focus={focus}
         slug={activeSlug ?? ""}
-        onClose={() => navigate("/configuration/s/people")}
+        onClose={closeToPeople}
       />
     </div>
   );
@@ -80,7 +79,7 @@ export function ConfigInvitePage() {
 
 export function ConfigNewThingPage() {
   usePageTitle("New category");
-  const navigate = useNavigate();
+  const closeToBuild = useCloseToOrigin("/configuration/s/build");
   return (
     <div>
       <PageHead
@@ -92,7 +91,7 @@ export function ConfigNewThingPage() {
         open
         inline
         chromeless
-        onClose={() => navigate("/configuration/s/build")}
+        onClose={closeToBuild}
       />
     </div>
   );

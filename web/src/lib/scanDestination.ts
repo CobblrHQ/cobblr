@@ -15,7 +15,33 @@ import type { ScanCandidate, ScanMenuEntry } from "./api";
 
 /** Selection key for a menu entry / candidate destination. */
 export function entryKey(module: string, instance: string | null): string {
-  return `${module}::${instance ?? ""}`;
+  // A module's own table is one table whether its instance is left out or
+  // spelled as the module ("inventory"), as the server's tables name it: two
+  // spellings were two keys, so the card did not find the row's destination
+  // and named the top candidate instead (#6237).
+  return `${module}::${instance && instance !== module ? instance : ""}`;
+}
+
+/** The Add to picker's tables with the apps the matchmaker offered to turn on,
+ *  for someone who may install them (#6237). The offer leads when it IS the
+ *  row's destination; otherwise the table that is on leads (an app is never
+ *  turned on over one that fits, #6099) and the offer stays a choice after
+ *  it, never dropped. `bundleMenu` is the offered tables with their fields. */
+export function withInstallOffers<T extends ScanMenuEntry>(
+  base: T[],
+  candidates: readonly ScanCandidate[],
+  bundleMenu: ReadonlyArray<ScanMenuEntry & { bundle_external_id?: string }>,
+  opts: { canInstall: boolean; destinationBundle: string | null },
+): Array<T | (ScanMenuEntry & { bundle_external_id?: string })> {
+  if (!opts.canInstall) return base;
+  const have = new Set(base.map((m) => entryKey(m.module, m.instance)));
+  const offers = candidates
+    .filter((c) => !!c.bundle_external_id)
+    .flatMap((c) => bundleMenu.filter((m) => m.bundle_external_id === c.bundle_external_id && m.module === c.module && (m.instance ?? null) === (c.instance ?? null)))
+    .filter((m, i, all) => !have.has(entryKey(m.module, m.instance)) && all.findIndex((o) => entryKey(o.module, o.instance) === entryKey(m.module, m.instance)) === i);
+  const leading = offers.filter((m) => m.bundle_external_id === opts.destinationBundle);
+  const after = offers.filter((m) => m.bundle_external_id !== opts.destinationBundle);
+  return [...leading, ...base, ...after];
 }
 
 /** A placeholder menu entry synthesized from a routed LIVE-instance candidate.

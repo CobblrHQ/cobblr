@@ -104,6 +104,35 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: { kind: { label: "Kind of record", type: "text", required: true }, group: { label: "Group", type: "text" }, label: { label: "Group name", type: "text" }, actions: { label: "Actions to move", type: "list" }, order: { label: "Group order", type: "number" }, hidden: { label: "Hidden", type: "boolean" }, primary: { label: "Primary", type: "boolean" }, layout: { label: "Complete layout", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/people
+    group: "more",
+    id: "platform:add-person", run_by: "member", label: "Add a person", icon: "user-plus",
+    description: "Put someone on the workspace's People list by name, so records can belong to them and automations can message them: a partner, a neighbour, a shop. Optional email, and phone in international form (+1 555 010 0123) for a text. Adding someone does not invite them; they are not a member.",
+    examples: ["add Alex to the people list", "add Sam, sam@example.com, +1 555 010 0123"],
+    scope: "workspace", min_role: "member", invoke_handler: "platform.add-person", user_invokable: true, undoable: false,
+    args_schema: {
+      name: { label: "Name", type: "text", required: true },
+      email: { label: "Email", type: "text" },
+      phone: { label: "Phone, with the country code (+1 555 010 0123)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/people
+    group: "more",
+    id: "platform:edit-person", run_by: "member", label: "Change a person's details", icon: "pencil",
+    description: "Change the name, email or phone of someone on the People list, found by name or id. A blank email or phone clears it. A member's name is their account's and is not changed here. The phone is in international form (+1 555 010 0123).",
+    examples: ["Alex's phone is +1 555 010 0123", "change Sam's email to sam@example.com"],
+    scope: "workspace", min_role: "member", invoke_handler: "platform.edit-person", user_invokable: true, undoable: false,
+    args_schema: {
+      person: { label: "Who, by name or id", type: "text", required: true },
+      name: { label: "New name", type: "text" },
+      email: { label: "Email (blank clears it)", type: "text" },
+      phone: { label: "Phone, with the country code (blank clears it)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /configuration/recently-deleted
     group: "lifecycle",
     id: "platform:restore-deleted-record", run_by: "member", label: "Restore a deleted record", icon: "history",

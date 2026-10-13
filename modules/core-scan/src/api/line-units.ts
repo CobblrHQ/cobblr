@@ -113,6 +113,7 @@ lineUnitsRouter.delete(
 // What a line holds and which scans filled it; by the inbox line, or by the
 // purchase's own line (the purchase page's "Scan the items"). The assistant
 // reads the same count on the line itself (line_received, get_scan_item).
+// `if_any=1` asks "is there one?": 200 with { slots } (null for none).
 lineUnitsRouter.get(
   "/inbox/line-slots",
   asyncHandler(async (req, res) => {
@@ -127,6 +128,14 @@ lineUnitsRouter.get(
             ? ((await db.selectFrom("core_scan_batches").select("fills_line").where("id", "=", req.query.batch_id).executeTakeFirst())?.fills_line ?? null)
             : null;
     const slots = lineId ? await lineSlots(db, lineId) : null;
+    // A page that routinely asks "does this purchase line have a row to count
+    // against?" (a typed-in line has none) sends if_any and gets 200 with
+    // slots: null. Asking for a line that must be there is a 404 when it is
+    // not (#6268): a refusal is never the normal answer to a question.
+    if (req.query.if_any === "1") {
+      res.json({ slots });
+      return;
+    }
     if (!slots) {
       res.status(404).json({ error: { code: "no_line", message: "No open order line of several by that id." } });
       return;

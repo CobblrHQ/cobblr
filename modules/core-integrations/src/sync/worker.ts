@@ -20,6 +20,23 @@ const SCAN_INTERVAL_MS = 2 * 60_000;
  *  the poll never re-does what a person just did (#2880). */
 export const DEFAULT_CADENCE_MIN = 20;
 
+/** What a section's state row becomes when its source stops offering it: off,
+ *  with the reason where the person reads it. A warning, not an error: nothing
+ *  failed, the section is simply gone. */
+export function goneSectionState(section: string, source: string): {
+  enabled: false;
+  next_run_at: null;
+  last_status: "warning";
+  last_error: string;
+} {
+  return {
+    enabled: false,
+    next_run_at: null,
+    last_status: "warning",
+    last_error: `${source} no longer has a "${section}" section, so it was switched off.`,
+  };
+}
+
 let registered = false;
 
 export function registerSyncWorker(): void {
@@ -43,15 +60,28 @@ export function registerSyncWorker(): void {
       let status = "ok";
       let error: string | null = null;
       let count = 0;
+      let conflicts: ReturnType<typeof runStatusOf>["last_conflicts"] | null = null;
       try {
         const ref = await loadConnectionRef(db, orgId, s.connector_row_id);
         const def = ref ? await resolveSyncConnector(db, ref.connectorId) : null;
         const type = def?.entityTypes.find((t) => t.key === s.entity_type);
+        // A section the source no longer offers (a printers section folded
+        // into machines) can never run again: switch it off, once, and say
+        // why, instead of an error on every poll for ever.
+        if (ref && def && !type) {
+          await db
+            .updateTable("core_integrations_sync_state")
+            .set({ ...goneSectionState(s.entity_type, def.label), updated_at: new Date() })
+            .where("connector_row_id", "=", s.connector_row_id)
+            .where("entity_type", "=", s.entity_type)
+            .execute();
+          continue;
+        }
         if (!ref || !type) throw new Error("connection or entity type unavailable");
         const r = await runReconcile(db, ref, type);
         count = r.total;
         // A value the run could not map was left alone; say so on the sync.
-        ({ last_status: status, last_error: error } = runStatusOf(r));
+        ({ last_status: status, last_error: error, last_conflicts: conflicts } = runStatusOf(r));
       } catch (e) {
         // Another reconcile of this sync is mid-flight (a person pressed
         // Import, or a webhook arrived). That is not a failure: leave
@@ -66,6 +96,7 @@ export function registerSyncWorker(): void {
           last_run_at: now,
           last_status: status,
           last_error: error,
+          ...(conflicts ? { last_conflicts: conflicts } : {}),
           last_synced_count: count,
           next_run_at: new Date(Date.now() + (s.cadence_min ?? DEFAULT_CADENCE_MIN) * 60_000),
           updated_at: new Date(),

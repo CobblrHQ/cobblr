@@ -2,7 +2,8 @@
 //
 // A record's recurring maintenance, in one small panel: each schedule says
 // its rule in words and where it stands ("due in 5 days", "overdue by 3.5
-// print hours"), and one row sets a new one. The interval picker offers the
+// print hours"), and Add a schedule opens the row that sets a new one (a
+// record with none shows one line, #6337). The interval picker offers the
 // calendar units and, after them, the counters this record's kind keeps
 // (a printer's print hours and prints), so "every 200 print hours" is the
 // same gesture as "every 3 months". Logging the service with the strip's
@@ -78,6 +79,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const [everyText, setEveryText] = useState("");
   const [unit, setUnit] = useState<string>("month");
   const [lastText, setLastText] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: key });
@@ -104,6 +106,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
       setName("");
       setEveryText("");
       setLastText("");
+      setAdding(false);
       refresh();
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't set the schedule"),
@@ -160,17 +163,30 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const input =
     "rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-1.5 text-base text-content dark:text-slate-100";
 
+  // Nothing scheduled and nothing done: one line until someone asks for the
+  // form, so an empty panel never grows the record (#6337).
+  if (!adding && !schedulesQ.isLoading && !historyQ.isLoading && schedules.length === 0 && (historyQ.data?.items.length ?? 0) === 0) {
+    return (
+      <div data-testid="maintenance-schedules" className="flex flex-wrap items-center gap-x-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-2 text-sm">
+        <CalendarClock size={14} aria-hidden className="text-muted" />
+        <span className="font-medium text-content dark:text-slate-100">Service schedule</span>
+        <span className="text-muted dark:text-slate-400">none</span>
+        <button type="button" onClick={() => setAdding(true)} className="ml-auto min-h-11 px-2 text-accent hover:underline">
+          Set one up
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div data-testid="maintenance-schedules" className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-        <CalendarClock size={12} aria-hidden /> {"// service schedule"}
+      <div className="flex items-center gap-1.5 text-sm font-medium text-content dark:text-slate-100">
+        <CalendarClock size={14} aria-hidden className="text-muted" /> Service schedule
       </div>
 
       {schedulesQ.isLoading ? (
         <Loader2 size={14} className="animate-spin text-faint" />
-      ) : schedules.length === 0 ? (
-        <p className="text-sm text-muted dark:text-slate-400">Nothing scheduled. Set how often this wants servicing and it will come up on its own.</p>
-      ) : (
+      ) : schedules.length === 0 ? null : (
         <ul className="space-y-2">
           {schedules.filter((s) => !s.anchor).map((s) =>
             editing === s.id ? (
@@ -250,6 +266,11 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         </div>
       )}
 
+      {!adding ? (
+        <button type="button" onClick={() => setAdding(true)} className="min-h-11 text-sm text-accent hover:underline">
+          Add a schedule
+        </button>
+      ) : (
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -306,7 +327,11 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
         >
           {create.isPending ? "Saving…" : "Set schedule"}
         </button>
+        <button type="button" onClick={() => setAdding(false)} className="ml-2 min-h-11 px-2 text-sm text-muted hover:text-content">
+          Cancel
+        </button>
       </form>
+      )}
     </div>
   );
 }

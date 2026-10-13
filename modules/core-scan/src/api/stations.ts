@@ -198,11 +198,15 @@ stationsRouter.put(
 );
 
 /** A record as the station shows it. */
-async function stationRecord(orgId: string, e: { kind: string; id: string; title: string; image_path?: string | null; detailUrl?: string | null; detail_url?: string | null; fields?: Record<string, unknown>; qty?: number | null; location_id?: string | null; instance?: string | null }): Promise<{ record: StationRecord; countable: boolean }> {
+async function stationRecord(orgId: string, e: { kind: string; id: string; title: string; image_path?: string | null; detailUrl?: string | null; detail_url?: string | null; fields?: Record<string, unknown>; qty?: number | null; unit?: string | null; location_id?: string | null; instance?: string | null }): Promise<{ record: StationRecord; countable: boolean }> {
   const target = await scanTargetOf(orgId, e.kind, e.instance ?? null);
   const field = target?.scannable.qtyField ?? null;
   const raw = e.qty ?? (field ? e.fields?.[field] : null);
   const n = typeof raw === "number" ? raw : raw != null ? Number(raw) : NaN;
+  // A barcode's tracked match carries its unit beside the count; a label's record, in its fields.
+  const rawUnit = !field ? null : e.unit ?? (target?.scannable.unitField ? e.fields?.[target.scannable.unitField] : null);
+  const unit = typeof rawUnit === "string" && rawUnit.trim() ? rawUnit.trim() : null;
+  const measured = unit ? await platform().units.resolve(orgId, unit).then((u) => !!u && u.category !== "count").catch(() => false) : false;
   const location_id = e.location_id ?? (typeof e.fields?.location_id === "string" ? (e.fields.location_id as string) : null);
   const place = location_id
     ? await platform().entities.lookupMany(orgId, [{ kind: "core-locations:location", id: location_id }]).then((r) => r[0]?.title ?? null)
@@ -215,6 +219,8 @@ async function stationRecord(orgId: string, e: { kind: string; id: string; title
       title: e.title,
       image_path: e.image_path ?? null,
       qty: field && Number.isFinite(n) ? n : null,
+      unit,
+      measured,
       location_id,
       location_name: place,
       detail_url: e.detailUrl ?? e.detail_url ?? null,

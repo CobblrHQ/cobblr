@@ -100,6 +100,7 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
     split_from?: unknown;
     extra_photos?: unknown;
     screenshot_crop_file_id?: unknown;
+    catalog_source?: unknown;
   };
   const out: RowPicture[] = [];
   const seen = new Set<string>();
@@ -127,6 +128,12 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
   }
   if (Array.isArray(meta.extra_photos)) {
     for (const id of meta.extra_photos) if (typeof id === "string" && id) file("extra", id, "Added photo");
+  }
+  // A catalog picture the person made themselves (a retake, an upload, a crop
+  // of their own photo) is theirs, never a catalog's (#6100): the owner's
+  // front-label photo of his cumin sat under "Catalog, checking".
+  if (row.catalog_image_file_id && typeof meta.catalog_source === "string" && OWN_CATALOG_SOURCES.has(meta.catalog_source)) {
+    file("extra", row.catalog_image_file_id, meta.catalog_source === "crop" ? "Your photo, cropped" : "Your photo");
   }
 
   // The catalog picture, once, and only once it is STORED (#4580): an address
@@ -168,6 +175,19 @@ export function rowPictures(row: PictureRow, ctx: PicturesContext = {}): RowPict
   out.push(...webTiles);
   if (current) current.current = true;
   return out;
+}
+
+/** Where a catalog picture came from, when it is the person's own picture
+ *  rather than one found for them (catalog-history.ts's CatalogSource). */
+export const OWN_CATALOG_SOURCES: ReadonlySet<string> = new Set(["yours", "upload", "crop"]);
+
+/** Every photo of the person's own on a row, the one they chose to show
+ *  first: what a label read looks at (#6100). A side shot and a front shot
+ *  are both theirs, and the front is the one they picked to show. */
+export function ownPhotoFileIds(row: PictureRow): string[] {
+  const yours = yourPictures(rowPictures(row));
+  const shown = yours.filter((p) => p.current);
+  return [...shown, ...yours.filter((p) => !p.current)].map((p) => p.fileId).filter((id): id is string => !!id);
 }
 
 /** The row's own pictures, in order: what "Your photos" shows. Empty means

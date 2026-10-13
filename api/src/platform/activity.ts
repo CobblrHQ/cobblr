@@ -114,6 +114,35 @@ export async function log(p: LogParams): Promise<void> {
   }
 }
 
+/** The name each record of a kind was created with, for the ones whose
+ *  creation name matches `pattern` (case-insensitive, run by the database),
+ *  from the creation entry of its log. The first entry wins (a record is
+ *  created once). */
+export async function createdNamesMatching(
+  orgId: string,
+  p: { module: string; entityType: string; pattern: string; limit?: number },
+): Promise<Array<{ entityId: string; name: string }>> {
+  const rows = await meta
+    .selectFrom("activity_log")
+    .select(["entity_id", sql<string>`diff->>'name'`.as("name")])
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", p.module)
+    .where("entity_type", "=", p.entityType)
+    .where("action", "=", `${p.entityType}_created`)
+    .where(sql<boolean>`diff->>'name' ~* ${p.pattern}`)
+    .orderBy("occurred_at", "asc")
+    .limit(p.limit ?? 5000)
+    .execute();
+  const seen = new Set<string>();
+  const out: Array<{ entityId: string; name: string }> = [];
+  for (const r of rows) {
+    if (seen.has(r.entity_id)) continue;
+    seen.add(r.entity_id);
+    out.push({ entityId: r.entity_id, name: r.name });
+  }
+  return out;
+}
+
 /** One row of a bulk write (an import of thousands): `diff.import_row` marks
  *  it, so a record's own History carries it while the workspace's and the
  *  person's feeds leave it to the bulk write's one summary line (#5963). */
@@ -187,6 +216,9 @@ export interface ListParams {
   apiTokenId?: string;
   /** Filter by entity type. */
   entityType?: string;
+  /** With entityType: one thing logged with no module of its own, like a
+   *  wire's firings (entity_type "binding", its id), #6129. */
+  entityId?: string;
   /** One record's history: the module, type and id it was logged under (the
    *  shape of activity_log_entity_idx). */
   entity?: { module: string; type: string; id: string };
@@ -218,6 +250,7 @@ function selected(p: ListParams) {
   if (p.authMethods && p.authMethods.length > 0) q = q.where("auth_method", "in", p.authMethods);
   if (p.apiTokenId) q = q.where("api_token_id", "=", p.apiTokenId);
   if (p.entityType) q = q.where("entity_type", "=", p.entityType);
+  if (p.entityType && p.entityId) q = q.where("entity_id", "=", p.entityId);
   if (p.entity) {
     q = q.where("module_name", "=", p.entity.module).where("entity_type", "=", p.entity.type).where("entity_id", "=", p.entity.id);
   } else {

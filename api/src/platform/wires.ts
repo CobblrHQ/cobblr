@@ -350,6 +350,7 @@ async function fireBindings(
           orgId,
           userId: actor.user_id,
           entity: { kind: t.kind, id: t.id, fields: entityFields },
+          wire: { id: b.id },
           event: {
             name: eventName,
             payload,

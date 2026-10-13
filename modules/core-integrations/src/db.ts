@@ -54,6 +54,10 @@ export interface CoreIntegrationsSyncedRecordsTable {
   external_id: string;
   cobblr_entity_id: string;
   source_hash: string | null;
+  /** What the source last said for each field the sync manages (flat; a
+   *  metadata key is `metadata.<key>`): the base of the three-way merge that
+   *  keeps a Cobblr-side edit. Null until the record's first run under it. */
+  synced_fields: Record<string, unknown> | null;
   deleted_at: Date | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
@@ -73,6 +77,12 @@ export interface CoreIntegrationsSyncStateTable {
   /** Null until the first import is approved — live poll + webhook are withheld
    *  while in preview; set once the one-time import runs. */
   import_approved_at: Date | null;
+  /** What to do when the source and Cobblr disagree about a field: "cobblr"
+   *  (the default), "source" or "ask" (platform-contract sync-merge). */
+  conflict_policy: Generated<string>;
+  /** What the last run asked about: conflicts kept for the person and source
+   *  records it could not place without asking. */
+  last_conflicts: Generated<{ conflicts: unknown[]; ambiguous: unknown[] }>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

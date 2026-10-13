@@ -74,13 +74,38 @@ export function isbnFieldsFromOpenLibrary(
 ): Record<string, string | number> {
   const out: Record<string, string | number> = { isbn };
   if (b.title?.trim()) out.title = b.title.trim();
-  const authors = (b.authors ?? []).map((a) => a.name?.trim()).filter(Boolean).join(", ");
+  const authors = eachAuthorOnce((b.authors ?? []).map((a) => a.name ?? "")).join(", ");
   if (authors) out.author = authors;
   const year = /\b(1[5-9]\d{2}|20\d{2})\b/.exec(b.publish_date ?? "")?.[1];
   if (year) out.year = Number(year);
   const publisher = b.publishers?.[0]?.name?.trim();
   if (publisher) out.publisher = publisher;
   return out;
+}
+
+/** A catalog record can name one author twice (an edition's and its
+ *  translation's, #6154): the same name, ignoring case and spacing, is one
+ *  author, kept where it first appears. Different names are never merged. */
+export function eachAuthorOnce(names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of names) {
+    const name = raw.trim().replace(/\s+/g, " ");
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push(name);
+  }
+  return out;
+}
+
+/** An author line already joined, as a cached hit or the mirror's composed
+ *  title carries it. It is split only when every part is a whole name
+ *  ("Douglas Crockford"): "Crockford, Douglas" style parts are one name cut
+ *  in two, and deduping them would merge two people sharing a surname. */
+function authorLineOnce(line: string): string {
+  const parts = line.split(/\s*,\s*/);
+  if (parts.length < 2 || !parts.every((p) => /\S\s+\S/.test(p))) return line.trim();
+  return eachAuthorOnce(parts).join(", ");
 }
 
 /** The book catalog could not be asked: the network, a non-2xx answer, a body
@@ -197,15 +222,17 @@ function bookHit(b: OpenLibraryBook, clean: string): BarcodeHit {
  *  only): re-read the book from Open Library for its fields; on a miss, the
  *  hit's own title and the ISBN are still a bag worth landing. */
 export async function isbnFieldsForHit(isbn: string, hit: BarcodeHit): Promise<Record<string, string | number>> {
-  if (hit.fields) return hit.fields;
+  // A hit cached before #6154 still carries the repeated author line.
+  const once = (f: Record<string, string | number>) => (typeof f.author === "string" ? { ...f, author: authorLineOnce(f.author) } : f);
+  if (hit.fields) return once(hit.fields);
   const live = await resolveIsbn(isbn).catch(() => null);
-  if (live?.fields) return live.fields;
+  if (live?.fields) return once(live.fields);
   const out: Record<string, string | number> = { isbn: isbn.replace(/[^0-9X]/gi, "").toUpperCase() };
   // The mirror composes "Title — Author": split it back rather than land the
   // author in the title field.
   const [title, author] = hit.title.split(/\s+—\s+/, 2);
   if (title?.trim()) out.title = title.trim();
-  if (author?.trim()) out.author = author.trim();
+  if (author?.trim()) out.author = authorLineOnce(author);
   return out;
 }
 

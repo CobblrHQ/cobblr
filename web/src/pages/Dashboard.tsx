@@ -92,6 +92,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
 import "../tips/install-tip";
+import { MetaParts } from "../components/MetaParts";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -1640,14 +1641,13 @@ function TileGrid({
                   grid renders nothing, so "also" is orphaned (the author, 2026-07-05) —
                   drop it to a plain "Enabled". */}
               {empties.size >= visible.length ? "Enabled:" : "Also enabled:"}{" "}
-              {alsoEnabled.map(([label, to], i) => (
-                <span key={label}>
-                  {i > 0 && " · "}
-                  <Link to={to} className="lowercase hover:text-accent underline decoration-dotted underline-offset-2">
+              <MetaParts
+                parts={alsoEnabled.map(([label, to]) => (
+                  <Link key={label} to={to} className="lowercase hover:text-accent underline decoration-dotted underline-offset-2">
                     {label}
                   </Link>
-                </span>
-              ))}
+                ))}
+              />
               <span>  - nothing in them yet.</span>
             </p>
           )}

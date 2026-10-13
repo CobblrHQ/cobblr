@@ -11,6 +11,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { invokeSavedConnector } from "../invoke-saved.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const connectorsRouter = Router({ mergeParams: true });
 
@@ -22,7 +23,7 @@ const ConnectorCreate = z.object({
 });
 
 const ConnectorUpdate = z.object({
-  label: z.string().min(1).max(120).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).optional(),
   config: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
@@ -31,7 +32,7 @@ const ConnectorUpdate = z.object({
 const InvokeBody = z.object({
   action_id: z.string().min(1),
   args: z.record(z.unknown()).optional(),
-  rendered: z.string().optional(),
+  rendered: optionalField(z.string()),
 });
 
 // ──────────────────────────── catalogue ────────────────────────────
@@ -280,7 +281,7 @@ connectorsRouter.post(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    const out = await invokeSavedConnector(tenantDb(req), ctx.org.id, id, parsed.data.action_id, parsed.data.args ?? {}, parsed.data.rendered);
+    const out = await invokeSavedConnector(tenantDb(req), ctx.org.id, id, parsed.data.action_id, parsed.data.args ?? {}, parsed.data.rendered ?? undefined);
     if (out.kind === "not_found") {
       res.status(404).json({ error: { code: "not_found", message: "connector not found" } });
       return;

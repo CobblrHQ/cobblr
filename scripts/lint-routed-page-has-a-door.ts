@@ -45,6 +45,8 @@ const EXEMPT: Record<string, string> = {
   "/join/:token": "an invite link in an email",
   "/join-machines/:ownerOrg/:token": "a machine-sharing invite link sent to the other workspace",
   "/reset/:token": "the password-reset email",
+  "/m/stop/:token": "the stop link at the foot of an automation's email to someone outside the workspace (#6070)",
+  "/m/reply/:token": "the reply link in an automation's email to someone outside the workspace (#6070)",
   "/verify/:token": "the email-verification email",
   "/pair": "the QR code the desktop shows for phone sign-in",
   "/view-as": "the link another Cobblr makes for View as through a share; Settings, Sharing opens it in a new tab with the grant in its fragment",

@@ -135,6 +135,13 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   org_personal_documents_reader: { travels: "never", why: "a consent to send personal documents to a cloud company is given by the owner where the workspace runs, never carried in a backup" },
   // The workspace's own outbound email: its provider settings and keys.
   org_outbound_email: { travels: "never", why: CREDENTIAL },
+  org_outbound_sms: { travels: "never", why: CREDENTIAL },
+  // Automations messaging people outside the workspace (#6070): the
+  // workspace's yes and limits, what they sent, and who asked to stop, which
+  // must survive a restore so a stopped person is never messaged again.
+  org_external_messages: { travels: "backup", users: ["updated_by"] },
+  external_message_log: { travels: "backup", id: "id" },
+  external_message_stops: { travels: "backup" },
   outbound_email_log: {
     travels: "never",
     why: "this instance's record of what it mailed; each order's own history, which the backup carries, keeps who was emailed and when",

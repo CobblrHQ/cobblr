@@ -19,8 +19,7 @@
 // literal built on a resolved root (`${REPO}web/...`) does not match.
 //
 //   npx tsx scripts/lint-test-paths-from-file.ts   (pnpm lint test-paths-from-file)
-import { readFileSync } from "node:fs";
-import { repoFiles } from "./lib/repo-files.js";
+import { readRepoFile, repoFiles } from "./lib/repo-files.js";
 
 // A top-level directory, as the start of a path or the whole of it ("modules").
 const TOP = "(?:api|web|modules|packages|scripts|bundles|docs|e2e|changelog\\.d|deploy|docker)(?:/|[\"'`])";
@@ -51,7 +50,8 @@ function check(file: string, src: string): Violation[] {
 const violations: Violation[] = [];
 for (const file of repoFiles(["*.test.ts", "*.test.tsx", "*.test.mjs", "*.test.js"])) {
   if (file.includes("node_modules/")) continue;
-  violations.push(...check(file, readFileSync(file, "utf8")));
+  const src = readRepoFile(file);
+  if (src !== null) violations.push(...check(file, src));
 }
 
 if (violations.length) {

@@ -119,6 +119,8 @@ function Row({
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(person.name);
+  const [draftEmail, setDraftEmail] = useState(person.email ?? "");
+  const [draftPhone, setDraftPhone] = useState(person.phone ?? "");
   const [inviting, setInviting] = useState(false);
   const [email, setEmail] = useState(person.email ?? "");
   const [handing, setHanding] = useState(false);
@@ -137,12 +139,12 @@ function Row({
   });
 
   const rename = useMutation({
-    mutationFn: () => api.updatePerson(slug!, person.id, { name: draft.trim() }),
+    mutationFn: () => api.updatePerson(slug!, person.id, { name: draft.trim(), email: draftEmail.trim(), phone: draftPhone.trim() }),
     onSuccess: () => {
       setEditing(false);
       onChanged?.();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't rename them."),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save their details."),
   });
   const invite = useMutation({
     mutationFn: () => api.invitePerson(slug!, person.id, email.trim() ? { email: email.trim() } : {}),
@@ -166,23 +168,32 @@ function Row({
 
   return (
     <div className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 text-sm" data-testid="people-row">
-      <div className="flex items-center gap-2">
-        {editing ? (
-          <input value={draft} onChange={(e) => setDraft(e.target.value)} className="input flex-1 min-w-0" aria-label="Name" autoFocus />
-        ) : (
-          <Link to={`/people/${person.id}`} className="flex-1 min-w-0 truncate text-content dark:text-mortar-100 hover:underline" title="What is theirs">
-            {person.name}
-            {person.left && <span className="ml-2 text-[11px] text-faint">left the workspace</span>}
-          </Link>
-        )}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex-1 min-w-0">
+          {editing ? (
+            <input value={draft} onChange={(e) => setDraft(e.target.value)} className="input w-full" aria-label="Name" autoFocus />
+          ) : (
+            <>
+              <Link to={`/people/${person.id}`} className="block truncate text-content dark:text-mortar-100 hover:underline" title="What is theirs">
+                {person.name}
+                {person.left && <span className="ml-2 text-[11px] text-faint">left the workspace</span>}
+              </Link>
+              {!person.member && (person.email || person.phone) && (
+                <p className="truncate text-xs text-muted" data-testid="people-contact">
+                  {[person.email, person.phone].filter(Boolean).join(" · ")}
+                </p>
+              )}
+            </>
+          )}
+        </div>
         {person.member && !person.left && <span className="text-[10px] font-mono uppercase tracking-widest text-muted">member</span>}
         {!person.member && !person.user_id && canWrite && !editing && (
-          <button type="button" className="text-xs text-accent hover:underline" onClick={() => setEditing(true)}>
-            Rename
+          <button type="button" className="text-xs text-accent hover:underline" onClick={() => setEditing(true)} data-testid="people-edit">
+            Edit
           </button>
         )}
         {editing && (
-          <button type="button" className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-xs px-2 py-1 transition disabled:opacity-50" disabled={!draft.trim() || rename.isPending} onClick={() => rename.mutate()}>
+          <button type="button" className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 text-xs px-2 py-1 transition disabled:opacity-50" disabled={!draft.trim() || rename.isPending} onClick={() => rename.mutate()} data-testid="people-edit-save">
             Save
           </button>
         )}
@@ -197,6 +208,13 @@ function Row({
           </button>
         )}
       </div>
+      {editing && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <input type="email" value={draftEmail} onChange={(e) => setDraftEmail(e.target.value)} placeholder="Email (optional)" aria-label="Email" className="input min-w-0" data-testid="people-edit-email" />
+          <input type="tel" value={draftPhone} onChange={(e) => setDraftPhone(e.target.value)} placeholder="Phone, with the country code (+1 …)" aria-label="Phone" className="input min-w-0" data-testid="people-edit-phone" />
+          <p className="sm:col-span-2 text-xs text-faint">An automation can email or text them only once an owner or admin allows it, under Configuration, Email.</p>
+        </div>
+      )}
       {handing && (
         <div className="mt-2 flex flex-col sm:flex-row gap-2">
           <select value={handTo} onChange={(e) => setHandTo(e.target.value)} className="input flex-1 min-w-0" aria-label="Hand to">

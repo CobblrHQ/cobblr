@@ -1,3 +1,5 @@
+import { registerPanelPresence } from "./platform/panel-presence.js";
+import { externalMessagingRefusal, sendExternalMessage } from "./platform/external-messages.js";
 import { readEnabledPlaceValues } from "./platform/placement-values.js";
 import { argChoicesFor } from "./platform/action-arg-choices.js";
 import { secretPresenceDb } from "./platform/secret-presence.js";
@@ -145,11 +147,13 @@ import { notePassFailure } from "./platform/pass-failures.js";
 import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
 import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
 import { backfillDefaultBindings } from "./platform/seed-bindings.js";
+import { healWireBooleanArgs } from "./platform/heal-wire-boolean-args.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
 import { actionGateOf, gatePasses } from "./platform/action-gates.js";
 import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-field-aggregates.js";
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
+import { reconcileBundleApps } from "./platform/reconcile-bundle-apps.js";
 import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
 import { reconcileBundleInstanceConfig } from "./platform/bundle-instance-config.js";
@@ -171,6 +175,8 @@ import { provisionOrgForUser } from "./routes/auth.js";
 import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
+import { registerShareChildren, shareChildrenFor } from "./platform/share-children.js";
+import { healCopiedCollectionLooksAtBoot } from "./platform/heal-copied-collection-looks.js";
 import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
 import { voidReadOnlyShareSuggestionsAtBoot } from "./platform/heal-void-share-suggestions.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
@@ -428,7 +434,7 @@ async function boot() {
     deletedRecords,
     dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
-    activity: { log: activity.log, logMany: activity.logMany, registerHistoryWriter },
+    activity: { log: activity.log, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),
@@ -454,6 +460,8 @@ async function boot() {
     selfFetch,
     entities: {
       registerResolver: entities.registerResolver,
+      registerShareChildren,
+      shareChildrenFor,
       registerWriter: entities.registerEntityWriter,
       getWriter: async (orgId, kind) => {
         const w = await entities.getEntityWriterFor(orgId, kind);
@@ -564,9 +572,11 @@ async function boot() {
       withFieldLabels,
       serverManagedFields: entities.serverManagedFields,
     },
+    panels: { registerPresence: registerPanelPresence },
     actions: {
       registerHandler: actions.registerHandler,
       registerPlanner: actions.registerPlanner,
+      registerWireCheck: actions.registerWireCheck,
       registerUndo: actions.registerUndo,
       registerRequester: actions.registerRequester,
       listApplicable: actions.listApplicable,
@@ -888,6 +898,9 @@ async function boot() {
         return { configured: s.configured, from: s.from };
       },
       send: (orgId, message) => sendFromWorkspace(orgId, message),
+      automatedRefusal: (orgId, via) => externalMessagingRefusal(orgId, via ?? "email"),
+      sendAutomated: (orgId, m) =>
+        sendExternalMessage({ orgId, bindingId: m.wireId, personId: m.personId, text: m.text, record: m.record ?? null, replyLink: m.replyLink === true, via: m.via === "text" ? "text" : "email" }),
       log: async (orgId, source) =>
         (await outboundEmailLog(orgId, source)).map((r) => ({
           id: r.id,
@@ -1978,6 +1991,8 @@ async function boot() {
   await T("reconcileBundleFieldAggregates", reconcileBundleFieldAggregates());
   const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
   console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
+  // A wire saved with a boolean argument as "true" is saved as true (#6130).
+  await T("healWireBooleanArgs", healWireBooleanArgs());
   // A first boot with no UI: COBBLR_OIDC_* sets up the instance's sign-in
   // provider (platform/oidc.ts). One saved in the UI is left alone.
   await T("seedOidcProviderFromEnv", seedProviderFromEnv());
@@ -1991,6 +2006,8 @@ async function boot() {
   if (bundleUpdates.applied > 0) {
     console.log(`[cobblr-api] bundle updates: ${bundleUpdates.applied} applied, ${bundleUpdates.skipped} left for the prompt`);
   }
+  const appsReconciled = await T("reconcileBundleApps", reconcileBundleApps());
+  if (appsReconciled.updated > 0) console.log(`[cobblr-api] bundle apps: ${appsReconciled.updated} updated`);
   // A field a bundle owns carries the role its current manifest declares, even
   // on an install whose update is waiting on the prompt (a lot the scan reads
   // is filed by role). Fills a missing role only; meta-only.
@@ -2083,6 +2100,7 @@ async function boot() {
   // instance; opens no tenant pools. See platform/reconcile-tenant-roles.ts.
   const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
   await T("reconcileShareSpaces", reconcileShareSpaces());
+  await T("healCopiedCollectionLooks", healCopiedCollectionLooksAtBoot());
   await T("voidReadOnlyShareSuggestions", voidReadOnlyShareSuggestionsAtBoot());
   if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
     console.log(

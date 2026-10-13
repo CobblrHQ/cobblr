@@ -50,7 +50,7 @@ export default defineModule({
           { name: "color", type: "text" },
           { name: "metadata", type: "object" },
         ],
-        exposableFields: ["name", "color"],
+        exposableFields: ["name", "color", "metadata"],
         detailRoute: "/tags/{id}",
       },
     ],

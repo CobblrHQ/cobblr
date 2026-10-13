@@ -7,13 +7,13 @@ import { SendError, previewSend, sendRecords, sendTargets, undoSend } from "../p
 
 export const SendBody = z.object({
   entity_kind: z.string().min(1).max(120), ids: z.array(z.string().uuid()).min(1).max(200),
-  connection_id: z.string().uuid().optional(),
+  connection_id: z.string().uuid().optional(), // none-refused-ok: the send packet is a typed input shared with the record-send action and file route, which take no null
   target_org: z.string().min(1).max(120), collection: z.string().max(120).nullable().optional(),
   mode: z.enum(["copy", "move"]), field_map: z.record(z.string().nullable()).optional(),
-  placement: z.literal("unplaced").optional(),
+  placement: z.literal("unplaced").optional(), // none-refused-ok: the send packet is a typed input shared with the record-send action and file route, which take no null
   include_secrets: z.boolean().optional(), location: z.string().uuid().nullable().optional(),
   create_matching: z.boolean().optional(), add_fields: z.array(z.string().max(120)).max(100).optional(),
-  duplicate: z.enum(["update", "another"]).optional(), request_id: z.string().uuid().optional(), dry_run: z.boolean().optional(),
+  duplicate: z.enum(["update", "another"]).optional(), request_id: z.string().uuid().optional(), dry_run: z.boolean().optional(), // none-refused-ok: the send packet is a typed input shared with the record-send action and file route, which take no null
 });
 export const recordSendRouter = Router();
 recordSendRouter.get("/:slug/records/send-targets", requireAuth, withTenant, async (req, res, next) => {

@@ -12,6 +12,7 @@ import { healBundleViewFields } from "../platform/heal-bundle-view-fields.js";
 import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
+import { testSweepRound } from "./test-support-sweep-round.js";
 import { setSubscriberDelayForTests } from "../platform/events.js";
 import { selfFetch } from "../platform/self-fetch.js";
 import { runWithActor } from "../lib/request-context.js";
@@ -235,16 +236,8 @@ testSupportRouter.post("/test-support/run-all-sweeps", async (req, res, next) =>
       res.status(400).json({ error: { code: "bad_request", message: "body needs { org_id }" } });
       return;
     }
-    const passes = await runAllTenantSweeps({ orgIds: [org_id] });
-    // A pass the scheduler is walking right now holds its lock and sits this
-    // call out; it is run again on its own until it runs, within a minute.
-    const deadline = Date.now() + 60_000;
-    for (let skipped = Object.keys(passes).filter((n) => passes[n]!.skipped); skipped.length && Date.now() < deadline; skipped = skipped.filter((n) => passes[n]!.skipped)) {
-      await new Promise((r) => setTimeout(r, 500));
-      for (const name of skipped) passes[name] = await runTenantSweep(name, { orgIds: [org_id] });
-    }
-    const failed = Object.entries(passes).filter(([, r]) => r.failed > 0 || r.skipped).map(([name, r]) => ({ name, skipped: r.skipped, failures: r.failures }));
-    res.status(failed.length ? 500 : 200).json({ passes: Object.keys(passes).length, failed });
+    const round = await testSweepRound({ all: runAllTenantSweeps }, org_id);
+    res.status(round.failed.length ? 500 : 200).json(round);
   } catch (err) {
     next(err);
   }

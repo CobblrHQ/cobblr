@@ -37,7 +37,7 @@ import {
 import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership, type StationRecordAction } from "../lib/api";
 import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { AskBeforeRun, DragInput, OverlayLayer, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking, WorkspaceLink } from "@cobblr/platform-web";
+import { AskBeforeRun, DragInput, OverlayLayer, readTypedNumber, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking, WorkspaceLink } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { FixedActiveOrgProvider } from "../auth/ActiveOrgContext";
 import { WorkspacePlatformWeb } from "../WorkspacePlatformWeb";
@@ -742,6 +742,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           <Keypad
             title={`How many ${view.record.title} are there?`}
             start={view.record.qty ?? 0}
+            decimal={view.record.measured}
             onCancel={() => setKeypad(false)}
             onDone={(n) => {
               setKeypad(false);
@@ -895,9 +896,23 @@ function RecordCard(props: {
   );
 }
 
-function Keypad({ title, start, onCancel, onDone }: { title: string; start: number; onCancel: () => void; onDone: (n: number) => void }) {
+// A measured thing (metres, grams) is counted with a decimal point: the
+// keypad had digits only, so 7.9 m could only be set as 7 or 79 (#6142).
+function Keypad({ title, start, decimal = false, onCancel, onDone }: { title: string; start: number; decimal?: boolean; onCancel: () => void; onDone: (n: number) => void }) {
   const [v, setV] = useState(String(start));
-  const press = (k: string) => setV((cur) => (k === "back" ? cur.slice(0, -1) : cur === "0" ? k : (cur + k).slice(0, 6)));
+  const press = (k: string) =>
+    setV((cur) => {
+      if (k === "back") return cur.slice(0, -1);
+      if (k === ".") return cur.includes(".") ? cur : `${cur || "0"}.`;
+      return cur === "0" ? k : (cur + k).slice(0, decimal ? 9 : 6);
+    });
+  const typed = readTypedNumber(v || "0", { allowNegative: false, decimal });
+  const keys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", decimal ? "." : "back", "0", decimal ? "back" : "ok"];
+  const set = (
+    <BigButton key="ok" disabled={typed === null} onClick={() => typed !== null && onDone(typed)}>
+      Set
+    </BigButton>
+  );
   return (
     <Overlay onCancel={onCancel} label={title}>
       <div className="text-xl font-medium">{title}</div>
@@ -905,17 +920,16 @@ function Keypad({ title, start, onCancel, onDone }: { title: string; start: numb
         {v || "0"}
       </div>
       <div className="grid grid-cols-3 gap-3">
-        {["1", "2", "3", "4", "5", "6", "7", "8", "9", "back", "0", "ok"].map((k) =>
+        {keys.map((k) =>
           k === "ok" ? (
-            <BigButton key={k} onClick={() => onDone(Number(v || 0))}>
-              Set
-            </BigButton>
+            set
           ) : (
-            <BigButton key={k} tone="plain" onClick={() => press(k)} label={k === "back" ? "Delete a digit" : undefined}>
+            <BigButton key={k} tone="plain" onClick={() => press(k)} label={k === "back" ? "Delete a digit" : k === "." ? "Decimal point" : undefined}>
               {k === "back" ? "⌫" : k}
             </BigButton>
           ),
         )}
+        {decimal && <div className="col-span-3 grid">{set}</div>}
       </div>
     </Overlay>
   );
@@ -1178,6 +1192,7 @@ function Notice({ tone, title, body, onDismiss }: { tone: "bad" | "ok"; title: s
 
 function BigButton({ children, onClick, tone = "solid", disabled, label }: { children: ReactNode; onClick: () => void; tone?: "solid" | "plain"; disabled?: boolean; label?: string }) {
   return (
+    // COLOUR-NOT-STATE: the tone is the caller's main action against a plain one, not a pick.
     <button
       type="button"
       onClick={onClick}

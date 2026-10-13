@@ -877,7 +877,10 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       const [module, type] = (await baseKindOf(req.tenant!.org.id, entityKind)).split(":");
       if (module && type) entity = { module, type, id: entityId };
     }
-    const filters = { orgId: req.tenant!.org.id, limit, actions, authMethods, apiTokenId, entityType, ...(entity ? { entity } : {}) };
+    // entity_type with entity_id and no entity_kind: one thing the kernel logs
+    // with no module (a wire's own firings, #6129).
+    const ownId = entityType && entityId && !entityKind ? entityId : undefined;
+    const filters = { orgId: req.tenant!.org.id, limit, actions, authMethods, apiTokenId, entityType, ...(ownId ? { entityId: ownId } : {}), ...(entity ? { entity } : {}) };
     const [items, total] = await Promise.all([
       activity.list({ ...filters, ...(Number.isSafeInteger(before) && before > 0 ? { cursorBeforeId: before } : {}) }),
       activity.count(filters),

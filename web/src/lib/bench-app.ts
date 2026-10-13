@@ -112,7 +112,7 @@ export const CATALOGING_BENCH_HTML = String.raw`
     {k:'locate',field:'_bin',label:'bin it'}
   ];}
 
-  var item=null, binSeq=0, currentPedal=null;
+  var item=null, binSeq=0, currentPedal=null, committing=false;
   // live edge state — populated by polling the app's own KV ("bench-live"),
   // which the on-site agent writes. live.on = a fresh reading was seen recently.
   var live={on:false,caliper_mm:null,scale_g:null,pedal_seq:0,seen:0};
@@ -232,6 +232,8 @@ export const CATALOGING_BENCH_HTML = String.raw`
   // item to add the tool, using the AI's name/brand when it's confident, else
   // the deterministic spec we composed. Generic modules, app-side wiring.
   function commit(){
+    if(committing || !item)return;
+    committing=true;
     var p=document.getElementById('cb-pedal'); if(p){p.disabled=true;p.textContent='Committing…';}
     var c=item.captured, floor=specName(c), bin=item.bin, photo=item.photo||null;
     var fields={}; Object.keys(c).forEach(function(k){if(k[0]!=='_')fields[k]=c[k];});
@@ -246,8 +248,22 @@ export const CATALOGING_BENCH_HTML = String.raw`
       var name = ai ? id.name : floor;
       var mfr = (id && id.brand) ? id.brand : undefined;
       return SDK.invoke('inventory:create-item',{args:{instance:'tooling',name:name,manufacturer:mfr,fields:fields},photo:photo,photoName:floor.replace(/[^a-z0-9.]+/gi,'-')+'.png'})
-        .then(function(cr){var res=(cr&&cr.result)||cr||{}; addLog(res.name||name,bin,ai); showResult(res.name||name,bin,ai);});
-    }).catch(function(){addLog(floor,bin,false);showResult(floor,bin,false);});
+        .then(function(cr){
+          var res=(cr&&cr.result)||cr||{};
+          if(res.ok!==true || typeof res.item_id!=='string' || !res.item_id){
+            throw new Error(typeof res.error==='string' ? res.error : 'The save did not return a saved tool.');
+          }
+          committing=false; addLog(res.name||name,bin,ai); showResult(res.name||name,bin,ai);
+        });
+    }).catch(function(error){
+      committing=false;
+      stage.innerHTML='<div class="cb-prompt" role="alert">Could not save this tool.</div>'+
+        '<div class="cb-sub" id="cb-error"></div>'+
+        '<div class="cb-sub">Your measurements and photo are still here. If access was refused, ask a workspace owner for permission to add tools, then try again.</div>'+
+        '<div class="cb-row"><div class="cb-spacer"></div>'+pedal('Try again')+'</div>';
+      document.getElementById('cb-error').textContent=error&&error.message ? error.message : 'The request failed. Check your connection and try again.';
+      bind(commit);
+    });
   }
 
   function showResult(name,bin,ai){

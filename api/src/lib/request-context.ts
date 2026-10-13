@@ -85,6 +85,8 @@ export interface RequestScope {
    *  which test file sent it, so a pool's holders and waiters name the burst
    *  that starved it, not only the query each one ran. */
   label?: string;
+  /** Test-only cold measurement: TTL caches belong to this request. */
+  coldTtlCaches?: boolean;
 }
 const scopeStorage = new AsyncLocalStorage<RequestScope>();
 

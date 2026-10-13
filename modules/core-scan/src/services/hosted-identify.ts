@@ -17,6 +17,7 @@
 //
 // Operator-configured internal service ⇒ plain fetch, strict-egress-safe
 // (the env-set-URL convention, docs/architecture/platform-spec.md §14.1).
+import { nameReadsAsProse } from "./item-name.js";
 import { parseProductRegion } from "./image-ops.js";
 import { parseListing } from "./listing-evidence.js";
 import type { PhotoIdentity } from "./enrich-photo.js";
@@ -357,7 +358,9 @@ export async function hostedIdentifyJob(jobId: string): Promise<HostedJobState> 
 export function toPhotoIdentity(item: Record<string, unknown>): PhotoIdentity | null {
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
   const name = str(item.name);
-  if (!name) return null;
+  // A description of the photo is no name (#6100): the caller reads the
+  // label instead (identifyPhoto), the same rule the tenant reply follows.
+  if (!name || nameReadsAsProse(name)) return null;
   const et = str(item.entity_type);
   const items = Array.isArray(item.items) ? (item.items as Array<{ name?: unknown; brand?: unknown; qty?: unknown }>) : [];
   const individuals = items

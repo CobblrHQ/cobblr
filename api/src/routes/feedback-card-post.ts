@@ -18,23 +18,48 @@ import { announceReturningMessage, announceRouted, type AnnouncePayload, type An
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { feedbackCard } from "./feedback-card.js";
 
-/** Post the item's card and remember which message it is. Never throws. */
-export async function postFeedbackCard(feedbackId: string, payload: AnnouncePayload): Promise<AnnounceResult> {
-  const posted = await announceReturningMessage("feedback.new", payload);
-  if (posted.messageId) {
-    try {
+export type FeedbackCardPostResult = AnnounceResult & { skipped?: "has_card" };
+
+/** Post and remember one card per item, across submission and late posting. Never throws. */
+export async function postFeedbackCard(feedbackId: string, payload: AnnouncePayload): Promise<FeedbackCardPostResult> {
+  const miss = { delivered: false, messageId: null, channelId: null };
+  let claimed = false;
+  try {
+    if (!(await announceRouted("feedback.new", payload.originGuildId))) return miss;
+    const row = await meta
+      .updateTable("feedback")
+      .set({ announce_message_id: CLAIM, updated_at: sql`updated_at` })
+      .where("id", "=", feedbackId)
+      .where("announce_message_id", "is", null)
+      .returning("id")
+      .executeTakeFirst();
+    if (!row) return { ...miss, skipped: "has_card" };
+    claimed = true;
+    const posted = await announceReturningMessage("feedback.new", payload);
+    if (posted.messageId) {
       await meta
         .updateTable("feedback")
         .set({ announce_message_id: posted.messageId, announce_channel_id: posted.channelId, updated_at: sql`updated_at` })
         .where("id", "=", feedbackId)
+        .where("announce_message_id", "=", CLAIM)
         .execute();
-    } catch (err) {
-      // The card exists but we cannot find it again: say so loudly, because
-      // every later edit will silently fall back to a second card.
-      console.error(`[feedback] card posted for ${feedbackId} but its id could not be stored:`, err);
+    }
+    return posted;
+  } catch (err) {
+    console.error(`[feedback] card delivery or message-id capture failed for ${feedbackId}:`, err);
+    return miss;
+  } finally {
+    if (claimed) {
+      // A failed delivery gives the item back; a saved message id keeps it claimed.
+      await meta
+        .updateTable("feedback")
+        .set({ announce_message_id: null, updated_at: sql`updated_at` })
+        .where("id", "=", feedbackId)
+        .where("announce_message_id", "=", CLAIM)
+        .execute()
+        .catch((err: unknown) => console.error(`[feedback] card claim release failed for ${feedbackId}:`, err));
     }
   }
-  return posted;
 }
 
 /** Why a stored item's card was, or was not, posted now. */
@@ -63,40 +88,20 @@ export async function postCardForStoredFeedback(feedbackId: string): Promise<Lat
   if (!(await announceRouted("feedback.new", originGuildId))) {
     return { posted: false, reason: "not_routed", message: "Discord is off for new feedback on this instance, so there is nowhere to post it." };
   }
-  // Claim it: a second caller now sees a card and is refused.
-  const claimed = await meta
-    .updateTable("feedback")
-    .set({ announce_message_id: CLAIM, updated_at: sql`updated_at` })
-    .where("id", "=", feedbackId)
-    .where("announce_message_id", "is", null)
-    .returning("id")
-    .executeTakeFirst();
-  if (!claimed) return { posted: false, reason: "has_card", message: "This item already has its card in Discord." };
   const context = (row.context ?? {}) as { route?: unknown };
   const route = typeof context.route === "string" ? context.route : "";
   const card = feedbackCard(row);
   const attachments = Array.isArray(row.attachments) ? row.attachments : [];
   const orgId = row.org_id;
-  let posted: AnnounceResult;
-  try {
-    posted = await postFeedbackCard(row.id, {
-      title: card.title,
-      body: card.body,
-      color: card.color,
-      fields: await reporterCardFields({ userId: row.user_id, orgId, route }),
-      originGuildId,
-      ...(orgId && attachments.length ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name ?? "" })) } : {}),
-    });
-  } finally {
-    // Whatever happened, the claim never outlives this call: a delivered post
-    // replaced it with the message id, anything else gives it back.
-    await meta
-      .updateTable("feedback")
-      .set({ announce_message_id: null, updated_at: sql`updated_at` })
-      .where("id", "=", feedbackId)
-      .where("announce_message_id", "=", CLAIM)
-      .execute();
-  }
+  const posted = await postFeedbackCard(row.id, {
+    title: card.title,
+    body: card.body,
+    color: card.color,
+    fields: await reporterCardFields({ userId: row.user_id, orgId, route }),
+    originGuildId,
+    ...(orgId && attachments.length ? { images: attachments.map((a) => ({ orgId, fileId: a.file_id, name: a.name ?? "" })) } : {}),
+  });
+  if (posted.skipped) return { posted: false, reason: "has_card", message: "This item already has its card in Discord." };
   if (!posted.delivered) return { posted: false, reason: "not_delivered", message: "Discord did not take the post. Check the webhook, then try again." };
   return { posted: true, messageId: posted.messageId };
 }

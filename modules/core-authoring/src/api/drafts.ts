@@ -34,6 +34,7 @@ import { kindFieldsOf, modulesOf, shapeCandidate } from "../services/shape.js";
 import { listTemplates, getTemplate } from "../services/templates.js";
 import { matchTemplateHosted } from "../services/match-template.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 /** Tell the workspace a design draft was made or applied, for the wires
  *  that listen (manifest `exposes.events`). */
@@ -250,8 +251,8 @@ draftsRouter.post(
 const CompileBody = z.object({
   intent: z.string().min(1).max(4000),
   selected_kinds: z.array(z.string()).optional(),
-  task: z.string().optional(),
-  base_template_id: z.string().optional(),
+  task: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_template_id: optionalField(z.string()),
 });
 // AI-REACH: a step of the design-a-workspace flow (see /build)
 draftsRouter.post(
@@ -269,7 +270,7 @@ draftsRouter.post(
         orgId,
         parsed.data.selected_kinds,
         parsed.data.task ?? "create-bundle",
-        parsed.data.base_template_id,
+        parsed.data.base_template_id ?? undefined,
         tc.role,
       );
     } catch (e) {
@@ -310,8 +311,8 @@ draftsRouter.post(
 const BuildBody = z.object({
   intent: z.string().min(1).max(4000),
   selected_kinds: z.array(z.string()).optional(),
-  task: z.string().optional(),
-  base_template_id: z.string().optional(),
+  task: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_template_id: optionalField(z.string()),
 });
 const MAX_BUILD_ATTEMPTS = 3;
 
@@ -444,7 +445,7 @@ draftsRouter.post(
         orgId,
         parsed.data.selected_kinds,
         parsed.data.task ?? "create-bundle",
-        parsed.data.base_template_id,
+        parsed.data.base_template_id ?? undefined,
         tc.role,
       );
     } catch (e) {

@@ -49,7 +49,7 @@ export interface WriteRequest {
    *  (#4472) puts a thing through the scan inbox's intake and may file it;
    *  what it filed is ledgered as a create of that record, so the panel's
    *  Undo removes it like any other. */
-  via?: "add_thing" | "file_inbox";
+  via?: "add_thing" | "file_inbox" | "put_back_scan";
 }
 
 export interface BulkOutcome {
@@ -203,6 +203,8 @@ export function undoableOf(
       // kept it. One with side effects the kernel cannot reverse never does.
       // Items filed out of the inbox go back into it.
       if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "file_inbox") return true;
+      // A scan item put back is taken back by restoring what the put-back recorded.
+      if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "put_back_scan") return !!parseJsonb<{ undo_revision?: unknown }>(row.payload)?.undo_revision;
       return !!undoSteps(parseJsonb<{ undo?: unknown }>(row.payload)?.undo);
     default:
       return false;
@@ -355,6 +357,39 @@ export async function performWrite(
   },
 ): Promise<WriteOutcome> {
   const { tool, entity_kind } = req;
+
+  if (req.via === "put_back_scan") {
+    // A scan inbox item put back as an earlier step found it (#6100). The
+    // put-back records the item first, so its Undo restores that.
+    const r = await getTool("put_back_scan_item")!.execute(wsApi, req.args ?? {});
+    if (!r.ok) return { ok: false, message: r.error ?? "Nothing was put back." };
+    const out = r.data as { id?: string; name?: string | null; undo_revision?: string | null };
+    const label = out.name ? `Put back “${out.name}”` : "Put back a scan item";
+    const row = await db
+      .insertInto("core_ai_chat_writes")
+      .values({
+        user_id: userId,
+        tool: "action",
+        entity_kind: "",
+        entity_id: null,
+        entity_label: label,
+        before: null,
+        payload: JSON.stringify({ via: "put_back_scan", item_id: out.id ?? String(req.args?.id ?? ""), undo_revision: out.undo_revision ?? null }) as unknown,
+        auto_applied: opts.auto,
+        prompt: opts.prompt ?? null,
+        turn_id: opts.turnId ?? null,
+        undone_at: null,
+        undo_of: opts.undoOf ?? null,
+      })
+      .returning("id")
+      .executeTakeFirst();
+    return {
+      ok: true,
+      message: out.name ? `Put back as “${out.name}”.` : "Put back as it was.",
+      ledger_id: row?.id,
+      undoable: !!out.undo_revision,
+    };
+  }
 
   if (tool === "action") {
     const r = await getTool("invoke_action")!.execute(wsApi, {
@@ -714,6 +749,18 @@ export async function undoWrite(
       held: "deleted-since",
       message: `${row.entity_label} has been deleted since, so there is nothing to put back. Undoing that deletion is a separate step.`,
     };
+  }
+
+  if (row.tool === "action" && payload?.via === "put_back_scan") {
+    const item = typeof payload.item_id === "string" ? payload.item_id : "";
+    const rev = typeof payload.undo_revision === "string" ? payload.undo_revision : "";
+    if (!item || !rev) return { ok: false, message: "This put-back kept nothing to undo it with." };
+    const back = await wsApi
+      .request("POST", `/modules/core-scan/inbox/${encodeURIComponent(item)}/revisions/${encodeURIComponent(rev)}/restore`, {})
+      .catch(() => null);
+    if (!back || back.status >= 400) return { ok: false, message: "The scan item could not be put back the way it was." };
+    await db.updateTable("core_ai_chat_writes").set({ undone_at: new Date() }).where("id", "=", row.id).execute();
+    return { ok: true, message: "Undid the put-back." };
   }
 
   if (row.tool === "action" && payload?.via === "file_inbox") {

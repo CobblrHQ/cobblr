@@ -1,4 +1,5 @@
 import { PastePanel } from "./PastePanel";
+import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
 import { RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
@@ -186,6 +187,22 @@ const FACE_HELD: Record<string, { field: string; fallback: unknown }> = {
   warranty: { field: "warranty_until", fallback: null },
 };
 
+
+/** The actions that move a record's stock, offered nowhere on a record marked
+ *  gone (#6153). The server holds the line at its stock writes; this keeps a
+ *  press from ending in a refusal. */
+const STOCK_MOVES = [
+  "inventory:use-one",
+  "inventory:use-up",
+  "inventory:mark-spoiled",
+  "inventory:restock-one",
+  "inventory:receive-lot",
+  "inventory:receive-package",
+  "inventory:split-lot",
+  "inventory:consume-with-loss",
+  "inventory:consume-stock",
+  "inventory:adjust-stock",
+];
 export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
   const mainCurrency = useMoneyCurrency();
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords, storageTracking, pasteTracking } = useInventory();
@@ -408,7 +425,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   // that is not a plain count: the same reading the amount control makes.
   const isMeasured = (u: string | null | undefined) =>
     !!u && u.trim().toLowerCase() !== "each" && (!units.all.length || usedInUnit(u, units.all) != null);
+  // Marked gone (its disposition: sold, lost, cleared by a stocktake), not
+  // merely archived: a split-off open ball is archived and still holds yarn.
+  const gone = readRecordDisposition(p.metadata) !== null;
   const excludeActionIds = [
+    // Marked gone: nothing is on hand, so nothing uses, takes or restocks it
+    // until it is brought back; the server refuses each anyway (#6153).
+    ...(gone ? STOCK_MOVES : []),
     "inventory:update-item",
     "inventory:measure-material",
     ...(canDisassemble ? [] : ["bricklink:disassemble-kit"]),
@@ -621,7 +644,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                           // the card ("Count these"), so say what is true instead.
                           // A record carrying BOTH a count and an estimate still shows
                           // the count: hiding a real number would be the worse lie.
-                          (isAssorted(p) && Number(p.qty) === 0 ? (
+                          // Marked gone: the kept count is history, not stock on hand,
+                          // and no stepper moves it (#6153).
+                          (gone ? (
+                            <span className="text-sm text-muted" data-qty-gone="true">
+                              Not on hand (had {units.format(Number(p.qty), p.unit)})
+                            </span>
+                          ) : isAssorted(p) && Number(p.qty) === 0 ? (
                             <span className="text-muted text-sm" data-qty-uncounted="true">
                               not counted
                             </span>
@@ -881,7 +910,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {/* Where it is kept: this record's place, any other places the same
           thing is kept (one card, a row per place), and "somewhere else too". */}
-      {!hide("location") && !hide("qty") && <HoldingsPanel partId={p.id} unit={units.suffix(p.unit) || undefined} />}
+      {!hide("location") && !hide("qty") && <HoldingsPanel partId={p.id} unit={units.suffix(p.unit) || undefined} gone={gone} />}
 
       <div id="units">
         <FaceSection face="serialized" kind={entityKind} holds={(p.units_count ?? 0) > 0}>

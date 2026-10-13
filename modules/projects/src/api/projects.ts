@@ -415,6 +415,12 @@ async function ensureProject(req: Parameters<typeof tenantDb>[0], id: string) {
     .executeTakeFirst();
 }
 
+/** A hand edit to a pattern's needs is a change to the pattern: a share
+ *  carries the needs with it (#6252), and hears of a change by the event. */
+function needsChanged(req: Parameters<typeof tenantContext>[0], projectId: string): void {
+  platform().events.emit("projects.project.updated", { orgId: tenantContext(req).org.id, projectId });
+}
+
 // AI-REACH: exempt hand edits to a pattern's needs list on its page; the assistant reads the list through GET /needs
 projectsRouter.post(
   "/:id/needs",
@@ -440,6 +446,7 @@ projectsRouter.post(
       .returning("id")
       .executeTakeFirstOrThrow();
     const items = await listNeeds(db, projectId);
+    needsChanged(req, projectId);
     res.status(201).json(items.find((n) => n.id === row.id));
   }),
 );
@@ -474,6 +481,7 @@ projectsRouter.patch(
     }
     await db.updateTable("projects_pattern_needs").set(patch as never).where("id", "=", cur.id).execute();
     if (cur.list_item_id) await syncShoppingLine(tenantContext(req).org.id, sessionUser(req)?.id ?? null, projectId, cur.id);
+    needsChanged(req, projectId);
     res.json((await listNeeds(db, projectId)).find((n) => n.id === cur.id));
   }),
 );
@@ -502,6 +510,7 @@ projectsRouter.delete(
       res.status(404).json({ error: { code: "not_found", message: "no such need on this pattern" } });
       return;
     }
+    needsChanged(req, projectId);
     res.status(204).end();
   }),
 );

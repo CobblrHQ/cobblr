@@ -394,6 +394,7 @@ async function lookupInBody<T>(postPath: string, body: unknown, olderGet: () => 
   try {
     return await request<T>("POST", postPath, body);
   } catch (err) {
+    // 404-is: an-older-api: a web deployed ahead of its api asks the older GET door
     if (err instanceof ApiError && err.status === 404) return request<T>("GET", olderGet());
     throw err;
   }
@@ -1144,6 +1145,16 @@ export type PaperworkResult =
     }
   | { read: false; reason: string };
 
+export interface OrderLineSlots {
+  line_id: string;
+  name: string | null;
+  count: number;
+  mode: "same" | "different";
+  received: number;
+  sentence: string;
+  units: Array<{ id: string; name: string | null; image_file_id: string | null }>;
+}
+
 export interface OrderItem {
   currency?: string;
   money_total?: MoneyTotal;
@@ -1407,9 +1418,28 @@ function filed<T>(slug: string, p: Promise<T>, change?: (r: T) => ScanFiledChang
   });
 }
 
+/** Automations that email people outside the workspace (#6070). */
+export interface AutomationEmailSettings {
+  enabled: boolean;
+  daily_limit: number;
+  per_wire_daily_limit: number;
+  recent: Array<{ id: string; channel: "email" | "text"; to_address: string; body: string | null; reply: "got" | "bought" | null; reply_token: string | null; status: "sent" | "held" | "stopped" | "refused" | "failed"; reason: string | null; created_at: string }>;
+}
+
+/** The workspace's own Twilio account, for texts to people outside it (#6070). */
+export interface OutboundSmsStatus {
+  configured: boolean;
+  from: string | null;
+  account_sid: string | null;
+  tokenSet: boolean;
+  updatedAt: string | null;
+}
+
 export interface OutboundEmailStatus {
   configured: boolean;
-  provider: "smtp" | "mailgun" | "resend" | "postmark" | null;
+  provider: "smtp" | "mailgun" | "resend" | "postmark" | "gmail" | null;
+  /** This server has a Google client, so Connect Gmail can be offered. */
+  gmail_available?: boolean;
   from: string | null;
   settings: Record<string, unknown>;
   secretsSet: string[];
@@ -2256,9 +2286,9 @@ export const api = {
     ),
   /** The workspace's People list: members and anyone added by name (#3787). */
   listPeople: (slug: string) => request<{ items: WorkspacePerson[] }>("GET", `/orgs/${slug}/people`),
-  addPerson: (slug: string, body: { name: string; email?: string }) =>
+  addPerson: (slug: string, body: { name: string; email?: string; phone?: string }) =>
     request<WorkspacePerson>("POST", `/orgs/${slug}/people`, body),
-  updatePerson: (slug: string, id: string, body: { name?: string; email?: string }) =>
+  updatePerson: (slug: string, id: string, body: { name?: string; email?: string; phone?: string }) =>
     request<WorkspacePerson>("PATCH", `/orgs/${slug}/people/${id}`, body),
   /** Everything one person owns, across every collection: `who` is an id, a
    *  name, or "me" (My things). */
@@ -2280,8 +2310,20 @@ export const api = {
   saveOutboundEmail: (slug: string, config: Record<string, unknown>) =>
     request<OutboundEmailStatus>("PUT", `/orgs/${slug}/outbound-email`, config),
   deleteOutboundEmail: (slug: string) => request<void>("DELETE", `/orgs/${slug}/outbound-email`),
+  /** Google's consent screen for sending from a Gmail account (send scope only). */
+  startGmailSender: (slug: string) => request<{ url: string }>("POST", `/orgs/${slug}/outbound-email/gmail/start`, {}),
   testOutboundEmail: (slug: string) => request<{ ok: true; to: string; status: "sent" | "skipped" }>("POST", `/orgs/${slug}/outbound-email/test`, {}),
   outboundEmailLog: (slug: string) => request<{ items: OutboundEmailLogRow[] }>("GET", `/orgs/${slug}/outbound-email/log`),
+  /** Whether automations may email people outside the workspace, its daily
+   *  limits, and what they tried lately (#6070). Owner/admin. */
+  getAutomationEmail: (slug: string) => request<AutomationEmailSettings>("GET", `/orgs/${slug}/outbound-email/automations`),
+  saveAutomationEmail: (slug: string, body: { enabled?: boolean; daily_limit?: number; per_wire_daily_limit?: number }) =>
+    request<Omit<AutomationEmailSettings, "recent">>("PUT", `/orgs/${slug}/outbound-email/automations`, body),
+  getOutboundSms: (slug: string) => request<OutboundSmsStatus>("GET", `/orgs/${slug}/outbound-email/sms`),
+  saveOutboundSms: (slug: string, body: { account_sid?: string; auth_token?: string; from_number?: string }) =>
+    request<OutboundSmsStatus>("PUT", `/orgs/${slug}/outbound-email/sms`, body),
+  deleteOutboundSms: (slug: string) => request<void>("DELETE", `/orgs/${slug}/outbound-email/sms`),
+  testOutboundSms: (slug: string, to: string) => request<{ ok: true; status: "sent" | "skipped" }>("POST", `/orgs/${slug}/outbound-email/sms/test`, { to }),
   /** Who each kind of workspace notification is for (owner/admin). */
   listNotificationAudiences: (slug: string) =>
     request<{ items: NotificationAudienceKind[] }>("GET", `/orgs/${slug}/notification-audiences`),
@@ -2949,6 +2991,10 @@ export const api = {
    *  picker (GET /addresses); `lookup` is null when no map lookup is set. */
   addresses: (slug: string, q: string) =>
     request<AddressSuggestionsBody>("GET", `/orgs/${slug}/addresses?${new URLSearchParams({ q }).toString()}`),
+  /** The presence-declared record panels that have something to show on one
+   *  record (#6337). */
+  panelPresence: (slug: string, kind: string, id: string, collection?: string | null) =>
+    request<{ present: string[] }>("GET", `/orgs/${slug}/panel-presence?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}${collection ? `&collection=${encodeURIComponent(collection)}` : ""}`),
   fieldValues: (slug: string, kind: string, field: string, opts: { detail?: string | null; note?: boolean } = {}) => {
     const q = new URLSearchParams({ kind, field, ...(opts.detail ? { detail: opts.detail } : {}), ...(opts.note ? { note: "1" } : {}) });
     return request<FieldValuesUsedBody>("GET", `/orgs/${slug}/field-values?${q.toString()}`);
@@ -3149,6 +3195,8 @@ export const api = {
       authMethods?: ("session" | "api_token" | "system")[];
       apiTokenId?: string;
       entityType?: string;
+      /** With entityType: one thing's own entries (a wire's firings). */
+      entityId?: string;
       /** One record's history. */
       entity?: { kind: string; id: string };
       limit?: number;
@@ -3165,6 +3213,7 @@ export const api = {
     if (opts.authMethods?.length) params.set("auth_methods", opts.authMethods.join(","));
     if (opts.apiTokenId) params.set("api_token_id", opts.apiTokenId);
     if (opts.entityType) params.set("entity_type", opts.entityType);
+    if (opts.entityType && opts.entityId && !opts.entity) params.set("entity_id", opts.entityId);
     if (opts.before) params.set("before", String(opts.before));
     return request<{ items: ActivityEntry[]; total?: number; next_before?: number | null }>(
       "GET",
@@ -3968,7 +4017,8 @@ export const api = {
   laserDesign: (slug: string, id: string, units: string) => request<LaserDesign>("GET", `/orgs/${slug}/modules/digifab/laser/design/${id}?units=${units}`),
   laserSheets: (slug: string, body: { material: string; thickness_mm: number; width_mm: number; height_mm: number; rotate: boolean; offset: number; outline?: boolean }) => request<{ items: LaserSheet[]; total: number }>("GET", `/orgs/${slug}/modules/inventory/sheets/find?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}`),
   nestDrawing: (slug: string, body: { library_id: string; quantity: number; sheet_ids: string[]; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string; rotation_step?: number; budget_ms?: number }) => request<{ design: LaserDesign; sheets: LaserLayoutSheet[]; quantity: number }>("POST", `/orgs/${slug}/modules/digifab/laser/nest`, body),
-  createLaserPlan: (slug: string, body: { connection_id: string; device_id: string; library_id: string; quantity: number; sheet_ids: string[]; mapping: Record<string, string>; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string; rotation_step?: number; budget_ms?: number; seed?: number }) => request<LaserPlanRecord>("POST", `/orgs/${slug}/modules/digifab/laser/plans`, body),
+  adjustLaserPlan: (slug: string, id: string, body: LaserLayoutAdjustment) => request<LaserPlanRecord | {valid: true} | {filename: string; content: string} | {unmatched: string[]; missing?: number[]}>("POST", `/orgs/${slug}/modules/digifab/laser/plans/${id}/adjust`, body),
+  createLaserPlan: (slug: string, body: { connection_id: string; device_id: string; library_id: string; quantity: number; sheet_ids: string[]; mapping: Record<string, string>; spacing_mm: number; kerf_mm: number; rotate: boolean; dxf_units: string; rotation_step?: number; budget_ms?: number; seed?: number; allow_flip?: boolean }) => request<LaserPlanRecord>("POST", `/orgs/${slug}/modules/digifab/laser/plans`, body),
   acceptLaserPlan: (slug: string, id: string) => request<{ run_id: string; jobs: string[] }>("POST", `/orgs/${slug}/modules/digifab/laser/plans/${id}/accept`, {}),
   discardLaserPlan: (slug: string, id: string) => request<{ ok: boolean }>("DELETE", `/orgs/${slug}/modules/digifab/laser/plans/${id}`),
   // ── File library (stored 3MF/gcode + send-to-machine) ─────────────────────
@@ -4047,9 +4097,10 @@ export const api = {
    *  or null when nothing connected does it. */
   getServiceCapabilityOptions: async (slug: string, capability: string): Promise<unknown | null> => {
     try {
-      const r = await request<{ options: unknown | null }>("GET", `/orgs/${slug}/services/capabilities/${encodeURIComponent(capability)}`);
+      const r = await request<{ options: unknown | null }>("GET", `/orgs/${slug}/services/capabilities/${encodeURIComponent(capability)}?if_any=1`);
       return r.options ?? null;
     } catch (e) {
+      // 404-is: an-older-api: an api older than if_any still answers 404 for a capability nothing connected does
       if (e instanceof ApiError && e.status === 404) return null;
       throw e;
     }
@@ -4905,6 +4956,26 @@ export const api = {
       "POST",
       `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/preview`,
     ),
+  /** What the section does when the source and Cobblr disagree about a field. */
+  setSyncPolicy: (slug: string, id: string, entityType: string, conflict_policy: SyncConflictPolicy) =>
+    request<{ ok: boolean; conflict_policy: SyncConflictPolicy }>(
+      "PUT",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/policy`,
+      { conflict_policy },
+    ),
+  /** A person's answer to what a run asked about: a source record is this
+   *  record (link) or new (create); a field is kept as Cobblr has it or taken. */
+  resolveSyncAsked: (
+    slug: string,
+    id: string,
+    entityType: string,
+    body: { external_id: string; action: "link" | "create" | "keep" | "take"; cobblr_id?: string; field?: string },
+  ) =>
+    request<{ ok: boolean; action: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/sync/connections/${id}/syncs/${encodeURIComponent(entityType)}/resolve`,
+      body,
+    ),
   runSyncImport: (slug: string, id: string, entityType: string) =>
     request<{ ok: boolean; result?: SyncRunResult; error?: string }>(
       "POST",
@@ -4945,6 +5016,7 @@ export const api = {
   scanBarcode: (
     slug: string,
     body: {
+      purpose?: import("@cobblr/platform-contract/scan-triage").ScanPurpose;
       barcode?: string;
       source_kind?: "barcode" | "photo" | "url" | "receipt";
       source_url?: string;
@@ -5777,6 +5849,10 @@ export const api = {
   /** Put back the answer the last re-run overwrote (restores metadata.pre_rerun). */
   scanUndoRerun: (slug: string, id: string) =>
     request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/undo-rerun`),
+  /** Put a scan row back as one of its History entries found it (#6100):
+   *  every field the step rewrote, from the before-state it recorded. */
+  restoreScanRevision: (slug: string, id: string, revision: string) =>
+    request<ScanInboxItem>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/revisions/${revision}/restore`),
   /** Single-SKU bin: what lives in this bin + direct qty adjust off its QR. */
   binContents: (slug: string, locationId: string) =>
     request<{ items: TrackedMatch[]; single: boolean }>(
@@ -6034,8 +6110,17 @@ export const api = {
   declineLineOffer: (slug: string, id: string) => request<{ items: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/line-offer/decline`),
   scanTheItems: (slug: string, lineId: string) =>
     request<{ batch_id: string }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${lineId}/scan-session`),
+  /** Whether there is a line to count against (a purchase line's, or a scan
+   *  session's), and what it holds: 200 with slots null for none, never a 404
+   *  (#6268). For a page that asks routinely; a line known to be there uses
+   *  orderLineSlots. */
+  orderLineSlotsIfAny: (slug: string, by: { order_item_id: string } | { batch_id: string }) =>
+    request<{ slots: OrderLineSlots | null }>(
+      "GET",
+      `/orgs/${slug}/modules/core-scan/inbox/line-slots?${"batch_id" in by ? `batch_id=${encodeURIComponent(by.batch_id)}` : `order_item_id=${encodeURIComponent(by.order_item_id)}`}&if_any=1`,
+    ),
   orderLineSlots: (slug: string, by: { line_id: string } | { order_item_id: string } | { batch_id: string }) =>
-    request<{ line_id: string; name: string | null; count: number; mode: "same" | "different"; received: number; sentence: string; units: Array<{ id: string; name: string | null; image_file_id: string | null }> }>(
+    request<OrderLineSlots>(
       "GET",
       `/orgs/${slug}/modules/core-scan/inbox/line-slots?${"line_id" in by ? `line_id=${encodeURIComponent(by.line_id)}` : "batch_id" in by ? `batch_id=${encodeURIComponent(by.batch_id)}` : `order_item_id=${encodeURIComponent(by.order_item_id)}`}`,
     ),
@@ -6938,6 +7023,7 @@ export const api = {
       uptime_s: number;
       routes_seen: number;
       cpu_total_ms: number;
+      cpu_estimated_ms: number;
       rows: Array<{
         route: string;
         calls: number;
@@ -6945,7 +7031,8 @@ export const api = {
         wall_ms: { p50: number; p95: number; max: number; samples: number };
         cpu_ms: { p50: number; p95: number; max: number; samples: number };
         cpu_ms_overlapped: { p50: number; p95: number; max: number; samples: number };
-        cpu_share: number;
+        cpu_share: number | null;
+        cpu_estimated_ms: number | null;
         rss_growth_max_mb: number;
         per_workspace_day: { workspaces: number; p50: number; p95: number; max: number };
       }>;
@@ -7823,6 +7910,25 @@ export interface SyncStateRow {
   next_run_at: string | null;
   /** Null until the first import is approved (then live sync is active). */
   import_approved_at: string | null;
+  /** What the section does when the source and Cobblr disagree about a field:
+   *  "cobblr" (the default), "source" or "ask". */
+  conflict_policy?: SyncConflictPolicy;
+  /** What the last run asked the person about. */
+  last_conflicts?: { conflicts: SyncConflictNote[]; ambiguous: SyncAmbiguousNote[] };
+}
+
+export type SyncConflictPolicy = "cobblr" | "source" | "ask";
+export interface SyncConflictNote {
+  record: string;
+  external_id: string;
+  field: string;
+  cobblr: unknown;
+  source: unknown;
+}
+export interface SyncAmbiguousNote {
+  record: string;
+  external_id: string;
+  candidates: Array<{ id: string; name: string }>;
 }
 
 export interface SyncRunResult {
@@ -7833,23 +7939,32 @@ export interface SyncRunResult {
   total: number;
   /** Source tags that could not be attached (counted, never swallowed). */
   tagsFailed?: number;
+  /** Fields where Cobblr's value was kept over a different one at the source. */
+  kept?: number;
+  conflicts?: SyncConflictNote[];
+  ambiguous?: SyncAmbiguousNote[];
 }
 
 // An import preview — what a reconcile WOULD do, computed without writing.
 export interface ImportPlanItem {
   externalId: string;
   name: string;
-  action: "create" | "update" | "link" | "unchanged" | "delete";
+  action: "create" | "update" | "link" | "unchanged" | "delete" | "ask";
   cobblrId?: string | null;
   /** The mapped source fields this row would write (what data comes over). */
   fields?: Record<string, unknown>;
   /** For link/update/delete: the existing Cobblr entity (name + current fields). */
   match?: { id: string; name: string; fields?: Record<string, unknown> | null } | null;
+  /** Each field the two sides disagree about, and what the section's rule does with it. */
+  changes?: Array<{ field: string; ours: unknown; theirs: unknown; decision: "write" | "keep" | "ask" }>;
+  /** For ask: the records here it might be. */
+  candidates?: Array<{ id: string; name: string }>;
 }
 export interface ImportPlan {
   entityType: string;
   targetKind: string;
-  counts: { create: number; update: number; link: number; unchanged: number; delete: number; total: number };
+  policy?: SyncConflictPolicy;
+  counts: { create: number; update: number; link: number; unchanged: number; delete: number; total: number; ask?: number };
   items: ImportPlanItem[];
 }
 
@@ -9119,6 +9234,7 @@ export type AiChatProposal =
   | { kind: "add"; args: Record<string, unknown> }
   /** Inbox items filed into one list; `lines` names each one. */
   | { kind: "file"; ids: string[]; list: string; list_label?: string; lines?: string[] }
+  | { kind: "put_back"; id: string; revision?: string; label?: string }
   /** What one message asked for, as one card: its steps in the order they
    *  run, each worded after the ones before it, and one Confirm (#4574). */
   | {
@@ -10146,6 +10262,8 @@ export interface WorkspacePerson {
   name: string;
   user_id: string | null;
   email: string | null;
+  /** A number to text, in international form. */
+  phone: string | null;
   member: boolean;
   left: boolean;
 }
@@ -10474,6 +10592,9 @@ export interface PlatformBinding {
   /** Why this wire can never run (a record trigger on a kind that says
    *  nothing at that moment); null or absent when it can. */
   never_runs?: string | null;
+  /** The wire in words (#6110): the one record it watches, the action's
+   *  label, and its arguments in the action's words. */
+  said?: { record: { id: string; title: string | null } | null; action: string | null; args: Array<{ label: string; value: string }> };
   trigger_event: string | null;
   /** The event it waits for is one nothing sends any more, so it never runs. */
   trigger_silent?: boolean;
@@ -11075,9 +11196,9 @@ export interface LaserRect { x: number; y: number; width: number; height: number
 export interface LaserPoint { x: number; y: number; c0?: { x: number; y: number }; c1?: { x: number; y: number } }
 export interface LaserDesign { width: number; height: number; paths: Array<{ layer: string; points: LaserPoint[]; closed: boolean; curves?: boolean[] }> }
 export interface LaserSheet { id: string; name: string; spec: { width_mm: number; height_mm: number; material: string; thickness_mm: number }; revision: number; offcut: boolean; percent_left: number; free_rectangles: LaserRect[] }
-export interface LaserPlacement extends LaserRect { number: number; rotated: boolean; footprint: LaserRect; angle?: number; translation?: { x: number; y: number }; footprint_outline?: Array<{ x: number; y: number }> }
+export interface LaserPlacement extends LaserRect { locked?: boolean; mirrored?: boolean; design?: LaserDesign; extra?: boolean; number: number; rotated: boolean; footprint: LaserRect; angle?: number; translation?: { x: number; y: number }; footprint_outline?: Array<{ x: number; y: number }> }
 export interface LaserLayoutSheet { id: string; name?: string; width: number; height: number; revision: number; free_rectangles: LaserRect[]; parts: LaserPlacement[]; remaining: LaserRect[]; svg?: string; nesting?: "outline" | "rectangle"; nesting_note?: string; nest_ms?: number; utilisation?: number; used_outlines?: Array<Array<{ x: number; y: number }>> }
-export interface LaserPlanRecord { id: string; connection_id: string; remote_device_id: string; run_id: string | null; plan: { name: string; quantity: number; material: string; thickness_mm: number; estimated_sec: number; design: LaserDesign; sheets: LaserLayoutSheet[] } }
+export interface LaserPlanRecord { id: string; connection_id: string; remote_device_id: string; run_id: string | null; plan: { name: string; quantity: number; material: string; thickness_mm: number; estimated_sec: number; design: LaserDesign; sheets: LaserLayoutSheet[]; adjustments?: LaserLayoutAdjustments } }
 export interface LaserJobLayout { plan_id: string; sheet_id: string; quantity: number; design: LaserDesign; parts: LaserPlacement[]; footprints: LaserRect[]; expected?: Array<LaserProfileRecord["profile"] & { index: number; layer: string }> }
 
 export interface MaterialDispatch { id: string; library_id: string; status: string; error: string | null; plan_ids: string[]; request: { quantity: number; material: string; thickness_mm: number } }
@@ -11154,3 +11275,18 @@ export interface MePush {
   quiet_now: boolean;
   held: number;
 }
+
+export interface LaserLayoutAlternative { goal: "most_parts" | "fewest_sheets" | "shortest_time"; seed: number; sheets: LaserLayoutSheet[]; utilisation: number; estimated_sec: number }
+export interface LaserLayoutAdjustments { sheets: LaserLayoutSheet[]; spacing_mm: number; kerf_mm: number; rotate: boolean; rotation_step: number; allow_flip: boolean; seed: number; avoid: Record<string,LaserRect[]>; limits: Record<string,number>; alternatives: LaserLayoutAlternative[]; selected: number; revision: number }
+export type LaserLayoutAdjustment =
+ | {operation:"pick";alternative:number}
+ | {operation:"lock";parts:number[];locked:boolean}
+ | {operation:"clear_locks"}
+ | {operation:"avoid";sheet_id:string;rectangle:LaserRect;permanent?:boolean}
+ | {operation:"clear_avoid";sheet_id:string}
+ | {operation:"renest";budget_ms?:number}
+ | {operation:"move"|"check_move";part:number;sheet_id:string;x:number;y:number;angle?:number;mirrored?:boolean}
+ | {operation:"limit";sheet_id:string;maximum:number}
+ | {operation:"fill";sheet_id:string}
+ | {operation:"export";sheet_id:string;format:"svg"|"dxf"|"lightburn"}
+ | {operation:"import";sheet_id:string;filename:string;content:string;extras?:"review"|"keep"|"drop";assignments?:Record<string,number>};

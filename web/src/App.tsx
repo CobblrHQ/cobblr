@@ -66,6 +66,8 @@ const JoinPage = lazy(() => import("./pages/JoinPage").then((m) => ({ default: m
 const JoinMachinesPage = lazy(() => import("./pages/JoinMachinesPage").then((m) => ({ default: m.JoinMachinesPage })));
 const NamedPublicPage = lazy(() => import("./pages/PublicSurfacePage").then((m) => ({ default: m.NamedPublicPage })));
 const PublicSurfacePage = lazy(() => import("./pages/PublicSurfacePage").then((m) => ({ default: m.PublicSurfacePage })));
+const StopMessagesPage = lazy(() => import("./pages/StopMessagesPage").then((m) => ({ default: m.StopMessagesPage })));
+const ReplyToMessagePage = lazy(() => import("./pages/ReplyToMessagePage").then((m) => ({ default: m.ReplyToMessagePage })));
 const ChangelogPage = lazy(() => import("./pages/ChangelogPage").then((m) => ({ default: m.ChangelogPage })));
 const QrResolvePage = lazy(() => import("./pages/QrResolvePage").then((m) => ({ default: m.QrResolvePage })));
 const ActionLabelPage = lazy(() => import("./pages/ActionLabelPage").then((m) => ({ default: m.ActionLabelPage })));
@@ -419,6 +421,11 @@ function PublicRoutes() {
       {/* /p/:token is the un-auth'd public surface render. Reachable
           signed-in or signed-out — the token is the secret. */}
       <Route path="/p/:token" element={<PublicSurfacePage />} />
+      {/* The stop link at the foot of an automation's message to someone
+          outside a workspace (#6070). Signed out; the token is the key. */}
+      <Route path="/m/stop/:token" element={<StopMessagesPage />} />
+      {/* The reply link an automation's message may carry (#6070). */}
+      <Route path="/m/reply/:token" element={<ReplyToMessagePage />} />
       {/* A public page's memorable address, when its owner gave it one. */}
       <Route path="/p/:org/:address" element={<NamedPublicPage />} />
       {/* Public "What's new" feed — reachable signed-in or signed-out. */}

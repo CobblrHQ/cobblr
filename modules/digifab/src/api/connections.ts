@@ -23,6 +23,7 @@ import type { Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
 import type { MachineDriver } from "../drivers/types.js";
 import type { DeviceConnectionInternal } from "@cobblr/platform-contract";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const connectionsRouter = Router({ mergeParams: true });
 
@@ -32,15 +33,15 @@ const ConnectionCreate = z.object({
   type: z.string().min(1).max(64),
   label: z.string().min(1).max(120),
   base_url: z.string().min(1).max(500),
-  api_key: z.string().max(500).optional(),
-  username: z.string().max(200).optional(),
-  password: z.string().max(500).optional(),
+  api_key: optionalText(500),
+  username: z.string().max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  password: optionalText(500),
   config: BenchConnectionConfig.optional(),
 });
 
 const ConnectionUpdate = z.object({
-  label: z.string().min(1).max(120).optional(),
-  base_url: z.string().min(1).max(500).optional(),
+  label: z.string().min(1).max(120).optional(), // none-refused-ok: a connection always has a label
+  base_url: z.string().min(1).max(500).optional(), // none-refused-ok: a connection always has an address
   api_key: z.string().max(500).nullable().optional(),
   username: z.string().max(200).nullable().optional(),
   password: z.string().max(500).nullable().optional(),
@@ -49,7 +50,7 @@ const ConnectionUpdate = z.object({
 });
 
 /** Raw create-creds blob from the provided fields (omit empties). */
-function credsFrom(d: { api_key?: string; username?: string; password?: string }): Record<string, unknown> {
+function credsFrom(d: { api_key?: string | null; username?: string | null; password?: string | null }): Record<string, unknown> {
   const c: Record<string, unknown> = {};
   if (d.api_key) c.apiKey = d.api_key;
   if (d.username) c.username = d.username;

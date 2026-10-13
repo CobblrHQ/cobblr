@@ -217,16 +217,15 @@ export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<Sa
   // switcher and the browser tab show, so it is set back afterwards and nobody
   // sees the handle.
   const { orgId, slug } = await deps.provisionOrg(userId, `Sandbox ${handle}`);
-  // trial_expires_at back to NULL, explicitly.
-  //
-  // provisionOrgForUser stamps the tier's TTL - thirty DAYS on trial - and NULL
-  // is what marks a sandbox as not yet handed over. Leaving the stamp in place
-  // meant a pooled sandbox never looked ready, so the pool believed it was empty
-  // and built another every twenty seconds: eight databases in three minutes,
-  // none of them claimable, each one sitting for a month. Nothing errored.
+  // NOT claimable yet: provisionOrgForUser stamps the tier's TTL (thirty days on trial) and that stamp
+  // stays until the workspace is complete. NULL is what claiming looks for (claimPooledSandbox), so
+  // nulling it here, before the seed had run, let a visitor arriving mid-seed be handed a half-stocked
+  // workspace: the hand-over row was written first and the rest of the stock landed after it, on the
+  // visitor's side of the ledger ("added 4 items" they never made, #6156). The pool calls
+  // makeSandboxClaimable once the seed is done; the direct path hands over with its own expiry.
   await meta
     .updateTable("orgs")
-    .set({ name: "Sandbox", sandbox: true, trial_expires_at: null })
+    .set({ name: "Sandbox", sandbox: true })
     .where("id", "=", orgId)
     .execute();
 
@@ -235,6 +234,14 @@ export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<Sa
   // this cannot hand out what the tier withholds.
   await deps.enableDefaults(orgId, userId);
   return { orgId, slug, userId };
+}
+
+/** The workspace is complete: from here a visitor may be handed it. `trial_expires_at IS NULL` is the pool's
+ *  marker for "waiting for somebody" (readyCount, claimPooledSandbox), and it is set only now, after the
+ *  seed, so nobody can claim what is still being stocked. A waiting sandbox is invisible to the reaper
+ *  (`trial_expires_at < now` never matches NULL); its hour begins when somebody arrives. */
+export async function makeSandboxClaimable(orgId: string): Promise<void> {
+  await meta.updateTable("orgs").set({ trial_expires_at: null }).where("id", "=", orgId).where("sandbox", "=", true).execute();
 }
 
 /** Start the clock and mint the link. The moment a sandbox becomes somebody's. */

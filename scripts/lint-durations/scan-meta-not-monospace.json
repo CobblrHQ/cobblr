@@ -1,0 +1,10 @@
+{
+  "lint": "lint:scan-meta-not-monospace",
+  "run": "node scripts/lint-scan-meta-not-monospace.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 782,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

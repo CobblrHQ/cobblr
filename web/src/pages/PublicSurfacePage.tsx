@@ -115,6 +115,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
       const res = await fetch(`/api/v1/public/${token}`, {
         headers: { "X-Cobblr-Visit": visit ? "1" : "0" },
       });
+      // 404-is: a-state: a shared link can be revoked, and the visitor sees that it is gone
       if (res.status === 404) throw new Error("not_found");
       if (res.status === 410) throw new Error("expired");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

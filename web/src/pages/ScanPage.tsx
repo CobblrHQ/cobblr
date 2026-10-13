@@ -470,7 +470,7 @@ function CommittedDestination({
   const filed = filedIntoOf(item.suggested_metadata);
   const label = filed?.label ?? destinationLabel(item.target_kind, tables, item.target_module);
   return (
-    <div className="text-[10px] font-mono text-faint truncate" data-testid="committed-destination">
+    <div className="text-[10px] text-faint truncate" data-testid="committed-destination">
       {label ? `→ ${label}` : ""}
       {item.barcode_text ? ` · ${item.barcode_text}` : ""}
     </div>
@@ -891,7 +891,7 @@ export function ScanPage() {
             <ScanLine size={15} className="text-amber-500 shrink-0 mt-0.5" />
             <div className="min-w-0 flex-1 text-sm">
               <span className="font-medium text-content dark:text-mortar-100">
-                Same barcode (<span className="font-mono">{aiItem.barcode_text}</span>){" "}
+                Same barcode ({/* mono: a barcode's digits */}<span className="font-mono">{aiItem.barcode_text}</span>){" "}
                 {exact ? "as" : "≈ one"} you scanned - looks like the same item.
               </span>
               <span className="text-muted">
@@ -3405,6 +3405,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             </div>
             <div className="min-w-0">
               <div className="font-medium text-content dark:text-mortar-100">Scanning…</div>
+              {/* mono: the code being looked up */}
               <div className="text-[11px] font-mono text-faint truncate">{p.code}</div>
             </div>
           </div>
@@ -3786,7 +3787,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         onOpen={setViewSource}
                         title="Open the original receipt: the photo or file its lines were read from"
                         aria-label="Open the original receipt"
-                        className="shrink-0 text-faint hover:text-accent transition"
+                        wrapClassName="shrink-0"
+                        // A finger's target around a 13 px glyph (#6144); on a
+                        // wide screen it reaches into the row's padding rather
+                        // than making the row taller.
+                        className="inline-flex min-h-11 min-w-11 items-center justify-center sm:-my-3 text-faint hover:text-accent transition"
                       >
                         <ReceiptText size={13} />
                       </ReceiptPeek>
@@ -4308,6 +4313,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                             {g.shipmentLocation && g.shipmentState !== "delivered" && (
                               <div className="text-[11px] text-faint">Last scanned {g.shipmentLocation}</div>
                             )}
+                            {/* mono: a tracking number */}
                             <div className="font-mono text-[11px] text-faint break-all pt-0.5">
                               {g.trackingNumber}
                             </div>
@@ -4788,10 +4794,11 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       {displayName(d) ?? d.barcode_text ?? "Unknown scan"}
                     </div>
                     {d.barcode_text && displayName(d) && (
+                      // mono: a barcode's digits
                       <div className="text-[10px] font-mono text-faint truncate">{d.barcode_text}</div>
                     )}
                     {recovery.kind === "in_group_photo" && (
-                      <div className="text-[10px] font-mono text-faint truncate">✂ piece of a split that was undone; the group photo is back in the inbox</div>
+                      <div className="text-[10px] text-faint truncate">✂ piece of a split that was undone; the group photo is back in the inbox</div>
                     )}
                     {recovery.kind === "undo_combine" && (
                       <div className="text-[10px] text-faint truncate">
@@ -4914,7 +4921,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           {displayName(grp.items[0]) ?? grp.items[0].barcode_text ?? "Unknown scan"}
                         </div>
                         {splitPieces(grp.items[0]) ? (
-                          <div className="text-[10px] font-mono text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
+                          <div className="text-[10px] text-faint truncate">✂ split into {splitPieces(grp.items[0])} items</div>
                         ) : (
                           <CommittedDestination item={grp.items[0]} tables={destinationTables} />
                         )}

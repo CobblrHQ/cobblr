@@ -12,13 +12,16 @@
 //                           mailgun_domain, mailgun_eu?, from, to.
 //   provider: "resend"    → Resend HTTP API. Fields: resend_api_key, from, to.
 //   provider: "postmark"  → Postmark HTTP API. Fields: postmark_token, from, to.
+//   provider: "gmail"     → the Gmail API, as the Google account a workspace
+//                           connected with only the send scope (#6070).
+//                           Fields: gmail_refresh_token, from (that account).
 //
 // Body is always plain text — no HTML — which keeps every provider's payload
 // trivial and dodges email-client rendering quirks.
 
 import nodemailer from "nodemailer";
 
-export type EmailProvider = "smtp" | "mailgun" | "resend" | "postmark";
+export type EmailProvider = "smtp" | "mailgun" | "resend" | "postmark" | "gmail";
 
 export interface EmailConfig {
   provider?: EmailProvider;
@@ -38,6 +41,8 @@ export interface EmailConfig {
   resend_api_key?: string;
   // postmark
   postmark_token?: string;
+  // gmail: the refresh token of a gmail.send grant (never typed; Connect Gmail)
+  gmail_refresh_token?: string;
 }
 
 /** Required string fields per provider (beyond the always-required from [+ to]). */
@@ -46,6 +51,7 @@ export const REQUIRED: Record<EmailProvider, (keyof EmailConfig)[]> = {
   mailgun: ["mailgun_api_key", "mailgun_domain"],
   resend: ["resend_api_key"],
   postmark: ["postmark_token"],
+  gmail: ["gmail_refresh_token"],
 };
 
 export type ValidConfig = EmailConfig & { provider: EmailProvider; from: string; to: string };
@@ -186,11 +192,61 @@ async function sendPostmark(cfg: ValidConfig, subject: string, text: string, htm
   return idFrom(res, "MessageID");
 }
 
+/** A header value on one line: a CR or LF in a subject would start a header
+ *  of the sender's choosing. */
+function oneLine(v: string): string {
+  return v.replace(/[\r\n]+/g, " ").trim();
+}
+
+/** A header that may hold more than ASCII, as RFC 2047 says. */
+function encodedWord(v: string): string {
+  const line = oneLine(v);
+  return /^[\x20-\x7e]*$/.test(line) ? line : `=?UTF-8?B?${Buffer.from(line).toString("base64")}?=`;
+}
+
+/** The message as Gmail's send call takes it: RFC 5322, base64url. */
+export function gmailRaw(m: { from: string; to: string; subject: string; text: string; html?: string; extras?: EmailExtras }): string {
+  const x = m.extras ?? {};
+  const head = [
+    `From: ${oneLine(x.from || m.from)}`,
+    `To: ${oneLine(m.to)}`,
+    `Subject: ${encodedWord(m.subject)}`,
+    ...(x.replyTo ? [`Reply-To: ${oneLine(x.replyTo)}`] : []),
+    ...(x.inReplyTo ? [`In-Reply-To: ${oneLine(x.inReplyTo)}`] : []),
+    ...(x.references ? [`References: ${oneLine(x.references)}`] : []),
+    "MIME-Version: 1.0",
+  ];
+  const part = (type: string, body: string) => [`Content-Type: ${type}; charset=UTF-8`, "Content-Transfer-Encoding: base64", "", Buffer.from(body).toString("base64").replace(/.{76}/g, "$&\r\n")].join("\r\n");
+  let body: string;
+  if (m.html) {
+    const b = `cobblr-${Date.now().toString(36)}`;
+    body = [`Content-Type: multipart/alternative; boundary="${b}"`, "", `--${b}`, part("text/plain", m.text), `--${b}`, part("text/html", m.html), `--${b}--`, ""].join("\r\n");
+  } else {
+    body = part("text/plain", m.text);
+  }
+  return Buffer.from(`${head.join("\r\n")}\r\n${body}`).toString("base64url");
+}
+
+async function sendGmail(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
+  const { refreshGoogleAccess } = await import("./mail-source/google-oauth.js");
+  const { GMAIL_API_BASE } = await import("./mail-source/gmail.js");
+  const access = await refreshGoogleAccess(cfg.gmail_refresh_token!);
+  const res = await fetch(`${GMAIL_API_BASE.replace(/\/$/, "")}/gmail/v1/users/me/messages/send`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${access}`, "content-type": "application/json" },
+    body: JSON.stringify({ raw: gmailRaw({ from: cfg.from, to: cfg.to, subject, text, html, extras: x }) }),
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  });
+  await expectOk(res);
+  return idFrom(res, "id");
+}
+
 const SENDERS: Record<EmailProvider, (cfg: ValidConfig, subject: string, text: string, html?: string, x?: EmailExtras) => Promise<string | null>> = {
   smtp: sendSmtp,
   mailgun: sendMailgun,
   resend: sendResend,
   postmark: sendPostmark,
+  gmail: sendGmail,
 };
 
 /** Deliver one plain-text email through the config's provider. Throws on failure. */

@@ -1796,6 +1796,18 @@ const ModuleManifest = z.object({
              *  the collection wears ("Price history" is `traits: ["fungible"]`
              *  and says nothing on a catalog). Absent, `target` alone decides. */
             appliesTo: ActionAppliesTo.optional(),
+            /** The collections this panel belongs on, by their stable name
+             *  ("3d-printers", "laser-cutters"). A panel for one sort of
+             *  machine names the collections it serves rather than every
+             *  record of the kind: a kiln's firing logs on every 3D printer
+             *  was the growth #6337 named. With `presence`, a record outside
+             *  these that already has the panel's data still shows it. */
+            collections: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]*$/)).min(1).optional(),
+            /** The panel also shows on a record its module says has its data
+             *  (a kiln profile, a linked manager, a renewal), checked through
+             *  platform().panels.registerPresence. With neither this nor
+             *  `collections`, `target` and `appliesTo` alone decide. */
+            presence: z.boolean().optional(),
             /** The face this panel belongs to, for disclosure (see the same
              *  field on an action). */
             face: FaceSchema.optional(),
@@ -2309,6 +2321,12 @@ export interface PlatformActivity {
    *  record's History gets its line, and the feeds show only the write's own
    *  summary entry, which the caller logs as usual (#5963). */
   logMany(p: { orgId: string; userId?: string | null; rows: ReadonlyArray<{ action: string; ref: ActivityLogParams["ref"]; diff?: Record<string, unknown> }> }): Promise<void>;
+  /** The name each record of a kind was CREATED with, from its creation entry
+   *  in the log, for the records whose creation name matches `pattern` (a
+   *  case-insensitive regex). For a heal that needs to know what a record
+   *  first said, since a heal's own rewrite is not an entry (#6303). A record
+   *  whose entry is gone (retention) is not in the answer. */
+  createdNamesMatching(orgId: string, p: { module: string; entityType: string; pattern: string; limit?: number }): Promise<Array<{ entityId: string; name: string }>>;
 }
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;
@@ -2883,7 +2901,7 @@ export interface EntityWriter {
    *  an importer treats every unmapped source record as a brand-new create. */
   listForMatch?(
     orgId: string,
-  ): Promise<Array<{ id: string; name: string; parentId?: string | null }>>;
+  ): Promise<Array<{ id: string; name: string; parentId?: string | null; kind?: string | null; instance?: string | null }>>;
   /** Optional: move values held under a custom field into the module's own
    *  taxonomy column, for a kind that declares `categoryAxis`.
    *
@@ -2978,10 +2996,35 @@ export class DuplicateRecordError extends Error {
   }
 }
 
+/** Rows a module keeps in a table of their own that belong to one record and
+ *  say something the owner wrote about it: a pattern's needs, a recipe's
+ *  ingredients. A shared record carries them (coordinator, 2026-10-13: shared
+ *  records carry their child rows, #6252), scoped to that record, and they
+ *  follow it like its files. `read` gives the rows as they can travel (no ids
+ *  of the owner's other records, nothing of the owner's own use of them);
+ *  `write` makes a record's set exactly those rows. */
+export interface ShareChildren {
+  /** The parent's module kind ("projects:project"); an instance kind's rows
+   *  are its module kind's. */
+  kind: string;
+  /** This set's name, unique for the kind ("pattern-needs"). */
+  name: string;
+  /** The table the rows live in, for the guard that every parent-keyed table
+   *  is declared or says why not (lint:share-children). */
+  table: string;
+  read(orgId: string, parentId: string): Promise<Array<Record<string, unknown>>>;
+  write(orgId: string, parentId: string, rows: Array<Record<string, unknown>>): Promise<void>;
+}
+
 export interface PlatformEntities {
   /** Register a resolver for one kind. Called from a module's
    *  api/index.ts at module-load time. */
   registerResolver(kind: string, resolver: EntityResolver): void;
+  /** Declare rows that belong to a record and travel with it when it is
+   *  shared (ShareChildren, #6252). Called at module-load time. */
+  registerShareChildren(def: ShareChildren): void;
+  /** The child sets declared for a module kind. */
+  shareChildrenFor(kind: string): ShareChildren[];
   /** Register an in-process WRITER for one kind (create/update/delete).
    *  Lets cross-module writers (the sync engine) mutate this kind without
    *  an HTTP loopback or user token. */
@@ -3485,6 +3528,9 @@ export interface ActionInvokeContext {
     timestamp: string; // ISO-8601
     trigger_type: "event" | "user-invoked" | "schedule" | "on-create" | "on-update" | "on-delete";
   };
+  /** The wire that ran this, when a wire did (#6070): what an action that
+   *  reaches outside the workspace names, limits and lets a recipient stop. */
+  wire?: { id: string };
   /** Pre-rendered template result, if the binding had a template. */
   rendered?: string;
   /** Extra args from the binding (passed through). */
@@ -3595,6 +3641,11 @@ export interface PlatformActions {
    *  "no unit called that" reaches the caller instead of a card that dies on
    *  press. A module registers it beside its handler. */
   registerPlanner(handlerKey: string, planner: ActionPlanner): void;
+  /** Whether a wire may be saved with this action (by id) and these
+   *  arguments: the reason it may not, or null. Asked when a wire is
+   *  created or changed, so a wire that could never do its job is refused
+   *  with the reason instead of failing at every firing (#6070). */
+  registerWireCheck(actionId: string, check: (ctx: { orgId: string; args: Record<string, unknown> }) => Promise<string | null>): void;
   /** How the action behind `handlerKey` is undone, from its result. Register
    *  it beside the handler; an action declared `undoable` must have one (a
    *  guard test holds the two together), and the card after a run offers
@@ -4217,7 +4268,10 @@ export interface SyncConnector {
 export interface ImportPlanItem {
   externalId: string;
   name: string;
-  action: "create" | "update" | "link" | "unchanged" | "delete";
+  /** "ask": the source record could be more than one existing record, or one
+   *  that is only nearly the same name; nothing is created or linked until a
+   *  person says which (`candidates`). */
+  action: "create" | "update" | "link" | "unchanged" | "delete" | "ask";
   /** The existing Cobblr entity this row touches (link / update / delete). */
   cobblrId?: string | null;
   /** The mapped source fields this row would WRITE — what data comes over. */
@@ -4225,6 +4279,12 @@ export interface ImportPlanItem {
   /** For link/update/delete: the existing Cobblr entity, so the preview can show
    *  the match both-sides (its name + current fields, when the writer can read). */
   match?: { id: string; name: string; fields?: Record<string, unknown> | null } | null;
+  /** For update/link: each field the two sides disagree about and what the
+   *  section's rule does with it (sync-merge.ts): write the source's value,
+   *  keep Cobblr's, or ask. */
+  changes?: Array<{ field: string; ours: unknown; theirs: unknown; decision: "write" | "keep" | "ask" }>;
+  /** For ask: the existing records it might be. */
+  candidates?: Array<{ id: string; name: string }>;
 }
 
 export interface ImportPlan {
@@ -4237,7 +4297,11 @@ export interface ImportPlan {
     unchanged: number;
     delete: number;
     total: number;
+    /** Source records that could be more than one existing record. */
+    ask?: number;
   };
+  /** The rule the plan was made under: "cobblr", "source" or "ask". */
+  policy?: string;
   items: ImportPlanItem[];
 }
 
@@ -7135,6 +7199,28 @@ export interface PlatformOutboundEmail {
     | { ok: true; logId: string; messageId: string | null; status: "sent" | "skipped" }
     | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed"; message: string }
   >;
+  /** An AUTOMATION's message to someone on the workspace's People list who
+   *  is not a member (#6070): only through this workspace's own sender, only
+   *  when an owner or admin has turned it on, within the daily limits, never
+   *  to someone who asked to stop this wire's messages, and naming who made
+   *  the wire, with the link that stops it. Every attempt is logged. */
+  sendAutomated(
+    orgId: string,
+    message: {
+      wireId: string;
+      personId: string;
+      text: string;
+      record?: { kind: string; id: string; title: string | null } | null;
+      /** Add a reply page link ("Got it", "Bought it"), signed, for 14 days. */
+      replyLink?: boolean;
+      /** Email (the default) or a text to the person's phone, through the
+       *  workspace's own Twilio account. */
+      via?: "email" | "text";
+    },
+  ): Promise<{ ok: true; status: "sent"; to: string; name: string } | { ok: false; status: "refused" | "held" | "stopped" | "failed"; reason: string }>;
+  /** Why an automation cannot message someone outside this workspace (the
+   *  owner's switch is off, or there is no sender of its own), or null. */
+  automatedRefusal(orgId: string, via?: "email" | "text"): Promise<string | null>;
   /** The sends about one record, newest first. */
   log(
     orgId: string,
@@ -7175,6 +7261,13 @@ export interface PlatformVault {
   countFor(orgId: string, userId: string, record: { kind: string; id: string }): Promise<number>;
 }
 
+/** Contributed record panels (#6337). A panel that declared `presence: true`
+ *  shows on a record its module says has the panel's data; the check is a
+ *  cheap read, run when the record's page opens. */
+export interface PlatformPanels {
+  registerPresence(panelId: string, check: (ctx: { orgId: string; kind: string; id: string; collection: string | null }) => Promise<boolean>): void;
+}
+
 export interface Platform {
   vault: PlatformVault;
   deletedRecords: PlatformDeletedRecords;
@@ -7196,6 +7289,7 @@ export interface Platform {
   selfFetch(input: string | URL | Request, init?: RequestInit): Promise<Response>;
   entities: PlatformEntities;
   actions: PlatformActions;
+  panels: PlatformPanels;
   live: PlatformLive;
   templates: PlatformTemplates;
   wires: PlatformWires;

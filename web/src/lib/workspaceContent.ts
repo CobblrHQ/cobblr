@@ -25,6 +25,7 @@ export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>
   const wrap = (path: string) =>
     api.request<{ items: unknown[] }>("GET", `/orgs/${slug}${path}`).then((r) => r.items.length).catch((err) => {
       const status = err instanceof ApiError ? err.status : 0;
+      // 404-is: a-module-off: a module whose items route is not served holds nothing to count
       if (status === 404 || status === 501) return 0;
       throw err;
     });

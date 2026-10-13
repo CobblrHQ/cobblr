@@ -357,31 +357,6 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                     <Hand size={10} /> {it.claimed_by_name}
                   </span>
                 )}
-                {/* What checking it off will DO, said before it happens, with the
-                    amount correctable: the row used to restock silently, and by
-                    an amount nobody could see or change (2026-09-12). The amount
-                    comes from the wire the kernel says will fire; the person's
-                    correction rides the check as `quantity`. */}
-                {!it.checked && amountFor(it) != null && (
-                  <span className="mt-0.5 flex items-center gap-1 text-[11px] text-muted" title="Checking this off adds to the record it came from">
-                    <NumberStepper
-                      className="inline-flex items-center rounded border border-line dark:border-slate-700"
-                      value={amountFor(it)!}
-                      min={1}
-                      label="Amount to add to stock"
-                      decreaseLabel="One fewer"
-                      increaseLabel="One more"
-                      icons
-                      iconSize={10}
-                      prefix="+"
-                      buttonClassName="px-1 py-0.5 hover:text-content disabled:opacity-40"
-                      inputClassName="w-7 bg-transparent px-1 text-center font-medium tabular-nums text-content dark:text-mortar-100"
-                      onChange={(n) => setAmounts((a) => ({ ...a, [it.id]: n }))}
-                    />
-                    to stock when checked
-                    {willDatePhrase(it.will_date) && <span className="text-faint">· {willDatePhrase(it.will_date)}</span>}
-                  </span>
-                )}
               </span>
               {!it.checked && (
                 <button
@@ -429,6 +404,36 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                 </button>
               </span>
               </div>
+              {/* What checking it off will DO, said before it happens, with the
+                  amount correctable: the row used to restock silently, and by
+                  an amount nobody could see or change (2026-09-12). The amount
+                  comes from the wire the kernel says will fire; the person's
+                  correction rides the check as `quantity`. Its own line under
+                  the row, one sentence that wraps as a sentence: inside the
+                  title's column a phone squeezed it a word wide, under the
+                  claim button (#6102). */}
+              {!it.checked && amountFor(it) != null && (
+                <div data-restock-preview className="mt-1 pl-7 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted" title="Checking this off adds to the record it came from">
+                  <NumberStepper
+                    className="inline-flex shrink-0 items-center rounded border border-line dark:border-slate-700"
+                    value={amountFor(it)!}
+                    min={1}
+                    label="Amount to add to stock"
+                    decreaseLabel="One fewer"
+                    increaseLabel="One more"
+                    icons
+                    iconSize={10}
+                    prefix="+"
+                    buttonClassName="px-1 py-0.5 hover:text-content disabled:opacity-40"
+                    inputClassName="w-7 bg-transparent px-1 text-center font-medium tabular-nums text-content dark:text-mortar-100"
+                    onChange={(n) => setAmounts((a) => ({ ...a, [it.id]: n }))}
+                  />
+                  <span>
+                    to stock when checked
+                    {willDatePhrase(it.will_date) && <span className="text-faint"> · {willDatePhrase(it.will_date)}</span>}
+                  </span>
+                </div>
+              )}
               {expanded === it.id && (
                 <CustomFieldsPanel
                   className="mt-2 pl-7"

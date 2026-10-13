@@ -31,6 +31,7 @@ import { useQueryClient, type Query, type QueryClient } from "@tanstack/react-qu
 import { usePlatformWeb } from "./context";
 import { useToast } from "./ToastContext";
 import type { PlatformWebApi } from "./types";
+import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { verdictOf } from "./action-outcome-compose";
 
 export interface ActionBody {
@@ -108,10 +109,9 @@ export async function runAction(
 }
 
 /** One way back, as the action's own undoer said it: an action and its args. */
-export interface UndoStep {
-  action_id: string;
+export type UndoStep = Omit<Extract<ActionUndoStep, { action_id: string }>, "args"> & {
   args?: Record<string, unknown>;
-}
+};
 
 /** An outcome's undo, one step or several, as a list. */
 export function undoStepsOf(undo: unknown): UndoStep[] {
@@ -136,7 +136,7 @@ export function offerUndo(
   toast: Pick<ReturnType<typeof useToast>, "action" | "success" | "error">,
   runBack: (body: ActionBody) => Promise<ActionRun>,
   outcome: Pick<ActionRun, "undo" | "result"> | null | undefined,
-  body: Pick<ActionBody, "entityKind" | "entityId">,
+  _body: Pick<ActionBody, "entityKind" | "entityId">,
   done?: string,
 ): boolean {
   const steps = undoStepsOf(outcome?.undo);
@@ -146,7 +146,14 @@ export function offerUndo(
     duration: 8000,
     onAction: async () => {
       try {
-        for (const step of steps) await runBack({ actionId: step.action_id, entityKind: body.entityKind, entityId: body.entityId, args: step.args ?? {} });
+        // Issued inverses are authorized with their own target, which may
+        // be absent or differ from the record that started the action.
+        for (const step of steps) await runBack({
+          actionId: step.action_id,
+          ...(step.entity_kind !== undefined ? { entityKind: step.entity_kind } : {}),
+          ...(step.entity_id !== undefined ? { entityId: step.entity_id } : {}),
+          args: step.args ?? {},
+        });
         toast.success("Undone.");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Couldn't undo that.");

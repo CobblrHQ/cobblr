@@ -73,7 +73,7 @@ export async function findFresh(
   userId: string | null,
   record: { kind: string; id: string },
   query?: string,
-): Promise<Array<{ connection_id: string; label: string; items: Array<LibraryItem & { score: number }>; error?: string }>> {
+): Promise<Array<{ connection_id: string; label: string; items: Array<LibraryItem & { score: number; conflict?: string; warning?: string }>; error?: string }>> {
   const facts = (await readFacts(orgId, record.kind, record.id)) ?? { name: "" };
   const out = [];
   for (const s of await systemsFor(orgId, userId)) {

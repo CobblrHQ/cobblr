@@ -1,5 +1,6 @@
+import { attachPhotoFileId } from "../services/attach-photo.js";
 import { applyModelFacts } from "../services/model-facts.js";
-import { appendScanHistory } from "../services/scan-history.js";
+import { appendScanHistory, preRerunSnapshot, recordRevision, restoreRevision } from "../services/scan-history.js";
 import { TEXT_OR_NULL, objectWith } from "@cobblr/platform-contract/ai-output-schemas";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { linkInVault } from "../services/vault-original.js";
@@ -27,6 +28,7 @@ import { mapOfferedFields, type OfferedThing } from "@cobblr/platform-contract/s
 // obtained from a separate multipart endpoint — keeps the JSON
 // body limits sane.
 
+import { createMatchQueue } from "../services/match-queue.js";
 import { withSellersApart } from "../services/seller-split.js";
 import { onCatchAll, routeByGivenFields, routeByIdentity, routeBySameMaker, routeWhereKept, type KeptTable } from "../services/kept-route.js";
 import { fetchShownImage } from "../services/shown-images.js";
@@ -68,7 +70,7 @@ import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
-import { listNamedByCategory, retargetByCategory } from "../services/retarget-by-category.js";
+import { listNamedByCategory, retargetByCategory, retargetIsbnToBookList } from "../services/retarget-by-category.js";
 import { lineQuantity, sameOrder } from "../services/receipt-shared.js";
 import { priorSessionOfOrder } from "../services/receipt-prior-session.js";
 import { FiledQuantity, copiedCountOf, filedQuantityOf, isOwnCopy } from "../services/filed-quantity.js";
@@ -101,6 +103,9 @@ import { displayed as displayedNote, cardNote, withoutRoutingSentences } from ".
 import {
   matchesScanFacet,
   needsScanReview,
+  SCAN_PURPOSES,
+  scanPurpose,
+  scanPurposeReview,
   scanHeldForReview,
   scanRowState,
   scanReviewReason,
@@ -109,7 +114,7 @@ import {
   SCAN_TRIAGE_COLUMNS,
   type ScanTriageFacet,
   splitUncutWords,
-  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+  type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem, scanMatchTier, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
@@ -525,6 +530,7 @@ inboxRouter.get(
 // ─────────────────────────── POST /scan ────────────────────────────
 
 const ScanBody = z.object({
+  purpose: z.enum(SCAN_PURPOSES).default("arrival"),
   barcode: optionalField(z.string().min(4).max(64)),
   source_kind: z.enum(["barcode", "photo", "url", "receipt"]).default("barcode"),
   source_url: optionalField(z.string().url().max(2000)),
@@ -611,9 +617,10 @@ inboxRouter.post(
       body.scan_area ??
       (typeof defaults.scan_area === "string" ? defaults.scan_area : null);
 
-    // Dedup repeated scans of the SAME barcode: rather than
+    // Dedup repeated scans of the SAME barcode and purpose: rather than
     // pile up a new row per scan, bump the quantity on the pending entry that's
-    // already there. Dedup is GLOBAL across all pending items for that barcode —
+    // already there. Checks only resurface; arrivals increase the quantity.
+    // Dedup is GLOBAL across pending items for that barcode and purpose —
     // NOT scoped to a batch/area (batch-scoping let the same UPC pile up a fresh
     // row per session, which is exactly how items went "missing": a re-scan in a
     // new session created a duplicate instead of resurfacing the one you had).
@@ -633,6 +640,7 @@ inboxRouter.post(
             .select(["id", "suggested_name", "image_file_id"])
             .where("status", "=", "pending")
             .where("barcode_text", "=", body.barcode)
+          .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", body.purpose)
             .where("image_file_id", "is", null)
             .orderBy(
               sql`(scan_batch_id is not distinct from ${body.scan_batch_id ?? null})`,
@@ -651,6 +659,7 @@ inboxRouter.post(
           .select(["id", "suggested_name", "image_file_id"])
           .where("status", "=", "pending")
           .where("barcode_text", "=", body.barcode)
+          .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", body.purpose)
           .orderBy("created_at", "desc")
           .executeTakeFirst());
       if (existing) {
@@ -660,7 +669,7 @@ inboxRouter.post(
         const bumped = await db
           .updateTable("core_scan_inbox_items")
           .set({
-            quantity: sql`quantity + 1`,
+            quantity: body.purpose === "arrival" ? sql`quantity + 1` : sql`quantity`,
             ...(attachPhoto ? { image_file_id: body.image_file_id } : {}),
             // Move the item into the session it was just re-scanned in, and stamp
             // the area if this scan carried one — so it groups with the scans
@@ -732,7 +741,7 @@ inboxRouter.post(
     // already made, and the person may still ask for another copy.
     const imageHash = body.source_kind === "photo" && body.image_file_id ? await pictureHash(ctx.org.id, body.image_file_id) : null;
     if (imageHash && !body.allow_duplicate) {
-      const twin = await recentTwin(db, imageHash);
+      const twin = await recentTwin(db, imageHash, new Date(), body.purpose);
       if (twin) {
         const existing = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", twin.id).executeTakeFirstOrThrow();
         res.status(200).json({ ...(await served(req, existing)), duplicate_of_recent: true });
@@ -746,7 +755,7 @@ inboxRouter.post(
     // row's state on the first paint instead of "Identifying..." (#3017).
     const storeStamps = storeCodeInsertStamps(body.barcode);
     const token = bearer(req);
-    const emailed = body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {};
+    const emailed = { scan_purpose: body.purpose, ...(body.origin === "email" ? { [ARRIVED_BY_KEY]: "email" } : {}) };
     // A title shared with the link is the person's name for the row, kept
     // like a rename (services/shared-title.ts).
     const arrivedBy = body.shared_title ? applySharedTitle(emailed, body.shared_title) : emailed;
@@ -3540,6 +3549,12 @@ inboxRouter.post(
       return;
     }
 
+    const purposeHold = scanPurposeReview({ ...row, status: "pending" });
+    if (scanPurpose(row) !== "arrival") {
+      res.status(409).json({ error: { code: "not_an_arrival", message: purposeHold } });
+      return;
+    }
+
     // ATOMIC CLAIM — two confirms racing (File-all vs a manual tap, or two
     // devices) both passed the read-guard above and both created the entity.
     // A compare-and-set on status makes the loser take the same 409 here.
@@ -5556,24 +5571,6 @@ inboxRouter.post(
       !(normalizeBarcode(rerun?.barcode) ?? barcodeFromHint(effectiveHint, row.barcode_text)) &&
       // VOCAB-ENUMERATION OK: the hint parser's kind (a part number), not a field role
       (earlyFacts.identifierKind === "identifier" || (!!typedHint && parseHintFacts(typedHint).quantity != null && !parseHintFacts(typedHint).identifier && !parseHintFacts(typedHint).rest));
-    await appendScanHistory(db, id, {
-      // Say WHICH kind of run this was — "Re-ran the lookup" hid whether tokens
-      // were spent, a hint was folded in, or it was a free replay.
-      action: readsHintOnly
-        ? "hint"
-        : rerun?.wrong
-        ? "wrong"
-        : rerun?.enrich
-          ? "enrich"
-          : rerun?.no_ai
-            ? "replay"
-            : effectiveHint
-              ? "rerun-hint"
-              : "rerun",
-      // The hint the run actually USED — so a re-run that carried a standing hint
-      // says so, instead of reading as a plain re-run that ignored it.
-      note: effectiveHint,
-    });
     // ── the barcode is a FACT the user can correct ─────────────────────────
     // Two doors, one landing spot: the explicit `barcode` field (the editor),
     // or a hint that carries one ("correct barcode X" - which used to ride into
@@ -5589,6 +5586,38 @@ inboxRouter.post(
       });
       return;
     }
+    // Say WHICH kind of run this was — "Re-ran the lookup" hid whether tokens
+    // were spent, a hint was folded in, or it was a free replay.
+    const runAction = readsHintOnly
+      ? "hint"
+      : rerun?.wrong
+        ? "wrong"
+        : rerun?.enrich
+          ? "enrich"
+          : rerun?.no_ai
+            ? "replay"
+            : effectiveHint
+              ? "rerun-hint"
+              : "rerun";
+    // Every path below can replace what the row shows, the inline barcode one
+    // included (it once kept nothing, so a cumin re-looked-up as a skirt had
+    // no way back, #6100). The row as it stands is recorded first; the
+    // History entry, the toast's Undo and "Previously: … · Revert" all
+    // restore from it.
+    const revision = await recordRevision(db, id, runAction);
+    const preRerun = { ...preRerunSnapshot(row, rerun?.no_ai ? "replay" : "rerun"), revision: revision.id };
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({ suggested_metadata: mergeMeta({ pre_rerun: preRerun }) as never })
+      .where("id", "=", id)
+      .execute();
+    await appendScanHistory(db, id, {
+      action: runAction,
+      revision,
+      // The hint the run actually USED — so a re-run that carried a standing hint
+      // says so, instead of reading as a plain re-run that ignored it.
+      note: effectiveHint,
+    });
     const correctedBarcode =
       normalizeBarcode(rerun?.barcode) ?? barcodeFromHint(effectiveHint, row.barcode_text);
     if (correctedBarcode && correctedBarcode !== row.barcode_text) {
@@ -5606,7 +5635,7 @@ inboxRouter.post(
         })
         .where("id", "=", id)
         .execute();
-      await appendScanHistory(db, id, { action: "barcode", note: correctedBarcode });
+      await appendScanHistory(db, id, { action: "barcode", revision, note: correctedBarcode });
       row.barcode_text = correctedBarcode;
     }
 
@@ -5666,19 +5695,7 @@ inboxRouter.post(
               pipeline_kind: "rerun",
               ...(effectiveHint ? { user_hint: effectiveHint } : {}),
               // What was on screen before, for "Previously: … · Revert".
-              pre_rerun: {
-                at: new Date().toISOString(),
-                kind: "rerun",
-                name: displayName(row),
-                manufacturer: row.suggested_manufacturer,
-                sku: row.suggested_sku,
-                candidates: row.suggested_candidates ?? [],
-                category: (row.suggested_metadata as { category?: unknown } | null)?.category ?? null,
-                entity_type: (row.suggested_metadata as { entity_type?: unknown } | null)?.entity_type ?? null,
-                ai_notes: row.ai_notes,
-                catalog_image_url: row.catalog_image_url,
-                catalog_image_file_id: row.catalog_image_file_id,
-              },
+              pre_rerun: preRerun,
             })}::jsonb` as never,
           updated_at: new Date(),
         })
@@ -5865,19 +5882,7 @@ inboxRouter.post(
               // not say what it used to be — the old name survived only by luck,
               // in the raw AI call log. One run deep is the useful depth: the
               // thing you want back is what was on screen before you tapped.
-              pre_rerun: {
-                at: new Date().toISOString(),
-                kind: rerun?.no_ai ? "replay" : "rerun",
-                name: displayName(row),
-                manufacturer: row.suggested_manufacturer,
-                sku: row.suggested_sku,
-                candidates: row.suggested_candidates ?? [],
-                category: (row.suggested_metadata as { category?: unknown } | null)?.category ?? null,
-                entity_type: (row.suggested_metadata as { entity_type?: unknown } | null)?.entity_type ?? null,
-                ai_notes: row.ai_notes,
-                catalog_image_url: row.catalog_image_url,
-                catalog_image_file_id: row.catalog_image_file_id,
-              },
+              pre_rerun: preRerun,
               // The hint has to ride into the matchmaker too — the barcode path
               // stamps it below, but the photo path returns before that, which
               // silently dropped the correction entirely.
@@ -6247,10 +6252,8 @@ inboxRouter.post(
     const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
     const { answer, hint } = parsed.data;
     if (!(row.barcode_text && answer === "no")) {
-      await appendScanHistory(db, id, {
-        action: answer === "yes" ? "confirm-guess" : "reject-guess",
-        note: hint ?? null,
-      });
+      const action = answer === "yes" ? "confirm-guess" : "reject-guess";
+      await appendScanHistory(db, id, { action, revision: await recordRevision(db, id, action), note: hint ?? null });
     }
 
     // A barcode card: the guess IS the catalog entry. "No" is the existing
@@ -6730,6 +6733,7 @@ inboxRouter.post(
           });
           return;
         }
+        const revision = await recordRevision(db, row.id, "crop-again");
         await db
           .updateTable("core_scan_inbox_items")
           .set({
@@ -6739,7 +6743,7 @@ inboxRouter.post(
           })
           .where("id", "=", row.id)
           .execute();
-        await appendScanHistory(db, row.id, { action: "crop-again", note: "cut again from the group photo" });
+        await appendScanHistory(db, row.id, { action: "crop-again", revision, note: "cut again from the group photo" });
         res.json(await served(req, await fresh()));
         return;
       }
@@ -6959,9 +6963,21 @@ inboxRouter.post(
       });
       return;
     }
-    // The snapshot replaces the identity keys it owns; every other key on the row
+    // A run since #6100 recorded the whole row first: put that back, every
+    // field the run changed, the barcode and the pictures included.
+    if (typeof snap.revision === "string") {
+      const back = await restoreRevision(db, id, snap.revision, "undo-rerun");
+      if (back) {
+        if (back.needsMatch) finishPutBackMatch(req, id);
+        res.json(await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirstOrThrow());
+        return;
+      }
+    }
+    // An older snapshot (or one whose revision was pruned) holds the identity
+    // only. It replaces the identity keys it owns; every other key on the row
     // (tags, hints, box state, the photo) is the USER's and survives the undo.
     // pre_rerun is dropped so undo can't be double-applied against a stale twin.
+    const revision = await recordRevision(db, id, "undo-rerun");
     const cols = preRerunRestore(snap);
     const restored = await db
       .updateTable("core_scan_inbox_items")
@@ -6987,9 +7003,66 @@ inboxRouter.post(
       .executeTakeFirstOrThrow();
     await appendScanHistory(db, id, {
       action: "undo-rerun",
+      revision,
       note: cols.suggested_name ? `back to "${cols.suggested_name}"` : undefined,
     });
     res.json(restored);
+  }),
+);
+
+/** A row put back as it stood before its match finished is matched now, by
+ *  replay: routing only, no model asked, the way Replay does it. Nothing else
+ *  is left running to finish it, and a put-back must never leave a row
+ *  "finishing" forever (the 390 walk of #6100). Detached: the inbox poll
+ *  shows the route when it lands. */
+function finishPutBackMatch(req: Request, itemId: string): void {
+  const ctx = tenantContext(req);
+  const token = bearer(req);
+  if (!token) return;
+  void matchItem({
+    orgId: ctx.org.id,
+    userId: sessionUser(req)?.id ?? null,
+    orgSlug: ctx.org.slug,
+    token,
+    baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+    itemId,
+    force: true,
+    replay: true,
+  }).catch((e: Error) => console.error("[core-scan] put-back match threw:", e.message));
+}
+
+// ─────────────── POST /inbox/:id/revisions/:rid/restore ───────────────
+// "Put back" on a History entry, and Undo on the toast that announced the
+// rewrite (#6100). Every rewrite records the row's fields before it starts and
+// its History entry carries that revision's id; this writes them back. The
+// put-back records the row as it is first, so it can be put back in turn. A
+// filed row is refused: what it filed into is a record now, and Unfile is its
+// way back.
+// AI-TOOL: put_back_scan_item
+inboxRouter.post(
+  "/inbox/:id/revisions/:rid/restore",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const id = String(req.params.id);
+    const rid = String(req.params.rid);
+    const db = tenantDb(req);
+    const row = await db.selectFrom("core_scan_inbox_items").select(["status"]).where("id", "=", id).executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    if (row.status !== "pending") {
+      res.status(409).json({ error: { code: "filed", message: "This item is filed already. Unfile it first to put an earlier version back." } });
+      return;
+    }
+    const back = /^[0-9a-f-]{36}$/i.test(rid) ? await restoreRevision(db, id, rid) : null;
+    if (!back) {
+      res.status(404).json({ error: { code: "no_such_version", message: "That earlier version of this item is no longer kept." } });
+      return;
+    }
+    if (back.needsMatch) finishPutBackMatch(req, id);
+    const fresh = await db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+    res.json(await served(req, fresh));
   }),
 );
 
@@ -7018,7 +7091,7 @@ inboxRouter.get(
     const matches = await findTracked(ctx.org.id, matchQuery(row, topCandidateFields(row.suggested_candidates), topCandidateCategory(row.suggested_candidates)));
     // One thing kept in several places: every place, so the banner can ask
     // which one this scan goes to (and which one it already picked).
-    const tier = matches.barcode_matches.length ? matches.barcode_matches : matches.name_matches;
+    const tier = scanMatchTier(matches);
     const cards = new Set(tier.map((m) => m.card_id ?? m.id));
     let places: Array<{ id: string; location_id: string | null; location_name: string | null; qty: number | null }> = [];
     const best = tier[0];
@@ -7442,6 +7515,10 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A count to a ten-thousandth at most: what a measured unit needs, and no
+ *  float noise passed off as an amount. */
+const atMostFourPlaces = (n: number) => Math.abs(Math.round(n * 10_000) - n * 10_000) < 1e-6;
+
 const AttachBody = z.object({
   kind: z.string().min(1),
   entity_id: z.string().min(1),
@@ -7484,10 +7561,12 @@ const AttachBody = z.object({
   qty: FiledQuantity.optional(),
   /** `count`: what is in your hands, signed (+3 arrived, -1 used up). The
    *  card's Change by. Exactly one of change / total. */
-  change: optionalField(z.number().int().min(-1_000_000).max(1_000_000)),
+  // A measured record is counted in fractions of its unit (half a metre),
+  // to a ten-thousandth; a counted one stays whole on the card (#6142).
+  change: optionalField(z.number().finite().min(-1_000_000).max(1_000_000).refine(atMostFourPlaces, "at most four decimal places")),
   /** `count`: the count as it actually is, the card's Set total. Filed in
    *  the ledger as a correction, never as use or a purchase. */
-  total: optionalField(z.number().int().min(0).max(1_000_000)),
+  total: optionalField(z.number().finite().min(0).max(1_000_000).refine(atMostFourPlaces, "at most four decimal places")),
   /** `count`: why, for the ledger line. A chip on the card, never asked. */
   reason: optionalField(z.enum(SCAN_COUNT_REASONS)),
 });
@@ -7529,6 +7608,14 @@ inboxRouter.post(
       });
       return;
     }
+    const purpose = scanPurpose(row);
+    const stockAction = parsed.data.mode === "add-qty" || parsed.data.mode === "replace" || parsed.data.mode === "add-place";
+    const countAction = parsed.data.mode === "count";
+    if (purpose !== "arrival" && (stockAction || ((purpose === "move" || purpose === "sort") && countAction))) {
+      res.status(409).json({ error: { code: "not_an_arrival", message: scanPurposeReview(row) } });
+      return;
+    }
+
     // Paperwork for one thing is put on the record, never added to it as
     // another unit or merged field by field: the one paperwork door (#4633).
     if (isPaperworkRow(row as never)) {
@@ -7904,44 +7991,32 @@ inboxRouter.post(
       }
     }
 
-    // add-qty / replace: give the entity the scan's photo when it has none
-    // (best-effort). A picture the person CHOSE on the card is different: they
-    // picked it looking at the "same as X" banner, for X, and it lands on the
-    // record whether or not the record had one. The scan's own photo and a
-    // lookup's find still only fill an empty slot (2026-09-12).
-    const chosenId =
-      (row.suggested_metadata as { catalog_image_user_set?: boolean } | null)?.catalog_image_user_set &&
-      row.catalog_image_file_id
-        ? row.catalog_image_file_id
-        : null;
-    if ((parsed.data.mode === "add-qty" || parsed.data.mode === "replace" || counting) && (chosenId || !entity.image_path)) {
-      const photoId = chosenId ?? row.catalog_image_file_id ?? row.image_file_id;
-      if (photoId) {
-        // Both halves from one split. This used to hand-roll it and pass the
-        // WHOLE kind as source_type, so the row was written "inventory:part"
-        // while every reader queries "part" - orphaned on write, and invisible
-        // because the PATCH below sets image_path regardless.
-        const { module, type } = splitEntityKind(baseKind);
-        // Awaited: the record should show the picture when the person opens it.
-        await platform()
-          .files.attach(ctx.org.id, {
-            fileId: photoId,
-            source_module: module,
-            source_type: type,
-            source_id: parsed.data.entity_id,
-            role: "gallery",
-          })
-          .then(() =>
-            apiFetch(entityPath, {
-              method: "PATCH",
-              headers: authHeaders,
-              body: JSON.stringify({
-                image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${photoId}/raw`,
-              }),
+    const photoId = attachPhotoFileId(row, parsed.data.mode, entity.image_path);
+    if (photoId) {
+      // Both halves from one split. This used to hand-roll it and pass the
+      // WHOLE kind as source_type, so the row was written "inventory:part"
+      // while every reader queries "part" - orphaned on write, and invisible
+      // because the PATCH below sets image_path regardless.
+      const { module, type } = splitEntityKind(baseKind);
+      // Awaited: the record should show the picture when the person opens it.
+      await platform()
+        .files.attach(ctx.org.id, {
+          fileId: photoId,
+          source_module: module,
+          source_type: type,
+          source_id: parsed.data.entity_id,
+          role: "gallery",
+        })
+        .then(() =>
+          apiFetch(entityPath, {
+            method: "PATCH",
+            headers: authHeaders,
+            body: JSON.stringify({
+              image_path: `/api/v1/orgs/${ctx.org.slug}/modules/core-files/files/${photoId}/raw`,
             }),
-          )
-          .catch((err) => console.error("[core-scan] attach photo failed:", (err as Error).message));
-      }
+          }),
+        )
+        .catch((err) => console.error("[core-scan] attach photo failed:", (err as Error).message));
     }
 
     // Resolve the inbox item as "attached" (history + metadata carry the ref).
@@ -9315,9 +9390,8 @@ inboxRouter.post(
 // not require the phone or computer webapp to be open, and it should not
 // re-run when a webpage connects"). The web never auto-triggers it.
 
-/** In-flight guard: one match per item at a time, across requests/tabs.
- *  Two open tabs used to fire two ~25s model runs for the same item. */
-const matchInFlight = new Map<string, number>();
+/** Background duplicates are suppressed; explicit corrections wait for older writes. */
+const runMatch = createMatchQueue();
 
 interface MatchItemOpts {
   orgId: string;
@@ -9699,9 +9773,10 @@ async function reconcileSplitSiblings(
 }
 
 async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
-  const inflight = matchInFlight.get(opts.itemId);
-  if (inflight && Date.now() - inflight < 120_000) return null;
-  matchInFlight.set(opts.itemId, Date.now());
+  return runMatch(`${opts.orgId}:${opts.itemId}`, opts.force, () => matchItemNow(opts));
+}
+
+async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | null> {
   try {
     // Acquire a LIVE pool — this runs detached minutes after the request
     // that scheduled it, past the idle reaper (see the /scan read-back note).
@@ -9851,7 +9926,7 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
     // A catch-all candidate whose category NAMES one of the module's own lists
     // goes to that list: "Teas" on a base-Inventory candidate is the model
     // saying tea and filing it where nobody looks for tea.
-    const retargeted = retargetByCategory(candidates, menu);
+    const retargeted = retargetByCategory(candidates, menu) + retargetIsbnToBookList(candidates, menu, row.barcode_text);
     if (retargeted) {
       console.log(`[core-scan] ${retargeted} candidate(s) re-routed to the list their category named`);
       // A moved candidate was on the catch-all when the decode filled, so it
@@ -10336,8 +10411,6 @@ async function matchItem(opts: MatchItemOpts): Promise<unknown[] | null> {
       console.error(`[core-scan] matchItem ${opts.itemId} fail-stamp also failed:`, (e2 as Error).message);
     }
     return null;
-  } finally {
-    matchInFlight.delete(opts.itemId);
   }
 }
 

@@ -46,6 +46,7 @@ import type { CoreDocumentsDB } from "./db.js";
 export type Db = Kysely<CoreDocumentsDB>;
 
 export const MATCH_PASS = "core-documents.match";
+export const MATCHING_FACTS_VERSION = 1;
 /** Records asked about per workspace per round, across its systems. */
 export const PER_ROUND = 5;
 export const ROUND_MS = 60_000;
@@ -99,10 +100,11 @@ export function getOn(orgId: string, credentialId: string, ref: string, include:
 
 /** What a record says about itself now, or null when it is gone. */
 export async function readFacts(orgId: string, kind: string, id: string): Promise<RecordFacts | null> {
+  const actualKind = await platform().entities.resolvedKindForEntity(orgId, kind, id);
   // SYSTEM-READ: matching reads a record's codes and short fields to find its library items, whoever can see those fields; nothing read here is shown, only the items it finds
-  const e = await platform().entities.lookup(orgId, kind, id, SYSTEM_VIEWER).catch(() => null);
+  const e = await platform().entities.lookup(orgId, actualKind, id, SYSTEM_VIEWER).catch(() => null);
   if (!e || !e.title?.trim()) return null;
-  const roled = await platform().entities.roledFieldsFor(orgId, kind).catch(() => []);
+  const roled = await platform().entities.roledFieldsFor(orgId, actualKind).catch(() => []);
   return recordFactsOf({ title: e.title, fields: e.fields ?? {} }, roled);
 }
 
@@ -340,14 +342,18 @@ export async function matchRound(orgId: string, db: Db, now = new Date(), holder
 
   const queued = await db
     .selectFrom("core_documents_records")
-    .select(["record_kind", "record_id", "facts", "attempts"])
-    .where("status", "=", "queued")
+    .select(["record_kind", "record_id", "facts", "facts_key", "attempts"])
+    // The outgoing api can consume a migration requeue while its replacement
+    // warms up, but it cannot stamp facts refreshed by this matcher.
+    .where((eb) => eb.or([eb("status", "=", "queued"), eb("facts_version", "<", MATCHING_FACTS_VERSION)]))
     .orderBy("updated_at", "desc")
     .limit(PER_ROUND + 1)
     .execute();
   let unreachable = false;
   for (const q of queued.slice(0, PER_ROUND)) {
-    const facts = (typeof q.facts === "string" ? JSON.parse(q.facts) : q.facts) as RecordFacts;
+    // Requeued records may still hold facts read through the base kind,
+    // before their collection's identifiers and custom fields were included.
+    const facts = (await readFacts(orgId, q.record_kind, q.record_id)) ?? ((typeof q.facts === "string" ? JSON.parse(q.facts) : q.facts) as RecordFacts);
     let failed = false;
     let lastError: string | null = null;
     for (const h of systems) {
@@ -363,12 +369,16 @@ export async function matchRound(orgId: string, db: Db, now = new Date(), holder
     const tries = q.attempts + 1;
     await db
       .updateTable("core_documents_records")
-      .set(
-        failed
-          ? { attempts: tries, last_error: lastError, ...(tries >= MAX_ATTEMPTS ? { status: "done" as const } : {}) }
-          : { status: "done", attempts: tries, matched_at: new Date(), last_error: null },
-      )
+      .set({
+        facts: JSON.stringify(facts),
+        facts_key: factsKey(facts),
+        facts_version: MATCHING_FACTS_VERSION,
+        ...(failed
+          ? { attempts: tries, last_error: lastError, status: tries >= MAX_ATTEMPTS ? "done" as const : "queued" as const }
+          : { status: "done" as const, attempts: tries, matched_at: new Date(), last_error: null }),
+      })
       .where("record_id", "=", q.record_id)
+      .where("facts_key", "=", q.facts_key)
       .execute();
     // A system that does not answer is not asked again this round.
     if (failed) {

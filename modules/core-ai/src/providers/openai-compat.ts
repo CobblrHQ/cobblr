@@ -22,7 +22,7 @@ import { assertSafeAiEndpoint, pinnedFetch, type PinnedResponse } from "../ssrf.
 import { sendDroppingRefused } from "./refused-params.js";
 import { TRANSIT_FIELD, viaBridge, edgeKeyFor, edgeFetch } from "./edge-transit.js";
 import { buildMessages } from "./openai.js";
-import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport, stripLeakedReasoning } from "./tool-wire.js";
+import { toolsOf, openAiToolsOf, parseOpenAiToolCalls, looksLikeNoToolSupport, stripLeakedReasoning, bridgeUsage } from "./tool-wire.js";
 import { promptFingerprint } from "./prompt-fingerprint.js";
 import { assertLocalAiEndpoint, assertLocalAiPin } from "./local-endpoint.js";
 
@@ -327,7 +327,12 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           // round is short anyway; it is the long prose answer that needs to
           // show up as it is written.
           const streamText = isChatTurn(ctx.capability) && typeof ctx.onDelta === "function" && !toolDefs;
-          if (streamText) body.stream = true;
+          // A streamed answer reports its usage only when asked, in one last
+          // frame (#6197): without it every streamed turn logged zero tokens.
+          if (streamText) {
+            body.stream = true;
+            body.stream_options = { include_usage: true };
+          }
           // MCP tool relay (a Claude-subscription bridge behind the OpenAI wire):
           // forward the per-request grant so the bridge spawns `claude -p
           // --mcp-config`. A real OpenAI-compatible server ignores this field.
@@ -353,6 +358,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
           let streamedText = "";
           // Every frame names the model answering; the first one that does is kept.
           let streamedModel: string | null = null;
+          let streamedUsage: unknown = null;
           const onChunk = streamText
             ? (chunk: string) => {
                 sseTail += chunk;
@@ -367,8 +373,10 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
                     const frame = JSON.parse(payload) as {
                       choices?: Array<{ delta?: { content?: string } }>;
                       model?: unknown;
+                      usage?: unknown;
                     };
                     streamedModel ??= servedModelOf(frame.model);
+                    if (frame.usage) streamedUsage = frame.usage;
                     const piece = frame.choices?.[0]?.delta?.content;
                     if (typeof piece === "string" && piece) {
                       streamedText += piece;
@@ -387,6 +395,13 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             body: JSON.stringify(body),
             ...(onChunk ? { onChunk } : {}),
           });
+          if (!res.ok && body.stream_options && res.status >= 400 && res.status < 500) {
+            // A server that does not know stream_options refuses it with a 4xx:
+            // the answer matters more than its count, so ask again without it.
+            await res.text().catch(() => "");
+            delete body.stream_options;
+            res = await call("/chat/completions", { method: "POST", headers, body: JSON.stringify(body), ...(onChunk ? { onChunk } : {}) });
+          }
           if (!res.ok && constrained && res.status >= 400 && res.status < 500) {
             // A server that does not speak json_schema says so with a 4xx; the
             // prompt already asks for the shape, so drop the constraint and go on.
@@ -405,7 +420,9 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
             // A streamed body is SSE frames, not one JSON object. Everything
             // needed was collected on the way past.
             if (!streamedText.trim()) throw new Error(`${id}: the stream carried no text`);
-            return { result: { role: "assistant", content: streamedText }, input_tokens: 0, output_tokens: 0, served_model: streamedModel };
+            // No usage frame (a server that ignores stream_options): the count is
+            // unknown, so none is logged rather than a zero nobody claimed.
+            return { result: { role: "assistant", content: streamedText }, ...bridgeUsage({ usage: streamedUsage }), served_model: streamedModel };
           }
           const out = (await res.json()) as {
             choices: Array<{
@@ -430,8 +447,7 @@ export function buildCompatProvider(opts: CompatPresetOpts): AiProviderDef {
               content: stripLeakedReasoning(msg.content ?? ""),
               ...(calls ? { tool_calls: calls } : {}),
             },
-            input_tokens: out.usage?.prompt_tokens ?? 0,
-            output_tokens: out.usage?.completion_tokens ?? 0,
+            ...bridgeUsage(out),
             cost_cents: 0,
             served_model: servedModelOf(out.model),
           };

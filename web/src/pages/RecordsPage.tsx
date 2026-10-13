@@ -1,4 +1,4 @@
-import { useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -91,11 +91,14 @@ export function RecordsPage({
       navigate(`/records/${rid}${searchParams.toString() ? `?${searchParams}` : ""}`);
     }
   };
+  // A record opened from somewhere else (a floor plan, a search) closes back
+  // there; one opened by its link closes to the list (#6266).
+  const closeToList = useCloseToOrigin(`/records${searchParams.toString() ? `?${searchParams}` : ""}`);
   const closeDetail = () => {
     if (instance) {
       setLocalSel(null);
       setSearchParams((prev) => { prev.delete("record"); return prev; }, { replace: true });
-    } else navigate(`/records${searchParams.toString() ? `?${searchParams}` : ""}`);
+    } else closeToList();
   };
 
   const list = useQuery({

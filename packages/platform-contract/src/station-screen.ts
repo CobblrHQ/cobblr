@@ -226,6 +226,11 @@ export interface StationRecord {
   image_path: string | null;
   /** The count, when the kind keeps one; null for a one-off thing. */
   qty: number | null;
+  /** The unit the count is kept in ("m", "kg", "each"), when the kind keeps one. */
+  unit: string | null;
+  /** The unit measures (metres, grams): its total is typed with a decimal
+   *  point (#6142); a counted one takes whole numbers. */
+  measured: boolean;
   location_id: string | null;
   location_name: string | null;
   detail_url: string | null;

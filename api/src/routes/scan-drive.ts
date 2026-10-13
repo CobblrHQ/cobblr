@@ -10,15 +10,16 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { routeScanToDrive } from "../platform/scan-drive.js";
 import { StationRefusal } from "../platform/scan-station-engine.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 export const scanDriveRouter = Router({ mergeParams: true });
 
 const Body = z.object({
   code: z.string().min(1).max(2000),
-  scan_batch_id: z.string().min(1).max(120).optional(),
-  disposition: z.enum(["navigate", "print", "file"]).optional(),
-  device_id: z.string().uuid().optional(),
-  request_id: z.string().min(1).max(120).optional(),
+  scan_batch_id: optionalField(z.string().min(1).max(120)),
+  disposition: optionalField(z.enum(["navigate", "print", "file"])),
+  device_id: z.string().uuid().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  request_id: optionalField(z.string().min(1).max(120)),
 });
 
 scanDriveRouter.post("/:slug/scan-drive", requireAuth, withTenant, async (req, res, next) => {
@@ -41,11 +42,11 @@ scanDriveRouter.post("/:slug/scan-drive", requireAuth, withTenant, async (req, r
       userId: req.session!.id,
       code: b.data.code,
       token,
-      scanBatchId: b.data.scan_batch_id,
+      scanBatchId: b.data.scan_batch_id ?? undefined,
       baseUrl,
-      disposition: b.data.disposition,
+      disposition: b.data.disposition ?? undefined,
       deviceId: b.data.device_id,
-      requestId: b.data.request_id,
+      requestId: b.data.request_id ?? undefined,
     });
     res.json(result);
   } catch (err) {

@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { Modal, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, SegmentedChoice, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
 export function SurfacesPage() {
@@ -339,44 +339,24 @@ function EditSurfaceModal({
           <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
             theming
           </div>
-          <label className="block">
+          <div>
             <div className="text-xs text-muted mb-1">Theme</div>
-            <div className="flex gap-1">
-              {(["auto", "light", "dark"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTheme(t)}
-                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
-                    theme === t
-                      ? "bg-cobble-600 text-white"
-                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </label>
-          <label className="block">
+            <SegmentedChoice
+              label="Theme"
+              value={theme}
+              onChange={setTheme}
+              options={[{ value: "auto", label: "auto" }, { value: "light", label: "light" }, { value: "dark", label: "dark" }]}
+            />
+          </div>
+          <div>
             <div className="text-xs text-muted mb-1">Default layout</div>
-            <div className="flex gap-1">
-              {(["tiles", "list"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setLayout(t)}
-                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
-                    layout === t
-                      ? "bg-cobble-600 text-white"
-                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </label>
+            <SegmentedChoice
+              label="Default layout"
+              value={layout}
+              onChange={setLayout}
+              options={[{ value: "tiles", label: "tiles" }, { value: "list", label: "list" }]}
+            />
+          </div>
           <label className="block">
             <div className="text-xs text-muted mb-1">Footer text</div>
             <input
@@ -649,25 +629,15 @@ function CreateSurfaceModal({
             autoFocus
           />
         </label>
-        <label className="block">
+        <div>
           <div className="text-xs text-muted mb-1">Source</div>
-          <div className="flex gap-1">
-            {(["view", "collection", "app"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setScopeType(t)}
-                className={`flex-1 px-3 py-1.5 text-xs rounded transition ${
-                  scopeType === t
-                    ? "bg-cobble-600 text-white"
-                    : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                }`}
-              >
-                {t === "view" ? "Saved view" : t === "collection" ? "Ad-hoc collection" : "App"}
-              </button>
-            ))}
-          </div>
-        </label>
+          <SegmentedChoice
+            label="Source"
+            value={scopeType}
+            onChange={setScopeType}
+            options={[{ value: "view", label: "Saved view" }, { value: "collection", label: "Ad-hoc collection" }, { value: "app", label: "App" }]}
+          />
+        </div>
         {scopeType === "view" && (
           <>
             <label className="block">
@@ -756,44 +726,24 @@ function CreateSurfaceModal({
           <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
             theming (optional)
           </div>
-          <label className="block">
+          <div>
             <div className="text-xs text-muted mb-1">Theme</div>
-            <div className="flex gap-1">
-              {(["auto", "light", "dark"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTheme(t)}
-                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
-                    theme === t
-                      ? "bg-cobble-600 text-white"
-                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </label>
-          <label className="block">
+            <SegmentedChoice
+              label="Theme"
+              value={theme}
+              onChange={setTheme}
+              options={[{ value: "auto", label: "auto" }, { value: "light", label: "light" }, { value: "dark", label: "dark" }]}
+            />
+          </div>
+          <div>
             <div className="text-xs text-muted mb-1">Default layout</div>
-            <div className="flex gap-1">
-              {(["tiles", "list"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setLayout(t)}
-                  className={`flex-1 px-3 py-1 text-xs rounded transition ${
-                    layout === t
-                      ? "bg-cobble-600 text-white"
-                      : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </label>
+            <SegmentedChoice
+              label="Default layout"
+              value={layout}
+              onChange={setLayout}
+              options={[{ value: "tiles", label: "tiles" }, { value: "list", label: "list" }]}
+            />
+          </div>
           <label className="block">
             <div className="text-xs text-muted mb-1">Footer text (optional)</div>
             <input

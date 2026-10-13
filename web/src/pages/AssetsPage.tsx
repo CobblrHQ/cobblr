@@ -1,4 +1,4 @@
-import { useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -102,11 +102,14 @@ export function AssetsPage({
       navigate(`/assets/${aid}${searchParams.toString() ? `?${searchParams}` : ""}`);
     }
   };
+  // A record opened from somewhere else (a floor plan, a search) closes back
+  // there; one opened by its link closes to the list (#6266).
+  const closeToList = useCloseToOrigin(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`);
   const closeDetail = () => {
     if (instance) {
       setLocalSel(null);
       setSearchParams((prev) => { prev.delete("asset"); return prev; }, { replace: true });
-    } else navigate(`/assets${searchParams.toString() ? `?${searchParams}` : ""}`);
+    } else closeToList();
   };
 
   // What is put away is its own list, one tap from the register.

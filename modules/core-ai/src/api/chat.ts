@@ -122,6 +122,10 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
       return Array.isArray(a.ids) && a.ids.length && typeof a.list === "string" && a.list.trim()
         ? { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: a.ids, list: a.list } }
         : null;
+    case "put_back_scan_item":
+      return typeof a.id === "string" && a.id.trim()
+        ? { tool: "update", via: "put_back_scan", entity_kind: "", args: { id: a.id, ...(typeof a.revision === "string" && a.revision ? { revision: a.revision } : {}) } }
+        : null;
     case "update_record":
       return kind && a.id
         ? { tool: "update", entity_kind: kind, entity_id: String(a.id), fields: (a.fields as Record<string, unknown>) ?? {} }
@@ -626,6 +630,18 @@ async function proposalOf(
       return {
         summary: `File ${ids.length === 1 ? "1 inbox item" : `${ids.length} inbox items`} into ${label}`,
         proposal: { kind: "file", ids, list, list_label: label, lines: names },
+      };
+    }
+    case "put_back_scan_item": {
+      const id = String(a.id ?? "").trim();
+      if (!id) return { error: "Which inbox item? Name it, or open it." };
+      const r = await getTool("get_scan_item")?.execute(wsApi, { id }).catch(() => null);
+      const d = r?.ok ? (r.data as { name?: string; history_words?: Array<{ said: string; revision?: string }> } | undefined) : undefined;
+      const revision = typeof a.revision === "string" && a.revision ? a.revision : undefined;
+      const step = d?.history_words?.find((h) => (revision ? h.revision === revision : !!h.revision));
+      return {
+        summary: `Put back ${d?.name ? `“${d.name}”` : "this inbox item"} as it was before: ${step?.said ?? "its last change"}`,
+        proposal: { kind: "put_back", id, ...(revision ? { revision } : {}), ...(d?.name ? { label: d.name } : {}) },
       };
     }
     case "add_thing": {
@@ -2148,6 +2164,8 @@ const ExecStep = z.union([
   z.object({ kind: z.literal("build"), draft_id: z.string() }),
   // add_thing (#4472): what the agent asked to add, run through the inbox.
   z.object({ kind: z.literal("add"), args: z.record(z.unknown()) }),
+  // put_back_scan_item (#6100): a scan inbox item put back as a step found it.
+  z.object({ kind: z.literal("put_back"), id: z.string().min(1), revision: z.string().optional(), label: z.string().optional() }),
   // file_inbox_items: inbox items filed into one list, each its record there.
   z.object({
     kind: z.literal("file"),
@@ -2249,6 +2267,15 @@ chatRouter.post(
           tenantDb(req),
           me,
           { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: step.ids, list: step.list } },
+          { auto: false, orgId: tenantContext(req).org.id, ...prompt },
+        );
+      }
+      if (step.kind === "put_back") {
+        return performWrite(
+          chatWorkspaceApi(c),
+          tenantDb(req),
+          me,
+          { tool: "update", via: "put_back_scan", entity_kind: "", args: { id: step.id, ...(step.revision ? { revision: step.revision } : {}) } },
           { auto: false, orgId: tenantContext(req).org.id, ...prompt },
         );
       }

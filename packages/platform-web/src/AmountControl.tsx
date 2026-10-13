@@ -9,6 +9,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { NumberStepper } from "./NumberStepper";
+import { readTypedNumber } from "./TypeableNumber";
 import { useUnits } from "./useUnits";
 import { usedInUnit } from "./units";
 import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
@@ -111,8 +112,8 @@ export function AmountControl({
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    const n = Number(amount.replace(",", "."));
-    if (!Number.isFinite(n) || n <= 0) {
+    const n = readTypedNumber(amount, { allowNegative: false, decimal: true });
+    if (n === null || n <= 0) {
       setError(`Say how much, in ${used.symbol}.`);
       return;
     }

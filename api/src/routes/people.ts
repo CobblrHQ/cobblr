@@ -5,19 +5,19 @@
 // inviting someone on the list to become a member is the admin's, as every
 // invite is. A member's own name is their account's, so it is not edited here.
 import { Router } from "express";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import { hasAuthEmailSender } from "../platform/hosted-seams.js";
-import { addPerson, clearPeopleCache, listPeople, personForUser } from "../platform/people.js";
+import { clearPeopleCache, createPerson, listPeople, personForUser, updatePerson } from "../platform/people.js";
 import { handOffThings, thingsOfPerson } from "../platform/person-things.js";
 import { deliverInvite, newInviteToken } from "./members.js";
 
 export const peopleRouter = Router({ mergeParams: true });
 
-const canWrite = (role: string | undefined) => !!role && role !== "guest";
 // role-gate: exact — inviting someone and handing on their things is
 // governance, the members page's bar (assertAdmin), not an action an editor's
 // rank reaches.
@@ -73,77 +73,46 @@ peopleRouter.get("/things", requireAuth, withTenant, async (req, res, next) => {
 });
 
 const PersonBody = z.object({
-  name: z.string().trim().min(1).max(120),
-  email: z.string().trim().email().max(255).optional().or(z.literal("")),
+  name: z.string().max(120),
+  email: z.string().max(255).nullish(),
+  phone: z.string().max(40).nullish(),
 });
 
+// AI-ACTION: platform:add-person
 peopleRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!canWrite(req.tenant!.role)) {
-      res.status(403).json({ error: { code: "forbidden", message: "A guest can see the people here but not add anyone." } });
-      return;
-    }
+    if (!(await requireCapability(req, res, "platform:add-person"))) return;
     const parsed = PersonBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "A person needs a name.", details: parsed.error.issues } });
       return;
     }
-    const orgId = req.tenant!.org.id;
-    const same = (await listPeople(orgId)).find((p) => p.name.toLowerCase() === parsed.data.name.toLowerCase());
-    if (same) {
-      res.status(409).json({ error: { code: "already_listed", message: `${same.name} is already on the list.` }, person: same });
+    const r = await createPerson(req.tenant!.org.id, req.session!.id, parsed.data);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message }, ...(r.person ? { person: r.person } : {}) });
       return;
     }
-    const person = await addPerson(orgId, { name: parsed.data.name, email: parsed.data.email || null });
-    await activity.log({
-      orgId,
-      userId: req.session!.id,
-      action: "person_added",
-      ref: { module: null, entityType: "person", entityId: person.id },
-      diff: { name: person.name },
-    });
-    res.status(201).json(person);
+    res.status(201).json(r.person);
   } catch (err) {
     next(err);
   }
 });
 
+// AI-ACTION: platform:edit-person
 peopleRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!canWrite(req.tenant!.role)) {
-      res.status(403).json({ error: { code: "forbidden", message: "A guest can see the people here but not change them." } });
-      return;
-    }
+    if (!(await requireCapability(req, res, "platform:edit-person"))) return;
     const parsed = PersonBody.partial().safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
       return;
     }
-    const orgId = req.tenant!.org.id;
-    const row = await meta
-      .selectFrom("workspace_people")
-      .select(["id", "user_id"])
-      .where("id", "=", req.params.id!)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (!row) {
-      res.status(404).json({ error: { code: "not_found", message: "No such person here." } });
+    const r = await updatePerson(req.tenant!.org.id, req.params.id!, parsed.data);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
-    if (row.user_id && parsed.data.name !== undefined) {
-      res.status(409).json({ error: { code: "member_name", message: "A member's name is their account's; they change it in their own settings." } });
-      return;
-    }
-    await meta
-      .updateTable("workspace_people")
-      .set({
-        ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
-        ...(parsed.data.email !== undefined ? { email: parsed.data.email ? parsed.data.email.toLowerCase() : null } : {}),
-      })
-      .where("id", "=", row.id)
-      .execute();
-    clearPeopleCache(orgId);
-    res.json((await listPeople(orgId)).find((p) => p.id === row.id));
+    res.json(r.person);
   } catch (err) {
     next(err);
   }

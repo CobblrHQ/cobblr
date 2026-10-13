@@ -22,6 +22,7 @@ export function ReceiptPeek({
   title,
   "aria-label": ariaLabel,
   className,
+  wrapClassName = "min-w-0",
 }: {
   slug: string;
   /** The receipt's stored original. Null when there is none (an emailed
@@ -34,6 +35,9 @@ export function ReceiptPeek({
   title?: string;
   "aria-label"?: string;
   className?: string;
+  /** The wrapper's sizing: "min-w-0" lets a text trigger truncate; a fixed
+   *  icon target says "shrink-0" so the row never squeezes it below its size. */
+  wrapClassName?: string;
 }) {
   const [hover, setHover] = useState(false);
   // Fetched on hover only: the panel can list a dozen receipts, and a dozen
@@ -43,7 +47,7 @@ export function ReceiptPeek({
   if (!fileId) return <>{children}</>;
   return (
     <span
-      className="relative inline-flex min-w-0"
+      className={`relative inline-flex ${wrapClassName}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >

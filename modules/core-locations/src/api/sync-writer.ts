@@ -149,14 +149,16 @@ export function registerLocationsWriter(): void {
 
     // Existing locations, for the import preview's name-merge — so importing a
     // room/bin that already exists by name links into it instead of
-    // duplicating. Name-only match (parent precision is best-effort here).
+    // duplicating.
     async listForMatch(orgId) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreLocationsDB>;
       const rows = await db
         .selectFrom("core_locations_locations")
-        .select(["id", "name", "parent_id"])
+        .select(["id", "name", "parent_id", "kind"])
         .execute();
-      return rows.map((r) => ({ id: r.id, name: r.name, parentId: r.parent_id }));
+      // Kind and parent are what make a same-name place the same place: a
+      // "Shed" in the garage is not the garden's (#6336).
+      return rows.map((r) => ({ id: r.id, name: r.name, parentId: r.parent_id, kind: r.kind }));
     },
 
     // Current fields of one location — lets the import preview show the

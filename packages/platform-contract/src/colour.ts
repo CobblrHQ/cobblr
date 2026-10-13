@@ -16,6 +16,7 @@ const WORDS: Record<string, string> = {
   silver: "#c0c0c0",
   red: "#ff0000",
   orange: "#ffa500",
+  apricot: "#fbceb1",
   yellow: "#ffff00",
   gold: "#ffd700",
   green: "#008000",

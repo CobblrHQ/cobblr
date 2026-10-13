@@ -11,11 +11,6 @@
 // @cobblr/platform-contract/optional-fields, or `.nullish()`. A genuine exception
 // carries `// none-refused-ok: <reason>` on the line.
 //
-// THE BASELINE. scripts/optional-fields-baseline.json lists the fields that still
-// refuse null (`file::schema::field`). It only shrinks: a field not in it fails,
-// and an entry whose field no longer refuses null fails as stale, so converting a
-// field means deleting its line.
-//
 // THE BOUNDARY. Booleans are out (false is already "none"), and so are arrays,
 // records and objects. Only a field written on one line is read.
 //
@@ -28,7 +23,6 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOTS = ["modules", "api/src"];
-const BASELINE = "scripts/optional-fields-baseline.json";
 const SCHEMA = /^\s*(?:export\s+)?const (\w+)\s*=\s*z\.object\(/;
 const REQUEST_NAME = /(Create|Update|Patch|Body|Input|Edit|Add|New|Post|Put)/i;
 const FIELD = /^\s*(\w+): z\.(?:string|number|enum|coerce|nativeEnum|literal)\b.*\.optional\(\)/;
@@ -77,11 +71,7 @@ export function check(file: string, src: string): Violation[] {
 
 const found: Violation[] = [];
 for (const root of ROOTS) for (const file of walk(root)) if (inScope(file)) found.push(...check(file, readFileSync(file, "utf8")));
-const baseline = new Set<string>(JSON.parse(readFileSync(BASELINE, "utf8")) as string[]);
-const seen = new Set(found.map((v) => v.key));
-const violations: Violation[] = found.filter((v) => !baseline.has(v.key));
-for (const key of baseline)
-  if (!seen.has(key)) violations.push({ file: BASELINE, line: 1, key, what: `stale baseline entry ${key}: that field no longer refuses null, delete the line` });
+const violations: Violation[] = found;
 
 if (violations.length) {
   console.error(`lint:optional-fields-accept-none - ${violations.length} violation(s):`);

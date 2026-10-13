@@ -73,6 +73,13 @@ const Invoke = z.object({
 servicesRouter.get("/:slug/services/capabilities/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
     const found = await capabilityDetail(orgOf(req), userOf(req), String(req.params.id));
+    // A page that routinely asks "does anything connected do this?" sends
+    // if_any and gets 200 with options: null; a 404 is for asking about a
+    // capability that must be there (#6268).
+    if (!found && req.query.if_any === "1") {
+      res.json({ id: String(req.params.id), offered: false, options: null });
+      return;
+    }
     if (!found) {
       res.status(404).json({ error: { code: "no_service", message: "nothing connected here does that" } });
       return;

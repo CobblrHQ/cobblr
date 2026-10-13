@@ -19,7 +19,9 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { normalisePhone } from "../lib/phone.js";
 import { ttlCache } from "../lib/ttl-cache.js";
+import * as activity from "./activity.js";
 
 export interface WorkspacePerson {
   id: string;
@@ -27,6 +29,9 @@ export interface WorkspacePerson {
   /** Set when this person is a member, or was one. */
   user_id: string | null;
   email: string | null;
+  /** A number to text, in international form (#6070): for an automation's
+   *  message to someone outside the workspace. */
+  phone: string | null;
   /** In the workspace now. False for someone on the list by name only, and
    *  for a member who has since left (their things are still theirs). */
   member: boolean;
@@ -65,6 +70,7 @@ export async function listPeople(orgId: string, opts: { includeArchived?: boolea
       "p.name",
       "p.user_id",
       "p.email",
+      "p.phone",
       "u.display_name as account_name",
       "u.email as account_email",
       "m.user_id as member_user",
@@ -80,6 +86,7 @@ export async function listPeople(orgId: string, opts: { includeArchived?: boolea
       name,
       user_id: r.user_id,
       email: r.user_id ? (r.account_email ?? r.email) : r.email,
+      phone: r.phone,
       member,
       left: !!r.user_id && !member,
     };
@@ -114,10 +121,10 @@ export async function personForUser(orgId: string, userId: string): Promise<stri
   return row?.id ?? null;
 }
 
-export async function addPerson(orgId: string, input: { name: string; email?: string | null }): Promise<WorkspacePerson> {
+export async function addPerson(orgId: string, input: { name: string; email?: string | null; phone?: string | null }): Promise<WorkspacePerson> {
   const row = await meta
     .insertInto("workspace_people")
-    .values({ org_id: orgId, name: input.name.trim(), email: input.email?.trim().toLowerCase() || null, user_id: null })
+    .values({ org_id: orgId, name: input.name.trim(), email: input.email?.trim().toLowerCase() || null, phone: input.phone ?? null, user_id: null })
     .returning(["id"])
     .executeTakeFirstOrThrow();
   clearPeopleCache(orgId);
@@ -157,4 +164,76 @@ export async function linkPersonToUser(orgId: string, personId: string, userId: 
 export async function userForPerson(orgId: string, personId: string): Promise<string | null> {
   const person = (await listPeople(orgId)).find((p) => p.id === personId);
   return person?.member && person.user_id ? person.user_id : null;
+}
+
+// ── adding and changing someone: the People page, the API and the assistant
+// (platform:add-person, platform:edit-person) all come through here.
+
+export type PersonWrite =
+  | { ok: true; person: WorkspacePerson }
+  | { ok: false; status: number; code: string; message: string; person?: WorkspacePerson };
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** An email and a phone as given: blank clears, anything else must be one. */
+function contactOf(input: { email?: string | null; phone?: string | null }): { email?: string | null; phone?: string | null } | { error: string } {
+  const out: { email?: string | null; phone?: string | null } = {};
+  if (input.email !== undefined) {
+    const e = (input.email ?? "").trim().toLowerCase();
+    if (e && (!EMAIL.test(e) || e.length > 255)) return { error: `${input.email} is not an email address.` };
+    out.email = e || null;
+  }
+  if (input.phone !== undefined) {
+    const raw = (input.phone ?? "").trim();
+    const p = raw ? normalisePhone(raw) : null;
+    if (raw && !p) return { error: `${input.phone} is not a phone number in international form: start with + and the country code, like +1 555 010 0123.` };
+    out.phone = p;
+  }
+  return out;
+}
+
+export async function createPerson(orgId: string, userId: string, input: { name: string; email?: string | null; phone?: string | null }): Promise<PersonWrite> {
+  const name = input.name.trim();
+  if (!name || name.length > 120) return { ok: false, status: 400, code: "invalid_body", message: "A person needs a name." };
+  const contact = contactOf(input);
+  if ("error" in contact) return { ok: false, status: 400, code: "invalid_body", message: contact.error };
+  const same = (await listPeople(orgId)).find((p) => p.name.toLowerCase() === name.toLowerCase());
+  if (same) return { ok: false, status: 409, code: "already_listed", message: `${same.name} is already on the list.`, person: same };
+  const person = await addPerson(orgId, { name, email: contact.email ?? null, phone: contact.phone ?? null });
+  await activity.log({
+    orgId,
+    userId,
+    action: "person_added",
+    ref: { module: null, entityType: "person", entityId: person.id },
+    diff: { name: person.name },
+  });
+  return { ok: true, person };
+}
+
+export async function updatePerson(orgId: string, id: string, input: { name?: string; email?: string | null; phone?: string | null }): Promise<PersonWrite> {
+  const row = await meta.selectFrom("workspace_people").select(["id", "user_id"]).where("id", "=", id).where("org_id", "=", orgId).executeTakeFirst();
+  if (!row) return { ok: false, status: 404, code: "not_found", message: "No such person here." };
+  if (row.user_id && input.name !== undefined) return { ok: false, status: 409, code: "member_name", message: "A member's name is their account's; they change it in their own settings." };
+  const name = input.name?.trim();
+  if (input.name !== undefined && (!name || name.length > 120)) return { ok: false, status: 400, code: "invalid_body", message: "A person needs a name." };
+  const contact = contactOf(input);
+  if ("error" in contact) return { ok: false, status: 400, code: "invalid_body", message: contact.error };
+  const set = { ...(name !== undefined ? { name } : {}), ...contact };
+  if (Object.keys(set).length) await meta.updateTable("workspace_people").set(set).where("id", "=", row.id).execute();
+  clearPeopleCache(orgId);
+  const person = (await listPeople(orgId)).find((p) => p.id === row.id);
+  return person ? { ok: true, person } : { ok: false, status: 404, code: "not_found", message: "No such person here." };
+}
+
+/** One person by id, or by name as said: exact first, then a part of it. */
+export async function findPerson(orgId: string, asked: string): Promise<{ ok: true; person: WorkspacePerson } | { ok: false; message: string }> {
+  const all = await listPeople(orgId);
+  const byId = all.find((p) => p.id === asked);
+  if (byId) return { ok: true, person: byId };
+  const want = asked.trim().toLowerCase();
+  const exact = all.filter((p) => p.name.toLowerCase() === want);
+  const matches = exact.length > 0 ? exact : all.filter((p) => p.name.toLowerCase().includes(want));
+  if (matches.length > 1) return { ok: false, message: `More than one person matches "${asked}": ${matches.map((p) => p.name).join(", ")}.` };
+  if (!matches[0]) return { ok: false, message: `Nobody called "${asked}" is on this workspace's People list.` };
+  return { ok: true, person: matches[0] };
 }

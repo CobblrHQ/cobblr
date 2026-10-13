@@ -1,28 +1,30 @@
-// "New version available" nudge. An SPA tab keeps running the bundle it loaded;
+// "New version available" notice. An SPA tab keeps running the bundle it loaded;
 // with several deploys a day (the author iterating live) an open tab silently
 // goes stale and "the fix isn't there" confusion follows. Poll /healthz's runtime
 // build_sha (COBBLR_BUILD_SHA — set by the deploy env); when it changes from the
-// sha this tab first saw, raise it as a sticky ACTION TOAST, where every other
-// toast goes (bottom-right), instead of a fixed pill floating over the bottom-
-// middle of the content (reported 2026-07-10).
-import { useEffect, useRef } from "react";
-import { useToast } from "@cobblr/platform-web";
+// sha this tab first saw, show a bar across the top that RESERVES its own room
+// (FloatingChrome reserveTop: the page and every overlay start below it).
+//
+// It was a sticky toast, and a toast that stays floats over whatever is under
+// it: on the phone scanner it was lifted above the Scanned sheet onto the mode
+// buttons, Refresh exactly where Move is, so a press meant to change mode would
+// reload the page (#6247). A notice that stays takes room; only a passing toast
+// floats.
+import { useEffect, useState } from "react";
+import { RefreshCw, X } from "lucide-react";
+import { FloatingChrome } from "@cobblr/platform-web";
 import { isSandboxSession } from "../lib/sandbox-session";
 
 const POLL_MS = 3 * 60_000;
 
 export function NewVersionNudge() {
-  // Keep the live toast api in a ref so the poll effect runs ONCE (an unstable
-  // ctx value must not restart the interval + reset the first-seen sha).
-  const toast = useToast();
-  const toastRef = useRef(toast);
-  toastRef.current = toast;
-  const fired = useRef(false);
+  const [stale, setStale] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
-    // Not in a sandbox. This nudge is for a tab somebody has kept open across
+    // Not in a sandbox. This notice is for a tab somebody has kept open across
     // deploys; a sandbox lasts an hour and belongs to a stranger who is deciding
     // whether they like Cobblr. "A new version is available" means nothing to
-    // them, it covers the page they came to look at, and it asks somebody
+    // them, it takes room on the page they came to look at, and it asks somebody
     // evaluating the product to do maintenance on it. They get the new build
     // with their next sandbox anyway.
     if (isSandboxSession()) return;
@@ -35,14 +37,7 @@ export function NewVersionNudge() {
         const sha = j.build_sha ?? null;
         if (!sha || stop) return;
         if (first === null) first = sha;
-        else if (sha !== first && !fired.current) {
-          fired.current = true; // one toast per stale tab
-          toastRef.current.action("A new version is available.", {
-            actionLabel: "Refresh",
-            onAction: () => window.location.reload(),
-            duration: 0, // sticky until they refresh or dismiss it
-          });
-        }
+        else if (sha !== first) setStale(true);
       } catch {
         /* quiet: a background poll; offline or a blip, it tries again next tick */
       }
@@ -54,5 +49,33 @@ export function NewVersionNudge() {
       clearInterval(t);
     };
   }, []);
-  return null; // it's a toast now — nothing to render inline
+  if (!stale || dismissed) return null;
+  return (
+    <FloatingChrome
+      anchor="top"
+      reserveTop
+      yields={false}
+      role="status"
+      data-testid="new-version-notice"
+      className="z-[190] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 bg-cobble-700 px-4 py-2 text-center text-sm font-medium text-white shadow-md"
+    >
+      <span>A new version is available.</span>
+      <button
+        type="button"
+        onClick={() => window.location.reload()}
+        className="inline-flex items-center gap-1 rounded border border-white/60 px-2 py-0.5 text-xs font-semibold hover:bg-white/10"
+      >
+        <RefreshCw size={12} aria-hidden /> Refresh
+      </button>
+      <button
+        type="button"
+        onClick={() => setDismissed(true)}
+        aria-label="Dismiss"
+        title="Dismiss"
+        className="inline-flex items-center rounded p-1 hover:bg-white/10"
+      >
+        <X size={14} aria-hidden />
+      </button>
+    </FloatingChrome>
+  );
 }

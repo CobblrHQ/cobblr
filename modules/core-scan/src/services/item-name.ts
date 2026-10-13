@@ -102,3 +102,13 @@ export function clampEntityName(name: string): string {
   const lastSpace = cut.lastIndexOf(" ");
   return (lastSpace > 120 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
+
+/** A model's "name" that is a description of the photo, not a name: longer
+ *  than any product title, or a sentence's worth of words. A hosted model
+ *  read the owner's cumin and answered with thousands of characters about
+ *  the jar, the hand and the floor (#6100); that is no name, and the row asks
+ *  the person for one instead. */
+export function nameReadsAsProse(name: string): boolean {
+  const n = name.trim();
+  return n.length > 120 || n.split(/\s+/).length > 20;
+}

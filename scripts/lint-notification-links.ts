@@ -16,6 +16,14 @@
 // Flags: `link_url: absoluteAppUrl(...)`, `link_url: <ident>` where that ident
 // was assigned from absoluteAppUrl in the same file, and string literals that
 // start with a scheme.
+//
+// And a written-out path must be a page the app has. "Change the limit" linked
+// to /configuration/outbound-email while the page lived at
+// /configuration/email (#6070): the bell's catch-all took every owner told a
+// message was held to the dashboard, and the row keeps the dead link forever.
+// So a literal `link_url` is matched against the routes web/src/App.tsx
+// declares (nested <Route>s joined, `:param` one segment, `*` the rest), or
+// its first segment is a module's (a module routes inside its own page).
 
 import ts from "typescript";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -32,9 +40,58 @@ function walk(dir: string, out: string[] = []): string[] {
     if (e === "node_modules" || e === "dist" || e === ".git") continue;
     const p = join(dir, e);
     if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.ts$/.test(p) && !/\.d\.ts$/.test(p)) out.push(p);
+    else if (/\.ts$/.test(p) && !/\.d\.ts$/.test(p) && !/\.test\.ts$/.test(p)) out.push(p);
   }
   return out;
+}
+
+/** Every path the app routes, from App.tsx's <Route> tree, as patterns. */
+function appRoutes(): RegExp[] {
+  const file = join(ROOT, "web/src/App.tsx");
+  const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const paths: string[] = [];
+  const pathOf = (attrs: ts.JsxAttributes): string | null => {
+    for (const a of attrs.properties) {
+      if (ts.isJsxAttribute(a) && a.name.getText(sf) === "path" && a.initializer && ts.isStringLiteral(a.initializer)) return a.initializer.text;
+    }
+    return null;
+  };
+  const join2 = (base: string, p: string) => (p.startsWith("/") ? p : `${base.replace(/\/$/, "")}/${p}`);
+  const visit = (node: ts.Node, base: string): void => {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(sf) === "Route") {
+      const p = pathOf(node.attributes);
+      if (p !== null) paths.push(join2(base, p));
+      return;
+    }
+    if (ts.isJsxElement(node) && node.openingElement.tagName.getText(sf) === "Route") {
+      const p = pathOf(node.openingElement.attributes);
+      const here = p === null ? base : join2(base, p);
+      if (p !== null) paths.push(here);
+      for (const c of node.children) visit(c, here);
+      return;
+    }
+    ts.forEachChild(node, (c) => visit(c, base));
+  };
+  visit(sf, "");
+  return paths
+    .filter((p) => p.startsWith("/"))
+    .map((p) => {
+      const segs = p.split("/").slice(1);
+      const rest = segs[segs.length - 1] === "*";
+      const parts = (rest ? segs.slice(0, -1) : segs).map((seg) => (seg.startsWith(":") ? "[^/]+" : seg.replace(/[.+?^${}()|[\]\\*]/g, "\\$&")));
+      return new RegExp(`^/${parts.join("/")}${rest ? "(?:/.*)?" : ""}/?$`);
+    });
+}
+
+/** Modules route inside their own page (`/<instance>/*`), so a link into one is theirs to resolve. */
+const MODULE_ROOTS = new Set(readdirSync(join(ROOT, "modules")).filter((d) => statSync(join(ROOT, "modules", d)).isDirectory()));
+const ROUTES = appRoutes();
+
+function isAPage(link: string): boolean {
+  const path = link.split(/[?#]/)[0] ?? "";
+  if (path === "/" || path === "") return true;
+  if (MODULE_ROOTS.has(path.split("/")[1] ?? "")) return true;
+  return ROUTES.some((r) => r.test(path));
 }
 
 const violations: Array<{ file: string; line: number; text: string }> = [];
@@ -79,6 +136,8 @@ for (const r of ROOTS) {
           flag(node, `link_url: ${init.text} — that variable holds an absoluteAppUrl(...) result`);
         } else if (ts.isStringLiteralLike(init) && /^https?:\/\//i.test(init.text)) {
           flag(node, `link_url: "${init.text.slice(0, 50)}…" — absolute URL literal`);
+        } else if (ts.isStringLiteralLike(init) && init.text.startsWith("/") && !isAPage(init.text)) {
+          flag(node, `link_url: "${init.text}" — no page in web/src/App.tsx answers this path, so the bell lands on the dashboard`);
         }
       }
       ts.forEachChild(node, visit);
@@ -88,7 +147,7 @@ for (const r of ROOTS) {
 }
 
 if (violations.length > 0) {
-  console.error("lint:notification-links - link_url must be a relative path:\n");
+  console.error("lint:notification-links - link_url must be a relative path to a page the app has:\n");
   for (const v of violations) console.error(`  ${v.file}:${v.line}\n    ${v.text}\n`);
   console.error(
     "The in-app bell routes link_url with React Router (a PATH); an absolute URL\n" +
@@ -99,4 +158,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("lint:notification-links - every link_url is a relative path.");
+console.log(`lint:notification-links - every link_url is a relative path, and every written-out one a page the app has (${ROUTES.length} routes).`);

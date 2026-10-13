@@ -1,4 +1,4 @@
-import { entityInitial, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -6,6 +6,7 @@ import { entityInitial, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotal
 
 import { lineReceivedSentence } from "@cobblr/platform-contract/line-units";
 import { OrderLineScanIn } from "../components/OrderLineUnits";
+import { usePurchaseLineActions } from "./purchaseLineActions";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -202,6 +203,7 @@ export function PurchasesPage() {
   usePageWidth("wide");
   const { activeSlug, activeOrg } = useActiveOrg();
   const navigate = useNavigate();
+  const closeOrder = useCloseToOrigin("/purchases");
   const { id, vendorId } = useParams<{ id?: string; vendorId?: string }>();
 
   const [query, setQuery] = useState("");
@@ -524,7 +526,7 @@ export function PurchasesPage() {
       )
       )}
 
-      <OrderDetailModal orderId={id ?? null} onClose={() => navigate("/purchases")} />
+      <OrderDetailModal orderId={id ?? null} onClose={closeOrder} />
       <NewOrderModal open={newOpen} onClose={() => setNewOpen(false)} />
       {/* A vendor's own address (/purchases/vendors/<id>, what search and a
           link hand out) opens the vendors panel on that vendor. */}
@@ -887,7 +889,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               <>
                 <ul className="space-y-1.5">
                   {items.map((it) => (
-                    <OrderLineItem key={it.id} slug={activeSlug} item={it} routeFor={routeFor} controls={<OrderLineControls slug={activeSlug} order={o} item={it} onStartReturn={() => setReturnLine(it.id)} />} />
+                    <OrderLineItem key={it.id} slug={activeSlug} order={o} item={it} routeFor={routeFor} totalColumn={items.some((i) => i.unit_cost != null)} controls={<OrderLineControls slug={activeSlug} order={o} item={it} onStartReturn={() => setReturnLine(it.id)} />} />
                   ))}
                 </ul>
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
@@ -964,13 +966,19 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
 function OrderLineItem({
   slug,
   item,
+  order,
   routeFor,
   controls,
+  totalColumn,
 }: {
   slug: string;
+  order: Order;
   item: OrderItem;
   routeFor: (kind: string, id: string) => string | null;
   controls?: ReactNode;
+  /** A line's total has a column of its own only when some line of the
+   *  order has a price; with none, the column would only hold blanks. */
+  totalColumn: boolean;
 }) {
   const money = (v: string | number | null | undefined, currency = item.currency) => formatStoredMoney(v, "amount", { currency });
   const resolved = useQuery({
@@ -987,6 +995,8 @@ function OrderLineItem({
   const qty = Number(item.qty);
   const unit = item.unit_cost != null ? Number(item.unit_cost) : null;
   const ext = unit != null ? qty * unit : null;
+  const each = `${qty.toFixed(0)} × ${unit != null ? money(unit) : "—"}`;
+  const actions = usePurchaseLineActions(slug, order, item);
 
   const inner = (
     <>
@@ -996,7 +1006,7 @@ function OrderLineItem({
         size={36}
         className="rounded-lg ring-1 ring-line dark:ring-slate-700 shrink-0"
       />
-      <span className="flex-1 min-w-0">
+      <span className="flex-1 min-w-0" data-testid="order-line-name">
         <span className={partDeleted ? "text-faint line-through text-sm" : "text-content dark:text-mortar-100 text-sm"}>{name}</span>
         {partDeleted && (
           <span className="ml-2 text-[9px] font-mono uppercase tracking-wider text-ember-500 border border-ember-500/40 bg-ember-500/10 rounded px-1.5 py-0.5">
@@ -1008,13 +1018,19 @@ function OrderLineItem({
             {lineReceivedSentence(Number(item.received_qty), qty)}
           </span>
         )}
+        {/* On a phone the count and price read under the name, so the name
+            has the row's width; a line with no price shows no total (#6147). */}
+        <span className="block sm:hidden font-mono text-xs text-muted" data-testid="order-line-price">
+          {each}
+          {ext != null ? ` · ${money(ext)}` : ""}
+        </span>
       </span>
-      <span className="font-mono text-xs text-muted whitespace-nowrap">
-        {qty.toFixed(0)} × {unit != null ? money(unit) : "—"}
-      </span>
-      <span className="font-mono text-xs text-content dark:text-mortar-100 w-16 text-right shrink-0">
-        {ext != null ? money(ext) : ""}
-      </span>
+      <span className="hidden sm:inline font-mono text-xs text-muted whitespace-nowrap">{each}</span>
+      {totalColumn && (
+        <span className="hidden sm:block font-mono text-xs text-content dark:text-mortar-100 w-16 text-right shrink-0">
+          {ext != null ? money(ext) : ""}
+        </span>
+      )}
     </>
   );
 
@@ -1029,7 +1045,19 @@ function OrderLineItem({
       ) : (
         <div className={`${cls} flex-1 min-w-0`}>{inner}</div>
       )}
-      {!item.received_at && !item.part_id && qty > 1 && <OrderLineScanIn itemId={item.id} />}
+      {/* On a phone Scan the items takes a line under the row, never the
+          name's width beside it (#6147). It is offered only when the line
+          has units to scan in, and says why not when the person can change
+          that (#6219). */}
+      {actions.scanIn.offered ? (
+        <span className="order-last basis-full pl-12 sm:order-none sm:basis-auto sm:pl-0">
+          <OrderLineScanIn itemId={item.id} />
+        </span>
+      ) : actions.scanIn.reason ? (
+        <span data-testid="order-line-scan-in-why" className="order-last basis-full pl-12 text-xs text-muted dark:text-slate-400">
+          {actions.scanIn.reason}
+        </span>
+      ) : null}
       {controls}
     </li>
   );

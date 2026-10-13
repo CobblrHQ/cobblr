@@ -17,6 +17,7 @@ import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
 import { dismissOnEmptySpace } from "../lib/dismiss-on-empty";
 import { MoreAppsDoor } from "./MoreAppsDoor";
+import { useAppCatalog } from "../lib/appCatalog";
 import { NavLink } from "react-router-dom";
 import { Menu, X, Moon, Sun, LogOut, Sliders, UserCog, Bell } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -31,7 +32,7 @@ import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useTheme } from "../theme/ThemeContext";
 import { useNavHasRow, useNavModules, HEADING_PREFIX, INSTANCE_PREFIX, NAVGROUP_PREFIX, navTargetFor, stripNavStem, surfaceTops } from "./useNavModules";
 import { groupNavRows, isNavTool } from "./nav-groups";
-import { phoneMenuSections } from "./phone-menu";
+import { phoneMenuSections, withoutEmptySections } from "./phone-menu";
 import { useNavBadges } from "./useNavBadges";
 import { NavCountBadge } from "./NavCountBadge";
 import { NavRowMenu, type RowCollection } from "./NavSplitRow";
@@ -51,6 +52,7 @@ export function MobileNav() {
   const visibleTops = surfaceTops(tops, appMode);
   const rowCandidates = visibleTops.flatMap((t) => instanceGroups.get(t.name)?.members ?? (t.name.startsWith("__instance__") ? [t] : []));
   const badges = useNavBadges(activeSlug);
+  const { apps } = useAppCatalog(!appMode);
   const pendingShares = usePendingAiShares(activeSlug, activeOrg?.role === "owner");
   const { logout, user } = useAuth();
   const { theme, toggle } = useTheme();
@@ -92,11 +94,16 @@ export function MobileNav() {
   // Lock body scroll while the panel is open.
   useLockPageScroll(open);
 
-  const linkClass =
-    "flex min-h-11 h-full min-w-0 items-center gap-2 px-3 text-sm whitespace-nowrap " +
+  // h-full only inside the grid, where it fills a cell its row already sized.
+  // Below the grid the scrolling list itself is the parent, so a row that
+  // fills it is a whole screen tall (#6334: one Discord link took 750 px).
+  const rowClass =
+    "flex min-h-11 min-w-0 items-center gap-2 px-3 text-sm whitespace-nowrap " +
     "text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 transition";
-  const standaloneLinkClass = linkClass + " border-b border-line dark:border-slate-800";
-  const headerClass = "flex min-h-11 h-full items-end gap-2 bg-subtle/60 px-3 pb-1.5 pt-4 uppercase text-[10px] font-mono tracking-widest text-faint dark:bg-slate-800/40 dark:text-slate-500";
+  const linkClass = rowClass + " h-full";
+  const standaloneLinkClass = rowClass + " border-b border-line dark:border-slate-800";
+  const headingClass = "flex min-h-11 items-end gap-2 bg-subtle/60 px-3 pb-1.5 pt-4 uppercase text-[10px] font-mono tracking-widest text-faint dark:bg-slate-800/40 dark:text-slate-500";
+  const headerClass = headingClass + " h-full";
   const close = () => setOpen(false);
   const arrangeMenu = (label: string, members: RowCollection[]) =>
     arranging ? <NavRowMenu slug={activeSlug} label={label} members={members} candidates={rowCandidates} className="flex w-11 self-stretch items-center justify-center normal-case tracking-normal" /> : null;
@@ -110,7 +117,7 @@ export function MobileNav() {
       {end}
     </div>
   ) });
-  const header = (key: string, label: string, door?: string | null, end?: ReactNode): MenuEntry => ({ key, fullWidth: true, header: true, content: (
+  const header = (key: string, label: string, door?: string | null, end?: ReactNode): MenuEntry => ({ key, fullWidth: true, header: true, door: !!door, content: (
     <div className="flex h-full items-stretch">
       {door
         ? <NavLink to={door} onClick={close} className={headerClass + " flex-1 hover:text-accent"}>{label}</NavLink>
@@ -118,7 +125,7 @@ export function MobileNav() {
       {end && <div className="flex items-stretch bg-subtle/60 dark:bg-slate-800/40">{end}</div>}
     </div>
   ) });
-  const entries: MenuEntry[] = [];
+  let entries: MenuEntry[] = [];
   if (!appMode) {
     entries.push(row("home", "/", "Home"));
     entries.push(row("search", "/search", "Search"));
@@ -157,6 +164,12 @@ export function MobileNav() {
     for (const m of s.blocks) block(m);
     if (s.looseTitle) entries.push(header(`section:${s.looseTitle}`, s.looseTitle));
     for (const m of s.loose) entries.push(loose(m));
+  }
+  entries = withoutEmptySections(entries);
+  // Nothing kept in this phone's menu (every row hidden here): the apps
+  // themselves, not a lone "More apps" to find them behind (#6334).
+  if (!appMode && entries.every((entry) => ALWAYS_THERE.has(entry.key))) {
+    for (const app of apps) if (app.state !== "off") entries.push(row(app.key, app.route, app.label));
   }
   if (!appMode) entries.push({ key: "more-apps", fullWidth: true, content: <MoreAppsDoor plain onNavigate={close} className={linkClass} /> });
   // One cell of the pinned account footer. min-w-0 + flex-1 so five of them
@@ -299,7 +312,7 @@ export function MobileNav() {
                   user={user}
                   itemClassName={standaloneLinkClass}
                   onNavigate={() => setOpen(false)}
-                  heading={<div className="mt-2 px-4 pt-2 border-t border-line dark:border-slate-800 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{COMMUNITY_HEADING}</div>}
+                  heading={<div role="heading" aria-level={3} className={headingClass + " border-b border-line dark:border-slate-800"}>{COMMUNITY_HEADING}</div>}
                 />
               )}
 
@@ -410,7 +423,10 @@ function NewInNav() {
   );
 }
 
-type MenuEntry = { key: string; content: ReactNode; fullWidth?: boolean; header?: boolean };
+/** The rows every menu opens with, kept or not: not a sign anything is kept. */
+const ALWAYS_THERE = new Set(["home", "search"]);
+
+type MenuEntry = { key: string; content: ReactNode; fullWidth?: boolean; header?: boolean; door?: boolean };
 
 /** Holding a row switches Arrange on, the phone's way to a row's "…". The
  *  press that did it does not also open the row. */

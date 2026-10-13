@@ -306,6 +306,9 @@ export interface PlatformWebApi {
    *  (`contributes.panels`). Optional: a host that doesn't wire it simply
    *  renders no contributed panels. See panels.tsx. */
   listContributedPanels?(slug: string): Promise<ContributedPanelSpec[]>;
+  /** The presence-declared panels that have something to show on one record
+   *  (GET /orgs/:slug/panel-presence, #6337). */
+  panelPresence?(slug: string, kind: string, id: string, collection?: string | null): Promise<{ present: string[] }>;
   /** Pictures suggested for records made without one (#3818), by kind, or by
    *  record id alone (kind null). Optional: a host without it shows none. */
   listPhotoSuggestions?(slug: string, kind: string | null, ids?: string[]): Promise<{ items: PhotoSuggestionRow[] }>;

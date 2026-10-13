@@ -91,6 +91,28 @@ export function groupValueOf(
   return { key: `${kind}|${groupField}|${value}`, label: value };
 }
 
+/** The code group a resolved record belongs to: its key and the name a new
+ *  prefix is derived from. Grouped by instance, the record's collection is the
+ *  resolved record's own `instance`, else the kind's (a `<collection>:item`
+ *  kind), else its `instance` field; a record in the module's default
+ *  collection is the kind-wide line. The label is the collection's display
+ *  name when there is one, so a new prefix matches the Codes page's
+ *  suggestion (Tooling is t, not the kind-wide n; #6287). Pure. */
+export function codeGroupOf(
+  baseKind: string,
+  groupField: string,
+  ent: { instance?: string | null; fields: Record<string, unknown> },
+  kindInstance: string | null,
+  collectionName: ReadonlyMap<string, string>,
+): { key: string; label: string } {
+  if (groupField !== "instance") return groupValueOf(baseKind, groupField, ent.fields);
+  const fromField = typeof ent.fields.instance === "string" && ent.fields.instance.trim() ? ent.fields.instance.trim() : null;
+  const collection = ent.instance || kindInstance || fromField;
+  const { key, label } = groupValueOf(baseKind, "instance", { instance: collection ?? "" });
+  const module = baseKind.split(":")[0] ?? baseKind;
+  return { key, label: (collection && collectionName.get(`${module}|${collection}`)) || label };
+}
+
 /** The DECLARED "draw the code in the QR center" default for a kind, read
  *  generically off the kernel entity-kind registry — NOT by branching on any
  *  kind string. The owning module declares its preference via the manifest's
@@ -194,17 +216,43 @@ export async function assignCodes(
   const out = new Map<string, string>();
   if (refs.length === 0) return out;
 
-  const have = await getCodes(db, refs.map((r) => r.id));
-  for (const [id, code] of have) out.set(id, code);
+  // What each record already has, and whether its group was printed (frozen).
+  const ids = [...new Set(refs.map((r) => r.id))];
+  const haveRows = await db
+    .selectFrom("labels_codes as c")
+    .leftJoin("labels_code_prefixes as p", "p.group_key", "c.group_key")
+    .select(["c.entity_id", "c.code", "c.group_key", "p.frozen"])
+    .where("c.entity_id", "in", ids)
+    .execute();
+  const have = new Map(haveRows.map((r) => [r.entity_id, r]));
+  // A printed code is a sticker in the world: it stays whatever its group, and
+  // still opens its record. An unprinted one in a group that is not the
+  // record's own (minted before #6287 on the kind-wide line) is minted again
+  // in the right one; nothing physical carries it yet.
+  const check = refs.filter((r) => !have.has(r.id) || have.get(r.id)!.frozen !== true);
+  for (const r of refs) {
+    const h = have.get(r.id);
+    if (h && h.frozen === true) out.set(r.id, h.code);
+  }
+  if (check.length === 0) return out;
 
-  const missing = refs.filter((r) => !have.has(r.id));
-  if (missing.length === 0) return out;
-
-  // Resolve the missing entities once to read their group value.
-  const resolved = await platform().entities.lookupMany(orgId, missing);
+  // Resolve them once to read their group.
+  const resolved = await platform().entities.lookupMany(orgId, check);
   const byId = new Map(resolved.map((e) => [e.id, e]));
 
-  const kinds = [...new Set(missing.map((r) => r.kind))];
+  // Each ref's group, the one way for every door (#6287). A record's kind may
+  // be asked by its base kind (inventory:part) or its collection's
+  // (tooling:item); both are one record in one collection, so the group is
+  // keyed on the BASE kind and the collection the record lives in, read from
+  // the resolved record or the kind itself, never only from a field a
+  // resolver may not fill. A new group's prefix comes from the collection's
+  // display name, as the Codes page suggests it, so the two always agree.
+  const shapes = await Promise.all(check.map((r) => platform().entities.resolveKind(orgId, r.kind).catch(() => ({ base: r.kind, instance: null }))));
+  const shapeOf = new Map(check.map((r, n) => [r.id, shapes[n]!]));
+  const collections = await platform().instances.list(orgId).catch(() => []);
+  const collectionName = new Map(collections.map((c) => [`${c.module_name}|${c.instance_name}`, c.display_name]));
+
+  const kinds = [...new Set(shapes.map((sh) => sh.base))];
   const cfgRows = await db
     .selectFrom("labels_code_config")
     .select(["entity_kind", "group_field"])
@@ -216,12 +264,23 @@ export async function assignCodes(
     // Serialize all minting in this workspace so concurrent prints can't collide
     // on a prefix or a sequence number.
     await sql`select pg_advisory_xact_lock(hashtext('labels_code_mint'))`.execute(trx);
-    for (const ref of missing) {
+    for (const ref of check) {
       const ent = byId.get(ref.id);
-      if (!ent) continue; // deleted / not readable — no code, skip
-      const gf = groupFieldFor.get(ref.kind) ?? "instance";
-      const { key, label } = groupValueOf(ref.kind, gf, ent.fields);
-      const minted = await mintOne(trx, ref.kind, ref.id, key, label);
+      const had = have.get(ref.id);
+      if (!ent) {
+        if (had) out.set(ref.id, had.code); // not readable now: keep what it has
+        continue;
+      }
+      const shape = shapeOf.get(ref.id) ?? { base: ref.kind, instance: null };
+      const kind = shape.base;
+      const gf = groupFieldFor.get(kind) ?? "instance";
+      const group = codeGroupOf(kind, gf, ent, shape.instance, collectionName);
+      if (had && had.group_key === group.key) {
+        out.set(ref.id, had.code);
+        continue;
+      }
+      if (had) await trx.deleteFrom("labels_codes").where("entity_id", "=", ref.id).where("code", "=", had.code).execute();
+      const minted = await mintOne(trx, ref.kind, kind, ref.id, group.key, group.label);
       if (minted !== null) out.set(ref.id, minted); // null = list opted out of a code
     }
   });
@@ -285,6 +344,9 @@ export async function prefixTakenByOther(
 async function mintOne(
   trx: Transaction<LabelsDB>,
   kind: string,
+  /** The base kind the group is keyed on; the code row keeps `kind`, the one
+   *  the record was asked by, so its code opens the record where it lives. */
+  groupKind: string,
   entityId: string,
   groupKey: string,
   label: string,
@@ -319,7 +381,7 @@ async function mintOne(
     group =
       (await trx
         .insertInto("labels_code_prefixes")
-        .values({ group_key: groupKey, entity_kind: kind, prefix, label })
+        .values({ group_key: groupKey, entity_kind: groupKind, prefix, label })
         .onConflict((oc) => oc.column("group_key").doNothing())
         .returningAll()
         .executeTakeFirst()) ??

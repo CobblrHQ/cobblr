@@ -1,4 +1,5 @@
 import { IDENTIFY_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
+import { recordName } from "@cobblr/platform-contract/record-name";
 import { registerRenewalDraftHandler } from "./renewal-draft.js";
 import { registerLineUnitActions } from "./line-unit-actions.js";
 // Action handlers, registered at module load via api/index.ts's
@@ -259,7 +260,10 @@ export function registerScanHandlers(): void {
       const raw = r.text;
       const m = raw.match(/\{[\s\S]*\}/);
       const parsed = JSON.parse(m ? m[0] : raw) as { name?: string; brand?: string; category?: string; confidence?: number };
-      const name = typeof parsed?.name === "string" ? parsed.name.trim() : "";
+      // Built from its real values: an answer that wrote the record's
+      // metadata into the name ("… SKU: None Brand: Unbranded …") is cut
+      // where the labels begin (record-name.ts, #6283).
+      const name = typeof parsed?.name === "string" ? recordName(parsed.name) : "";
       if (!name) return { ok: true, identified: false };
       return {
         ok: true,

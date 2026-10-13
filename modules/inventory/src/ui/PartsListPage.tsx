@@ -1,7 +1,7 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { NewItemMenu, workspaceFetch } from "@cobblr/platform-web";
+import { NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -9,6 +9,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { WhatsStillHereButton, WhatsStillHereSheet } from "./WhatsStillHere";
+import { RecountButton } from "./RecountPage";
 import { AlertTriangle, Archive, ArrowRightLeft, ClipboardCheck, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
 import { BulkActionBar, BulkSetField, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
@@ -65,9 +66,11 @@ export function PartsListPage() {
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
   // /inventory/parts/:id keeps this list mounted and opens the detail
-  // modal (D4). Closing returns to /inventory.
+  // modal (D4). Closing returns to where it was opened from: this list, or a
+  // floor plan's drawer (#6266); a record opened by its link closes to the list.
   const { id: detailId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
+  const closeDetail = useCloseToOrigin(basePath);
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [locationId, setLocationId] = useState<string>("");
@@ -691,6 +694,10 @@ export function PartsListPage() {
             >
               <ClipboardCheck size={14} /> What's still here? (no place)
             </button>
+            <RecountButton
+              categoryId={categoryId || null}
+              className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+            />
             <button
               onClick={() => void exportCsv()}
               disabled={exporting}
@@ -743,6 +750,10 @@ export function PartsListPage() {
         >
           <FileUp size={14} /> Import CSV
         </button>
+        <RecountButton
+          categoryId={categoryId || null}
+          className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
+        />
         {connectorImport && (
           <button
             onClick={() => setConnectorOpen(true)}
@@ -980,7 +991,7 @@ export function PartsListPage() {
       {detailId && (
         <PartDetailModal
           id={detailId}
-          onClose={() => navigate(basePath)}
+          onClose={closeDetail}
         />
       )}
       {spoolmanOpen && (

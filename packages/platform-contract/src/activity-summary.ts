@@ -202,6 +202,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "sheet_imported": "imported",
   "stocktake_taken": "took stock of",
   "stocktake_undone": "undid the stocktake of",
+  "recount_applied": "finished the recount of",
+  "recount_undone": "undid the recount of",
   "sheet_material_updated": "updated",
   "station_created": "created",
   "station_revoked": "revoked",
@@ -354,6 +356,22 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
       ? `${actor} took stock of ${title}: ${n(d.kept)} kept, ${n(d.gone)} marked gone`
       : `${actor} undid the stocktake of ${title}`;
     if (!resolved) subject = { ...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/stocktakes/${encodeURIComponent(e.entity_id)}` };
+  } else if (e.action === "recount_applied" || e.action === "recount_undone") {
+    // One line for the whole recount (#6302), never one per record: it says
+    // what changed and opens the recount, where its Undo is.
+    const n = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0);
+    const said = [
+      n(d.moved) ? `${n(d.moved)} moved` : null,
+      n(d.counted) ? `${n(d.counted)} recounted` : null,
+      n(d.added) ? `${n(d.added)} added` : null,
+      n(d.gone) ? `${n(d.gone)} marked gone` : null,
+    ].filter(Boolean).join(", ");
+    summary = e.action === "recount_applied"
+      ? `${actor} finished the recount of ${title}: ${n(d.seen)} seen${said ? `, ${said}` : ""}`
+      : `${actor} undid the recount of ${title}`;
+    const collection = text(d.collection) ?? "inventory";
+    const base = collection === "inventory" ? "inventory" : `instances/${encodeURIComponent(collection)}`;
+    if (!resolved) subject = { ...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/${base}/recounts/${encodeURIComponent(e.entity_id)}` };
   } else if (e.action === "record_sent") {
     verb = "sent";
     summary = `Sent from ${text(d.from) ?? "another workspace"} by ${actor}: ${title}`;

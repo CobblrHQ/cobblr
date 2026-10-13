@@ -266,3 +266,29 @@ export function pressStillNeeds(ask: readonly PressAsk[], answers: Record<string
   }
   return out;
 }
+
+/** Words a person or a form may type for a yes or a no. */
+const YES = new Set(["true", "yes", "y", "1", "on"]);
+const NO = new Set(["false", "no", "n", "0", "off"]);
+
+/** The call's arguments with each `boolean` one a boolean: given as "true" or
+ *  "false" (a form's text box, a wire's saved JSON, the assistant), it is
+ *  the yes or no it says. A wire composer
+ *  saved "Checking it off adds it back to the record's stock" as the string
+ *  "true", the handler read `restocks === true` as no, and the line it made
+ *  never restocked, with every step saying it worked (#6130). A value the
+ *  schema's type cannot read, and a `{{token}}` a wire fills in when it
+ *  fires, are left as given for the door and the handler to judge. */
+export function typedArgs<T>(schema: Record<string, ActionArgSpec> | null | undefined, given: T): T {
+  if (!schema || !given || typeof given !== "object" || Array.isArray(given)) return given;
+  let out: Record<string, unknown> | null = null;
+  for (const [name, spec] of Object.entries(schema)) {
+    const v = (given as Record<string, unknown>)[name];
+    if (typeof v !== "string" || /\{\{/.test(v)) continue;
+    const s = v.trim().toLowerCase();
+    if (spec?.type !== "boolean") continue;
+    const typed = YES.has(s) ? true : NO.has(s) ? false : v;
+    if (typed !== v) (out ??= { ...(given as Record<string, unknown>) })[name] = typed;
+  }
+  return (out ?? given) as T;
+}

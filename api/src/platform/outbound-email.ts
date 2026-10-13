@@ -22,7 +22,7 @@ import { checkEmailConfig, sendEmailVia, type EmailConfig, type EmailProvider } 
 import { decryptCredentials, encryptCredentials } from "./integrations.js";
 
 /** Config keys that are secrets: accepted on write, never returned. */
-const SECRET_KEYS = ["smtp_pass", "mailgun_api_key", "resend_api_key", "postmark_token"] as const;
+const SECRET_KEYS = ["smtp_pass", "mailgun_api_key", "resend_api_key", "postmark_token", "gmail_refresh_token"] as const;
 
 export interface OutboundEmailStatus {
   configured: boolean;
@@ -77,6 +77,9 @@ export async function saveOutboundEmail(
   userId: string,
   input: Record<string, unknown>,
 ): Promise<{ ok: true; status: OutboundEmailStatus } | { ok: false; reason: string }> {
+  // Gmail is connected through Google's consent screen (saveGmailSender),
+  // never typed: its token is Google's to hand over.
+  if (input.provider === "gmail") return { ok: false, reason: "connect Gmail with its own button, so Google asks the account's owner" };
   const previous = (await readConfig(orgId)) ?? {};
   const next: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(input)) {
@@ -108,8 +111,37 @@ export async function saveOutboundEmail(
   return { ok: true, status: await outboundEmailStatus(orgId) };
 }
 
+/** The Gmail account a workspace connected (#6070, slice 3d): it sends as
+ *  that address, with a grant that can send and nothing else. Replaces any
+ *  other provider, as saving one does. */
+export async function saveGmailSender(orgId: string, userId: string, grant: { email: string; refresh_token: string }): Promise<OutboundEmailStatus> {
+  const previous = await readRow(orgId);
+  const config = { provider: "gmail", from: grant.email, gmail_refresh_token: grant.refresh_token };
+  const configEnc = await encryptCredentials(orgId, config);
+  const values = { provider: "gmail" as const, from_address: grant.email, config_enc: configEnc, updated_by: userId, updated_at: new Date() };
+  await meta
+    .insertInto("org_outbound_email")
+    .values({ org_id: orgId, ...values })
+    .onConflict((oc) => oc.column("org_id").doUpdateSet(values))
+    .execute();
+  if (previous?.provider === "gmail") await revokeGmail(orgId, previous.config_enc, grant.refresh_token);
+  return outboundEmailStatus(orgId);
+}
+
+/** End a replaced or removed Gmail grant at Google, best effort: the local
+ *  secret is gone either way. */
+async function revokeGmail(orgId: string, configEnc: string, keep?: string): Promise<void> {
+  const cfg = (await decryptCredentials(orgId, configEnc).catch(() => ({}))) as Record<string, unknown>;
+  const token = typeof cfg.gmail_refresh_token === "string" ? cfg.gmail_refresh_token : null;
+  if (!token || token === keep) return;
+  const { revokeGoogleToken } = await import("./mail-source/google-oauth.js");
+  if (!(await revokeGoogleToken(token))) console.warn(`[outbound-email] could not revoke the Gmail grant of ${orgId} at Google; it is deleted here`);
+}
+
 export async function deleteOutboundEmail(orgId: string): Promise<void> {
+  const row = await readRow(orgId);
   await meta.deleteFrom("org_outbound_email").where("org_id", "=", orgId).execute();
+  if (row?.provider === "gmail") await revokeGmail(orgId, row.config_enc);
 }
 
 export interface OutboundSend {

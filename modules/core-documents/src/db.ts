@@ -8,6 +8,7 @@ export interface RecordsTable {
   record_id: string;
   facts: ColumnType<RecordFacts, string, string>;
   facts_key: string;
+  facts_version: Generated<number>;
   status: Generated<"queued" | "done">;
   attempts: Generated<number>;
   matched_at: Date | null;

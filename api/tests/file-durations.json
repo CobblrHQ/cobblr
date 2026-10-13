@@ -91,7 +91,6 @@
   "core-labels-qr.test.ts": 0.1,
   "core-openapi.test.ts": 0.1,
   "digifab-fleet.test.ts": 0.1,
-  "digifab-print-rules.test.ts": 0.1,
   "digifab-routing.test.ts": 0.1,
   "filament-upgrade-migration.test.ts": 0.1,
   "focused-mode.test.ts": 0.1,

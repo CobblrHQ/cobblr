@@ -26,6 +26,7 @@ export function DeletedWorkspaceBackups() {
       const r = await fetch(`/api/v1/me/workspace-exports/${id}/download`, {
         headers: { authorization: `Bearer ${getToken() ?? ""}` },
       });
+      // 404-is: a-state: a deleted workspace's backup is kept for a while, then expires
       if (!r.ok) throw new Error(r.status === 404 ? "That backup has expired." : `Download failed (${r.status})`);
       downloadBlob(await r.blob(), filename);
     } catch (e) {

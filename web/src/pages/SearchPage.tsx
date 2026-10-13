@@ -51,6 +51,7 @@ export function SearchPage() {
     // gets its chips, from every kind, as before.
     queryFn: () =>
       api.searchKinds(activeSlug).catch((e: unknown) => {
+        // 404-is: an-older-api: a web deployed ahead of the api that serves /search/kinds
         if (e instanceof ApiError && e.status === 404) return api.listEntityKinds(activeSlug);
         throw e;
       }),

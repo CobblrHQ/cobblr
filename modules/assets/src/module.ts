@@ -99,6 +99,7 @@ export default defineModule({
           // What was paid: exposable so the assistant and views can answer
           // "what did the van cost", gated below like a part's cost.
           "purchase_price_cents",
+          "vendor",
         ],
         // Only viewers granted `assets:view-costs` see the price (admins and
         // owners see everything), the same tier a part's cost sits behind.

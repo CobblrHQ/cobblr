@@ -2,9 +2,10 @@
 // #36772", linked to the purchase it was filed on. The header carried the
 // number beside the session's name, where a phone's width cut it off with the
 // name ("Kingr…"), and nothing in the session opened its purchase (#6004).
-import { Fragment, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
+import { MetaParts, distinctParts } from "../components/MetaParts";
 
 /** "Order #36772", the number itself the link to its purchase (#6095: one
  *  line under the header, not a second line saying "Open the purchase"). */
@@ -27,16 +28,10 @@ export function SessionOrderRef({ orderRef, purchaseId }: { orderRef: string | n
 /** The line under a session's header: what Add means and which order it is,
  *  one line, joined so no separator is ever left hanging. */
 export function SessionMetaLine({ parts }: { parts: ReadonlyArray<ReactNode | null | false | undefined> }) {
-  const shown = parts.filter((p): p is ReactNode => p != null && p !== false && p !== "");
-  if (!shown.length) return null;
+  if (!distinctParts(parts).length) return null;
   return (
     <div data-testid="session-meta-line" className="px-2.5 text-[11px] text-muted dark:text-slate-400">
-      {shown.map((p, i) => (
-        <Fragment key={i}>
-          {i > 0 && " · "}
-          {p}
-        </Fragment>
-      ))}
+      <MetaParts parts={parts} />
     </div>
   );
 }

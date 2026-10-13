@@ -2598,7 +2598,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
 // resolve TRANSITION, so re-running this on already-resolved items (e.g. to
 // re-send a corrected email) emails without duplicating changelog entries.
 const BatchResolveBody = z.object({
-  status: z.enum(["resolved", "wontfix"]).optional().default("resolved"),
+  status: z.enum(["resolved", "wontfix"]).nullish().transform((v) => v ?? "resolved"),
   items: z
     .array(
       z.object({

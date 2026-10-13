@@ -31,3 +31,10 @@ export function phoneMenuSections<T extends { name: string }>(
     : [section(tops, tops.every((t) => !o.isTool(t)) ? "Collections" : "Other")];
   return sections.filter((s) => s.blocks.length + s.loose.length > 0);
 }
+
+/** A header that is only a word, with no row under it before the next header
+ *  or the end, is an empty section: it goes, so it draws no divider and keeps
+ *  no height (#6334). A header that is itself a link stays. */
+export function withoutEmptySections<T extends { header?: boolean; door?: boolean }>(entries: T[]): T[] {
+  return entries.filter((e, i) => !e.header || e.door || (entries[i + 1] !== undefined && !entries[i + 1]!.header));
+}

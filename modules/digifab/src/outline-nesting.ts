@@ -1,5 +1,5 @@
 import polygonClipping from "polygon-clipping";
-import { canRecordCuts, type Design, type Sheet, type LayoutSheet, type Point, type Rect } from "./laser-layout.js";
+import { canRecordCuts, type Design, type Sheet, type LayoutSheet, type Point, type Rect, subtractRectangles } from "./laser-layout.js";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { runNestWorker, type NestResult } from "./nesting-pool.js";
@@ -125,7 +125,18 @@ export async function nestOutlines(design: Design, quantity: number, sheets: She
  try { outline = designOutline(design); } catch { /* A complex contour can still use the rectangle planner. */ }
  const started = performance.now();
  // The sheet's free rectangles already exclude every used area. Subtracting the BOUNDS of a used outline again removed an L-shaped offcut's free notch (its bounds are the whole sheet).
- const rectangleSheets = sheets;
+ const extraObstacles = sheets.map(s => [...sheetObstacles(s), ...(s.nest_obstacles ?? [])]);
+ for (const obstacles of extraObstacles) if (obstacles.length > 512 || obstacles.reduce((n,p)=>n+p.length,0)>32768) throw new Error("This sheet is too fragmented to nest by outline.");
+ const rectangleSheets = sheets.map(s => {
+  const margin = (spacing + kerf) / 2;
+  let free = s.free_rectangles;
+  for (const obstacle of s.nest_obstacles ?? []) {
+   const b = bounds(obstacle);
+   free = subtractRectangles(free, {x:b.x-margin,y:b.y-margin,width:b.width+2*margin,height:b.height+2*margin});
+  }
+  if(s.nest_obstacles?.length) free = free.map(r=>({x:Math.max(0,r.x),y:Math.max(0,r.y),width:Math.min(s.width,r.x+r.width)-Math.max(0,r.x)-1e-9,height:Math.min(s.height,r.y+r.height)-Math.max(0,r.y)-1e-9})).filter(r=>r.width>0&&r.height>0);
+  return {...s,free_rectangles:free};
+ });
  const rectangle = runNestWorker<LayoutSheet[]>({rectangle:{design,quantity,sheets:rectangleSheets,spacing,kerf,rotate:rotate && step !== 360 && 90 % step === 0,partial:options.partial}},Math.max(1,budget-Math.ceil(performance.now()-started))).then(result=>({result}),error=>({error}));
  // A part that is not a plain rectangle, nested by its bounding box, says
  // why on the sheet (#5419): spaced by boxes, its parts cannot touch, but
@@ -137,8 +148,7 @@ export async function nestOutlines(design: Design, quantity: number, sheets: She
  const separation = spacing + kerf + (outline.curved ? 0.1 : 0) + Math.max(...sheets.map(s=>Math.max(s.width,s.height)),design.width,design.height)*2e-6;
  const containers = sheets.map((s,id)=>{
   if (![s.width,s.height].every(n=>Number.isFinite(n)&&n>0)) throw new Error("The sheet dimensions are invalid.");
-  const obstacles = sheetObstacles(s);
-  if (obstacles.length>512 || obstacles.reduce((n,p)=>n+p.length,0)>32768) throw new Error("This sheet is too fragmented to nest by outline.");
+  const obstacles = extraObstacles[id]!;
   return {id,shape:{type:"simple_polygon",data:(s.outline??boxPoints({x:0,y:0,width:s.width,height:s.height})).map(p=>[p.x,p.y])},zones:obstacles.map(p=>({quality:0,shape:{type:"simple_polygon",data:p.map(v=>[v.x,v.y])}}))};
  });
  const start = performance.now();

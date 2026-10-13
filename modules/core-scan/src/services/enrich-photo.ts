@@ -28,7 +28,8 @@ import { PHOTO_READ_KEY, type PhotoRead } from "@cobblr/platform-contract/scan-e
 import { asPackaging, packagingFromProse, type Packaging } from "@cobblr/platform-contract/scan-tools";
 import { platform } from "@cobblr/platform-contract";
 import { isLineImageRef, storedLineImageId } from "@cobblr/platform-contract/email-line-images";
-import { tidyTruncatedName } from "./item-name.js";
+import { nameReadsAsProse, tidyTruncatedName } from "./item-name.js";
+import { labelAgrees, nameFromLabelPhoto } from "./label-name.js";
 import type { CoreScanDB } from "../db.js";
 import { reportBarcodeCorrection, reportBarcodeReject, unitLotsOf, withoutLots } from "./barcode-corrections.js";
 import { boxLabelPass } from "./box-label-pass.js";
@@ -575,6 +576,22 @@ export async function identifyImage(opts: IdentifyImageOpts): Promise<PhotoIdent
   return (await identifyPhoto(opts)).identity;
 }
 
+/** A read whose "name" described the photo is named from the photo's label
+ *  instead (#6100): the label's largest product-like line, read with no
+ *  model. Null, so the row asks to be named, when the read was not a
+ *  description or no line on the label stands out. */
+async function namedFromLabel(
+  readName: unknown,
+  imageB64: string,
+  rebuild: (name: string) => PhotoIdentity | null,
+): Promise<PhotoIdentity | null> {
+  if (typeof readName !== "string" || !nameReadsAsProse(readName)) return null;
+  const label = await nameFromLabelPhoto(Buffer.from(imageB64, "base64")).catch(() => null);
+  // The read's own description is the evidence: a label line sharing no
+  // word with it is something the OCR found, not what the read saw.
+  return label && labelAgrees(label, [readName]) ? rebuild(label) : null;
+}
+
 export async function identifyPhoto({
   orgId,
   imageB64,
@@ -607,7 +624,7 @@ export async function identifyPhoto({
     if ("degraded" in why && why.degraded && why.degraded !== "off") hostedDegraded = why.degraded;
     if ("queued" in why && why.queued) hostedJob = why.queued;
     if (hosted?.kind === "item" && hosted.item) {
-      const mapped = toPhotoIdentity(hosted.item);
+      const mapped = toPhotoIdentity(hosted.item) ?? (await namedFromLabel(hosted.item.name, imageB64, (name) => toPhotoIdentity({ ...hosted.item!, name })));
       if (mapped) return { identity: mapped };
     }
     if (hosted?.kind === "receipt") return { identity: receiptAsIdentity() };
@@ -663,7 +680,7 @@ export async function identifyPhoto({
     console.error("[core-scan] identify reply was not JSON:", (err as Error)?.message ?? err);
     return { identity: null, failure: { code: "no_answer", ai: "no-answer", reason: "reply was not JSON" }, ...(hostedJob ? { hostedJob } : {}) };
   }
-  const identity = parseIdentityReply(parsed);
+  const identity = parseIdentityReply(parsed) ?? (await namedFromLabel(parsed?.name, imageB64, (name) => parseIdentityReply({ ...parsed, name })));
   if (!identity) return { identity: null, failure: { code: "no_item", reason: "no name in the reply" }, ...(hostedJob ? { hostedJob } : {}) };
   return { identity, ...(answeredBy ? { answeredBy } : {}) };
 }
@@ -718,7 +735,7 @@ export function parseIdentityReply(parsed: Record<string, unknown> | null): Phot
   if (!name && is_receipt === "yes") {
     return { ...receiptAsIdentity(), observations: str(p.observations).slice(0, 1500) || receiptAsIdentity().observations, is_receipt };
   }
-  if (!name) return null;
+  if (!name || nameReadsAsProse(name)) return null;
   const rawType = str(p.entity_type) || str(p.type);
   const et: "asset" | "part" | null = rawType === "asset" || rawType === "part" ? rawType : null;
   return {
@@ -1003,7 +1020,20 @@ export function parseObservation(raw: string): PhotoObservation {
  */
 /** The pending-check bag `enrichBarcodeItem` stashes while a photo-backed barcode
  *  hit is shown as "checking…". crossCheckScanPhoto clears them when it resolves. */
-const PENDING_KEYS = ["photo_check_pending", "pending_confidence", "pending_notes"] as const;
+const PENDING_KEYS = ["photo_check_pending", "pending_confidence", "pending_notes", "pending_replaced"] as const;
+
+/** What a lookup's candidate replaced on the row, kept at the photo gate
+ *  (enrich.ts) so a candidate the photo contradicts can be taken back (#6100). */
+export interface PendingReplaced {
+  name: string | null;
+  manufacturer: string | null;
+  sku: string | null;
+  catalog_image_url: string | null;
+  catalog_image_file_id: string | null;
+  source: string | null;
+  category?: string | null;
+  entity_type?: string | null;
+}
 
 /** True when the cross-check's "corrected" name is really just the name we were
  *  REJECTING, echoed back — a self-contradictory vision reply ("this is NOT an
@@ -1448,6 +1478,51 @@ export async function crossCheckScanPhoto(
     // The catalog image still shows the wrong product (the lookup's picture) —
     // refresh it to match the corrected name.
     void refreshCatalogImageByName(orgId, itemId, correctName, correctBrand || null).catch(() => {});
+    return;
+  }
+
+  // A LOOKUP'S CANDIDATE the photo contradicts is never kept (#6100): the
+  // lookup wrote it at the gate, so the identity it replaced goes back (or the
+  // row is left unnamed, never named after another product). The cumin's
+  // re-run wrote a J. Jill skirt over "Kania Kreuzkümmel gemahlen" and the
+  // check then said "a spice jar, not a skirt" and left the skirt. A name a
+  // person's added photo is checked against is not a candidate (not gated),
+  // and keeps the flag-only behaviour below.
+  if (isGated) {
+    const replaced = (meta as { pending_replaced?: PendingReplaced }).pending_replaced ?? null;
+    const kept = replaced?.name?.trim() || null;
+    await freshDb
+      .updateTable("core_scan_inbox_items")
+      .set({
+        suggested_name: kept,
+        suggested_manufacturer: replaced?.manufacturer ?? null,
+        suggested_sku: replaced?.sku ?? null,
+        catalog_image_url: replaced?.catalog_image_url ?? null,
+        catalog_image_file_id: replaced?.catalog_image_file_id ?? null,
+        ai_confidence: kept ? "0.6" : "0",
+        // identityMeta drops everything the candidate brought (its category,
+        // description, raw answer) and lays the replaced identity back.
+        suggested_metadata: identityMeta(
+          {
+            ...(replaced?.source ? { source: replaced.source } : {}),
+            ...(replaced?.category ? { category: replaced.category } : {}),
+            ...(replaced?.entity_type ? { entity_type: replaced.entity_type } : {}),
+            photo_mismatch: { reason: reason || undefined, correct_name: correctName || undefined, rejected_name: resolvedName },
+          },
+          { alsoDrop: PENDING_KEYS, keep: ["photo_observations", "photo_distinct", "photo_individuals", "photo_observed_for"] },
+        ) as never,
+        ai_notes:
+          `Found online as "${resolvedName}", but your photo shows something else` +
+          (reason ? ` (${reason})` : "") +
+          (kept ? `, so "${kept}" was kept.` : correctName ? `. It looks like "${correctName}": use that, or name it.` : ", so it was not used. Name it."),
+        updated_at: new Date(),
+      })
+      .where("id", "=", itemId)
+      .execute();
+    if (existing?.barcode_text && !photoShowsOtherThings(verdict?.things, meta.photo_distinct)) {
+      void reportBarcodeReject({ upc: existing.barcode_text, reason: reason || "photo shows a different product", orgId }).catch(() => {});
+      void evictBarcodeCaches(orgId, existing.barcode_text).catch(() => {});
+    }
     return;
   }
 

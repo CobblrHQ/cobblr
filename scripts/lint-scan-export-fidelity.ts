@@ -108,8 +108,10 @@ for (const k of batchKeys) {
 
 // Every picture key the resolver reads: the PictureRow columns and the
 // metadata keys rowPictures dereferences (`meta.<key>`), less the ones that
-// are not pictures (split_from names the parent, not a file).
-const NOT_A_PICTURE = new Set(["split_from", "suggested_metadata"]);
+// are not pictures (split_from names the parent, not a file; catalog_source
+// says where the catalog picture came from, a word the importer carries with
+// the rest of the metadata, #6100).
+const NOT_A_PICTURE = new Set(["split_from", "suggested_metadata", "catalog_source"]);
 const pictureKeys = [
   ...blockKeys(picturesSrc, "export interface PictureRow {"),
   ...[...picturesSrc.matchAll(/\bmeta\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]!),

@@ -749,9 +749,13 @@ export function CustomBlock({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const tokenRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
+  // A token the app could not get is said, never an endless Loading: a guest's
+  // app sat there behind a sheet about something they had not done (#6044).
+  const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
+    setStartError(null);
     api
       .mintAppToken(slug, appSlug)
       .then((r) => {
@@ -759,7 +763,9 @@ export function CustomBlock({
         tokenRef.current = r.token;
         setReady(true); // only render the iframe once the token's in hand
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        if (alive) setStartError(e instanceof Error ? e.message : "This app could not start.");
+      });
     return () => { alive = false; };
   }, [slug, appSlug]);
 
@@ -932,6 +938,12 @@ export function CustomBlock({
   const frameStyle: React.CSSProperties = theme
     ? { height: `${height ?? 360}px`, background: "var(--app-bg)", borderColor: "var(--app-border)", borderRadius: "var(--app-radius)" }
     : { height: `${height ?? 360}px` };
+  if (startError)
+    return (
+      <div role="alert" className={frameClass + " flex items-center justify-center p-4 text-center text-sm text-muted"} style={frameStyle} data-testid="app-start-error">
+        This app could not start: {startError}
+      </div>
+    );
   if (!ready || (!frameUrl && !frameError))
     return (
       <div className={frameClass + " flex items-center justify-center text-xs text-faint italic"} style={frameStyle}>

@@ -150,6 +150,7 @@ export function BundlesPage() {
     onSuccess: (_r, d) => toast.success(`Installed the ${d.name} driver.`),
     onError: (e: unknown) =>
       toast.error(
+        // 404-is: a-module-off: installing a driver needs the Digital Fabrication module on
         e instanceof ApiError && e.status === 404
           ? "Enable the Digital Fabrication module first (Configuration → Modules)."
           : e instanceof ApiError ? e.message : (e as Error).message,

@@ -1,4 +1,4 @@
-import { useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -488,16 +488,12 @@ export function MachinesPage({
           </div>
         )}
         {showContributedTabs && (
-          <div className="h-9 inline-flex items-stretch rounded-md border border-line dark:border-slate-600 overflow-hidden text-xs">
-            <button type="button" onClick={() => setPageTab("items")} className={"px-3 " + (pageTab === "items" ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-              {nounPlural}
-            </button>
-            {contributedTabs.map((p) => (
-              <button key={p.id} type="button" onClick={() => setPageTab(p.id)} className={"px-3 " + (pageTab === p.id ? "bg-cobble-600 text-white" : "text-muted hover:bg-subtle dark:hover:bg-slate-800")}>
-                {p.title}
-              </button>
-            ))}
-          </div>
+          <SegmentedChoice
+            label="What to show"
+            value={pageTab}
+            onChange={setPageTab}
+            options={[{ value: "items", label: nounPlural }, ...contributedTabs.map((p) => ({ value: p.id, label: p.title }))]}
+          />
         )}
         {!instance && !lensName && availableLenses.length > 0 && (
           <select

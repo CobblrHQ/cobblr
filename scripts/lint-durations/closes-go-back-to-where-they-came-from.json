@@ -1,0 +1,10 @@
+{
+  "lint": "lint:closes-go-back-to-where-they-came-from",
+  "run": "node scripts/lint-closes-go-back-to-where-they-came-from.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 1296,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

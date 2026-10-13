@@ -1,4 +1,6 @@
 import { assertStorageReady } from "./storage.js";
+import { recordName } from "@cobblr/platform-contract/record-name";
+import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { stockTrackerAllows } from "../stock-tracker.js";
 // Action handlers — the wire-engine-callable + Tier-B-invokable side of
 // inventory. All GENERIC inventory capabilities (a use-case lives in a bundle +
@@ -182,6 +184,18 @@ async function inPartUnit(orgId: string, partId: string, delta: number, unit: st
   return { ok: true, delta: Math.round(converted * 1e6) / 1e6 };
 }
 
+/** A record marked gone (sold, lost, cleared by a stocktake: its
+ *  disposition) is not on hand: what it held is history, kept for Undo, and
+ *  no use or restock moves it (#6153). Bringing it back is the way to stock
+ *  it again. Not `archived` alone: a split-off open ball is archived to keep
+ *  it out of the lists and still holds the yarn on it. */
+export function isGone(metadata: unknown): boolean {
+  return readRecordDisposition(metadata) !== null;
+}
+export function goneStockRefusal(name: string | null | undefined): string {
+  return `${name || "This record"} is marked gone, so it has nothing on hand. Bring it back before changing its stock.`;
+}
+
 /** The core stock-delta path, shared by adjust-stock (wire/HTTP) and the
  *  one-tap consume actions (use-one/use-up). Applies the delta, writes the
  *  consumption ledger, re-emits stock.changed, and fires stock.low on a
@@ -201,10 +215,11 @@ export async function applyStockDelta(
     // too would double-count. Generic — any external tracker opts a part out.
     const ext = await trx
       .selectFrom("inventory_parts")
-      .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty"])
+      .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty", "metadata", "name"])
       .where("id", "=", partId)
       .forUpdate().executeTakeFirst();
     if (!ext) return { ok: false, error: "part_not_found" };
+    if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name) };
     if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
       return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
     }
@@ -469,10 +484,11 @@ export async function withBatches(
   if (delta < 0 && !opts.correction) await assertStorageReady(db, orgId, partId);
   const row = await db
     .selectFrom("inventory_parts")
-    .select(["id", "qty", "metadata"])
+    .select(["id", "qty", "metadata", "name"])
     .where("id", "=", partId)
     .executeTakeFirst();
   if (!row) return { ok: false, error: "missing_part" };
+  if (isGone(row.metadata)) return { ok: false, error: goneStockRefusal(row.name) };
 
   const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
   const qtyNow = Number(row.qty);
@@ -1261,8 +1277,10 @@ export function registerInventoryActionHandlers(): void {
     // No name is no item: a call with nothing said used to create "Untitled"
     // and report it made (#3141, the #3133 family). The schema marks it
     // required, so the door refuses first; this is the handler's own word.
-    if (typeof a.name !== "string" || !a.name.trim()) return { ok: false, error: "say what the item is called (name)" };
-    const name = a.name.trim().slice(0, 200);
+    // A name of real values only (record-name.ts, #6283): an app's or an
+    // assistant's answer that carried "SKU: None Brand: …" keeps the name.
+    const name = recordName(typeof a.name === "string" ? a.name : "").slice(0, 200);
+    if (!name) return { ok: false, error: "say what the item is called (name)" };
     const manufacturer = typeof a.manufacturer === "string" && a.manufacturer.trim() ? a.manufacturer.trim().slice(0, 120) : null;
     const locationId = typeof a.location_id === "string" && a.location_id ? a.location_id : null;
     const fields = (a.fields && typeof a.fields === "object" ? a.fields : {}) as Record<string, unknown>;

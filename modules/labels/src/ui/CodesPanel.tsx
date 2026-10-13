@@ -28,7 +28,6 @@ export function CodesPanel() {
     mutationFn: (code: string) => api.resolveCode(code),
     onSuccess: (hit) => {
       if (hit.detail_url) navigate(hit.detail_url);
-      else toast.success(`${hit.code} → ${hit.title ?? hit.entity_kind}`);
     },
     onError: () => toast.error("No item has that code."),
   });
@@ -87,7 +86,10 @@ export function CodesPanel() {
       >
         <SearchInput
           value={q}
-          onChange={setQ}
+          onChange={(value) => {
+            setQ(value);
+            if (search.isSuccess) search.reset();
+          }}
           // vocab-lint-ok: codes span every kind (parts, machines, locations), so a neutral generic noun is correct here
           placeholder="Find an item by its short code (e.g. m1)"
           aria-label="Find an item by its short code"
@@ -102,6 +104,11 @@ export function CodesPanel() {
           Go
         </button>
       </form>
+      {search.isSuccess && !search.data.detail_url && (
+        <p role="status" className="text-sm text-content dark:text-mortar-100">
+          Found {search.data.code}: {search.data.title ?? "Unnamed record"}. This record has no page to open.
+        </p>
+      )}
 
       <div>
         <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">codes by kind</div>

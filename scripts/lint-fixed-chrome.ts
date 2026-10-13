@@ -177,6 +177,12 @@ for (const file of SURFACES) {
   if (!/\buseLayerStack\(/.test(src)) {
     violations.push({ file, line: 1, what: "covers the page with a fixed layer of its own but never calls useLayerStack, so what opens over it can land under it" });
     files.add(file);
+  }  // It starts below the bars that reserve the top (a new version, offline,
+  // an operator viewing as you): spelled from inset-0, the camera lay over
+  // them, and the update notice then sat on its mode strip (#6247).
+  if (!/--top-chrome-height|--app-header-bottom|\bfc-overlay\b|<OverlayLayer\b/.test(src)) {
+    violations.push({ file, line: 1, what: "covers the page with a fixed layer of its own from the screen's top edge, over the bars that reserve the top; start it at var(--top-chrome-height) (or below the header)" });
+    files.add(file);
   }
 }
 

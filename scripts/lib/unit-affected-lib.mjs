@@ -89,19 +89,47 @@ export function parseSpecifiers(src) {
 }
 
 /**
+ * PURE. The file a package's `exports` names for a subpath ("." or "./money"), or null when it names none
+ * this can read (conditions, arrays): the caller then depends on the whole package.
+ * @param {unknown} exportsField the package.json `exports` (or its `main`, as a string)
+ * @param {string} sub
+ */
+export function exportTarget(exportsField, sub) {
+  const pick = (v) => (typeof v === "string" ? v : v && typeof v === "object" && !Array.isArray(v) ? pick(v.import ?? v.default ?? v.types) : null);
+  if (typeof exportsField === "string") return sub === "." ? exportsField : null;
+  if (!exportsField || typeof exportsField !== "object") return null;
+  if (sub in exportsField) return pick(exportsField[sub]);
+  for (const [k, v] of Object.entries(exportsField)) {
+    const star = k.indexOf("*");
+    if (star < 0) continue;
+    const pre = k.slice(0, star), post = k.slice(star + 1);
+    if (sub.startsWith(pre) && sub.endsWith(post) && sub.length >= pre.length + post.length) {
+      const t = pick(v);
+      if (t) return t.replace("*", sub.slice(pre.length, sub.length - post.length));
+    }
+  }
+  return null;
+}
+
+/**
  * @param {string} file the importing file's repo path
  * @param {string} spec
  * @param {Map<string, string>} packages workspace package name → its directory
+ * @param {Map<string, unknown>} [exportsByDir] package directory → its `exports` (or `main`): an import then
+ *   depends on the file it resolves to, not on the whole package. A change to one platform-contract file used
+ *   to select every unit test that imports the package at all: 1,531 of 2,368 for four paths (#6226).
  * @returns {string | null} a key: a file key, or `pkg:<dir>`; null for npm
  */
-export function resolveSpecifier(file, spec, packages) {
+export function resolveSpecifier(file, spec, packages, exportsByDir) {
   if (spec.startsWith(".")) {
     const dir = file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "";
     return keyOf(posixJoin(dir, spec));
   }
-  const m = /^(@[^/]+\/[^/]+|[^@/][^/]*)/.exec(spec);
+  const m = /^(@[^/]+\/[^/]+|[^@/][^/]*)(\/.*)?$/.exec(spec);
   const dir = m && packages.get(m[1]);
-  return dir ? `pkg:${dir}` : null;
+  if (!dir) return null;
+  const target = exportsByDir?.has(dir) ? exportTarget(exportsByDir.get(dir), m[2] ? `.${m[2]}` : ".") : null;
+  return target && !target.includes("*") ? keyOf(posixJoin(dir, target)) : `pkg:${dir}`;
 }
 
 /**
@@ -110,12 +138,12 @@ export function resolveSpecifier(file, spec, packages) {
  * @param {Map<string, string>} packages
  * @returns {Map<string, Set<string>>}
  */
-export function buildGraph(sources, packages) {
+export function buildGraph(sources, packages, exportsByDir) {
   const graph = new Map();
   for (const [file, src] of sources) {
     const deps = new Set();
     for (const spec of parseSpecifiers(src)) {
-      const k = resolveSpecifier(file, spec, packages);
+      const k = resolveSpecifier(file, spec, packages, exportsByDir);
       if (k) {
         deps.add(k);
         // `./dir` and `./dir/index` are one module.
@@ -273,14 +301,15 @@ export function listedBy(path, tests, testSources) {
  *   basenameCount: Map<string, number>,
  *   versionOnly?: Set<string>,     package.json files whose diff is the version line alone
  *   graph?: Map<string, Set<string>>,  buildGraph(sources, packages), when the caller already has it
+ *   exportsByDir?: Map<string, unknown>, each package's `exports`: imports resolve to files, not packages
  * }} input
  * @returns {{ kind: "full" | "affected", tests: string[], reason: string, why: Map<string, string> }}
  */
-export function selectUnitTests({ changed, tests, sources, packages, basenameCount, versionOnly = new Set(), graph: prebuilt = null }) {
+export function selectUnitTests({ changed, tests, sources, packages, basenameCount, versionOnly = new Set(), graph: prebuilt = null, exportsByDir }) {
   const full = (reason) => ({ kind: "full", tests: [...tests], reason, why: new Map() });
   if (changed === null) return full("no base to compare against");
   const paths = changed.filter(Boolean);
-  const graph = prebuilt ?? buildGraph(sources, packages);
+  const graph = prebuilt ?? buildGraph(sources, packages, exportsByDir);
   const runner = runnerClosure(graph);
   for (const p of paths) {
     // A version bump (every module change carries one, lint:versions) changes no

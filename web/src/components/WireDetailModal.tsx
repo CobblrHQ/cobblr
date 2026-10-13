@@ -10,6 +10,7 @@ import { ExternalLink, Trash2, Pencil } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, api, type PlatformBinding } from "../lib/api";
 import { FEED_SCROLL } from "../lib/feed";
+import { wireSentence } from "../lib/wireSentence";
 import { Modal, useToast, useConfirm } from "@cobblr/platform-web";
 
 interface Props {
@@ -39,18 +40,16 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
     }
   }, [binding?.id, binding?.template, binding?.enabled]);
 
-  // Pull recent firings for this specific wire.
+  // This wire's own firings, asked of the log by its id: another wire with
+  // the same action is someone else's history (#6129), and the newest fifty
+  // of every wire would drop this one's on a busy workspace.
   const recent = useQuery({
     queryKey: ["wire-firings", slug, binding?.id],
-    queryFn: () => api.listActivity(slug, { actions: ["wire_fired", "wire_failed"], limit: 50 }),
+    // paginate-ok: the newest fifty of one wire's runs, with the log's own total beside them; the full history is on /activity.
+    queryFn: () => api.listActivity(slug, { actions: ["wire_fired", "wire_failed"], entityType: "binding", entityId: binding!.id, limit: 50 }),
     enabled: open && !!binding,
   });
-  // Filter to the rows where diff.action matches this binding.
-  const matching =
-    recent.data?.items.filter((r) => {
-      const d = (r.diff ?? {}) as { action?: string };
-      return d.action === binding?.action_id;
-    }) ?? [];
+  const matching = recent.data?.items ?? [];
 
   // Resolve the originating bundle so the Origin row can name it and
   // deep-link to that specific bundle — the binding only carries the
@@ -108,6 +107,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
     (template.trim() || null) !== (binding.template ?? null) ||
     enabled !== binding.enabled;
 
+  const said = wireSentence(binding);
   return (
     <Modal
       open={open}
@@ -117,6 +117,13 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
       size="lg"
     >
       <div className="space-y-5">
+        {/* The wire in words first (#6110); the ids are in the list below. */}
+        {said.headline && (
+          <div>
+            <p className="text-sm text-content dark:text-mortar-100" data-testid="wire-detail-said">{said.headline}</p>
+            {said.given && <p className="text-xs text-muted dark:text-slate-400" data-testid="wire-detail-given">{said.given}</p>}
+          </div>
+        )}
         {/* Origin / trigger / timestamps in a definition list */}
         <dl className="grid grid-cols-3 gap-2 text-xs">
           <Row label="Source kind">
@@ -212,7 +219,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
         {/* Recent firings for this wire */}
         <div>
           <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-            // recent firings for this wire ({matching.length})
+            // recent firings for this wire ({recent.data?.total ?? matching.length})
           </div>
           {matching.length === 0 ? (
             <div className="text-xs text-faint italic">

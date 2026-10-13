@@ -23,16 +23,16 @@ import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { browserImageHeaders } from "./image-fetch-headers.js";
 import { platform } from "@cobblr/platform-contract";
-import { isShortBarcode } from "@cobblr/platform-contract/scan-triage";
 import { PHOTO_CHECK_NOTE } from "@cobblr/platform-contract/scan-copy";
-import { answerAgreesWithCode, durableOutcome, namedByOnePerson, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { answerAgreesWithCode, durableOutcome, type BarcodeHit, type DurableBarcodeOutcome } from "./barcode-lookup.js";
+import { hitVerdict } from "./hit-trust.js";
 import { resolveBarcodeViaWebSearch, productTitle } from "./barcode-websearch.js";
 import { reportBarcodeCorrection, unitLotsOf } from "./barcode-corrections.js";
 import { catalogAnswerForCode } from "./catalog-answer.js";
 import { cleanListingTitle } from "./listing-title.js";
 import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFieldsForHit, ISBN_DECODER_ID, type ScanCodeType } from "./scan-router.js";
 import { readScanFrameLot } from "./scan-frame-label.js";
-import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName } from "./enrich-photo.js";
+import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName, type PendingReplaced } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
 import { nameFromAmazonLabel } from "./fnsku-label.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
@@ -271,6 +271,33 @@ async function clearCatalogIdentity(ctx: EnrichContext, lockedImg: { url: string
     })
     .where("id", "=", ctx.itemId)
     .execute();
+}
+
+/** The identity a lookup's candidate is about to replace, kept at the photo
+ *  gate so a candidate the photo contradicts is taken back, never kept
+ *  (crossCheckScanPhoto, #6100). Undefined for a row with no name yet. */
+async function identityBeforeCandidate(ctx: EnrichContext): Promise<PendingReplaced | undefined> {
+  const r = await ctx.db
+    .selectFrom("core_scan_inbox_items")
+    .select(["suggested_name", "suggested_manufacturer", "suggested_sku", "catalog_image_url", "catalog_image_file_id", "suggested_metadata"])
+    .where("id", "=", ctx.itemId)
+    .executeTakeFirst();
+  if (!r?.suggested_name) return undefined;
+  const meta = (r.suggested_metadata ?? {}) as { source?: unknown; category?: unknown; entity_type?: unknown; photo_check_pending?: unknown; pending_replaced?: PendingReplaced };
+  // Already gated (a second lookup before the check landed): the identity
+  // before the FIRST candidate is the one to keep, not the candidate.
+  if (meta.photo_check_pending === true && meta.pending_replaced) return meta.pending_replaced;
+  if (meta.photo_check_pending === true) return undefined;
+  return {
+    name: r.suggested_name,
+    manufacturer: r.suggested_manufacturer,
+    sku: r.suggested_sku,
+    catalog_image_url: r.catalog_image_url,
+    catalog_image_file_id: r.catalog_image_file_id,
+    source: typeof meta.source === "string" ? meta.source : null,
+    category: typeof meta.category === "string" ? meta.category : null,
+    entity_type: typeof meta.entity_type === "string" ? meta.entity_type : null,
+  };
 }
 
 async function nameFromPhoto(ctx: EnrichContext, opts: { note?: string; meta?: Record<string, unknown> } = {}): Promise<PhotoNameResult> {
@@ -929,6 +956,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
       // crossCheckScanPhoto confirms or corrects it — a spurious listing must not
       // flash confidently in the moment of scan.
       const webGate = hasScanPhoto;
+      const replacedByWeb = webGate ? await identityBeforeCandidate(ctx) : undefined;
       await ctx.db
         .updateTable("core_scan_inbox_items")
         .set({
@@ -948,6 +976,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
                   photo_check_pending: true,
                   pending_confidence: String(web.confidence),
                   pending_notes: web.evidence,
+                  ...(replacedByWeb ? { pending_replaced: replacedByWeb } : {}),
                 }
               : {}),
           }) as never,
@@ -1090,8 +1119,8 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
   // cannot drift apart (#3057).
   // One person's word on the barcode network (#3769) is shown the same way: the
   // name is there, and the card asks for a look before it is trusted.
-  const onePerson = namedByOnePerson(hit);
-  const lowTrust = (codeClass.type === "upc" && isShortBarcode(codeClass.code)) || onePerson;
+  const verdict = hitVerdict(hit, codeClass, provenanceLabel(hit));
+  const lowTrust = verdict.lowTrust;
 
   // 2. Stash the catalog image URL on the row immediately; the
   // actual file download happens next and may take a moment.
@@ -1101,7 +1130,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
   // scan photo exists we don't show these yet — we hold at a damped "checking…"
   // state and stash the confirmed values so crossCheckScanPhoto can restore them
   // if the photo agrees (or override them if it doesn't).
-  const confirmedConfidence = hit.title ? (lowTrust ? "0.6" : "0.85") : null;
+  const confirmedConfidence = verdict.confidence;
   // Provenance: a box-resolver result that came from the shared Barcode
   // Intelligence DB (cache or OFF mirror) returns resolver.cache==="hit" — it
   // resolved instantly from BIdb, NOT a live provider call. Surface that as
@@ -1111,14 +1140,11 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
   // it is open and retired by "Looks fine"; baked into the note it outlived
   // that tap and kept telling a person who had just said "looks fine" to
   // double-check (#3057).
-  const confirmedNotes = onePerson
-    ? "Named by one person on the barcode network. Check it, or correct it."
-    : hit.title
-      ? `Identified via ${provenanceLabel(hit)}.`
-      : `Resolved via ${provenanceLabel(hit)}.`;
+  const confirmedNotes = verdict.notes;
   // Gate the hit behind the photo cross-check only when there's a photo to check
   // AND a real product name to verify.
   const gateOnPhoto = hasScanPhoto && !!hit.title;
+  const replacedByHit = gateOnPhoto ? await identityBeforeCandidate(ctx) : undefined;
 
   // A book. The ISBN is a decodable identifier, so its hit carries a semantic
   // bag the way a VIN decode does: `decoded` is what the matchmaker's role-fill
@@ -1164,7 +1190,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
         ...(parsePackSize(hit.title) ? { pack_size: parsePackSize(hit.title) } : {}),
         // The pending-check bag: the values to restore when the photo confirms.
         ...(gateOnPhoto
-          ? { photo_check_pending: true, pending_confidence: confirmedConfidence, pending_notes: confirmedNotes }
+          ? { photo_check_pending: true, pending_confidence: confirmedConfidence, pending_notes: confirmedNotes, ...(replacedByHit ? { pending_replaced: replacedByHit } : {}) }
           : {}),
       }) as never,
       // Damp the confidence + say we're checking, until the photo cross-check lands.

@@ -16,6 +16,7 @@ import { placeLine, platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser } from "../db.js";
 import { requireRole } from "./util.js";
 import { registerPlacementActionHandlers } from "./action-handlers.js";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 // Side effect on import: the place/remove action handlers.
 registerPlacementActionHandlers();
@@ -234,11 +235,11 @@ const PlaceBody = z.object({
   // A pin inside the container, millimetres from its top-left; null clears it.
   position: Position.nullish(),
   // What made the move ("floor plan"): the activity row says so.
-  via: z.string().trim().min(1).max(80).optional(),
+  via: optionalField(z.string().trim().min(1).max(80)),
   // The slot holds one thing: what is in it now goes back where it came from.
   one_to_a_slot: z.boolean().optional(),
   // Only this many of a counted thing (2 of 4 sticks): the rest stays put.
-  qty: z.number().finite().positive().max(1_000_000).optional(),
+  qty: optionalField(z.number().finite().positive().max(1_000_000)),
 });
 
 // POST /place { containee, container, slot?, position?, via? } — put a thing inside a container.
@@ -266,7 +267,7 @@ router.post(
       ...(parsed.data.position !== undefined ? { position: parsed.data.position } : {}),
       ...(parsed.data.via ? { via: parsed.data.via } : {}),
       ...(parsed.data.one_to_a_slot ? { oneToASlot: true } : {}),
-      ...(parsed.data.qty !== undefined ? { qty: parsed.data.qty } : {}),
+      ...(parsed.data.qty != null ? { qty: parsed.data.qty } : {}),
     });
     // When what went in is another record than the one asked (a split-off
     // part of it, or the record it joined there), say which: putting that one

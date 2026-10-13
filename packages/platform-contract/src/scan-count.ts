@@ -61,7 +61,10 @@ export function scanCountLedgerReason(move: { change: number; correction: boolea
 /** The count the record will have. Taking never goes below zero: the floor
  *  takes what is there and the card says so. */
 export function scanCountResult(mode: ScanCountMode, have: number, value: number): number {
-  return mode === "set" ? Math.max(0, value) : Math.max(0, have + value);
+  // Rounded to a ten-thousandth: 8.4 m less 0.5 m is 7.9 m, never
+  // 7.8999999999999995 (#6142).
+  const r = mode === "set" ? Math.max(0, value) : Math.max(0, have + value);
+  return Math.round(r * 10_000) / 10_000;
 }
 
 /** A use session takes one; a recount starts at the current total; a

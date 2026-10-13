@@ -1,0 +1,10 @@
+{
+  "lint": "lint:share-children",
+  "run": "node scripts/lint-share-children.ts",
+  "rows": [
+    "migration"
+  ],
+  "ms": 2804,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

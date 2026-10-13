@@ -1,3 +1,4 @@
+import { registerRenewalsPresence } from "../renewals-presence.js";
 // core-maintenance router. Mounted at
 //   /api/v1/orgs/:slug/modules/core-maintenance/.
 
@@ -47,3 +48,4 @@ export default router;
 // Side-effect: the assistant's door to the service log. Without these this
 // module has no entity kind and no action, so it can be read and never added to.
 registerMaintenanceHandlers();
+registerRenewalsPresence();

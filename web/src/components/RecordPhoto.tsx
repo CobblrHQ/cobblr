@@ -13,7 +13,7 @@
 //   • One "Find a photo on the web", whose AI Pick is the scan inbox's, shown
 //     only where AI can answer.
 
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Image as ImageIcon } from "lucide-react";
 import { useToast } from "@cobblr/platform-web";
@@ -307,7 +307,14 @@ export function RecordPhoto({
   const s = suggestions ? answers.suggestion : null;
   const suggestedSrc = !src && s?.status === "suggested" ? s.image_path : null;
   return (
-    <div data-testid="record-photo" className="space-y-2">
+    // On a phone the column is the photo's own width: the answers and the web
+    // search wrap under the thumbnail rather than widening the column, which
+    // left a header's title 93 px and five lines (#6150).
+    <div
+      data-testid="record-photo"
+      className="space-y-2 max-sm:w-[var(--record-photo-w)] max-sm:shrink-0"
+      style={{ "--record-photo-w": `${size}px` } as CSSProperties}
+    >
       <EntityImageEdit
         slug={activeSlug!}
         src={src || suggestedSrc}

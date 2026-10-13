@@ -12,16 +12,16 @@ export default {
   // hoverable control just applies :hover and the SECOND tap fires the click
   // (e.g. switching workspace took two taps). App-wide.
   future: { hoverOnlyWhenSupported: true },
-  // Scan the web app's own sources + every first-party module's UI
-  // source so module-only classnames make it into the final CSS.
-  // As more modules ship, add them here.
+  // Scan the web app's own sources and EVERY module's and package's UI, so a
+  // class written only in a module makes it into the CSS. A list of modules
+  // to remember drifted: lists, sales and builds were never added, and a
+  // linked list line's dark ground was a class nobody built (#6165).
+  // lint:tailwind-sees-every-ui-file holds every .tsx inside these globs.
   content: [
     "./index.html",
     "./src/**/*.{ts,tsx}",
-    "../modules/inventory/src/ui/**/*.{ts,tsx}",
-    "../modules/labels/src/ui/**/*.{ts,tsx}",
-    "../modules/projects/src/ui/**/*.{ts,tsx}",
-    "../packages/platform-web/src/**/*.{ts,tsx}",
+    "../modules/*/src/**/*.{ts,tsx}",
+    "../packages/*/src/**/*.{ts,tsx}",
   ],
   darkMode: "class",
   theme: {

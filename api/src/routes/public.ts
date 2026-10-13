@@ -27,6 +27,8 @@ import { readVisibility } from "@cobblr/platform-contract/share-scope";
 import { countLabelScan, labelPublicRecord, pageFrame, pageIsLive, publicPageRecord, publicPageRecords, skinDocument } from "../platform/public-page.js";
 import { resolveQrToken } from "./qr-scan.js";
 
+import { z } from "zod";
+import { answerReply, readReply, readStopToken, stopMessages } from "../platform/external-messages.js";
 export const publicRouter = Router();
 
 // What a public address answers is data for the page that shows it, never a
@@ -653,4 +655,77 @@ publicRouter.get("/scan-export/:token/files/:id/raw", (req, res, next) => {
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.send(Buffer.from(file.bytes));
   })().catch(next);
+});
+
+// ── stop an automation's messages (#6070) ──────────────────────────────────
+// The link at the foot of every message an automation emails someone outside
+// a workspace. Opening it asks; only the press stops, so a mail scanner that
+// follows links does not stop anything by itself. The token is signed and
+// names one workspace, one automation and one person; nothing else of the
+// workspace is shown.
+
+publicRouter.get("/external-stop/:token", async (req, res, next) => {
+  try {
+    const claim = readStopToken(req.params.token ?? "");
+    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: "This link is not one Cobblr made, or it was changed." } });
+    const org = await meta.selectFrom("orgs").select("name").where("id", "=", claim.o).executeTakeFirst();
+    const stopped = await meta
+      .selectFrom("external_message_stops")
+      .select("person_id")
+      .where("org_id", "=", claim.o)
+      .where("binding_id", "=", claim.w)
+      .where("person_id", "=", claim.p)
+      .executeTakeFirst();
+    res.json({ workspace: org?.name ?? "A workspace", stopped: !!stopped });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: exempt: the recipient's own stop, from a link in an email, with
+// no account; there is nobody for the assistant to act for.
+publicRouter.post("/external-stop/:token", async (req, res, next) => {
+  try {
+    const claim = readStopToken(req.params.token ?? "");
+    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: "This link is not one Cobblr made, or it was changed." } });
+    await stopMessages(claim);
+    res.json({ stopped: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── answer an automation's message (#6070, slice 3b) ────────────────────────
+// The reply link a wire may add: the item and two answers, nothing else of
+// the workspace. Signed, for one message, for 14 days.
+
+publicRouter.get("/external-reply/:token", async (req, res, next) => {
+  try {
+    const r = await readReply(req.params.token ?? "");
+    if (!r.ok) {
+      const status = r.why === "expired" ? 410 : 404;
+      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : "This link is not one Cobblr made, or it was changed." } });
+    }
+    res.json({ workspace: r.workspace, item: r.item, answered: r.answered });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const ReplyBody = z.object({ answer: z.enum(["got", "bought"]) });
+// AI-REACH: exempt: the answer of someone outside the workspace, from a link in
+// an email, with no account; there is nobody for the assistant to act for.
+publicRouter.post("/external-reply/:token", async (req, res, next) => {
+  try {
+    const body = ReplyBody.safeParse(req.body ?? {});
+    if (!body.success) return void res.status(400).json({ error: { code: "invalid_body", message: "Answer got or bought." } });
+    const r = await answerReply(req.params.token ?? "", body.data.answer);
+    if (!r.ok) {
+      const status = r.why === "expired" ? 410 : 404;
+      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : "This link is not one Cobblr made, or it was changed." } });
+    }
+    res.json({ answered: r.answered, listed: r.listed });
+  } catch (err) {
+    next(err);
+  }
 });

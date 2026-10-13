@@ -20,8 +20,7 @@ import type { Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { countOf } from "@cobblr/platform-contract/plural";
 import type { InventoryDB } from "./db.js";
-import { consumeOldest } from "./batches.js";
-import { withBatches } from "./api/action-handlers.js";
+import { bringAllBack, markAllGone, setCount, unsetCount } from "./reconcile-engine.js";
 
 /** Where the stocktake looks: a place (and everything inside it, a shelf in
  *  the Fridge included), everything of a collection that has no place, or the
@@ -208,11 +207,6 @@ export interface StocktakeDone {
 
 const ref = (i: StocktakeItem) => ({ id: i.id, kind: i.kind, title: i.title });
 
-function byKind<T extends { id: string; kind: string }>(items: readonly T[]): Map<string, string[]> {
-  const out = new Map<string, string[]>();
-  for (const i of items) out.set(i.kind, [...(out.get(i.kind) ?? []), i.id]);
-  return out;
-}
 
 /** Take stock: mark the rest gone, set the counts, and keep one row that the
  *  activity line and Undo both read. */
@@ -238,26 +232,15 @@ export async function runStocktake(orgId: string, userId: string | null, input: 
     .returning("id")
     .executeTakeFirstOrThrow();
 
-  // Gone first: the door refuses a whole batch before writing any of it, so a
-  // refusal here leaves nothing to put back but what an earlier kind marked.
-  const marked: Array<[string, string[]]> = [];
-  for (const [kind, ids] of byKind(plan.gone)) {
-    const r = await platform().dispositions.markGone(orgId, userId, kind, ids, { how: "gone", note: `Stocktake of ${plan.label}` }, { quiet: true });
-    if (!r.ok) {
-      for (const [k, done] of marked) await platform().dispositions.bringBack(orgId, userId, k, done, { quiet: true });
-      await t.deleteFrom("inventory_stocktakes").where("id", "=", row.id).execute();
-      throw new ActionRefusal(r.error);
-    }
-    marked.push([kind, ids]);
+  // Gone first, all or nothing (the one engine both stocktakes and recounts
+  // end through, reconcile-engine.ts): a refusal leaves nothing marked.
+  try {
+    await markAllGone(orgId, userId, plan.gone.map(ref), `Stocktake of ${plan.label}`);
+  } catch (err) {
+    await t.deleteFrom("inventory_stocktakes").where("id", "=", row.id).execute();
+    throw err;
   }
-  for (const c of plan.counted) {
-    await withBatches(orgId, c.id, "stocktake", c.after - c.before, (batches) => consumeOldest(batches, c.before - c.after).batches, {
-      userId,
-      correction: true,
-      sourceKind: "stocktake",
-      sourceId: row.id,
-    });
-  }
+  for (const c of plan.counted) await setCount(orgId, userId, c, { kind: "stocktake", id: row.id }, "stocktake");
   await platform().activity.log({
     orgId,
     userId,
@@ -287,17 +270,15 @@ export async function undoStocktake(orgId: string, userId: string | null, id: st
   const counted = row.counted as unknown as Array<{ id: string; before: number; after: number }>;
   const ids = [...gone.map((g) => g.id), ...counted.map((c) => c.id)];
   const present = new Set(ids.length ? (await t.selectFrom("inventory_parts").select("id").where("id", "in", ids).execute()).map((r) => r.id) : []);
-  let back = 0;
-  for (const [kind, kindIds] of byKind(gone.filter((g) => present.has(g.id)))) {
-    const r = await platform().dispositions.bringBack(orgId, userId, kind, kindIds, { quiet: true });
-    if (!r.ok) {
-      await t.updateTable("inventory_stocktakes").set({ undone_at: null, undone_by: null }).where("id", "=", id).execute();
-      throw new ActionRefusal(r.error);
-    }
-    back += r.done.length;
+  let back: number;
+  try {
+    back = await bringAllBack(orgId, userId, gone.filter((g) => present.has(g.id)).map((g) => ({ ...g, title: "" })));
+  } catch (err) {
+    await t.updateTable("inventory_stocktakes").set({ undone_at: null, undone_by: null }).where("id", "=", id).execute();
+    throw err;
   }
   for (const c of counted.filter((x) => present.has(x.id))) {
-    await withBatches(orgId, c.id, "stocktake undone", c.before - c.after, (batches) => batches, { userId, correction: true, sourceKind: "stocktake", sourceId: id });
+    await unsetCount(orgId, userId, { ...c, title: "" }, { kind: "stocktake", id }, "stocktake undone");
     back += 1;
   }
   await platform().activity.log({

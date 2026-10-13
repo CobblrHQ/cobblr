@@ -18,6 +18,7 @@
 //     settled: (a) => a.status === "done",
 //   });
 import { expect } from "vitest";
+import { worn } from "../../scripts/lib/load-factor.mjs";
 
 export async function expectNeverTorn<T>(o: {
   poll: () => Promise<T>;
@@ -29,9 +30,13 @@ export async function expectNeverTorn<T>(o: {
   /** Reads in flight at once each round (a page and its retries). */
   width?: number;
   maxRounds?: number;
+  /** Wall-clock budget for the read, separate from workspace setup. */
+  timeoutMs?: number;
 }): Promise<T> {
   const width = o.width ?? 3;
   const maxRounds = o.maxRounds ?? 2000;
+  const timeoutMs = o.timeoutMs ?? worn(20_000);
+  const until = Date.now() + timeoutMs;
   const say = o.describe ?? ((a: T) => JSON.stringify(a));
   let writing = !!o.during;
   const done = o.during?.finally(() => {
@@ -55,9 +60,14 @@ export async function expectNeverTorn<T>(o: {
       }
     });
     if (!writing && hasSettled) break;
+    const remaining = until - Date.now();
+    if (remaining <= 0 || rounds === maxRounds) break;
+    // Each round still races three reads, but a pending round leaves the
+    // shared database time for the writer and other files' requests.
+    await new Promise((resolve) => setTimeout(resolve, Math.min(250, remaining)));
   }
   await done;
   expect(tornSeen.length, `an answer was torn, finished with what it finished missing: ${tornSeen.join("; ")}`).toBe(0);
-  expect(hasSettled, `the work never settled in ${rounds} rounds of ${width} reads; the last reads: ${trail.slice(-6).join(" | ")}`).toBe(true);
+  expect(hasSettled, `the work never settled in ${rounds} rounds of ${width} reads (deadline ${timeoutMs} ms); the last reads: ${trail.slice(-6).join(" | ")}`).toBe(true);
   return settledAnswer as T;
 }

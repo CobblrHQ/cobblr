@@ -24,7 +24,7 @@ const PageBody = z.object({
   name: z.string().min(1).max(160),
   scope: z.unknown().optional(),
   visibility: z.unknown().optional(),
-  layout: z.enum(["gallery", "table"]).optional(),
+  layout: z.enum(["gallery", "table"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   label_door: z.boolean().optional(),
   public_until: z.string().datetime().nullable().optional(),
   contact: z

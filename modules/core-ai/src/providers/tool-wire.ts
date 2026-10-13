@@ -231,6 +231,8 @@ export function parseAnthropicContent(
 export function bridgeUsage(body: unknown): {
   input_tokens?: number;
   output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
 } {
   const b = (body ?? {}) as Record<string, unknown>;
   const u = (b.usage ?? {}) as Record<string, unknown>;
@@ -246,9 +248,20 @@ export function bridgeUsage(body: unknown): {
     num(u.output_tokens) ?? //    Anthropic
     num(u.completion_tokens); //  OpenAI
 
+  // The prompt cache (#6197). Anthropic reports fresh input and the cache
+  // apart; the OpenAI shape (Google AI Studio, OpenAI) folds the cached part
+  // into prompt_tokens and names it under prompt_tokens_details, so it is
+  // taken back out: input is always the fresh part, the same on every row.
+  const details = (u.prompt_tokens_details ?? {}) as Record<string, unknown>;
+  const read = num(u.cache_read_input_tokens) ?? num(details.cached_tokens);
+  const write = num(u.cache_creation_input_tokens);
+  const fresh = input !== undefined && read !== undefined && num(u.input_tokens) === undefined ? Math.max(0, input - read) : input;
+
   return {
-    ...(input !== undefined ? { input_tokens: input } : {}),
+    ...(fresh !== undefined ? { input_tokens: fresh } : {}),
     ...(output !== undefined ? { output_tokens: output } : {}),
+    ...(read ? { cache_read_tokens: read } : {}),
+    ...(write ? { cache_write_tokens: write } : {}),
   };
 }
 

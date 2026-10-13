@@ -18,7 +18,7 @@
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Most hosts in the code are
 // never loaded by the browser at all: duckduckgo.com is a link, hooks.slack.com
 // a placeholder, api.formlabs.com a base URL the api calls. Telling a load from
-// a mention needs a browser, which e2e/csp-enforced.mjs is (csp-shell.yml on
+// a mention needs a browser, which e2e/csp-enforced.mjs is (ci.yml's typecheck job, scripts/ci/csp-shell-check.sh, on
 // every web pull request). So this lint does not guess: it makes a new host a
 // listed decision, and the walk proves the loads.
 //

@@ -66,8 +66,8 @@ export function compileLaserPlan(design:Design,sheet:LayoutSheet,profiles:Record
  const layers:LayerSettings[]=orderedLaserLayers(design,profiles);
  const paths:LaserMotionPlan["paths"]=[];
  for(const layer of layers) for(const part of sheet.parts) {
-  const transform=(p:Point):Point=>transformPlacedPoint(p,part,design.height);
-  const source=design.paths.filter(p=>p.layer===layer.layer);
+  const transform=(p:Point):Point=>transformPlacedPoint(p,part,(part.design ?? design).height);
+  const source=(part.design ?? design).paths.filter(p=>p.layer===layer.layer);
   const contours=source.map(p=>({closed:p.closed,points:linearPath(p,transform)}));
   if(layer.operation==="engrave") {
    if(contours.some(p=>!p.closed))throw new Error("Close every engraving contour before using a fill profile.");

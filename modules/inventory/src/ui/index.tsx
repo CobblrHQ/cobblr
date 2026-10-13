@@ -21,6 +21,7 @@ import { FamilyPage } from "./FamilyPage";
 import { SheetSearch } from "./SheetSearch";
 import { SettingsPage } from "./SettingsPage";
 import { ExpiringPage } from "./ExpiringPage";
+import { RecountPage } from "./RecountPage";
 import { useQuery } from "@tanstack/react-query";
 
 // Re-export the NewPartDialog + Provider so the portal shell can
@@ -87,6 +88,7 @@ export function InventoryUI({ orgSlug, getToken, instance, displayName, itemNoun
           <Route path="parts/:id" element={<PartsListPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="expiring" element={<ExpiringPage />} />
+          <Route path="recounts/:id" element={<RecountPage />} />
           {/* Bundle setup-cards / next-steps deep-link to
               /instances/<name>/items (mirroring the API path
               /orgs/:slug/instances/:name/items). That UI path had no

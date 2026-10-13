@@ -20,6 +20,8 @@
 // load is in flight wins: that load's answer is handed to the askers already
 // waiting but is not stored, so an invalidation is never undone by a read that
 // started before it.
+import { currentRequestScope, type RequestScope } from "./request-context.js";
+
 export interface TtlCache<V> {
   get(key: string, load: () => Promise<V>): Promise<V>;
   delete(key: string): void;
@@ -30,8 +32,8 @@ export interface TtlCache<V> {
 
 // Every cache made, so a test can make ONE workspace's entries cold (the test
 // door forget-org-caches) without touching anybody else's. A cache that is
-// warm in one run and cold in the next is what made the bounded-meta test pass
-// only on a retry; measuring from cold, every time, makes it deterministic.
+// warm in one run and cold in the next can disguise a per-row load. Cold probes
+// use request-owned entries instead, because background reads can race a reset.
 const all = new Set<TtlCache<never>>();
 
 /** Forget a workspace's entries in every ttlCache (keys start with its id). */
@@ -40,6 +42,43 @@ export function forgetOrgInTtlCaches(orgId: string): void {
 }
 
 export function ttlCache<V>(ttlMs: number, now: () => number = Date.now): TtlCache<V> {
+  const shared = makeTtlCache<V>(ttlMs, now);
+  const isolated = new WeakMap<RequestScope, TtlCache<V>>();
+  // Clearing shared entries before a GET leaves a gap for background work to
+  // warm them or start a load charged to another scope. Cold probes own theirs.
+  const active = (): TtlCache<V> => {
+    const scope = currentRequestScope();
+    if (!scope?.coldTtlCaches) return shared;
+    let cache = isolated.get(scope);
+    if (!cache) {
+      cache = makeTtlCache<V>(ttlMs, now);
+      isolated.set(scope, cache);
+    }
+    return cache;
+  };
+  const cache: TtlCache<V> = {
+    get: (key, load) => active().get(key, load),
+    delete(key) {
+      shared.delete(key);
+      const scoped = active();
+      if (scoped !== shared) scoped.delete(key);
+    },
+    clear() {
+      shared.clear();
+      const scoped = active();
+      if (scoped !== shared) scoped.clear();
+    },
+    forgetPrefix(prefix) {
+      shared.forgetPrefix(prefix);
+      const scoped = active();
+      if (scoped !== shared) scoped.forgetPrefix(prefix);
+    },
+  };
+  all.add(cache as TtlCache<never>);
+  return cache;
+}
+
+function makeTtlCache<V>(ttlMs: number, now: () => number): TtlCache<V> {
   // single-flight: this IS the shared-miss cache; `loading` below shares every miss
   const done = new Map<string, { at: number; value: V }>();
   const loading = new Map<string, Promise<V>>();
@@ -83,6 +122,5 @@ export function ttlCache<V>(ttlMs: number, now: () => number = Date.now): TtlCac
       for (const k of [...done.keys(), ...loading.keys()]) if (k.startsWith(prefix)) cache.delete(k);
     },
   };
-  all.add(cache as TtlCache<never>);
   return cache;
 }

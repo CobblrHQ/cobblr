@@ -14,10 +14,9 @@
 // busy) says so on the line before it: // COLOUR-NOT-STATE: <why>.
 //
 // THE BOUNDARY. Only filled-with-white-text styles: a hover tint or a
-// border-only highlight is not a state on its own. The 48 buttons (in 30 files) on main
-// that already did this when the rule arrived are counted per file in
-// scripts/selected-not-by-colour-alone.baseline.json: a file's count may only
-// go down (lower it when you fix one), and a new file is never added.
+// border-only highlight is not a state on its own. The 48 buttons (in 30
+// files) on main when the rule arrived were fixed or marked in #6086, and
+// their baseline deleted: every button now holds to it.
 //
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -90,30 +89,14 @@ export function check(file: string, src: string): Violation[] {
   return out;
 }
 
-const BASELINE_FILE = "scripts/selected-not-by-colour-alone.baseline.json";
-
 if (process.argv[1] && /lint-selected-not-by-colour-alone/.test(process.argv[1])) {
-  const baseline = JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as Record<string, number>;
-  const byFile = new Map<string, Violation[]>();
-  for (const root of ROOTS) for (const file of walk(root)) {
-    const v = check(file, readFileSync(file, "utf8"));
-    if (v.length) byFile.set(file, v);
-  }
   const bad: Violation[] = [];
-  const lower: string[] = [];
-  for (const [file, v] of byFile) if (v.length > (baseline[file] ?? 0)) bad.push(...v);
-  for (const [file, n] of Object.entries(baseline)) {
-    const now = byFile.get(file)?.length ?? 0;
-    if (now < n) lower.push(`${file}: ${n} -> ${now}`);
-  }
-  if (bad.length || lower.length) {
-    if (bad.length) {
-      console.error(`lint:selected-not-by-colour-alone - ${bad.length} button(s) show their state by colour alone:`);
-      for (const v of bad) console.error(`  ${v.file}:${v.line}  ${v.what}`);
-      console.error("Use SegmentedChoice from @cobblr/platform-web for a pick of a few, or add aria-pressed / aria-checked to the button; a fill that is not a state says // COLOUR-NOT-STATE: <why> on the line before.");
-    }
-    if (lower.length) console.error(`lint:selected-not-by-colour-alone - fewer than ${BASELINE_FILE} records, lower it (it only goes down):\n  ${lower.join("\n  ")}`);
+  for (const root of ROOTS) for (const file of walk(root)) bad.push(...check(file, readFileSync(file, "utf8")));
+  if (bad.length) {
+    console.error(`lint:selected-not-by-colour-alone - ${bad.length} button(s) show their state by colour alone:`);
+    for (const v of bad) console.error(`  ${v.file}:${v.line}  ${v.what}`);
+    console.error("Use SegmentedChoice from @cobblr/platform-web for a pick of a few, or add aria-pressed / aria-checked to the button; a fill that is not a state says // COLOUR-NOT-STATE: <why> on the line before.");
     process.exit(1);
   }
-  console.log(`lint:selected-not-by-colour-alone OK (${[...byFile.values()].reduce((a, v) => a + v.length, 0)} recorded, none new)`);
+  console.log("lint:selected-not-by-colour-alone OK (no button tells its state by colour alone)");
 }

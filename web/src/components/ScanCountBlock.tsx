@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Plus } from "lucide-react";
-import { offerUndo, runAction, TypeableNumber, useFaces, useToast } from "@cobblr/platform-web";
+import { offerUndo, readTypedNumber, runAction, TypeableNumber, useFaces, useToast, rovingRadio } from "@cobblr/platform-web";
 import {
   SCAN_COUNT_REASON_LABEL,
   SHOPPING_LIST_DOOR,
@@ -47,10 +47,10 @@ function shown(mode: ScanCountMode, v: number): string {
 
 /** What the person typed, read the way they meant it: "+200", "-1", "−1",
  *  "10". Null while it is not a number yet (an empty field, a lone sign). */
-export function readTyped(text: string): number | null {
-  const t = text.trim().replace(/^−/, "-");
-  if (!/^[+-]?\d+$/.test(t)) return null;
-  return Number(t);
+export function readTyped(text: string, decimal = false): number | null {
+  // The shared field's own reader: a measured amount keeps its decimal
+  // point, and nothing is stripped to make a number fit (#6142).
+  return readTypedNumber(text, { allowNegative: true, decimal });
 }
 
 /** Saving a count: the attach, the confirmation in words, and the shopping
@@ -133,8 +133,8 @@ export function useScanCountSave(itemId: string, match: TrackedMatch, onDone?: (
  *  action two ways), "Take 1", "Set total to 10". */
 /** The save button's words. `amount` says a measured amount in its unit
  *  ("8.4 m"); a count keeps its plain number and "+1 more" (useMatchAmount). */
-export function scanCountVerb(mode: ScanCountMode, value: number, have: number, amount: (n: number) => string = String, measured = false): string {
-  if (mode === "set") return value === have ? `Already ${amount(have)}` : `Set total to ${amount(value)}`;
+export function scanCountVerb(mode: ScanCountMode, value: number, have: number, amount: (n: number) => string = String, measured = false, confirms = false): string {
+  if (mode === "set") return value === have ? (confirms ? `The count is right: ${amount(have)}` : `Already ${amount(have)}`) : `Set total to ${amount(value)}`;
   if (value > 0) return measured ? `+${amount(value)}` : `+${value} more`;
   if (value < 0) return `Take ${amount(-value)}`;
   return "Nothing to change";
@@ -148,7 +148,12 @@ export function ScanCountBlock({
   sessionMode,
   scanned = 1,
   onDone,
+  confirmsCount = false,
 }: {
+  /** A count check: an unchanged total is an answer too, "the count is
+   *  right", and saving it settles the check (#6250). Everywhere else an
+   *  unchanged total has nothing to save. */
+  confirmsCount?: boolean;
   itemId: string;
   /** How many the scan's line holds (a 10-pack is 10): what a re-buy adds. */
   scanned?: number;
@@ -165,6 +170,9 @@ export function ScanCountBlock({
   const stock = worn.on.has("stock");
   const have = Math.max(0, match.qty ?? 0);
   const { amount, measured } = useMatchAmount(match.unit);
+  // A measured record is counted in fractions of its unit: half a metre is
+  // typed as 0.5, never read as 5 (#6142).
+  const decimal = measured;
   const [mode, setMode] = useState<ScanCountMode>(initialMode);
   const [value, setValue] = useState(() => scanCountStart(initialMode, have, sessionMode, scanned));
   const [text, setText] = useState(() => shown(initialMode, scanCountStart(initialMode, have, sessionMode, scanned)));
@@ -198,7 +206,7 @@ export function ScanCountBlock({
     setText(shown(m, start));
     setReason(null);
   };
-  const typed = readTyped(text);
+  const typed = readTyped(text, decimal);
   const body = typed == null || (mode === "change" && typed === 0) ? null : scanCountBody(mode, value, reason);
   const result = scanCountResult(mode, have, value);
   const reasons = mode === "change" && value > 0 ? scanCountReasonsFor(value, { stock, perishable }) : [];
@@ -211,6 +219,7 @@ export function ScanCountBlock({
   return (
     <div
       data-testid="scan-count"
+      data-count-for={itemId}
       data-mode={mode}
       onClick={(e) => e.stopPropagation()}
       className={`rounded-lg border px-2.5 py-2 space-y-2 ${tone.box}`}
@@ -219,10 +228,11 @@ export function ScanCountBlock({
           caption do not fit one line, and an inline switch ran off the card. */}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <div role="radiogroup" aria-label="How this scan changes the count" className="inline-flex max-w-full flex-wrap rounded-full border border-line dark:border-slate-600 p-0.5 text-[11px] font-medium">
-        {(["change", "set"] as const).map((m) => (
+        {(["change", "set"] as const).map((m, i) => (
           <button
             key={m}
             type="button"
+            {...rovingRadio(i, (["change", "set"] as const).indexOf(mode))}
             role="radio"
             aria-checked={mode === m}
             onClick={() => switchTo(m)}
@@ -246,10 +256,11 @@ export function ScanCountBlock({
           // negative, and a change of zero is refused (the field goes back).
           allowNegative={mode === "change"}
           signedText={mode === "change"}
+          decimal={decimal}
           text={text}
           onTextChange={(t) => {
             setText(t);
-            const n = readTyped(t);
+            const n = readTyped(t, decimal);
             if (n == null || (mode === "change" && n === 0)) return;
             const next = Math.max(floor, n);
             setValue(next);
@@ -327,12 +338,12 @@ export function ScanCountBlock({
       <button
         type="button"
         data-testid="scan-count-save"
-        disabled={!body || save.isPending || (mode === "set" && value === have)}
+        disabled={!body || save.isPending || (mode === "set" && value === have && !confirmsCount)}
         // A take is offered back with Undo, whichever way it was set up.
         onClick={() => save.mutate({ mode, value, reason, undo: mode === "change" && value < 0 })}
         className={`inline-flex min-h-10 items-center justify-center rounded-full px-3 py-1 text-sm font-medium disabled:opacity-50 ${tone.save}`}
       >
-        {save.isPending ? "Saving…" : scanCountVerb(mode, value, have, amount, measured)}
+        {save.isPending ? "Saving…" : scanCountVerb(mode, value, have, amount, measured, confirmsCount)}
       </button>
     </div>
   );

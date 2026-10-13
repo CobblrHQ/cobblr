@@ -51,7 +51,7 @@ export function tryErrorHtml(kind: TryErrorKind): string {
 
 /** Answer a failure on a route the BROWSER navigates to: a page for a person,
  *  the JSON for anything else. A form or redirect that lands on raw JSON is a
- *  bug (api/tests/no-form-navigates-to-json.test.ts). */
+ *  bug (scripts/lib/no-form-navigates-to-json.test.ts). */
 export function tryFailure(req: Pick<Request, "accepts">, res: Response, status: number, code: TryErrorKind, message: string): void {
   if (req.accepts(["json", "html"]) === "html") {
     res.status(status).type("html").send(tryErrorHtml(code));

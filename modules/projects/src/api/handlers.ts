@@ -14,6 +14,7 @@ import type { ProjectsDB } from "../db.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 import { announceUnblocked, releaseDependentsOf } from "./deps.js";
+import { registerPatternNeedsShare } from "./share-children.js";
 import { makeNextOccurrence } from "./repeat.js";
 
 let registered = false;
@@ -24,6 +25,7 @@ export function registerProjectsHandlers(): void {
   registered = true;
   registerRowHistoryWriter("projects:project", "projects_projects");
   registerRowHistoryWriter("projects:task", "projects_tasks");
+  registerPatternNeedsShare();
 
   // Entity-kind resolvers ─────────────────────────────────────────
   platform().entities.registerResolver(
@@ -327,6 +329,7 @@ function toResolvedTask(row: {
   priority: string | null;
   energy: string | null;
   due_date: Date | null;
+  metadata: unknown;
 }): ResolvedEntity {
   return {
     kind: "projects:task",
@@ -340,6 +343,7 @@ function toResolvedTask(row: {
       priority: row.priority,
       energy: row.energy,
       due_date: row.due_date,
+      metadata: row.metadata ?? {},
     },
   };
 }

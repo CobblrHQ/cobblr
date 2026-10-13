@@ -11,6 +11,7 @@
 // back from the workspace rather than assumed from the call that was made: a
 // done line is one the workspace now shows. A step that cannot be taken is
 // skipped and named, never silent.
+import { bundleCarryNote } from "./carry-note.js";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { signSession } from "../auth/jwt.js";
@@ -254,12 +255,7 @@ async function replay(
     if (current) {
       const now = String((current as { version?: unknown }).version ?? "");
       bundles.push(current);
-      bundleNotes.set(
-        id,
-        now && trialVersion && now !== trialVersion
-          ? `the current version, ${now}; your trial had ${trialVersion}`
-          : `the current version${now ? `, ${now}` : ""}`,
-      );
+      bundleNotes.set(id, bundleCarryNote(now, trialVersion));
     } else {
       bundles.push(carried);
       bundleNotes.set(id, "as you built it in your trial; it is not in the catalog here");

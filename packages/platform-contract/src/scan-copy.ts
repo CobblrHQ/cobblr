@@ -22,6 +22,15 @@ export const STORE_CODE_NOTE = "A store's own code, nothing to look up. Name it 
 /** A shop's own code named from the item itself (#6100): from the photo and
  *  its label, or from this workspace's own filing of the same code, never
  *  from a global catalog, which answers with some other shop's product. */
+/** A name read off a label that a stricter read no longer stands behind
+ *  (#6100: "Uni" off the owner's cumin). */
+export const LABEL_CLEARED_NOTE = "No name on its photos could be read. Name it to file it.";
+/** A row named from the biggest words on its photo's label (#6100). */
+export const LABEL_NAME_NOTE = "Named from the biggest words on its label.";
+/** A photo read that described the picture instead of naming it (#6100). */
+export const PROSE_NAME_NOTE = "The photo's read described it, not named it. Name it to file it.";
+/** A barcode catalog that named only the brand, not the product (#6146). */
+export const BRAND_ONLY_NOTE = "Only its brand is known, not which product. Check the name.";
 export const STORE_CODE_PHOTO_NOTE = "A shop's own barcode, so it was named from your photo, not looked up.";
 export const STORE_CODE_FILED_NOTE = "A shop's own barcode, named as you filed it here before.";
 
@@ -100,6 +109,26 @@ export const STORE_CODE_ROUTING = "No name yet. Files as a generic item.";
  *  the note (#3057): "Looks fine" retires the doubt, and a warning baked into
  *  the note outlived the tap that was meant to dismiss it. */
 export const SHORT_BARCODE_DOUBT = "Short barcode. Double-check this is the right product.";
+
+/** The doubt, worded by its suspect (#6100): a barcode whose digits check out
+ *  is right, so what a catalog said about it is what is in doubt. */
+export const STORE_CODE_NAME_DOUBT = "A shop's own barcode: names found online may be other products.";
+export const SHORT_BARCODE_NAME_DOUBT = "A short barcode, so the name found for it may be another product's.";
+export const BARCODE_MISREAD_DOUBT = "This barcode may be misread: check it against the label.";
+/** The question a name doubt asks, and the source of the photo's answer. */
+export const NAME_DOUBT_PROMPT = "Is this the right name?";
+export const PHOTO_NAME_SOURCE = "read off your photo";
+
+/** An identification's confidence as a person reads it: never a bare 0.30
+ *  on the card (#6100). Null when there is none to say (no score, or 0,
+ *  which is "nothing identified" and is said elsewhere). */
+export function confidenceInWords(score: string | number | null | undefined): string | null {
+  const n = typeof score === "number" ? score : Number(score);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 0.8) return "high confidence";
+  if (n >= 0.5) return "medium confidence";
+  return "low confidence";
+}
 
 /** The doubt the pipeline raised without saying which kind. */
 export const UNTRUSTED_DOUBT = "The identification is not trusted. Check it.";

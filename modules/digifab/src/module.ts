@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.37.1",
+  version: "0.37.2",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -152,21 +152,25 @@ export default defineModule({
     // Components live in web/src/panels/registry.tsx under these ids; the
     // machines pages render them generically, never naming digifab.
     panels: [
-      { id: "digifab:kiln", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Firing logs" },
-      {id: "digifab:instrument",surface:"entity-detail-panel" as const,target:"machines:machine",title:"Bench instrument"},
+      // Each machine panel names the collections it serves, and shows on any
+      // other machine only where that machine already has its data
+      // (panel-presence.ts): a kiln's firing logs on every 3D printer was the
+      // growth the owner named (#6337).
+      { id: "digifab:kiln", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Firing logs", collections: ["kilns"], presence: true },
+      { id: "digifab:instrument", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Bench instrument", presence: true },
       // "Just my 3D printers, live" — the scoped fleet floor as a page tab
       // on every machines collection (3D Printers, Laser Cutters, …).
       { id: "digifab:fleet-tab", surface: "module-page-tab" as const, target: "machines", title: "Fleet" },
       // The per-machine cockpit half: link THIS machine to its manager +
       // live status, inside the machine's own detail modal.
-      { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Job manager" },
+      { id: "digifab:cockpit", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Job manager", collections: ["3d-printers", "laser-cutters", "cnc-machines"], presence: true },
       // The spools loaded on this printer, one per slot: a print draws its
       // grams from them (loaded-spools.ts).
-      { id: "digifab:loaded", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Loaded filament" },
+      { id: "digifab:loaded", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Loaded filament", collections: ["3d-printers"], presence: true },
       // What a slicer needs to know about this printer (Services §14.3): its
       // neutral model id, nozzle, build volume, default quality and a preset
       // per filament type. One per machine, read by every slicer.
-      { id: "digifab:printing-profile", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Printing profile" },
+      { id: "digifab:printing-profile", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Printing profile", collections: ["3d-printers"], presence: true },
       // Print this on a model file's own page (Services §14.3): the door to a
       // Make, a printer it fits, a slice, and the one yes.
       { id: "digifab:print-this", surface: "entity-detail-panel" as const, target: "core-files:file", title: "Print this" },
@@ -521,11 +525,11 @@ export default defineModule({
         id: "digifab:laser-batch", label: "Prepare a laser batch", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: the page's own laser routes gate on this action's own id, owner or admin (laser.ts)
         runBy: "admin",
-        description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Nest outlines for laser, CNC or cutter previews with operation nest, without a machine or profiles. Requires an admin. Never starts a machine. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, rotation_step, budget_ms (3000 default, up to 30000), seed, dxf_units. Nest fields: the same without connection_id, device_id or mapping. Queue/discard: saved plan id.",
+        description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Nest outlines for laser, CNC or cutter previews with operation nest, without a machine or profiles. Requires an admin. Never starts a machine. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, rotation_step, budget_ms (3000 default, up to 30000), seed, dxf_units. Nest fields: the same without connection_id, device_id or mapping. Plan also accepts allow_flip. Adjust: saved plan id and fields.operation pick (alternative 0-2), lock (parts, locked), clear_locks, avoid (sheet_id, rectangle, permanent), clear_avoid, renest (budget_ms), move or check_move (part, sheet_id, x, y, angle, mirrored), limit (sheet_id, maximum), fill (sheet_id), export (sheet_id, format svg/dxf/lightburn), import (sheet_id, filename, content, extras review/keep/drop, assignments mapping reported shape names to missing part numbers). Layout coordinates are millimetres from the lower-left. Imports match names first, then geometry and position. New, changed or ambiguous shapes need an explicit assignment or extra-shape decision. Requested part counts stay intact. Queue/discard: saved plan id.",
         examples: ["prepare 200 parts from this drawing", "import the laser material profiles"],
         invokeHandler: "digifab.laser-batch", effect: "writes", undoable: false,
         argsSchema: {
-          operation: { label: "Operation", type: "text", required: true, choices: ["create_profile", "import_profiles", "update_profile", "plan", "nest", "queue", "discard"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
+          operation: { label: "Operation", type: "text", required: true, choices: ["create_profile", "import_profiles", "update_profile", "plan", "nest", "adjust", "queue", "discard"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
           id: { label: "Profile or plan id", type: "text" },
           fields: { label: "Profile or plan fields", type: "json" },
         },

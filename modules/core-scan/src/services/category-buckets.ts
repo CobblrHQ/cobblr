@@ -17,7 +17,7 @@
 // names to infer behaviour. When AI is available it groups and names far better,
 // so this only runs on the heuristic tier.
 //
-// Pure + unit-tested (api/tests/scan-category-buckets.test.ts).
+// Pure + unit-tested (modules/core-scan/src/services/scan-category-buckets.test.ts).
 
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
 

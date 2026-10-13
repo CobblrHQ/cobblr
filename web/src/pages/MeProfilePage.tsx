@@ -22,7 +22,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
 import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
-import { useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
+import { rovingRadio, useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, useNavLayout } from "../lib/nav-mode";
 import { LayoutPreview } from "../components/LayoutPreview";
 import { DownloadMyDataSection } from "../components/DownloadMyDataSection";
@@ -30,6 +30,7 @@ import { DeleteAccountSection } from "../components/DeleteAccountSection";
 import { DeletedWorkspaceBackups } from "../components/DeletedWorkspaceBackups";
 import { ChangeEmailSection } from "../components/ChangeEmailSection";
 import { LinkedSignInsSection } from "../components/LinkedSignInsSection";
+import { MetaParts } from "../components/MetaParts";
 import {
   DEFAULT_TITLE_FORMAT,
   TITLE_FORMATS,
@@ -141,14 +142,13 @@ function AccountCard({
         <p className="mt-2 text-sm text-content dark:text-mortar-200">{meta.blurb}</p>
       </Link>
       <div className="mt-2.5 text-xs text-faint dark:text-slate-500 leading-relaxed">
-        {items.map((l, i) => (
-          <span key={l.to}>
-            {i > 0 && " · "}
-            <Link to={l.to} title={l.description} className="hover:text-accent hover:underline">
+        <MetaParts
+          parts={items.map((l) => (
+            <Link key={l.to} to={l.to} title={l.description} className="hover:text-accent hover:underline">
               {l.label}
             </Link>
-          </span>
-        ))}
+          ))}
+        />
       </div>
     </div>
   );
@@ -359,12 +359,13 @@ function TitleFormatSection() {
         When a scan knows a title's original, its translation and how it is pronounced, this is how the name reads. Nothing is ever invented: a title missing a variant shows what it has.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" role="radiogroup" aria-label="Title format">
-        {TITLE_FORMATS.map((f) => {
+        {TITLE_FORMATS.map((f, i) => {
           const selected = current === f;
           return (
             <button
               key={f}
               type="button"
+              {...rovingRadio(i, TITLE_FORMATS.indexOf(current))}
               role="radio"
               aria-checked={selected}
               data-testid={`title-format-${f}`}
@@ -405,12 +406,13 @@ function LayoutSection() {
         <PanelLeft size={14} /> Layout (desktop)
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Desktop layout">
-        {NAV_LAYOUTS.map((o) => {
+        {NAV_LAYOUTS.map((o, i) => {
           const selected = navLayout === o.value;
           return (
             <button
               key={o.value}
               type="button"
+              {...rovingRadio(i, NAV_LAYOUTS.findIndex((x) => x.value === navLayout))}
               role="radio"
               aria-checked={selected}
               onClick={() => setNavLayout(o.value)}

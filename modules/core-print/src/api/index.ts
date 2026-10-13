@@ -24,6 +24,7 @@ import { configuredDriver, dispatchToPrinter } from "../dispatch.js";
 import type { PrintDoc } from "../drivers/types.js";
 import type { CorePrintPrintersTable } from "../db.js";
 import type { Selectable } from "kysely";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 const router = Router({ mergeParams: true });
 
@@ -95,7 +96,7 @@ const CreateBody = z.object({
   queue: z.string().max(200).default(""),
   credentials: Credentials.optional(),
   is_default: z.boolean().optional(),
-  notes: z.string().max(2000).optional(),
+  notes: optionalText(2000),
   settings: z.record(z.unknown()).optional(),
 });
 

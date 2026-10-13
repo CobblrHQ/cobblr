@@ -11,6 +11,7 @@ import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-sche
 import { restore as restoreDeletedRecord } from "./deleted-records.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { restoreHistoryVersion } from "./history-restore.js";
+import { createPerson, findPerson, updatePerson } from "./people.js";
 import { z } from "zod";
 import { setBulkField, restoreBulkField, type BulkFieldResult } from "./bulk-set-field.js";
 // Handlers for the kernel's own actions (platform-actions.ts) — wired at boot,
@@ -357,6 +358,25 @@ export function registerPlatformActionHandlers(): void {
     return parsed.success ? { action_id: "platform:edit-record-actions", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
   });
 
+  registerHandler("platform.add-person", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    if (!ctx.userId) return { ok: false, error: "A person adds someone to the list." };
+    const text = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : undefined);
+    const r = await createPerson(ctx.orgId, ctx.userId, { name: text("name") ?? "", email: text("email"), phone: text("phone") });
+    if (!r.ok) return { ok: false, error: r.message };
+    return { ok: true, summary: `Added ${r.person.name} to the People list.`, data: { id: r.person.id } };
+  });
+  registerHandler("platform.edit-person", async (ctx) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const text = (k: string) => (typeof args[k] === "string" ? (args[k] as string) : undefined);
+    const asked = text("person")?.trim();
+    if (!asked) return { ok: false, error: "Whose details? Name a person on the People list." };
+    const found = await findPerson(ctx.orgId, asked);
+    if (!found.ok) return { ok: false, error: found.message };
+    const r = await updatePerson(ctx.orgId, found.person.id, { name: text("name"), email: text("email"), phone: text("phone") });
+    if (!r.ok) return { ok: false, error: r.message };
+    return { ok: true, summary: `Changed ${r.person.name}'s details.`, data: { id: r.person.id } };
+  });
   registerHandler("platform.restore-deleted-record", async (ctx) => {
     const parsed = z.object({ kind: z.string().min(1), entity_id: z.string().min(1) }).safeParse(ctx.args);
     if (!parsed.success) return { ok: false, error: "Choose a deleted record." };

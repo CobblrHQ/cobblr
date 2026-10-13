@@ -47,6 +47,8 @@ export interface NumberStepperProps {
   suffix?: string;
   /** A change to stock you have, not a count: it may be negative, ± hop over
    *  zero (+1 → −1), and a typed zero is refused. */
+  /** A measured amount: the typed number may carry a decimal point (#6142). */
+  decimal?: boolean;
   signed?: boolean;
   /** Stop clicks reaching a card that opens on tap. */
   stopClicks?: boolean;
@@ -73,6 +75,7 @@ export function NumberStepper({
   prefix = "",
   suffix = "",
   signed = false,
+  decimal = false,
   stopClicks = false,
   decreaseLabel,
   increaseLabel,
@@ -144,6 +147,7 @@ export function NumberStepper({
           label={label}
           allowNegative={signed}
           signedText={signed}
+          decimal={decimal}
           testId={inputTestId}
           className={inputClassName}
           onCommit={(n) => {

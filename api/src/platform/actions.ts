@@ -11,7 +11,7 @@ import type {
   EntityActionRecord,
 } from "@cobblr/platform-contract";
 import { axisOfTrait, PLATFORM_OWNER, type ActionRequester, type AnyAxisName } from "@cobblr/platform-contract";
-import { requiredArgsRefusal } from "@cobblr/platform-contract/action-args";
+import { requiredArgsRefusal, typedArgs } from "@cobblr/platform-contract/action-args";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { meta } from "../db/meta.js";
@@ -51,6 +51,32 @@ export function hasHandler(handlerKey: string): boolean {
 export type { ActionPlan, ActionPlanner };
 
 const planners = new Map<string, ActionPlanner>();
+
+/** Whether a wire may be saved with this action and these arguments, said
+ *  before it is saved rather than at every firing (#6070: a wire that would
+ *  message someone outside the workspace while the workspace cannot). A
+ *  module registers it beside its handler, by action id. */
+export type WireCheck = (ctx: { orgId: string; args: Record<string, unknown> }) => Promise<string | null>;
+const wireChecks = new Map<string, WireCheck>();
+
+export function registerWireCheck(actionId: string, check: WireCheck): void {
+  wireChecks.set(actionId, check);
+}
+
+/** A wire's arguments as its action's schema types them, so what is saved is
+ *  what the action reads: a boolean saved as a boolean (#6130). */
+export async function typedWireArgs(actionId: string, args: Record<string, unknown> | null | undefined): Promise<Record<string, unknown> | null | undefined> {
+  if (!args) return args;
+  const row = await meta.selectFrom("entity_actions").select("args_schema").where("id", "=", actionId).executeTakeFirst();
+  return typedArgs(row?.args_schema as ArgsSchema, args);
+}
+
+/** Why a wire running `actionId` with `args` cannot be saved, or null. */
+export async function wireCheckRefusal(actionId: string, orgId: string, args: unknown): Promise<string | null> {
+  const check = wireChecks.get(actionId);
+  if (!check) return null;
+  return check({ orgId, args: args && typeof args === "object" ? (args as Record<string, unknown>) : {} });
+}
 
 export function registerPlanner(handlerKey: string, planner: ActionPlanner): void {
   planners.set(handlerKey, planner);
@@ -171,6 +197,8 @@ export async function planFor(
   }
   const gone = row ? await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity") : null;
   if (gone) return { error: gone };
+  // A boolean argument is a boolean whichever door sent it (#6130).
+  if (row) ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };
   const refused = row ? requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args) : null;
   if (refused) return { error: refused };
   const planner = row?.invoke_handler ? planners.get(row.invoke_handler) : undefined;
@@ -435,6 +463,9 @@ export async function invoke(
   }
   const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
   if (gone) return { ok: false, error: gone };
+  // A boolean argument is a boolean whichever door sent it: a wire's saved
+  // "true", a form's text box, the assistant (#6130).
+  ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };
   const refused = requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args);
   if (refused) return { ok: false, error: refused };
   try {

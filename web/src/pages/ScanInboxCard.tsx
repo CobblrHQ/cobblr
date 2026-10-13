@@ -23,11 +23,12 @@ import { SamePictureOffer, ScanTwinsContext, TWIN_SENTENCE } from "./scanTwins";
 import { useAwaitingWords, type AwaitingWords } from "./awaitingLookup";
 import { answeredByLine } from "@cobblr/platform-contract/provider-reason";
 import { useAutoGrowTextarea } from "../lib/useAutoGrowTextarea";
+import { MetaParts, joinMeta } from "../components/MetaParts";
 import { } from "../components/FileEverythingSheet";
 import { } from "../components/UploadKindSheet";
 import { } from "../components/SessionReadVerdict";
 
-import { Fragment, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StationNewFace } from "./StationNewFace";
@@ -53,6 +54,7 @@ import { fieldsStillOnTable, fieldsNoLongerOnTable, isQuietDefault, isImpliedByP
 import { canRerunLookup } from "../lib/scanRerun";
 import { headingSaysItAll, namelessReason, namelessRemedy } from "../lib/identifySentence";
 import { MATCH_FAILED_WORDS, RUN_NO_ANSWER_WORDS, namelessWords } from "@cobblr/platform-contract/scan-nameless";
+import { scanHistoryLines, latestRevision, type ScanHistoryEntryStored } from "@cobblr/platform-contract/scan-history-words";
 import { namelessCard } from "../lib/namelessCard";
 import { fallbackChip, identifyFailureWords, type IdentifyFailure } from "@cobblr/platform-contract/scan-fallback";
 import { TrackedMatchBanner, TrackedMatchLine } from "../components/TrackedMatchBanner";
@@ -88,7 +90,7 @@ import type { ScanTool } from "@cobblr/platform-contract/scan-tools";
 import { shouldOfferSplit } from "../lib/splitOffer";
 import { leadPhoto, photoOrder, photoUnverified, catalogRungs } from "../lib/scanPhoto";
 import { } from "../lib/scanCombine";
-import { entryKey, withRoutedInstances, pickDestinationKey } from "../lib/scanDestination";
+import { entryKey, withRoutedInstances, pickDestinationKey, withInstallOffers } from "../lib/scanDestination";
 import {
   type AiStatus,
   ApiError,
@@ -100,12 +102,12 @@ import {
   type TrackedMatch,
 } from "../lib/api";
 import { } from "../lib/scanPayload";
-import { needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanReceiptAlreadyIn, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { scanPurpose, scanReviewAction, needsScanReview, scanRebuy, scanLooksFineResolves, scanDoubt, scanDoubtSuspect, scanDoubtWords, scanProvenanceNote, scanReceiptReadFailed, scanReceiptAlreadyIn, scanSplitUncut, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { SCAN_UNDO_ACTIONS, scanCombinedCount } from "@cobblr/platform-contract/scan-recovery";
 import { ScanReceiptUnread } from "../components/ScanReceiptUnread";
 import { scanAssertedFields, fieldStandingsOf } from "@cobblr/platform-contract/scan-evidence";
 import { provenanceHeadline, provenanceLines } from "@cobblr/platform-contract/field-contributions";
-import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, actionInstallAdd, PHOTO_CHECK_NOTE, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
+import { KEYWORD_ROUTE_SENTENCE, ACTION_ADD, actionInstallAdd, PHOTO_CHECK_NOTE, photoCheckIsLive, confidenceInWords } from "@cobblr/platform-contract/scan-copy";
 import { matchParentType, readField } from "../lib/parent-type-match";
 import { isRerunInFlight } from "./scan-status";
 import { baseKind } from "./scanFileAll";
@@ -538,6 +540,7 @@ export function InboxCard({
   }
 
   function openForm(cand?: ScanCandidate) {
+    if (scanPurpose(item) !== "arrival") { expandOnly(); return; }
     // No explicit chip and no ?into= target → open on the row's DESTINATION
     // (the pill's table), fields pre-filled when the matchmaker read some. Not
     // the top candidate: when a person or a better table moved the row, the
@@ -856,6 +859,9 @@ export function InboxCard({
   // Intelligence DB and improves the next scan of this UPC everywhere.
   const doubt = scanDoubt(item);
   const doubtWords = scanDoubtWords(item);
+  // What the doubt suspects: the barcode only when its digits fail their own
+  // check; otherwise the name a catalog gave it (#6100).
+  const doubtSuspect = scanDoubtSuspect(item);
   // The same picture waiting here twice (scanTwins.tsx, #3852).
   const twinIds = useContext(ScanTwinsContext).get(item.id) ?? [];
   // The note as provenance: the doubt a lookup once baked into it is
@@ -1124,6 +1130,16 @@ export function InboxCard({
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
+  // "Put back" on a History entry and Undo on the toast that announced a
+  // rewrite: the row as that step found it, every field (#6100).
+  const putBack = useMutation({
+    mutationFn: (revision: string) => api.restoreScanRevision(activeSlug, item.id, revision),
+    onSuccess: (it) => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      toast.success(it.suggested_name ? `Back to “${it.suggested_name}”` : "Put back as it was");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   // "Read as a receipt": the identify step routes a photographed receipt on its
   // own verdict; when it misses, this sends the photo to the same receipt
   // parser from the card instead of a delete-and-rephotograph (#2882).
@@ -1190,9 +1206,13 @@ export function InboxCard({
         toast.success("Re-applying the latest processing to what the AI already found…");
         return;
       }
+      // The barcode branch runs INLINE, so `fresh` is the re-resolved row and
+      // its newest History entry holds what it replaced: the toast can undo it.
+      const undo = latestRevision(fresh);
+      const said = (msg: string) =>
+        undo ? toast.action(msg, { actionLabel: "Undo", onAction: () => putBack.mutate(undo) }) : toast.success(msg);
       if (vars?.barcode) {
-        // The barcode branch runs INLINE, so `fresh` is the re-resolved row.
-        toast.success(
+        said(
           fresh.suggested_name
             ? `Barcode corrected - now reads as ${fresh.suggested_name}`
             : "Barcode corrected - no match yet for the new code.",
@@ -1215,7 +1235,7 @@ export function InboxCard({
         toast.success("Re-checking - the name updates in a moment…");
         return;
       }
-      toast.success(
+      said(
         fresh.suggested_name
           ? `Lookup updated: ${fresh.suggested_name}`
           : "Re-ran, still no match. Fill it in manually.",
@@ -1675,6 +1695,12 @@ export function InboxCard({
   // cannot supply. There the corrective action is offered instead.
   const looksFineResolves = scanLooksFineResolves(item);
   const focusName = () => document.querySelector<HTMLInputElement>(`[data-name-it="${item.id}"]`)?.focus();
+  // The count block's total, where a count check is settled (#6250).
+  const focusCount = () => {
+    const field = document.querySelector<HTMLInputElement>(`[data-count-for="${item.id}"] input`);
+    field?.scrollIntoView({ block: "center" });
+    field?.focus();
+  };
   // Why, in the contract's words: the pill's Review carries it, and a flagged
   // row with no note of its own shows it where the note would be.
   // With the field's own label when it names one ("Acquired from says
@@ -1957,8 +1983,9 @@ export function InboxCard({
                 ) : (
                   "Source data"
                 )}
-                {!aiWorking && item.ai_confidence && (
-                  <span className="text-muted">· {item.ai_confidence}</span>
+                {/* Said in words, never a bare 0.30 (#6100). */}
+                {!aiWorking && confidenceInWords(item.ai_confidence) && (
+                  <span className="text-muted">· {confidenceInWords(item.ai_confidence)}</span>
                 )}
                 {!aiWorking && item.updated_at && (
                   <span className="text-faint">· updated {relativeTime(item.updated_at)}</span>
@@ -2019,9 +2046,18 @@ export function InboxCard({
                   snapshot exists — the next run replaces it, and undoing clears it. */}
               {(() => {
                 const snap = (
-                  item.suggested_metadata as { pre_rerun?: { name?: string | null; kind?: string } } | null
+                  item.suggested_metadata as { pre_rerun?: { name?: string | null; manufacturer?: string | null; ai_confidence?: string | null; kind?: string } } | null
                 )?.pre_rerun;
                 if (!snap || item.status !== "pending") return null;
+                // Offer the way back only when it would bring back something you
+                // can see (#6210): "Previously: Effective Java" beside Effective
+                // Java read as a Revert that does nothing.
+                const sameName = (snap.name ?? null) === (displayName(item) ?? null);
+                const prevWords = "ai_confidence" in snap ? confidenceInWords(snap.ai_confidence) : null;
+                const nowWords = confidenceInWords(item.ai_confidence);
+                const sameConfidence = !("ai_confidence" in snap) || prevWords === nowWords;
+                const sameBrand = !("manufacturer" in snap) || (snap.manufacturer ?? null) === (item.suggested_manufacturer ?? null);
+                if (sameName && sameConfidence && sameBrand) return null;
                 return (
                   // ONE LINE, no panel. A bordered, tinted box with its own
                   // padding spent roughly 70px on a sentence and a button, and
@@ -2038,6 +2074,7 @@ export function InboxCard({
                               repeated because the button beside it says so. */}
                           Previously:{" "}
                           <span className="font-medium text-content dark:text-mortar-100">{snap.name}</span>
+                          {sameName && !sameConfidence && prevWords ? <span> · {prevWords}</span> : null}
                         </>
                       ) : (
                         <>This {snap.kind === "replay" ? "replay" : "re-run"} replaced the previous answer</>
@@ -2055,63 +2092,47 @@ export function InboxCard({
                   </div>
                 );
               })()}
-              {/* Per-item history — what you did to this listing, newest first.
-                  ("You asked for more detail · 2 min ago".) */}
+              {/* Per-item history, newest first, in words: what each step did
+                  and what it changed the name from and to, with Put back on
+                  every step that recorded a before-state (#6100). */}
               {(() => {
-                const hist = (
-                  item.suggested_metadata as { history?: { action: string; at: string; note?: string }[] } | null
-                )?.history;
-                if (!Array.isArray(hist) || hist.length === 0) return null;
-                const label: Record<string, string> = {
-                  rerun: "Re-ran the lookup with AI",
-                  replay: "Replayed: the latest processing, same identification",
-                  "rerun-hint": "Re-ran with a hint",
-                  hint: "Read the hint",
-                  "confirm-guess": "Confirmed the first look",
-                  "reject-guess": "Said the first look was wrong",
-                  "crop-again": "Cut it again from the group photo",
-                  barcode: "Corrected the barcode",
-                  wrong: "Flagged wrong, re-checked everything",
-                  enrich: "Asked for more detail",
-                  confirm: "Locked into the barcode database",
-                  combine: "Combined similar items",
-                  "undo-rerun": "Undid the re-run",
-                  "store-code": "Named again from its photo: a shop's own barcode",
-                };
-                // "Re-ran the lookup with AI" is written when the run STARTS,
-                // so on its own it claims something the run may never have
-                // delivered - the monitor-label item read exactly that for a run
-                // the AI never answered (reported 2026-08-10). The row stamps
-                // whether a model answered the LATEST run; the newest entry IS
-                // that run, so the outcome is reported there and nowhere else.
-                // Only for actions that ASK the AI - a replay is no-AI by design.
-
+                const lines = scanHistoryLines(
+                  (item.suggested_metadata as { history?: ScanHistoryEntryStored[] } | null)?.history,
+                  { name: displayName(item), brand: item.suggested_manufacturer, confidence: item.ai_confidence },
+                );
+                if (lines.length === 0) return null;
+                const canPutBack = item.status === "pending";
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
                     <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">history</div>
                     {/* The LIST scrolls, the card does not grow. Nothing is
                         dropped: an unbounded history is what makes this rail
-                        tall, and the rail's height is the card's height.
-                        Newest first, so the useful end needs no scrolling. */}
-                    <ul className="space-y-0.5 max-h-20 overflow-y-auto pr-1">
-                      {[...hist].reverse().map((h, i) => {
-                        // The verdict rides on the ENTRY, so it stays with the
-                        // run it describes instead of hopping to whatever is
-                        // newest (reported 2026-08-10).
-                        const noAnswer = (h as { ai_answered?: boolean }).ai_answered === false;
-                        return (
+                        tall, and the rail's height is the card's height. */}
+                    <ul className="space-y-0.5 max-h-24 overflow-y-auto pr-1" data-testid="scan-history">
+                      {lines.map((h, i) => (
                         <li key={i} className="text-[11px] text-muted dark:text-slate-400 flex items-baseline gap-2">
                           <span className="min-w-0">
-                            {label[h.action] ?? h.action}
-                            {noAnswer && (
-                              <span className="text-amber-600 dark:text-amber-400"> - {RUN_NO_ANSWER_WORDS}</span>
-                            )}
-                            {h.note ? `: “${h.note}”` : ""}
+                            {h.words}
+                            {h.times > 1 && <span className="text-faint"> ({h.times} times)</span>}
+                            {/* The verdict rides on the ENTRY, so it stays with the
+                                run it describes (reported 2026-08-10). */}
+                            {h.noAnswer && <span className="text-amber-600 dark:text-amber-400"> - {RUN_NO_ANSWER_WORDS}</span>}
                           </span>
-                          <span className="text-faint ml-auto whitespace-nowrap">{relativeTime(h.at)}</span>
+                          <span className="ml-auto flex shrink-0 items-baseline gap-2">
+                            {canPutBack && h.revision && h.changed !== false && (
+                              <button
+                                type="button"
+                                onClick={() => putBack.mutate(h.revision!)}
+                                disabled={putBack.isPending}
+                                className="text-[11px] font-medium text-accent hover:underline disabled:opacity-50"
+                              >
+                                Put back
+                              </button>
+                            )}
+                            <span className="text-faint whitespace-nowrap">{relativeTime(h.at)}</span>
+                          </span>
                         </li>
-                        );
-                      })}
+                      ))}
                     </ul>
                   </div>
                 );
@@ -2218,6 +2239,7 @@ export function InboxCard({
             rowLeading={handheld ? null : (
               <>
               {editingBarcode ? (
+                // mono: the barcode as it is typed, digit by digit
                 <span className="inline-flex items-center gap-1 font-mono" onClick={(e) => e.stopPropagation()}>
                   ▌▌
                   <input
@@ -2230,6 +2252,7 @@ export function InboxCard({
                       else if (e.key === "Escape") setEditingBarcode(false);
                     }}
                     placeholder="digits from the label"
+                    // mono: the barcode as it is typed
                     className="w-36 rounded border border-accent bg-surface dark:bg-slate-900 px-1.5 py-0.5 font-mono text-content outline-none"
                   />
                   <button
@@ -2251,6 +2274,7 @@ export function InboxCard({
                   </button>
                 </span>
               ) : item.barcode_text ? (
+                // mono: a barcode's digits
                 <span className="inline-flex items-center gap-1 font-mono text-content dark:text-mortar-200 bg-subtle dark:bg-slate-800 rounded px-2 py-0.5">
                   ▌▌{item.barcode_text}
                   {item.status === "pending" && (
@@ -2278,7 +2302,7 @@ export function InboxCard({
                     setEditingBarcode(true);
                   }}
                   title="Type the barcode off the label - it identifies the product exactly"
-                  className="inline-flex items-center gap-1 font-mono text-muted dark:text-slate-400 border border-dashed border-line dark:border-slate-700 rounded px-2 py-0.5 hover:border-accent hover:text-content transition"
+                  className="inline-flex items-center gap-1 text-muted dark:text-slate-400 border border-dashed border-line dark:border-slate-700 rounded px-2 py-0.5 hover:border-accent hover:text-content transition"
                 >
                   ▌▌ Add barcode
                 </button>
@@ -2372,7 +2396,7 @@ export function InboxCard({
   );
   const confirmForm = (
     <>
-          {!planContext && formOpen && !receiptUnread && <ConfirmForm
+          {!planContext && formOpen && !receiptUnread && scanPurpose(item) === "arrival" && <ConfirmForm
             // The row and the chosen table ONLY. This key once carried the name,
             // the maker, the AI timestamp and the top route's fields, so every
             // refetch that moved one of them remounted the whole form and every
@@ -2433,7 +2457,7 @@ export function InboxCard({
     if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) segs.push("✂ from split");
     return segs;
   })();
-  const phoneSubtitle = subtitleParts.join(" · ");
+  const phoneSubtitle = joinMeta(subtitleParts);
   // A piece still on the group photo says so on every surface: the desk row,
   // the item screen and the phone row (scanSplitUncut, #3614).
   const splitUncut = scanSplitUncut(item);
@@ -2594,10 +2618,21 @@ export function InboxCard({
                   choices: (q?.choices ?? []).map((c) => ({ value: c.value, source: c.source, onPick: () => q && (q.field || q.names) && answerQuestion.mutate({ field: q.field, value: c.value, ...(q.names ? { names: true as const } : {}), ...(c.quantity ? { quantity: c.quantity } : {}) }) })),
                   actions: [
                     ...(typed && !formOpen ? [{ label: "Type it", hint: "Set the value on the form below", onClick: () => openForm(dest ?? undefined) }] : []),
-                    looksFineResolves
-                      ? { label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() }
-                      : { label: "Name it", hint: "Nothing files without a name", onClick: focusName },
+                    // The one action that settles why it is held (scanReviewAction):
+                    // a count is settled by its count, never by naming a record
+                    // that has a name (#6250).
+                    ...((): Array<{ label: string; hint: string; busy?: boolean; onClick: () => void }> => {
+                      switch (scanReviewAction(item)) {
+                        case "looks-fine": return [{ label: "Looks fine", hint: "A person looked; stop flagging it", busy: markReviewed.isPending, onClick: () => markReviewed.mutate() }];
+                        case "name": return [{ label: "Name it", hint: "Nothing files without a name", onClick: focusName }];
+                        case "set-total": return [{ label: "Set the total", hint: "The count below is what you have now", onClick: focusCount }];
+                        default: return [];
+                      }
+                    })(),
+                    // The name is the suspect (#6100): a way to type the right one.
+                    ...(doubtSuspect === "name" ? [{ label: "Edit name", hint: "Type the right name", onClick: focusName }] : []),
                   ],
+                  barcodeSuspect: doubtSuspect === "barcode",
                 };
               })()
             : null
@@ -2609,6 +2644,8 @@ export function InboxCard({
           catalog: catalogImg,
           catalogChecking: unverified,
           catalogCaption: catalogCaption(resolved.pictures),
+          // The strip's thumbnail and this pair lead with the same picture.
+          lead: thumbRole === "yours" ? "yours" : "catalog",
           onOpenYours: () => openZoom("yours"),
           onOpenCatalog: () => openZoom("catalog"),
           onCapture: () => setCaptureSheet("add"),
@@ -2654,6 +2691,9 @@ export function InboxCard({
           formOpen,
           // A record the workspace counts: the banner's count control files
           // this scan, so the footer offers the other answer, a new record.
+          // A count, move or sort is settled here or discarded, never filed
+          // as a new thing (#6250).
+          canAdd: scanPurpose(item) === "arrival",
           addLabel: restockMatch ? "File as a different one" : rowState.action.kind === "merge" || blockedAsk ? rowState.action.label : phoneAddLabel,
           onOpenForm: restockMatch ? () => openForm(dest ?? undefined) : rowState.action.kind === "merge" ? runCommit : blockedAsk ? () => askToFile.mutate() : () => openForm(dest ?? undefined),
           // The screen's footer says what the row says (#3076): +1 more runs
@@ -2673,7 +2713,7 @@ export function InboxCard({
               : blockedAsk
                 ? { label: rowState.action.label, title: rowState.action.title, busy: askToFile.isPending, onClick: () => askToFile.mutate() }
                 : null,
-          filedOnScreen: !!restockMatch && !receiptBlock,
+          filedOnScreen: scanPurpose(item) !== "arrival" || (!!restockMatch && !receiptBlock),
           onDiscard: () => discard.mutate(),
           discardPending: discard.isPending,
           setActionSlot,
@@ -2732,7 +2772,7 @@ export function InboxCard({
             pictureNote={unsavedNote}
             onThumbBroken={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
             onViewImage={thumb ? () => openZoom(catalogImg ? "catalog" : "yours") : null}
-            subtitle={[item.barcode_text, phoneSubtitle].filter(Boolean).join(" · ")}
+            subtitle={joinMeta([item.barcode_text, ...subtitleParts])}
             question={
               cardQuestions[0] && (item.suggested_name || cardQuestions[0].names)
                 ? {
@@ -2777,10 +2817,10 @@ export function InboxCard({
                       : null
             }
             quantity={
-              receiptUnread
+              receiptUnread || scanPurpose(item) !== "arrival"
                 ? null
                 : restockMatch
-                  ? { value: rowChange, busy: rowCount.isPending, onChange: (n) => setRowChange(Math.max(-rowHave, n)), signed: { floor: -rowHave } }
+                  ? { value: rowChange, busy: rowCount.isPending, onChange: (n) => setRowChange(Math.max(-rowHave, n)), signed: { floor: -rowHave }, decimal: rowAmount.measured }
                   : { value: isOwnCopy(item.suggested_metadata) ? (item.quantity ?? 1) : Math.max(1, item.quantity ?? 1), busy: qtyPatch.isPending, onChange: (n) => qtyPatch.mutate(Math.max(1, n)) }
             }
             chips={chips}
@@ -2799,7 +2839,8 @@ export function InboxCard({
                               ? "ask"
                               : "review",
                     label: restockMatch ? scanCountVerb("change", rowChange, rowHave, rowAmount.amount, rowAmount.measured) : rowState.action.label,
-                    destination: restockMatch ? `${restockMatch.title}: ${rowAmount.amount(rowHave)} → ${rowAmount.amount(scanCountResult("change", rowHave, rowChange))}` : updating ? `${updating.title} in ${dest.label}` : dest.label,
+                    destination: restockMatch ? restockMatch.title : updating ? `${updating.title} in ${dest.label}` : dest.label,
+                    destinationNote: restockMatch ? `${rowAmount.amount(rowHave)} → ${rowAmount.amount(scanCountResult("change", rowHave, rowChange))}` : undefined,
                     tentative: tentativeRoute && !updating,
                     reason: rowState.sentence ?? rowState.action.title,
                     busy: commitBusy || askToFile.isPending,
@@ -2817,7 +2858,7 @@ export function InboxCard({
             multi={multiItem ? { distinct: multiItem.distinct ?? multiItem.individuals.length, onSplit: () => split.mutate(), onKeep: () => keepGrouped.mutate(), busy: split.isPending || keepGrouped.isPending } : null}
             tracked={
               alreadyTracked && trackedMatch?.title
-                ? rowState.merge
+                ? rowState.merge || scanPurpose(item) !== "arrival"
                   ? `You already have: ${trackedMatch.title}`
                   : `Possible match: ${trackedMatch.title}`
                 : null
@@ -3080,7 +3121,7 @@ export function InboxCard({
               />
             )}
           </div>
-          <div className="text-[11px] font-mono text-faint dark:text-slate-500 min-w-0 whitespace-normal break-words sm:truncate">
+          <div data-testid="scan-card-meta" className="text-[11px] text-faint dark:text-slate-500 min-w-0 whitespace-normal break-words sm:truncate">
             {(() => {
               // Build the subtitle from the fields that are PRESENT and join them
               // with " · ". An absent field (a photo-identified book has no
@@ -3101,7 +3142,8 @@ export function InboxCard({
                 const codeNote = codeSourceNote(codeSourceOf(item), { emailed: !!sessionSource?.emailed });
                 segs.push(
                   <>
-                    {item.barcode_text}
+                    {/* mono: a barcode's digits */}
+                    <span className="font-mono">{item.barcode_text}</span>
                     {codeNote && <span className="text-amber-600 dark:text-amber-500"> ({codeNote})</span>}
                   </>,
                 );
@@ -3226,12 +3268,9 @@ export function InboxCard({
                     </a>,
                   );
               }
-              return segs.map((s, i) => (
-                <Fragment key={i}>
-                  {i > 0 && " · "}
-                  {s}
-                </Fragment>
-              ));
+              // Joined once, each fact said once: a book's scanned ISBN and its
+              // hit's model number (the same ISBN) read twice (#6234).
+              return <MetaParts parts={segs} />;
             })()}
           </div>
           </div>
@@ -4260,7 +4299,7 @@ export function InboxCard({
                   full-width row under the grid: the photo column always runs taller,
                   so that row was buying nothing but height (reported 2026-08-08).
                   Below `lg` the grid is one column, so this still lands last. */}
-              {!planContext && !formOpen && (
+              {!planContext && !formOpen && scanPurpose(item) === "arrival" && (
                 <div className="flex justify-end">
                   <div className="flex flex-col items-end gap-1">
                   {/* This is the ONE door into the fields: it opens the form on
@@ -5074,10 +5113,14 @@ function ConfirmForm({
   // bundle's table details.
   const destBundle = item.resolved_destination?.bundle_external_id ?? null;
   const topBundleCand = canInstallBundle && destBundle ? (candidates.find((c) => c.bundle_external_id === destBundle) ?? null) : null;
+  // Any app the matchmaker offered stays a choice here, not only one that is
+  // the destination: a book whose Bookshelf is not installed defaults to the
+  // Inventory the workspace has, and Bookshelf had vanished from Add to (#6237).
+  const offersApp = canInstallBundle && candidates.some((c) => !!c.bundle_external_id);
   const bundleMenuQ = useQuery({
     queryKey: ["scan-bundle-menu", activeSlug],
     queryFn: () => api.scanBundleMenu(activeSlug),
-    enabled: !!activeSlug && !!topBundleCand,
+    enabled: !!activeSlug && offersApp,
     staleTime: 5 * 60_000,
   });
   const willInstallEntry: (ScanMenuEntry & { bundle_external_id?: string }) | null =
@@ -5090,11 +5133,9 @@ function ConfirmForm({
         ) ?? null
       : null;
   const willInstallKey = willInstallEntry ? entryKey(willInstallEntry.module, willInstallEntry.instance) : null;
-  // The will-install destination leads the picker; dedupe against the base menu.
-  const entries =
-    willInstallEntry && !baseEntries.some((m) => entryKey(m.module, m.instance) === willInstallKey)
-      ? [willInstallEntry, ...baseEntries]
-      : baseEntries;
+  // The will-install destination leads the picker; any other offered app
+  // follows the tables that are on (withInstallOffers, unit-tested).
+  const entries = withInstallOffers(baseEntries, candidates, bundleMenuQ.data?.items ?? [], { canInstall: canInstallBundle, destinationBundle: willInstallEntry ? destBundle : null });
   // Initial pick: the will-install bundle when it's the top match, else the
   // routed entry, else a GENERIC default table (never an arbitrary named
   // instance). pickDestinationKey is pure + unit-tested in scanDestination.ts.
@@ -5557,6 +5598,7 @@ function ConfirmForm({
     // action corner looks identical whichever state the card is in. In a
     // footer the pair is one row, Cancel first, the primary at the thumb.
     <div className={row ? "flex flex-row-reverse items-center gap-2" : "flex flex-col items-end gap-1"}>
+            {/* COLOUR-NOT-STATE: the primary action of the confirm form, not a pick. */}
             <button
               type="submit"
         form={formId}
@@ -5654,6 +5696,17 @@ function ConfirmForm({
         })}
       </select>
     </label>
+    {(() => {
+      // The app the matchmaker named is not the default here because a table
+      // that is on fits (#6099); said, so a card that named it does not
+      // silently become another table (#6237).
+      const offered = entries.find((m) => (m as { bundle_external_id?: string }).bundle_external_id && entryKey(m.module, m.instance) !== selKey);
+      return offered ? (
+        <p data-testid="offer-note" className="basis-full text-xs text-muted">
+          {offered.label} would keep this, but it is not set up yet. Pick it above to set it up as you add.
+        </p>
+      ) : null;
+    })()}
     </div>
   );
   // The list rendering: every field the table has, as a labelled input. The
@@ -6058,6 +6111,7 @@ function ScanFieldInput({
             value={s}
             onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
             placeholder="#6F8FAF"
+            // mono: a colour's hex code
             className="flex-1 min-w-0 px-2 py-1.5 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-800"
           />
         </div>

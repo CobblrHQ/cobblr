@@ -238,7 +238,7 @@ surfacesRouter.get(
 );
 
 const SurfaceUpdate = z.object({
-  name: z.string().min(1).max(160).optional(),
+  name: z.string().min(1).max(160).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   config: z.record(z.unknown()).optional(),
   // Pause/resume without revoking the token — the URL stays valid but
   // /public/:token 404s while disabled, then resumes when re-enabled.

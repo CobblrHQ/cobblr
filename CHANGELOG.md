@@ -2,6 +2,46 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-13
+
+### Features
+- A thing you lend out keeps its place and its state. Lend… on its page asks who has it, why (repair, borrowed, or your own words), since when and when it is due back, and the page then reads "With Sam Lee · repair · since Oct 13, 2026 (due Oct 27, 2026)". While it is out it cannot be moved or labelled (each says "Lent to Sam Lee."), a lent printer gets no print-farm jobs, and its service reminders wait. A due day comes up in Needs you and on the calendar. It's back ends the loan with nothing to put back by hand, and back from a repair it asks "Was it repaired?" and logs the repair. History keeps both, and you can tell the assistant ("I dropped the Dremel off with Sam to fix it").
+- Choose a nesting layout, pin parts, avoid defects, move copies between sheets, and bring edited layouts back without losing job counts.
+- Recount with the phone camera, read a label off a photo for things with no barcode, and print Cobblr labels so the next recount is a scan
+- Finish a recount with a preview of what changes, choose what happens to things not seen, and undo the whole recount in one press
+- Recount a whole collection across every place: scan barcodes, type a label for things with none, or tap them in the list, and pick it up another day
+- Set a scan station to a recount so several tablets and phones count one collection at once, never counting a thing twice
+- A recount adds a new spool under its filament type, and asks which type when two read alike
+- A shared pattern brings the needs you typed for it, and a change to them reaches the friend's copy.
+
+### Improvements
+- The assistant can turn a list's sections on and off ("track lending on my tools"), the same way + Lending does on a record, and Undo puts them back. Asking what can be done with one kind of record now answers with that kind's own actions, a sentence each, instead of every action in the workspace.
+- An empty panel on a record is one line: a printer with no service schedule, no spool loaded or no print manager shows a single line and one control, and the form opens when you tap it
+- Your workspace can send its email from a Gmail account: connect it on Configuration, Email, and Google lets Cobblr send as that address and nothing else.
+- Section headings and field labels read in the app's own face: no more code font or // in front of Tags, History or Service schedule
+- A message an automation sends to someone outside your workspace can carry a reply link: they answer Got it or Bought it, and Bought it puts the thing on your shopping list.
+- An automation can text someone outside your workspace through your own Twilio account, and the People list can hold a phone number for them.
+- A live sync keeps what you changed in Cobblr: each section has an If they differ rule (Cobblr wins by default), a record that could be one you already have is asked about instead of copied, and Preview & sync is a dry run that shows each field before anything is written.
+
+### Fixes
+- A Count scan waiting for review offers the count's own actions: Set the total, or The count is right when nothing changed, which finishes the check. It no longer offers Name it for something already named, or Add to Inventory for a count.
+- A tool added from the Cataloging Bench, or anything an app or the assistant adds, is named from its real values. Its name no longer carries labels and empty values like "SKU: None Brand: Unbranded", and names saved that way before are cleaned up.
+- Something marked gone (lost, sold, cleared by a stocktake) no longer looks like stock you have. Its page says "Not on hand" and what it had, and offers no Use one, Stock arrived or stock use until you bring it back. Its count is kept for Undo.
+- A title with a word like None or Null in it is kept whole ("None of the Above" is no longer saved as "of the Above"). Only empty values after a label such as "SKU: None" are cleaned out of a name. Titles the earlier cleanup cut are put back from the name they were created with.
+- A yes-or-no setting on an automation is kept as a yes or a no, however it was entered. An automation that adds something to a list "to restock it when checked" now makes a line that restocks, and automations saved before this are corrected when the app updates.
+- A Bookshelf copied to another of your workspaces keeps calling its records books, and a scanned ISBN goes to it.
+- A Bookshelf copied to another of your workspaces before the matching-collection fix calls its books books again after the next update, unless you renamed it yourself.
+- Confirming a count now leaves offered photos off your record until you choose one.
+- A guest's app in the portal starts instead of waiting behind a read-only notice.
+- A label's short code now always starts with its own list's letter, the one the Codes page shows: a tool in Tooling is t1, not the catch-all n1. A code already given out but never printed moves to the right list the next time you label the thing; one already printed stays as it is and still opens its item.
+- A scanned book whose Bookshelf is not set up says Inventory everywhere, and Details still offers Bookshelf as a choice.
+- A record page shows only what belongs to it: a 3D printer no longer shows a kiln's firing logs, a bench instrument or a licence's renewal terms. A kiln keeps its firing logs wherever it is filed, and anything with a renewal or an expiry date keeps its Renewals.
+- The phone menu stacks from the top again: the community links no longer stretch to fill the screen, an empty group draws no divider, and a menu with every row hidden lists the apps.
+- On a phone, the list view of Machines, Assets, Purchases, your own collections and saved views shows each record as a stacked row with its name and its whole state together, and nothing to scroll sideways.
+- Members can now undo their own stock taps from a record page.
+- A friend's copy of a shared Pattern shows the pattern's fields, what it needs and its PDF.
+- "A new version is available" now shows as a bar across the top that makes room for itself, so on a phone it no longer sits over the scanner's buttons or anything else you might tap.
+
 ## 2026-10-12
 
 ### Improvements

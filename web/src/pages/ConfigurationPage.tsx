@@ -30,6 +30,7 @@ import { useConfigVisibility } from "../lib/useConfigVisibility";
 import { isFocused } from "../lib/api";
 import { useBundleUpdates } from "../lib/useBundleUpdates";
 import { useBundleDetail } from "../components/useBundleDetail";
+import { MetaParts } from "../components/MetaParts";
 
 export function ConfigurationPage() {
   usePageTitle("Configuration");
@@ -215,14 +216,13 @@ export function SectionCard({
         <p className="mt-2 text-sm text-content dark:text-mortar-200">{blurb}</p>
       </Link>
       <div className="mt-2.5 text-xs text-faint dark:text-slate-500 leading-relaxed">
-        {leaves.map((l, i) => (
-          <span key={l.to}>
-            {i > 0 && " · "}
-            <Link to={l.to} className="hover:text-accent hover:underline">
+        <MetaParts
+          parts={leaves.map((l) => (
+            <Link key={l.to} to={l.to} className="hover:text-accent hover:underline">
               {l.label}
             </Link>
-          </span>
-        ))}
+          ))}
+        />
       </div>
     </div>
   );

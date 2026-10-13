@@ -27,9 +27,19 @@ const SKIP = new Set(["node_modules", "dist", ".git", "_tmp", "coverage", "build
 
 function testFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
-    if (SKIP.has(name)) continue;
+    // A dot-directory is scratch (a test's mkdtemp, .git): a test running
+    // beside this lint writes one under scripts/ and removes it, and a file
+    // listed here and gone before it was read crashed the lint (main at
+    // 22462e37a).
+    if (SKIP.has(name) || name.startsWith(".")) continue;
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) testFiles(full, out);
+    let isDir: boolean;
+    try {
+      isDir = statSync(full).isDirectory();
+    } catch {
+      continue;
+    }
+    if (isDir) testFiles(full, out);
     else if (/\.test\.(ts|tsx|mts|mjs)$/.test(name)) out.push(full);
   }
   return out;

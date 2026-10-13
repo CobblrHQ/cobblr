@@ -79,6 +79,7 @@ export function ScanItemSheetFooter({
   onOpenForm,
   primary,
   filedOnScreen = false,
+  canAdd = true,
   onCancel,
   onDiscard,
   discardPending,
@@ -101,6 +102,9 @@ export function ScanItemSheetFooter({
    *  The footer then offers no commit of its own, and the form's Confirm stays
    *  inside the form, as filing it as a new one. */
   filedOnScreen?: boolean;
+  /** False for a scan that is not an arrival (a count, a move, a sort): it
+   *  is settled on the screen or discarded, never filed as new (#6250). */
+  canAdd?: boolean;
   /** Leave the screen without changes (the header's "All items"). */
   onCancel: () => void;
   onDiscard: () => void;
@@ -125,7 +129,7 @@ export function ScanItemSheetFooter({
       >
         <Trash2 size={14} /> Discard
       </button>
-      {!formOpen && (
+      {!formOpen && canAdd && (
         <button
           type="button"
           onClick={onOpenForm}

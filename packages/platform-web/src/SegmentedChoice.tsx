@@ -10,8 +10,9 @@
 // a check mark as well as its fill, so it is told apart without its colour
 // (#6045: Off / Just me / Share on a connection read by colour alone).
 
-import { useRef, type KeyboardEvent, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Check } from "lucide-react";
+import { rovingRadio } from "./roving-radio";
 
 /** Beyond this many options a row of buttons is the wrong control. */
 export const SEGMENTED_MAX = 5;
@@ -46,28 +47,9 @@ export function SegmentedChoice<T extends string>({
   /** One option per line (options that carry long hints), full width. */
   stack?: boolean;
 }) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-  const enabled = options.map((o, i) => (!o.disabled && !disabled ? i : -1)).filter((i) => i >= 0);
-  const current = options.findIndex((o) => o.value === value);
-  // Roving tabindex: the selected option is the tab stop, else the first enabled one.
-  const stop = current >= 0 && enabled.includes(current) ? current : (enabled[0] ?? -1);
-
-  const move = (from: number, dir: 1 | -1) => {
-    if (enabled.length === 0) return;
-    const at = enabled.indexOf(from);
-    const next = enabled[(at + dir + enabled.length) % enabled.length]!;
-    refs.current[next]?.focus();
-    onChange(options[next]!.value);
-  };
-  const onKey = (e: KeyboardEvent<HTMLButtonElement>, i: number) => {
-    if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-      e.preventDefault();
-      move(i, 1);
-    } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-      e.preventDefault();
-      move(i, -1);
-    }
-  };
+  // Tab lands on the picked option, or the first one that can be picked.
+  const picked = options.findIndex((o) => o.value === value && !o.disabled);
+  const stop = picked >= 0 ? picked : options.findIndex((o) => !o.disabled);
 
   return (
     <div role="radiogroup" aria-label={label} className={`${stack ? "flex flex-col" : "flex flex-wrap"} gap-2 ${className}`}>
@@ -78,19 +60,15 @@ export function SegmentedChoice<T extends string>({
         return (
           <button
             key={o.value}
-            ref={(el) => {
-              refs.current[i] = el;
-            }}
+            {...rovingRadio(i, stop)}
             type="button"
             role="radio"
             aria-checked={picked}
-            tabIndex={i === stop ? 0 : -1}
             disabled={off}
             data-testid={o.testId}
             onClick={() => {
               if (!picked) onChange(o.value);
             }}
-            onKeyDown={(e) => onKey(e, i)}
             className={
               "min-h-11 rounded-lg border px-3 py-1.5 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50 " +
               (stack ? "w-full " : "") +

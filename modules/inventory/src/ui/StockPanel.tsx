@@ -27,7 +27,13 @@ export function StockPanel({ id, hideThreshold = false }: { id: string; hideThre
   return <section className="rounded-xl border border-line bg-surface p-4 space-y-3" data-testid="stock-shape">
     <h3 className="font-semibold">Workshop stock</h3>
     {query.isError && <QueryError what="Stock could not be loaded." onRetry={() => void query.refetch()} />}
-    {view && <>
+    {/* Marked gone: what it held is history kept for Undo, not stock on hand,
+        and nothing here uses, restocks or loads it (#6153). */}
+    {view?.gone && <>
+      <p data-testid="stock-gone" className="text-sm"><strong>Not on hand:</strong> marked gone. It had {formatStockAmount(view.remaining, view.unit)} when it went; bring it back to use or restock it.</p>
+      {view.uses.length > 0 && <details><summary className="min-h-11 cursor-pointer flex items-center text-sm">Recent stock use</summary><ul className="space-y-2 text-sm">{view.uses.map(u => <li key={u.id} className="break-words">{u.source}: {formatStockAmount(Number(u.amount), u.unit)} ({u.verdict})</li>)}</ul></details>}
+    </>}
+    {view && !view.gone && <>
       <div className="flex flex-wrap items-center gap-2"><span>{shapes.find(s => s.value === view.shape)?.label}</span><strong>{formatStockAmount(view.remaining, view.unit)} remaining</strong>{view.low && <span className="text-amber-700 dark:text-amber-300">Low stock</span>}{view.low && <AddToListButton kind={entityKind} id={id} />}</div>
       {view.shape === "roll" && view.config.shape === "roll" && <p className="text-sm text-muted">{view.config.width_mm} mm wide. Each job uses {view.config.waste} m of waste unless you measure it.</p>}
       {view.config.shape === "wearing-tool" && <p className="text-sm text-muted">{shown(view.used)} of {formatStockAmount(view.config.limit, view.unit)} used. Replacement follows your maintenance schedule.</p>}

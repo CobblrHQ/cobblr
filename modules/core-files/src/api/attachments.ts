@@ -20,7 +20,7 @@ const AttachmentCreate = z.object({
   source_type: z.string().min(1).max(80),
   source_id: z.string().uuid(),
   role: z.string().min(1).max(40).nullable().optional(),
-  sort_order: z.number().int().min(0).optional(),
+  sort_order: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
 // AI-REACH: attaches an uploaded file; the assistant cannot carry a file

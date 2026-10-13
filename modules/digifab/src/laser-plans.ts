@@ -1,3 +1,4 @@
+import { recordedOutline, validateAdjustedLayout, type LayoutAdjustments } from "./layout-adjustments.js";
 import polygonClipping from "polygon-clipping";
 import { createHash } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
@@ -11,7 +12,7 @@ import { buildDriverById, NOT_OCCUPYING_STATUSES } from "./jobs-core.js";
 export class LaserPlanRefusal extends Error {}
 export type LaserPlan = {
  name: string; design: Design; quantity: number; material: string; thickness_mm: number; source_hash: string;
- sheets: LayoutSheet[]; profiles: Record<string, Profile>; estimated_sec: number;
+ sheets: LayoutSheet[]; profiles: Record<string, Profile>; estimated_sec: number; adjustments?: LayoutAdjustments;
 };
 export type JobLayout = { plan_id: string; sheet_index: number; sheet_id: string; revision: number; quantity: number; footprints: Rect[]; outlines?: Point[][]; expected: LayerSettings[]; content_hash: string; design: Design; parts: LayoutSheet["parts"] };
 export function layoutOf(metadata: Record<string, unknown>): JobLayout | null {
@@ -89,6 +90,12 @@ export function compactFootprints(rectangles: Rect[]): Rect[] {
  return result;
 }
 export async function acceptLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: string) {
+ let answer: {run_id:string;jobs:string[]} | undefined;
+ const lock=await platform().exclusive.run(`laser-layout:${orgId}:${id}`,async()=>{answer=await acceptLockedLaserPlan(db,orgId,id);});
+ if(!lock.ran||!answer)throw new LaserPlanRefusal("This layout is being adjusted. Wait for the current change to finish.");
+ return answer;
+}
+async function acceptLockedLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: string) {
  const initial = await db.selectFrom("digifab_laser_plans").selectAll().where("id", "=", id).executeTakeFirst();
  if (!initial) throw new LaserPlanRefusal("This plan no longer exists.");
  let answer: { run_id: string; jobs: string[] } | undefined;
@@ -96,6 +103,7 @@ export async function acceptLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: 
   const saved = await db.selectFrom("digifab_laser_plans").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
   if (saved.run_id) { const jobs = await db.selectFrom("digifab_jobs").select("id").where("run_id", "=", saved.run_id).execute(); answer = { run_id: saved.run_id, jobs: jobs.map(j => j.id) }; return; }
   const plan = saved.plan;
+  if (plan.adjustments) validateAdjustedLayout(plan.design,plan.sheets,plan.adjustments,plan.quantity);
   const bed = await laserBed(db, orgId, saved.connection_id, saved.remote_device_id);
   if (plan.sheets.some(s => s.width > bed.width || s.height > bed.height)) throw new LaserPlanRefusal("A chosen sheet exceeds the laser bed. Choose sheets that fit its saved bed size.");
   const source = await db.selectFrom("digifab_library").select("file_id").where("id", "=", saved.library_id).executeTakeFirstOrThrow();
@@ -129,10 +137,10 @@ export async function acceptLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: 
     }
     const file = await platform().files.write(orgId, Buffer.from(content), { filename, mimeType: direct ? "application/json" : "application/xml" });
     if (!file) throw new LaserPlanRefusal("The generated file could not be saved.");
-    const outlines = sheet.nesting === "outline" ? sheet.parts.map(p => p.footprint_outline!) : undefined;
+    const outlines = sheet.nesting === "outline" || plan.adjustments ? sheet.parts.map(recordedOutline) : undefined;
     const footprints = outlines ? [] : compactFootprints(sheet.parts.map(p => p.footprint));
     if (footprints.length > 512) throw new LaserPlanRefusal("This layout is too fragmented to record its used area. Make a smaller batch.");
-    files.push({ fileId: file.fileId, filename, size: Buffer.byteLength(content), sheet, layout: { plan_id: id, sheet_index: index, sheet_id: sheet.id, revision: sheet.revision, quantity: sheet.parts.length, footprints, ...(outlines ? { outlines } : {}), expected: project.layers, content_hash, design: plan.design, parts: sheet.parts } });
+    files.push({ fileId: file.fileId, filename, size: Buffer.byteLength(content), sheet, layout: { plan_id: id, sheet_index: index, sheet_id: sheet.id, revision: sheet.revision, quantity: sheet.parts.filter(p=>!p.extra).length, footprints, ...(outlines ? { outlines } : {}), expected: project.layers, content_hash, design: plan.design, parts: sheet.parts } });
    }
    answer = await db.transaction().execute(async trx => {
     const claim = await trx.selectFrom("digifab_laser_plans").select("run_id").where("id", "=", id).forUpdate().executeTakeFirstOrThrow();
@@ -143,7 +151,7 @@ export async function acceptLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: 
     const jobs: string[] = [];
     for (const f of files) {
      const displayName = `${plan.name} · Sheet ${files.indexOf(f) + 1}`;
-     const metadata = { laser_material: { material: plan.material, thickness_mm: plan.thickness_mm, width_mm: f.sheet.width, height_mm: f.sheet.height }, laser_layout: f.layout, parts_per_plate: f.sheet.parts.length };
+     const metadata = { laser_material: { material: plan.material, thickness_mm: plan.thickness_mm, width_mm: f.sheet.width, height_mm: f.sheet.height }, laser_layout: f.layout, parts_per_plate: f.sheet.parts.filter(p=>!p.extra).length };
      await trx.insertInto("digifab_library").values({ name: displayName, file_id: f.fileId, thumbnail_file_id: null, kind: f.filename.endsWith(".laserplan") ? "laser-plan" : "lbrn2", size_bytes: f.size, plate_count: 1, notes: "Generated from a verified laser layout.", metadata }).execute();
      const job = await trx.insertInto("digifab_jobs").values({ connection_id: saved.connection_id, target_device: saved.remote_device_id, file_id: f.fileId, file_ref: f.filename, run_id: run.id, metadata: { display_name: displayName }, laser_layout: f.layout, max_attempts: 1 }).returning("id").executeTakeFirstOrThrow();
      jobs.push(job.id);

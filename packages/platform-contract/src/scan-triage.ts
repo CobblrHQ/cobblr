@@ -61,7 +61,11 @@ import {
   MERGE_SENTENCE,
   NO_NAME_SENTENCE,
   RECEIPT_UNREAD_SENTENCE,
-  SHORT_BARCODE_DOUBT,
+  STORE_CODE_NAME_DOUBT,
+  SHORT_BARCODE_NAME_DOUBT,
+  BARCODE_MISREAD_DOUBT,
+  NAME_DOUBT_PROMPT,
+  PHOTO_NAME_SOURCE,
   SPLIT_GROUP_DOUBT,
   SPLIT_SIBLINGS_DOUBT,
   THROTTLED_SENTENCE,
@@ -70,6 +74,8 @@ import {
   fillSentence,
 } from "@cobblr/platform-contract/scan-copy";
 import { createCapabilityForModule } from "@cobblr/platform-contract/create-capability";
+import { isStoreCode, isValidUpcE } from "@cobblr/platform-contract/store-codes";
+import { gtinChecksumOk } from "@cobblr/platform-contract/identifier-check";
 import { isBareCodeName, nameIsRejected } from "@cobblr/platform-contract/display-identity";
 import { normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";
 import { rankFits, type FitItem, type FitTable } from "@cobblr/platform-contract/table-fit";
@@ -163,6 +169,7 @@ export const SCAN_STALE_DAYS = 2;
 const STALE_MS = SCAN_STALE_DAYS * 24 * 60 * 60 * 1000;
 
 interface TriageMeta {
+  scan_purpose?: ScanPurpose;
   /** "store-code": a shop's own label, classified at insert; nothing to look
    *  up, so the reason is known before any lookup runs (#3017). */
   code_type?: string;
@@ -201,7 +208,7 @@ interface TriageMeta {
   read_as_item?: boolean;
 }
 
-function metaOf(row: ScanTriageRow): TriageMeta {
+function metaOf(row: Pick<ScanTriageRow, "suggested_metadata">): TriageMeta {
   return (row.suggested_metadata ?? {}) as TriageMeta;
 }
 
@@ -315,7 +322,26 @@ export function checkFieldsWords(checks: { fields: string[]; waiting: boolean; l
   return fillSentence(checks.waiting ? CHECK_FIELDS_WAITING_SENTENCE : CHECK_FIELDS_SENTENCE, { fields: list });
 }
 
+export const SCAN_PURPOSES = ["arrival", "count", "move", "sort"] as const;
+export type ScanPurpose = typeof SCAN_PURPOSES[number];
+
+export function scanPurpose(row: Pick<ScanTriageRow, "suggested_metadata">): ScanPurpose {
+  const purpose = metaOf(row).scan_purpose;
+  return purpose === "count" || purpose === "move" || purpose === "sort" ? purpose : "arrival";
+}
+
+export function scanPurposeReview(row: ScanTriageRow): string | null {
+  if (!isPending(row)) return null;
+  switch (scanPurpose(row)) {
+    case "count": return "Counting stock, not an arrival. Set the total or discard this scan.";
+    case "move": return "Moving stock, not an arrival. Choose its place or discard this scan.";
+    case "sort": return "Sorting stock, not an arrival. Choose its place or discard this scan.";
+    case "arrival": return null;
+  }
+}
+
 export function needsScanReview(row: ScanTriageRow): boolean {
+  if (scanPurposeReview(row)) return true;
   if (!isPending(row)) return false;
   // An unmet requirement is not a doubt: nothing files without a name, so
   // "Looks fine" cannot retire it. It used to, which hid the review block
@@ -354,6 +380,26 @@ export function scanLooksFineResolves(row: ScanTriageRow): boolean {
   return !needsScanReview({ ...row, suggested_metadata: meta });
 }
 
+/** The one thing a held row's review block offers to settle it. */
+export type ScanReviewAction = "set-total" | "looks-fine" | "name";
+
+/** Which action settles a held row, by why it is held: the one rule every
+ *  review block reads (#6250). A count check is settled by its count (set
+ *  the total, or say the count is right), never by naming a record that
+ *  already has a name: a Count scan's review offered "Name it", which
+ *  focused nothing. A move or sort is settled by its own place controls, so
+ *  the block adds nothing. A doubt a person may wave through is "Looks fine";
+ *  only a row with no name asks to be named. Null: nothing in the block. */
+export function scanReviewAction(row: ScanTriageRow): ScanReviewAction | null {
+  if (!needsScanReview(row)) return null;
+  const purpose = scanPurpose(row);
+  if (purpose === "count") return "set-total";
+  if (purpose !== "arrival") return null;
+  if (scanLooksFineResolves(row)) return "looks-fine";
+  if (!isNamed(row)) return "name";
+  return null;
+}
+
 /**
  * A doubt the pipeline raised about the identification (`low_trust`) that no
  * person has retired yet: pending, flagged, not `reviewed`. THE answer to
@@ -390,12 +436,33 @@ export function scanDoubt(row: ScanTriageRow): ScanDoubt | null {
 export function scanDoubtWords(row: ScanTriageRow): string | null {
   const kind = scanDoubt(row);
   if (!kind) return null;
-  if (kind === "short-barcode") return SHORT_BARCODE_DOUBT;
+  if (kind === "short-barcode") {
+    // Worded by the suspect (#6100): the cumin's card blamed a barcode that
+    // was right, while the name a catalog gave it was a skirt.
+    if (scanDoubtSuspect(row) === "barcode") return BARCODE_MISREAD_DOUBT;
+    return isStoreCode(row.barcode_text ?? "") ? STORE_CODE_NAME_DOUBT : SHORT_BARCODE_NAME_DOUBT;
+  }
   const own = scanProvenanceNote(row.ai_notes);
   if (own) return own;
   if (kind === "split-group") return SPLIT_GROUP_DOUBT;
   if (kind === "split-siblings") return SPLIT_SIBLINGS_DOUBT;
   return UNTRUSTED_DOUBT;
+}
+
+/** What an open doubt suspects: the BARCODE only when its digits fail their
+ *  own check (a mis-read: an EAN-8 that is not a UPC-E either, a UPC-A or
+ *  EAN-13 with a bad check digit); otherwise the NAME a catalog gave a
+ *  barcode that is right. Null when no doubt is open. "Fix the barcode" is
+ *  offered only for the first (#6100: the owner's correct cumin code got it). */
+export function scanDoubtSuspect(row: ScanTriageRow): "name" | "barcode" | null {
+  // Only a barcode's doubt has a suspect to name; a split piece or an
+  // untrusted read is the pipeline's own doubt, said in its own words.
+  if (scanDoubt(row) !== "short-barcode") return null;
+  const code = (row.barcode_text ?? "").trim();
+  if (!/^\d+$/.test(code)) return "name";
+  if (code.length === 8) return gtinChecksumOk(code) || isValidUpcE(code) ? "name" : "barcode";
+  if (code.length >= 12 && code.length <= 14) return gtinChecksumOk(code) ? "name" : "barcode";
+  return "name";
 }
 
 /** A short product code: fewer than the twelve digits of a UPC-A / EAN-13
@@ -441,6 +508,8 @@ export function scanReviewReason(
   } = {},
 ): string | null {
   if (!needsScanReview(row)) return null;
+  const purpose = scanPurposeReview(row);
+  if (purpose) return purpose;
   const meta = metaOf(row);
   // Before "no name": a receipt whose read failed is not an unnamed item.
   if (scanReceiptReadFailed(row)) return RECEIPT_UNREAD_SENTENCE;
@@ -608,6 +677,20 @@ export function scanReviewQuestions(row: ScanTriageRow): ScanQuestion[] {
   // split into the problem and the action, so the question's heading is
   // the thing to do and its line is why. Never the router's paragraph
   // (`ai_notes`): that is provenance, and it stays in Source data (#3063).
+  // A doubt over the NAME (#6100) is this question: whether the name is
+  // right, with the name the photo read as one tap. The cumin's card had only
+  // Looks fine and Fix the barcode, while its own photo said "Ground cumin".
+  if (scanDoubtSuspect(row) === "name") {
+    const read = typeof (meta as { photo_mismatch?: { correct_name?: unknown } }).photo_mismatch?.correct_name === "string" ? String((meta as { photo_mismatch: { correct_name: string } }).photo_mismatch.correct_name).trim() : "";
+    out.push({
+      field: null,
+      names: true,
+      prompt: NAME_DOUBT_PROMPT,
+      choices: read && read !== row.suggested_name?.trim() ? [{ value: read, source: PHOTO_NAME_SOURCE }] : [],
+      because: (scanDoubtWords(row) ?? "").replace(/\.$/, ""),
+    });
+    return out;
+  }
   const sentence = scanReviewReason(row) ?? UNTRUSTED_DOUBT;
   const { problem, action } = splitSentence(sentence);
   out.push({ field: null, prompt: action ?? "Check the name", choices: [], because: problem });
@@ -938,7 +1021,13 @@ export function scanDestination(row: ScanTriageRow, ctx: ScanDestinationContext 
       updates: null,
     };
   }
-  const top = cands[0];
+  // A table to turn on is never the default while one that is on already
+  // fits: the router ranked "Turn on Home Inventory" (0.85) over the
+  // Inventory the workspace has (0.6), and one fan of a pair asked to install
+  // an app while its twin filed into Inventory (#6099). The offer stays a
+  // choice in Add to; turning on an app is the default only when nothing
+  // installed was a candidate at all.
+  const top = cands[0]?.bundle_external_id ? (cands.find((c) => !!c.module && !c.bundle_external_id) ?? cands[0]) : cands[0];
   if (!top?.module) return null;
   const system: ScanDestination = {
     module: top.module,
@@ -1001,6 +1090,16 @@ export interface ScanRowStateContext extends ScanDestinationContext {
   /** The field's label on the destination's table, for the source-conflict
    *  sentence. */
   fieldLabel?: (name: string) => string;
+}
+
+/** The records a scan chooses among: those its code matched (a barcode, an
+ *  identifier) when there are any, else those its name matched. An exact
+ *  code on something you own is the answer; look-alikes found by name never
+ *  turn it into "which is it?" (#6248). Several records sharing the code
+ *  still ask. The stamp, the matches route, the card's chooser and its best
+ *  match all read this one rule (lint:capabilities `scan-match-tier`). */
+export function scanMatchTier<M>(found: { barcode_matches: readonly M[]; name_matches: readonly M[] }): M[] {
+  return [...(found.barcode_matches.length > 0 ? found.barcode_matches : found.name_matches)];
 }
 
 /** The record the matchmaker found already tracking this thing, stamped on
@@ -1169,6 +1268,8 @@ export const MEASURED_RECORD_SENTENCE = "{title} is kept in {unit}: say how much
 
 
 export function scanRebuy(row: ScanTriageRow, ctx: ScanDestinationContext = {}): ScanRebuy {
+  const purpose = scanPurposeReview(row);
+  if (purpose) return { kind: "hold", sentence: purpose };
   if (!isPending(row) || metaOf(row).reviewed) return { kind: "none" };
   const t = scanTrackedMatch(row);
   if (!t) return { kind: "none" };
@@ -1280,6 +1381,8 @@ export function scanRowState(row: ScanTriageRow, ctx: ScanRowStateContext = {}):
     return { eligibility: "blocked", sentence, action: { kind: "blocked", label: ACTION_BLOCKED, title: sentence }, destination, merge: null, ask };
   };
   if (!isPending(row)) return add();
+  const purpose = scanPurposeReview(row);
+  if (purpose) return review(purpose);
   // No grant makes a table in an app this deployment lacks: another table is
   // the only next step, for a person with or without the permission.
   if (permitted === false) return moduleOff === "absent" && destination ? review(fillSentence(UNAVAILABLE_SENTENCE, { table: destination.label })) : blocked(BLOCKED_SENTENCE);

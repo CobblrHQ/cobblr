@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.8",
+  version: "0.21.15",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -1024,6 +1024,67 @@ export default defineModule({
       },
       {
         group: "stock",
+        id: "inventory:start-recount",
+        // Recounting a collection is counting what is there: the member's own stock work.
+        grantedAs: "inventory:count-stock",
+        examples: ["let's recount my filament", "rescan all my PETG from scratch", "recount the spices"],
+        label: "Recount a collection",
+        description:
+          "Start a recount of everything in a collection (or one category of it) across every place, or pick up the one already open over the same scope. Nothing on the records changes while it is open: each thing is scanned in (inventory:recount-scan) and the reconcile at the end is previewed first. Args: { scope: { collection: <collection name or label>, category_id? } }. Returns recount_id.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.start-recount",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:recount-scan",
+        grantedAs: "inventory:count-stock",
+        examples: ["scanned 6970000000011", "that one says Kingroon PETG white", "this is the silver spool"],
+        label: "Scan a thing into a recount",
+        description:
+          "Count one thing found during a recount. Matched strongest first: record_id (a record the person picked), then barcode, then what its label says (text, and attributes such as brand, material, color, diameter). Identical records count one each without asking; two kinds read alike answer result 'ask' with candidates to pick (scan again with record_id); nothing alike answers 'new' and is noted to add at the reconcile. In a collection whose things belong to types (Spools under Filament Types), something new is matched against the types and added under one; two types read alike answer 'ask_type' (scan again with type_id, and new: true). new: true says it is none of the things offered. Optional place_id (where it is now) and amount (how much is left). Args: { recount_id, record_id?, barcode?, text?, attributes?, new?, type_id?, place_id?, amount? }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.recount-scan",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:apply-recount",
+        grantedAs: "inventory:count-stock",
+        // Not declared undoable, though it has one Undo: finishing a recount can
+        // mark things gone, so it is shown on a card and confirmed first.
+        examples: ["finish the filament recount", "the scan is the truth, apply it", "mark the ones I didn't see gone"],
+        label: "Finish a recount",
+        description:
+          "Finish an open recount (previewed first: the card lists every change). Seen records are confirmed; with truth on, their places and amounts come from the scans. New things are added (new: { <scan_id>: 'add' | 'skip' }, default add), like the type they read as. Not seen records: not_seen: { <record_id>: 'gone' | 'keep' | 'later' }, or not_seen_all for all of them; the default is gone when truth is on, keep when off. Gone is 'gone, not recorded how' (never finished or thrown out). Nothing is deleted, and one Undo (inventory:undo-recount) puts everything back. Args: { recount_id, truth?, not_seen?, not_seen_all?, new? }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.apply-recount",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:undo-recount",
+        grantedAs: "inventory:count-stock",
+        examples: ["undo that recount", "put the filament back as it was"],
+        label: "Undo a recount",
+        description: "Put a finished recount back: things it marked gone are listed again, moves and amounts go back, and things it added are marked gone. Records deleted since stay deleted. Args: { recount_id }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.undo-recount",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
+        id: "inventory:recount-remove-scan",
+        grantedAs: "inventory:count-stock",
+        examples: ["that scan was wrong", "take that one back out of the recount"],
+        label: "Take a scan out of a recount",
+        description: "Take one scan back out of an open recount (a mis-scan or the wrong pick): the record it counted is expected again. Args: { recount_id, scan_id }.",
+        scope: "workspace" as const,
+        invokeHandler: "inventory.recount-remove-scan",
+        userInvokable: true,
+      },
+      {
+        group: "stock",
         id: "inventory:undo-stocktake",
         grantedAs: "inventory:count-stock",
         examples: ["undo that stocktake", "bring the fridge back"],
@@ -1179,6 +1240,9 @@ export default defineModule({
     onBoot: async () => {
       const { registerStockShapesHeal } = await import("./heal-stock-shapes.js");
       registerStockShapesHeal();
+      // A name saved with metadata labels or "None" in it is rebuilt (#6283).
+      const { registerRecordNamesHeal } = await import("./heal-record-names.js");
+      registerRecordNamesHeal();
       const { registerShapedStockShortages } = await import("./stock-shortages.js");
       registerShapedStockShortages();
       const { registerInventoryTidyFinders } = await import("./tidy-finders.js");

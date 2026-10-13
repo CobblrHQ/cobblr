@@ -1,3 +1,5 @@
+import { colourFromName } from "@cobblr/platform-contract/colour";
+
 // "The same product": the one rule behind every place the platform decides
 // that two things are one thing.
 //
@@ -209,6 +211,12 @@ const wordsOf = (s: string): string[] => s.toLowerCase().match(/[a-z0-9][a-z0-9.
  *  product's, so a word-overlap rule calls them one thing; the options are
  *  what was bought. Unknown (false) when either name says nothing about it. */
 export function variantsDisagree(a: string | null | undefined, b: string | null | undefined): boolean {
+  // A typed name has no store option tail. Disjoint explicit colours still
+  // veto overlap; an absent colour says nothing, and aliases share a swatch.
+  const colours = (name: string | null | undefined) => new Set((name ?? "").split(/[^a-z]+/i).map(colourFromName).filter((c): c is string => !!c));
+  const ca = colours(a);
+  const cb = colours(b);
+  if (ca.size && cb.size && ![...ca].some((c) => cb.has(c))) return true;
   const va = storeVariantOf(a);
   const vb = storeVariantOf(b);
   if (va && vb) return va.base === vb.base && va.options.join("/") !== vb.options.join("/");

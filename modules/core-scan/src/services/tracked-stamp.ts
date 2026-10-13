@@ -17,6 +17,7 @@ import { sql, type Kysely } from "kysely";
 import { personNameOf } from "@cobblr/platform-contract/display-identity";
 import { platform } from "@cobblr/platform-contract";
 import { HOLDING_OF } from "@cobblr/platform-contract/holdings";
+import { scanMatchTier } from "@cobblr/platform-contract/scan-triage";
 import { findTracked, placesOfCard, type TrackedMatch } from "./entity-match.js";
 import { scanTargetOf } from "./scan-target.js";
 
@@ -72,7 +73,7 @@ export function scanPlaceOf(row: { target_location_id?: string | null; suggested
 /** The stamp for a matcher's answer, or null when nothing matched. */
 export function trackedMatchStamp(tracked: { barcode_matches: TrackedMatch[]; name_matches: TrackedMatch[] } | null): TrackedMatchStamp | null {
   if (!tracked) return null;
-  const tier = tracked.barcode_matches.length > 0 ? tracked.barcode_matches : tracked.name_matches;
+  const tier = scanMatchTier(tracked);
   const best = tier[0];
   if (!best) return null;
   const things = new Set(tier.map((m) => m.card_id ?? m.id));
@@ -113,8 +114,7 @@ export async function trackedMatchStampAt(
   const byNameOnly = !!found && !!tracked && tracked.barcode_matches.length === 0;
   const stamp = found && byNameOnly && vehicleWithoutProvedVin(rowMeta) ? { ...found, confirm: VIN_DID_NOT_READ } : found;
   if (!stamp || stamp.of > 1 || !tracked) return stamp;
-  const tier = tracked.barcode_matches.length > 0 ? tracked.barcode_matches : tracked.name_matches;
-  const card = tier[0]?.card_id ?? stamp.id;
+  const card = scanMatchTier(tracked)[0]?.card_id ?? stamp.id;
   // Not caught: places that could not be read are not "one place" (#4985).
   const places = await placesOfCard(orgId, stamp.kind, card);
   if (!at.place_choice) {

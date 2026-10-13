@@ -1,4 +1,5 @@
 import { renewalDocumentTypeIn } from "@cobblr/platform-contract/renewal-document-types";
+import { readRenewalPeriod } from "./renewal-draft.js";
 import { looksLikeBillOfSale } from "./bill-of-sale.js";
 import sharp from "sharp";
 import { inflateSync } from "node:zlib";
@@ -20,7 +21,7 @@ const run = promisify(execFile);
 /** The label an AI is asked to answer each field under: the ones
  *  extractPersonalFields reads back. */
 const ANSWER_LABEL: Record<PersonalDocumentField, string> = { vin: "VIN", plate: "Plate", expires: "Expires", amount: "Fee", reference: "Confirmation", make: "Make", model: "Model", year: "Year" };
-const PERSONAL = /\b(registration|renewal|vin|plate|vehicle|bill of sale|certificate of title|odometer|licen[cs]e|passport|social security|ssn|policy number|insurance|medical|patient|tax return|tax form|form w-?2|form 1040|bank statement|account statement|account number|routing number|iban|swift code|diagnosis|prescription|identity|id card|driver information|driver record|date of birth)\b|\b\d{3}-\d{2}-\d{4}\b/i;
+const PERSONAL = /\b(registration|vin|plate|vehicle|bill of sale|certificate of title|odometer|licen[cs]e|passport|social security|ssn|policy number|insurance|medical|patient|tax return|tax form|form w-?2|form 1040|bank statement|account statement|account number|routing number|iban|swift code|diagnosis|prescription|identity|id card|driver information|driver record|date of birth)\b|\b\d{3}-\d{2}-\d{4}\b/i;
 const ORDINARY = /\b(receipt|subtotal|sales tax|product|ingredients|nutrition|yarn|cotton|polyester|wool|barcode|isbn|manual|knit(?:ting)?|crochet|sewing|pattern|stitch|upc|ean)\b/i;
 function manufacturingTable(text: string, header: string): boolean {
   if (!/\b(?:reference|ref|refdes|designator)\b/i.test(header) || !/\b(?:footprint|package)\b/i.test(header)) return false;
@@ -37,9 +38,13 @@ function numericCadSource(lines: string[]): boolean {
   return lines.some((line) => imported.test(line)) && lines.some((line) => shape.test(line))
     && lines.every((line) => imported.test(line) || shape.test(line));
 }
-/** Personal indicators or a VIN-shaped value, the one test text and metadata share. */
+function recurringInvoice(text: string): boolean {
+  return /\b(?:invoice|receipt)\b/i.test(text) && Boolean(readRenewalPeriod(text).billing_cycle);
+}
+/** Personal indicators always win; renewal alone also names ordinary recurring invoices. */
 function personalIn(text: string): boolean {
-  return PERSONAL.test(text) || /\b[A-HJ-NPR-Z0-9]{17}\b/i.test(text);
+  return PERSONAL.test(text) || /\b[A-HJ-NPR-Z0-9]{17}\b/i.test(text)
+    || (/\brenewal\b/i.test(text) && !recurringInvoice(text));
 }
 /** The printable text an image's metadata carries (EXIF, XMP, IPTC, comments).
  *  An ICC colour profile is not document text and is not read. */
@@ -64,13 +69,13 @@ export function photoPrivacy(text: string): "personal" | "normal" {
 }
 const LISTING = /\b(?:just listed|listed|listing|message seller|seller|buy it now|add to (?:cart|basket)|free shipping|shipping|delivery|in stock|sold by|condition|marketplace)\b|[$£€]\s?\d/i;
 export function classifyPersonalText(text: string, vault = false): "personal" | "normal" {
-  if (vault || PERSONAL.test(text) || /\b[A-HJ-NPR-Z0-9]{17}\b/i.test(text)) return "personal";
+  if (vault || personalIn(text)) return "personal";
   const header = text.split(/\r?\n/, 1)[0] || "";
   const receiptTable = /\b(?:qty|quantity)\b/i.test(header) && /\bunit\s+(?:price|cost)\b/i.test(header)
     && Boolean(parseCsvReceipt(text)?.items.length);
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const machineCode = lines.some((line) => /^[GMT]\d+\b/.test(line)) && lines.every((line) => /^(?:[GMT]\d+\b|;)/.test(line));
-  return ORDINARY.test(text) || machineCode || receiptTable || manufacturingTable(text, header) || numericCadSource(lines) ? "normal" : "personal";
+  return ORDINARY.test(text) || recurringInvoice(text) || machineCode || receiptTable || manufacturingTable(text, header) || numericCadSource(lines) ? "normal" : "personal";
 }
 function day(raw: string): string | null {
   let y: number, m: number, d: number;
@@ -255,7 +260,12 @@ const JPEG_STRUCTURE = new Set([0xc0, 0xc1, 0xc2, 0xc4, 0xdb, 0xdd, 0xda]);
  *  EXIF chunks are read. Any other chunk cannot be inspected. */
 const PNG_CHUNKS = new Set(["IHDR", "PLTE", "IDAT", "IEND", "tRNS", "pHYs", "sRGB", "gAMA", "cHRM", "iCCP", "sBIT", "bKGD", "tIME", "eXIf", "tEXt", "iTXt", "zTXt"]);
 const PNG_TEXT = new Set(["tEXt", "iTXt", "zTXt", "eXIf"]);
-const printable = (b: Uint8Array) => Buffer.from(b).toString("latin1").replace(/[^\x20-\x7e]+/g, " ");
+/** The text in bytes that are mostly not text (a picture's segments, the
+ *  video after a motion photo): runs of eight printable characters or more,
+ *  the way `strings` reads a binary. Every printable byte used to count, so a
+ *  random tail spelled "VIN" or "SSN" between two symbols about once in 900
+ *  motion photos and made an ordinary photo personal. */
+const printable = (b: Uint8Array) => (Buffer.from(b).toString("latin1").match(/[\x20-\x7e]{8,}/g) ?? []).join(" ");
 /** A whole file hidden inside a picture: a PDF or a ZIP (which is how an
  *  Office document travels). Unseen, so it keeps the picture personal. */
 const EMBEDDED_DOCUMENT = /%PDF-|PK\x03\x04/;
@@ -381,7 +391,7 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   const raw = input.mime === "image/svg+xml" ? new TextDecoder().decode(input.bytes) : "";
   const geometry = /^(?:svg|g|path|circle|line|rect|ellipse|polygon|polyline|defs|clipPath|mask|linearGradient|radialGradient|stop)$/;
   const vectorDrawing = !forcePersonal && !text.trim() && /^\s*<svg\b/.test(raw)
-    && !/<[!?]|\b(?:href|aria-label|on\w+)\s*=/i.test(raw) && !PERSONAL.test(raw) && !/\b[A-HJ-NPR-Z0-9]{17}\b/i.test(raw)
+    && !/<[!?]|\b(?:href|aria-label|on\w+)\s*=/i.test(raw) && !personalIn(raw)
     && [...raw.matchAll(/<\s*\/?\s*([\w:-]+)/g)].every((tag) => geometry.test(tag[1]!));
   // Source code (Python, OpenSCAD, G-code and the like) is not a document a
   // person's papers arrive as; only what it actually says can make it personal.

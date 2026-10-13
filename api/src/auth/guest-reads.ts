@@ -38,6 +38,7 @@ export const GUEST_WRITES: Readonly<Record<string, { why: string }>> = {
   "POST /:slug/approval-requests/:id/resume": { why: "their own request, once granted (the route checks it is theirs)" },
   "POST /:slug/approval-requests/:id/complete": { why: "their own request, once granted (the route checks it is theirs)" },
   "PUT /:slug/modules/core-apps/apps/:app/data/:key": { why: "an app in the portal keeps its own state; the app decides who may open it" },
+  "POST /:slug/modules/core-apps/apps/:app/token": { why: "an app in the portal starts: its token acts as the guest and reads only what a guest may (the app decides who may open it, #6044)" },
   "DELETE /:slug/members/:userId": { why: "leaving the workspace; the route refuses a guest removing anyone but themselves" },
   "POST /:slug/actions/invoke": { why: "a button in a portal app; the action refuses a guest unless it was granted to them" },
 };

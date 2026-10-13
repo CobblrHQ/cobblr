@@ -91,14 +91,14 @@ desktopUpdatesRouter.get("/updates/:product/:target/:arch/:version", async (req,
 // ── publish a release (super-admin / CI) ─────────────────────────────────────
 const PublishBody = z.object({
   // Optional product namespace (edge-helper is the default when omitted).
-  product: z.string().regex(PRODUCT_RE).optional(),
+  product: z.string().regex(PRODUCT_RE).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
   // Either one platform, or a whole manifest at once.
-  platform: z.string().min(3).max(40).optional(), // "<target>-<arch>"
-  version: z.string().min(1).max(40).optional(),
-  url: z.string().url().optional(),
-  signature: z.string().min(1).optional(),
-  notes: z.string().max(4000).optional(),
-  pub_date: z.string().optional(),
+  platform: z.string().min(3).max(40).optional(), // "<target>-<arch>" // none-refused-ok: the update manifest is typed with undefined, never null
+  version: z.string().min(1).max(40).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
+  url: z.string().url().optional(), // none-refused-ok: the update manifest is typed with undefined, never null
+  signature: z.string().min(1).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
+  notes: z.string().max(4000).optional(), // none-refused-ok: the update manifest is typed with undefined, never null
+  pub_date: z.string().optional(), // none-refused-ok: the update manifest is typed with undefined, never null
   manifest: z.record(z.object({ version: z.string(), url: z.string().url(), signature: z.string(), notes: z.string().optional(), pub_date: z.string().optional() })).optional(),
 });
 // UI-REACH: the desktop helper's release pipeline publishing a build

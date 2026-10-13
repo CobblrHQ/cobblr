@@ -7,12 +7,13 @@ import type { RequestScope } from "../lib/request-context.js";
 export interface MetaProbe {
   total: number;
   statements: Array<{ text: string; count: number }>;
+  cold_ttl_caches?: true;
 }
 const probes = new Map<string, MetaProbe>();
 
 export function rememberProbe(id: string, scope: RequestScope): void {
   const statements = [...scope.meta.entries()].map(([text, count]) => ({ text, count })).sort((a, b) => b.count - a.count);
-  probes.set(id, { total: statements.reduce((n, s) => n + s.count, 0), statements: statements.slice(0, 20) });
+  probes.set(id, { total: statements.reduce((n, s) => n + s.count, 0), statements: statements.slice(0, 20), ...(scope.coldTtlCaches ? { cold_ttl_caches: true as const } : {}) });
   while (probes.size > 200) probes.delete(probes.keys().next().value as string);
 }
 

@@ -23,7 +23,7 @@ import { EntityActionChip } from "../components/EntityActionChip";
 import { useAiStatus } from "./ScanPage";
 import { AiOffMissHint } from "./ScanInboxCard";
 import { useNavigate } from "react-router-dom";
-import { filedIntoOf, needsScanReview, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
+import { filedIntoOf, scanPurpose, needsScanReview, scanReviewQuestions, scanReviewReason, scanRowState, scanTrackedMatch, scanDeclinesRecord } from "@cobblr/platform-contract/scan-triage";
 import { NO_MATCH_ASK_FOR_PHOTO, PHOTO_CHECK_NOTE, classifiedCodeOf, photoCheckIsLive } from "@cobblr/platform-contract/scan-copy";
 import { itemEnriching } from "./scan-status";
 import { ScanNameItInline } from "../components/ScanNameItInline";
@@ -352,7 +352,8 @@ export function ScanResultModal({
     instance: stampedMatch.instance,
   }));
   const alreadyOwned = stampedOwned || liveMatches.length > 0;
-  const countingWhatYouHave = !!countMode && alreadyOwned;
+  const inventoryCheck = !!item && scanPurpose(item) !== "arrival";
+  const countingWhatYouHave = inventoryCheck || (!!countMode && alreadyOwned);
   const oneTap =
     !countingWhatYouHave && !scanTarget.into && item && item.suggested_name && rowState && (rowState.eligibility === "ready" || rowState.eligibility === "needs-install")
       ? oneTapDestination(item, rowState.destination)
@@ -625,7 +626,7 @@ export function ScanResultModal({
         {/* A scan of something the workspace already counts says how many
             in the match's own count (Change by / Set total) below; a second
             stepper here would ask the same question twice (#3884). */}
-        {!alreadyOwned && (
+        {!alreadyOwned && !inventoryCheck && (
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
             <QtyStepper value={qty} onSet={setQty} big />
@@ -661,6 +662,7 @@ export function ScanResultModal({
             filing into scan inbox for this category to get figured out
             later"); routing is the inbox's job, on the surface built for it. */}
         {countingWhatYouHave ? null : scanTarget.into ? (
+          // COLOUR-NOT-STATE: the primary action steps back once it is already owned, and its label turns to Add as a separate one.
           <button
             type="button"
             disabled={!item || busy}
@@ -677,6 +679,7 @@ export function ScanResultModal({
           </button>
         ) : oneTap ? (
           <div className="space-y-1">
+            {/* COLOUR-NOT-STATE: the primary action steps back once it is already owned, and its label turns to Add as a separate one. */}
             <button
               type="button"
               data-testid="sheet-add-to"
@@ -735,6 +738,7 @@ export function ScanResultModal({
             <Trash2 size={16} />
           </button>
           {onRetake && (
+            // COLOUR-NOT-STATE: Take a photo is the main way when nothing matched, and its label says so.
             <button
               type="button"
               disabled={busy}
@@ -755,6 +759,7 @@ export function ScanResultModal({
         </div>
         {/* With a one-tap destination above, keeping the scan for later is
             the second choice, and says so: it goes to the inbox. */}
+        {/* COLOUR-NOT-STATE: Save & next is the main way when there is nowhere one tap files it, and its label says so. */}
         <button
           type="button"
           disabled={busy}

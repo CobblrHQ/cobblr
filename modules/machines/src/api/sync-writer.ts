@@ -180,16 +180,19 @@ export function registerMachinesWriter(): void {
     // Existing machines, for the import preview's name-merge.
     async listForMatch(orgId) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
-      const rows = await db.selectFrom("machines_machines").select(["id", "name"]).execute();
-      return rows.map((r) => ({ id: r.id, name: r.name }));
+      const rows = await db.selectFrom("machines_machines").select(["id", "name", "instance"]).execute();
+      // The instance (3D printers, laser cutters) is the kind a sync matches
+      // on: a laser called "Mini" is not the printer called "Mini" (#6336).
+      return rows.map((r) => ({ id: r.id, name: r.name, instance: r.instance }));
     },
 
-    // Current fields of one machine — for the import preview's both-sides diff.
+    // Current fields of one machine — for the preview's both-sides diff, and
+    // for a sync deciding what the person changed.
     async read(orgId, id) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
       const row = await db
         .selectFrom("machines_machines")
-        .select(["name", "short_name", "family", "type", "manufacturer", "serial_number", "state", "image_path", "notes", "location_id", "metadata"])
+        .select(["name", "short_name", "family", "type", "manufacturer", "serial_number", "state", "image_path", "notes", "location_id", "excitement", "quantity", "instance", "metadata"])
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
@@ -204,6 +207,11 @@ export function registerMachinesWriter(): void {
         image_path: row.image_path,
         notes: row.notes,
         location_id: row.location_id,
+        // Every field a sync writes is readable here: a sync keeps what the
+        // person changed only for the fields it can see (#6336).
+        excitement: row.excitement,
+        quantity: row.quantity,
+        instance: row.instance,
         metadata: row.metadata,
       };
     },

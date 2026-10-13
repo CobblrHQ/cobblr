@@ -1204,14 +1204,15 @@ export async function detailPathForEntity(orgId: string, kind: string, id: strin
     | { detailUrl?: unknown; instance?: unknown }
     | null;
   const detailUrl = entity && typeof entity.detailUrl === "string" && entity.detailUrl ? entity.detailUrl : null;
-  const module = kind.split(":")[0] ?? "";
-  let namedInstance = entity && typeof entity.instance === "string" && entity.instance ? entity.instance : null;
+  const { base, instance: kindInstance } = await resolveKind(orgId, kind);
+  const module = base.split(":")[0] ?? "";
+  let namedInstance = kindInstance ?? (entity && typeof entity.instance === "string" && entity.instance ? entity.instance : null);
   if (!namedInstance && INSTANCE_ITEM_DETAIL[module]) {
     const probed = await probeNamedInstance(orgId, module, id);
     if (probed) namedInstance = probed.instance;
   }
-  const rec = await getKind(kind);
-  return resolveDetailPath({ kind, id, instance: namedInstance, detailUrl, baseDetailRoute: rec?.detail_route ?? null });
+  const rec = await getKind(base);
+  return resolveDetailPath({ kind: base, id, instance: namedInstance, detailUrl, baseDetailRoute: rec?.detail_route ?? null });
 }
 
 /** The address for a record when it leaves the app. Unlike a detail path, it

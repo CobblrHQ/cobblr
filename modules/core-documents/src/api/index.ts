@@ -16,7 +16,7 @@ import { platform } from "@cobblr/platform-contract";
 import { LIBRARY_ITEM_KIND, LIBRARY_LINK_REL, libraryTargetId } from "@cobblr/platform-contract/library";
 import { roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import type { CoreDocumentsDB } from "../db.js";
-import { getOn, holdersOf, noteFacts, nudge, pushSetupOf, readFacts } from "../matching.js";
+import { MATCHING_FACTS_VERSION, getOn, holdersOf, noteFacts, nudge, pushSetupOf, readFacts } from "../matching.js";
 import { abilitiesOf, copyItem, LibraryRefusal, findFresh, healLinks, linkItem, systemsFor, unlinkItem } from "../service.js";
 import { registerLibraryActions } from "./actions.js";
 
@@ -120,9 +120,9 @@ router.get(
     // Only what this person's systems can still show them.
     const usable = new Set(systems.map((s) => s.credentialId));
     suggestions = suggestions.filter((s) => usable.has(s.connection_id));
-    let known: { status: string; matched_at: Date | null; last_error: string | null } | undefined = await db
+    let known: { status: string; facts_version: number; matched_at: Date | null; last_error: string | null } | undefined = await db
       .selectFrom("core_documents_records")
-      .select(["status", "matched_at", "last_error"])
+      .select(["status", "facts_version", "matched_at", "last_error"])
       .where("record_id", "=", r.id)
       .executeTakeFirst();
     // A record the background has not reached yet goes to the front of the
@@ -131,7 +131,7 @@ router.get(
       const facts = await readFacts(orgId, r.kind, r.id);
       if (facts && (await noteFacts(db, r.kind, r.id, facts))) {
         nudge(orgId);
-        known = { status: "queued", matched_at: null, last_error: null };
+        known = { status: "queued", facts_version: 0, matched_at: null, last_error: null };
       }
     }
     res.json({
@@ -175,7 +175,7 @@ router.get(
         ...(usable.has(l.connection_id) || othersLibrary(l.connection_id) ? {} : { reconnect: { provider: l.library_provider, address: l.library_address } }),
       })),
       suggestions: suggestions.map((s) => ({ connection_id: s.connection_id, ref: s.ref, type: s.item_type, type_label: s.item_type_label, title: s.title, subtitle: s.subtitle, created: s.created, tags: s.tags, open_url: s.open_url, open_label: s.open_label, has_thumb: s.has_thumb, because: s.because, conflict: s.conflict, warning: s.warning, score: s.score })),
-      matching: known?.status === "queued",
+      matching: known?.status === "queued" || (known != null && known.facts_version < MATCHING_FACTS_VERSION),
       matched_at: known?.matched_at ?? null,
       // The background asked and got no answer: the panel says so with a
       // Retry; the record itself shows nothing extra.

@@ -191,7 +191,7 @@ export function ScanningInBanner({ batchId }: { batchId: string }) {
   const { activeSlug } = useActiveOrg();
   const slots = useQuery({
     queryKey: ["order-line-slots", activeSlug, batchId],
-    queryFn: () => api.orderLineSlots(activeSlug, { batch_id: batchId }).catch(() => null), // quiet: a session that is not bound to a line has no banner
+    queryFn: async () => (await api.orderLineSlotsIfAny(activeSlug, { batch_id: batchId })).slots, // a session that is not bound to a line has no slots, and no banner
     refetchInterval: 4000,
   });
   const s = slots.data;

@@ -42,6 +42,7 @@ export interface BoardThing {
   short: string;
   size: OuterSize | null;
   rect: FpRect | null;
+  position?: { x_mm: number; y_mm: number } | null;
   overhang?: boolean;
   tooTall?: boolean;
   /** Moved by the draft. */
@@ -254,7 +255,7 @@ export function buildBoard(opts: {
     const key = `${r.kind}:${r.id}`;
     const size = sizeOf(r);
     const at = spot.get(key);
-    return { key, kind: r.kind, id: r.id, name: r.name, short: shortLabel(r.name, r.shortName), size, rect: size && at ? footprintAt(size, at) : null, moved: moved.has(key) };
+    return { key, kind: r.kind, id: r.id, name: r.name, short: shortLabel(r.name, r.shortName), size, position: at, rect: size && at ? footprintAt(size, at) : null, moved: moved.has(key) };
   });
 
   const areas = kids(roomNow.id).filter((p) => p.kind === "area");

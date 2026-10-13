@@ -44,6 +44,7 @@ export function ScanReceiptUnread(p: ScanReceiptUnreadProps) {
             Open it
           </Link>
         )}
+        {/* COLOUR-NOT-STATE: both sizes are filled; the condition is the compact size, not a state. */}
         <button
           type="button"
           data-testid="receipt-read-again"

@@ -16,7 +16,7 @@ import { suggestKinds } from "../lib/suggest-kinds";
 import { useBundleDetail } from "../components/useBundleDetail";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
-import { useLater, usePageTitle, useToast } from "@cobblr/platform-web";
+import { rovingRadio, useLater, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
 import { Cobb } from "../components/Cobb";
@@ -421,11 +421,14 @@ export function BuildPage() {
     // whole page sideways). It should now never engage; it's the backstop for
     // browser font scaling.
     <div className="overflow-x-auto">
-      <div className="grid grid-cols-2 lg:flex w-full lg:min-w-max rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
-      {(["tweak", "workspace", "app", "app-custom"] as const).map((m) => (
+      <div role="radiogroup" aria-label="What to build" className="grid grid-cols-2 lg:flex w-full lg:min-w-max rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-0.5 text-sm">
+      {(["tweak", "workspace", "app", "app-custom"] as const).map((m, i) => (
         <button
           key={m}
           type="button"
+          {...rovingRadio(i, (["tweak", "workspace", "app", "app-custom"] as const).indexOf(mode))}
+          role="radio"
+          aria-checked={mode === m}
           onClick={() => setMode(m)}
           className={
             // In the grid a label may wrap (cells share a height, so a 2-line
@@ -433,12 +436,13 @@ export function BuildPage() {
             // at 320px). In the row it must NOT: equal-width segments give
             // "Design my workspace" less room than its label needs, and a
             // wrapped label doubles the strip's height.
-            "flex-1 text-center whitespace-normal lg:whitespace-nowrap px-2.5 py-1.5 rounded-md font-medium transition " +
+            "min-h-11 flex-1 inline-flex items-center justify-center gap-1 text-center whitespace-normal lg:whitespace-nowrap px-2.5 py-1.5 rounded-md font-medium transition " +
             (mode === m
               ? "bg-cobble-600 text-white"
               : "text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-200")
           }
         >
+          {mode === m && <Check size={14} strokeWidth={2.5} aria-hidden data-picked-mark className="shrink-0" />}
           {/* User nouns, not platform jargon ("worker app" meant nothing
               to a new user — redesign A2). */}
           {m === "tweak"
@@ -678,7 +682,7 @@ export function BuildPage() {
                     fewer is more reliable - the AI wires to the wrong thing when handed everything
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
+                <div role="group" aria-label="Collections the AI builds on" className="flex flex-wrap gap-1.5">
                   {kindItems.map((k) => {
                     const on = effectiveScope.includes(k.id);
                     return (
@@ -687,13 +691,15 @@ export function BuildPage() {
                         type="button"
                         onClick={() => toggleKind(k.id)}
                         title={k.id}
+                        aria-pressed={on}
                         className={
-                          "px-2.5 py-1 rounded-full text-xs border transition " +
+                          "min-h-11 inline-flex items-center gap-1 px-3 rounded-full text-xs border transition " +
                           (on
                             ? "bg-cobble-600 border-cobble-600 text-white"
                             : "border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:border-accent")
                         }
                       >
+                        {on && <Check size={12} strokeWidth={2.5} aria-hidden />}
                         {k.display_name}
                       </button>
                     );
@@ -707,6 +713,7 @@ export function BuildPage() {
           {/* With no AI, the roles swap: the copy-paste prompt is the real
               path, so IT gets the primary style and "Build it for me" is
               disabled with a reason (not silently inert). */}
+          {/* COLOUR-NOT-STATE: the fill marks which way is the main one (the prompt when no AI is connected), not a pick. */}
           <button
             type="button"
             onClick={buildHosted}
@@ -721,6 +728,7 @@ export function BuildPage() {
           >
             <Sparkles size={14} /> {busy === "building" ? "Building…" : "Build it for me"}
           </button>
+          {/* COLOUR-NOT-STATE: the fill marks which way is the main one (the prompt when no AI is connected), not a pick. */}
           <button
             type="button"
             onClick={buildPrompt}

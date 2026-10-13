@@ -2,17 +2,34 @@
 // opens its digit keypad (inputmode="numeric", enterkeyhint="done"), the whole
 // value is selected, it commits on blur or Enter and Escape puts the old value
 // back. What a commit MEANS (an absolute count, a change that skips zero) is
-// the caller's: this only reads a whole number and hands it over.
+// the caller's: this only reads the number and hands it over.
+//
+// It never changes a number's size to make it fit (#6142): typing "-0.5" into
+// a count used to strip the point and read -05, and "7.9" read 79. A field
+// for a measured amount (`decimal`) reads one decimal point (or comma); a
+// whole-number field keeps what was typed and REFUSES a fraction at commit,
+// going back to its value, rather than reading a different number.
 
 import { useRef, useState, type KeyboardEvent } from "react";
 
 /** A whole number from what was typed, or null. A leading minus (hyphen, minus
- *  sign or en dash) is the sign only when negatives are allowed. */
+ *  sign or en dash) is the sign only when negatives are allowed. A fraction
+ *  ("7.9") is not a whole number: null, never 79. */
 export function readWhole(text: string, allowNegative: boolean): number | null {
-  const neg = allowNegative && /^\s*[-−–]/.test(text);
-  const d = text.replace(/\D/g, "");
-  if (!d) return null;
-  return (neg ? -1 : 1) * Number(d);
+  return readTypedNumber(text, { allowNegative, decimal: false });
+}
+
+/** The number typed, read the way it was meant, or null when it is not one:
+ *  an optional sign (+, hyphen, minus sign, en dash; a minus only when
+ *  negatives are allowed), digits, and with `decimal` one point or comma and
+ *  more digits. Anything else is null; nothing is stripped to make it fit. */
+export function readTypedNumber(text: string, o: { allowNegative: boolean; decimal: boolean }): number | null {
+  const t = text.trim().replace(/[−–]/g, "-").replace(/\s+/g, "");
+  const m = t.match(o.decimal ? /^([+-]?)(\d*)(?:[.,](\d+))?$/ : /^([+-]?)(\d+)$/);
+  if (!m || !(m[2] || m[3])) return null;
+  if (m[1] === "-" && !o.allowNegative) return null;
+  const n = Number(`${m[2] || "0"}${m[3] ? `.${m[3]}` : ""}`);
+  return Number.isFinite(n) ? (m[1] === "-" ? -n : n) : null;
 }
 
 /** What the field shows for a value: a signed one shows its plus. */
@@ -31,8 +48,12 @@ export function TypeableNumber({
   text: controlledText,
   onTextChange,
   onRevert,
+  decimal = false,
 }: {
   value: number;
+  /** A measured amount (metres, kilograms): a decimal point is part of the
+   *  number, and the phone opens its decimal keypad. */
+  decimal?: boolean;
   /** A whole number the person committed. May equal the value; the caller decides. */
   onCommit: (n: number) => void;
   label: string;
@@ -69,7 +90,7 @@ export function TypeableNumber({
       return;
     }
     // An untouched count may be fractional or have refreshed while focused.
-    const n = !controlled && !wasEdited ? value : readWhole(text, allowNegative);
+    const n = !controlled && !wasEdited ? value : readTypedNumber(text, { allowNegative, decimal });
     if (n === null) {
       setText(wholeText(value, signedText));
       return;
@@ -91,8 +112,8 @@ export function TypeableNumber({
   return (
     <input
       type="text"
-      inputMode="numeric"
-      pattern={allowNegative ? "[-−+0-9]*" : "[0-9]*"}
+      inputMode={decimal ? "decimal" : "numeric"}
+      pattern={decimal ? (allowNegative ? "[-−+0-9.,]*" : "[0-9.,]*") : allowNegative ? "[-−+0-9]*" : "[0-9]*"}
       enterKeyHint="done"
       autoComplete="off"
       aria-label={label}
@@ -109,7 +130,10 @@ export function TypeableNumber({
         if (!typing.current) before.current = value;
         typing.current = true;
         edited.current = true;
-        setText(e.target.value.replace(allowNegative ? /[^\d+\-−–]/g : /\D/g, ""));
+        // Letters are dropped; a point or comma is kept even in a whole-number
+        // field, so a typed fraction is refused at commit and never read as a
+        // different number (#6142).
+        setText(e.target.value.replace(allowNegative ? /[^\d+\-−–.,]/g : /[^\d.,]/g, ""));
       }}
       onBlur={commit}
       onKeyDown={onKey}

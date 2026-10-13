@@ -20,7 +20,8 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { runExclusive } from "./exclusive.js";
-import { sandboxEnabled, sandboxTtlMs, sandboxCapacity, provisionSandboxWorkspace, handOverSandbox } from "./try-sandbox.js";
+import { buildPooledSandbox } from "./build-pooled-sandbox.js";
+import { sandboxEnabled, sandboxTtlMs, sandboxCapacity, provisionSandboxWorkspace, handOverSandbox, makeSandboxClaimable } from "./try-sandbox.js";
 import type { ProvisionDeps, SandboxResult, SandboxWorkspace } from "./try-sandbox.js";
 import { claimableSince } from "./try-sandbox-query.js";
 
@@ -120,14 +121,11 @@ export async function topUpPool(deps: PoolDeps): Promise<boolean> {
   }
 
   const before = await readyCount();
-  const ws = await provisionSandboxWorkspace(deps);
-  try {
-    await deps.seed(ws);
-  } catch (err) {
-    // A sandbox with nothing in it is still usable, and refusing to pool it
-    // would mean an empty pool every time the catalogue is having a bad day.
-    console.error("[try-pool] seed failed, pooling it empty:", (err as Error).message);
-  }
+  const ws = await buildPooledSandbox({
+    provision: () => provisionSandboxWorkspace(deps),
+    seed: deps.seed,
+    makeClaimable: (w) => makeSandboxClaimable(w.orgId),
+  });
 
   // Did the thing we just built actually become claimable?
   //

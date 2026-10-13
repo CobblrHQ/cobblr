@@ -11,6 +11,12 @@
 // wider and buys the guarantee that matters: this token cannot label,
 // archive or send, whatever the code does.
 //
+// A workspace's Gmail SENDER (#6070, slice 3d) is a separate grant with the
+// opposite guarantee: gmail.send and the address it sends as (openid email),
+// and nothing that reads mail. The state says which grant it is for, so the
+// one registered redirect serves both and neither can be swapped for the
+// other on the way back.
+//
 // PKCE rides along. The verifier has to survive the redirect without living
 // in process memory (the api is stateless), so it travels inside the state
 // token ENCRYPTED under the credentials key: the state is signed against
@@ -35,6 +41,16 @@ export const GOOGLE_AUTH_BASE = process.env.COBBLR_GOOGLE_AUTH_BASE || "https://
 export const GOOGLE_OAUTH_BASE = process.env.COBBLR_GOOGLE_OAUTH_BASE || "https://oauth2.googleapis.com";
 
 export const GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly";
+export const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+
+/** What a grant is for: reading store mail into a workspace, or sending its
+ *  automations' and owners' email from a Gmail address. */
+export type GooglePurpose = "read" | "send";
+
+const SCOPES: Record<GooglePurpose, string> = {
+  read: GMAIL_READONLY_SCOPE,
+  send: `openid email ${GMAIL_SEND_SCOPE}`,
+};
 
 const STATE_ALG = "HS256";
 const STATE_AUD = "gmail-oauth";
@@ -57,11 +73,11 @@ export interface OAuthStart {
 
 /** Sign the state and build the consent URL. The verifier is minted here and
  *  lives only inside the state, encrypted. */
-export async function beginGoogleConsent(userId: string, orgId: string): Promise<OAuthStart> {
+export async function beginGoogleConsent(userId: string, orgId: string, purpose: GooglePurpose = "read"): Promise<OAuthStart> {
   const verifier = randomBytes(48).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const now = Math.floor(Date.now() / 1000);
-  const state = await new SignJWT({ org: orgId, v: encryptCreds(verifier) })
+  const state = await new SignJWT({ org: orgId, v: encryptCreds(verifier), p: purpose })
     .setProtectedHeader({ alg: STATE_ALG })
     .setIssuer("cobblr")
     .setAudience(STATE_AUD)
@@ -73,7 +89,7 @@ export async function beginGoogleConsent(userId: string, orgId: string): Promise
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
     response_type: "code",
-    scope: GMAIL_READONLY_SCOPE,
+    scope: SCOPES[purpose],
     access_type: "offline",
     // A refresh token is only issued on a CONSENTED grant; a silent re-auth
     // returns none, and a mailbox with no refresh token stops in an hour.
@@ -90,6 +106,7 @@ export interface OAuthStateClaims {
   userId: string;
   orgId: string;
   verifier: string;
+  purpose: GooglePurpose;
 }
 
 /** Verify the state on the way back; null for anything not ours or expired. */
@@ -101,7 +118,9 @@ export async function readGoogleState(state: string): Promise<OAuthStateClaims |
       algorithms: [STATE_ALG],
     });
     if (typeof payload.sub !== "string" || typeof payload.org !== "string" || typeof payload.v !== "string") return null;
-    return { userId: payload.sub, orgId: payload.org, verifier: decryptCreds(payload.v) };
+    // A state from before purposes existed was always a mailbox's.
+    const purpose: GooglePurpose = payload.p === "send" ? "send" : "read";
+    return { userId: payload.sub, orgId: payload.org, verifier: decryptCreds(payload.v), purpose };
   } catch {
     return null;
   }
@@ -111,6 +130,22 @@ export interface GoogleGrant {
   refresh_token: string;
   access_token: string;
   expires_in: number;
+  /** The account's address, from the ID token a send grant asks for
+   *  (openid email). Read straight from Google's token endpoint over TLS,
+   *  which is what makes it trustworthy without checking its signature. */
+  email: string | null;
+}
+
+/** The verified address in an ID token's claims, or null. */
+function emailOfIdToken(idToken: string | undefined): string | null {
+  if (!idToken) return null;
+  try {
+    // b64-lenient-ok: an ID token straight from Google's token endpoint, not input a person can respell.
+    const claims = JSON.parse(Buffer.from(idToken.split(".")[1] ?? "", "base64url").toString()) as { email?: unknown; email_verified?: unknown };
+    return typeof claims.email === "string" && claims.email_verified !== false ? claims.email : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The code for the tokens. Null on any failure; the callback surfaces a
@@ -130,9 +165,9 @@ export async function exchangeGoogleCode(code: string, verifier: string, fetchIm
       }),
     });
     if (!r.ok) return null;
-    const t = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+    const t = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number; id_token?: string };
     if (!t.access_token || !t.refresh_token) return null;
-    return { refresh_token: t.refresh_token, access_token: t.access_token, expires_in: t.expires_in ?? 3600 };
+    return { refresh_token: t.refresh_token, access_token: t.access_token, expires_in: t.expires_in ?? 3600, email: emailOfIdToken(t.id_token) };
   } catch {
     return null;
   }

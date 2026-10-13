@@ -446,6 +446,21 @@ export function WireComposer({
                       return c ? <p className="mt-1 text-[11px] text-faint dark:text-slate-500">{c.summary}</p> : null;
                     })()}
                   </label>
+                ) : spec.type === "boolean" ? (
+                  // A yes-or-no setting (a message's reply link): asked as
+                  // one, never a box to type "true" into.
+                  <label key={name} className="block">
+                    <span className="block text-[11px] text-muted dark:text-slate-400 mb-0.5">{spec.label}</span>
+                    <select
+                      value={args[name] ?? ""}
+                      onChange={(e) => setArgs((a) => ({ ...a, [name]: e.target.value }))}
+                      className="input text-sm"
+                      data-testid={`wire-arg-${name}`}
+                    >
+                      <option value="">no</option>
+                      <option value="true">yes</option>
+                    </select>
+                  </label>
                 ) : spec.choices?.length ? (
                   // A "who" (choicesFrom people) and any argument the server
                   // filled with choices: picked by name, never typed as an id.

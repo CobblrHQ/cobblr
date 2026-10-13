@@ -1,3 +1,4 @@
+import { shareChildrenFor } from "./share-children.js";
 import { isOwnLink } from "./share-sync.js";
 // The mirror: what the owner shares, copied into the share space, kept in step
 // (#4627 §2, docs/design-decisions/share-spaces.md §7).
@@ -130,9 +131,9 @@ async function shapeFor(orgId: string, kinds: string[], vis: VisibilityDef, gate
   const instances = full.instances.filter((i) => instanceNames.has(i.instance_name));
   for (const i of instances) modules.add(i.module);
   // registry-filter-ok: only the bundles that provide a shared collection travel
-  const bundles = full.bundles.filter((b) => {
-    const provides = ((b as { provides_instances?: Array<{ instance_name?: string; name?: string }> }).provides_instances ?? []).map((i) => i.instance_name ?? i.name);
-    return provides.some((n) => n && instanceNames.has(n));
+  const bundles = full.bundles.flatMap((b) => {
+    const shared = sharedPartOfBundle(b as BundleShape, instanceNames);
+    return shared ? [shared] : [];
   });
   const fieldDefs = [];
   for (const f of full.field_defs.filter((d) => kinds.includes(d.entity_kind))) {
@@ -155,6 +156,26 @@ async function shapeFor(orgId: string, kinds: string[], vis: VisibilityDef, gate
   };
 }
 
+type InstanceDecl = { instance_name?: string; name?: string };
+type BundleShape = { provides_instances?: InstanceDecl[]; features?: Array<{ key?: string; default?: boolean; provides_instances?: InstanceDecl[] }> } & Record<string, unknown>;
+
+/** The part of a bundle a share space needs: only the collections shared
+ *  with it, and the features that provide them turned on. A Pattern table
+ *  comes from Yarn's "designs" feature, off by default: the whole bundle sent
+ *  as it is gave the friend a Patterns list with no pattern fields, no file
+ *  intake and no pattern panels (#6056), and sent with every feature on it
+ *  would hand them the owner's Yarn stash table too. Null when the bundle
+ *  provides none of the shared collections. */
+export function sharedPartOfBundle(b: BundleShape, instanceNames: ReadonlySet<string>): BundleShape | null {
+  const nameOf = (i: InstanceDecl) => i.instance_name ?? i.name ?? "";
+  const top = (b.provides_instances ?? []).filter((i) => instanceNames.has(nameOf(i)));
+  const features = (b.features ?? [])
+    .filter((f) => (f.provides_instances ?? []).some((i) => instanceNames.has(nameOf(i))))
+    .map((f) => ({ ...f, default: true, provides_instances: (f.provides_instances ?? []).filter((i) => instanceNames.has(nameOf(i))) }));
+  if (!top.length && !features.length) return null;
+  return { ...b, provides_instances: top, features };
+}
+
 /** The kind each record travels as. A record in a named instance (a
  *  Pattern: a project in Yarn's "designs") travels as that instance's kind,
  *  "designs:item", so the share space gets the instance, its fields and its
@@ -173,6 +194,15 @@ async function carriedRefs(orgId: string, refs: ScopeRef[]): Promise<ScopeRef[]>
     out.set(`${kind}\u0000${r.id}`, { ...r, entity_kind: kind });
   }
   return [...out.values()];
+}
+
+/** What the owner wrote about a record in rows of its own (a pattern's
+ *  needs), by set, as each module gives them to travel (#6252). Inside the
+ *  record's digest, so a change to a need is a change to the record. */
+async function childRowsOf(orgId: string, kind: string, id: string): Promise<Record<string, Array<Record<string, unknown>>>> {
+  const out: Record<string, Array<Record<string, unknown>>> = {};
+  for (const def of shareChildrenFor(await baseKindOf(orgId, kind))) out[def.name] = await def.read(orgId, id);
+  return out;
 }
 
 /** Largest attached file a share carries; a bigger one is left out and said. */
@@ -283,7 +313,8 @@ async function mirrorPass(link: { id: string; org_id: string; settings: unknown 
       }
     }
     const files = await attachedFiles(link.org_id, ref.entity_kind, ref.id);
-    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest, changed_since: changedSince, files };
+    const children = await childRowsOf(link.org_id, ref.entity_kind, ref.id);
+    const body = { origin: { kind: ref.entity_kind, id: ref.id }, title: p.title, fields: p.fields, metadata: p.metadata, place: p.place, photo_digest: photoDigest, changed_since: changedSince, files, ...(Object.keys(children).length ? { children } : {}) };
     const digest = sha(JSON.stringify({ format: MIRROR_FORMAT, ...body }));
     if (state.get(k)?.digest === digest && !photo) continue;
     // A file's bytes go once; a later pass names it and the copy keeps it.
@@ -708,6 +739,14 @@ export function registerShareMirrorOps(): void {
     const clean = written !== null && w?.version && (await w.version(link.org_id, id)) === written;
     if (!clean && mark !== null && before) await keepEditsMadeDuringApply(link, kind, origin.id, id, mark, before, sent ?? before);
     if (Array.isArray(p.files)) await carryFiles(link, kind, id, p.files as SentFile[], (p.file_data ?? {}) as Record<string, string>);
+    // The record's own rows, made exactly what the owner's are (#6252).
+    if (p.children && typeof p.children === "object") {
+      const defs = shareChildrenFor(await baseKindOf(link.org_id, kind));
+      for (const [name, rows] of Object.entries(p.children as Record<string, unknown>)) {
+        const def = defs.find((d) => d.name === name);
+        if (def && Array.isArray(rows)) await def.write(link.org_id, id, rows as Array<Record<string, unknown>>);
+      }
+    }
   });
 
   registerCopyOp("mirror.remove", async (link, p) => {

@@ -7,6 +7,7 @@
 // total, in ScanCountBlock, and those reasons are an optional chip there
 // (#3884). The plan keeps its choice, in the collection's own words (the
 // faces verdict through repurchaseWords), because a bulk file has no stepper.
+import { scanMatchTier } from "@cobblr/platform-contract/scan-triage";
 import { useQuery } from "@tanstack/react-query";
 import { useFaces } from "@cobblr/platform-web";
 import { repurchaseWords, type RestockChoice } from "@cobblr/platform-contract/kind-label";
@@ -28,7 +29,7 @@ export function useBestTrackedMatch(itemId: string, matchProp?: TrackedMatch | n
   });
   const match: TrackedMatch | null =
     matchProp ??
-    (resolved.data?.barcode_matches ?? []).concat(resolved.data?.name_matches ?? [])[0] ??
+    scanMatchTier({ barcode_matches: resolved.data?.barcode_matches ?? [], name_matches: resolved.data?.name_matches ?? [] })[0] ??
     null;
   const locations = useQuery({
     queryKey: ["core-locations", activeSlug],

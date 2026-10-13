@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { isGone } from "./action-handlers.js";
 import { z } from "zod";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { ActionRefusal, likeEscape, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
@@ -77,7 +78,8 @@ shapedStockRouter.get("/:id", asyncHandler(async (req, res) => {
     db.selectFrom("inventory_stock_uses").selectAll().where("part_id", "=", row.id).orderBy("at", "desc").limit(50).execute(),
     db.selectFrom("inventory_stock_loaded").selectAll().where("part_id", "=", row.id).executeTakeFirst(),
   ]);
-  res.json({ ...views.get(row.id), uses, loaded: loaded ?? null });
+  // Marked gone: what it held is history, not stock on hand (#6153).
+  res.json({ ...views.get(row.id), uses, loaded: loaded ?? null, gone: isGone(row.metadata) });
 }));
 
 async function routeWrite(req: Parameters<typeof tenantDb>[0], res: import("express").Response, action: string, schema: typeof ConfigureStock | typeof ConsumeStock | typeof LoadStock) {

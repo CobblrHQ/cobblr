@@ -14,8 +14,10 @@ import { platform, type SyncConnector } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { loadConnectionRef } from "../sync/connection.js";
-import { ReconcileBusyError, runReconcile, planReconcile, runStatusOf } from "../sync/engine.js";
+import { ReconcileBusyError, runReconcile, planReconcile, resolveAsked, runStatusOf, type AskedAnswer } from "../sync/engine.js";
 import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "../sync/worker.js";
+import { CONFLICT_POLICIES, type ConflictPolicy } from "@cobblr/platform-contract/sync-merge";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { installedSyncConnectors, resolveSyncConnector } from "../sync/resolve.js";
 
 export const syncRouter = Router({ mergeParams: true });
@@ -135,7 +137,7 @@ const ConnectionCreate = z.object({
   label: z.string().min(1),
   // Optional: a fixed-baseUrl source (e.g. Ravelry) supplies its own base, so the
   // UI hides the field and this is absent — validated below against the connector.
-  base_url: z.string().url().optional(),
+  base_url: z.string().url().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).default({}),
   // "edge" routes the source fetch over the workspace's dial-out bridge (the
   // only way a hosted instance reaches a LAN source); "direct" fetches base_url
@@ -236,8 +238,8 @@ syncRouter.get(
 );
 
 const ConnectionUpdate = z.object({
-  label: z.string().min(1).optional(),
-  base_url: z.string().url().optional(),
+  label: z.string().min(1).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  base_url: z.string().url().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   credentials: z.record(z.unknown()).optional(),
   enabled: z.boolean().optional(),
 });
@@ -423,6 +425,82 @@ syncRouter.post(
   }),
 );
 
+// ── DRY RUN: the same plan as the preview, as a read. What a run would
+// create, link, update or ask about under the section's rule, field by field,
+// with nothing written (the source is read, Cobblr is not touched). A GET so a
+// read-only look (an operator's view-as, an assistant) can ask it safely. ──
+syncRouter.get(
+  "/connections/:id/syncs/:entityType/dry-run",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const rt = await loadRefType(req, res);
+    if (!rt) return;
+    try {
+      const plan = await planReconcile(tenantDb(req), rt.ref, rt.type);
+      res.json({ ok: true, policy: plan.policy, plan });
+    } catch (e) {
+      res.status(502).json({ ok: false, error: (e as Error).message });
+    }
+  }),
+);
+
+const PolicyBody = z.object({ conflict_policy: z.enum(CONFLICT_POLICIES as unknown as [ConflictPolicy, ...ConflictPolicy[]]) });
+
+// ── What the section does when the source and Cobblr disagree about a field:
+// Cobblr wins (the default) / the source wins / ask. A person's setting. ──
+// AI-REACH: exempt — a section's conflict rule is the owner's own setting (it decides whether a sync may write over what a person changed), set on the Integrations page
+syncRouter.put(
+  "/connections/:id/syncs/:entityType/policy",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = PolicyBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const rt = await loadRefType(req, res);
+    if (!rt) return;
+    await tenantDb(req)
+      .insertInto("core_integrations_sync_state")
+      .values({ connector_row_id: rt.ref.connectorRowId, entity_type: rt.type.key, conflict_policy: parsed.data.conflict_policy })
+      .onConflict((oc) => oc.columns(["connector_row_id", "entity_type"]).doUpdateSet({ conflict_policy: parsed.data.conflict_policy, updated_at: new Date() }))
+      .execute();
+    res.json({ ok: true, conflict_policy: parsed.data.conflict_policy });
+  }),
+);
+
+const ResolveBody = z
+  .object({
+    external_id: z.string().min(1),
+    action: z.enum(["link", "create", "keep", "take"]),
+    cobblr_id: optionalField(z.string().min(1)),
+    field: optionalField(z.string().min(1)),
+  })
+  .refine((b) => b.action !== "link" || !!b.cobblr_id, "cobblr_id says which record it is")
+  .refine((b) => (b.action !== "keep" && b.action !== "take") || !!b.field, "field says which field");
+
+// ── A person's answer to what a run asked about: a source record is this record
+// that is already here (link) or is new (create); a field they differ on is
+// kept as Cobblr has it (keep) or taken from the source (take). ──
+// AI-REACH: exempt — a person's decision about their own records, listed by the run; nothing is written until they choose
+syncRouter.post(
+  "/connections/:id/syncs/:entityType/resolve",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin")) return;
+    const parsed = ResolveBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const rt = await loadRefType(req, res);
+    if (!rt) return;
+    try {
+      const b = parsed.data;
+      const answer: AskedAnswer =
+        b.action === "create" ? { action: "create" } : b.action === "link" ? { action: "link", cobblrId: b.cobblr_id! } : { action: b.action, field: b.field! };
+      const done = await resolveAsked(tenantDb(req), rt.ref, rt.type, parsed.data.external_id, answer);
+      res.json({ ok: true, ...done });
+    } catch (e) {
+      if (e instanceof ReconcileBusyError) return void res.status(409).json({ ok: false, error: e.message });
+      res.status(409).json({ ok: false, error: (e as Error).message });
+    }
+  }),
+);
+
 // ── approve & run the one-time IMPORT (merges by name), then go LIVE. ──
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
 syncRouter.post(
@@ -434,7 +512,7 @@ syncRouter.post(
     const ctx = tenantContext(req);
     const db = tenantDb(req);
     try {
-      const result = await runReconcile(db, rt.ref, rt.type, { linkOnMatch: true });
+      const result = await runReconcile(db, rt.ref, rt.type);
       const now = new Date();
       // The import IS a reconcile, so the poll's next turn is a cadence away.
       // It used to be due NOW: the scan tick that followed re-reconciled what

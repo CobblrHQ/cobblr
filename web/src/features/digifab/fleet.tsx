@@ -25,7 +25,7 @@ import { SnapmakerPairing } from "./SnapmakerPairing";
 import { ESPHomeBenchDiscovery } from "./ESPHomeBenchDiscovery";
 import { SnapmakerDiscovery } from "./SnapmakerDiscovery";
 import { FormlabsConnection } from "./FormlabsConnection";
-import { useState, useMemo, useEffect, useRef, Fragment, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useRef, useId, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Wifi, Printer, Send, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
@@ -2785,6 +2785,7 @@ export function MachineDigifabPanel({
   /** Pre-selected bridge driver (from the printer's kind), for the inline connect. */
   driverHint?: string;
 }) {
+  const managerPickerId = useId();
   const qc = useQueryClient();
   const toast = useToast();
   const links = useQuery({
@@ -2867,6 +2868,43 @@ export function MachineDigifabPanel({
   });
 
   const conn = link ? connections.find((c) => c.id === link.connection_id) : undefined;
+  const connectModal = createConnOpen && (
+    <CreateConnectionModal
+      types={conns.data?.types ?? ["fdm_monster", "mock"]}
+      presetType="edge_adapter"
+      presetName={machineName}
+      presetDriver={driverHint}
+      onClose={() => setCreateConnOpen(false)}
+      onCreated={(connectionId) => {
+        // Auto-select the just-created manager so it's not back on "choose…";
+        // its single device then auto-picks → the user just clicks Link.
+        void qc.invalidateQueries({ queryKey: ["digifab-connections", slug] });
+        if (connectionId) {
+          setConnId(connectionId);
+          setDeviceId("");
+        }
+        setCreateConnOpen(false);
+      }}
+    />
+  );
+
+  // No manager in the workspace yet: one line that says what linking one
+  // gives this machine, and one control (#6337).
+  if (!link && conns.isSuccess && connections.length === 0) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-2 rounded-lg border border-line dark:border-slate-700 px-3 py-1 text-sm">
+        <span className="font-semibold text-content dark:text-mortar-100">{capitalise(words.manager)}</span>
+        <span className="text-muted dark:text-slate-400">none</span>
+        <span className="basis-full sm:basis-auto sm:flex-1 text-xs text-muted dark:text-slate-400">
+          {`Connect one (${words.managerExamples}) to send ${words.jobs} from here and see its camera and controls.`}
+        </span>
+        <button type="button" onClick={() => setCreateConnOpen(true)} className="ml-auto min-h-11 px-2 text-accent hover:underline">
+          Connect one
+        </button>
+        {connectModal}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
@@ -2923,14 +2961,15 @@ export function MachineDigifabPanel({
         </p>
       ) : (
         <div className="flex flex-wrap items-end gap-2">
-          <label className="block">
-            <span className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
-              Manager
+          <div className="block">
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+              <label htmlFor={managerPickerId}>Manager</label>
               <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline normal-case tracking-normal">
                 + new
               </button>
-            </span>
+            </div>
             <select
+              id={managerPickerId}
               value={connId}
               onChange={(e) => {
                 setConnId(e.target.value);
@@ -2945,7 +2984,7 @@ export function MachineDigifabPanel({
                 </option>
               ))}
             </select>
-          </label>
+          </div>
           {connId && (() => {
             const devs = devices.data?.items ?? [];
             // A direct driver (PrusaLink / Duet / a LAN Bambu) IS the one printer —
@@ -2975,25 +3014,7 @@ export function MachineDigifabPanel({
           </button>
         </div>
       )}
-      {createConnOpen && (
-        <CreateConnectionModal
-          types={conns.data?.types ?? ["fdm_monster", "mock"]}
-          presetType="edge_adapter"
-          presetName={machineName}
-          presetDriver={driverHint}
-          onClose={() => setCreateConnOpen(false)}
-          onCreated={(connectionId) => {
-            // Auto-select the just-created manager so it's not back on "choose…";
-            // its single device then auto-picks → the user just clicks Link.
-            void qc.invalidateQueries({ queryKey: ["digifab-connections", slug] });
-            if (connectionId) {
-              setConnId(connectionId);
-              setDeviceId("");
-            }
-            setCreateConnOpen(false);
-          }}
-        />
-      )}
+      {connectModal}
       {/* The cockpit, opened from the machine's own page — same component the
           fleet tile mounts. Portals to body, so it layers over the machine
           detail modal cleanly. */}

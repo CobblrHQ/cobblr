@@ -9,6 +9,7 @@
 // field must not also undo a rename on another.
 
 import type { BundleConflictResolution, BundleUpgradeConflict } from "../lib/api";
+import { rovingRadio } from "@cobblr/platform-web";
 
 export type ConflictChoice = BundleConflictResolution["choice"];
 
@@ -137,10 +138,11 @@ export function BundleUpdateConflicts({
                 </div>
               </div>
               <div role="radiogroup" aria-label={`${c.field_label}: what to keep`} className="flex flex-wrap gap-1.5">
-                {options.map((o) => (
+                {options.map((o, i) => (
                   <button
                     key={o.value}
                     type="button"
+                    {...rovingRadio(i, options.findIndex((x) => x.value === choice))}
                     role="radio"
                     aria-checked={choice === o.value}
                     onClick={() => onPick(key, o.value)}

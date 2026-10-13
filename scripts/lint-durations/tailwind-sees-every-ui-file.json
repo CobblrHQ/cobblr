@@ -1,0 +1,10 @@
+{
+  "lint": "lint:tailwind-sees-every-ui-file",
+  "run": "node scripts/lint-tailwind-sees-every-ui-file.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 1354,
+  "recorded": "2026-10-13",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

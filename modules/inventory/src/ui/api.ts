@@ -2,7 +2,7 @@ import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
 import type { ReceiptDraftConfig, RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import type { StockView, ConfigureStock, ConsumeStock, LoadStock } from "../api/stock-shapes";
 import type { z } from "zod";
-export type StockDetail = StockView & { uses: Array<{ id: string; source: string; verdict: string; amount: string; unit: string; at: string }>; loaded: { station: string; slot: string } | null };
+export type StockDetail = StockView & { uses: Array<{ id: string; source: string; verdict: string; amount: string; unit: string; at: string }>; loaded: { station: string; slot: string } | null; gone?: boolean };
 import type { storageView } from "../api/storage";
 export type StorageView = NonNullable<Awaited<ReturnType<typeof storageView>>>;
 import type { SheetChange, sheetView } from "../api/sheets";
@@ -336,6 +336,16 @@ export class InventoryApi {
    *  listed records it saw, and what it saw that is not listed. Writes nothing. */
   stocktakePhoto = (placeId: string, fileId: string) =>
     this.requestAbs<{ seen: number; matched: Array<{ id: string; seen: string }>; unmatched: Array<{ name: string; qty: number }> }>("POST", `/api/v1/orgs/${this.slug}/modules/inventory/stocktake/photo`, { place_id: placeId, file_id: fileId });
+  /** One recount: what it expects, what has been seen, what is new (#6302). */
+  recount = (id: string) => this.requestAbs<import("../recount.js").RecountRead>("GET", `/api/v1/orgs/${this.slug}/modules/inventory/recounts/${encodeURIComponent(id)}`);
+  /** What finishing a recount would do with these choices, writing nothing. */
+  recountPlan = (id: string, body: import("../recount-reconcile.js").ReconcileInput) =>
+    this.requestAbs<import("../recount-reconcile.js").ReconcilePlan>("POST", `/api/v1/orgs/${this.slug}/modules/inventory/recounts/${encodeURIComponent(id)}/plan`, body);
+  /** The words printed on a thing's label, read off one photo (writes nothing). */
+  recountLabel = (id: string, fileId: string) =>
+    this.requestAbs<{ text: string }>("POST", `/api/v1/orgs/${this.slug}/modules/inventory/recounts/${encodeURIComponent(id)}/label`, { file_id: fileId });
+  /** The recounts still open, where a paused one is picked up. */
+  openRecounts = () => this.requestAbs<{ items: Array<{ id: string; label: string; updated_at: string }> }>("GET", `/api/v1/orgs/${this.slug}/modules/inventory/recounts`);
   /** A photo taken for this workspace, kept in Files. */
   uploadPhoto = (file: File) => {
     const form = new FormData(); form.set("file", file);

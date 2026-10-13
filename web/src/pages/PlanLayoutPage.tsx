@@ -22,6 +22,7 @@ import { useLayoutBoard } from "../lib/useLayoutBoard";
 import { reorderTo, shelfRow } from "../lib/planFit";
 import type { Board } from "../lib/layoutBoard";
 import { LayoutBoard, startThingDrag, type ThingDrop } from "../components/LayoutBoard";
+import { AddSizesDialog } from "../components/PlanSizedThings";
 import { DEFAULT_AISLE_MM } from "@cobblr/platform-contract/plan-clearance";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 import { readBound, withBound } from "../lib/floorplanGeometry";
@@ -158,7 +159,7 @@ export function PlanLayoutPage() {
   // phone, two or three in a desktop column); the rest wrap below.
   const perRow = Math.max(1, Math.min(faceCount, Math.floor((colW + 16) / 216)));
   const faceW = other && colW > 0 ? Math.floor((colW - (perRow - 1) * 16) / perRow) : undefined;
-  const { board, room, placeable, sizeOf, loading } = useLayoutBoard(slug, roomId, body, faceH, faceW);
+  const { board, room, placeable, kinds, sizeOf, loading } = useLayoutBoard(slug, roomId, body, faceH, faceW);
   const { board: otherBoard } = useLayoutBoard(slug, roomId, other?.body ?? EMPTY_PLAN_DRAFT, faceH, faceW);
   useEffect(() => {
     const n = Math.max(1, ...[board, otherBoard].map((b) => b?.racks.filter((r) => r.face && r.shelves.length).length ?? 1));
@@ -263,6 +264,8 @@ export function PlanLayoutPage() {
   const notInRoom = board?.flags.filter((f) => f.kind === "room") ?? [];
   const [naming, setNaming] = useState<string | null>(null);
   const [addingRack, setAddingRack] = useState(false);
+  const [addingSizes, setAddingSizes] = useState(false);
+  const unsized = board ? [...board.floor.filter((t) => !t.size), ...board.racks.flatMap((r) => r.shelves.flatMap((s) => s.unsized))] : [];
   const fits = board?.racks.flatMap((r) => r.shelves.filter((s) => s.line).map((s) => ({ rack: r.name, s }))) ?? [];
 
   return (
@@ -427,6 +430,17 @@ export function PlanLayoutPage() {
               )}
               {room && <AisleCheck slug={slug} room={room} />}
               <LayoutBoard board={board} editable={editable} onDrop={onDrop} onMoveRack={onMoveRack} />
+              {unsized.length > 0 && (
+                <p className="text-sm text-muted dark:text-slate-400" data-testid="layout-needs-size">
+                  {countOf(unsized.length, "thing needs", "things need")} dimensions before fit can be checked.
+                  {editable && (
+                    <button type="button" onClick={() => setAddingSizes(true)} className="ml-1 text-accent hover:underline">
+                      Add their sizes to see if they fit
+                    </button>
+                  )}
+                </p>
+              )}
+              {addingSizes && <AddSizesDialog slug={slug} things={unsized} placeable={placeable} placeableKinds={kinds} onClose={() => setAddingSizes(false)} />}
               {fits.length > 0 && (
                 <ul data-testid="layout-fits" className="space-y-0.5 text-xs">
                   {[...fits].sort((a, b) => Number(a.s.row!.fits) - Number(b.s.row!.fits)).map(({ rack, s }) => (

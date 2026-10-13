@@ -28,7 +28,7 @@ export function parseCosts(text) {
 
 /** Does a test file reach the running api or a database? Read from its source: a session, an http
  *  call, the api's base url, fetch, a pg client, the test-support doors, or the app's own helpers. */
-export const REACHES_THE_API = /\b(signupFreshOrg|signupBlankOrg|isApiUp|http\s*[<(]|BASE\b|fetch\(|new\s+pg\.|from\s+["']pg["']|testSupport|ensureModule|enableAllModulesForTests|getTenantDb|meta\.(selectFrom|insertInto|updateTable))/;
+export const REACHES_THE_API = /\b(signupFreshOrg|signupBlankOrg|isApiUp|http\s*[<(]|BASE\b|fetch\(|new\s+pg\.|from\s+["']pg["']|testSupport|ensureModule|enableAllModulesForTests|getTenantDb|meta\s*\.\s*(selectFrom|insertInto|updateTable|deleteFrom))/;
 export function reachesTheApi(src) {
   return REACHES_THE_API.test(String(src));
 }

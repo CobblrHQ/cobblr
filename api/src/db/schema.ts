@@ -549,8 +549,19 @@ export interface BackupDestinationsTable {
 
 export interface OrgOutboundEmailTable {
   org_id: string;
-  provider: "smtp" | "mailgun" | "resend" | "postmark";
+  provider: "smtp" | "mailgun" | "resend" | "postmark" | "gmail";
   from_address: string;
+  config_enc: string;
+  updated_by: string | null;
+  created_at: Generated<Date>;
+  updated_at: Generated<Date>;
+}
+
+/** A workspace's own Twilio account, for texts to people outside it
+ *  (#6070). The SID and token are in config_enc; never in a backup. */
+export interface OrgOutboundSmsTable {
+  org_id: string;
+  from_number: string;
   config_enc: string;
   updated_by: string | null;
   created_at: Generated<Date>;
@@ -610,12 +621,53 @@ export interface WorkspaceInvitesTable {
 
 /** Someone a workspace's records can belong to (#3787): a member, tied to
  *  their account, or anyone else by name. */
+/** A workspace's yes to automations messaging people outside it (#6070). */
+export interface OrgExternalMessagesTable {
+  org_id: string;
+  enabled: Generated<boolean>;
+  daily_limit: Generated<number>;
+  per_wire_daily_limit: Generated<number>;
+  updated_by: string | null;
+  updated_at: Generated<Date>;
+}
+
+/** Every message an automation tried to send outside the workspace. */
+export interface ExternalMessageLogTable {
+  id: Generated<string>;
+  org_id: string;
+  binding_id: string | null;
+  person_id: string | null;
+  to_address: string;
+  body: string | null;
+  record_kind: string | null;
+  record_id: string | null;
+  status: string;
+  reason: string | null;
+  outbound_log_id: string | null;
+  /** The recipient's answer on the reply page (#6070): got or bought. */
+  reply: string | null;
+  replied_at: Date | null;
+  /** email or text. */
+  channel: Generated<string>;
+  created_at: Generated<Date>;
+}
+
+/** A recipient who stopped one wire's messages. */
+export interface ExternalMessageStopsTable {
+  org_id: string;
+  binding_id: string;
+  person_id: string;
+  stopped_at: Generated<Date>;
+}
+
 export interface WorkspacePeopleTable {
   id: Generated<string>;
   org_id: string;
   name: Generated<string>;
   user_id: string | null;
   email: string | null;
+  /** A number to text, international form (+15550100123). */
+  phone: string | null;
   created_at: Generated<Date>;
   archived_at: Date | null;
 }
@@ -1068,6 +1120,8 @@ export interface EntityActionBindingsTable {
   /** Set when this row was contributed by a Pillar-E module's
    *  `contributes.wires`. Cleaned up on module disable. */
   source_module: string | null;
+  /** The member who made the wire (#6070); null for one made before, or by a bundle. */
+  created_by: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** Q1 wire target. JSON value:
    *  - `"self"` — action runs on the source entity (default).
    *  - `{ rel: string, dir?: "in" | "out", kind?: string }` — action
@@ -1886,6 +1940,9 @@ export interface MetaDB {
   workspace_invites: WorkspaceInvitesTable;
   workspace_invite_uses: WorkspaceInviteUsesTable;
   workspace_people: WorkspacePeopleTable;
+  org_external_messages: OrgExternalMessagesTable;
+  external_message_log: ExternalMessageLogTable;
+  external_message_stops: ExternalMessageStopsTable;
   signup_invites: SignupInvitesTable;
   waitlist: WaitlistTable;
   api_tokens: ApiTokensTable;
@@ -1922,6 +1979,7 @@ export interface MetaDB {
   impersonation_sessions: ImpersonationSessionsTable;
   backup_destinations: BackupDestinationsTable;
   org_outbound_email: OrgOutboundEmailTable;
+  org_outbound_sms: OrgOutboundSmsTable;
   outbound_email_log: OutboundEmailLogTable;
   test_org_pool: TestOrgPoolTable;
   operator_sandboxes: OperatorSandboxesTable;

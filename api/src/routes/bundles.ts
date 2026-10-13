@@ -35,6 +35,7 @@ import {
 } from "../platform/platform-actions.js";
 import { getTenantDb } from "../db/tenant.js";
 import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
+import { appsFromManifest, syncBundleApps, type BundleApp, type BundleAppRow, type BundleAppsDB } from "./bundle-apps.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
 import { canonicalModuleName, getEntry } from "../modules/registry.js";
@@ -91,20 +92,10 @@ interface CoreCatalogsCatalogsRow {
 }
 // core-apps lives in the same tenant DB. Bundles can seed WorkspaceApps
 // (e.g. the Outfit Planner) idempotently on install.
-interface CoreAppsAppsRow {
-  id: string;
-  slug: string;
-  name: string;
-  icon: string | null;
-  visible_capability: string | null;
-  pages: unknown;
-  theme: unknown | null;
-  created_by: string | null;
-}
 interface BundleTenantDB {
   core_views_views: CoreViewsViewsRow;
   core_catalogs_catalogs: CoreCatalogsCatalogsRow;
-  core_apps_apps: CoreAppsAppsRow;
+  core_apps_apps: BundleAppRow;
 }
 
 export const bundlesRouter = Router({ mergeParams: true });
@@ -1934,7 +1925,7 @@ async function applyValidatedBundleUnlocked(
   // the new set applies cleanly; the user's entities (parts, etc.) stay.
   const existing = await meta
     .selectFrom("bundles")
-    .select(["id", "version", "manifest"])
+    .select(["id", "version", "manifest", "enabled_features"])
     .where("org_id", "=", orgId)
     .where("external_id", "=", m.id)
     .execute();
@@ -1978,6 +1969,20 @@ async function applyValidatedBundleUnlocked(
       }
       if (pi.instance_name && typeof pi.qty_unit === "string" && pi.qty_unit.trim()) {
         priorInstanceUnits.set(pi.instance_name, pi.qty_unit.trim());
+      }
+    }
+  }
+  const priorAppDefaults: BundleApp[] = [];
+  if (m.provides_apps.length > 0) {
+    const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+    const priorViews = existing.length ? await tdb.selectFrom("core_views_views")
+      .select(["id", "name", "entity_kind"]).where("bundle_id", "in", existing.map((b) => b.id)).execute() : [];
+    const history = await meta.selectFrom("bundle_snapshots").select(["manifest", "enabled_features"])
+      .where("org_id", "=", orgId).where("external_id", "=", m.id).execute();
+    for (const bundle of [...existing, ...history]) {
+      for (const app of appsFromManifest(bundle.manifest, bundle.enabled_features ?? [])) {
+        const resolved = resolveAppViewRefs(app.pages, priorViews);
+        if (!resolved.unresolved.length) priorAppDefaults.push({ ...app, pages: resolved.pages });
       }
     }
   }
@@ -2427,6 +2432,7 @@ async function applyValidatedBundleUnlocked(
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
       for (const v of allViews) {
+        // check-then-insert: applyValidatedBundle holds the workspace's bundle-apply advisory lock.
         const inserted_view = await tdb
           .insertInto("core_views_views")
           .values({
@@ -2469,48 +2475,12 @@ async function applyValidatedBundleUnlocked(
     }
   }
 
-  // Seed bundle-provided WorkspaceApps (e.g. Wardrobe → the Outfit
-  // Planner). Idempotent on slug — skip if one already exists so a
-  // re-install doesn't clobber a workspace's edits. Needs core-apps
-  // enabled (declare it in the bundle/feature requires) so the table
-  // exists; a miss is logged, non-fatal.
   if (m.provides_apps.length > 0) {
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
-      for (const app of m.provides_apps) {
-        const exists = await tdb
-          .selectFrom("core_apps_apps")
-          .select("id")
-          .where("slug", "=", app.slug)
-          .executeTakeFirst();
-        if (exists) continue;
-        // Bind any `view_name` reference to the id that view actually got in
-        // this workspace. Unresolved names are logged and the block is left as
-        // authored: the App Player will reject it, which is the honest outcome
-        // and exactly what lint:bundle-app-view-refs prevents ever reaching here.
-        const { pages, unresolved } = resolveAppViewRefs(app.pages, seededViews);
-        if (unresolved.length > 0) {
-          console.error(
-            `[bundle-install] app "${app.slug}" references unknown saved view(s) ${unresolved.join(", ")} in bundle ${inserted.external_id}`,
-          );
-        }
-        await tdb
-          .insertInto("core_apps_apps")
-          .values({
-            slug: app.slug,
-            name: app.name,
-            icon: app.icon ?? null,
-            visible_capability: app.visible_capability ?? null,
-            pages: sql`${JSON.stringify(pages)}::jsonb` as never,
-            theme: app.theme ? (sql`${JSON.stringify(app.theme)}::jsonb` as never) : null,
-            created_by: null,
-          } as never)
-          // Two installs at once both found no app: the second keeps the first.
-          .onConflict((oc) => oc.column("slug").doNothing())
-          .execute();
-      }
+      await syncBundleApps(tdb as unknown as Kysely<BundleAppsDB>, m.provides_apps, priorAppDefaults, seededViews);
     } catch (err) {
-      console.error(`[bundle-install] provides_apps insert failed for bundle ${inserted.id}:`, err);
+      console.error(`[bundle-install] provides_apps sync failed for bundle ${inserted.id}:`, err);
     }
   }
 

@@ -1,6 +1,6 @@
 // A fake Google for the mail-source tests: the token endpoint, the revoke
 // endpoint, and the four Gmail calls the source uses (profile, list, get,
-// attachment). It records every call, because what was FETCHED is the
+// attachment), and the one a workspace's Gmail sender uses (send). It records every call, because what was FETCHED is the
 // exposure the tests are about, and answers `q` the way Gmail does for the
 // one operator the allowlist uses: `from:(a OR b) after:<epoch>`.
 //
@@ -32,6 +32,8 @@ export interface FakeGmail {
   grantDead: boolean;
   /** Flip to make every Gmail call answer 503. */
   down: boolean;
+  /** Every message handed to messages.send, as its raw RFC 5322 text. */
+  sent: string[];
   close(): Promise<void>;
 }
 
@@ -82,6 +84,7 @@ export async function startFakeGmail(mails: FakeMail[]): Promise<FakeGmail> {
     revoked: [],
     grantDead: false,
     down: false,
+    sent: [],
     close: async () => {},
   };
   const server: Server = createServer((req, res) => {
@@ -98,7 +101,9 @@ export async function startFakeGmail(mails: FakeMail[]): Promise<FakeGmail> {
         const form = new URLSearchParams(raw);
         if (state.grantDead) return json(400, { error: "invalid_grant", error_description: "Token has been expired or revoked." });
         if (form.get("grant_type") === "authorization_code") {
-          return json(200, { access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600 });
+          // An ID token naming the account, as Google sends one for openid email.
+          const idToken = ["e30", b64url(JSON.stringify({ email: "person@example.test", email_verified: true })), "sig"].join(".");
+          return json(200, { access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600, id_token: idToken });
         }
         return json(200, { access_token: `access-${state.refreshCalls}`, expires_in: 3600 });
       }
@@ -109,6 +114,11 @@ export async function startFakeGmail(mails: FakeMail[]): Promise<FakeGmail> {
       if (state.down) return json(503, { error: { message: "backend down" } });
       if (!(req.headers.authorization ?? "").startsWith("Bearer access-")) return json(401, { error: { message: "bad token" } });
       if (url.pathname === "/gmail/v1/users/me/profile") return json(200, { emailAddress: "person@example.test" });
+      if (url.pathname === "/gmail/v1/users/me/messages/send" && req.method === "POST") {
+        const body = JSON.parse(raw || "{}") as { raw?: string };
+        state.sent.push(Buffer.from(body.raw ?? "", "base64url").toString());
+        return json(200, { id: `sent-${state.sent.length}`, threadId: `sent-${state.sent.length}` });
+      }
       if (url.pathname === "/gmail/v1/users/me/messages") {
         const q = url.searchParams.get("q") ?? "";
         state.queries.push(q);

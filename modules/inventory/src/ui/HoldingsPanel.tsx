@@ -127,7 +127,9 @@ function ArrivedForm({ at, onDone }: { at: HoldingRow; onDone: () => void }) {
   );
 }
 
-export function HoldingsPanel({ partId, unit }: { partId: string; unit?: string }) {
+/** `gone`: the record is marked gone, so nothing arrives at or moves between
+ *  its places until it is brought back (#6153). */
+export function HoldingsPanel({ partId, unit, gone = false }: { partId: string; unit?: string; gone?: boolean }) {
   const { api, basePath } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
@@ -210,6 +212,7 @@ export function HoldingsPanel({ partId, unit }: { partId: string; unit?: string 
             if (ok) split.mutate(row);
           }}
           actions={(row) => {
+            if (gone) return null;
             const toggle = (form: "restock" | "arrived") =>
               setOpen((o) => (o && o.row === row.id && o.form === form ? null : { row: row.id, form }));
             const done = () => {

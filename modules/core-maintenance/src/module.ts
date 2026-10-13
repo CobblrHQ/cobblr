@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.17",
+  version: "0.2.18",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -387,6 +387,11 @@ export default defineModule({
         id: "core-maintenance:renewals", surface: "entity-detail-panel", target: "*", title: "Renewals", placement: "summary",
         // a renewal is for a thing you keep: never a job, order or project that gets finished, nor a pruned record
         appliesTo: { traits: ["unique", "indefinite", "durable"] },
+        // and only where there is one, or in a collection of things that renew:
+        // "No paid terms yet · Add a renewal" on a 3D printer was #6337. Adding
+        // a first renewal stays in the record's actions (Keep a renewal scheduled).
+        collections: ["subscriptions"],
+        presence: true,
       },
       {
         id: "core-maintenance:schedules",

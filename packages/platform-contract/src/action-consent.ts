@@ -10,7 +10,7 @@
 // decision, not a detail: the action's every effect stays inside the
 // workspace, and a person can put it back without help, so an AI may run it
 // and the person reads what happened on a card with an Undo. The set is
-// pinned by name (api/tests/undoable-actions-pinned.test.ts), and a guard
+// pinned by name (scripts/lib/undoable-actions-pinned.test.ts), and a guard
 // holds that every flagged action has registered how it is undone. Default
 // false: a new action is cautious until someone decides otherwise. An action
 // that registers an inverse and still says false (the move between lists)

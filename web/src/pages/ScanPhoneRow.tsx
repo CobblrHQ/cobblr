@@ -83,6 +83,8 @@ export interface ScanPhoneRowProps {
      *  below zero down to `floor` (taking what is there), and skips zero
      *  (#3884: "where is my −1 button"). */
     signed?: { floor: number };
+    /** A measured record: the change is typed in fractions of its unit (#6142). */
+    decimal?: boolean;
   } | null;
   /** A few of the destination table's own fields, as compact tokens in the
    *  metadata lines. `confirmed` = the person set it; `swatch` = a colour. */
@@ -98,6 +100,9 @@ export interface ScanPhoneRowProps {
      *  the same words the desk card and the session show. */
     label: string;
     destination: string;
+    /** What the action does to the destination, kept whole beside its name
+     *  ("6 → 9" on a repeat scan) while a long name gives way. */
+    destinationNote?: string;
     tentative: boolean;
     reason?: string;
     busy: boolean;
@@ -201,7 +206,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             {name ?? (p.working ? "Reading…" : p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </span>
           {p.subtitle && (
-            <span className="mr-2 font-mono text-[11px] text-faint dark:text-slate-500">
+            <span data-testid="scan-card-meta" className="mr-2 text-[11px] text-faint dark:text-slate-500">
               {lineRuns(p.subtitle).map((r, i) => (r.place ? <span key={i} data-place-run="" className="inline-block">{r.text}</span> : r.text))}
             </span>
           )}
@@ -314,6 +319,8 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
                 // skips zero and may be typed negative. Otherwise it is the
                 // count of a new capture, one at least.
                 signed={!!q.signed}
+                // A measured record's change is typed in fractions (#6142).
+                decimal={!!q.decimal}
                 min={q.signed ? q.signed.floor : 1}
                 label={q.signed ? "Change by" : "Quantity"}
                 prefix="×"
@@ -398,6 +405,11 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
   // inside the row it took 20rem from wherever the pill sat, and with a
   // phone's larger text it ran off the right edge (#3930).
   const pill = useRef<HTMLButtonElement | null>(null);
+  const menu = useRef<HTMLDivElement | null>(null);
+  useEscapeToClose(open, menu, () => {
+    setOpen(false);
+    pill.current?.focus();
+  });
   const [at, setAt] = useState<{ top: number; left: number; above: number } | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -410,18 +422,23 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
     return () => window.removeEventListener("scroll", onScroll, { capture: true });
   }, [open, setOpen]);
   return (
-    <div className="relative flex min-w-0 max-w-full flex-wrap items-stretch">
+    // One row, the destination and its action (#6245, the owner's "the
+    // controls take up 3 rows ... they can get down to 2"): a long name is
+    // cut to fit and said whole in its label, where it used to wrap and push
+    // the action onto a row of its own.
+    <div className="relative flex min-w-0 max-w-full items-stretch">
       <button
         type="button"
         ref={pill}
         onClick={() => setOpen(!open)}
-        aria-label={`Destination: ${c.destination}. Choose a different destination`}
+        aria-label={`Destination: ${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Choose a different destination`}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title="Which table this gets filed into"
+        title={`${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Which table this gets filed into`}
         className="inline-flex min-h-9 min-w-0 items-center gap-1 rounded-l-md border border-line dark:border-slate-600 bg-subtle/60 dark:bg-slate-800/60 pl-2 pr-1.5 text-[13px] text-content dark:text-mortar-100"
       >
-        <span className="min-w-[4rem] text-left leading-tight">{c.destination}{c.tentative ? "?" : ""}</span>
+        <span className="min-w-0 truncate text-left leading-tight">{c.destination}{c.tentative ? "?" : ""}</span>
+        {c.destinationNote && <span data-destination-note className="shrink-0 whitespace-nowrap text-left leading-tight tabular-nums">{c.destinationNote}</span>}
         <ChevronDown size={14} className={"shrink-0 text-faint transition-transform " + (open ? "rotate-180" : "")} />
       </button>
       <button
@@ -438,7 +455,7 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
       {open && at && createPortal(
         <>
           <BackdropLayer className="z-[60]" onClick={() => setOpen(false)} />
-          <PopoverLayer role="listbox" style={{ top: at.top, left: at.left }} flipAbove={at.above} className="z-[61] w-80 overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl">
+          <PopoverLayer ref={menu} role="listbox" style={{ top: at.top, left: at.left }} flipAbove={at.above} className="z-[61] w-80 overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl">
             <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint">File into</div>
             {c.options.map((o) => (
               <button

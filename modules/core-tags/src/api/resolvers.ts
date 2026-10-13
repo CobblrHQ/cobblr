@@ -45,6 +45,7 @@ function toResolvedTag(row: {
   id: string;
   name: string;
   color: string | null;
+  metadata: Record<string, unknown>;
 }): ResolvedEntity {
   return {
     kind: "core-tags:tag",
@@ -55,6 +56,7 @@ function toResolvedTag(row: {
     fields: {
       name: row.name,
       color: row.color,
+      metadata: row.metadata,
     },
   };
 }

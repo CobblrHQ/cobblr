@@ -73,6 +73,11 @@ export interface ScanItemScreenProps {
     busy: boolean;
     choices: Array<{ value: string; source: string; onPick: () => void }>;
     actions: Array<{ label: string; hint?: string; busy?: boolean; onClick: () => void }>;
+    /** The barcode itself is the suspect (its digits fail their own check,
+     *  the contract's scanDoubtSuspect). Only then is "Fix the barcode" an
+     *  answer: a correct code "fixed" re-runs a lookup that was never the
+     *  problem (#6100). */
+    barcodeSuspect?: boolean;
   } | null;
   /** A receipt whose lines could not be read (contract: scanReceiptReadFailed):
    *  the screen leads with Read again instead of asking for a name (#3581). */
@@ -91,6 +96,9 @@ export interface ScanItemScreenProps {
      *  (the contract's catalogCaption, #3071). */
     catalogCaption?: string;
     onOpenYours: () => void;
+    /** Which picture leads: the strip's thumbnail is the same one, both
+     *  from photoOrder (#6099). */
+    lead?: "catalog" | "yours";
     onOpenCatalog: () => void;
     onCapture: () => void;
     onRetake: (() => void) | null;
@@ -122,6 +130,8 @@ export interface ScanItemScreenProps {
     primary?: { label: string; title?: string; busy: boolean; onClick: () => void } | null;
     /** The record's count on the screen files this row (see ScanItemSheetFooter). */
     filedOnScreen?: boolean;
+    /** A scan that is not an arrival is never filed as new (#6250). */
+    canAdd?: boolean;
     onDiscard: () => void;
     discardPending: boolean;
     setActionSlot: (el: HTMLDivElement | null) => void;
@@ -165,7 +175,7 @@ function ReviewBlock({ r, barcode }: { r: NonNullable<ScanItemScreenProps["revie
             {a.label}
           </button>
         ))}
-        {barcode.canEdit && !barcode.editing && (
+        {barcode.canEdit && !barcode.editing && (!barcode.value || r.barcodeSuspect) && (
           <button type="button" onClick={barcode.onStart} title={barcode.value ? "Fix the barcode; saving re-runs the lookup on the corrected code" : "Type the barcode off the label; it identifies the product exactly"} className={action + " border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100"}>
             <Pencil size={13} className="text-faint" /> {barcode.value ? "Fix the barcode" : "Add the barcode"}
           </button>
@@ -316,7 +326,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
           <h2 className={"text-xl font-semibold leading-tight " + (displayName(item) ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400")}>
             {displayName(item) ?? (p.receipt ? RECEIPT_UNREAD_TITLE : "Name this item")}
           </h2>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-mono text-faint dark:text-slate-500">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-faint dark:text-slate-500">
             {p.barcode.editing ? (
               <span className="flex w-full items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                 <input
@@ -329,6 +339,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
                     else if (e.key === "Escape") p.barcode.onCancel();
                   }}
                   placeholder="digits from the label"
+                  // mono: the barcode as it is typed
                   className="min-h-11 min-w-0 flex-1 rounded-md border border-accent bg-surface dark:bg-slate-900 px-2.5 font-mono text-sm text-content outline-none"
                 />
                 <button
@@ -355,11 +366,12 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
                 // so the identity block does not float a band of nothing
                 // above Pictures (the owner: "a little dead whitespace",
                 // #3078).
-                className="-ml-1 -my-3 inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 text-[11px] font-mono text-content dark:text-mortar-200 active:bg-subtle dark:active:bg-slate-800"
+                className="-ml-1 -my-3 inline-flex min-h-11 items-center gap-1.5 rounded-md px-1 text-[11px] text-content dark:text-mortar-200 active:bg-subtle dark:active:bg-slate-800"
               >
                 {p.barcode.value ? (
                   <>
-                    <span>▌▌{p.barcode.value}</span>
+                    {/* mono: a barcode's digits */}
+                    <span className="font-mono">▌▌{p.barcode.value}</span>
                     <Pencil size={11} className="text-faint" />
                   </>
                 ) : (
@@ -442,22 +454,30 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
             </div>
           }
         >
-          {/* Catalog first, then yours, the desktop's order (the owner, #2982).
+          {/* Catalog first, then yours, the desktop's order (the owner, #2982),
+              read from photoOrder like the strip's thumbnail (#6099).
               With no catalog picture there is no catalog tile: your photo IS
               the item's picture, not the peer of an empty box that reads as
               broken (the owner, 2026-09-24; #3584's fallback). Finding or
               adding a catalog picture stays one quiet line below. */}
           {p.pictures.catalog || p.pictures.catalogChecking ? (
-            <div className="grid grid-cols-2 gap-2">
-              <Picture
-                src={p.pictures.catalog}
-                caption={p.pictures.catalogChecking ? "Catalog, checking" : (p.pictures.catalogCaption ?? "Catalog")}
-                empty="No picture"
-                onOpen={p.pictures.onOpenCatalog}
-                onBroken={p.pictures.onCatalogBroken}
-                onPick={p.pictures.onPickCatalog}
-              />
-              <Picture src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} camera />
+            <div className="grid grid-cols-2 gap-2" data-testid="pictures-pair" data-lead={p.pictures.lead ?? "catalog"}>
+              {(() => {
+                const catalog = (
+                  <Picture
+                    key="catalog"
+                    src={p.pictures.catalog}
+                    caption={p.pictures.catalogChecking ? "Catalog, checking" : (p.pictures.catalogCaption ?? "Catalog")}
+                    empty="No picture"
+                    onOpen={p.pictures.onOpenCatalog}
+                    onBroken={p.pictures.onCatalogBroken}
+                    onPick={p.pictures.onPickCatalog}
+                  />
+                );
+                const yours = <Picture key="yours" src={p.pictures.yours} caption="Your photo" empty="No photo yet" onOpen={p.pictures.onOpenYours} onBroken={p.pictures.onYoursBroken} onPick={p.pictures.onPickYours} camera />;
+                // The order the strip's thumbnail follows: photoOrder (#6099).
+                return p.pictures.lead === "yours" ? [yours, catalog] : [catalog, yours];
+              })()}
             </div>
           ) : (
             <div data-testid="pictures-yours-only">
@@ -493,6 +513,7 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
         onOpenForm={p.footer.onOpenForm}
         primary={p.footer.primary ?? null}
         filedOnScreen={p.footer.filedOnScreen ?? false}
+        canAdd={p.footer.canAdd ?? true}
         onCancel={p.nav.onClose}
         onDiscard={p.footer.onDiscard}
         discardPending={p.footer.discardPending}

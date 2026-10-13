@@ -2,6 +2,8 @@
 //
 //   POST /me/mail-sources/gmail/start        {org_id} → {url}: the consent screen
 //   GET  /me/mail-sources/gmail/callback     Google lands here; stores the grant
+//                                            (a mailbox's, or a workspace's Gmail
+//                                            sender's: the signed state says which)
 //   GET  /me/mail-sources                    the card: address, workspace, state
 //   POST /me/mail-sources/:id/sync           Check now (a stopped source is retried)
 //   GET  /orgs/:slug/mail-sources            the workspace's view: who feeds it
@@ -21,6 +23,7 @@ import { publicBaseUrl } from "../platform/public-url.js";
 import { addUserCredential, updateUserCredential, listUserCredentials } from "../platform/user-credentials.js";
 import { beginGoogleConsent, exchangeGoogleCode, googleOAuthConfigured, googleRedirectUri, readGoogleState } from "../platform/mail-source/google-oauth.js";
 import { GmailSource } from "../platform/mail-source/gmail.js";
+import { saveGmailSender } from "../platform/outbound-email.js";
 import { GMAIL_PROVIDER_ID, MAIL_SOURCE_KIND, mailSourceStates, mailSourcesRoutedTo, myMailSources, writeMailSourceState } from "../platform/mail-source/store.js";
 import { BACKFILL_DAYS, syncCredential } from "../platform/mail-source/sync.js";
 
@@ -74,15 +77,27 @@ mailSourcesRouter.get("/me/mail-sources/gmail/callback", async (req, res) => {
       return publicBaseUrl();
     }
   })();
-  const back = (word: string) => res.redirect(`${origin}/me/connections?gmail=${word}`);
+  let page = "/me/connections";
+  const back = (word: string) => res.redirect(`${origin}${page}?gmail=${word}`);
   try {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const state = typeof req.query.state === "string" ? req.query.state : "";
-    if (typeof req.query.error === "string") return back("denied");
     const claims = state ? await readGoogleState(state) : null;
+    if (claims?.purpose === "send") page = "/configuration/email";
+    if (typeof req.query.error === "string") return back("denied");
     if (!code || !claims) return back("error");
     const grant = await exchangeGoogleCode(code, claims.verifier);
     if (!grant) return back("error");
+    if (claims.purpose === "send") {
+      // A workspace's sender: only an owner or admin sets one, checked again
+      // here because a role can change in the minute the consent took.
+      const m = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", claims.orgId).where("user_id", "=", claims.userId).executeTakeFirst();
+      // role-gate: exact — the workspace's sending address is governance, the email page's bar.
+      if (!m || (m.role !== "owner" && m.role !== "admin")) return back("forbidden");
+      if (!grant.email) return back("error");
+      await saveGmailSender(claims.orgId, claims.userId, { email: grant.email, refresh_token: grant.refresh_token });
+      return back("connected");
+    }
     const profile = await new GmailSource({ accessToken: grant.access_token }).profile().catch(() => null);
     const email = profile?.email ?? null;
 

@@ -88,6 +88,10 @@ export function appsMatching(q: string, apps: readonly AppEntry[], limit = 6): A
 }
 
 export const MODULE_ROUTE_OWNERS: ReadonlyArray<{ route: string; module: string }> = [
+  { route: "/station/assembly", module: "builds" },
+  { route: "/station/reflow", module: "builds" },
+  { route: "/station/inspection", module: "builds" },
+  { route: "/stocktakes", module: "inventory" },
   { route: "/station/floor", module: "digifab" },
   { route: "/station/printer", module: "digifab" },
   { route: "/station/machine", module: "digifab" },

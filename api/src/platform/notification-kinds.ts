@@ -50,6 +50,8 @@ export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
   { eventType: "platform.assistant.change_held", label: "Assistant wants to delete something", description: "An assistant asked to delete a record, and it waits for your yes." },
   { eventType: "platform.service.awaiting_confirm", label: "Service waiting for your yes", description: "An automation or a module asked for a service that runs only once someone says yes." },
   { eventType: "platform.service.stuck", label: "Service run stuck", description: "A service run stopped moving, and what you can do about it." },
+  { eventType: "platform.external_messages.replied", label: "Reply to an automation's message", description: "Someone outside the workspace answered an automation's message: they got it, or bought it." },
+  { eventType: "platform.external_messages.held", label: "Automation message held", description: "An automation's message to someone outside the workspace was held by the daily limit." },
   { eventType: "platform.service.waiting_long", label: "Service still waiting on you", description: "A service run has waited a long time for your yes or your answer." },
   // The operator's own notices, sent to the deployment's admins.
   { eventType: "platform.account.created", scope: "operator", label: "New account", description: "Somebody signed up (to the deployment's operators)." },

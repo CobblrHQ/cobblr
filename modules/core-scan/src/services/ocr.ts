@@ -382,3 +382,50 @@ export async function ocrLabelReadings(bytes: Buffer | Uint8Array): Promise<{ fr
     return null;
   }
 }
+
+/** One word the engine read, with its box: what tells a label's title from
+ *  its small print (label-name.ts). */
+export interface OcrWord {
+  text: string;
+  conf: number;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  /** The engine's own grouping: words with the same three are one line. */
+  block: number;
+  par: number;
+  line: number;
+}
+
+/** The words on an image with their sizes, read as sparse text (a product
+ *  label is islands of type, not a column). Null when there is no engine or
+ *  it failed; [] when it read nothing. */
+export async function ocrWordBoxes(bytes: Buffer | Uint8Array): Promise<OcrWord[] | null> {
+  if (!(await ocrAvailable())) return null;
+  try {
+    const tsv = await run(["stdin", "stdout", "--psm", "11", "-l", "eng", "tsv"], await preprocessForOcr(bytes));
+    const words: OcrWord[] = [];
+    for (const row of tsv.split(/\r?\n/).slice(1)) {
+      const c = row.split("\t");
+      if (c[0] !== "5" || c.length < 12) continue;
+      const text = (c[11] ?? "").trim();
+      if (!text) continue;
+      words.push({
+        text,
+        conf: Number(c[10]),
+        block: Number(c[2]),
+        par: Number(c[3]),
+        line: Number(c[4]),
+        left: Number(c[6]),
+        top: Number(c[7]),
+        width: Number(c[8]),
+        height: Number(c[9]),
+      });
+    }
+    return words;
+  } catch (err) {
+    console.warn(`[core-scan] label word OCR failed: ${(err as Error).message}`);
+    return null;
+  }
+}

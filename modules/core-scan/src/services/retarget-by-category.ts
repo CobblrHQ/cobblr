@@ -12,6 +12,20 @@
 
 import type { ScanMenuEntry } from "./matchmaker.js";
 import { instanceForCategory } from "@cobblr/platform-contract/instance-for-category";
+import { codeKindOf } from "./barcode-lookup.js";
+
+/** What a list's records ARE, read from how they are identified: a list
+ *  whose records carry an ISBN holds books, whatever the list is called (a
+ *  Bookshelf copied from another workspace kept its fields and lost its
+ *  noun, #6155). Words the category rule matches beside the list's names. */
+const HELD_BY_IDENTIFIER: Readonly<Record<string, string>> = { "identifier:isbn": "book" };
+export function heldThings(entry: Pick<ScanMenuEntry, "fields">): string[] {
+  // The decode role a bundle declares, or, where a copy carried the field
+  // but not its decode role (a field made through the field API keeps only
+  // its meaning), an identifier field by that identifier's name.
+  const roleOf = (f: ScanMenuEntry["fields"][number]) => f.decode_role ?? (f.field_role === "identifier" ? `identifier:${f.name.toLowerCase()}` : null);
+  return [...new Set(entry.fields.flatMap((f) => { const r = roleOf(f); return r && HELD_BY_IDENTIFIER[r] ? [HELD_BY_IDENTIFIER[r]!] : []; }))];
+}
 
 interface CandidateLike {
   module: string;
@@ -40,7 +54,7 @@ export function retargetByCategory(candidates: CandidateLike[], menu: readonly S
     if (!cand.category) continue;
     const siblings = menu
       .filter((e) => e.module === cand.module && e.instance)
-      .map((e) => ({ instance: e.instance!, label: e.label, noun: e.noun, keywords: e.scan_keywords ?? null, entry: e }));
+      .map((e) => ({ instance: e.instance!, label: e.label, noun: e.noun, keywords: [...(e.scan_keywords ?? []), ...heldThings(e)], entry: e }));
     const hit = instanceForCategory(cand.category, siblings);
     if (!hit) continue;
     cand.instance = hit.entry.instance;
@@ -74,6 +88,35 @@ export function listNamedByCategory(category: unknown, menu: readonly ScanMenuEn
   if (typeof category !== "string" || !category.trim()) return null;
   const named = menu
     .filter((e) => e.instance)
-    .map((e) => ({ instance: e.instance!, label: e.label, noun: e.noun, keywords: e.scan_keywords ?? null, entry: e }));
+    .map((e) => ({ instance: e.instance!, label: e.label, noun: e.noun, keywords: [...(e.scan_keywords ?? []), ...heldThings(e)], entry: e }));
   return instanceForCategory(category, named)?.entry ?? null;
+}
+
+/** A scanned ISBN is a book whatever a catalog answers, and the list for it
+ *  is the one whose records carry an ISBN, found by that field, not by its
+ *  name or noun (#6155: a Bookshelf copied from another workspace lost its
+ *  noun, and a book no catalog knew went to Inventory). Moves a candidate on
+ *  a module's catch-all to that list when exactly one installed list holds
+ *  books; a list the model chose on purpose stays. Returns how many moved. */
+export function retargetIsbnToBookList(candidates: CandidateLike[], menu: readonly ScanMenuEntry[], code: string | null | undefined): number {
+  if (!code || codeKindOf(code) !== "book") return 0;
+  const lists = menu.filter((e) => e.instance && !e.bundle_external_id && heldThings(e).includes("book"));
+  if (lists.length !== 1) return 0;
+  const list = lists[0]!;
+  let moved = 0;
+  for (const cand of candidates) {
+    if (cand.instance) continue;
+    cand.module = list.module;
+    cand.instance = list.instance;
+    cand.kind = list.kind;
+    cand.label = list.label;
+    moved++;
+  }
+  if (moved) {
+    // One chip per table, as retargetByCategory keeps it.
+    const seen = new Set<string>();
+    const kept = candidates.filter((c) => { const t = `${c.module}::${c.instance ?? ""}`; if (seen.has(t)) return false; seen.add(t); return true; });
+    candidates.splice(0, candidates.length, ...kept);
+  }
+  return moved;
 }

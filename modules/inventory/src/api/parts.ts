@@ -1,4 +1,5 @@
 import { stockViews } from "./stock-shapes.js";
+import { recordName } from "@cobblr/platform-contract/record-name";
 import { logPartCreated } from "./part-created.js";
 import { stockUnitRefusal } from "../stock-unit.js";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
@@ -29,7 +30,7 @@ import { castFieldValues } from "@cobblr/platform-contract/field-values";
 import { disclosureHandler, fieldsShowStockSignal, latchInstanceStock } from "./disclosure.js";
 import { computeReconcile } from "../reconcile.js";
 import { stockMoved } from "./stock-moved.js";
-import { arrivingLots, withBatches } from "./action-handlers.js";
+import { goneStockRefusal, isGone, arrivingLots, withBatches } from "./action-handlers.js";
 import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUnitsSummary } from "../on-hand.js";
 import { consumptionUnitOf } from "../consumption-unit.js";
 import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
@@ -1270,6 +1271,10 @@ partsRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
     if (parsed.data.metadata) parsed.data.metadata = await typedFields(req, parsed.data.metadata as Record<string, unknown>);
+    // A name of real values only (record-name.ts, #6283).
+    const builtName = recordName(parsed.data.name);
+    if (!builtName) return void res.status(400).json({ error: { code: "invalid_body", message: "Say what it is called." } });
+    parsed.data.name = builtName;
 
     const inserted = await db
       .insertInto("inventory_parts")
@@ -1539,6 +1544,12 @@ partsRouter.patch(
     if (!before) {
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
+    }
+
+    // A record marked gone has nothing on hand: its kept count is history for
+    // Undo, not a number to edit, unless this same edit brings it back (#6153).
+    if (isGone(before.metadata) && parsed.data.qty != null && parsed.data.archived !== false && Number(parsed.data.qty) !== Number(before.qty)) {
+      return void res.status(409).json({ error: { code: "record_gone", message: goneStockRefusal(before.name) } });
     }
 
     if (parsed.data.unit != null) {

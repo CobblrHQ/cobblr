@@ -22,7 +22,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -114,20 +114,23 @@ export function ViewsPage() {
         {items.map((v) => (
           <li
             key={v.id}
-            className="flex items-center gap-3 px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800/40 cursor-pointer"
+            className="flex items-center gap-1 sm:gap-3 px-3 py-2 text-sm hover:bg-subtle dark:hover:bg-slate-800/40 cursor-pointer"
             onClick={() => setActive(v)}
           >
-            <LayoutList size={14} className="text-faint" />
-            <span className="font-medium truncate">{v.name}</span>
-            <span className="text-xs text-muted dark:text-slate-400 truncate">
-              {labels.collection(v.entity_kind)}
-            </span>
-            <span className="ml-auto text-xs text-faint tracking-wide">
-              {labels.viewType(v.view_type)}
-              {v.is_default && " · default"}
-              {v.owner_user_id === null && " · shared"}
-              {v.pinned && " · pinned"}
-            </span>
+            <LayoutList size={14} className="shrink-0 text-faint" />
+            {/* The name takes the row's width and wraps rather than cutting
+                short; what it shows and how sit on the line under it (#6201:
+                with finger-sized actions a phone row left the name a few
+                letters). */}
+            <div className="min-w-0 flex-1">
+              <div className="font-medium break-words">{v.name}</div>
+              <div className="text-xs text-muted dark:text-slate-400 break-words">
+                {labels.collection(v.entity_kind)} · {labels.viewType(v.view_type)}
+                {v.is_default && " · default"}
+                {v.owner_user_id === null && " · shared"}
+                {v.pinned && " · pinned"}
+              </div>
+            </div>
             <button
               aria-label={v.pinned ? "Unpin from dashboard" : "Pin to dashboard"}
               onClick={(e) => {
@@ -135,9 +138,8 @@ export function ViewsPage() {
                 pinToggle.mutate({ id: v.id, pinned: !v.pinned });
               }}
               className={
-                v.pinned
-                  ? "text-accent hover:text-accent"
-                  : "text-faint hover:text-accent"
+                "inline-flex shrink-0 min-h-11 min-w-11 -my-2 items-center justify-center " +
+                (v.pinned ? "text-accent hover:text-accent" : "text-faint hover:text-accent")
               }
               title={v.pinned ? "Unpin from dashboard" : "Pin to dashboard"}
             >
@@ -149,7 +151,7 @@ export function ViewsPage() {
                 e.stopPropagation();
                 setEditing(v);
               }}
-              className="text-faint hover:text-accent"
+              className="inline-flex shrink-0 min-h-11 min-w-11 -my-2 items-center justify-center text-faint hover:text-accent"
               title="Edit"
             >
               <Pencil size={14} />
@@ -173,7 +175,7 @@ export function ViewsPage() {
                   toast.error(`Delete failed: ${(err as Error).message}`);
                 }
               }}
-              className="text-faint hover:text-ember-500"
+              className="inline-flex shrink-0 min-h-11 min-w-11 -my-2 items-center justify-center text-faint hover:text-ember-500"
               title="Delete"
             >
               <Trash2 size={14} />
@@ -1829,10 +1831,11 @@ type ViewLayout = (typeof VIEW_LAYOUTS)[number];
 function LayoutPicker({ value, onChange }: { value: ViewLayout; onChange: (t: ViewLayout) => void }) {
   return (
     <div role="radiogroup" aria-label="Layout" className="flex flex-wrap gap-1">
-      {VIEW_LAYOUTS.map((t) => (
+      {VIEW_LAYOUTS.map((t, i) => (
         <button
           key={t}
           type="button"
+          {...rovingRadio(i, VIEW_LAYOUTS.indexOf(value))}
           role="radio"
           aria-checked={value === t}
           onClick={() => onChange(t)}

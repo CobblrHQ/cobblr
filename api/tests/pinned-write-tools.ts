@@ -17,6 +17,9 @@ export const PINNED_WRITE_TOOLS = [
   // Inbox items filed into a list through the inbox's own confirm: record
   // writes after the scan's checks, like add_thing, not kernel config.
   "file_inbox_items",
+  // A scan inbox item put back as a step in its History found it (#6100):
+  // the card's own Put back, through the chat ledger, undoable like a filing.
+  "put_back_scan_item",
   // The one write rail for every module operation, entity or workspace.
   "invoke_action",
   // The one door to outside services (#4034), not a kernel-config write: it

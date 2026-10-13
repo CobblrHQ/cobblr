@@ -50,6 +50,7 @@ export function ChatRefChip({
       try {
         await api.lookupEntity(slug, record.kind, record.id);
       } catch (err) {
+        // 404-is: a-state: a chat chip can name a record deleted after the message was written
         if (err instanceof ApiError && (err.status === 404 || err.status === 410)) {
           toast.info(`${name || `That ${noun}`} is gone: it was deleted after this was written.`);
           return;

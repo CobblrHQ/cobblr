@@ -15,17 +15,18 @@ import { z } from "zod";
 import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const renderersRouter = Router({ mergeParams: true });
 
 const InstallBody = z.object({
   name: z.string().min(1).max(120).regex(/^[a-z0-9][a-z0-9_-]*$/),
-  version: z.string().max(32).optional(),
+  version: z.string().max(32).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   exts: z.array(z.string().regex(/^[a-z0-9]+$/).max(12)).min(1).max(20),
   /** The renderer JS bundle (capped — it ships inline in the index). */
   renderer_js: z.string().min(1).max(2_000_000),
-  pubkey: z.string().max(1000).optional(),
-  signature: z.string().max(1000).optional(),
+  pubkey: optionalText(1000),
+  signature: optionalText(1000),
 });
 
 const COLS = ["id", "name", "version", "exts", "renderer_js", "signed_by", "created_at"] as const;

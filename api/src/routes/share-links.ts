@@ -77,12 +77,12 @@ shareLinksOrgRouter.get("/:slug/own-connections", requireAuth, withTenant, async
 });
 
 const CreateBody = z.object({
-  purpose: z.literal("own").optional(),
+  purpose: z.literal("own").optional(), // none-refused-ok: the invite lookups index by these values and take no null
   label: z.string().max(120).default(""),
   /** Their email: the invite is bound to it and, with outgoing mail, sent there. */
   email: z.union([z.string().trim().toLowerCase().email().max(254), z.literal("")]).optional(),
   /** Which of the places an invite can open the owner chose (destinations). */
-  where: z.number().int().min(0).max(50).optional(),
+  where: z.number().int().min(0).max(50).optional(), // none-refused-ok: the invite lookups index by these values and take no null
   collection: z.object({ kind: z.string().min(1), ids: z.array(z.string().uuid()).max(5000).optional() }).optional(),
 });
 
@@ -211,8 +211,8 @@ shareLinksRouter.get("/share-links/invite/:code", async (req, res, next) => {
 });
 
 const ClaimBody = z.object({
-  purpose: z.literal("own").optional(),
-  share_org_id: z.string().uuid().optional(),
+  purpose: z.literal("own").optional(), // none-refused-ok: the invite lookups index by these values and take no null
+  share_org_id: z.string().uuid().optional(), // none-refused-ok: the invite lookups index by these values and take no null
   code: z.string().min(8).max(200),
   share_url: z.string().max(500),
   share_link_id: z.string().uuid(),
