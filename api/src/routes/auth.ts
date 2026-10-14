@@ -334,6 +334,12 @@ export async function buildAuthResponse(userId: string): Promise<AuthResponse> {
 // link). Add fields here as more anonymous-time toggles appear;
 // don't repurpose /api/v1/healthz for auth UI hints.
 
+/** Where a phone fetches an Offline CA install's root certificate, or null. */
+export function phoneCertificateUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  const site = (env.COBBLR_SITE_ADDRESS ?? "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  return env.COBBLR_TLS_MODE === "internal" && site ? `http://${site}/cobblr-root.crt` : null;
+}
+
 authRouter.get("/config", async (req, res) => {
   if (overLimit(configLimiter, req)) return rateLimited(res);
   // The same answer for every visitor of a deployment: a shared cache may hold
@@ -358,6 +364,12 @@ authRouter.get("/config", async (req, res) => {
     // managed/public-prod deployment sets COBBLR_HOSTED=true. Drives client hints
     // such as "a hosted Cobblr can't reach your LAN device directly".
     hosted: process.env.COBBLR_HOSTED === "true",
+    // An Offline CA install (the setup builder's COBBLR_TLS_MODE=internal) signs
+    // its own certificate, so a phone must trust that CA once before its camera
+    // works (a camera needs a secure context). The bundled Caddy serves the root
+    // certificate on plain HTTP at this address, and the pairing screen shows it
+    // as a QR, so that is one scan (#6443). Null on every other install.
+    phone_certificate_url: phoneCertificateUrl(),
     // Whether this server can send Web Push (#5565): its key pair exists. The
     // public key itself is public by nature, but a yes is all a page (or an
     // operator checking a deployment with curl) needs. null: could not be read.

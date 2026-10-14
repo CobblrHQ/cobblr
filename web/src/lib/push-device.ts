@@ -167,7 +167,9 @@ export async function turnOnPushHere(publicKey: string | null | undefined, env: 
  *  next thing to do. A Record over every failure, so a new one cannot be
  *  added without words. */
 export function pushTurnOnProblem(failure: { why: PushTurnOnFailure; message?: string }, env: Pick<PushEnv, "userAgent" | "platform" | "maxTouchPoints" | "route">): { says: string; next: string } {
-  const detail = failure.message ? ` The browser said: ${failure.message}` : "";
+  // The browser's words end their own sentence, so the next step does not run on from them.
+  const said = failure.message?.trim();
+  const detail = said ? ` The browser said: ${/[.!?]$/.test(said) ? said : `${said}.`}` : "";
   const words: Record<PushTurnOnFailure, { says: string; next: string }> = {
     denied: { says: "Notifications were blocked when the browser asked.", next: howToAllowAgain(env) },
     dismissed: { says: "The browser's question was closed without an answer, so nothing was turned on.", next: "Press Try again and choose Allow." },

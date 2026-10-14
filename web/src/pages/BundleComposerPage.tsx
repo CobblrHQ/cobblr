@@ -271,8 +271,8 @@ export function BundleComposerPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div className="space-y-4">
             <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
-                // metadata
+              <div className="text-[10px] uppercase tracking-widest text-accent mb-3">
+                metadata
               </div>
               <FieldPack
                 items={[
@@ -328,7 +328,7 @@ export function BundleComposerPage() {
               />
               {requires.length > 0 && (
                 <div className="mt-3 text-[11px] font-mono text-muted">
-                  // auto-requires:{" "}
+                  auto-requires:{" "}
                   {requires.map((r, i) => (
                     <span key={r.module}>
                       {i > 0 && ", "}
@@ -427,7 +427,7 @@ export function BundleComposerPage() {
                       <span className="flex-1 text-content dark:text-mortar-200 truncate">
                         {f.display_label ?? f.name}
                       </span>
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+                      <span className="text-[10px] uppercase tracking-widest text-faint">
                         {f.type}
                       </span>
                     </li>
@@ -440,8 +440,8 @@ export function BundleComposerPage() {
           <div className="space-y-3 lg:sticky lg:top-4 lg:self-start">
             <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-                  // preview
+                <div className="text-[10px] uppercase tracking-widest text-accent">
+                  preview
                 </div>
                 <div className="text-[10px] font-mono text-faint">
                   {countOf(selectedWires.size, "wire")} · {countOf(selectedFields.size, "field")}
@@ -506,8 +506,8 @@ function Section({
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // {title}
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          {title}
         </div>
         {hasAny && (
           <div className="text-[10px] font-mono">

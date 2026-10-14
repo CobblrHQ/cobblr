@@ -14,7 +14,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Plus, Printer, Trash2 } from "lucide-react";
 import { SearchInput, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
-import { EMPTY_PLAN_DRAFT, PLANNED_PREFIX, draftSummary, plannedRack, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
+import { EMPTY_PLAN_DRAFT, PLANNED_PREFIX, bodyAsApplied, draftSummary, plannedRack, renamePlannedRack, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import { parseOuterSize } from "@cobblr/platform-contract/outer-size";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ApiError, api, type PlanDraft } from "../lib/api";
@@ -159,8 +159,11 @@ export function PlanLayoutPage() {
   // phone, two or three in a desktop column); the rest wrap below.
   const perRow = Math.max(1, Math.min(faceCount, Math.floor((colW + 16) / 216)));
   const faceW = other && colW > 0 ? Math.floor((colW - (perRow - 1) * 16) / perRow) : undefined;
-  const { board, room, placeable, kinds, sizeOf, loading } = useLayoutBoard(slug, roomId, body, faceH, faceW);
-  const { board: otherBoard } = useLayoutBoard(slug, roomId, other?.body ?? EMPTY_PLAN_DRAFT, faceH, faceW);
+  // An applied option draws the racks Apply made as the real ones (#6363).
+  const drawn = useMemo(() => (body ? bodyAsApplied(body, draft?.made) : null), [body, draft?.made]);
+  const otherDrawn = useMemo(() => (other ? bodyAsApplied(other.body, other.made) : EMPTY_PLAN_DRAFT), [other]);
+  const { board, room, placeable, kinds, sizeOf, loading } = useLayoutBoard(slug, roomId, drawn, faceH, faceW);
+  const { board: otherBoard } = useLayoutBoard(slug, roomId, otherDrawn, faceH, faceW);
   useEffect(() => {
     const n = Math.max(1, ...[board, otherBoard].map((b) => b?.racks.filter((r) => r.face && r.shelves.length).length ?? 1));
     setFaceCount(n);
@@ -216,7 +219,12 @@ export function PlanLayoutPage() {
       refreshRoom();
       toast.action(r.note, { actionLabel: "Undo", onAction: () => undo.mutate(id) });
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    // A refused Apply took back what it did, or left its part on the draft
+    // with Undo (#6369): either way the room is read again.
+    onError: (e) => {
+      refreshRoom();
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
   });
 
   // Things not in this room yet, to bring into the draft; sized ones first.
@@ -245,9 +253,14 @@ export function PlanLayoutPage() {
     } else change({ ...body, moves: { ...body.moves, [id]: { ...body.moves[id], rect } } });
   };
 
+  const onRenameRack = (id: string, name: string) => {
+    if (!editable || !body) return;
+    change(renamePlannedRack(body, id, name));
+  };
+
   const summary = body ? draftSummary(body) : null;
   const askApply = async () => {
-    if (!draft || !summary) return;
+    if (!draft || !summary || save.isPending) return;
     const parts = [
       summary.things ? `move ${countOf(summary.things, "thing", "things")}` : null,
       summary.places ? `move ${countOf(summary.places, "rack or shelf", "racks and shelves")}` : null,
@@ -372,7 +385,7 @@ export function PlanLayoutPage() {
                 <button
                   type="button"
                   onClick={() => void askApply()}
-                  disabled={apply.isPending || notInRoom.length > 0}
+                  disabled={apply.isPending || save.isPending || notInRoom.length > 0}
                   title={notInRoom.length ? "Something in this layout does not fit the room" : undefined}
                   className="rounded bg-cobble-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
                 >
@@ -429,7 +442,7 @@ export function PlanLayoutPage() {
                 </section>
               )}
               {room && <AisleCheck slug={slug} room={room} />}
-              <LayoutBoard board={board} editable={editable} onDrop={onDrop} onMoveRack={onMoveRack} />
+              <LayoutBoard board={board} editable={editable} onDrop={onDrop} onMoveRack={onMoveRack} onRenameRack={onRenameRack} />
               {unsized.length > 0 && (
                 <p className="text-sm text-muted dark:text-slate-400" data-testid="layout-needs-size">
                   {countOf(unsized.length, "thing needs", "things need")} dimensions before fit can be checked.

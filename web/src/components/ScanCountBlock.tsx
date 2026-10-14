@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Minus, Plus } from "lucide-react";
-import { offerUndo, readTypedNumber, runAction, TypeableNumber, useFaces, useToast, rovingRadio } from "@cobblr/platform-web";
+import { NumberStepper, offerUndo, readTypedNumber, runAction, useFaces, useToast, rovingRadio } from "@cobblr/platform-web";
 import {
   SCAN_COUNT_REASON_LABEL,
   SHOPPING_LIST_DOOR,
@@ -244,35 +243,38 @@ export function ScanCountBlock({
       </div>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <button title={mode === "set" ? "One fewer in total" : "One less"} type="button" aria-label={mode === "set" ? "One fewer in total" : "One less"} disabled={value <= floor || (mode === "change" && have === 0)} onClick={() => put(value - 1)} className={step}>
-          <Minus size={15} />
-        </button>
-        <TypeableNumber
+        <NumberStepper
           value={value}
+          min={floor}
+          signed={mode === "change"}
+          decimal={decimal}
           label={mode === "set" ? "Total" : "Change by"}
+          decreaseLabel={mode === "set" ? "One fewer in total" : "One less"}
+          increaseLabel={mode === "set" ? "One more in total" : "One more"}
+          icons
+          iconSize={15}
+          className="inline-flex items-center gap-2"
+          buttonClassName={step}
           // The shared typeable number (tap, numeric keypad, select-all, commit
           // on blur or Enter, Escape reverts), with this block's own meaning on
           // top: the preview follows every keystroke, a change may be typed
           // negative, and a change of zero is refused (the field goes back).
-          allowNegative={mode === "change"}
-          signedText={mode === "change"}
-          decimal={decimal}
-          text={text}
-          onTextChange={(t) => {
-            setText(t);
-            const n = readTyped(t, decimal);
-            if (n == null || (mode === "change" && n === 0)) return;
-            const next = Math.max(floor, n);
-            setValue(next);
-            if (mode === "change" && Math.sign(next) !== Math.sign(value)) setReason(null);
+          typed={{
+            text,
+            onTextChange: (t) => {
+              setText(t);
+              const n = readTyped(t, decimal);
+              if (n == null || (mode === "change" && n === 0)) return;
+              const next = Math.max(floor, n);
+              setValue(next);
+              if (mode === "change" && Math.sign(next) !== Math.sign(value)) setReason(null);
+            },
+            onCommit: () => setText(shown(mode, value)),
+            onRevert: (was) => put(was),
           }}
-          onCommit={() => setText(shown(mode, value))}
-          onRevert={(was) => put(was)}
-          className="h-10 w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
+          inputClassName="h-10 w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
+          onChange={put}
         />
-        <button title={mode === "set" ? "One more in total" : "One more"} type="button" aria-label={mode === "set" ? "One more in total" : "One more"} onClick={() => put(value + 1)} className={step}>
-          <Plus size={15} />
-        </button>
         <span data-testid="count-result" className={`min-w-0 text-sm ${tone.result}`}>
           {mode === "change" ? (
             <>

@@ -119,8 +119,8 @@ export function HeadingsBuilder() {
   return (
     <section className="space-y-3">
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // navigation headings
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          navigation headings
         </div>
         <p className="text-xs text-muted dark:text-slate-400 mt-1">
           Group nav entries under your own headings - e.g. a{" "}

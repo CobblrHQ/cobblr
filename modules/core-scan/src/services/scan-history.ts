@@ -26,7 +26,7 @@ export type ScanRewriteAction =
 /** Actions that leave those fields alone, or that are one half of a pair
  *  whose other half undoes them (file/unfile, combine/uncombine,
  *  split/unsplit). They record no revision. */
-export type ScanOwnInverseAction = "confirm" | "attached" | "unconfirm" | "combine" | "uncombine" | "split" | "unsplit";
+export type ScanOwnInverseAction = "confirm" | "attached" | "unconfirm" | "combine" | "uncombine" | "split" | "unsplit" | "resplit";
 
 /** A recorded before-state: its id rides on the History entry. */
 export interface ScanRevision {

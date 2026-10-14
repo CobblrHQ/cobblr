@@ -79,7 +79,7 @@ lines.forEach((line, i) => {
 
 // git grep picks the few files that mention CLAUDE.md at all; reading every
 // file under the roots to find them cost 48 MB a run.
-const citing = execFileSync("git", ["grep", "--untracked", "-l", "-I", "-F", "CLAUDE.md", "--", ...CITE_ROOTS, ...CITE_FILES], { cwd: ROOT, encoding: "utf8" })
+const citing = execFileSync("git", ["grep", "--untracked", "-l", "-I", "-F", "CLAUDE.md", "--", ...CITE_ROOTS, ...CITE_FILES], { maxBuffer: 1024 * 1024 * 1024, cwd: ROOT, encoding: "utf8" })
   .split("\n")
   .filter((f) => f && !/(^|\/)migrations\//.test(f))
   .map((f) => join(ROOT, f));

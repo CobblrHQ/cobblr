@@ -39,8 +39,8 @@ export function PersonThingsPage() {
       )}
       {q.data?.groups.map((g) => (
         <section key={`${g.kind}:${g.field}`} className="space-y-2" data-testid="person-things-group">
-          <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">
-            {`// ${g.label} (${g.items.length})`}
+          <h2 className="text-[11px] uppercase tracking-widest text-muted">
+            {`${g.label} (${g.items.length})`}
             <span className="normal-case tracking-normal ml-2 text-faint">by {g.field_label}</span>
           </h2>
           <ul className="space-y-1.5">

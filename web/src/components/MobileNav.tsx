@@ -102,7 +102,7 @@ export function MobileNav() {
     "text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 transition";
   const linkClass = rowClass + " h-full";
   const standaloneLinkClass = rowClass + " border-b border-line dark:border-slate-800";
-  const headingClass = "flex min-h-11 items-end gap-2 bg-subtle/60 px-3 pb-1.5 pt-4 uppercase text-[10px] font-mono tracking-widest text-faint dark:bg-slate-800/40 dark:text-slate-500";
+  const headingClass = "flex min-h-11 items-end gap-2 bg-subtle/60 px-3 pb-1.5 pt-4 uppercase text-[10px] tracking-widest text-faint dark:bg-slate-800/40 dark:text-slate-500";
   const headerClass = headingClass + " h-full";
   const close = () => setOpen(false);
   const arrangeMenu = (label: string, members: RowCollection[]) =>
@@ -244,7 +244,7 @@ export function MobileNav() {
                   kept here for the same reason: the row rides high in the bar. */}
               <div
                 className="shrink-0 flex items-center justify-between px-5 pt-1 pb-2 border-b border-line dark:border-slate-800"
-                style={{ paddingTop: "calc(0.25rem + env(safe-area-inset-top))" }}
+                style={{ paddingTop: "calc(0.25rem + var(--safe-top))" }}
               >
                 {/* The mark carries over from the bar. The bar drops the
                     "Cobblr" wordmark on a phone to give the workspace name that
@@ -341,7 +341,7 @@ export function MobileNav() {
                   carries. */}
               <div
                 className="shrink-0 flex items-stretch justify-around border-t-2 border-line dark:border-slate-800 bg-subtle/60 dark:bg-slate-800/40 px-1 pt-2"
-                style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom))" }}
+                style={{ paddingBottom: "calc(0.5rem + var(--inset-bottom))" }}
               >
                 <NavLink
                   to="/me/notifications"

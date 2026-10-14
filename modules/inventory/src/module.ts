@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.15",
+  version: "0.21.17",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -941,6 +941,7 @@ export default defineModule({
       },
       {
         group: "plan",
+        // UI-SCREEN: /inventory/* (Consume or Release beside a reservation)
         id: "inventory:settle-allocation",
         runBy: "member",
         examples: ["we used the reserved ones", "release that reservation"],
@@ -958,6 +959,7 @@ export default defineModule({
       },
       {
         group: "stock",
+        // UI-SCREEN: /inventory/* (Categories in list settings)
         id: "inventory:add-category",
         runBy: "member",
         examples: ["add a Fasteners category", "we need a new category"],

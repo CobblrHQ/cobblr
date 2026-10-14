@@ -129,7 +129,7 @@ export function SearchBar() {
                   what a person searches for) and says so, ranked after the
                   live ones by the search itself. */}
               {h.retired && (
-                <span className="ml-2 align-middle text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">archived</span>
+                <span className="ml-2 align-middle text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">archived</span>
               )}
             </div>
             <div className="text-xs text-muted dark:text-slate-400 truncate">

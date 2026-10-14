@@ -119,7 +119,7 @@ function Composer({ kind, id, recordTitle }: { kind: string; id: string; recordT
 
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-4" data-testid="action-label-composer">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">new button for {recordTitle || "this record"}</div>
+      <div className="text-[10px] uppercase tracking-widest text-accent">new button for {recordTitle || "this record"}</div>
       {labels.data?.complete === false && <p className="text-sm text-muted">Showing {labels.data.items.length} of {countOf(labels.data.total ?? 0, "label")}.</p>}
       {actions.isLoading ? (
         <Loader2 size={16} className="animate-spin text-faint" />

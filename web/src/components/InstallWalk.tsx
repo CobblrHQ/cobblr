@@ -202,7 +202,7 @@ export function InstallOfferAfterScan({ landed }: { landed: boolean }) {
   }, [landed, phase, route]);
   if (phase === "offered") {
     return (
-      <FloatingChrome anchor="top" data-testid="install-offer" className="inset-x-3 top-[max(4.25rem,calc(env(safe-area-inset-top)+3.75rem))] z-[60] flex items-center gap-2 rounded-xl border border-blue-200 bg-white/95 px-3 py-2 text-sm shadow-lg dark:border-blue-900 dark:bg-slate-900/95">
+      <FloatingChrome anchor="top" data-testid="install-offer" className="inset-x-3 top-[max(4.25rem,calc(var(--top-edge)+3.75rem))] z-[60] flex items-center gap-2 rounded-xl border border-blue-200 bg-white/95 px-3 py-2 text-sm shadow-lg dark:border-blue-900 dark:bg-slate-900/95">
         <span className="min-w-0 flex-1 text-slate-700 dark:text-slate-200">It landed. Put Cobblr on your home screen?</span>
         <button type="button" className={quiet} onClick={() => { dismissInstall(); setPhase("gone"); }}>Not now</button>
         <button type="button" className="shrink-0 rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-semibold text-white" onClick={() => setPhase("walking")}>Show me</button>

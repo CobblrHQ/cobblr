@@ -161,7 +161,7 @@ export function AppsConfigPage() {
           className="flex flex-col gap-3"
         >
           <label className="flex flex-col gap-1">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">App name</span>
+            <span className="text-[10px] uppercase tracking-widest text-faint">App name</span>
             <input
               autoFocus
               value={newAppName}
@@ -261,7 +261,7 @@ export function AppsConfigPage() {
               </div>
 
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
                   Visible to
                 </span>
                 <select
@@ -323,7 +323,7 @@ export function AppsConfigPage() {
                     </div>
                   ))}
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-[10px] font-mono uppercase text-faint">add block:</span>
+                    <span className="text-[10px] uppercase text-faint">add block:</span>
                     {BLOCK_TYPES.map((t) => (
                       <button
                         key={t}
@@ -396,7 +396,7 @@ function BlockEditor({
   const [showPreview, setShowPreview] = useState(false);
   const [previewNonce, setPreviewNonce] = useState(0);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
-  const labelCls = "text-[10px] font-mono uppercase tracking-widest text-faint";
+  const labelCls = "text-[10px] uppercase tracking-widest text-faint";
   const inputCls = "w-full px-2 py-1 text-xs border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const ViewSelect = ({ value, onPick }: { value: string; onPick: (v: string) => void }) => (
     <select aria-label="View" value={value} onChange={(e) => onPick(e.target.value)} className={inputCls}>

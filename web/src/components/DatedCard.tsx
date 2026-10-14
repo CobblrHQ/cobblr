@@ -220,7 +220,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     const more = g.count - (g.entries ?? []).length;
     return (
       <div>
-        <div className="flex items-center gap-2 pl-9 pr-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+        <div className="flex items-center gap-2 pl-9 pr-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
           <span>{heading}</span>
           {overdue && toss && (card.overdue?.all_ids?.length ?? 0) > 1 && (
             <button
@@ -267,7 +267,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
             {(card.overdue || card.upcoming) && (
               <div className="flex items-center gap-2 px-3 pt-2">
                 <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
-                <span className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-400">Today</span>
+                <span className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">Today</span>
                 <span className="h-px flex-1 bg-amber-300/70 dark:bg-amber-700/60" />
               </div>
             )}

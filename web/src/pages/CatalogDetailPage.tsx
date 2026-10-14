@@ -107,7 +107,7 @@ export function CatalogDetailPage() {
       <div>
         <Link
           to="/configuration/catalogs"
-          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
+          className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
         >
           <ArrowLeft size={10} /> back to catalogs
         </Link>
@@ -122,7 +122,7 @@ export function CatalogDetailPage() {
             {catalog.source === "hosted" ? (
               <span
                 title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
-                className="text-[11px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
+                className="text-[11px] uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
               >
                 Hosted
               </span>
@@ -245,7 +245,7 @@ export function CatalogDetailPage() {
 function Stat({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </div>
       <div className="text-content dark:text-mortar-100 truncate">{children}</div>
@@ -324,7 +324,7 @@ function EntryCard({
             key={k}
             className="text-xs text-muted dark:text-mortar-200 truncate flex items-center gap-1"
           >
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="text-[10px] uppercase tracking-widest text-faint">
               {labels[k] ?? k}:
             </span>
             <CatalogFieldValue
@@ -402,7 +402,7 @@ function ImportCsvModal({
     <Modal open onClose={onClose} title="Import CSV" size="lg">
       <div className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             CSV file
           </span>
           <input
@@ -425,7 +425,7 @@ function ImportCsvModal({
         )}
         <div className="grid grid-cols-3 gap-2">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               ID column
             </span>
             <input
@@ -437,7 +437,7 @@ function ImportCsvModal({
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Title column
             </span>
             <input
@@ -449,7 +449,7 @@ function ImportCsvModal({
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Image column
             </span>
             <input

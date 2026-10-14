@@ -25,12 +25,12 @@ export function JoinMachinesPage() {
   // connection there): the admin tier, by rank. Guests/members can't.
   const addable = orgs.filter((o) => roleSatisfies(o.role, ["owner", "admin"]));
   const [target, setTarget] = useState(addable[0]?.slug ?? "");
-  const [added, setAdded] = useState<{ name: string; count: number }[]>([]);
+  const [added, setAdded] = useState<{ name: string; count: number | null }[]>([]);
   const redeem = useMutation({
     mutationFn: () => api.redeemEdgeShare(target, { owner_org: ownerOrg!, token: token! }),
     onSuccess: (r) => {
       const name = addable.find((o) => o.slug === target)?.name ?? target;
-      setAdded((a) => [...a.filter((x) => x.name !== name), { name, count: r.machines.length }]);
+      setAdded((a) => [...a.filter((x) => x.name !== name), { name, count: r.already ? a.find((x) => x.name === name)?.count ?? null : r.machines.length }]);
       toast.success(r.already ? "Already added to that workspace" : `Added ${r.machines.length} machine${r.machines.length === 1 ? "" : "s"}`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add these machines"),
@@ -67,7 +67,7 @@ export function JoinMachinesPage() {
         ) : (
           <div className="space-y-2">
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Add to workspace</span>
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Add to workspace</span>
               <select value={target} onChange={(e) => setTarget(e.target.value)} className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900">
                 {addable.map((o) => (
                   <option key={o.slug} value={o.slug}>{o.name} ({displaySlug(o.slug)})</option>
@@ -86,7 +86,7 @@ export function JoinMachinesPage() {
             {added.map((a) => (
               <div key={a.name} className="flex items-center gap-2 text-sm text-content dark:text-mortar-100">
                 <CheckCircle2 size={16} className="text-moss-600 dark:text-moss-400 shrink-0" />
-                Added {a.count} machine{a.count === 1 ? "" : "s"} to <strong>{a.name}</strong>
+                {a.count === null ? "Already added to" : `Added ${a.count} machine${a.count === 1 ? "" : "s"} to`} <strong>{a.name}</strong>
               </div>
             ))}
             <Link to={`/${displaySlug(addable.find((o) => o.slug === target)?.slug ?? target)}/digifab`} className="inline-block text-xs text-accent hover:underline">Open Digital Fabrication →</Link>

@@ -45,6 +45,10 @@ const WITHHELD: Record<string, string> = {
   COBBLR_TEST_ORG_POOL:
     "test rig only — it registers a token-minting route, so it must be impossible to switch on from a prod .env",
   COBBLR_TEST_ORG_POOL_SIZE: "sizes the test-only pool above; meaningless without it",
+  COBBLR_EMAIL_DELIVERY_DOOR:
+    "staging and harness stacks only; it files any .eml a member sends, so it must be impossible to switch on from a prod .env",
+  COBBLR_IP_LIMITS_OFF:
+    "harness stacks only (the nightly walk); it removes the per-address sign-in and signup limits, so it must be impossible to switch on from a prod .env",
 };
 
 const schema = readFileSync(join(ROOT, "api/src/env.ts"), "utf8");

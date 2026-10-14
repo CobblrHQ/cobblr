@@ -13,6 +13,32 @@
  * above the dock. A piece that yields (the default) hides while any overlay
  * is open, and the sum drops to what remains. */
 
+/* The screen's safe area: the ONE place env(safe-area-inset-*) is read
+ * (lint:safe-area-tokens). On an iPhone the status bar and the Dynamic Island
+ * cover the top 47 to 59 px of a home-screen app, and the home bar its bottom
+ * 34 px; env() is 0 in a plain browser tab and on a desk.
+ *
+ *   --inset-*    the raw inset, for a surface drawn from the screen's edge.
+ *   --safe-top   what is left of the top inset below the bars that reserve
+ *                the top (top-chrome.ts): the padding for a surface that
+ *                starts under them (the header, an overlay, a sheet). 0 once a
+ *                bar has taken the inset.
+ *   --top-edge   where content can start from the screen's top: below the
+ *                inset and below every reserved bar.
+ *
+ * The update notice became a bar that reserves the top and was drawn from
+ * y = 0, under the clock and the Dynamic Island, its Refresh and close half
+ * covered (#6550). The bars now start below the inset, and the one at the edge
+ * paints the inset in its own colour. */
+:root {
+  --inset-top: env(safe-area-inset-top, 0px);
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
+  --inset-left: env(safe-area-inset-left, 0px);
+  --inset-right: env(safe-area-inset-right, 0px);
+  --safe-top: max(0px, calc(var(--inset-top) - var(--top-chrome-height, 0px)));
+  --top-edge: max(var(--inset-top), var(--top-chrome-height, 0px));
+}
+
 .fc-fixed {
   position: fixed;
 }
@@ -24,14 +50,34 @@
 .fc-bottom {
   left: 0;
   right: 0;
-  bottom: var(--fc-bottom, 0px);
+  bottom: calc(var(--inset-bottom) + var(--fc-bottom, 0px));
+}
+/* The bar at the screen's edge carries its colour over the inset beside it,
+ * as a native bar does, so nothing shows through behind the clock or the home
+ * bar (top-chrome.ts and bottom-dock.ts mark it). */
+.fc-top[data-fc-edge]::before,
+.fc-bottom[data-fc-edge]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: inherit;
+  pointer-events: none;
+}
+.fc-top[data-fc-edge]::before {
+  bottom: 100%;
+  height: var(--inset-top);
+}
+.fc-bottom[data-fc-edge]::after {
+  top: 100%;
+  height: var(--inset-bottom);
 }
 /* A corner piece: its own lift above the dock, plus --fc-stack, the room the
  * pieces below it in the same corner take (bottom-dock.ts stackCorner).
  * Horizontal placement is the piece's (right-4, or left-1/2 -translate-x-1/2
  * for a centred pill). */
 .fc-corner {
-  bottom: calc(var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem) + var(--fc-stack, 0px));
+  bottom: calc(var(--inset-bottom) + var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem) + var(--fc-stack, 0px));
 }
 /* An overlay ends above the toasts (--overlay-bottom, bottom-dock.ts
  * overlayBottomReserve): they stay up over a modal and used to sit on its
@@ -75,8 +121,15 @@ html[data-overlay-open][data-overlay-owns-bottom]::after,
 html[data-covering-open][data-overlay-owns-bottom]::after {
   content: none;
 }
+/* A popover never runs past the screen: a list longer than the screen
+ * scrolls inside it, and a swipe that reaches its end stays in it rather than
+ * scrolling the page behind (#6527: the scan card's File into menu could not
+ * be scrolled on a phone). A caller's own max-h / overflow utility wins. */
 .fc-popover {
   position: fixed;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .fc-backdrop {
   position: fixed;

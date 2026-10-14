@@ -62,7 +62,7 @@ export function ChangelogPage() {
         <div className="space-y-8">
           {sections.map((day) => (
             <section key={day.date}>
-              <h2 className="mb-3 text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              <h2 className="mb-3 text-[11px] uppercase tracking-widest text-faint dark:text-slate-500">
                 {prettyDate(day.date)}
               </h2>
               <ul className="space-y-2.5">

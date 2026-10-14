@@ -600,7 +600,7 @@ function DestinationsSection({ base, auth }: { base: string; auth: () => Record<
                     <div className="text-muted italic px-1 py-2">No backups here yet. Press <em>Back up now</em> to send one.</div>
                   ) : (
                     <>
-                      <div className="text-[10px] font-mono uppercase tracking-widest text-faint px-1 pb-1">
+                      <div className="text-[10px] uppercase tracking-widest text-faint px-1 pb-1">
                         {backupFiles.length} backup{backupFiles.length === 1 ? "" : "s"} in {d.label}
                       </div>
                       <ul className="divide-y divide-line/70 dark:divide-slate-700/70">

@@ -75,7 +75,7 @@ export function SandboxLanding() {
     return (
       <div className="min-h-screen grid place-items-center bg-canvas text-content">
         <div className="text-center">
-          <p className="font-mono text-xs uppercase tracking-widest text-faint">setting up your sandbox</p>
+          <p className="text-xs uppercase tracking-widest text-faint">setting up your sandbox</p>
           <p className="mt-2 text-lg">One moment.</p>
         </div>
       </div>

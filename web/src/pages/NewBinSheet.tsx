@@ -180,7 +180,7 @@ export function NewBinSheet({
               </button>
             )}
             <label className="block">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-accent block mb-1">
+              <span className="text-[10px] uppercase tracking-widest text-accent block mb-1">
                 what is in it
               </span>
               <input

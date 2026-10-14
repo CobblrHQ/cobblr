@@ -31,18 +31,13 @@ import { meta } from "../db/meta.js";
 import { getKind, listKindsForOrg, baseKindOf } from "./entities.js";
 import { fieldRolesForKind } from "./field-defs.js";
 import { familiesOf, isTypeCollection } from "./families.js";
+import { getOverrideConfig, upsertOverride } from "./entity-kind-overrides.js";
+import { mergeOverrideConfig } from "./override-config-merge.js";
 
 /** The stored explicit choices for a kind: an instance's own config, or the
  *  entity-kind override for a module's base kind. */
 async function explicitFaces(orgId: string, kind: string): Promise<FaceConfig> {
-  const [head, tail] = kind.split(":");
-  // `<instance>:item` is an instance kind; its config row is keyed by the
-  // owning module, which the instance table knows. Anything else, and an
-  // instance the table does not know, reads the entity-kind override.
-  const owner = tail === "item" && head ? await moduleOfInstance(orgId, head) : null;
-  const target = owner
-    ? { target_kind: "instance", target_id: `${owner}:${head}` }
-    : { target_kind: "entity_kind", target_id: kind };
+  const target = await faceTargetOf(orgId, kind);
   const row = await meta
     .selectFrom("entity_kind_overrides")
     .select("config")
@@ -52,6 +47,41 @@ async function explicitFaces(orgId: string, kind: string): Promise<FaceConfig> {
     .executeTakeFirst();
   const cfg = (row?.config as { faces?: FaceConfig } | null)?.faces;
   return cfg && typeof cfg === "object" ? cfg : {};
+}
+
+/** Where a kind's face choices are kept. `<instance>:item` is an instance
+ *  kind; its config row is keyed by the owning module, which the instance
+ *  table knows. Anything else, and an instance the table does not know, is
+ *  the entity-kind override. */
+async function faceTargetOf(orgId: string, kind: string): Promise<{ target_kind: "instance" | "entity_kind"; target_id: string }> {
+  const [head, tail] = kind.split(":");
+  const owner = tail === "item" && head ? await moduleOfInstance(orgId, head) : null;
+  return owner ? { target_kind: "instance", target_id: `${owner}:${head}` } : { target_kind: "entity_kind", target_id: kind };
+}
+
+/** Turn a face on for a kind when what someone just did needs it: lending a
+ *  thing of a kind without the Lending face switches it on (record-loans.md).
+ *  The kind's other face choices are kept. True when it was switched on. */
+export async function switchFaceOn(orgId: string, kind: string, face: FaceName): Promise<boolean> {
+  if ((await facesForKind(orgId, kind)).faces.includes(face)) return false;
+  await setFaces(orgId, kind, { [face]: true });
+  return true;
+}
+
+/** A person's face choices for a kind: true turns one on, false off, null
+ *  takes the choice back so the kind's own fields decide again. The other
+ *  choices are kept. Returns the explicit choices as they were, for an undo. */
+export async function setFaces(orgId: string, kind: string, change: Partial<Record<FaceName, boolean | null>>): Promise<FaceConfig> {
+  const target = await faceTargetOf(orgId, kind);
+  const stored = await getOverrideConfig(orgId, target.target_kind, target.target_id);
+  const before = { ...((stored.faces as FaceConfig | undefined) ?? {}) };
+  const faces: FaceConfig = { ...before };
+  for (const [face, on] of Object.entries(change) as Array<[FaceName, boolean | null]>) {
+    if (on === null) delete faces[face];
+    else faces[face] = on;
+  }
+  await upsertOverride({ orgId, targetKind: target.target_kind, targetId: target.target_id, config: mergeOverrideConfig(stored, { faces: Object.keys(faces).length ? faces : null }) });
+  return before;
 }
 
 async function moduleOfInstance(orgId: string, instanceName: string): Promise<string | null> {

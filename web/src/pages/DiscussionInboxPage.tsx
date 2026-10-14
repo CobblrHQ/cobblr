@@ -86,12 +86,12 @@ function InboxRow({ item }: { item: DiscussionInboxItem }) {
             </span>
           )}
           {item.resolved_at && (
-            <span className="shrink-0 text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="shrink-0 text-[10px] uppercase tracking-widest text-faint">
               settled
             </span>
           )}
         </div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
+        <div className="text-[10px] uppercase tracking-widest text-faint truncate">
           {room ? "the whole workspace" : kind} · {item.comments}{" "}
           {item.comments === 1 ? "comment" : "comments"} ·{" "}
           {relativeTime(item.latest_at)}

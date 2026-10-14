@@ -216,7 +216,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                         }}
                         className="flex-1 bg-transparent font-semibold text-content dark:text-mortar-100 text-sm focus:outline-none border-b border-transparent focus:border-line"
                       />
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint">section</span>
+                      <span className="text-[10px] uppercase tracking-widest text-faint">section</span>
                       <button
                         onClick={() => deleteSection.mutate(it.id.slice(2))}
                         className="text-faint hover:text-red-500 transition"
@@ -229,7 +229,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                   ) : (
                     <>
                       <span className="flex-1 text-sm text-content dark:text-mortar-100">{it.def.display_label}</span>
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint">{it.def.type}</span>
+                      <span className="text-[10px] uppercase tracking-widest text-faint">{it.def.type}</span>
                     </>
                   )}
                 </SortableRow>

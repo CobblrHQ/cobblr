@@ -594,7 +594,7 @@ export function DiscussionTab() {
           </span>
           {resolved && (
             <span
-              className="inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-2 py-1 text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300"
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-2 py-1 text-[11px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300"
               title="This conversation has been marked settled."
             >
               <Check size={11} /> settled
@@ -640,7 +640,7 @@ export function DiscussionTab() {
                 <span className="text-faint">{relativeTime(c.created_at)}</span>
                 {c.edited_at && <span className="text-faint italic">edited</span>}
                 {fresh.has(c.id) && (
-                  <span className="rounded-full bg-amber-400 text-cobble-900 text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 animate-pulse">
+                  <span className="rounded-full bg-amber-400 text-cobble-900 text-[9px] uppercase tracking-widest px-1.5 py-0.5 animate-pulse">
                     new
                   </span>
                 )}
@@ -968,8 +968,8 @@ export function DiscussionPreview({
       {/* The count is of what is actually there: a removed comment leaves a
           tombstone so replies still read, but it is not something to go and
           look at. */}
-      <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        // discussion{count > 0 ? ` (${count})` : ""}
+      <h3 className="text-[10px] uppercase tracking-widest text-accent mb-2">
+        discussion{count > 0 ? ` (${count})` : ""}
       </h3>
       <button
         type="button"
@@ -981,7 +981,7 @@ export function DiscussionPreview({
             <span className="text-sm text-content dark:text-mortar-200 line-clamp-2 break-words">
               {latest.body}
             </span>
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mt-1">
               {count === 1 ? "1 comment" : `${count} comments`} · open to reply
             </span>
           </>

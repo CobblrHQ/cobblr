@@ -143,7 +143,7 @@ function StatBlock({ block, data, theme }: { block: Extract<AppBlock, { type: "s
     <div className="rounded-xl border p-4 min-w-[120px]" style={cardStyle(theme)}>
       <div className="text-3xl font-extrabold" style={accentStyle(theme)}>{n}</div>
       {block.label && (
-        <div className="text-[10px] font-mono uppercase tracking-widest mt-1" style={mutedStyle(theme)}>{block.label}</div>
+        <div className="text-[10px] uppercase tracking-widest mt-1" style={mutedStyle(theme)}>{block.label}</div>
       )}
     </div>
   );
@@ -154,7 +154,7 @@ function ViewBlock({ block, data, theme }: { block: Extract<AppBlock, { type: "v
   return (
     <div>
       {block.title && (
-        <div className="text-[10px] font-mono uppercase tracking-widest mb-2" style={mutedStyle(theme)}>{block.title}</div>
+        <div className="text-[10px] uppercase tracking-widest mb-2" style={mutedStyle(theme)}>{block.title}</div>
       )}
       {items.length === 0 ? (
         <div className="text-sm italic" style={mutedStyle(theme)}>nothing here.</div>
@@ -213,7 +213,7 @@ export function PublicAppPlayer({
         ) : null}
         <span className="font-extrabold text-lg">{app.name}</span>
         <div className="flex-1" />
-        <span className="text-[10px] font-mono uppercase tracking-widest" style={mutedStyle(theme)}>public · read-only</span>
+        <span className="text-[10px] uppercase tracking-widest" style={mutedStyle(theme)}>public · read-only</span>
       </header>
       <main id={MAIN_ID} tabIndex={-1} className="focus:outline-none max-w-5xl mx-auto px-6 py-8 space-y-5">
         {stats.length > 0 && (

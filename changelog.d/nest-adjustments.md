@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-13
 docs_target: docs/modules/digifab-drivers.md#Adjust a saved layout
+docs_published: 2026-10-14
 ---
 
 Choose a nesting layout, pin parts, avoid defects, move copies between sheets, and bring edited layouts back without losing job counts.

@@ -129,7 +129,7 @@ export function JsonField({
     <div className={className}>
       <div className="flex items-center justify-between mb-1">
         {label ? (
-          <label htmlFor={id} className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+          <label htmlFor={id} className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
             {label}
           </label>
         ) : (

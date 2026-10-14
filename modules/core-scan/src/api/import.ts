@@ -496,6 +496,7 @@ importRouter.post(
 
 // ── POST /import ─────────────────────────────────────────────────────────────
 // AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// UI-SCREEN: /scan (More inbox actions, Import from file)
 importRouter.post(
   "/import",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),

@@ -78,11 +78,11 @@ export function RegistryItemModal({
         {trust && (
           <div>
             {trust === "official" ? (
-              <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
+              <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                 verified - signed by a Cobblr-vouched key
               </span>
             ) : (
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
+              <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
                 unverified - Cobblr hasn't reviewed this
               </span>
             )}
@@ -100,7 +100,7 @@ export function RegistryItemModal({
         <dl className="grid grid-cols-2 gap-2 text-xs">
           {details.map((d) => (
             <div key={d.label}>
-              <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
+              <dt className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
                 {d.label}
               </dt>
               <dd className="text-content dark:text-mortar-100 font-mono break-all">{d.value}</dd>
@@ -110,7 +110,7 @@ export function RegistryItemModal({
 
         <div className="flex items-center justify-between pt-3 border-t border-line dark:border-slate-700">
           {installed ? (
-            <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600">installed</span>
+            <span className="text-[10px] uppercase tracking-widest text-moss-600">installed</span>
           ) : canInstall ? (
             <button
               type="button"
@@ -121,7 +121,7 @@ export function RegistryItemModal({
               {busy ? "Installing…" : "Install"}
             </button>
           ) : (
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="text-[10px] uppercase tracking-widest text-faint">
               {cannotInstallNote ?? "not installable here"}
             </span>
           )}

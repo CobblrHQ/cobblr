@@ -57,7 +57,7 @@ export function RecountFinish({ id, onClose }: { id: string; onClose: () => void
   };
 
   const p = plan.data;
-  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const head = "text-[10px] uppercase tracking-widest text-accent";
   const list = "divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700";
   return (
     <section className="space-y-3 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3" data-testid="recount-finish">

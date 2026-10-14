@@ -187,7 +187,7 @@ export function FileDetailPage() {
       </dl>
 
       <section aria-label="Used by" data-testid="file-used-by">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">// used by</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-accent mb-2">used by</h3>
         {usedBy.isLoading ? (
           <div className="text-sm text-muted">Loading…</div>
         ) : users.length === 0 ? (

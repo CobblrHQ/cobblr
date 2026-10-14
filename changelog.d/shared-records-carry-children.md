@@ -4,6 +4,7 @@ scope: sharing
 date: 2026-10-13
 docs_target: docs/USER_GUIDE.md#4.5g Sharing (`/configuration/sharing`)
 ui: none (the friend's copy shows the needs in the pattern's existing What this pattern needs panel)
+docs_published: 2026-10-14
 ---
 A shared pattern brings the needs you typed for it, and a change to them reaches the friend's copy.
 

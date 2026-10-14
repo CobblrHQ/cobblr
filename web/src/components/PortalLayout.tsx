@@ -120,7 +120,7 @@ export function PortalLayout() {
             {hasWorkspace && (
               <button
                 onClick={() => navigate("/")}
-                className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition px-2 py-1"
+                className="text-[11px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition px-2 py-1"
                 style={mutedStyle(skin)}
                 title={isAdmin ? "Switch to the admin shell" : "Open the workspace"}
               >

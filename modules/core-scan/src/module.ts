@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.75.7",
+  version: "0.77.4",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -75,6 +75,10 @@ export default defineModule({
       // heal-forwarded-store-host.ts).
       const { registerForwardedStoreHostHeal } = await import("./heal-forwarded-store-host.js");
       registerForwardedStoreHostHeal();
+      // Boot-time heal: a pack's part split before #6456 gets its own colour
+      // and name (DONE WHEN in heal-split-part-values.ts).
+      const { registerSplitPartValuesHeal } = await import("./heal-split-part-values.js");
+      registerSplitPartValuesHeal();
       const { registerUnsavedCatalogChoicesHeal } = await import("./heal-unsaved-catalog-choices.js");
       registerUnsavedCatalogChoicesHeal();
       const { registerUnfoundedPlaceSuggestionsHeal } = await import("./heal-unfounded-place-suggestions.js");
@@ -243,6 +247,7 @@ export default defineModule({
       },
       {
         group: "more",
+        // UI-SCREEN: /me/notifications (the parcel notification carries its receipt session)
         id: "core-scan:confirm-receipt-arrival",
         runBy: "member",
         examples: ["I have the parcel", "the package is here", "got the delivery in hand"],
@@ -437,6 +442,7 @@ export default defineModule({
       },
       {
         group: "organise",
+        // UI-SCREEN: /fields (fill empty provenance from past receipts)
         id: "core-scan:fill-fields-from-receipts",
         // ADMIN-ONLY: the page's own route POST /receipts/backfill-fields gates on this action's own id, owner or admin (inbox.ts)
         runBy: "admin",
@@ -481,6 +487,72 @@ export default defineModule({
         scope: "workspace" as const,
         invokeHandler: "core-scan.identify",
         userInvokable: true,
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /scan (a photo's card in the inbox: "Split by names…")
+        id: "core-scan:add-things-from-photo",
+        runBy: "member",
+        examples: ["this photo is two dehumidifiers, the Midea on the left and the Frigidaire on the right"],
+        label: "Add several things from one photo",
+        description: "Add several things shown in one photo, each from what you say about it: Cobblr finds where each sits, crops it, and puts each in the inbox with its crop as its picture, kept together as one group with Undo split. Pass the photo (image_file_id, uploaded first, or item_id of a photo already in the inbox) and items, a list with what add_thing takes for each (name, fields, quantity, identifier, goes_to, place, roles) plus optional where (\"left\", \"the black one\") or box (fractions x, y, w, h). When the photo shows a different number of things than listed, nothing is added and the answer says what it saw.",
+        scope: "workspace",
+        invokeHandler: "core-scan.add-things-from-photo",
+        userInvokable: true,
+        // Undo split on the group puts the photo back as one.
+        undoable: true,
+        argsSchema: {
+          image_file_id: { label: "The photo, uploaded first (or item_id instead)", type: "text" },
+          item_id: { label: "Or a photo already in the inbox, by its id", type: "text" },
+          items: { label: "What is in it: a list of things, each with name and what add_thing takes, plus where or box", type: "json", required: true },
+        },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /scan (a split piece's card: "Undo split")
+        id: "core-scan:undo-split",
+        runBy: "member",
+        examples: ["undo that split, it was one thing"],
+        label: "Undo split",
+        description: "Put a split photo back as one: the pieces it was split into leave the inbox (kept, never deleted) and the photo comes back as it was. Pass item_id, the group's or any one piece's. Refused while a piece is already filed.",
+        scope: "workspace",
+        invokeHandler: "core-scan.undo-split",
+        userInvokable: true,
+        argsSchema: {
+          item_id: { label: "The split: the group's id or one piece's", type: "text", required: true },
+        },
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /scan (the Undo split toast's "Split again")
+        id: "core-scan:redo-split",
+        runBy: "member",
+        examples: ["put that split back", "I didn't mean to undo the split"],
+        label: "Split again",
+        description: "Put back a split that Undo split took apart: the same parts come back into the inbox as they were, and the line goes back under them. Pass item_id, the line that was put back as one. Refused once that line was filed or split again.",
+        scope: "workspace",
+        invokeHandler: "core-scan.redo-split",
+        userInvokable: true,
+        argsSchema: {
+          item_id: { label: "The line that was put back as one", type: "text", required: true },
+        },
+      },
+      // UI-SCREEN: /scan  the inbox card's ⋯, the camera's sheet and a station offer Ran out through the confirm and attach routes this action calls (web/src/pages/scanRanOut.ts)
+      {
+        group: "stock",
+        id: "core-scan:ran-out",
+        runBy: "member",
+        examples: ["I just ran out of oat milk and I don't have it in Cobblr yet", "Mark the coffee filters I scanned as ran out"],
+        label: "Ran out",
+        description: "Keeps a scanned thing at none on hand and puts it on the shopping list: a new thing is added at 0, one you already keep is taken to 0 through Used it up, and a restock rule fires as for anything used up. Pass item_id, the scan in the inbox; for a new thing, kind says where it is kept when the scan was not going anywhere yet.",
+        scope: "workspace",
+        invokeHandler: "core-scan.ran-out",
+        userInvokable: true,
+        argsSchema: {
+          item_id: { label: "The scan in the inbox", type: "text", required: true },
+          kind: { label: "Where it is kept, when it is new (a kind, like a table's items); else where the scan was going", type: "text" },
+          instance: { label: "The table, when the kind has several", type: "text" },
+        },
       },
     ],
   },

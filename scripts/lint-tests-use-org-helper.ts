@@ -30,6 +30,8 @@ const HELPER = "signupFreshOrg";
 const SUBJECT_IS_SIGNUP = new Set([
   // what a sign-up records about the link that sent it (the signed_up event)
   "a-sign-up-records-the-source-that-sent-it.test.ts",
+  // what the signup response says about verifying the new account's email
+  "a-self-host-install-with-no-email-sender-never-asks-to-verify.test.ts",
   "auth-pair-codes.test.ts",
   "auth-reset-verify.test.ts",
   "auth-signup-gate.test.ts",

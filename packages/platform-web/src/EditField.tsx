@@ -22,7 +22,7 @@ import type { MoneyStorage } from "@cobblr/platform-contract/money";
 
 /** The small mono caption every field in a pack wears over its control. */
 export function FieldLabel({ children }: { children: ReactNode }) {
-  return <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{children}</span>;
+  return <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{children}</span>;
 }
 
 /** A caption over any control: for the pickers and selects a page renders

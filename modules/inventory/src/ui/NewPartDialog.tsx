@@ -1,6 +1,6 @@
 import type { RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
-import { EntityThumb, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
+import { EntityThumb, LocationPicker, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -517,15 +517,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   need: fieldNeed("native:location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
-                      <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className={"input " + fieldPackControlClass}>
-                        <option value=""> - none - </option>
-                        {locs.data?.items.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {"  ".repeat(l.depth)}
-                            {l.name}
-                          </option>
-                        ))}
-                      </select>
+                      <LocationPicker value={locationId || null} onChange={(id) => setLocationId(id ?? "")} />
                     </Field>
                   ),
                 }

@@ -20,12 +20,14 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { listApplicable } from "../platform/actions.js";
-import { resolveKind, titleForEntity } from "../platform/entities.js";
+import { detailPathForEntity, resolveKind, titleForEntity } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
 import { listShareEdits } from "../platform/share-edits.js";
 import { listAdditions } from "../platform/share-additions.js";
+import { listOpenLoans, type OpenLoan } from "../platform/custody.js";
+import { daysUntil } from "@cobblr/platform-contract/day";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const attentionRouter = Router({ mergeParams: true });
@@ -437,6 +439,42 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         });
     }
 
+    // Things lent out: due back, overdue, or out a month with no day set
+    // (record-loans.md). One read of every loan, whatever kind it is on.
+    const loans: OpenLoan[] = await listOpenLoans(req.tenant!.org.id).catch(() => []);
+    const lentKeys = new Set(loans.map((l) => `${l.kind}:${l.id}`));
+    {
+      const loanEntry = (l: OpenLoan, words: string) => ({
+        id: l.id,
+        title: `${l.title}, with ${l.loan.holder}: ${words}`,
+        action: { record: l.id, kind: l.kind },
+        record: { kind: l.kind, id: l.id, name: l.title },
+      });
+      const byState = { overdue: [] as OpenLoan[], today: [] as OpenLoan[], upcoming: [] as OpenLoan[], long: [] as OpenLoan[] };
+      for (const l of loans) {
+        if (l.dueElsewhere) continue;
+        if (!l.loan.due_back) {
+          if (-daysUntil(l.loan.since, today) >= WINDOW_DAYS) byState.long.push(l);
+          continue;
+        }
+        const state = dueState(l.loan.due_back, today, WINDOW_DAYS);
+        if (state === "overdue") byState.overdue.push(l);
+        else if (state === "today") byState.today.push(l);
+        else if (state === "upcoming") byState.upcoming.push(l);
+      }
+      const push = async (kind: "overdue" | "due_today" | "upcoming", label: (n: number) => string, list: OpenLoan[], words: (l: OpenLoan) => string) => {
+        if (!list.length) return;
+        // The row opens the first thing it names; each entry opens its own.
+        const route = (await detailPathForEntity(req.tenant!.org.id, list[0]!.kind, list[0]!.id).catch(() => undefined)) ?? "/";
+        rows.push({ kind, label: label(list.length), count: list.length, sample: list.slice(0, 3).map((l) => l.title), route, entries: list.slice(0, 8).map((l) => loanEntry(l, words(l))) });
+      };
+      const back = (l: OpenLoan) => (l.loan.due_back ? countdownWords(l.loan.due_back, today) : "");
+      await push("overdue", (n) => `${n === 1 ? "thing" : "things"} lent out, overdue back`, byState.overdue, back);
+      await push("due_today", (n) => `${n === 1 ? "thing" : "things"} lent out, due back today`, byState.today, back);
+      await push("upcoming", (n) => `${n === 1 ? "thing" : "things"} lent out, due back soon`, byState.upcoming, back);
+      await push("upcoming", (n) => `${n === 1 ? "thing" : "things"} lent out for over a month`, byState.long, (l) => `out ${-daysUntil(l.loan.since, today)} days`);
+    }
+
     // Scheduled maintenance: every open service in the log, including each
     // schedule's next occurrence ("Oil change on the van, overdue by 4 days";
     // a printer whose print hours passed its mark, dated today by the
@@ -448,6 +486,9 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     }>(`/orgs/${slug}/modules/core-maintenance/entries?kind=scheduled&due_within_days=${WINDOW_DAYS}&limit=${ITEM_CAP}`, token);
     if (maint && maint.items.length > 0) {
       const orgId = req.tenant!.org.id;
+      // A thing lent out is not here to service: its reminders wait until
+      // it is back (record-loans.md).
+      maint.items = maint.items.filter((e) => !lentKeys.has(`${e.entity_module}:${e.entity_type}:${e.entity_id}`));
       // An occurrence of a schedule says where it stands in the schedule's own
       // words: a printer past its service hours is "overdue by 125 print
       // hours", not "due today" because the sweeper dated it today.

@@ -28,6 +28,7 @@
 //   npx tsx scripts/lint-phone-input-font.ts   (pnpm run lint phone-input-font)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -117,7 +118,7 @@ function cssGuardHolds(): boolean {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 if (!cssGuardHolds()) {
   violations.push({ file: CSS_GUARD, line: 1, what: "the coarse-pointer guard is gone: @media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em) !important } }" });
 }

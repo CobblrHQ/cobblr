@@ -49,7 +49,7 @@ export function ResinStockPanel({ slug, resin, onChanged }: { slug: string; resi
   };
   const options = choices.data?.pages.flatMap(page => page.items).filter(item => item.unit === chosenSlot.unit && item.remaining > 0) ?? [];
   return <section className="rounded border border-line p-4 space-y-4" aria-label="Loaded resin and wearing tools">
-    <h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Loaded resin and tools</h2>
+    <h2 className="text-xl font-semibold uppercase tracking-wide">Loaded resin and tools</h2>
     <p>The bottle and vat use liquid stock in ml. Film and LCD records use their own replacement limits. Load one film record, counted by layers or prints.</p>
     <GlobalScanWedge activeSlug={slug} />
     {resin.loaded.length ? <ul className="space-y-3">{resin.loaded.map(item => <li key={item.slot} className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0 break-words"><strong>{slots.find(slot => slot.id === item.slot)?.label}: {item.name}</strong><p>{formatStockAmount(item.remaining, item.unit)} remaining{item.shape === "wearing-tool" ? ` · ${formatStockAmount(item.used, item.unit)} used` : ""}</p>{item.maintenance_due && <p role="status" className="text-amber-700 dark:text-amber-400">Replacement is due. Check Maintenance.</p>}{item.low && <p role="status" className="text-amber-700 dark:text-amber-400">This stock is low.</p>}</div><button className={button} disabled={load.isPending} onClick={() => load.mutate({ id: item.id, slot: item.slot!, loaded: false })}>Unload</button></li>)}</ul> : <p>No resin bottle is loaded.</p>}

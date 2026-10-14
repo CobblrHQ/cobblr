@@ -2,6 +2,34 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-14
+
+### Features
+- Cobb can change a list's icon, navigation visibility and order, grouping, and the word used for its records, with Undo to restore the previous settings.
+- Ran out on a scan keeps a thing at none on hand and puts it on the shopping list, whether Cobblr knew it or not
+- Several things in one photo can now be added by name. On a photo in the scan inbox, Split by names… takes one thing per line; the assistant and connected AI tools do the same with a photo and a list. Each thing gets its own row with its own crop, the photo stays as their group shot, and Undo split puts it back as one. When the photo shows a different number of things than you named, it says what it sees and adds nothing.
+- A pack split into parts of one kind shows each part as a short row under a parent that says the table and shared values once, and the parent's picture loads on a phone
+- You can reorganise lists, choose where unmatched scans land, add several items together, recheck scan matches and undo a past inbox import from the app.
+
+### Improvements
+- The assistant no longer invites people, hands one person's things to another, approves requests or shares with a new email address: those grant access or decide what someone may do, so you do them yourself, and the assistant opens the screen for you. An automation set up through the assistant cannot do them either, and its card says who it would message.
+- A workspace now sends at most 20 emailed invites, 20 hand-offs and 5 test emails an hour, through every screen and the assistant alike. One more is refused with how long until the next can go. Self-hosted servers can change the numbers.
+- The assistant can arrange the dashboard (with Undo), install a pasted blueprint after a card that lists every public page it would publish, and copy an app's records into a full workspace you run. Copying an app's records now needs you to be an owner or admin of the app, as its design always said.
+- The assistant can install a bundle from the catalog, turn its optional parts on or off, and put it back to an earlier version, each as a card to confirm. The assistant can also choose which list scans that fit no list land in.
+- An owner or admin can ask the assistant to send a test email, as a card to confirm. Inviting someone, handing on their things and sharing with a new email address stay your own steps: the assistant opens the screen for you.
+- The assistant can link two records, change a link's note and unlink them, the same way the Links panel does, and each can be undone. A move it makes between lists now brings the custom fields you choose along, as the move on the screen does.
+- The assistant can set up, change and remove an automation, not only switch one on or off. Each is a card you confirm, held to the same checks as the Automations screen, and each can be undone.
+- An open record shows a change made elsewhere (by the assistant, another device or another person) within a moment, without a reload
+- Hide or reorder the panels on each kind of record, under Configuration, Record actions and panels: a 3D printer and a kiln are arranged apart, with Undo, and Cobb can do it too
+- On an iPhone the update notice and every bar at the top or bottom of the screen now sit clear of the clock, the Dynamic Island and the home bar.
+- The scan camera has one Mode button (Add, Move, Count, Sort) with a menu that explains each, and its area chip shows the whole name with nothing scrolling sideways.
+- Undo split now offers Split again, and a pack of different things that is one row has a Split into button that brings back the same parts. The scan inbox's table pickers are one list in one order, and a long list of tables scrolls on a phone instead of closing. On a phone, a split pack's controls fit one row, its parts read in one case, a count button never breaks a word, and "You already have this · 3 on hand" opens the record.
+- A scan row's quantity stepper counts every tap on a phone, even a quick run while the last tap is still saving, and the number no longer has a × in front of it.
+
+### Fixes
+- Opening the Location picker on a record that already has a place no longer clears that place. The picker's Clear button sat inside its own clickable area, so a click on the field could press Clear; they are now separate buttons.
+- Going offline with a form open no longer reloads the page and loses the form. On a narrow phone, a scanned item's destination keeps its name beside a long action, and a refused notification sign-up ends the browser's words with a full stop.
+
 ## 2026-10-13
 
 ### Features

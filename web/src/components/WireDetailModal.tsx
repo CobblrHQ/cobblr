@@ -183,7 +183,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
         {/* Editable fields */}
         <div className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Template
             </span>
             <input
@@ -200,13 +200,13 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
               onChange={(e) => setEnabled(e.target.checked)}
               className="accent-cobble-500"
             />
-            <span className="font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+            <span className="uppercase tracking-widest text-muted dark:text-slate-400">
               Enabled
             </span>
           </label>
           {(!!binding.filter || !!binding.args) && (
             <details className="text-xs">
-              <summary className="font-mono uppercase tracking-widest text-[10px] text-faint dark:text-slate-500 cursor-pointer">
+              <summary className="uppercase tracking-widest text-[10px] text-faint dark:text-slate-500 cursor-pointer">
                 Advanced (filter / args)
               </summary>
               <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200">
@@ -218,8 +218,8 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
 
         {/* Recent firings for this wire */}
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-            // recent firings for this wire ({recent.data?.total ?? matching.length})
+          <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+            recent firings for this wire ({recent.data?.total ?? matching.length})
           </div>
           {matching.length === 0 ? (
             <div className="text-xs text-faint italic">
@@ -243,7 +243,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
                     <div className="flex items-center gap-2">
                       <span
                         className={
-                          "font-mono text-[10px] uppercase " +
+                          "text-[10px] uppercase " +
                           (failed ? "text-ember-500" : "text-moss-600")
                         }
                       >
@@ -275,7 +275,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
           <button
             onClick={handleDelete}
             disabled={remove.isPending}
-            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+            className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
           >
             <Trash2 size={11} /> delete wire
           </button>
@@ -304,7 +304,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
+      <dt className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </dt>
       <dd className="text-content dark:text-mortar-100">{children}</dd>

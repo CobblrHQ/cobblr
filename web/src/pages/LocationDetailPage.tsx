@@ -291,7 +291,7 @@ export function LocationDetailPage() {
             <button
               type="button"
               onClick={() => setEditing(true)}
-              className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent border border-cobble-200 dark:border-cobble-800 rounded px-2 py-1"
+              className="text-[11px] uppercase tracking-widest text-accent hover:text-accent border border-cobble-200 dark:border-cobble-800 rounded px-2 py-1"
             >
               edit details
             </button>
@@ -300,7 +300,7 @@ export function LocationDetailPage() {
         <PlaceLights key={l.id} slug={activeSlug} place={l} hasBins={children.length > 0} />
         {l.notes && (
           <div className="mt-4 pt-3 border-t border-line dark:border-slate-700">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
+            <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
               notes
             </div>
             <p className="text-sm text-content dark:text-mortar-200 whitespace-pre-wrap">
@@ -342,8 +342,8 @@ export function LocationDetailPage() {
           the obvious place to put something inside it. */}
       <section>
         <div className="flex items-center gap-2 mb-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            // sub-locations ({children.length})
+          <div className="text-[10px] uppercase tracking-widest text-accent">
+            sub-locations ({children.length})
           </div>
           <button
             type="button"
@@ -389,7 +389,7 @@ export function LocationDetailPage() {
                       {c.name}
                     </span>
                   </div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
+                  <div className="text-[10px] uppercase tracking-widest text-faint mt-1">
                     {c.kind}
                   </div>
                 </Link>
@@ -401,8 +401,8 @@ export function LocationDetailPage() {
       </section>
 
       <section>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-          // what's here ({contents.data?.items.length ?? 0})
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+          what's here ({contents.data?.items.length ?? 0})
         </div>
         {contents.isLoading && <div className="text-xs text-faint">loading…</div>}
         {contents.isError && (
@@ -434,7 +434,7 @@ export function LocationDetailPage() {
                     </div>
                     {/* The collection, not the kind id: INVENTORY:PART under
                         a book was the review's example (2026-09-12). */}
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate">
+                    <div className="text-[10px] uppercase tracking-widest text-faint truncate">
                       {labels.record(item)}
                       {maker ? ` · ${maker}` : ""}
                     </div>

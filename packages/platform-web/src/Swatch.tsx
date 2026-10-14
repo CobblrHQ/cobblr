@@ -5,7 +5,7 @@
 // table, on the Filament page and in the field itself.
 
 import { colourFill, colourLabel, parseColour } from "@cobblr/platform-contract/colour";
-import { colorSwatch } from "./swatch";
+import { colorSwatch } from "./swatch-pick";
 
 export function Swatch({
   value,

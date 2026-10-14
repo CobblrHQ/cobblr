@@ -161,7 +161,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
                 ))}
               </select>
             ) : (
-              <span className="font-mono uppercase tracking-widest text-[10px] text-muted">
+              <span className="uppercase tracking-widest text-[10px] text-muted">
                 {fieldDef.type}
               </span>
             )}
@@ -208,7 +208,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </Row>
           {fieldDef.renderer && (
             <Row label="Renderer">
-              <span className="font-mono uppercase tracking-widest text-[10px] text-accent dark:text-cobble-300">
+              <span className="uppercase tracking-widest text-[10px] text-accent dark:text-cobble-300">
                 {fieldDef.renderer}
               </span>
             </Row>
@@ -221,7 +221,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
         </dl>
 
         <div>
-          <label className="block font-mono uppercase tracking-widest text-[10px] text-faint mb-1" htmlFor={`label-${fieldDef.id}`}>
+          <label className="block uppercase tracking-widest text-[10px] text-faint mb-1" htmlFor={`label-${fieldDef.id}`}>
             Label
           </label>
           <div className="flex gap-2">
@@ -285,7 +285,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
 
         {(fieldDef.type === "number" || fieldDef.type === "money") && (
           <label className="block">
-            <span className="block font-mono uppercase tracking-widest text-[10px] text-faint mb-1">In group totals</span>
+            <span className="block uppercase tracking-widest text-[10px] text-faint mb-1">In group totals</span>
             <select
               aria-label="In group totals"
               className="input"
@@ -301,7 +301,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
         )}
         {fieldDef.type === "text" && (
           <div>
-            <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">
+            <div className="uppercase tracking-widest text-[10px] text-faint mb-1">
               Choices
               <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                 {choices.length ? "renders as a dropdown" : "empty = a plain text box"}
@@ -341,7 +341,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
         )}
 
         <div className="p-3 rounded-md bg-subtle dark:bg-slate-800/70 text-xs text-content dark:text-mortar-200">
-          <div className="font-mono uppercase tracking-widest text-[10px] text-faint mb-1">
+          <div className="uppercase tracking-widest text-[10px] text-faint mb-1">
             Where it appears
           </div>
           {scopeLabel ? (
@@ -375,7 +375,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
                 if (fieldDef.bundle_external_id) bundleDetail.open(fieldDef.bundle_external_id);
                 else navigate("/bundles");
               }}
-              className="text-[10px] font-mono uppercase tracking-widest text-accent hover:underline"
+              className="text-[10px] uppercase tracking-widest text-accent hover:underline"
             >
               part of {fieldDef.bundle_name ?? "a bundle"}  - manage the bundle →
             </button>
@@ -383,7 +383,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
             <button
               onClick={handleDelete}
               disabled={remove.isPending}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> delete field
             </button>
@@ -404,7 +404,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
+      <dt className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">
         {label}
       </dt>
       <dd className="text-content dark:text-mortar-100">{children}</dd>

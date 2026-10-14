@@ -1,4 +1,5 @@
 import { persistCncRuntime } from "./cnc-runtime.js";
+import { lentPrinterRefusal } from "./detectors/lent.js";
 import { releaseUnstartedCncStock, validateCncStock } from "./cnc-start.js";
 import {verifyLargePrint} from "./large-format/service.js";
 import { authorizeCutterStart, requireCutterStation } from "./cutter-station.js";
@@ -122,8 +123,8 @@ export function bedClearReason(status: string): string {
 /**
  * END A JOB. The only way a digifab job may reach a terminal status.
  *
- * F-1 ATOMIC: the status flip and the bed-clear (needs_attention) row commit
- * TOGETHER. Otherwise an assign pass can observe the device as "no longer
+ * F-1 ATOMIC: the status flip, the bed-clear (needs_attention) row and the
+ * Make's Print step status commit TOGETHER. Otherwise an assign pass can observe the device as "no longer
  * printing" in the gap BEFORE the attention row exists and drip the next queued
  * job straight onto the uncleared bed.
  *
@@ -155,7 +156,18 @@ export async function markJobTerminal(
       .where("status", "not in", [...TERMINAL])
       .executeTakeFirst();
     claimed = Number(r.numUpdatedRows ?? 0) > 0;
-    if (!claimed || !bedClear) return;
+    if (!claimed) return;
+    // The Make this job prints says so in the same commit: a reader who sees
+    // the job done never sees its Make's Print step still running (main went
+    // red on exactly that read, 2026-10-14). settleMakeForJob still links the
+    // spools afterwards; a batch's step carries no job id and settles there.
+    await trx
+      .updateTable("digifab_make_steps")
+      .set({ status: status === "completed" ? "done" : "failed", error: status === "completed" ? null : status === "cancelled" ? "cancelled at the printer" : "the print failed", updated_at: new Date() })
+      .where("job_id", "=", prev.id)
+      .where("step", "=", "print")
+      .execute();
+    if (!bedClear) return;
     await trx
       .insertInto("digifab_device_attention")
       .values({
@@ -835,7 +847,10 @@ export type SendJobResult =
   | { ok: false; code: "not_found" | "already_sent" | "already_sending" | "already_terminal" | "no_connection" | "unknown_device" | "file_missing" | "review_required" | "batch_approval_required" }
   /** The manager refused or could not be reached: the job is failed with this
    *  sentence on it, and the sentence is what the person sees. */
-  | { ok: false; code: "send_failed" | "material_not_ready"; message: string; shouldPoll?: boolean };
+  | { ok: false; code: "send_failed" | "material_not_ready"; message: string; shouldPoll?: boolean }
+  /** The printer is lent out (record-loans.md): nothing was sent, the job is
+   *  untouched, and the sentence says to whom. */
+  | { ok: false; code: "printer_lent"; message: string };
 
 /** Claim a job for ONE send, in a single conditional UPDATE: the job still
  *  unsent, in one of `statuses`, and not already claimed. Two sends of one job
@@ -884,6 +899,9 @@ export async function sendJob(
   // terminal job flip straight back to `sent`). Retry is an explicit endpoint.
   if (TERMINAL.has(job.status)) return { ok: false, code: "already_terminal" };
   if (!job.connection_id) return { ok: false, code: "no_connection" };
+  // A printer lent out is away; the job stays as it is for when it is back.
+  const lent = await lentPrinterRefusal(db, orgId, job);
+  if (lent) return { ok: false, code: "printer_lent", message: lent };
 
   // From here on this send owns the job, or it stops: nothing below this line
   // runs twice for one job at the same time.
@@ -1172,7 +1190,7 @@ async function checkJobMaterial(
 export type AssignJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; shouldPoll: boolean }
   | { ok: false; code: "not_found" | "batch_approval_required" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" | "already_sending" }
-  | { ok: false; code: "material_not_ready"; message: string };
+  | { ok: false; code: "material_not_ready" | "printer_lent"; message: string };
 
 /** F-14 — re-pick a printer for a job stuck in `awaiting-assignment` (its target
  *  matched 0 or many printers). The file is ALREADY on the farm (remote_file_id),
@@ -1191,6 +1209,8 @@ export async function assignJob(
   if (job.status !== "awaiting-assignment") return { ok: false, code: "not_awaiting" };
   if (!job.connection_id) return { ok: false, code: "no_connection" };
   if (!job.remote_file_id) return { ok: false, code: "no_file" };
+  const lent = await lentPrinterRefusal(db, orgId, { connection_id: job.connection_id, target_device: deviceId });
+  if (lent) return { ok: false, code: "printer_lent", message: lent };
 
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver) return { ok: false, code: "no_connection" };

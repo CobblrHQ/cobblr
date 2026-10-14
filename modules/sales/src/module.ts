@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.35",
+  version: "0.1.36",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",

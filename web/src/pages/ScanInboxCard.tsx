@@ -1,4 +1,5 @@
-import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useOverlayOpenFlag, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, PopoverLayer, BackdropLayer, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
+import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
+import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
 // collapsed strip (photo column, title, facts, filing pair, tool rail), the
 // expanded triage surface (photos beside intel, the confirm form, the AI
@@ -44,6 +45,7 @@ import { } from "../components/OrganizeWalkSheet";
 import { } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
 import { CropPhotoModal } from "../components/CropPhotoModal";
+import { SplitByNamesSheet } from "../components/SplitByNamesSheet";
 import { imageUrlFrom } from "../components/pastedImage";
 import { ImageLightbox, type LightboxItem } from "../components/ImageLightbox";
 import { ScanYourPhotos } from "../components/ScanYourPhotos";
@@ -90,7 +92,7 @@ import type { ScanTool } from "@cobblr/platform-contract/scan-tools";
 import { shouldOfferSplit } from "../lib/splitOffer";
 import { leadPhoto, photoOrder, photoUnverified, catalogRungs } from "../lib/scanPhoto";
 import { } from "../lib/scanCombine";
-import { entryKey, withRoutedInstances, pickDestinationKey, withInstallOffers } from "../lib/scanDestination";
+import { entryKey, withRoutedInstances, pickDestinationKey, withInstallOffers, destinationChoices, FALLBACK_MENU } from "../lib/scanDestination";
 import {
   type AiStatus,
   ApiError,
@@ -135,19 +137,13 @@ import { type ScanTarget } from "./scanInboxShared";
 import { ScanNameItInline as NameItInline } from "../components/ScanNameItInline";
 import { LOOKUP_GAVE_UP, RECEIPT_READ_AGAIN, RECEIPT_UNREAD_SENTENCE, RECEIPT_READ_ANYWAY, classifiedCodeOf, receiptAlreadyInSentence } from "@cobblr/platform-contract/scan-copy";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { useUndoSplit } from "../lib/useUndoSplit";
+import { recordHref } from "@cobblr/platform-contract/instance-detail";
+import { DestinationPicker } from "../components/DestinationPicker";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 
 import { countOf } from "@cobblr/platform-contract/plural";
-/** Base-kind fallback for when the scan menu can't load — the menu
- *  (GET /modules/core-scan/menu) is the real source of truth and lists
- *  the workspace's ACTUAL tables ("Yarn"), not module names. */
-const FALLBACK_MENU: ScanMenuEntry[] = [
-  { module: "inventory", instance: null, kind: "inventory:part", noun: "part", label: "Inventory part", fields: [] },
-  { module: "assets", instance: null, kind: "assets:asset", noun: "asset", label: "Asset", fields: [] },
-  { module: "machines", instance: null, kind: "machines:machine", noun: "machine", label: "Machine", fields: [] },
-];
-
 // ── scan-drives-screen (Phase 1) ─────────────────────────────────────────────
 
 /** True when the item never got a real identity — no name, or the AI's
@@ -610,67 +606,18 @@ export function InboxCard({
   // Opened with a destination in hand (the phone row's override, a chip
   // tap), the screen starts on it rather than on the top match.
   const [destKey, setDestKey] = useState<string | null>(defaultCand ? entryKey(defaultCand.module, defaultCand.instance) : null);
-  const [destOpen, setDestOpen] = useState(false);
-  // The picker's dismiss layer covers the whole app, so floating chrome (the
-  // Live pill, the feedback bubble) has to yield to it like any overlay.
-  useOverlayOpenFlag(destOpen);
-  // The menu PORTALS to body, positioned from the pill's rect. Anchored in
-  // place it was clipped by the card's own bounds - it opened below correctly
-  // and simply could not be seen past the second option.
-  const destBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [destRect, setDestRect] = useState<{ top: number; left: number; above: number } | null>(null);
-  const openDest = () => {
-    const r = destBtnRef.current?.getBoundingClientRect();
-    // PopoverLayer moves the menu back onto the screen from what it drew; a
-    // clamp here from an assumed width is what ran off a phone (#3930).
-    if (r) setDestRect({ top: r.bottom + 4, left: r.left, above: r.top });
-    setDestOpen(true);
-  };
-  const closeDest = () => {
-    setDestOpen(false);
-    // Hand focus back to the pill, so Escape doesn't dump keyboard users at
-    // the document root. The native <select> this replaced did all of this
-    // for free — everything here is paying that debt back.
-    destBtnRef.current?.focus();
-  };
-  // The menu's position is measured ONCE at open, so a page that scrolls
-  // underneath would leave it floating detached from the pill. Close instead
-  // of chasing it: a scroll mid-pick means attention moved elsewhere.
-  useEffect(() => {
-    if (!destOpen) return;
-    const onScroll = () => setDestOpen(false);
-    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
-  }, [destOpen]);
+
   // EVERY table, not just the matchmaker's guesses. The old "add somewhere
   // else…" existed because the chips only offered what the AI proposed; with a
   // picker there is no reason to hide the rest. Candidates keep their extracted
   // fields and lead the list; the remaining tables follow with none.
-  const destOptions = (() => {
-    const base = withRoutedInstances(menu && menu.length > 0 ? menu : FALLBACK_MENU, candidates);
-    const seen = new Set(candidates.map((c) => entryKey(c.module, c.instance)));
-    const rest = base
-      .filter((m) => !seen.has(entryKey(m.module, m.instance)))
-      // Same shape as a candidate, minus the things only the matchmaker knows
-      // (no extracted fields, no basis, no bundle to install).
-      .map(
-        (m) =>
-          ({
-            ...m,
-            instance: m.instance ?? null,
-            fields: {} as Record<string, string>,
-            // A table you picked yourself carries no matchmaker verdict: no
-            // extracted name, no confidence. Explicit rather than cast away.
-            name: item.suggested_name ?? "",
-            confidence: 0,
-          }) as (typeof candidates)[number],
-      );
-    return [...candidates, ...rest];
-  })();
+  const destOptions = destinationChoices(menu, candidates, item.suggested_name);
   // Who is looking: the workspace's tables, whether this person may install
   // one and whether they may file into each, the same answer the page's
   // session strip reads (scanViewer.ts).
   const viewer = useScanViewer(menu);
+  // "I just ran out of this" (#6526): keep it at none, onto the shopping list.
+  const ranOutRow = useRanOut(item, viewer, menu, station?.onFiled);
   // THE row's state (#3059 Engine 1): eligibility, the one sentence, the
   // action's words and the destination, resolved once in the contract and
   // rendered here, on the phone row and on the item screen alike. The
@@ -1175,6 +1122,14 @@ export function InboxCard({
     onSuccess: () => void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) }),
     onError: () => toast.error("Couldn't save the new name. Try again."),
   });
+  const rematch = useMutation({
+    mutationFn: () => api.matchScanItem(activeSlug, item.id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      toast.success("Matches checked again.");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
+  });
   const rerun = useMutation({
     mutationFn: (vars?: {
       hint?: string;
@@ -1487,15 +1442,7 @@ export function InboxCard({
   });
   // The other direction, from a piece: the group photo comes back as it
   // was and every piece of the split goes to Recently deleted.
-  const unsplit = useMutation({
-    mutationFn: () => api.unsplitScanItem(activeSlug, item.id),
-    onSuccess: (r) => {
-      toast.success(`Split undone: the group photo is back in the inbox and its ${r.discarded} piece${r.discarded === 1 ? "" : "s"} ${r.discarded === 1 ? "is" : "are"} in Recently deleted.`);
-      invalidateInbox();
-      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    },
-    onError: onErr,
-  });
+  const unsplit = useUndoSplit({ onDone: () => invalidateInbox() });
   // Undo combine (#3639): from the kept row, the rows it absorbed come back
   // and it gives back the quantity they added. The absorbed rows offer the
   // same from Recently deleted.
@@ -1672,6 +1619,8 @@ export function InboxCard({
   // The "this scan IS a container" one-shot (a scanned storage tote becomes a
   // core-locations bin, identity + photo riding onto the bin's record).
   const [makeBinOpen, setMakeBinOpen] = useState(false);
+  // Split by the names a person types (#6342), beside the split that counts for itself.
+  const [namesOpen, setNamesOpen] = useState(false);
   // The served row's own answer (the contract's tool rule, #3006) when it
   // carries one; the name rule alone for a row from an older api.
   const containerish =
@@ -1812,6 +1761,18 @@ export function InboxCard({
         }}
         onClose={() => setCaptureSheet(null)}
       />
+      {namesOpen && (
+        <SplitByNamesSheet
+          slug={activeSlug}
+          itemId={item.id}
+          onClose={() => setNamesOpen(false)}
+          onDone={(n) => {
+            setNamesOpen(false);
+            toast.success(`Split into ${countOf(n, "item")}`);
+            invalidateInbox();
+          }}
+        />
+      )}
       {makeBinOpen && (
         <MakeBinSheet
           item={item}
@@ -2104,7 +2065,7 @@ export function InboxCard({
                 const canPutBack = item.status === "pending";
                 return (
                   <div className="mt-2 border-t border-line dark:border-slate-700/60 pt-1.5">
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">history</div>
+                    <div className="text-[10px] uppercase tracking-widest text-faint mb-1">history</div>
                     {/* The LIST scrolls, the card does not grow. Nothing is
                         dropped: an unbounded history is what makes this rail
                         tall, and the rail's height is the card's height. */}
@@ -2145,7 +2106,7 @@ export function InboxCard({
                 if (entries.length === 0) return null;
                 return (
                   <div className="mt-1.5">
-                    <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Parsed fields</div>
+                    <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Parsed fields</div>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
                       {entries.map(([k, v]) => {
                         const sw = /colou?r/i.test(k) ? colorSwatch(v) : null;
@@ -2516,6 +2477,7 @@ export function InboxCard({
               : null
           }
           reason={rowState.sentence ?? rowState.action.title ?? null}
+          ranOut={ranOutRow.offered ? { busy: ranOutRow.pending, onRun: ranOutRow.run } : null}
           fixing={stationFixing}
           onFix={() => setStationFixing(true)}
           fixName={<CorrectNameInline slug={activeSlug} itemId={item.id} initial={shownName ?? ""} large onDone={() => setStationFixing(false)} />}
@@ -2562,11 +2524,14 @@ export function InboxCard({
   ) : null;
   if (sheet) {
     const actions: ScanItemScreenAction[] = [];
+    if (item.status === "pending") actions.push({ label: "Recheck matches", hint: "Look for this item in the current lists", busy: rematch.isPending, onClick: () => rematch.mutate() });
     if (item.status === "pending") {
+      if (ranOutRow.offered) actions.push({ label: RAN_OUT_LABEL, icon: screenIcons.ranOut, hint: RAN_OUT_HINT, busy: ranOutRow.pending, onClick: ranOutRow.run });
       if (item.image_file_id && !multiItem && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split into items", icon: screenIcons.split, hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
+      if (item.image_file_id && toolSplit) actions.push({ ...toolSplit, tool: "split", label: "Split by names…", icon: screenIcons.split, hint: "Say what each thing in the photo is", onClick: () => setNamesOpen(true) });
       if (item.image_file_id && toolReceipt) actions.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", icon: screenIcons.receipt, hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if (combinedCount) actions.push({ label: SCAN_UNDO_ACTIONS.undoCombine, icon: screenIcons.undo, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
-      if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: SCAN_UNDO_ACTIONS.undoSplit, icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
+      if ((item.suggested_metadata as { split_from?: string } | null)?.split_from) actions.push({ label: SCAN_UNDO_ACTIONS.undoSplit, icon: screenIcons.undo, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate(item.id) });
       if (hasLocations && toolBin) actions.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) actions.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
@@ -2751,12 +2716,15 @@ export function InboxCard({
       .map(({ name: k, label, value: v }) => ({ key: k, label, value: `${String(v)}${whoFromBeside(dest?.fields, k)}`, confirmed: k in userValues, swatch: /colou?r/i.test(k) ? colorSwatch(v) : null }));
     const splitFrom = (item.suggested_metadata as { split_from?: string } | null)?.split_from;
     const more: ScanPhoneRowAction[] = [];
+    if (item.status === "pending") more.push({ label: "Recheck matches", hint: "Look for this item in the current lists", busy: rematch.isPending, onClick: () => rematch.mutate() });
     if (item.status === "pending") {
+      if (ranOutRow.offered) more.push({ label: RAN_OUT_LABEL, hint: RAN_OUT_HINT, busy: ranOutRow.pending, onClick: ranOutRow.run });
       more.push({ label: "Replay processing", hint: "Free: keeps the identification, re-applies routing and fields", busy: aiWorking, onClick: () => rerun.mutate({ noAi: true }) });
       if (item.image_file_id && !multiItem && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split into items", hint: "Several different things in one photo", busy: split.isPending, onClick: () => split.mutate() });
+      if (item.image_file_id && toolSplit) more.push({ ...toolSplit, tool: "split", label: "Split by names…", hint: "Say what each thing in the photo is", onClick: () => setNamesOpen(true) });
       if (item.image_file_id && toolReceipt) more.push({ ...toolReceipt, tool: "receipt", label: "Read as a receipt", hint: "This photo is a receipt: split into its lines", busy: asReceipt.isPending, onClick: () => asReceipt.mutate() });
       if (combinedCount) more.push({ label: SCAN_UNDO_ACTIONS.undoCombine, hint: `Put the ${countOf(combinedCount, "scan")} back as they were`, busy: uncombine.isPending, onClick: () => uncombine.mutate() });
-      if (splitFrom) more.push({ label: SCAN_UNDO_ACTIONS.undoSplit, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate() });
+      if (splitFrom) more.push({ label: SCAN_UNDO_ACTIONS.undoSplit, hint: "Put the group photo back; every piece goes to Recently deleted", busy: unsplit.isPending, onClick: () => unsplit.mutate(item.id) });
       if (hasLocations && toolBin) more.push({ ...toolBin, tool: "bin", label: "Turn into a bin", hint: "This IS a container: make it a location you can scan into", onClick: () => setMakeBinOpen(true) });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "empty-box" ? "Not an empty box" : "Empty box", hint: BOX_STATE_EFFECT["empty-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "empty-box" ? null : "empty-box") });
       if (toolBox) more.push({ ...toolBox, tool: "box_state", group: "box_state", label: boxState === "item-in-box" ? "Not in its box" : "Item in box", hint: BOX_STATE_EFFECT["item-in-box"], busy: setBoxState.isPending, onClick: () => setBoxState.mutate(boxState === "item-in-box" ? null : "item-in-box") });
@@ -2856,13 +2824,17 @@ export function InboxCard({
                   }
             }
             multi={multiItem ? { distinct: multiItem.distinct ?? multiItem.individuals.length, onSplit: () => split.mutate(), onKeep: () => keepGrouped.mutate(), busy: split.isPending || keepGrouped.isPending } : null}
+            // "You already have this · 0 on hand", the record a tap away: its
+            // whole name, cut at the edge, said nothing a phone could read
+            // (#6527). A possible match still names what it might be.
             tracked={
               alreadyTracked && trackedMatch?.title
                 ? rowState.merge || scanPurpose(item) !== "arrival"
-                  ? `You already have: ${trackedMatch.title}`
+                  ? `You already have this${restockMatch ? ` · ${rowAmount.amount(rowHave)} on hand` : ""}`
                   : `Possible match: ${trackedMatch.title}`
                 : null
             }
+            trackedHref={alreadyTracked && trackedMatch?.kind && trackedMatch.id ? recordHref({ kind: trackedMatch.kind, id: trackedMatch.id, detailUrl: (trackedRaw as { detail_url?: string | null } | null)?.detail_url ?? null }, null) : null}
             rerun={{ running: aiWorking, replaying: replayNoAi, failed: !aiWorking && (matchFailed || namelessFix?.recovery === "retry" || aiDowngraded), can: canRerunLookup(item), onRun: () => rerun.mutate(undefined) }}
             onCapture={() => setCaptureSheet("add")}
             more={more}
@@ -2989,11 +2961,11 @@ export function InboxCard({
                   </span>
                 )}
                 {rerunning || serverMatching ? (
-                  <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-accent animate-pulse">
+                  <span className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-2 py-0.5 text-[10px] uppercase tracking-widest text-accent animate-pulse">
                     {replayNoAi ? "replaying" : rerunning ? "re-running" : "AI reading…"}
                   </span>
                 ) : matchFailed ? (
-                  <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300">
+                  <span className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-0.5 text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-300">
                     matching failed
                     <button
                       type="button"
@@ -3112,7 +3084,6 @@ export function InboxCard({
                 busy={qtyPatch.isPending}
                 stopClicks
                 label="Quantity"
-                prefix="×"
                 decreaseLabel="Decrease quantity"
                 increaseLabel="Increase quantity"
                 buttonClassName="px-1.5 py-0.5 hover:bg-cobble-700 disabled:opacity-50"
@@ -3218,7 +3189,7 @@ export function InboxCard({
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        unsplit.mutate();
+                        unsplit.mutate(item.id);
                       }}
                       disabled={unsplit.isPending}
                       title="Put the group photo back in the inbox as it was; every piece of this split goes to Recently deleted."
@@ -3549,31 +3520,36 @@ export function InboxCard({
                       stays as the floor. e2e/scan-card-never-clips.mjs holds
                       it: a name cut with room beside it fails. */}
                   <span className="relative inline-flex min-w-[5rem] max-w-full grow basis-auto items-center">
-                    <button
-                      type="button"
-                      ref={destBtnRef}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        destOpen ? closeDest() : openDest();
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape" && destOpen) closeDest();
-                      }}
-                      title={updating ? `Adds to ${updating.title}, which you already have in ${dest.label}. Pick another table to file it as a new item there instead.` : "Which table this gets filed into"}
-                      aria-haspopup="listbox"
-                      aria-expanded={destOpen}
-                      className={
-                        "inline-flex w-full min-w-0 items-center gap-1 pl-2.5 max-sm:pl-2 pr-2 py-1 transition " +
-                        (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
-                      }
-                    >
-                      <Sparkles size={11} className="shrink-0 max-sm:hidden" />
-                      <span className="min-w-0 truncate" data-testid="dest-pill-label">
-                        {updating ? `${updating.title} in ${dest.label}` : dest.label}
-                        {tentativeRoute && !updating ? "?" : ""}
-                      </span>
-                      {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80 max-sm:hidden" />}
-                    </button>
+                    <DestinationPicker
+                      options={destOptions}
+                      value={entryKey(dest.module, dest.instance)}
+                      onPick={(k) => pickDestination.mutate(k)}
+                      note={updating ? <>Adds to {updating.title} in {dest.label}. Pick another table to file this as a new item there.</> : undefined}
+                      trigger={(t) => (
+                      <button
+                        type="button"
+                        ref={t.ref}
+                        {...t.props}
+                        data-testid="dest-pill"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          t.toggle();
+                        }}
+                        title={updating ? `Adds to ${updating.title}, which you already have in ${dest.label}. Pick another table to file it as a new item there instead.` : "Which table this gets filed into"}
+                        className={
+                          "inline-flex w-full min-w-0 items-center gap-1 pl-2.5 max-sm:pl-2 pr-2 py-1 transition " +
+                          (tentativeRoute ? "hover:bg-cobble-600/10" : "hover:bg-cobble-700")
+                        }
+                      >
+                        <Sparkles size={11} className="shrink-0 max-sm:hidden" />
+                        <span className="min-w-0 truncate" data-testid="dest-pill-label">
+                          {updating ? `${updating.title} in ${dest.label}` : dest.label}
+                          {tentativeRoute && !updating ? "?" : ""}
+                        </span>
+                        {destOptions.length > 1 && <ChevronDown size={11} className="shrink-0 opacity-80 max-sm:hidden" />}
+                      </button>
+                      )}
+                    />
                   </span>
                   <ScanCardCommit
                     state={rowState}
@@ -3600,68 +3576,7 @@ export function InboxCard({
                     or {staleHint.label}?
                   </button>
                 )}
-                    {destOpen && destRect && createPortal(
-                      <>
-                        {/* click anywhere else to dismiss */}
-                        <BackdropLayer className="z-[60]" onClick={(e) => { e.stopPropagation(); closeDest(); }} />
-                        <PopoverLayer
-                          role="listbox"
-                          style={{ top: destRect.top, left: destRect.left }}
-                          flipAbove={destRect.above}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") {
-                              e.stopPropagation();
-                              closeDest();
-                              return;
-                            }
-                            if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
-                            e.preventDefault();
-                            const opts = [...e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
-                            const at = opts.indexOf(document.activeElement as HTMLButtonElement);
-                            const next = e.key === "ArrowDown" ? Math.min(at + 1, opts.length - 1) : Math.max(at - 1, 0);
-                            opts[next]?.focus();
-                          }}
-                          className="z-[61] min-w-[13rem] max-w-[18rem] rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg py-1 flex flex-col"
-                        >
-                          {updating && (
-                            <p className="px-2.5 pt-1 pb-1.5 text-[11px] leading-snug text-muted border-b border-line dark:border-slate-700 mb-1">
-                              Adds to {updating.title} in {dest.label}. Pick another table to file this as a new item there.
-                            </p>
-                          )}
-                          {destOptions.map((c) => {
-                            const k = entryKey(c.module, c.instance);
-                            const on = k === entryKey(dest.module, dest.instance);
-                            return (
-                              <button
-                                key={k}
-                                type="button"
-                                role="option"
-                                aria-selected={on}
-                                autoFocus={on}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  pickDestination.mutate(k);
-                                  closeDest();
-                                }}
-                                className={
-                                  "flex items-center gap-2 px-2.5 py-1.5 text-left text-xs transition " +
-                                  (on
-                                    ? "text-accent font-medium bg-subtle/60 dark:bg-slate-800/60"
-                                    : "text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800")
-                                }
-                              >
-                                <CheckCircle size={11} className={on ? "shrink-0" : "shrink-0 opacity-0"} />
-                                <span className="min-w-0 truncate">
-                                  {c.label}
-                                  {c.bundle_external_id ? " · installs on add" : ""}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </PopoverLayer>
-                      </>,
-                      document.body,
-                    )}
+
                 </span>
               )}
               {/* The editable chips land here while the form is open, in the
@@ -4029,6 +3944,13 @@ export function InboxCard({
                     setBoxState.mutate(next);
                   }}
                 >
+                  {item.status === "pending" && <MenuItem
+                    icon={<RefreshCw size={14} />}
+                    label="Recheck matches"
+                    hint="Look for this item in the current lists"
+                    disabled={rematch.isPending}
+                    onClick={() => { close(); rematch.mutate(); }}
+                  />}
                   <MenuItem
                     icon={<Camera size={14} />}
                     label={retakeCatalog.isPending ? "Uploading…" : "Retake for catalog"}
@@ -4160,7 +4082,7 @@ export function InboxCard({
                       a standing ambient row — see scan-inbox-ux-review.md F2. */}
                   <figcaption
                     className={
-                      "text-[10px] font-mono uppercase tracking-widest mt-1 flex items-center gap-2 " +
+                      "text-[10px] uppercase tracking-widest mt-1 flex items-center gap-2 " +
                       (unverified ? "text-amber-600 dark:text-amber-400" : "text-accent")
                     }
                   >
@@ -4199,7 +4121,7 @@ export function InboxCard({
                   >
                     <EntityPhoto src={yoursImg} alt="your photo" aspect="4/3" fit="contain" eager placeholder={null} className="max-h-32 sm:max-h-48 !bg-transparent" onBroken={() => markBroken(yoursRawUrl)} />
                   </button>
-                  <figcaption className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
+                  <figcaption className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mt-1 flex items-center gap-2">
                     <span>yours</span>
                     {item.image_file_id && !handheld && (
                       <button
@@ -4997,7 +4919,7 @@ function ParentTypeCard({
 
   return (
     <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 px-3 py-2 sm:col-span-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
         {typeLabel}
       </div>
       {body}
@@ -5136,6 +5058,13 @@ function ConfirmForm({
   // The will-install destination leads the picker; any other offered app
   // follows the tables that are on (withInstallOffers, unit-tested).
   const entries = withInstallOffers(baseEntries, candidates, bundleMenuQ.data?.items ?? [], { canInstall: canInstallBundle, destinationBundle: willInstallEntry ? destBundle : null });
+  // In the order every picker lists them (destinationChoices): the row's
+  // suggestions first, then the workspace's tables (#6527).
+  const pickerOrder = destinationChoices(menu, candidates, null).map((c) => c.key);
+  const rank = (k: string) => (pickerOrder.indexOf(k) < 0 ? pickerOrder.length : pickerOrder.indexOf(k));
+  const pickerOptions = entries
+    .map((m, i) => ({ key: entryKey(m.module, m.instance), label: m.label, installs: !!(m as { bundle_external_id?: string }).bundle_external_id, i }))
+    .sort((x, y) => rank(x.key) - rank(y.key) || x.i - y.i);
   // Initial pick: the will-install bundle when it's the top match, else the
   // routed entry, else a GENERIC default table (never an arbitrary named
   // instance). pickDestinationKey is pure + unit-tested in scanDestination.ts.
@@ -5658,44 +5587,41 @@ function ConfirmForm({
   const destinationChip = (
     <div className="flex flex-wrap items-center gap-2">
     <NewFromTemplateButton args={{ kind: `${entry.module}:${baseKind(entry.module)}`, instance: entry.instance ?? undefined, scanItemId: item.id, seed: { name, ...(locationId ? { location_id: locationId } : {}) } }} />
-    <label className="inline-flex items-baseline gap-1.5 max-w-full rounded-lg border px-2 py-1 cursor-pointer transition border-line/70 dark:border-slate-700/70 bg-subtle/50 dark:bg-slate-800/50 hover:border-cobble-400 dark:hover:border-cobble-600">
-      <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">Add to</span>
-      <select
-        value={selKey}
-        onChange={(e) => {
-          const k = e.target.value;
-          userPickedDest.current = true;
-          setSelKey(k);
-          onPickDestination?.(k);
-          // Switching to a table the matchmaker already extracted for →
-          // merge its field values in (typed values keep winning where
-          // the user edited a key the candidate also fills).
-          const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
-          if (cand && Object.keys(cand.fields).length) {
-            // Only what the table it is being filed into actually has.
-            const live = fieldsStillOnTable((menu ?? []).find((m) => entryKey(m.module, m.instance ?? null) === k), cand.fields);
-            custom.seedUnder(live);
-          }
-        }}
-        // Full width is a phone constraint, not a desktop one. A destination
-        // reads in a few words, so on a wide form it only needs to be as wide
-        // as its longest option; stretching it across the form makes it look
-        // like the page's main input, which it is not now that the fields
-        // beside it are chips.
-        className="bg-transparent border-0 p-0 pr-1 text-sm outline-none max-w-[16rem] cursor-pointer"
-      >
-        {entries.map((m) => {
-          const wi = (m as { bundle_external_id?: string }).bundle_external_id;
-          return (
-            <option key={entryKey(m.module, m.instance)} value={entryKey(m.module, m.instance)}>
-              {m.label}
-              {m.instance ? "" : ` (${m.noun})`}
-              {wi ? " · not set up yet" : ""}
-            </option>
-          );
-        })}
-      </select>
-    </label>
+    {/* The one table picker (DestinationPicker, #6527): the same list, in
+        the same order, as the card's pill and a split line's parent. */}
+    <DestinationPicker
+      options={pickerOptions}
+      value={selKey}
+      label="Add to"
+      onPick={(k) => {
+        userPickedDest.current = true;
+        setSelKey(k);
+        onPickDestination?.(k);
+        // Switching to a table the matchmaker already extracted for →
+        // merge its field values in (typed values keep winning where
+        // the user edited a key the candidate also fills).
+        const cand = candidates.find((c) => entryKey(c.module, c.instance) === k);
+        if (cand && Object.keys(cand.fields).length) {
+          // Only what the table it is being filed into actually has.
+          const live = fieldsStillOnTable((menu ?? []).find((m) => entryKey(m.module, m.instance ?? null) === k), cand.fields);
+          custom.seedUnder(live);
+        }
+      }}
+      trigger={(t) => (
+        <button
+          type="button"
+          ref={t.ref}
+          {...t.props}
+          onClick={t.toggle}
+          data-testid="confirm-destination"
+          className="inline-flex items-baseline gap-1.5 max-w-full rounded-lg border px-2 py-1 transition border-line/70 dark:border-slate-700/70 bg-subtle/50 dark:bg-slate-800/50 hover:border-cobble-400 dark:hover:border-cobble-600"
+        >
+          <span className="shrink-0 text-[10px] uppercase tracking-wide text-faint">Add to</span>
+          <span className="min-w-0 max-w-[16rem] truncate text-sm">{pickerOptions.find((o) => o.key === selKey)?.label ?? entry.label}</span>
+          <ChevronDown size={12} className="shrink-0 self-center text-faint" aria-hidden />
+        </button>
+      )}
+    />
     {(() => {
       // The app the matchmaker named is not the default here because a table
       // that is on fits (#6099); said, so a card that named it does not
@@ -6099,7 +6025,7 @@ function ScanFieldInput({
   if (wantsSwatch(def)) {
     return (
       <div className="block">
-        <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+        <label htmlFor={inputId} className="block text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
           {def.display_label}
         </label>
         <div className="flex flex-wrap items-center gap-2">
@@ -6148,7 +6074,7 @@ function ScanFieldInput({
   return (
     <div className="block">
       {!hideLabel && (
-        <label htmlFor={inputId} className="block text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
+        <label htmlFor={inputId} className="block text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-1">
           {def.display_label}
         </label>
       )}

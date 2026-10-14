@@ -1,26 +1,10 @@
 {
   "_why": "Kernel routes the assistant cannot reach. A WORKLIST, not an allowance: it may only shrink. Each is a capability a person has and Cobb does not, which is how he came to print a stage direction instead of grouping two nav sections. Give one an action (// AI-ACTION: <id>) or say why it should never have a door (// AI-REACH: <reason>), then delete its line. A NEW kernel route cannot be added here: it says which it is on the day it is written.",
   "unreachable": {
-    "blueprint.ts POST /install": "needs an action that shows the blueprint's plan as a card and applies it on the person's yes",
-    "bundles.ts DELETE /:x": "needs a held change like a delete: removing a bundle removes its fields and what they hold",
     "bundles.ts PATCH /:x/features": "needs an action to turn a bundle's optional parts on or off",
     "bundles.ts POST /history/:x/revert": "needs an action that previews what a revert puts back before it runs",
     "bundles.ts POST /install": "needs an action that installs a bundle from the catalog, shown as a card first",
-    "dashboard.ts PUT /:x/dashboard-layout": "needs an action to arrange a person's dashboard (add, move, remove a card)",
     "instances.ts POST /:x/scan-fallback": "needs an action to name the table a scan lands in when nothing else fits",
-    "orgs.ts POST /:x/import-app": "needs an action that copies a managed app's records into this workspace, after the person's yes",
-    "outbound-email.ts DELETE /": "a workspace action to remove the outbound mail server (admin only, confirmed)",
-    "outbound-email.ts POST /test": "a workspace action that sends a test message through the configured outbound mail server",
-    "outbound-email.ts PUT /": "a workspace action to set the outbound mail server (an admin setting; the password stays out of chat)",
-    "pairings.ts DELETE /:x": "needs an unlink action, the inverse of linking two records",
-    "pairings.ts PATCH /:x": "needs an action to change what a link between two records says",
-    "pairings.ts POST /": "needs a link action to connect two records, such as a part and the project that uses it",
-    "people.ts POST /:x/hand-off": "needs an action that hands one person's things to another, after the person's yes",
-    "people.ts POST /:x/invite": "needs an action that sends a sign-up invitation, after the person's yes, since it emails someone",
-    "platform.ts DELETE /:x/bindings/:x": "needs an action to remove an automation (a wire), shown before it goes",
-    "platform.ts PATCH /:x/bindings/:x": "needs an action to change an automation's trigger or what it does",
-    "platform.ts POST /:x/bindings": "needs an action to set up an automation, previewed as a card before it is saved",
-    "quickstart.ts POST /materialize": "needs an action that builds the workspace from the quickstart answers, as a card",
-    "record-move.ts POST /": "needs an action that moves a record to another table, using the preview this file already serves"
+    "quickstart.ts POST /materialize": "needs an action that builds the workspace from the quickstart answers, as a card"
   }
 }

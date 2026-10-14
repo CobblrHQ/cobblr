@@ -184,6 +184,7 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
  *  which is the entire point of instances being different. */
 export const KIND_SCOPED_CONFIG = [
   "record_action_layouts",
+  "record_panel_layouts",
   "record_action_pins",
   // A deleted record is absent, so it cannot move between collections. Its
   // recovery image keeps the collection it belonged to when it was deleted.

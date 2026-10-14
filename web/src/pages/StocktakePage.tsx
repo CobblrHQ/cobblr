@@ -37,7 +37,7 @@ export function StocktakePage() {
   const section = (title: string, rows: Array<{ id: string; title: string; note?: string }>) =>
     rows.length ? (
       <section className="space-y-1">
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">{title}</h2>
+        <h2 className="text-[10px] uppercase tracking-widest text-accent">{title}</h2>
         <ul className="divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700">
           {rows.map((r) => (
             <li key={r.id} className="flex flex-wrap gap-x-3 px-3 py-2 text-sm">

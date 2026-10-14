@@ -19,7 +19,7 @@ type Unit = "in" | "mm";
 function NumField({ label, value, onChange, step = 0.25 }: { label: string; value: string; onChange: (v: string) => void; step?: number }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
       {/* NUMBER-INPUT-TEXT: the modal keeps the size as typed text until Save, where it parses and converts the unit. */}
       <input
         type="number" min={0} step={step} inputMode="decimal"
@@ -99,7 +99,14 @@ export function NewSizeModal({
       ? api.updateCustomSize(initialSize.id, { name: name.trim(), ...dims })
       : api.createCustomSize({ name: name.trim(), ...dims }),
     onSuccess: (size) => {
-      void qc.invalidateQueries({ queryKey: ["labels-custom-sizes", orgSlug] });
+      const queryKey = ["labels-custom-sizes", orgSlug];
+      qc.setQueryData<{ items: CustomLabelSize[] }>(queryKey, (previous) => {
+        const items = previous?.items ?? [];
+        return { items: items.some((item) => item.id === size.id)
+          ? items.map((item) => item.id === size.id ? size : item)
+          : [...items, size] };
+      });
+      void qc.invalidateQueries({ queryKey });
       toast.success(`${initialSize ? "Saved" : "Added"} “${size.name}” (${size.per_sheet} up)`);
       onCreated(size);
       onClose();
@@ -111,7 +118,7 @@ export function NewSizeModal({
     <Modal open={open} onClose={onClose} title={initialSize ? "Edit label size" : "New label size"}>
       <div className="space-y-4">
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">name</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="1.5 × 3 sheet, two-up" className="input !py-1.5 text-sm" />
         </label>
 

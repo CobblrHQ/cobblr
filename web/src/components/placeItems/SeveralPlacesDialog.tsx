@@ -4,8 +4,7 @@
 // person says which. Each answer goes through the holdings door.
 
 import { useState } from "react";
-import { Minus, Plus } from "lucide-react";
-import { Modal } from "@cobblr/platform-web";
+import { Modal, NumberStepper } from "@cobblr/platform-web";
 import type { PlaceableRecord } from "../../lib/placeableRecords";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -39,8 +38,9 @@ export function SeveralPlacesDialog({
   const [qty, setQty] = useState(1);
   const [addQty, setAddQty] = useState(1);
   const max = source?.qty ?? 0;
-  const step = (set: (f: (n: number) => number) => void, d: number, hi: number) => set((n) => Math.min(Math.max(1, n + d), hi));
+  const stepper = "inline-flex items-center gap-2";
   const btn = "w-9 h-9 grid place-items-center rounded-md border border-line dark:border-slate-600 disabled:opacity-30";
+  const field = "w-12 bg-transparent text-center font-mono tabular-nums text-content dark:text-mortar-100";
 
   return (
     <Modal open onClose={onClose} title={`${record.name} is kept in ${countOf(holdings.length, "place")}`} subtitle={`Dropped on ${placeName}`} size="sm">
@@ -77,13 +77,20 @@ export function SeveralPlacesDialog({
             </label>
           )}
           <div className="flex items-center gap-2">
-            <button title="Move one fewer" type="button" className={btn} aria-label="Move one fewer" disabled={qty <= 1} onClick={() => step(setQty, -1, max)}>
-              <Minus size={14} />
-            </button>
-            <span className="min-w-[2rem] text-center font-mono tabular-nums">{fmt(qty)}</span>
-            <button title="Move one more" type="button" className={btn} aria-label="Move one more" disabled={qty >= max} onClick={() => step(setQty, 1, max)}>
-              <Plus size={14} />
-            </button>
+            <NumberStepper
+              value={qty}
+              min={1}
+              max={max}
+              decimal={!Number.isInteger(max)}
+              label="How many to move"
+              decreaseLabel="Move one fewer"
+              increaseLabel="Move one more"
+              icons
+              className={stepper}
+              buttonClassName={btn}
+              inputClassName={field}
+              onChange={setQty}
+            />
             <button
               type="button"
               disabled={busy || !source || qty > max}
@@ -98,13 +105,19 @@ export function SeveralPlacesDialog({
         <div className="rounded-md border border-line dark:border-slate-700 p-3 space-y-2">
           <div className="font-medium text-content dark:text-mortar-100">Add as another place</div>
           <div className="flex items-center gap-2">
-            <button title="Count one fewer here" type="button" className={btn} aria-label="Count one fewer here" disabled={addQty <= 1} onClick={() => step(setAddQty, -1, 9999)}>
-              <Minus size={14} />
-            </button>
-            <span className="min-w-[2rem] text-center font-mono tabular-nums">{fmt(addQty)}</span>
-            <button title="Count one more here" type="button" className={btn} aria-label="Count one more here" onClick={() => step(setAddQty, 1, 9999)}>
-              <Plus size={14} />
-            </button>
+            <NumberStepper
+              value={addQty}
+              min={1}
+              max={9999}
+              label="How many to keep here"
+              decreaseLabel="Count one fewer here"
+              increaseLabel="Count one more here"
+              icons
+              className={stepper}
+              buttonClassName={btn}
+              inputClassName={field}
+              onChange={setAddQty}
+            />
             <button
               type="button"
               disabled={busy}

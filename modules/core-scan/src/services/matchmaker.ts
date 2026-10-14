@@ -1011,6 +1011,35 @@ export function heuristicMatch(
  *  candidate: the table this workspace holds that the same bundle made, and
  *  the product fields people filed, with no model. Null when the answer names
  *  no table here. */
+/** A code the workspace already keeps (identified from its own records at
+ *  intake, #6003) is routed to the table that record lives in, with no model
+ *  (#6555): the record already says where it lives, and asking cost the
+ *  owner's tea 4.8 s and a model call on every scan. Null when the row was not
+ *  identified that way, or its table is not on the menu. */
+export function heldCandidate(item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate | null {
+  const meta = (item.metadata ?? {}) as { identified_by?: unknown; tracked_match?: { kind?: unknown; instance?: unknown; of?: unknown } | null };
+  if (meta.identified_by !== "your_records") return null;
+  const t = meta.tracked_match;
+  if (!t || typeof t.kind !== "string" || (typeof t.of === "number" && t.of > 1)) return null;
+  const instance = typeof t.instance === "string" ? t.instance : null;
+  const entry = menu.find((e) => e.kind === t.kind && (e.instance ?? null) === instance) ?? menu.find((e) => (e.instance ?? null) === instance && instance !== null);
+  if (!entry) return null;
+  const fields: Record<string, string | number | boolean> = {};
+  seedPackSize(entry, item, fields);
+  const cat = resolveCategoryInto(entry, item.category, fields);
+  return {
+    module: entry.module,
+    instance: entry.instance,
+    kind: entry.kind,
+    label: entry.label,
+    confidence: 1,
+    name: cleanCaptureName(item.name ?? ""),
+    fields,
+    ...(cat ? { category: cat.value, ...(cat.isNew ? { category_is_new: true } : {}) } : {}),
+    notes: `Already in your ${entry.label}: filed where you keep it.`,
+  };
+}
+
 export function learnedCandidate(item: PerceivedItem, menu: ScanMenuEntry[]): MatchCandidate | null {
   const raw = (item.metadata as { raw?: { learned?: unknown; bidb?: { attributes?: unknown; confidence?: unknown }; resolver?: { confidence?: unknown } } } | null | undefined)?.raw;
   const route = learnedRouteFor(raw?.learned ?? learnedAttributesOf(raw?.bidb?.attributes), menu);
@@ -1229,6 +1258,9 @@ export async function runMatchmaker(
   // What people filed this barcode as, on the barcode network: its table and
   // its product fields, with no model (#3769).
   if (!replay) {
+    // A code you keep goes where you keep it, before anything else (#6555).
+    const kept = heldCandidate(item, menu);
+    if (kept) return [kept];
     const learned = learnedCandidate(item, menu);
     if (learned) return [learned];
   }

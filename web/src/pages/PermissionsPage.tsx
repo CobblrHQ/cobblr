@@ -181,8 +181,8 @@ function PermissionsOverview() {
       {members.length > 0 && (
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
           <div className="flex items-baseline gap-2">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // members &amp; roles
+            <span className="text-[10px] uppercase tracking-widest text-accent">
+              members &amp; roles
             </span>
             <span className="text-xs text-faint dark:text-slate-400">
               stock role (set in <Link className="underline hover:text-accent" to="/configuration?open=members">Members</Link>) ·
@@ -301,7 +301,7 @@ function PermissionsOverview() {
         <div className="px-4 py-3 border-t border-line dark:border-slate-800 bg-subtle/50 dark:bg-slate-800/20">
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              <span className="text-[10px] uppercase tracking-widest text-faint">
                 kind
               </span>
               <select
@@ -319,7 +319,7 @@ function PermissionsOverview() {
               </select>
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              <span className="text-[10px] uppercase tracking-widest text-faint">
                 field
               </span>
               <select
@@ -342,7 +342,7 @@ function PermissionsOverview() {
               </select>
             </label>
             <label className="flex flex-col gap-1 flex-1 min-w-[160px]">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              <span className="text-[10px] uppercase tracking-widest text-faint">
                 capability
               </span>
               <input

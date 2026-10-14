@@ -29,7 +29,23 @@ export function makeIpLimiter(windowMs: number, max: number): (key: string) => b
 // The CI test harness logs in thousands of times from ONE ip (localhost) — the limits
 // protect PROD, not the harness, so bypass them under the test rig. COBBLR_TEST_ORG_POOL is
 // set only in ci.yml / the test rig (env.ts), never in prod.
-export const IP_LIMITS_OFF = process.env.NODE_ENV === "test" || !!process.env.COBBLR_TEST_ORG_POOL;
+//
+// COBBLR_IP_LIMITS_OFF=true is the same switch for a harness stack that is NOT the test rig
+// (2026-10-14): the nightly walk boots a development stack and walks three specs at once, each
+// signing up its own workspace from localhost, and the 15-a-minute signup limit refused 124 of
+// 370 specs before they began. It never switches the test org pool on. A production node that
+// sets it refuses to boot, and a value other than true or false refuses too.
+export function ipLimitsOff(e: NodeJS.ProcessEnv): boolean {
+  const flag = e.COBBLR_IP_LIMITS_OFF;
+  if (flag !== undefined && flag !== "" && flag !== "true" && flag !== "false") {
+    throw new Error(`COBBLR_IP_LIMITS_OFF must be true or false, not ${JSON.stringify(flag)}`);
+  }
+  if (flag === "true" && e.NODE_ENV === "production") {
+    throw new Error("COBBLR_IP_LIMITS_OFF must never be set on a production node: it removes the per-address sign-in and signup limits");
+  }
+  return e.NODE_ENV === "test" || !!e.COBBLR_TEST_ORG_POOL || flag === "true";
+}
+export const IP_LIMITS_OFF = ipLimitsOff(process.env);
 
 /** True when this request should be rejected as over-limit. No-op under the test rig. */
 export function overLimit(limiter: (k: string) => boolean, req: Request): boolean {

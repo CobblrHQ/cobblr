@@ -291,7 +291,7 @@ export function ProjectDetailPage() {
         </div>
 
         <label className="block">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 block mb-1">
             description
           </span>
           <DescriptionField
@@ -338,7 +338,7 @@ export function ProjectDetailPage() {
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// tasks</div>
+          <div className="text-[10px] uppercase tracking-widest text-accent">tasks</div>
           <div role="group" aria-label="Whose tasks" className="flex rounded-md border border-line dark:border-slate-700 overflow-hidden text-xs">
             {[
               { v: false, label: "All" },
@@ -399,7 +399,7 @@ function Labelled({
 }) {
   return (
     <label className="flex gap-2 items-center">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         {label}
       </span>
       {children}
@@ -431,7 +431,7 @@ function SaveStatus({
   return (
     <span
       aria-live="polite"
-      className={`inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest ${tone} ${className}`}
+      className={`inline-flex items-center gap-1 text-[10px] uppercase tracking-widest ${tone} ${className}`}
     >
       {saved && !saving && !failed && <Check size={11} />}
       {text}
@@ -550,12 +550,12 @@ function TaskRow({
         {task.title}
       </button>
       {(task.priority === "high" || task.priority === "urgent") && !done && (
-        <span className="text-[10px] font-mono uppercase text-ember-600 dark:text-ember-400">{task.priority}</span>
+        <span className="text-[10px] uppercase text-ember-600 dark:text-ember-400">{task.priority}</span>
       )}
       {due && (
         <span
           data-testid="task-due"
-          className={"text-[10px] font-mono uppercase px-1.5 py-0.5 rounded " + (due === "late" ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : due === "today" ? "text-accent" : "text-faint dark:text-slate-500")}
+          className={"text-[10px] uppercase px-1.5 py-0.5 rounded " + (due === "late" ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : due === "today" ? "text-accent" : "text-faint dark:text-slate-500")}
         >
           {due === "late" ? "late · " : due === "today" ? "today · " : ""}
           {dayLabel(task.due_date, { month: "short", day: "numeric" })}
@@ -571,10 +571,10 @@ function TaskRow({
         <span data-testid="task-assignee" className="text-[10px] font-mono text-muted dark:text-slate-400">{task.assignee_label}</span>
       )}
       {task.energy && (
-        <span className="text-[10px] font-mono text-faint dark:text-slate-500 uppercase">{task.energy}</span>
+        <span className="text-[10px] text-faint dark:text-slate-500 uppercase">{task.energy}</span>
       )}
       {blocked && (
-        <span className="text-[10px] font-mono uppercase text-ember-500 bg-ember-50 px-1.5 py-0.5 rounded">
+        <span className="text-[10px] uppercase text-ember-500 bg-ember-50 px-1.5 py-0.5 rounded">
           blocked: {task.blocked_deps}
         </span>
       )}
@@ -668,8 +668,8 @@ function MaterialsPanel({
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
       data-testid="design-materials-panel"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
-        // materials for this design
+      <div className="text-[10px] uppercase tracking-widest text-accent mb-3">
+        materials for this design
       </div>
       {items.length === 0 ? (
         <p className="text-xs text-faint dark:text-slate-500 mb-3">
@@ -682,7 +682,7 @@ function MaterialsPanel({
           {items.map((a) => (
             <li key={a.id} className="flex items-center gap-2 text-sm">
               <span
-                className={`text-[10px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded border shrink-0 ${
+                className={`text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border shrink-0 ${
                   a.status === "reserved"
                     ? "text-accent border-cobble-200 dark:border-cobble-800"
                     : a.status === "consumed"
@@ -800,8 +800,8 @@ function HooksNeededPanel({
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5"
       data-testid="design-hooks-panel"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-3">
-        // hooks needed
+      <div className="text-[10px] uppercase tracking-widest text-accent mb-3">
+        hooks needed
       </div>
       {neededParts.length === 0 ? (
         <p className="text-xs text-faint dark:text-slate-500 mb-3">
@@ -815,7 +815,7 @@ function HooksNeededPanel({
             return (
               <li key={h.id} className="flex items-center gap-2 text-sm">
                 <span
-                  className={`text-[10px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded border shrink-0 ${
+                  className={`text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border shrink-0 ${
                     inStock
                       ? "text-moss-600 border-moss-200 dark:border-moss-800"
                       : "text-ember-500 border-ember-200 dark:border-ember-800"

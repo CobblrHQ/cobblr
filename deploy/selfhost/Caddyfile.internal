@@ -8,7 +8,8 @@
 #   COBBLR_CADDYFILE    = ./deploy/selfhost/Caddyfile.internal
 #   COBBLR_SITE_ADDRESS = cobblr.local        (or the box's LAN IP, e.g. 192.168.1.50)
 #
-# To trust the CA on your devices, export Caddy's root once:
+# To trust the CA on your devices: a phone scans the QR on the pairing screen
+# (Pair phone), which opens http://<site>/cobblr-root.crt below. Or export it:
 #   docker compose ... exec caddy cat /data/caddy/pki/authorities/local/root.crt > cobblr-root.crt
 # then install cobblr-root.crt on each device (iOS: Settings → General → VPN &
 # Device Management → install profile, then General → About → Certificate Trust
@@ -16,6 +17,30 @@
 #
 # Prefer the DuckDNS/Cloudflare Caddyfiles if at all possible — they skip this
 # per-device dance entirely.
+
+# A browser that opens the box by its IP sends no server name (TLS cannot
+# carry an IP there), so Caddy must be told which certificate to hand it, or
+# every handshake fails with "tlsv1 alert internal error" while the site is up.
+# The setup builder offers the IP for exactly this mode; harmless for a name.
+{
+	default_sni {$COBBLR_SITE_ADDRESS}
+}
+
+# The one thing served over plain HTTP: this box's root certificate, so a phone
+# can fetch it before it trusts anything (core #6443). The pairing screen shows
+# this address as a QR code. Everything else still goes to HTTPS.
+http://{$COBBLR_SITE_ADDRESS} {
+	handle /cobblr-root.crt {
+		root * /data/caddy/pki/authorities/local
+		rewrite * /root.crt
+		header Content-Type application/x-x509-ca-cert
+		header Content-Disposition "attachment; filename=cobblr-root.crt"
+		file_server
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+}
 
 {$COBBLR_SITE_ADDRESS} {
 	encode gzip

@@ -295,8 +295,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
       <div className="space-y-5">
         {/* Members list */}
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-            // members ({members.data?.items.length ?? 0})
+          <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+            members ({members.data?.items.length ?? 0})
           </div>
           {members.isLoading && (
             <div className="text-xs text-faint">loading…</div>
@@ -310,7 +310,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                     <div className="text-sm text-content dark:text-mortar-100 truncate">
                       {m.display_name}
                       {isSelf && (
-                        <span className="ml-2 text-[10px] font-mono uppercase tracking-widest text-faint">
+                        <span className="ml-2 text-[10px] uppercase tracking-widest text-faint">
                           you
                         </span>
                       )}
@@ -337,7 +337,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       ))}
                     </select>
                   ) : (
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+                    <span className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                       {m.role}
                     </span>
                   )}
@@ -360,8 +360,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
         {/* Open invites */}
         {isAdminish && (
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-              // open invites ({invites.data?.items.length ?? 0})
+            <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+              open invites ({invites.data?.items.length ?? 0})
             </div>
             {invites.data?.items.length === 0 && (
               <div className="text-xs text-faint italic">
@@ -380,7 +380,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-baseline gap-2">
-                        <span className="font-mono uppercase tracking-widest text-[10px] text-muted">
+                        <span className="uppercase tracking-widest text-[10px] text-muted">
                           {inv.role}
                         </span>
                         {inv.invited_email && (
@@ -397,7 +397,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                           </span>
                         )}
                         {expired && (
-                          <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">
+                          <span className="text-[10px] uppercase tracking-widest text-ember-500">
                             expired
                           </span>
                         )}
@@ -419,7 +419,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                     </div>
                     {inv.reusable && inv.paused_at && (
                       <span className="flex flex-col items-end gap-1" data-testid="join-link-paused">
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">paused</span>
+                        <span className="text-[10px] uppercase tracking-widest text-ember-500">paused</span>
                         <span className="flex gap-2">
                           <button
                             type="button"
@@ -482,8 +482,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
             onSubmit={submitInvite}
             className="rounded-xl border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-900 p-4 space-y-3"
           >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // invite someone
+            <div className="text-[10px] uppercase tracking-widest text-accent">
+              invite someone
             </div>
 
             {/* Two genuinely different invites. Owners get both (when self-serve
@@ -524,7 +524,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               {inviteKind === "workspace" && joinLink ? (
               <>
               <label className="flex-1 block min-w-0">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   At most, then pause
                 </span>
                 <span className="flex gap-1">
@@ -547,7 +547,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 </span>
               </label>
               <label className="flex-1 block min-w-0">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Stop after (optional)
                 </span>
                 <input
@@ -562,7 +562,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               </>
               ) : (
               <label className="flex-1 block min-w-0">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Email {inviteKind === "platform" ? "(optional)" : "hint (optional)"}
                 </span>
                 <input
@@ -577,7 +577,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
               )}
               {inviteKind === "workspace" && (
                 <label className="block">
-                  <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                     Role
                   </span>
                   <select
@@ -654,7 +654,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 here.
               </p>
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Their things go to</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Their things go to</span>
                 <select value={handTo} onChange={(e) => setHandTo(e.target.value)} className="input w-full" data-testid="hand-off-to">
                   <option value="">Keep them as {leaving.member.display_name}'s</option>
                   {leaving.others.map((p) => (

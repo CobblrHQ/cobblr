@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft } from "lucide-react";
-import { FooterActionPopover, MoveToInstancePanel, PlacePickList, noteRecentPlace, useToast, type PlaceChoice } from "@cobblr/platform-web";
+import { FooterActionPopover, MoveToInstancePanel, MoveToChoices, noteRecentPlace, useToast, type PlaceChoice } from "@cobblr/platform-web";
 import { countOf } from "@cobblr/platform-contract";
 import { useInventory } from "./context";
 import { placeOfRow, putPart, type PartPlace } from "./move-part";
@@ -169,7 +169,7 @@ function MoveBody({ rows, close, onMoved, listMove }: { rows: Row[]; close: () =
       {locs.isPending ? (
         <p className="p-3 text-sm text-muted">Loading places…</p>
       ) : (
-        <PlacePickList
+        <MoveToChoices
           slug={orgSlug}
           places={placeChoices(locs.data?.items ?? [])}
           holders={(holders.data?.items ?? []).map((h) => ({ id: h.id, name: h.title, line: h.line ? `in ${h.line}` : null, holderKind: h.kind }))}

@@ -8,6 +8,7 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
+import { InstanceNameRegex } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { requireRole } from "../auth/capability.js";
@@ -39,7 +40,7 @@ export const overridesRouter = Router({ mergeParams: true });
 
 const CreateInstanceBody = z.object({
   module_name: z.string().min(1),
-  instance_name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  instance_name: z.string().min(1).regex(InstanceNameRegex),
   display_name: z.string().min(1).max(160),
 });
 
@@ -213,11 +214,12 @@ instancesRouter.post(
 // scan, categories emerge from real data, and the ones that earn a table get one.
 const PromoteBody = z.object({
   category: z.string().min(1).max(60),
-  instance_name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  instance_name: z.string().min(1).regex(InstanceNameRegex),
   display_name: z.string().min(1).max(160),
 });
 
 // AI-ACTION: platform:promote-category
+// UI-SCREEN: /configuration/presentation (Organise, give category its own list)
 instancesRouter.post(
   "/:instanceName/promote-category",
   requireAuth,
@@ -270,6 +272,7 @@ const DemoteBody = z.object({
 });
 
 // AI-ACTION: platform:demote-category
+// UI-SCREEN: /configuration/presentation (Organise, fold this list into another)
 instancesRouter.post(
   "/:instanceName/demote-to-category",
   requireAuth,
@@ -411,14 +414,15 @@ overridesRouter.get(
   },
 );
 
-// AI-ACTION: platform:rename-thing
+// AI-ACTION: platform:rename-thing, platform:set-list-presentation
+// One door for many settings: each screen that calls it names the actions
+// that cover what it writes (lint:ui-settings-writes-name-their-action).
 overridesRouter.put(
   "/",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!(await requireCapability(req, res, "platform:rename-thing"))) return;
       const parsed = UpsertOverrideBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -430,6 +434,12 @@ overridesRouter.put(
         });
         return;
       }
+      const configKeys = Object.keys(parsed.data.config ?? {});
+      const presentationKeys = ["group_label", "presents_as_top_level", "item_noun", "item_noun_plural"];
+      const presentation = parsed.data.icon !== undefined || parsed.data.hidden !== undefined || parsed.data.nav_order !== undefined || configKeys.some((key) => presentationKeys.includes(key));
+      const other = parsed.data.display_label !== undefined || parsed.data.display_label_plural !== undefined || configKeys.some((key) => !presentationKeys.includes(key));
+      if (presentation && !(await requireCapability(req, res, "platform:set-list-presentation"))) return;
+      if ((other || !presentation) && !(await requireCapability(req, res, "platform:rename-thing"))) return;
       const orgId = req.tenant!.org.id;
       const targetKind = parsed.data.target_kind as OverrideTarget;
       // Merge, so a form can only change the keys it sent.

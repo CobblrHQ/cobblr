@@ -117,7 +117,7 @@ export function CatalogMatchPage() {
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
+          className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
         >
           <ArrowLeft size={10} /> back
         </button>
@@ -147,7 +147,7 @@ export function CatalogMatchPage() {
       {catalogs.length > 0 && (
         <div className="grid grid-cols-12 gap-3">
           <div className="col-span-3 space-y-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Catalogs
             </div>
             {catalogs.map((c) => (

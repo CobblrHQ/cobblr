@@ -305,11 +305,11 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                     {f.name}
                   </span>
                   <span className="flex-1">{f.display_label}</span>
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                  <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
                     {f.type}
                   </span>
                   {f.bundle_id && (
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                    <span className="text-[10px] uppercase tracking-widest text-accent">
                       bundled
                     </span>
                   )}
@@ -352,8 +352,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
 
       {(presets.data?.items ?? []).length > 0 && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            // sets you can switch on
+          <div className="text-[10px] uppercase tracking-widest text-accent">
+            sets you can switch on
           </div>
           {(presets.data?.items ?? []).map((preset) => (
             <div key={preset.key} className="flex items-start gap-3">
@@ -399,8 +399,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         onSubmit={submit}
         className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
       >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // new field
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          new field
         </div>
         {/* A field lives on ONE kind, or on a CLASS of them. "Origin: where I got
             this" belongs on everything physical you track — and on anything
@@ -408,7 +408,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             is a trait predicate, the same one actions use, so it isn't a short
             list of canned options: any combination of the 12 traits works. */}
         <div className="flex items-center gap-4 text-xs">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
             Applies to
           </span>
           <SegmentedChoice
@@ -444,7 +444,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         <div className="grid grid-cols-2 gap-3">
           {mode === "kind" && (
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Entity kind
             </span>
             <select
@@ -462,7 +462,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           </label>
           )}
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Type
             </span>
             <select
@@ -488,7 +488,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             </select>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Label
               <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                 what you'd call it
@@ -507,7 +507,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Key
               <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                 auto - how templates + the API refer to it
@@ -534,7 +534,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               preset and not be. Left empty by default: a role is a person
               saying what a field is, never inferred from its name. */}
           <label className="col-span-2 block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Meaning
               <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                 optional - lets a scan fill this field for you
@@ -592,7 +592,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
             <div className="col-span-2 grid grid-cols-3 gap-3">
               {type === "text" && (
                 <div className="col-span-2">
-                  <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                     Choices
                     <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                       optional - makes it a dropdown
@@ -608,7 +608,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               )}
               {rendererChoices.length > 1 && (
                 <label className="block">
-                  <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                  <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                     Renderer
                     <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                       how it draws
@@ -641,7 +641,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           )}
           {type === "relation" && (
             <label className="block col-span-2">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Points at
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                   which kind of record this field links to
@@ -659,7 +659,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           )}
           {type === "computed" && (
             <label className="block col-span-2">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Template
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                   read-only - rendered from the entity's fields
@@ -681,7 +681,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
           )}
           {fieldTypeTakesUnit(type) && (
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Unit
                 <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-600">
                   {type === "measure"
@@ -722,8 +722,8 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
 
         {Object.keys(mine).length > 0 && (
           <>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // your fields
+            <div className="text-[10px] uppercase tracking-widest text-accent">
+              your fields
             </div>
             {renderGroups(mine)}
           </>
@@ -732,11 +732,11 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         {Object.keys(bundled).length > 0 && (
           <>
             <div
-              className={`text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 ${
+              className={`text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 ${
                 Object.keys(mine).length > 0 ? "pt-3 mt-1 border-t border-line dark:border-slate-700" : ""
               }`}
             >
-              // from bundles &amp; modules
+              from bundles &amp; modules
             </div>
             {renderGroups(bundled)}
           </>

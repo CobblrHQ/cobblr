@@ -245,7 +245,7 @@ function ChoicePopover({ label, value, options, onCommit, detail, placeholder, a
           data-choice-combobox=""
         />
         {open && isNew && (
-          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase tracking-widest text-accent" data-testid="choice-new">
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-widest text-accent" data-testid="choice-new">
             new
           </span>
         )}
@@ -348,7 +348,7 @@ function DetailColumn({
           }}
           className="input w-full py-1 text-sm pr-10"
         />
-        {isNew && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase tracking-widest text-accent">new</span>}
+        {isNew && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-widest text-accent">new</span>}
       </div>
       <ul role="listbox" aria-label={detail.label} className="flex-1 overflow-auto py-1">
         {enabled &&
@@ -436,7 +436,7 @@ function ChoiceSheet({ label, value, options, onCommit, detail, placeholder, cla
                   }}
                   className="input w-full pr-12 text-base"
                 />
-                {isNew && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono uppercase tracking-widest text-accent">new</span>}
+                {isNew && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] uppercase tracking-widest text-accent">new</span>}
               </div>
               <button type="button" onClick={() => (draft.trim() ? take(draft) : step === "detail" ? take(null) : close())} className="px-3 py-2 text-sm text-accent">
                 {draft.trim() ? "Done" : step === "detail" ? "Skip" : "Cancel"}

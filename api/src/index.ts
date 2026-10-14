@@ -38,7 +38,7 @@ import { confirmServiceJob, registerServiceConfirm } from "./platform/service-co
 import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
-import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, EntityKindIdRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
+import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, KindRefRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
@@ -90,6 +90,7 @@ import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
 import { registerResolvable, resolveValue } from "./platform/resolvables.js";
 import * as activity from "./platform/activity.js";
+import { announceRecordChange } from "./platform/record-stream.js";
 import * as actions from "./platform/actions.js";
 import * as live from "./platform/live.js";
 import * as devices from "./platform/devices.js";
@@ -140,6 +141,7 @@ import { reverifyWhenBridgesReturn } from "./platform/connection-probe.js";
 import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
+import { registerLoanCalendar } from "./platform/custody.js";
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
@@ -1231,7 +1233,7 @@ async function boot() {
         // was stored, and every lookup of the record then missed it: the thing
         // was placed nowhere anyone could see.
         for (const r of [asked, askedContainer]) {
-          if (!EntityKindIdRegex.test(r.kind)) throw new Error(`placement: ${r.kind} is not a kind (<module>:<name>)`);
+          if (!KindRefRegex.test(r.kind)) throw new Error(`placement: ${r.kind} is not a kind (<module>:<name>)`);
         }
         // One record, one key: whatever spelling the caller holds (a
         // collection's "home-inventory:item" from a search, the base
@@ -1913,6 +1915,7 @@ async function boot() {
   // BEFORE the registry sync that seeds their rows, so an action is never
   // listed without its handler.
   registerPlatformActionHandlers();
+  registerLoanCalendar();
   // The HTTP MCP face (POST /api/v1/hooks/mcp). Registered after the module
   // loader so its tool list reflects every loaded module's kinds and actions.
   registerHostedMcp();
@@ -2053,6 +2056,10 @@ async function boot() {
   observeEvents((_event, orgId) => void shareEdits.noteCopiesChanged(orgId).catch(() => undefined));
   // A module's route may log an edit without emitting an event: both sides
   // hear of it through the log as well.
+  // An open page showing a record hears that it was written (#6337).
+  activity.observeActivity((orgId, ref) => {
+    if (ref.module) announceRecordChange(orgId, { kind: `${ref.module}:${ref.entityType}`, id: ref.entityId });
+  });
   activity.observeActivity((orgId) => {
     void shareMirror.noteWorkspaceChanged(orgId).catch(() => undefined);
     void shareEdits.noteCopiesChanged(orgId).catch(() => undefined);

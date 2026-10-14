@@ -190,7 +190,7 @@ export function OutboundEmailPage() {
 
       {status.data?.configured && (
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
-          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">Sent</h2>
+          <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">Sent</h2>
           {(log.data?.items ?? []).length === 0 && <p className="text-sm text-faint">Nothing sent yet.</p>}
           <ul className="divide-y divide-line dark:divide-slate-800">
             {(log.data?.items ?? []).map((r) => (
@@ -334,7 +334,7 @@ function AutomationEmailSection({ slug, configured }: { slug: string; configured
   const d = q.data;
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3" data-testid="automation-email">
-      <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">Automations</h2>
+      <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">Automations</h2>
       <label className="flex items-start gap-2 text-sm text-content dark:text-mortar-100">
         <input
           type="checkbox"

@@ -8,11 +8,11 @@
 // agrees to carrying those defs BEFORE anything is written. See
 // docs/design-decisions/move-between-instances.md.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import { requireRole } from "../auth/capability.js";
 import { MoveError, getMover, moveRecords, planMove } from "../platform/move-records.js";
 
 export const recordMoveRouter = Router({ mergeParams: true });
@@ -22,9 +22,6 @@ type Res = import("express").Response;
 
 /** Moving records is an edit, not an admin act: the admin tier, by rank
  *  (an editor sits in it). */
-function requireEditor(req: Req, res: Res): boolean {
-  return requireRole(req, res, "owner", "admin");
-}
 
 const bodySchema = z.object({
   module: z.string().min(1).max(80),
@@ -53,7 +50,8 @@ function fail(res: Res, err: unknown): void {
 // needs the door; showing what would happen changes nothing.
 recordMoveRouter.post("/preview", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireEditor(req, res)) return;
+    // The dry run of the move below: whoever may move may see what it would do.
+    if (!(await requireCapability(req, res, "platform:move-records"))) return;
     const body = bodySchema.parse(req.body);
     const mover = getMover(body.module);
     if (!mover) {
@@ -81,9 +79,10 @@ recordMoveRouter.post("/preview", requireAuth, withTenant, async (req, res, next
   }
 });
 
+// AI-ACTION: platform:move-records
 recordMoveRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireEditor(req, res)) return;
+    if (!(await requireCapability(req, res, "platform:move-records"))) return;
     const body = bodySchema.parse(req.body);
     const result = await moveRecords(orgId(req), body.module, body.ids, body.from, body.to, {
       carryFields: body.carry_fields,

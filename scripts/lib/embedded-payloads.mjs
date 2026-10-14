@@ -10,3 +10,11 @@ export const EMBEDDED_PAYLOADS = ["api/src/platform/edge-bridge-bundle.ts"];
 
 /** Is this repo path (either separator) one of the payloads? */
 export const isEmbeddedPayload = (p) => EMBEDDED_PAYLOADS.includes(String(p).replace(/\\/g, "/").replace(/^\.\//, ""));
+
+// The lints that read a payload ON PURPOSE: its checksum, its generator's
+// paths. Every other lint, run under run-lints.mjs, reads a listed payload as
+// an empty file (lib/lint-reads.cjs), so a new lint that walks api/src never
+// reads megabytes of base64 it cannot judge: the embedded bridge bundle broke
+// three lints' read budgets that way (node-resolves, mcp's two, heal-shims).
+// Adding a lint here is the explicit say-so that it needs the payload itself.
+export const PAYLOAD_READERS = ["lint:bridge-bundle-checksum", "lint:generated-artifact-paths"];

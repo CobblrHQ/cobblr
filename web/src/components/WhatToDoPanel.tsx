@@ -71,7 +71,7 @@ function LaneHeader({ kicker, title, count }: { kicker: string; title: string; c
   return (
     <div className="mb-2 flex items-start justify-between gap-2">
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{kicker}</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">{kicker}</div>
         <div className="text-sm font-semibold text-content dark:text-mortar-100">{title}</div>
       </div>
       {typeof count === "number" && count > 0 && (
@@ -738,7 +738,7 @@ export function WhatToDoPanel({
           (selectedRecipe || selectedModuleObj ? "border-accent/60 bg-accent/5 dark:bg-cobble-900/15" : "border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40")
         }>
           <LaneHeader
-            kicker="// just add it"
+            kicker="just add it"
             title={
               selectedRecipe ? `Set up ${selectedRecipe.manifest.name}`
               : selectedModuleObj ? (kindIsMulti ? `New ${selectedModuleObj.displayName} category` : `Add ${withArticle(selectedModuleObj.displayName)}`)
@@ -816,7 +816,7 @@ export function WhatToDoPanel({
 
           {/* The always-available freeform item path (or just type anything). */}
           {(selectedRecipe || selectedModuleObj) && (
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">or just add an item</div>
+            <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">or just add an item</div>
           )}
           <FreeformAdd slug={slug} placeholder={`e.g. ${itemPlaceholder}`} add={noteMut} />
           <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
@@ -864,7 +864,7 @@ export function WhatToDoPanel({
               there's nothing captured yet and no funnel selection. */}
           {items.length === 0 && !selectedRecipe && !selectedModuleObj && (
             <div className="mt-2 flex flex-wrap gap-1.5 items-center">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">try:</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">try:</span>
               {STARTER_CHIPS.map((c) => (
                 <button
                   key={c}
@@ -883,14 +883,14 @@ export function WhatToDoPanel({
               give it a home. This is the funnel's payoff: col 3 fills in. */}
           {typed.length > 0 && (
             <div data-testid="capture-panel" className="mt-3 min-w-0 space-y-3 rounded-xl border border-line bg-surface/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({typed.length})</div>
+              <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({typed.length})</div>
               <div className="grid min-w-0 gap-4 lg:grid-cols-2">
                 {orderedGroups.map(([key, group]) => {
                   const d = group.captures[0]!.resolved_destination;
                   return <section key={key} aria-label={group.label} data-testid="capture-group" className="min-w-0">
                     <div className="flex min-w-0 items-center justify-between gap-2 py-1">
                       <div className="min-w-0">
-                        <h3 className="truncate text-[10px] font-mono uppercase tracking-widest text-accent">{group.label} · {group.captures.length}</h3>
+                        <h3 className="truncate text-[10px] uppercase tracking-widest text-accent">{group.label} · {group.captures.length}</h3>
                         {d?.bundle_external_id && <p className="text-[11px] text-faint">Collection will be created</p>}
                       </div>
                       {d && <button type="button" aria-label={`Add all ${group.captures.length} to ${group.label}`} disabled={discardMut.isPending || batchMut.isPending || confirmMut.isPending || mergeMut.isPending || (!!d.bundle_external_id && materialize.busy(d.bundle_external_id))} onClick={() => addCaptures(group.captures)} className="shrink-0 rounded px-2 py-2 text-xs font-medium text-accent hover:bg-subtle disabled:opacity-50">Add all {group.captures.length}</button>}
@@ -900,7 +900,7 @@ export function WhatToDoPanel({
                 })}
               </div>
               {known.length > 0 && <section aria-label="Already in your workspace" data-testid="capture-known" className="min-w-0">
-                <h3 className="py-1 text-[10px] font-mono uppercase tracking-widest text-faint">Already in your workspace · {known.length}</h3>
+                <h3 className="py-1 text-[10px] uppercase tracking-widest text-faint">Already in your workspace · {known.length}</h3>
                 <ul>{known.map((it) => <li key={it.id} className="flex min-w-0 items-center gap-2 rounded-lg bg-surface px-1 py-2 dark:bg-slate-900">
                   <CaptureThumbnail slug={slug} item={it} name={captureName(it)} />
                   <div className="min-w-0 flex-1 text-sm">
@@ -949,7 +949,7 @@ export function WhatToDoPanel({
             marker and the bins name themselves as you sort.
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex-1 min-w-0 text-[10px] font-mono uppercase tracking-widest text-accent">// every way to start</div>
+            <div className="flex-1 min-w-0 text-[10px] uppercase tracking-widest text-accent">every way to start</div>
             <SearchInput value={browseQ} onChange={setBrowseQ} placeholder="Search bundles and modules…" onKeyDown={(e) => {
                   // Enter takes the first tile in section order, so the top-left
                   // result is always what a blind Enter selects.
@@ -973,17 +973,17 @@ export function WhatToDoPanel({
                   come next, and the blank kinds last - the escape hatch, not
                   the offer. */}
               {skins.length > 0 && (
-                <BundleSection title="// ready-made bundles" hint="one kind of thing, fields already shaped - add your first item right away">
+                <BundleSection title="ready-made bundles" hint="one kind of thing, fields already shaped - add your first item right away">
                   {skins.map((b) => recipeTile(b))}
                 </BundleSection>
               )}
               {setups.length > 0 && (
-                <BundleSection title="// full-setup bundles" hint="several modules wired together">
+                <BundleSection title="full-setup bundles" hint="several modules wired together">
                   {setups.map((b) => recipeTile(b))}
                 </BundleSection>
               )}
               {blankMatches.length > 0 && (
-                <BundleSection title="// start from a blank slate" hint="an empty module you shape yourself">
+                <BundleSection title="start from a blank slate" hint="an empty module you shape yourself">
                   {blankMatches.map((s) => blankTile(s))}
                 </BundleSection>
               )}
@@ -996,7 +996,7 @@ export function WhatToDoPanel({
           {capabilityModules.length > 0 && !browseQ.trim() && (
             <div className="pt-3 border-t border-line/60 dark:border-slate-700/60">
               <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">// add a capability</span>
+                <span className="text-[10px] uppercase tracking-widest text-accent">add a capability</span>
                 <span className="text-[11px] text-faint dark:text-slate-500">acts on things you already track</span>
               </div>
               <div className="flex flex-wrap gap-1.5">

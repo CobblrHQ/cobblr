@@ -408,7 +408,7 @@ export function TrackedMatchBanner({
         // 2026-09-24: "a wealth of info here (possibly even too much)").
         <details data-testid="merge-in" className="rounded-md bg-white/60 dark:bg-slate-900/40 border border-emerald-200/70 dark:border-emerald-800/50 px-2.5 py-2">
           <summary className="cursor-pointer text-[11px] text-emerald-700 dark:text-emerald-300">What gets filled in</summary>
-          <div className="text-[11px] font-mono uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1 mt-1">
+          <div className="text-[11px] uppercase tracking-widest text-emerald-700 dark:text-emerald-300 mb-1 mt-1">
             merge in
           </div>
           <dl className="text-xs space-y-0.5">

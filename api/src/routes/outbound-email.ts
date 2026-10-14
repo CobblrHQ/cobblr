@@ -13,8 +13,9 @@ import {
   outboundEmailLog,
   outboundEmailStatus,
   saveOutboundEmail,
-  sendFromWorkspace,
+  sendOutboundTest,
 } from "../platform/outbound-email.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { externalMessagesSettings, saveExternalMessagesSettings } from "../platform/external-messages.js";
 import { beginGoogleConsent, googleOAuthConfigured } from "../platform/mail-source/google-oauth.js";
 import { deleteOutboundSms, outboundSmsStatus, saveOutboundSms, sendTextFromWorkspace } from "../platform/outbound-sms.js";
@@ -44,6 +45,9 @@ outboundEmailRouter.get("/", requireAuth, withTenant, async (req, res, next) => 
 });
 
 const Save = z.record(z.unknown());
+// AI-REACH: exempt: the workspace's mail provider and its password or API key,
+// a credential an owner or admin types on this screen; it never passes through
+// chat (its Twilio twin below is exempt for the same reason).
 outboundEmailRouter.put("/", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!assertAdmin(req, res)) return;
@@ -57,6 +61,8 @@ outboundEmailRouter.put("/", requireAuth, withTenant, async (req, res, next) => 
   }
 });
 
+// AI-REACH: exempt: removing how the workspace mails its customers is the
+// owner's or an admin's own step on this screen, like setting it.
 outboundEmailRouter.delete("/", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!assertAdmin(req, res)) return;
@@ -84,19 +90,14 @@ outboundEmailRouter.post("/gmail/start", requireAuth, withTenant, async (req, re
 
 /** Send a test to the person asking, so they see it arrive before a customer
  *  does. It goes through the same door and is logged like any other send. */
+// AI-ACTION: platform:test-outbound-email
 outboundEmailRouter.post("/test", requireAuth, withTenant, async (req, res, next) => {
   try {
+    if (!(await requireCapability(req, res, "platform:test-outbound-email"))) return;
     if (!assertAdmin(req, res)) return;
-    const me = await meta.selectFrom("users").select(["email"]).where("id", "=", req.session!.id).executeTakeFirst();
-    if (!me?.email) return void res.status(400).json({ error: { code: "no_address", message: "Your account has no email address to send the test to." } });
-    const r = await sendFromWorkspace(req.tenant!.org.id, {
-      to: me.email,
-      subject: "Test from Cobblr",
-      text: `This is a test of ${req.tenant!.org.name}'s outbound email. If you can read it, emails to your customers will arrive the same way.`,
-      sentBy: req.session!.id,
-    });
-    if (!r.ok) return void res.status(r.reason === "not_configured" ? 409 : 502).json({ error: { code: r.reason, message: r.message } });
-    res.json({ ok: true, to: me.email, status: r.status });
+    const r = await sendOutboundTest(req.tenant!.org.id, req.tenant!.org.name, req.session!.id);
+    if (!r.ok) return void res.status(r.status).json({ error: { code: r.code, message: r.message } });
+    res.json({ ok: true, to: r.to, status: r.status });
   } catch (err) {
     next(err);
   }

@@ -18,6 +18,7 @@ import { AskCobbAbout } from "./AskCobbAbout";
 import { HEADER_ACTION_IDS } from "./RecordHeaderChips";
 import { DormantActionButton } from "./DormantActionButton";
 import { RecordDisposition } from "./RecordDisposition";
+import { RecordLoan, useOffWhileLent } from "./RecordLoan";
 import { RecordSharing } from "./RecordSharing";
 import { RecordPublic } from "./RecordPublic";
 import { SendRecords } from "./SendRecords";
@@ -124,6 +125,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
         {actions.map((a) => <ActionButton key={a.id} entityKind={entityKind} entityId={entityId} action={a} runNow={armed === a.id} onRan={() => setArmed(null)} />)}
         {dormant.map((a) => <DormantActionButton key={`off:${a.id}`} entityKind={entityKind} action={a} onTurnedOn={setArmed} />)}
         {data?.lifecycle && <RecordDisposition kind={entityKind} id={entityId} />}
+        {data?.lendable && <RecordLoan kind={entityKind} id={entityId} />}
         <RecordSharing kind={entityKind} id={entityId} />
         <RecordPublic id={entityId} />
         <SendRecords kind={entityKind} ids={[entityId]} record />
@@ -175,6 +177,7 @@ function ActionButton({
   // on: the same arguments either way.
   const go = () => run({ actionId: action.id, label: action.label, argsSchema: action.args_schema, invokeRoute: action.invoke_route, invokeHandler: action.invoke_handler });
   useRunOnce(runNow, go, onRan);
+  const off = useOffWhileLent(entityKind, entityId, action.id);
 
   return (
     <>
@@ -185,10 +188,10 @@ function ActionButton({
           e.preventDefault();
           go();
         }}
-        disabled={pending}
-        title={action.description ?? action.label}
+        disabled={pending || !!off}
+        title={off ?? action.description ?? action.label}
         className={
-          "rounded-md border text-xs px-2 py-1.5 transition flex items-center gap-1 " +
+          "rounded-md border text-xs px-2 py-1.5 transition flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 " +
           (flash === "ok"
             ? "border-moss-200 bg-moss-50 text-moss-600"
             : flash === "err"
@@ -219,6 +222,7 @@ function BindingButton({
   const { run, flash, note, failure, asking, dismissFailure, pending } = useInvokeEntityAction({ entityKind, entityId });
   const go = () => run({ actionId: binding.action_id, argsSchema: binding.args_schema, binding });
   useRunOnce(runNow, go, onRan);
+  const off = useOffWhileLent(entityKind, entityId, binding.action_id);
   return (
     <>
       <RecordActionItem id={binding.action_id} group={binding.group ?? "more"} primary={binding.primary} label={binding.label} description={binding.description ?? ""}><ActionDescription description={binding.description || binding.label}><button
@@ -228,10 +232,10 @@ function BindingButton({
           e.preventDefault();
           go();
         }}
-        disabled={pending}
-        title={binding.label}
+        disabled={pending || !!off}
+        title={off ?? binding.label}
         className={
-          "rounded-md border text-xs px-2 py-1.5 transition flex items-center gap-1 " +
+          "rounded-md border text-xs px-2 py-1.5 transition flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 " +
           (flash === "ok"
             ? "border-moss-200 bg-moss-50 text-moss-600"
             : flash === "err"

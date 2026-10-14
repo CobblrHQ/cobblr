@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-13
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-14
 ---
 
 Recount a whole collection across every place: scan barcodes, type a label for things with none, or tap them in the list, and pick it up another day

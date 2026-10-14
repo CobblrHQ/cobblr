@@ -175,7 +175,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       ))}
       {groups.length === 0 && (
         <>
-          <h3 className="mb-2 text-[10px] font-mono uppercase tracking-widest text-accent">// from your libraries</h3>
+          <h3 className="mb-2 text-[10px] uppercase tracking-widest text-accent">from your libraries</h3>
           <p className="text-xs text-faint italic mb-2">{data.matching ? `Looking in ${where}…` : data.unanswered ? null : `Nothing in ${where} looks like this yet.`}</p>
         </>
       )}
@@ -186,7 +186,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         return (
           <div key={label} className="mb-3" data-testid={`library-group-${label.toLowerCase()}`}>
             <div className="flex items-center justify-between mb-2 gap-2">
-              <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">{`// ${label.toLowerCase()}`}</h3>
+              <h3 className="text-[10px] uppercase tracking-widest text-accent">{label.toLowerCase()}</h3>
               {suggested.length > 0 && (
                 <span className="text-xs text-muted" data-testid="documents-count">
                   {countLine(suggested, label)}

@@ -167,8 +167,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   // text-sm font-medium heading was a fourth heading family nothing else had.
   return (
     <section className="space-y-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        {"// "}
+      <div className="text-[10px] uppercase tracking-widest text-accent">
+        
         {title.toLowerCase()}
       </div>
       <div className="space-y-2">{children}</div>
@@ -212,7 +212,7 @@ function LinkRow({
       <ExpiryBadge expiresAt={link.expires_at} />
       {link.min_target_role && (
         <span
-          className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30"
+          className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider text-accent bg-cobble-50 dark:text-cobble-300 dark:bg-cobble-900/30"
           title={`Only target-side ${link.min_target_role}s+ can read this share`}
         >
           {link.min_target_role}+

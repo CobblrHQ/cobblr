@@ -77,7 +77,7 @@ export function ForcePasswordResetPage() {
 
         <form onSubmit={submit} className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Current (temp) password
             </span>
             <PasswordInput
@@ -90,7 +90,7 @@ export function ForcePasswordResetPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               New password (8+ chars)
             </span>
             <PasswordInput
@@ -102,7 +102,7 @@ export function ForcePasswordResetPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Confirm new password
             </span>
             <PasswordInput

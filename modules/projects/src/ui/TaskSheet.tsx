@@ -54,7 +54,7 @@ export function localToday(): string {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="flex flex-col gap-1 min-w-0">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
       {children}
     </label>
   );
@@ -256,12 +256,12 @@ function WaitsOn({ task, dependencies: given, onChanged }: { task: Task; depende
 
   return (
     <div data-testid="task-waits-on">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Waits on</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Waits on</div>
       {dependencies.length === 0 && <div className="text-xs text-faint dark:text-slate-500 italic">Nothing. It can start any time.</div>}
       <ul className="space-y-1">
         {dependencies.map((d) => (
           <li key={d.id} className="flex items-center gap-2 text-sm">
-            <span className={"text-[10px] font-mono uppercase px-1.5 py-0.5 rounded " + (d.open ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : "text-moss-700 bg-moss-50 dark:text-moss-300 dark:bg-moss-900/30")}>
+            <span className={"text-[10px] uppercase px-1.5 py-0.5 rounded " + (d.open ? "text-ember-600 bg-ember-50 dark:text-ember-300 dark:bg-ember-900/30" : "text-moss-700 bg-moss-50 dark:text-moss-300 dark:bg-moss-900/30")}>
               {d.open ? "waiting" : "clear"}
             </span>
             <span className="flex-1 min-w-0 truncate">
@@ -319,7 +319,7 @@ function Checklist({ items: saved, onSave: save }: { items: ChecklistItem[]; onS
   return (
     <div data-testid="task-checklist">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">Checklist</span>
+        <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">Checklist</span>
         {checklistProgress(items) && <span className="text-[10px] font-mono text-muted">{checklistProgress(items)} done</span>}
       </div>
       <ul className="space-y-1">

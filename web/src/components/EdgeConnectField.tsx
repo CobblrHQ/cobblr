@@ -31,7 +31,7 @@ export interface EdgeConnectValue {
 
 
 const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
 export function EdgeConnectField({
   slug,

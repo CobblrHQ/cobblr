@@ -94,7 +94,7 @@ export function SidePanel({
       }
       // The home indicator sits over the panel's last few points; pad the
       // content up off it so the composer / last row stays tappable.
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "var(--inset-bottom)" }}
     >
       {children}
     </div>,

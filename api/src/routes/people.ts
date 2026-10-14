@@ -4,17 +4,15 @@
 // member may add someone or fix a name they typed (a guest may only look);
 // inviting someone on the list to become a member is the admin's, as every
 // invite is. A member's own name is their account's, so it is not edited here.
+import { handOffPersonThings, invitePerson } from "../platform/people-ops.js";
+import { linkOrigin } from "../platform/link-origin.js";
 import { Router } from "express";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { z } from "zod";
-import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import * as activity from "../platform/activity.js";
-import { hasAuthEmailSender } from "../platform/hosted-seams.js";
-import { clearPeopleCache, createPerson, listPeople, personForUser, updatePerson } from "../platform/people.js";
-import { handOffThings, thingsOfPerson } from "../platform/person-things.js";
-import { deliverInvite, newInviteToken } from "./members.js";
+import { createPerson, listPeople, personForUser, updatePerson } from "../platform/people.js";
+import { thingsOfPerson } from "../platform/person-things.js";
 
 export const peopleRouter = Router({ mergeParams: true });
 
@@ -121,6 +119,8 @@ peopleRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
 // Invite someone on the list to become a member. Accepting ties their entry to
 // the account they make, so the things already theirs stay theirs.
 const InviteBody = z.object({ email: z.string().trim().email().max(255).optional() });
+// AI-REACH: human-only: grants workspace access. Cobb may explain it or open
+// this screen filled in; the person presses Invite (human-only.ts).
 peopleRouter.post("/:id/invite", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!isAdmin(req.tenant!.role)) {
@@ -132,57 +132,12 @@ peopleRouter.post("/:id/invite", requireAuth, withTenant, async (req, res, next)
       res.status(400).json({ error: { code: "invalid_body", message: "That email does not look right.", details: parsed.error.issues } });
       return;
     }
-    const orgId = req.tenant!.org.id;
-    const person = (await listPeople(orgId)).find((p) => p.id === req.params.id);
-    if (!person) {
-      res.status(404).json({ error: { code: "not_found", message: "No such person here." } });
+    const r = await invitePerson({ orgId: req.tenant!.org.id, orgName: req.tenant!.org.name, inviterId: req.session!.id, personId: String(req.params.id), email: parsed.data.email ?? null, origin: linkOrigin(req) });
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
-    if (person.member) {
-      res.status(409).json({ error: { code: "already_member", message: `${person.name} is already a member.` } });
-      return;
-    }
-    const email = parsed.data.email?.toLowerCase() || person.email || null;
-    if (email && email !== person.email) {
-      await meta.updateTable("workspace_people").set({ email }).where("id", "=", person.id).execute();
-      clearPeopleCache(orgId);
-    }
-    const token = newInviteToken();
-    const expiresAt = new Date(Date.now() + 14 * 24 * 3600_000);
-    const invite = await meta
-      .insertInto("workspace_invites")
-      .values({
-        org_id: orgId,
-        invited_by_user: req.session!.id,
-        token,
-        invited_email: email,
-        role: "member",
-        expires_at: expiresAt,
-        person_id: person.id,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await activity.log({
-      orgId,
-      userId: req.session!.id,
-      action: "invite_created",
-      ref: { module: null, entityType: "invite", entityId: invite.id },
-      diff: { role: "member", email, person: person.id },
-    });
-    if (email) {
-      // DETACHED: the invite email; the invite exists and its link is shown to whoever made it
-      void deliverInvite({
-        req,
-        email,
-        token,
-        role: "member",
-        orgName: req.tenant!.org.name,
-        inviterId: req.session!.id,
-        inviteId: invite.id,
-        expiresAt,
-      }).catch((e) => console.error("[people] invite deliver failed:", (e as Error).message));
-    }
-    res.status(201).json({ ...invite, emailed: Boolean(email) && hasAuthEmailSender() });
+    res.status(201).json({ ...r.invite, emailed: r.emailed });
   } catch (err) {
     next(err);
   }
@@ -191,6 +146,8 @@ peopleRouter.post("/:id/invite", requireAuth, withTenant, async (req, res, next)
 // Hand everything one person owns to someone else on the list: what a member
 // who left kept, passed on now. The same hand-off removing a member offers.
 const HandOffBody = z.object({ to: z.string().uuid() });
+// AI-REACH: human-only: hands everything one person owns to another. Cobb
+// may explain it or open this screen; the person presses Hand off.
 peopleRouter.post("/:id/hand-off", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!isAdmin(req.tenant!.role)) {
@@ -202,28 +159,15 @@ peopleRouter.post("/:id/hand-off", requireAuth, withTenant, async (req, res, nex
       res.status(400).json({ error: { code: "invalid_body", message: "Say who to hand them to.", details: parsed.error.issues } });
       return;
     }
-    const orgId = req.tenant!.org.id;
-    const all = await listPeople(orgId, { includeArchived: true });
-    const from = all.find((p) => p.id === req.params.id);
-    const to = all.find((p) => p.id === parsed.data.to);
-    if (!from || !to) {
-      res.status(404).json({ error: { code: "not_found", message: "No such person here." } });
+    const r = await handOffPersonThings({ orgId: req.tenant!.org.id, userId: req.session!.id, fromId: String(req.params.id), toId: parsed.data.to });
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
-    if (from.id === to.id) {
-      res.status(400).json({ error: { code: "same_person", message: "They already own them." } });
-      return;
-    }
-    const result = await handOffThings(orgId, from.id, to.id);
-    await activity.log({
-      orgId,
-      userId: req.session!.id,
-      action: "things_handed_off",
-      ref: { module: null, entityType: "person", entityId: from.id },
-      diff: { to: to.id, moved: result.moved, kept: result.kept.length },
-    });
-    res.json({ from, to, ...result });
+    const { ok: _ok, ...body } = r;
+    res.json(body);
   } catch (err) {
     next(err);
   }
 });
+

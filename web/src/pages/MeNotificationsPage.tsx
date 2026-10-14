@@ -181,7 +181,7 @@ export function MeNotificationsPage() {
 
       {Array.from(byDay.entries()).map(([day, entries]) => (
         <section key={day}>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
+          <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
             {day}{" "}
             <span className="text-faint dark:text-slate-500">
               ({entries.length})
@@ -211,7 +211,7 @@ export function MeNotificationsPage() {
                       : "hover:bg-subtle dark:hover:bg-slate-800/60")
                   }
                 >
-                  <span className="col-span-2 w-fit max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 shrink-0">
+                  <span className="col-span-2 w-fit max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 shrink-0">
                     {n.org_name}
                   </span>
                   <div className="flex-1 min-w-0">

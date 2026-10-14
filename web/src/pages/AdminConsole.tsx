@@ -118,7 +118,7 @@ function OverviewTab() {
     <div className="space-y-6">
       {/* The reason an operator opens this page: does anything need me? */}
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Needs attention{attention === 0 ? ": all clear" : ""}
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -144,7 +144,7 @@ function OverviewTab() {
       </div>
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Platform
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -169,7 +169,7 @@ function OverviewTab() {
 function StatText({ label, value, to, alert }: { label: string; value: string; to?: string; alert?: boolean }) {
   const inner = (
     <>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint">{label}</div>
       <div
         className={
           "font-display text-2xl font-bold mt-1.5 " +
@@ -195,7 +195,7 @@ function StatText({ label, value, to, alert }: { label: string; value: string; t
 function Stat({ label, value, to, alert }: { label: string; value: number; to?: string; alert?: boolean }) {
   const inner = (
     <>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+      <div className="text-[10px] uppercase tracking-widest text-faint">
         {label}
       </div>
       <div
@@ -337,7 +337,7 @@ function WorkspacesTab() {
                   onChange={(e) => setPlan.mutate({ id: w.id, plan: e.target.value as "free" | "paid" | "disabled" })}
                   disabled={setPlan.isPending}
                   className={
-                    "rounded-md border bg-surface dark:bg-slate-900 px-1.5 py-1 text-[10px] font-mono uppercase tracking-widest " +
+                    "rounded-md border bg-surface dark:bg-slate-900 px-1.5 py-1 text-[10px] uppercase tracking-widest " +
                     (w.plan === "disabled"
                       ? "border-ember-400 text-ember-600 dark:text-ember-400"
                       : "border-line dark:border-slate-700 text-accent")
@@ -470,7 +470,7 @@ function UsersTab() {
               <td className="px-3 py-2 text-xs text-muted">
                 {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
               </td>
-              <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
+              <td className="px-3 py-2 text-[10px] uppercase tracking-widest">
                 {!u.active && <span className="text-ember-500">inactive</span>}
                 {u.active && u.must_reset_password && (
                   <span className="text-amber-500">pending-reset</span>
@@ -644,12 +644,12 @@ function ImpersonationLogTab() {
                   <td className="px-3 py-2 text-xs">{s.target_name ?? s.target_email ?? "—"}</td>
                   <td className="px-3 py-2 text-xs">{s.workspace_name ?? s.workspace_slug ?? "—"}</td>
                   <td className="px-3 py-2 text-xs text-muted max-w-[240px] truncate" title={s.reason}>{s.reason}</td>
-                  <td className="px-3 py-2 text-[10px] font-mono uppercase">
+                  <td className="px-3 py-2 text-[10px] uppercase">
                     {s.write_enabled_at ? <span className="text-red-500">write</span> : <span className="text-amber-500">read</span>}
                   </td>
                   <td className="px-3 py-2 text-xs tabular-nums">{s.request_count}</td>
                   <td className="px-3 py-2 text-[11px] text-muted">{new Date(s.created_at).toLocaleString()}</td>
-                  <td className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest">
+                  <td className="px-3 py-2 text-[10px] uppercase tracking-widest">
                     {live ? <span className="text-moss-500">live</span> : s.ended_at ? <span className="text-faint">ended</span> : <span className="text-faint">expired</span>}
                   </td>
                 </tr>
@@ -685,7 +685,7 @@ function ModulesTab() {
             <div className="font-mono text-sm text-accent dark:text-cobble-300">
               {m.module_name}
             </div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <div className="text-[10px] uppercase tracking-widest text-faint">
               {m.workspace_count} workspace{m.workspace_count === 1 ? "" : "s"}
             </div>
           </div>
@@ -755,7 +755,7 @@ function ActivityTab() {
         </tbody>
       </table>
       </div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-1">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 px-1">
         latest 100 events
       </div>
     </div>
@@ -825,7 +825,7 @@ function HealthTab() {
           the api. */}
       {cfg.data && (
         <div>
-          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+          <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
             Instance configuration
           </h2>
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-sm">
@@ -840,7 +840,7 @@ function HealthTab() {
               ["Shared barcode DB", cfg.data.bidb, cfg.data.bidb === "configured" ? true : cfg.data.bidb === "off" ? null : false],
             ] as Array<[string, string, boolean | null]>).map(([k, v, on]) => (
               <div key={k} className="flex items-baseline justify-between gap-2 min-w-0">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-faint shrink-0">{k}</span>
+                <span className="text-[10px] uppercase tracking-wider text-faint shrink-0">{k}</span>
                 <span
                   className={
                     "font-mono text-xs truncate " +
@@ -863,7 +863,7 @@ function HealthTab() {
           every product on the host). */}
       {cfg.data?.barcode_resolver_configured && (
         <div>
-          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+          <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
             Barcode resolver
           </h2>
           {resolver.data ? (
@@ -894,7 +894,7 @@ function HealthTab() {
       )}
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Sandbox CPU usage
         </h2>
         {cpu.data && cpu.data.workspaces.length === 0 && (
@@ -905,7 +905,7 @@ function HealthTab() {
         )}
         {cpu.data && cpu.data.workspaces.length > 0 && (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
-            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-faint flex items-center gap-3">
+            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-faint flex items-center gap-3">
               <span>
                 quota {Math.round(cpu.data.quota_ms_per_window / 1000)}s /{" "}
                 {Math.round(cpu.data.window_ms / 1000)}s window
@@ -959,7 +959,7 @@ function HealthTab() {
       </div>
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Compute per route
         </h2>
         {compute.data && compute.data.rows.length === 0 && (
@@ -967,7 +967,7 @@ function HealthTab() {
         )}
         {compute.data && compute.data.rows.length > 0 && (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
-            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-faint">
+            <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-faint">
               since {new Date(compute.data.since).toLocaleString()} · {compute.data.routes_seen} routes ·{" "}
               {Math.round(compute.data.cpu_total_ms / 1000)}s CPU
             </div>
@@ -1015,7 +1015,7 @@ function HealthTab() {
       </div>
 
       <div>
-        <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 mb-2">
           Sandbox invocation telemetry
         </h2>
         {tel.data && tel.data.rows.length === 0 && (
@@ -1290,7 +1290,7 @@ function HealthCard({
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <div className="text-[10px] uppercase tracking-widest text-faint">
           {label}
         </div>
         <span className={`text-xs font-mono text-${color}-600`}>
@@ -1306,7 +1306,7 @@ function Th({ children, right }: { children: React.ReactNode; right?: boolean })
   return (
     <th
       className={
-        "text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2 " +
+        "text-[10px] uppercase tracking-widest text-faint px-3 py-2 " +
         (right ? "text-right" : "text-left")
       }
     >
@@ -1359,18 +1359,18 @@ function InvitesTab() {
       </p>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// new invite</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">new invite</div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Lock to email (optional)</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Lock to email (optional)</span>
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="friend@example.com" className="input w-full" />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Note (optional)</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Note (optional)</span>
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="for a teammate" className="input w-full" />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Expires in (days)</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Expires in (days)</span>
             <input type="number" min={1} max={365} value={days} onChange={(e) => setDays(e.target.value)} className="input w-full" />
           </label>
         </div>
@@ -1379,8 +1379,8 @@ function InvitesTab() {
         </button>
         {freshLink && (
           <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
+            <div className="text-[10px] uppercase tracking-widest text-accent">
+              {emailedTo ? `emailed to ${emailedTo}, link also shown here` : "copy this now, shown once"}
             </div>
             <div className="flex items-center gap-2">
               <input aria-label="Sign-in link" readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
@@ -1394,10 +1394,10 @@ function InvitesTab() {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Status</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">For</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Redeemed by</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Expires</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Status</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">For</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Redeemed by</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Expires</th>
               <th className="px-3 py-1.5"></th>
             </tr>
           </thead>
@@ -1463,8 +1463,8 @@ function WaitlistTab() {
 
       {freshLink && (
         <div className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 p-3 space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            {emailedTo ? `// emailed to ${emailedTo}, link also shown here` : "// copy this now, shown once"}
+          <div className="text-[10px] uppercase tracking-widest text-accent">
+            {emailedTo ? `emailed to ${emailedTo}, link also shown here` : "copy this now, shown once"}
           </div>
           <div className="flex items-center gap-2">
             <input aria-label="Sign-in link" readOnly value={freshLink} onFocus={(e) => e.currentTarget.select()} className="input flex-1 font-mono text-xs" />
@@ -1477,10 +1477,10 @@ function WaitlistTab() {
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Status</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Email</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Signed up</th>
-              <th className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider">Invite</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Status</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Email</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Signed up</th>
+              <th className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider">Invite</th>
               <th className="px-3 py-1.5"></th>
             </tr>
           </thead>
@@ -1525,7 +1525,7 @@ function StatusPill({ status }: { status: string }) {
     invited: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300",
     dismissed: "bg-mortar-100 text-muted dark:bg-slate-800 dark:text-slate-400",
   };
-  return <span className={"inline-block rounded px-1.5 py-0.5 text-[10px] font-mono uppercase " + (map[status] ?? map.expired)}>{status}</span>;
+  return <span className={"inline-block rounded px-1.5 py-0.5 text-[10px] uppercase " + (map[status] ?? map.expired)}>{status}</span>;
 }
 
 // ── AI tab — cross-workspace AI activity log ──
@@ -1576,7 +1576,7 @@ function AiActivityTab() {
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
               {["When", "Workspace", "User", "Capability", "Model", "Tokens", "Cost", "Source", ""].map((h) => (
-                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+                <th key={h} className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
@@ -1609,7 +1609,7 @@ function AiActivityTab() {
 function FilterInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
       <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="input text-sm" />
     </label>
   );
@@ -1780,7 +1780,7 @@ function BarcodeCacheTab() {
           <FilterInput label="Workspace (slug)" value={org} onChange={setOrg} placeholder="log-it-or-frog-it" />
         )}
         <FilterInput label="Source" value={source} onChange={setSource} placeholder="go-upc" />
-        <label className="flex flex-col gap-1 text-[10px] font-mono uppercase tracking-wider text-muted">
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wider text-muted">
           Result
           <select
             value={foundSel}
@@ -1807,7 +1807,7 @@ function BarcodeCacheTab() {
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
               {["", "UPC", "Product", "Brand", "Category", "Source", ...(layer === "workspaces" ? ["Workspace"] : []), "Result", "When"].map((h, i) => (
-                <th key={i} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+                <th key={i} className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
@@ -1873,7 +1873,7 @@ function BarcodeCacheTab() {
                   ...(detail.expires_at ? ([["Re-check after", new Date(detail.expires_at).toLocaleString()]] as Array<[string, string | null]>) : []),
                 ] as Array<[string, string | null]>).map(([k, v]) => (
                   <div key={k} className="flex gap-2">
-                    <span className="w-24 shrink-0 font-mono text-[10px] uppercase tracking-wider text-muted pt-0.5">{k}</span>
+                    <span className="w-24 shrink-0 text-[10px] uppercase tracking-wider text-muted pt-0.5">{k}</span>
                     <span className="text-content dark:text-mortar-100 break-all">{v ?? "—"}</span>
                   </div>
                 ))}
@@ -1883,7 +1883,7 @@ function BarcodeCacheTab() {
               <p className="text-muted dark:text-slate-300">{detail.description}</p>
             )}
             <div>
-              <div className="font-mono text-[10px] uppercase tracking-wider text-muted mb-1">Raw provider payload (everything captured)</div>
+              <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Raw provider payload (everything captured)</div>
               <pre className="rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-900 p-3 text-[11px] overflow-auto max-h-72 whitespace-pre-wrap break-all">
                 {JSON.stringify(detail.raw, null, 2)}
               </pre>
@@ -1928,7 +1928,7 @@ function ScanEvalTab() {
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
               {["When", "Workspace", "Item", "Route", "Fields", "Note", ""].map((h) => (
-                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+                <th key={h} className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
@@ -1969,7 +1969,7 @@ function ScanEvalTab() {
 function ScanEvalDetailModal({ c, onClose }: { c: ScanEvalCase; onClose: () => void }) {
   const block = (label: string, value: unknown) => (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-accent mb-1">{label}</div>
       <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-56 overflow-auto text-content dark:text-mortar-200">{JSON.stringify(value, null, 2)}</pre>
     </div>
   );
@@ -2044,7 +2044,7 @@ function AnnouncementsTab() {
           }}
           className="rounded-xl border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-2"
         >
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">post an update</div>
+          <div className="text-[10px] uppercase tracking-widest text-accent">post an update</div>
           <div className="flex flex-wrap gap-2">
             <select aria-label="Category"
               value={effectivePostCat}

@@ -55,6 +55,8 @@ import {
   BulkActionBar, BulkSetField,
   BulkTagAction,
   EntityThumb,
+  PhoneRecordList,
+  usePhoneLayout,
   EntityTile,
   ViewModeToggle,
   changeWorkspaceShape,
@@ -420,7 +422,7 @@ export function MachinesPage({
             onClick={() => setShowGone(!showGone)}
             aria-pressed={showGone}
             data-testid="show-gone"
-            className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] font-mono uppercase tracking-widest transition ${showGone ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
+            className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] uppercase tracking-widest transition ${showGone ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
           >
             {showGone ? "Back to what you have" : `Gone (${machines.data?.gone_count ?? 0})`}
           </button>
@@ -428,7 +430,7 @@ export function MachinesPage({
         {!instance && lensModule && (
           <Link
             to="/machines"
-            className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition`}
+            className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] uppercase tracking-widest hover:bg-cobble-200 transition`}
             title="Clear lens"
           >
             lens: {lensModule.displayName} ×
@@ -440,7 +442,7 @@ export function MachinesPage({
               type="button"
               onClick={() => setStateMenuOpen((o) => !o)}
               className={
-                `${HEADER_CONTROL} text-[10px] font-mono uppercase tracking-widest px-2.5 rounded-md border transition ` +
+                `${HEADER_CONTROL} text-[10px] uppercase tracking-widest px-2.5 rounded-md border transition ` +
                 (hiddenStates.size
                   ? "border-accent text-accent bg-accent/5"
                   : "border-line dark:border-slate-600 text-muted hover:text-accent hover:border-accent")
@@ -453,7 +455,7 @@ export function MachinesPage({
               <>
                 <BackdropLayer className="z-10" onClick={() => setStateMenuOpen(false)} />
                 <div className="absolute z-20 mt-1 left-0 min-w-44 max-h-72 overflow-y-auto rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg p-2 space-y-0.5">
-                  <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint px-1 mb-1">
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-faint px-1 mb-1">
                     <span>show states</span>
                     {hiddenStates.size > 0 && (
                       <button type="button" onClick={() => setHiddenStates(new Set())} className="text-accent hover:underline normal-case tracking-normal">
@@ -574,8 +576,8 @@ export function MachinesPage({
             <div className="space-y-5">
               {groupMachines(filtered, viewGroupBy).map((g) => (
                 <section key={g.key}>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
-                    // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+                  <div className="text-[10px] uppercase tracking-widest text-accent mb-2 capitalize">
+                    {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                   </div>
                   <MachineTileGrid rows={g.rows} onRowClick={rowClick} live={liveByMachine} instance={instance} />
                 </section>
@@ -588,8 +590,8 @@ export function MachinesPage({
           <div className="space-y-5">
             {sections.map((s) => (
               <section key={s.key || "_other"}>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-                  // {s.label}{" "}
+                <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+                  {s.label}{" "}
                   <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
                 </div>
                 <MachineTileGrid rows={s.rows} onRowClick={rowClick} live={liveByMachine} instance={instance} />
@@ -602,8 +604,8 @@ export function MachinesPage({
           <div className="space-y-5">
             {groupMachines(filtered, viewGroupBy).map((g) => (
               <section key={g.key}>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 capitalize">
-                  // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+                <div className="text-[10px] uppercase tracking-widest text-accent mb-2 capitalize">
+                  {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
                 </div>
                 <MachineTable
               instance={instance}
@@ -643,8 +645,8 @@ export function MachinesPage({
         <div className="space-y-5">
           {sections.map((s) => (
             <section key={s.key || "_other"}>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-                // {s.label}{" "}
+              <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+                {s.label}{" "}
                 <span className="text-faint dark:text-slate-500">({s.rows.length})</span>
               </div>
               <MachineTable
@@ -980,10 +982,32 @@ function MachineTable({
   const suggestions = usePhotoSuggestions(instance ? `${instance}:item` : ENTITY_KIND, rows.map((m) => m.id));
   const showSelect = !!selected && !!onToggle;
   const allChecked = showSelect && rows.length > 0 && rows.every((r) => selected!.has(r.id));
+  const phone = usePhoneLayout();
+  if (phone) {
+    return (
+      <PhoneRecordList
+        rows={rows.map((m) => ({
+          id: m.id,
+          name: m.name,
+          picture: <EntityThumb src={m.image_path} suggestedSrc={suggestedSrcFor(suggestions, m.id, m.image_path)} pictureState={pictureStateFor(suggestions, m.id, m.image_path)} alt={m.name} size={40} />,
+          state: m.state,
+          identity: [m.family, fp.hidden("type") ? null : m.type, m.manufacturer],
+          fields: lensFieldDefs.map((d) => {
+            const v = (m.metadata as Record<string, unknown>)[d.name];
+            return { label: d.display_label, value: v === null || v === undefined || v === "" ? null : String(v) };
+          }),
+          quantity: m.quantity,
+          aside: live?.get(m.id) ? <LiveChip dev={live.get(m.id)!.dev} /> : undefined,
+        }))}
+        onOpen={onRowClick}
+        selection={showSelect ? { selected: selected!, onToggle: onToggle!, onSelectAll } : undefined}
+      />
+    );
+  }
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           <tr>
             {showSelect && (
               <th className="w-8 px-3 py-2">
@@ -1059,7 +1083,7 @@ function MachineTable({
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
+                  <span className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                     {m.state}
                   </span>
                   {live?.get(m.id) && <LiveChip dev={live.get(m.id)!.dev} />}
@@ -1269,7 +1293,7 @@ export function MachineDetailModal({
               large on the LEFT with its picker, everything else on the RIGHT,
               so the modal uses width instead of scrolling tall. Stacks on
               phones. */}
-          <RecordFaces kind={instance ? `${instance}:item` : ENTITY_KIND} target={instance ? { target_kind: "instance", target_id: `machines:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
+          <RecordFaces kind={instance ? `${instance}:item` : ENTITY_KIND}>
           <div className="grid gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
             <div className="space-y-2">
               {/* The photo, a suggestion in its place when it has none
@@ -1298,7 +1322,7 @@ export function MachineDetailModal({
               <div className="flex flex-wrap gap-3">
                 {printerKind !== null && (
                   <label className="block">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Kind</span>
+                    <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Kind</span>
                     <select
                       value={typeof m.metadata?.printer_kind === "string" ? (m.metadata.printer_kind as string) : printerKind}
                       onChange={(e) => update.mutate({ metadata: { printer_kind: e.target.value } })}
@@ -1310,7 +1334,7 @@ export function MachineDetailModal({
                 )}
                 {specialisations.length > 0 && (
                   <label className="block">
-                    <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{Noun} type</span>
+                    <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{Noun} type</span>
                     <select
                       value={typeof m.metadata?.specialisation === "string" ? (m.metadata.specialisation as string) : ""}
                       onChange={(e) => update.mutate({ metadata: { specialisation: e.target.value || null } })}
@@ -1434,7 +1458,7 @@ export function MachineDetailModal({
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
               onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> delete machine
             </button>
@@ -1461,7 +1485,7 @@ export function MachineDetailModal({
 export function EnableJobManagerCard({ words, noun, pending, onEnable }: { words: MachineWords; noun?: string; pending: boolean; onEnable: () => void }) {
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-1.5">
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-accent">
         {words.kind === "3d-printer" ? <Printer size={12} /> : <Send size={12} />} {words.manager}
       </div>
       <p className="text-[11px] text-muted dark:text-slate-400">
@@ -1751,7 +1775,7 @@ function NewMachineModal({
     create.mutate();
   }
 
-  const lblCls = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lblCls = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const segBtn = (active: boolean) =>
     "px-2.5 py-1 rounded border text-xs transition " + (active ? "border-cobble-500 text-accent bg-subtle dark:bg-slate-800" : "border-line dark:border-slate-600 text-muted hover:text-content");
 
@@ -1852,7 +1876,7 @@ function NewMachineModal({
 
         {printerFlow && kind && (
           <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
-            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-accent">
               <Printer size={12} /> How do you want to connect?
             </div>
             <div className="flex flex-wrap gap-1.5">

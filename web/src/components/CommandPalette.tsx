@@ -339,7 +339,7 @@ export function CommandPalette() {
             return (
               <Fragment key={r.key}>
                 {header && (
-                  <li role="presentation" className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                  <li role="presentation" className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
                     {header}
                   </li>
                 )}

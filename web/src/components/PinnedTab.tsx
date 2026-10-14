@@ -41,7 +41,7 @@ function PinnedCard({ entry, slug }: { entry: KnowledgeEntry; slug: string }) {
           {entry.title}
         </Link>
         {entry.kind && (
-          <span className="ml-auto shrink-0 text-[10px] font-mono uppercase tracking-widest text-faint">
+          <span className="ml-auto shrink-0 text-[10px] uppercase tracking-widest text-faint">
             {entry.kind}
           </span>
         )}
@@ -54,7 +54,7 @@ function PinnedCard({ entry, slug }: { entry: KnowledgeEntry; slug: string }) {
       {/* Not a link to somewhere else: the whole value is that you did not have
           to navigate to see it. The title links out for when you do. */}
       <div className="px-3 pb-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <span className="text-[10px] uppercase tracking-widest text-faint">
           pinned · workspace {slug}
         </span>
       </div>

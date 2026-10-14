@@ -3,6 +3,7 @@
 // big Add; "Not this?" opens the one input that fixes the name, and More opens
 // the full card for everything else. InboxCard renders this with its own
 // state, so Add here is the same Add the inbox's row runs.
+import { RAN_OUT_HINT, RAN_OUT_LABEL } from "./scanRanOut";
 import type { ReactNode } from "react";
 import { Plus } from "lucide-react";
 import { EntityPhoto, NumberStepper } from "@cobblr/platform-web";
@@ -34,6 +35,8 @@ export interface StationNewFaceProps {
   onFix: () => void;
   fixName: ReactNode;
   onMore: () => void;
+  /** "I just ran out of this" (#6526): kept at none, onto the shopping list. */
+  ranOut?: { busy: boolean; onRun: () => void } | null;
 }
 
 export function StationNewFace(p: StationNewFaceProps) {
@@ -61,7 +64,6 @@ export function StationNewFace(p: StationNewFaceProps) {
                 busy={p.quantity.busy}
                 min={1}
                 label="Quantity"
-                prefix="×"
                 decreaseLabel="One fewer"
                 increaseLabel="One more"
                 testId="station-new-qty"
@@ -89,6 +91,18 @@ export function StationNewFace(p: StationNewFaceProps) {
             <button type="button" onClick={p.onFix} className="px-1 py-2 text-lg text-content underline underline-offset-4">
               Not this? Fix the name
             </button>
+            {p.ranOut && (
+              <button
+                type="button"
+                data-testid="station-ran-out"
+                onClick={p.ranOut.onRun}
+                disabled={p.ranOut.busy}
+                title={RAN_OUT_HINT}
+                className="inline-flex min-h-[48px] items-center rounded-xl border border-line px-4 text-lg text-content hover:border-cobble-400 disabled:opacity-40 dark:border-slate-600"
+              >
+                {RAN_OUT_LABEL}
+              </button>
+            )}
             <button
               type="button"
               onClick={p.onMore}

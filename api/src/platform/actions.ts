@@ -1,6 +1,7 @@
 // Capability Registry runtime. Mirrors entities.ts but for actions
 // rather than entities.
 
+import { OFF_WHILE_LENT, lentWhy, loanOfFields } from "@cobblr/platform-contract/loan";
 import type { ActionUndoStep, ActionUndoer, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type {
   ActionPlan,
@@ -180,6 +181,14 @@ export async function missingRecordRefusal(ctx: ActionInvokeContext, scope: "ent
   return `No ${ctx.entity.kind} with id ${ctx.entity.id} here. Read the record first and pass its real id.`;
 }
 
+/** A thing lent out cannot be moved or labelled until it is back
+ *  (OFF_WHILE_LENT, record-loans.md): "Lent to Sam Lee." */
+async function lentRefusal(actionId: string, ctx: ActionInvokeContext): Promise<string | null> {
+  if (!OFF_WHILE_LENT.has(actionId) || !ctx.entity?.kind || !ctx.entity.id) return null;
+  const loan = loanOfFields(ctx.entity.fields) ?? (await lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id).then((e) => (e ? loanOfFields(e.fields) : null)).catch(() => null));
+  return loan ? lentWhy(loan) : null;
+}
+
 export async function planFor(
   actionId: string,
   ctx: ActionInvokeContext,
@@ -197,6 +206,8 @@ export async function planFor(
   }
   const gone = row ? await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity") : null;
   if (gone) return { error: gone };
+  const lent = await lentRefusal(actionId, ctx);
+  if (lent) return { error: lent };
   // A boolean argument is a boolean whichever door sent it (#6130).
   if (row) ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };
   const refused = row ? requiredArgsRefusal(actionId, row.args_schema as ArgsSchema, ctx.args) : null;
@@ -463,6 +474,8 @@ export async function invoke(
   }
   const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
   if (gone) return { ok: false, error: gone };
+  const lent = await lentRefusal(actionId, ctx);
+  if (lent) return { ok: false, code: "lent_out", error: lent };
   // A boolean argument is a boolean whichever door sent it: a wire's saved
   // "true", a form's text box, the assistant (#6130).
   ctx = { ...ctx, args: typedArgs(row.args_schema as ArgsSchema, ctx.args) };

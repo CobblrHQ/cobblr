@@ -46,7 +46,7 @@ export function ApprovalRequestsCard({ slug }: { slug: string }) {
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3"
     >
       <div className="flex items-baseline gap-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">// requests</span>
+        <span className="text-[10px] uppercase tracking-widest text-accent">requests</span>
         <span className="text-xs text-muted dark:text-slate-400">
           {pending.length === 0 ? "Nothing waiting on you." : `${pending.length} waiting on you.`} A yes gives exactly what was asked, to that person.
         </span>

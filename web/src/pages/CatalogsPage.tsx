@@ -139,7 +139,7 @@ function CatalogCard({
           // against, nothing to import.
           <span
             title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
-            className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
+            className="text-[10px] uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
           >
             Hosted
           </span>
@@ -149,7 +149,7 @@ function CatalogCard({
           </span>
         )}
         {catalog.puller_id && (
-          <span className="text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
             {catalog.puller_id}
           </span>
         )}
@@ -202,7 +202,7 @@ function CreateCatalogModal({
         className="space-y-3"
       >
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
           </span>
           <input
@@ -215,7 +215,7 @@ function CreateCatalogModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Description (optional)
           </span>
           <textarea
@@ -226,7 +226,7 @@ function CreateCatalogModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Source URL (optional)
           </span>
           <input

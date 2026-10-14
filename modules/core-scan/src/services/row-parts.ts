@@ -44,6 +44,58 @@ export interface PartsRow {
 
 export type Admit = (values: Record<string, unknown>) => Promise<{ id: string }>;
 
+type PackWords = { count?: unknown; each?: unknown; whole?: unknown; colour?: unknown };
+const squash = (v: unknown) => (typeof v === "string" ? v.toLowerCase().replace(/\s+/g, "") : "");
+
+/** The pack's whole amount as its line wrote it ("10 kg"), or worked out
+ *  from its count and each ("10" x "1 kg"). */
+function wholeOf(whole: unknown, pack?: PackWords | null): string | null {
+  if (typeof whole === "string" && whole.trim()) return whole;
+  const n = typeof pack?.count === "number" ? pack.count : null;
+  const each = typeof pack?.each === "string" ? pack.each.match(/^\s*([\d.]+)\s*([a-z]+)\s*$/i) : null;
+  return n && each ? `${Number(each[1]) * n} ${each[2]}` : null;
+}
+
+/** A part's name without the option that names the whole pack: one spool of
+ *  a ten-spool pack is not "10KG" (#6456). */
+export function partNameWithoutWhole(name: string, whole: unknown, pack?: PackWords | null): string {
+  const w = squash(wholeOf(whole, pack));
+  if (!w) return name;
+  const segs = name.split(" / ");
+  const kept = segs.filter((s) => squash(s) !== w);
+  return kept.length && kept.length < segs.length ? kept.join(" / ") : name;
+}
+
+/**
+ * The line's route, as one of its parts carries it (#6456). The table is the
+ * same product's, but a value that describes the pack as a whole is not the
+ * part's: the pack's mixed colour becomes the part's own colour (or blank
+ * when nobody could read it), the pack's whole amount becomes one part's,
+ * the count is the part's, and the line's sentence about the pack stays on
+ * the line. Every door that hands a part its line's route goes through here.
+ */
+export function partCandidates(list: unknown, lineMeta: Record<string, unknown>, part: { n: number; meta?: Record<string, unknown> }): unknown[] {
+  if (!Array.isArray(list)) return [];
+  const pack = (lineMeta.line_pack ?? {}) as PackWords;
+  const mine = (part.meta?.line_pack ?? {}) as PackWords;
+  const colour = part.meta && "pack_colour" in part.meta ? part.meta.pack_colour : mine.colour;
+  const swaps: Array<[string, unknown]> = [];
+  if (squash(pack.colour)) swaps.push([squash(pack.colour), typeof colour === "string" && colour ? colour : null]);
+  const whole = wholeOf(pack.whole, pack);
+  if (squash(whole)) swaps.push([squash(whole), typeof mine.each === "string" ? mine.each : typeof pack.each === "string" ? pack.each : null]);
+  return list.map((c) => {
+    if (!c || typeof c !== "object") return c;
+    const { notes: _pack, ...rest } = c as Record<string, unknown> & { fields?: Record<string, unknown> };
+    const fields: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rest.fields ?? {})) {
+      const swap = swaps.find(([from]) => from === squash(v));
+      if (!swap) fields[k] = v;
+      else if (swap[1] !== null) fields[k] = swap[1];
+    }
+    return { ...rest, fields, quantity: part.n };
+  });
+}
+
 /** What a line cost, from the most exact amount it states. */
 function paidOf(meta: Record<string, unknown>): number | null {
   return typeof meta.line_net === "number" ? meta.line_net : typeof meta.line_total === "number" ? meta.line_total : null;

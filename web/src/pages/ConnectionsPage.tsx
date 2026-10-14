@@ -635,7 +635,7 @@ function ConnectionForm({
           {orgs.length === 0 && <div className="text-[11px] text-faint p-2">No workspaces.</div>}
           {orgSections.map((section) => (
             <div key={section.label}>
-              <div className="px-2 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500">
+              <div className="px-2 pt-2 pb-1 text-[9px] uppercase tracking-widest text-muted dark:text-slate-500">
                 {section.label}
               </div>
               {section.items.map((o) => {

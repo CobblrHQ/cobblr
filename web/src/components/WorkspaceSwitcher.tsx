@@ -138,7 +138,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
   const header = (label: string, border: boolean) => (
     <li
       className={
-        "px-3 pt-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-muted dark:text-slate-500 " +
+        "px-3 pt-2 pb-1 text-[9px] uppercase tracking-widest text-muted dark:text-slate-500 " +
         (border ? "border-t border-line dark:border-slate-800 mt-1" : "")
       }
     >
@@ -347,7 +347,7 @@ function WorkspaceRow({
           <span className="truncate">{o.name}</span>
           {/* On a workspace you don't own, your role is the key signal. */}
           {o.role !== "owner" && (
-            <span className="shrink-0 text-[9px] font-mono uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
+            <span className="shrink-0 text-[9px] uppercase tracking-wide px-1 py-0.5 rounded bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300">
               {o.role}
             </span>
           )}
@@ -535,7 +535,7 @@ export function RenameWorkspaceModal({
     <Modal open={open} onClose={onClose} title="Rename workspace" size="sm">
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Workspace name
           </span>
           <input
@@ -564,7 +564,7 @@ export function RenameWorkspaceModal({
           </button>
         ) : (
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               URL handle
             </span>
             <div className="flex items-center gap-1.5">
@@ -676,7 +676,7 @@ export function CreateWorkspaceModal({
     >
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Workspace name
           </span>
           <input
@@ -689,7 +689,7 @@ export function CreateWorkspaceModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Start from a blueprint (optional)
           </span>
           <input

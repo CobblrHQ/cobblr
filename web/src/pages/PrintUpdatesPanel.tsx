@@ -8,7 +8,7 @@ import { Plus, Trash2, Send, Bell, X, Copy } from "lucide-react";
 import { Modal, useToast, NumberField } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabChannel, type DigifabRule, type DigifabCadence, type DigifabStep } from "../lib/api";
 
-const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+const lbl = "text-[10px] uppercase tracking-widest text-faint";
 const field = "px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 w-full";
 
 export function PrintUpdatesPanel({ slug }: { slug: string }) {

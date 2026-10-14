@@ -16,6 +16,7 @@
 // same job; two doors to one label queue, one of them a module reaching into
 // another (audit, 2026-09-08).
 
+import { useOffWhileLent } from "./RecordLoan";
 import { useQuery } from "@tanstack/react-query";
 import { Printer, QrCode } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -74,7 +75,7 @@ export function RecordHeaderChips({
       {(print || bound) && <Link
         to={`/labels/nfc?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}&title=${encodeURIComponent(label)}`}
         title="Put this record’s label link on an NFC tag"
-        className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
+        className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
       >{isWebNfcAvailable() ? "Write to NFC tag" : "Copy tag link"}</Link>}
       {/* An action label (#3897): a code that DOES one of this record's
           buttons when scanned. Offered where a label can be printed, and only
@@ -86,7 +87,7 @@ export function RecordHeaderChips({
             to={`/labels/action/new?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}&title=${encodeURIComponent(label)}`}
             title="Print a code that does one of this record's buttons when scanned"
             data-testid="action-label-chip"
-            className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
+            className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent hover:border-accent transition"
           >
             <QrCode size={10} />
             Action label
@@ -109,13 +110,14 @@ function PrintChip({
   binding?: RunArgs["binding"];
 }) {
   const { run, flash, failure, asking, dismissFailure, note, pending } = useInvokeEntityAction({ entityKind: kind, entityId: id });
+  const off = useOffWhileLent(kind, id, action.id);
   return (
     <>
     <ActionDescription description={action.description || action.label}>
     <button
       type="button"
-      disabled={pending}
-      title={action.description ?? action.label}
+      disabled={pending || !!off}
+      title={off ?? action.description ?? action.label}
       onClick={(e) => {
         e.stopPropagation();
         e.preventDefault();
@@ -126,7 +128,7 @@ function PrintChip({
         );
       }}
       className={
-        "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-widest transition " +
+        "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-widest transition disabled:cursor-not-allowed disabled:opacity-50 " +
         (flash === "ok"
           ? "border-moss-200 bg-moss-50 text-moss-600"
           : flash === "err"

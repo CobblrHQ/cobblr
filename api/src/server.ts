@@ -89,7 +89,8 @@ import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
 import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
-import { inboundEmailRouter } from "./routes/inbound-email.js";
+import { inboundEmailRouter, emailDeliveryRouter } from "./routes/inbound-email.js";
+import { EMAIL_DELIVERY_DOOR } from "./platform/email-delivery-door.js";
 import { mailSourcesRouter, workspaceMailSourcesRouter } from "./routes/mail-sources.js";
 import { mailboxCheckRouter } from "./routes/mailbox-check.js";
 import { sandboxInstallRouter } from "./routes/sandbox-install.js";
@@ -102,6 +103,7 @@ import { scanDriveRouter } from "./routes/scan-drive.js";
 import { scanStationsRouter } from "./routes/scan-stations.js";
 import { stationDevicesRouter, stationPublicRouter } from "./routes/station-devices.js";
 import { liveRouter } from "./routes/live.js";
+import { recordStreamRouter } from "./routes/record-stream.js";
 import { instancesRouter, overridesRouter } from "./routes/instances.js";
 import { navHeadingsRouter } from "./routes/nav-headings.js";
 import { approvalRequestsRouter } from "./routes/approval-requests.js";
@@ -513,6 +515,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", calendarOrgRouter);
   // The caller's per-workspace receipt-forwarding address (authed).
   v1.use("/orgs", receiptAddressRouter);
+  if (EMAIL_DELIVERY_DOOR) v1.use("/orgs", emailDeliveryRouter);
   v1.use("/orgs", workspaceMailSourcesRouter);
   // Member portal config + per-action capability grants.
   v1.use("/orgs", portalRouter);
@@ -535,6 +538,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs", scanStationsRouter);
   // The Live box's applicable session controls for this workspace.
   v1.use("/orgs", liveRouter);
+  v1.use("/orgs", recordStreamRouter);
   // Super-admin (platform operator) surface — cross-workspace
   // dashboards. Gated by SUPERADMIN_EMAILS env var.
   v1.use("/super-admin/sign-in", oidcAdminRouter);

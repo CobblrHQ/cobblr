@@ -263,7 +263,7 @@ export function BundlesPage() {
       <ConfigHeaderActions>
         <Link
           to="/bundles/compose"
-          className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+          className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
           title="Pick which wires + field defs go into a bundle, no JSON authoring required"
         >
           <Package size={12} /> compose
@@ -271,7 +271,7 @@ export function BundlesPage() {
         <button
           type="button"
           onClick={() => setExportOpen(true)}
-          className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+          className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
           title="Export the whole workspace's customisations as one bundle (no per-item picker)"
         >
           <Download size={12} /> publish mine
@@ -303,7 +303,7 @@ export function BundlesPage() {
               built in
             </span>
             {officialOk === false && (
-              <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached - showing the built-in list.">offline</span>
+              <span className="text-[10px] uppercase tracking-widest text-ember-500 shrink-0" title="The official index couldn't be reached - showing the built-in list.">offline</span>
             )}
           </li>
           {sources.map((s) => {
@@ -355,8 +355,8 @@ export function BundlesPage() {
 
       <div>
         <div className="flex items-center gap-2 mb-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-            // marketplace
+          <div className="text-[10px] uppercase tracking-widest text-accent">
+            marketplace
           </div>
           {registry.isFetching && <span className="text-[10px] text-faint">loading…</span>}
           {officialOk === false && (
@@ -372,7 +372,7 @@ export function BundlesPage() {
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
-            className="shrink-0 flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition border border-line dark:border-slate-700 rounded px-2 py-1"
+            className="shrink-0 flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted hover:text-accent transition border border-line dark:border-slate-700 rounded px-2 py-1"
             title="Manage bundle sources - add a third-party repository"
           >
             <Library size={12} /> sources{sources.length ? ` · ${sources.length}` : ""}
@@ -386,8 +386,8 @@ export function BundlesPage() {
         )}
         <div className="space-y-4">
           {([
-            ["// ready-made bundles", "one kind of thing, fields already shaped", shownSections.skins],
-            ["// full-setup bundles", "several modules wired together", shownSections.setups],
+            ["ready-made bundles", "one kind of thing, fields already shaped", shownSections.skins],
+            ["full-setup bundles", "several modules wired together", shownSections.setups],
           ] as const).map(([title, hint, list]) =>
             list.length === 0 ? null : (
               <BundleSection key={title} title={title} hint={hint}>
@@ -405,16 +405,16 @@ export function BundlesPage() {
                       badges={
                         <>
                           {updateAvailable ? (
-                            <span className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5" title={`Installed v${installedV} · latest v${b.manifest.version}`}>
+                            <span className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded px-1.5 py-0.5" title={`Installed v${installedV} · latest v${b.manifest.version}`}>
                               update available
                             </span>
                           ) : installed ? (
-                            <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
+                            <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                               installed
                             </span>
                           ) : null}
                           {thirdParty && (
-                            <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${b.source}`}>
+                            <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${b.source}`}>
                               3rd-party
                             </span>
                           )}
@@ -431,8 +431,8 @@ export function BundlesPage() {
 
       {/* ── Drivers lane (digifab declarative-HTTP machine drivers) ── */}
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-          // drivers
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-1">
+          drivers
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
           Machine drivers for the Digital Fabrication module - installed hot, no restart.
@@ -448,7 +448,7 @@ export function BundlesPage() {
                   <div className="font-medium text-content dark:text-mortar-100 text-sm flex items-center gap-2 flex-wrap">
                     {d.name}
                     {d.source !== "official" && (
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${d.source}`}>3rd-party</span>
+                      <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`From ${d.source}`}>3rd-party</span>
                     )}
                   </div>
                   <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">{d.id}</div>
@@ -471,8 +471,8 @@ export function BundlesPage() {
 
       {/* ── Modules lane (sandboxed WASM — signed, super-admin only) ── */}
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-          // modules
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-1">
+          modules
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
           Sandboxed WASM modules - signature-verified, hot-installed.{" "}
@@ -490,9 +490,9 @@ export function BundlesPage() {
                     {m.name}
                     <span className="text-[10px] font-mono text-faint">v{m.version}</span>
                     {m.trust === "official" ? (
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
+                      <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
                     ) : (
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${m.source})`}>unverified</span>
+                      <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${m.source})`}>unverified</span>
                     )}
                   </div>
                   {(m.blurb || m.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{m.blurb || m.description}</div>}
@@ -507,7 +507,7 @@ export function BundlesPage() {
                     Install
                   </button>
                 ) : (
-                  <span className="shrink-0 text-[10px] font-mono uppercase tracking-widest text-faint self-center">super-admin</span>
+                  <span className="shrink-0 text-[10px] uppercase tracking-widest text-faint self-center">super-admin</span>
                 )}
               </li>
             ))}
@@ -517,8 +517,8 @@ export function BundlesPage() {
 
       {/* ── Renderers lane (sandboxed file-preview renderers) ── */}
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-          // renderers
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-1">
+          renderers
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500 mb-2">
           File-preview renderers for extra formats - they run fully sandboxed (no network, no data
@@ -538,15 +538,15 @@ export function BundlesPage() {
                       {r.name}
                       <span className="text-[10px] font-mono text-faint">.{r.exts.join(" .")}</span>
                       {r.trust === "official" ? (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
+                        <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
                       ) : (
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${r.source})`}>unverified</span>
+                        <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${r.source})`}>unverified</span>
                       )}
                     </div>
                     {(r.blurb || r.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{r.blurb || r.description}</div>}
                   </button>
                   {installed ? (
-                    <span className="shrink-0 text-[10px] font-mono uppercase tracking-widest text-moss-600 self-center">installed</span>
+                    <span className="shrink-0 text-[10px] uppercase tracking-widest text-moss-600 self-center">installed</span>
                   ) : (
                     <button
                       type="button"
@@ -568,8 +568,8 @@ export function BundlesPage() {
         onSubmit={submit}
         className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3"
       >
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // install a bundle
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          install a bundle
         </div>
         <textarea
           value={paste}
@@ -591,8 +591,8 @@ export function BundlesPage() {
       </form>
 
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-          // installed bundles
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+          installed bundles
         </div>
         {bundles.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bundles.data?.items.length === 0 && (
@@ -852,7 +852,7 @@ function ExportBundleModal({
             ]}
           />
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1">
+            <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
               preview
             </div>
             <pre className="max-h-48 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">

@@ -4,9 +4,10 @@
 // drop-in. Portals to body (a header's backdrop-blur traps position:fixed, so
 // the panel must escape it — see the modal-portal convention).
 //
-// Interaction: a row's NAME picks that location (when it's a valid target for
-// the `kind` filter); the ▸ on the right OPENS it to reveal its children. A leaf
-// (no children) just picks. Search flattens to matches with their path.
+// Interaction: a row's NAME picks that location; the ▸ on the right OPENS it to
+// reveal its children. A leaf (no children) just picks. Search flattens to
+// matches with their path. Every place is pickable: no prop narrows it to one
+// kind (#6438; lint:capabilities, location:one-picker).
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -14,15 +15,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Backpack, Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
 import { api, type Location, type PlaceHolder } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { withArticle } from "@cobblr/platform-contract/plural";
-
-/** A kind of place, in words a person reads: "a room or area", "a container". */
-function placeKindWords(kind: string | null | undefined): string {
-  if (kind === "area") return "a room or area";
-  return withArticle(kind || "place");
-}
 import { QuickCreateLocation } from "./QuickCreateLocation";
-import { ActionDescription, OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { ActionDescription, firstActionSentence, OverlayLayer, PopoverLayer, SearchInput, useEscapeToClose, useToast } from "@cobblr/platform-web";
 
 interface Props {
   value: string | null;
@@ -32,10 +26,6 @@ interface Props {
   /** Exclude this location AND everything under it. For choosing a PARENT,
    *  where a node may not become its own ancestor. */
   excludeSubtreeOf?: string;
-  /** Restrict PICKABLE rows to one kind ("area" rooms / "container" bins).
-   *  Non-matching rows still show for navigation (you can drill THROUGH a room
-   *  to reach its bins), they just can't be selected. */
-  kind?: Location["kind"];
   label?: string;
   placeholder?: string;
   triggerLabel?: string;
@@ -54,7 +44,7 @@ interface Props {
    *  things too, and hand the chosen one back instead of moving anything. */
   onPickHolder?: (holder: PlaceHolder) => void;
   /** The holder chosen through onPickHolder, shown as the selection. */
-  pickedHolder?: PlaceHolder | null;
+  pickedHolder?: Pick<PlaceHolder, "kind" | "id" | "title" | "line"> | null;
 }
 
 // siblings: manual drag order (position), then NATURAL name (Bin 2 before Bin 10).
@@ -66,7 +56,6 @@ export function LocationTreePicker({
   onChange,
   excludeId,
   excludeSubtreeOf,
-  kind,
   label,
   placeholder = "Select a location…",
   triggerLabel,
@@ -96,9 +85,8 @@ export function LocationTreePicker({
     enabled: !!activeSlug,
   });
 
-  // Holders are offered for a record's own place only, and not where the pick
-  // is restricted to one kind of place (a machine stands in a room).
-  const offersHolders = (!!thing || !!onPickHolder) && !kind;
+  // Holders are offered for a record's own place, or a destination that takes one.
+  const offersHolders = !!thing || !!onPickHolder;
   const holders = useQuery({
     queryKey: ["core-placement-holders", activeSlug],
     queryFn: () => api.placementHolders(activeSlug),
@@ -157,7 +145,6 @@ export function LocationTreePicker({
   const parentOf = (l: Location): string | null => (l.parent_id && byId.has(l.parent_id) ? l.parent_id : null);
   const childrenOf = (pid: string | null) => all.filter((l) => parentOf(l) === pid).sort(cmp);
   const hasKids = (id: string) => all.some((l) => parentOf(l) === id);
-  const canPick = (l: Location) => !kind || l.kind === kind;
   const nameOf = (l: Location) => l.short_name?.trim() || l.name;
   const pathOf = (id: string): Location[] => {
     const out: Location[] = [];
@@ -221,7 +208,7 @@ export function LocationTreePicker({
 
   const rows = q.trim()
     ? all
-        .filter((l) => canPick(l) && `${l.name} ${l.short_name ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
+        .filter((l) => `${l.name} ${l.short_name ?? ""}`.toLowerCase().includes(q.trim().toLowerCase()))
         .sort(cmp)
         .slice(0, 80)
     : childrenOf(cursor);
@@ -234,31 +221,36 @@ export function LocationTreePicker({
 
   const sizeCls = size === "sm" ? "px-2 py-1 text-xs" : "px-2.5 py-1.5 text-sm";
 
+  const toggle = () => (open ? setOpen(false) : openPanel());
+  // The opener is a real button and comes FIRST: a <label> around a field (its
+  // own below, or a host's) forwards a click anywhere in it to the first
+  // control inside, and that used to be the Clear button nested in the opener,
+  // so opening a printer's Location cleared the saved one (#6365). Clear is a
+  // sibling after the opener, never inside it, and no click but its own
+  // reaches it.
   const trigger = (
     <div
       ref={trigRef}
-      role="button"
-      tabIndex={0}
-      onClick={() => (open ? setOpen(false) : openPanel())}
-      onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openPanel())}
       className={
-        "w-full inline-flex items-center gap-1.5 border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 cursor-pointer " +
+        "w-full inline-flex items-center gap-1.5 border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 " +
         sizeCls +
         (className ? " " + className : "")
       }
     >
-      <MapPin size={13} className="shrink-0 text-faint" />
-      <span className="truncate flex-1 text-left">
-        {triggerLabel ? triggerLabel : inside ? (
-          where.data!.line
-        ) : pickedHolder ? (
-          pickedHolder.line ? `${pickedHolder.title}, in ${pickedHolder.line}` : pickedHolder.title
-        ) : selected ? (
-          pathOf(selected.id).map(nameOf).join(" › ")
-        ) : (
-          <span className="text-faint">{placeholder}</span>
-        )}
-      </span>
+      <button type="button" onClick={toggle} aria-expanded={open} title={description ? firstActionSentence(description) : undefined} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left">
+        <MapPin size={13} className="shrink-0 text-faint" />
+        <span className="truncate flex-1 text-left">
+          {triggerLabel ? triggerLabel : inside ? (
+            where.data!.line
+          ) : pickedHolder ? (
+            pickedHolder.line ? `${pickedHolder.title}, in ${pickedHolder.line}` : pickedHolder.title
+          ) : selected ? (
+            pathOf(selected.id).map(nameOf).join(" › ")
+          ) : (
+            <span className="text-faint">{placeholder}</span>
+          )}
+        </span>
+      </button>
       {!triggerLabel && (selected || inside) && (
         <button
           aria-label={inside ? `Take out of ${inside.name}` : "Clear location"}
@@ -273,7 +265,10 @@ export function LocationTreePicker({
           <X size={13} />
         </button>
       )}
-      <ChevronDown size={14} className="shrink-0 text-faint" />
+      {/* NAME-OK: decorative chevron, the opener button beside it carries the name */}
+      <button type="button" tabIndex={-1} aria-hidden="true" onClick={toggle} className="shrink-0 cursor-pointer text-faint">
+        <ChevronDown size={14} />
+      </button>
     </div>
   );
 
@@ -333,7 +328,7 @@ export function LocationTreePicker({
             )}
             {holderMatches.length > 0 && (
               <div data-testid="location-picker-holders" className="border-b border-line dark:border-slate-800">
-                <div className="px-3 pt-2 pb-1 font-mono text-[10px] uppercase tracking-widest text-faint">Inside something</div>
+                <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-faint">Inside something</div>
                 {holderMatches.map((h) => {
                   const here = chosen?.kind === h.kind && chosen.id === h.id;
                   return (
@@ -354,7 +349,6 @@ export function LocationTreePicker({
             {rows.length === 0 && holderMatches.length === 0 && <div className="px-3 py-3 text-sm text-faint">Nothing here.</div>}
             {rows.map((l) => {
               const kids = hasKids(l.id);
-              const pickable = canPick(l);
               const parentPath = pathOf(l.id).slice(0, -1);
               return (
                 <div
@@ -366,12 +360,8 @@ export function LocationTreePicker({
                 >
                   <button
                     type="button"
-                    onClick={() => (pickable ? pick(l.id) : kids ? drill(l.id) : undefined)}
-                    // A place this field cannot take says so, never a tap that
-                    // does nothing (#4693).
-                    disabled={!pickable && !kids}
-                    title={!pickable ? `This takes ${placeKindWords(kind)}; ${nameOf(l)} is ${placeKindWords(l.kind)}.` : undefined}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => pick(l.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
                   >
                     {value === l.id && !inside && <Check size={13} className="shrink-0 text-accent" />}
                     <span className="truncate">
@@ -381,8 +371,6 @@ export function LocationTreePicker({
                     {q.trim() && parentPath.length > 0 && (
                       <span className="truncate text-xs text-faint">in {parentPath.map(nameOf).join(" › ")}</span>
                     )}
-                    {!pickable && kids && <span className="shrink-0 text-[10px] text-faint">open ▸</span>}
-                    {!pickable && !kids && <span className="shrink-0 text-[10px] text-faint" data-testid="place-not-pickable">{placeKindWords(l.kind)}, not {placeKindWords(kind)}</span>}
                   </button>
                   {!q.trim() && kids && (
                     <button
@@ -411,13 +399,16 @@ export function LocationTreePicker({
       document.body,
     );
 
+  // Not a <label>: the caption would name the opener "Location" in place of
+  // what it holds, and a label here was how a click on the field reached its
+  // Clear (#6365).
   const body = label ? (
-    <label className="block">
-      <span className="mb-1 block font-mono text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
+    <div className="block">
+      <span className="mb-1 block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         {label}
       </span>
       {trigger}
-    </label>
+    </div>
   ) : (
     trigger
   );
@@ -430,7 +421,6 @@ export function LocationTreePicker({
         <QuickCreateLocation
           slug={activeSlug}
           all={list.data?.items ?? []}
-          defaultKind={kind}
           onClose={() => setCreateOpen(false)}
           onCreated={(loc) => {
             onChange(loc.id);

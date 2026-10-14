@@ -13,12 +13,14 @@ import { displayName } from "@cobblr/platform-contract/display-identity";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import { thumbnailFit, thumbnailTextHeavy, type ThumbFit } from "@cobblr/platform-contract/thumbnail-fit";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { NumberStepper, OverlayLayer, BackdropLayer, PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
+import { NumberStepper, OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
+import { DestinationPicker } from "../components/DestinationPicker";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
 
 export interface ScanPhoneRowAction {
@@ -117,6 +119,8 @@ export interface ScanPhoneRowProps {
   multi: { distinct: number; onSplit: () => void; onKeep: () => void; busy: boolean } | null;
   /** "You already have one": name it, one line. */
   tracked: string | null;
+  /** The record it matched, opened from the line. */
+  trackedHref?: string | null;
   /** Re-run AI, on the card, with its live state. `failed` is the last run's
    *  verdict (the AI did not answer), so the control reads Retry. */
   rerun: { running: boolean; replaying: boolean; failed: boolean; can: boolean; onRun: () => void };
@@ -131,7 +135,6 @@ export interface ScanPhoneRowProps {
 
 export function ScanPhoneRow(p: ScanPhoneRowProps) {
   const { item } = p;
-  const [pickOpen, setPickOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   // A long thin thing lying flat is a sliver in this 64px column; turned a
   // quarter it runs the column's height. Measured from the picture's own
@@ -288,9 +291,20 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             )}
           </div>
         )}
-        {p.tracked && (
-          <div className={"line-clamp-1 text-[11px] " + (/^Possible match/.test(p.tracked) ? "text-amber-700 dark:text-amber-400" : "text-moss-700 dark:text-moss-400")}>{p.tracked}</div>
-        )}
+        {p.tracked &&
+          (p.trackedHref ? (
+            <Link
+              to={p.trackedHref}
+              onClick={stop}
+              data-testid="tracked-line"
+              title={`Open the record${/^Possible match/.test(p.tracked) ? "" : " you already have"}`}
+              className={"line-clamp-1 text-[11px] underline decoration-dotted underline-offset-2 " + (/^Possible match/.test(p.tracked) ? "text-amber-700 dark:text-amber-400" : "text-moss-700 dark:text-moss-400")}
+            >
+              {p.tracked}
+            </Link>
+          ) : (
+            <div data-testid="tracked-line" className={"line-clamp-1 text-[11px] " + (/^Possible match/.test(p.tracked) ? "text-amber-700 dark:text-amber-400" : "text-moss-700 dark:text-moss-400")}>{p.tracked}</div>
+          ))}
         {p.multi && (
           <div className="flex items-center gap-1.5 text-[11px]" onClick={stop}>
             <span className="text-content dark:text-mortar-100">{p.multi.distinct} things in this photo</span>
@@ -323,7 +337,6 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
                 decimal={!!q.decimal}
                 min={q.signed ? q.signed.floor : 1}
                 label={q.signed ? "Change by" : "Quantity"}
-                prefix="×"
                 decreaseLabel={q.signed ? "One less" : "Decrease quantity"}
                 increaseLabel={q.signed ? "One more" : "Increase quantity"}
                 inputTestId={q.signed ? "row-change" : undefined}
@@ -359,7 +372,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         </div>
         {p.commit && (
           <div data-row="filing" className="flex items-center gap-1.5" onClick={stop}>
-            <PhoneCommit c={p.commit} open={pickOpen} setOpen={setPickOpen} onReview={p.onOpen} />
+            <PhoneCommit c={p.commit} onReview={p.onOpen} />
             {p.commit.better && (
               <button
                 type="button"
@@ -387,7 +400,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
  *  as one control whatever the action says. Review used to be an outline
  *  with no left side (border-l-0 against the grey divider), which the owner
  *  read as a different, broken control: "missing yellow line" (#3018). */
-function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneRowProps["commit"]>; open: boolean; setOpen: (v: boolean) => void; onReview: () => void }) {
+function PhoneCommit({ c, onReview }: { c: NonNullable<ScanPhoneRowProps["commit"]>; onReview: () => void }) {
   // The words are the contract's (scanRowState.action.label, handed down as
   // c.label); this only colours them. A second copy of "Install & add" here
   // is how the list and the card once disagreed (#3076).
@@ -401,83 +414,51 @@ function PhoneCommit({ c, open, setOpen, onReview }: { c: NonNullable<ScanPhoneR
         : c.kind === "merge"
           ? { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <PackagePlus size={13} />, onClick: c.onAdd, title: c.reason }
           : { label: c.label, cls: "border-emerald-600 bg-emerald-600 text-white", icon: <CheckCircle size={13} />, onClick: c.onAdd, title: `File into ${c.destination}` };
-  // The menu portals to the page and keeps itself on the screen. Anchored
-  // inside the row it took 20rem from wherever the pill sat, and with a
-  // phone's larger text it ran off the right edge (#3930).
-  const pill = useRef<HTMLButtonElement | null>(null);
-  const menu = useRef<HTMLDivElement | null>(null);
-  useEscapeToClose(open, menu, () => {
-    setOpen(false);
-    pill.current?.focus();
-  });
-  const [at, setAt] = useState<{ top: number; left: number; above: number } | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const r = pill.current?.getBoundingClientRect();
-    if (r) setAt({ top: r.bottom + 4, left: r.left, above: r.top });
-    // Measured once at open, so a scroll underneath would leave it floating
-    // away from the pill: close instead of chasing it.
-    const onScroll = () => setOpen(false);
-    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
-  }, [open, setOpen]);
+  // The menu is the one every filing surface opens (DestinationPicker):
+  // portalled, kept on the screen, scrolling its own list (#3930, #6527).
   return (
     // One row, the destination and its action (#6245, the owner's "the
     // controls take up 3 rows ... they can get down to 2"): a long name is
     // cut to fit and said whole in its label, where it used to wrap and push
-    // the action onto a row of its own.
+    // the action onto a row of its own. The name keeps its first letters: a
+    // long action ("Turn on Filament and add") wraps inside its own button
+    // rather than cutting the name to nothing at 320 (#6480).
     <div className="relative flex min-w-0 max-w-full items-stretch">
-      <button
-        type="button"
-        ref={pill}
-        onClick={() => setOpen(!open)}
-        aria-label={`Destination: ${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Choose a different destination`}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={`${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Which table this gets filed into`}
-        className="inline-flex min-h-9 min-w-0 items-center gap-1 rounded-l-md border border-line dark:border-slate-600 bg-subtle/60 dark:bg-slate-800/60 pl-2 pr-1.5 text-[13px] text-content dark:text-mortar-100"
-      >
-        <span className="min-w-0 truncate text-left leading-tight">{c.destination}{c.tentative ? "?" : ""}</span>
-        {c.destinationNote && <span data-destination-note className="shrink-0 whitespace-nowrap text-left leading-tight tabular-nums">{c.destinationNote}</span>}
-        <ChevronDown size={14} className={"shrink-0 text-faint transition-transform " + (open ? "rotate-180" : "")} />
-      </button>
+      <DestinationPicker
+        options={c.options}
+        value={c.options.find((o) => o.selected)?.key ?? null}
+        onPick={c.onPick}
+        trigger={(t) => (
+          <button
+            type="button"
+            ref={t.ref}
+            {...t.props}
+            onClick={t.toggle}
+            aria-label={`Destination: ${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Choose a different destination`}
+            title={`${c.destination}${c.destinationNote ? `: ${c.destinationNote}` : ""}. Which table this gets filed into`}
+            className="inline-flex min-h-9 min-w-0 items-center gap-1 rounded-l-md border border-line dark:border-slate-600 bg-subtle/60 dark:bg-slate-800/60 pl-2 pr-1.5 text-[13px] text-content dark:text-mortar-100"
+          >
+            <span className="min-w-[5ch] truncate text-left leading-tight">{c.destination}{c.tentative ? "?" : ""}</span>
+            {c.destinationNote && <span data-destination-note className="shrink-0 whitespace-nowrap text-left leading-tight tabular-nums">{c.destinationNote}</span>}
+            <ChevronDown size={14} className={"shrink-0 text-faint transition-transform " + (t.open ? "rotate-180" : "")} />
+          </button>
+        )}
+      />
       <button
         type="button"
         disabled={c.busy}
         onClick={action.onClick}
         title={action.title}
         data-segment="action"
-        className={"relative -ml-px inline-flex min-h-9 shrink-0 items-center gap-1 rounded-r-md border px-2.5 text-[13px] font-semibold disabled:opacity-50 " + action.cls}
+        // As narrow as its longest word and no narrower: it wraps between
+        // words ("Turn on Filament / and add"), never inside one ("+1 / 0 /
+        // mo / re" beside a long name and its 0 → 10, #6527). The name is
+        // what gives way.
+        className={"relative -ml-px inline-flex min-h-9 min-w-min items-center gap-1 rounded-r-md border px-2.5 text-left text-[13px] font-semibold leading-tight [overflow-wrap:normal] disabled:opacity-50 " + action.cls}
       >
-        {action.icon}
-        {action.label}
+        {action.icon && <span className="shrink-0">{action.icon}</span>}
+        <span>{action.label}</span>
       </button>
-      {open && at && createPortal(
-        <>
-          <BackdropLayer className="z-[60]" onClick={() => setOpen(false)} />
-          <PopoverLayer ref={menu} role="listbox" style={{ top: at.top, left: at.left }} flipAbove={at.above} className="z-[61] w-80 overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl">
-            <div className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint">File into</div>
-            {c.options.map((o) => (
-              <button
-                key={o.key}
-                type="button"
-                role="option"
-                aria-selected={o.selected}
-                onClick={() => {
-                  c.onPick(o.key);
-                  setOpen(false);
-                }}
-                className={"flex min-h-11 w-full items-center gap-2 px-3 text-left text-sm " + (o.selected ? "font-medium text-accent bg-subtle/60 dark:bg-slate-800/60" : "text-content dark:text-mortar-100")}
-              >
-                <CheckCircle size={14} className={o.selected ? "shrink-0" : "shrink-0 opacity-0"} />
-                <span className="min-w-0 truncate">{o.label}</span>
-                {o.installs && <span className="ml-auto shrink-0 text-[11px] text-faint">installs on add</span>}
-              </button>
-            ))}
-          </PopoverLayer>
-        </>,
-        document.body,
-      )}
     </div>
   );
 }
@@ -531,9 +512,9 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
         data-sheet
         aria-label={`Tools for ${title}`}
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[80dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl"
+        className="max-h-[80dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 pb-[max(0.5rem,var(--inset-bottom))] shadow-2xl"
       >
-        <div className="truncate px-4 pt-3 pb-1 text-[11px] font-mono uppercase tracking-widest text-faint">{title}</div>
+        <div className="truncate px-4 pt-3 pb-1 text-[11px] uppercase tracking-widest text-faint">{title}</div>
         {inline.map(row)}
         {folded.length > 0 && (
           <>

@@ -22,6 +22,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { reachesTheApi } from "./test-cost.mjs";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -70,7 +71,7 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 // The baseline only shrinks. An entry whose file moved out, or that now reaches the api, is stale:
 // said, never failed (a move PR and this baseline landing in either order must not block each other),
 // and `--prune` takes them off. A NEW file is what fails, above.

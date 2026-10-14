@@ -105,8 +105,8 @@ export function TemplatesPage() {
 
       {grouped.map(({ kind, items }) => (
         <section key={kind.id}>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-            // {kind.label} ({items.length})
+          <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+            {kind.label} ({items.length})
           </div>
           <ul className="space-y-2">
             {items.map((t) => (

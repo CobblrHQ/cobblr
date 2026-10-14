@@ -21,7 +21,7 @@ export function ESPHomeDevices() {
   const connections = useQuery({ queryKey: ["esphome", slug], queryFn: () => api.esphomeConnections(slug) });
   const add = useMutation({ mutationFn: () => api.addESPHome(slug, { label, base_url: address, bridge, ...(token ? { api_key: token } : {}) }), onSuccess: () => { setLabel(""); setToken(""); void qc.invalidateQueries({ queryKey: ["esphome", slug] }); void qc.invalidateQueries({ queryKey: ["place-light-connections", slug] }); }, onError: e => toast.error(e.message) });
   return <section className="space-y-4">
-    <h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">ESPHome devices</h2>
+    <h2 className="text-[10px] uppercase tracking-widest text-accent">ESPHome devices</h2>
     <p className="text-sm text-muted">Use lights, sensors and switches without Home Assistant. Install an ESPHome driver on your bridge. Its native API key stays in the bridge configuration.</p>
     <form className="space-y-3 max-w-xl" onSubmit={e => { e.preventDefault(); add.mutate(); }}>
       <label className="block text-sm">Name<input className={field} value={label} onChange={e => setLabel(e.target.value)} required /></label>

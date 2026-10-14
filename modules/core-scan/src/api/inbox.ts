@@ -68,6 +68,7 @@ import { resolveRequirement, storageRequirementFor } from "../services/storage-r
 import { applyReceiptFacts, receiptPackAsks } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
+import { RAN_OUT_KEY, ranOut, withdrawRanOut, type RanOutOutcome } from "../services/ran-out.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
 import { listNamedByCategory, retargetByCategory, retargetIsbnToBookList } from "../services/retarget-by-category.js";
@@ -123,7 +124,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl } from "../services/enrich.js";
 import { classifiedCodeOf } from "@cobblr/platform-contract/scan-copy";
-import { intakeRow, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
+import { intakeRow, knownByCode, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
@@ -171,6 +172,7 @@ import {
   withProposedCategories,
   categoriesFromCandidateRows,
   runMatchmaker,
+  heuristicMatch,
   reconcileSeriesSecondaries,
   type MatchCandidate,
   type ScanMenuEntry, perceiveRow } from "../services/matchmaker.js";
@@ -187,7 +189,8 @@ import { lineDiscounted, lineNet, shareOrderDiscount, type ReceiptResult } from 
 import { isLineImageRef, lineImagesFor, type EmailLineImage } from "@cobblr/platform-contract/email-line-images";
 import { storeHostForReceipt } from "../services/store-product.js";
 import { splitParentsOf } from "../services/split-groups.js";
-import { undoSplit } from "../services/undo-split.js";
+import { redoSplit, undoSplit } from "../services/undo-split.js";
+import { withoutStoreCopySuffix } from "@cobblr/platform-contract/split-line";
 import { orderLinePass } from "../services/order-line-offer.js";
 import { readOrderPacks } from "@cobblr/platform-contract/receipt-pack";
 import { orderPageForReceipt, readWithOrderPage } from "../services/receipt-order-page.js";
@@ -201,6 +204,7 @@ import { claimGlanceAnswer, readContextFor, readGlanceEnabled, writeGlanceEnable
 import { normalizeBarcode, barcodeFromHint } from "../services/barcode-correction.js";
 import { findBinContents, findTracked, placesOfCard } from "../services/entity-match.js";
 import { cropRegion, cropRefusalWords, detectSplitItems, rotateImage } from "../services/image-ops.js";
+import { allBoxed, countMismatchSentence, placeListed, type ListedPiece } from "../services/listed-pieces.js";
 import { auditSplitSeries, healSplitSeriesWorkspace } from "../services/split-series-heal.js";
 import { auditReroute, rerouteWorkspace } from "../services/reroute-keyword-rows.js";
 import { storeCodeInsertStamps } from "../services/barcode-lookup.js";
@@ -564,6 +568,21 @@ const ScanBody = z.object({
    *  repeat within the window answers with the existing item (#3852). */
   allow_duplicate: z.boolean().optional(),
 });
+
+/** What a decoded code already is here, from the workspace's own records
+ *  only (#6436). The scanner asks this the instant a code decodes and shows
+ *  the record at once, while the photo and the scan itself are still on their
+ *  way; an outside lookup is only ever for a code this answers null to.
+ *  Writes nothing. */
+inboxRouter.get(
+  "/scan/known",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const code = typeof req.query.code === "string" ? req.query.code.trim().slice(0, 200) : "";
+    if (!code) return void res.status(400).json({ error: { code: "bad_query", message: "Say which code (code=)." } });
+    res.json({ known: await knownByCode(tenantContext(req).org.id, code) });
+  }),
+);
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
@@ -1002,12 +1021,19 @@ inboxRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = AssistantBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const body = parsed.data;
     const token = bearer(req);
     if (!token) {
       res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
       return;
     }
+    res.status(201).json(await addThingFor(req, token, parsed.data));
+  }),
+);
+
+/** One thing an agent adds, through the inbox's own intake: the add_thing
+ *  door, and each piece of add_things_from_photo (`extra` carries what a
+ *  piece knows of its group photo). */
+async function addThingFor(req: Request, token: string, body: z.infer<typeof AssistantBody>, extra: { metadata?: Record<string, unknown> } = {}) {
     const ctx = tenantContext(req);
     const db = tenantDb(req);
     const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
@@ -1059,6 +1085,7 @@ inboxRouter.post(
       target_location_id: body.location_id ?? null,
       metadata: {
         arrived_by: "assistant",
+        ...(extra.metadata ?? {}),
         ...(body.identifier && !asCode ? { identifier: body.identifier } : {}),
         ...(early
           ? {
@@ -1161,13 +1188,152 @@ inboxRouter.post(
     }
 
     const kept = placed ? { fields_kept: placed.kept, fields_refused: placed.refused } : { fields_kept: [], fields_refused: [] };
-    res.status(201).json({
+    return {
       ...found,
       ...kept,
       ...(goesToRefused ? { goes_to_refused: goesToRefused } : {}),
       filed,
       not_filed_because: notFiled,
       next: nextForTheAgent(found, filed, notFiled, !!body.file, kept.fields_refused, goesToRefused),
+    };
+}
+
+// ──────────────────── POST /scan/assistant/photo ─────────────────────
+// Several things from one photo (#6342): "this photo is printer 1 {details}
+// and printer 2 {details}". The caller lists the pieces; Cobblr works out
+// where each sits (its own box, or the split's detection told the list),
+// crops each, and adds each through add_thing's own intake with its crop as
+// its picture. The photo becomes the group shot, the pieces one split group
+// ("2 of 2") with Undo split. A photo that shows a different number than was
+// listed is asked about and nothing is added.
+const PhotoPieceBox = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().gt(0).max(1), h: z.number().gt(0).max(1) });
+const PhotoPiece = AssistantBody.omit({ image_file_id: true, file: true, allow_duplicate: true }).extend({
+  /** Where it sits in the photo, in words: "left", "the black one". */
+  where: optionalField(z.string().trim().min(1).max(200)),
+  /** Where it sits, as fractions of the picture (x, y top-left; w, h). */
+  box: PhotoPieceBox.optional(),
+});
+const PhotosOfSeveralBody = z
+  .object({
+    /** The photo, uploaded first through core-files. */
+    image_file_id: optionalUuid(),
+    /** Or a photo already in the inbox, split by this list. */
+    item_id: optionalUuid(),
+    items: z.array(PhotoPiece).min(2).max(20),
+  })
+  .refine((b) => !!b.image_file_id !== !!b.item_id, { message: "give the photo as image_file_id, or the inbox item as item_id, one of them" });
+
+// AI-ACTION: core-scan:add-things-from-photo
+inboxRouter.post(
+  "/scan/assistant/photo",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-scan:add-things-from-photo"))) return;
+    const parsed = PhotosOfSeveralBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const token = bearer(req);
+    if (!token) {
+      res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } });
+      return;
+    }
+    const body = parsed.data;
+    const ctx = tenantContext(req);
+    const db = tenantDb(req);
+    const userId = sessionUser(req).id;
+
+    let existing: { id: string; image_file_id: string | null; status: string; ai_notes: string | null; suggested_metadata: unknown } | undefined;
+    if (body.item_id) {
+      existing = await db.selectFrom("core_scan_inbox_items").select(["id", "image_file_id", "status", "ai_notes", "suggested_metadata"]).where("id", "=", body.item_id).executeTakeFirst();
+      if (!existing) return void res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      if (!existing.image_file_id) return void res.status(409).json({ error: { code: "no_photo", message: "That inbox item has no photo to split." } });
+      if (existing.status !== "pending" || (existing.suggested_metadata as { split_into?: unknown } | null)?.split_into) {
+        return void res.status(409).json({ error: { code: "not_splittable", message: "That inbox item is already filed or split." } });
+      }
+    }
+    const photo = existing?.image_file_id ?? body.image_file_id!;
+
+    // Where each piece sits, before anything is written: a disagreement is a
+    // question, and asking must leave nothing behind.
+    const listed: ListedPiece[] = body.items.map((it) => ({ name: it.name, where: it.where ?? null, box: it.box ?? null }));
+    const detected = allBoxed(listed) ? { items: [], failed: false } : await detectSplitItems(ctx.org.id, photo, userId, listed);
+    const placed = placeListed(listed, detected.items, detected.failed);
+    if (!placed.ok) {
+      return void res.status(409).json({
+        error: { code: "count_mismatch", message: countMismatchSentence(listed, placed.seen) },
+        seen: placed.seen,
+        listed: listed.map((l) => l.name),
+      });
+    }
+
+    const parent = existing ?? (
+      await intakeRow({
+        db,
+        orgId: ctx.org.id,
+        orgSlug: ctx.org.slug,
+        userId,
+        token,
+        baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API,
+        visitorIp: req.ip ?? null,
+        door: "assistant",
+        values: {
+          source_kind: "photo",
+          image_file_id: photo,
+          suggested_name: `${countOf(listed.length, "thing")} from one photo`,
+          created_by_user_id: userId,
+          // The group shot is only the pieces' photo: nothing to identify.
+          suggested_metadata: JSON.stringify({ arrived_by: "assistant", intake_shape: "import" }) as never,
+        },
+      })
+    ).row;
+
+    const pieces: Array<Record<string, unknown>> = [];
+    const ids: string[] = [];
+    for (const [n, it] of body.items.entries()) {
+      const at = placed.pieces[n]!;
+      const cut = at.box ? await cropRegion(ctx.org.id, photo, at.box) : null;
+      const crop = cut?.fileId ? "ok" : at.box ? "failed" : "none";
+      const { where: _where, box: _box, ...thing } = it;
+      const added = await addThingFor(req, token, { ...thing, image_file_id: cut?.fileId ?? photo }, {
+        metadata: {
+          source: "vision-split",
+          split_from: parent.id,
+          split_region: at.box,
+          crop,
+          ...(cut && "reason" in cut ? { crop_reason: cut.reason } : {}),
+          ...(at.boxed_as && at.boxed_as !== it.name ? { split_boxed_as: at.boxed_as } : {}),
+        },
+      });
+      ids.push(added.item_id);
+      pieces.push({
+        item_id: added.item_id,
+        name: added.name,
+        crop_file_id: cut?.fileId ?? null,
+        crop,
+        ...(cut && "reason" in cut ? { crop_refused: cropRefusalWords(cut.reason) } : {}),
+        goes_to: added.goes_to,
+        already_have: added.already_have,
+        fields_kept: added.fields_kept,
+        fields_refused: added.fields_refused,
+        ...(added.goes_to_refused ? { goes_to_refused: added.goes_to_refused } : {}),
+      });
+    }
+    await db
+      .updateTable("core_scan_inbox_items")
+      .set({
+        status: "resolved",
+        suggested_metadata: mergeMeta({ split_into: ids, split_prior_notes: existing?.ai_notes ?? null, split_how: "photo" }) as never,
+        ai_notes: `Split into ${countOf(ids.length, "item")}.`,
+        resolved_at: new Date(),
+        updated_at: new Date(),
+      })
+      .where("id", "=", parent.id)
+      .execute();
+    await appendScanHistory(db, parent.id, { action: "split", note: `${countOf(ids.length, "item")} listed by the assistant; crops: ${pieces.map((p) => p.crop).join(", ")}` });
+    const group = (await splitParentsOf(db, [{ id: ids[0]!, suggested_metadata: { split_from: parent.id } }])).summaries[parent.id] ?? null;
+    res.status(201).json({
+      group: { item_id: parent.id, headline: group?.headline ?? null, check: group?.check ?? null, can_undo: group?.can_undo ?? true },
+      items: pieces,
+      ...(placed.uncut ? { uncut: "The photo could not be read for where each piece sits, so each keeps the whole photo; crop one from its card." } : {}),
+      next: `${countOf(ids.length, "thing")} from one photo are in the inbox as one group. Undo split (core-scan:undo-split with item_id ${parent.id}) puts them back as one photo.`,
     });
   }),
 );
@@ -1464,7 +1630,9 @@ async function materializeReceiptLines(opts: {
       values: {
         source_kind: "receipt",
         scan_batch_id: opts.batchId,
-        suggested_name: line.description.slice(0, 300),
+        // Named without a store's copy number ("Multicolor-1", #6527); the
+        // line as written stays its description, which finds the variant.
+        suggested_name: withoutStoreCopySuffix(line.description).slice(0, 300),
         // The product number the till printed beside the description. Stamped as
         // the row's barcode so the line resolves the way a scanned one does — a
         // catalog name and a real picture — instead of living forever as the
@@ -3435,6 +3603,12 @@ export const ConfirmBody = z.object({
   save_eval_case: z.boolean().optional(),
   /** Optional note / hard-case label stored on the captured eval case. */
   eval_note: optionalText(200),
+  /** "I just ran out of this" (#6526): filed with none on hand. It is added
+   *  with one and that one is taken as used up through the quantity door, so
+   *  a restock rule sees the same crossing as for anything used up, and it
+   *  goes on the shopping list (services/ran-out.ts). A kind that keeps no
+   *  count cannot run out and is refused. */
+  ran_out: z.boolean().optional(),
 });
 
 const FileSelectedBody = z.object({
@@ -3550,7 +3724,10 @@ inboxRouter.post(
     }
 
     const purposeHold = scanPurposeReview({ ...row, status: "pending" });
-    if (scanPurpose(row) !== "arrival") {
+    // A count of something you do not keep yet that comes to none is Ran out:
+    // nothing arrives, so it is not refused as an arrival.
+    const ranOutAsked = parsed.data.ran_out === true;
+    if (scanPurpose(row) !== "arrival" && !(ranOutAsked && scanPurpose(row) === "count")) {
       res.status(409).json({ error: { code: "not_an_arrival", message: purposeHold } });
       return;
     }
@@ -3681,6 +3858,10 @@ inboxRouter.post(
       });
       return;
     }
+    if (ranOutAsked && (!resolvedTarget || !scanTarget.qtyField)) {
+      res.status(400).json({ error: { code: "not_counted", message: `${scanTarget.noun ?? "This"} keeps no count, so it cannot run out. Add it instead.` } });
+      return;
+    }
     const createPath = scanTarget.createEndpoint;
 
     // Build the create body. Defaults from the suggestion + extras win.
@@ -3739,12 +3920,14 @@ inboxRouter.post(
     // or an arrival from outside counted, never below one (filed-quantity.ts).
     const ownCopy = isOwnCopy(row.suggested_metadata);
     const scannedQty = ownCopy ? copiedCountOf(row.quantity) : filedQuantityOf(row.quantity);
-    const qty =
-      parsed.data.quantity ??
-      (ownCopy ? scannedQty : targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
+    // Ran out files one, which the take below uses up: none is left.
+    const qty = ranOutAsked
+      ? 1
+      : parsed.data.quantity ??
+        (ownCopy ? scannedQty : targetIsUnique && !(scannedQty > 1) ? undefined : scannedQty);
     // The batches its boxes printed, filed as lots on the record (#5764).
     const lots =
-      resolvedTarget && scanTarget.adjustAction && scanTarget.qtyField && typeof qty === "number" && qty > 0 ? await rowLots(db, row, qty).catch(() => []) : [];
+      !ranOutAsked && resolvedTarget && scanTarget.adjustAction && scanTarget.qtyField && typeof qty === "number" && qty > 0 ? await rowLots(db, row, qty).catch(() => []) : [];
     const lotted = lots.reduce((n, l) => n + l.qty, 0);
     // `extras.metadata` (the instance's custom fields the user filled on the
     // confirm form — colorway, fibre, …) is DEEP-merged into the scan metadata
@@ -4275,6 +4458,28 @@ inboxRouter.post(
       if (!arrived.ok) console.error(`[core-scan] the lots of ${row.id} did not reach ${created.id}:`, arrived.refused);
     }
 
+    // Ran out (#6526): the one it was filed with is taken as used up, and it
+    // goes on the shopping list; the list line is kept on the row for Undo.
+    let ranOutDone: RanOutOutcome | null = null;
+    if (ranOutAsked && resolvedTarget && created?.id) {
+      const tok = bearer(req);
+      ranOutDone = await ranOut({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        target: resolvedTarget,
+        entity: { kind: kindKey, id: created.id },
+        current: 1,
+        invented: true,
+        rowId: row.id,
+        door: { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: tok ? { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } : {} },
+      });
+      await db
+        .updateTable("core_scan_inbox_items")
+        .set({ suggested_metadata: mergeMeta({ [RAN_OUT_KEY]: ranOutDone.stamp }) as never })
+        .where("id", "=", row.id)
+        .execute();
+    }
+
     // Scan-into-container: if the item was scanned into a CONTAINER bin (a
     // server/asset or machine — not a location), place the created entity inside
     // it. Parallel to the location_id stamping in the create body above; the
@@ -4705,7 +4910,9 @@ inboxRouter.post(
     // the ledger began at your second buy and cold start lasted one shop longer
     // than it needed to. Announced on the bus, not called: a workspace without
     // Cadence has nobody listening and is unaffected.
-    if (created?.id) {
+    // A thing you ran out of was not bought today: the ledger hears the use
+    // (the take above), never a purchase.
+    if (created?.id && !ranOutAsked) {
       const firstBuy = buildCadenceEvents({
         mode: "add-qty",
         kind: effectiveKindId,
@@ -4732,7 +4939,12 @@ inboxRouter.post(
       }
     }
 
-    res.json({ item: await served(req, resolvedRow), created, installed: installer.installed });
+    res.json({
+      item: await served(req, resolvedRow),
+      created,
+      installed: installer.installed,
+      ...(ranOutDone ? { ran_out: { took: ranOutDone.took, on_list: ranOutDone.on_list, needs_list: ranOutDone.needs_list, note: ranOutDone.list_note } } : {}),
+    });
   }),
 );
 
@@ -7452,6 +7664,12 @@ inboxRouter.post(
         if (released) note = note ? `${note} Its line on the purchase order is unclaimed again.` : "Its line on the purchase order is unclaimed again.";
       }
     }
+    // Ran out's list line comes off with it (#6526): Undo leaves nothing it added.
+    if (meta[RAN_OUT_KEY]) {
+      await withdrawRanOut(ctx.org.id, sessionUser(req)?.id ?? null, meta[RAN_OUT_KEY]).catch((e: Error) => {
+        note = note ? `${note} Its shopping list line stayed (${e.message}).` : `Its shopping list line stayed (${e.message}).`;
+      });
+    }
     // Reopen: back to pending, resolution cleared, RESTORED to its original
     // spot — un-confirm is an UNDO, not a re-scan. created_at stays (it's when
     // the item was scanned, immutable history); rewriting it to now() dragged
@@ -7472,7 +7690,7 @@ inboxRouter.post(
         // The receipt-order linkage STAYS: the order line is a fact about the
         // receipt, born at parse, and filing this row again must claim that
         // same line. Only the attach link is cleared.
-        suggested_metadata: mergeMeta({}, ["attached_to", FILED_INTO_KEY]) as never,
+        suggested_metadata: mergeMeta({}, ["attached_to", FILED_INTO_KEY, RAN_OUT_KEY]) as never,
         updated_at: new Date(),
       })
       .where("id", "=", id)
@@ -7559,6 +7777,10 @@ const AttachBody = z.object({
    *  File everything line, a queue's count); else the row's own. Absent from
    *  this schema, a door's count was stripped and the row's filed instead. */
   qty: FiledQuantity.optional(),
+  /** With `count`: "I ran out of this" (#6526). Whatever the record holds is
+   *  taken as used up (no change or total needed), and it goes on the
+   *  shopping list (services/ran-out.ts). */
+  ran_out: z.boolean().optional(),
   /** `count`: what is in your hands, signed (+3 arrived, -1 used up). The
    *  card's Change by. Exactly one of change / total. */
   // A measured record is counted in fractions of its unit (half a metre),
@@ -7579,7 +7801,11 @@ inboxRouter.post(
     const id = req.params.id;
     const parsed = AttachBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    if (parsed.data.mode === "count" && !(parsed.data.total != null ? parsed.data.change == null : parsed.data.change != null && parsed.data.change !== 0)) {
+    if (parsed.data.ran_out && parsed.data.mode !== "count") {
+      res.status(400).json({ error: { code: "ran_out_is_a_count", message: "Ran out is a count: send mode count" } });
+      return;
+    }
+    if (parsed.data.mode === "count" && !parsed.data.ran_out && !(parsed.data.total != null ? parsed.data.change == null : parsed.data.change != null && parsed.data.change !== 0)) {
       res.status(400).json({ error: { code: "count_needs_one", message: "a count is a non-zero change or a total, exactly one" } });
       return;
     }
@@ -7967,8 +8193,27 @@ inboxRouter.post(
     // `count`: the change in your hands, or the total as it really is,
     // through the same quantity door. A total is a correction in the ledger.
     let counted = 0;
-    const correction = counting && parsed.data.total != null;
-    if (counting && scannable.qtyField) {
+    const correction = counting && !parsed.data.ran_out && parsed.data.total != null;
+    let ranOutDone: RanOutOutcome | null = null;
+    if (counting && scannable.qtyField && parsed.data.ran_out) {
+      // Ran out: what the shelf holds is taken as used up, then the list.
+      ranOutDone = await ranOut({
+        orgId: ctx.org.id,
+        userId: sessionUser(req)?.id ?? null,
+        target,
+        entity: { kind: parsed.data.kind, id: parsed.data.entity_id },
+        current: priorQty,
+        rowId: id ?? "",
+        door: { baseUrl, slug: ctx.org.slug, headers: authHeaders },
+      });
+      if (ranOutDone.move && !ranOutDone.move.ok) {
+        res.status(409).json({ error: { code: "attach_failed", message: ranOutDone.move.refused ?? "the record's quantity could not be changed" } });
+        return;
+      }
+      counted = ranOutDone.move?.delta ?? 0;
+      newQty = ranOutDone.move ? (ranOutDone.move.newQty ?? priorQty + ranOutDone.move.delta) : priorQty;
+      if (ranOutDone.move?.undo) undoSteps.unshift(...ranOutDone.move.undo);
+    } else if (counting && scannable.qtyField) {
       const want = correction ? parsed.data.total! - priorQty : (parsed.data.change ?? 0);
       newQty = priorQty;
       if (want !== 0) {
@@ -8053,6 +8298,8 @@ inboxRouter.post(
             // run by unconfirm while the record still reads what this left.
             ...(undoSteps.length ? { undo: undoSteps } : {}),
           },
+          // Ran out's list line, which Undo takes back off.
+          ...(ranOutDone ? { [RAN_OUT_KEY]: ranOutDone.stamp } : {}),
         }) as never,
         resolved_at: new Date(),
         updated_at: new Date(),
@@ -8088,7 +8335,7 @@ inboxRouter.post(
       entityId: parsed.data.entity_id,
       added: counting ? counted : qtyAdded,
       priorQty: priorQty,
-      ...(counting ? { correction, reason: parsed.data.reason ?? null } : {}),
+      ...(counting ? { correction, reason: ranOutDone ? "used_up" : (parsed.data.reason ?? null) } : {}),
     });
     for (const ev of cadenceEvents) {
       await platform().events.emit("core-scan.stock.observed", {
@@ -8109,7 +8356,9 @@ inboxRouter.post(
       cadence_recorded: cadenceEvents.map((e) => e.event_type),
       // A take (or a recount down) that left it at its minimum or empty: the
       // card offers the shopping list.
-      ...(counting ? { low: scanCountLeftLow(newQty, numOrNull(entity.min_qty), newQty != null && newQty < priorQty) } : {}),
+      // Ran out put it on the list already, so the card offers it no second time.
+      ...(counting ? { low: !ranOutDone?.on_list && scanCountLeftLow(newQty, numOrNull(entity.min_qty), newQty != null && newQty < priorQty) } : {}),
+      ...(ranOutDone ? { ran_out: { took: ranOutDone.took, on_list: ranOutDone.on_list, needs_list: ranOutDone.needs_list, note: ranOutDone.list_note } } : {}),
     });
   }),
 );
@@ -8677,11 +8926,11 @@ inboxRouter.post(
 // is looking at when the split turns out wrong. Refused when a child was
 // already filed: that record exists now, and putting the group back beside
 // it would count the thing twice; send that child back first.
-// AI-REACH: exempt (scan-inbox undo from the UI: a step of the guided scan flow, driven from the scanner screen with the pieces in view; the assistant reaches the inbox through list_scan_inbox)
+// AI-ACTION: core-scan:undo-split
 inboxRouter.post(
   "/inbox/:id/unsplit",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-scan:undo-split"))) return;
     const id = String(req.params.id);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
@@ -8693,6 +8942,30 @@ inboxRouter.post(
     }
     await appendScanHistory(db, r.parent.id, { action: "unsplit", note: `${r.live.length} split item${r.live.length === 1 ? "" : "s"} discarded` });
     res.json({ parent: await served(req, r.parent), discarded: r.live.length });
+  }),
+);
+
+// ─────────────────────── POST /inbox/:id/redo-split ──────────────────
+// Split again (#6527): the Undo split toast's way back. The parts the undo
+// took out come back as they were, and the line goes back under them
+// (services/undo-split.ts redoSplit). An Undo split is one tap; a stray one
+// put the owner's split pack of ten back as one row with no way back but
+// splitting it from scratch.
+// AI-ACTION: core-scan:redo-split
+inboxRouter.post(
+  "/inbox/:id/redo-split",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-scan:redo-split"))) return;
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const tok = bearer(req);
+    const r = await redoSplit(db, String(req.params.id), tok ? { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } } : null);
+    if (!r.ok) {
+      res.status(r.status).json({ error: r.error });
+      return;
+    }
+    await appendScanHistory(db, r.parent.id, { action: "resplit", note: `${r.parts.length} split item${r.parts.length === 1 ? "" : "s"} back` });
+    res.json({ parent: await served(req, r.parent), parts: r.parts });
   }),
 );
 
@@ -9044,6 +9317,7 @@ inboxRouter.post(
 // art (image-search by name, same as a re-identify's refresh — honors the
 // user-picked-image lock). Detached per item; returns how many were queued.
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// UI-SCREEN: /scan (More inbox actions, Fill missing photos)
 inboxRouter.post(
   "/inbox/backfill-catalog-photos",
   asyncHandler(async (req, res) => {
@@ -9844,7 +10118,64 @@ async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | null> {
     // replay re-derives from what the row already holds rather than looking
     // again — so when the stored observation is missing, or describes a photo
     // that has since been retaken, this pass simply goes without one.
-    if (!photoObservations && row.image_file_id && !opts.replay) {
+    // The tables first, so a first match can say where it goes before any
+    // model is asked (#6555).
+    const baseMenu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token, opts.orgId);
+    // What this item's OWN batch has already proposed, offered as ordinary axis
+    // values. Without it every item in a bulk scan invents in isolation and a
+    // run of like things scatters across synonyms of one category — see
+    // withProposedCategories for the measurement.
+    const menu = withProposedCategories(baseMenu, await batchProposedCategories(db, row.scan_batch_id, opts.itemId));
+    // The deterministic router answers first (#6555, heuristic first, AI
+    // last): a first match writes the heuristic's table at once, so the card
+    // shows where it goes with its name, and the model's answer below
+    // replaces it. Marked interim, with no fallback note: nothing failed.
+    if (!opts.replay && !opts.force && row.suggested_name && storedCandidateList(row.suggested_candidates).length === 0) {
+      const quick = heuristicMatch(perceiveRow(row, { photoObservations }), menu).map((c) => {
+        const { ai_fallback: _f, ai_fallback_reason: _r, notes: _n, ...rest } = c as typeof c & { notes?: unknown };
+        return { ...rest, interim: true };
+      });
+      if (quick.length) {
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ suggested_candidates: JSON.stringify(quick) as never, updated_at: new Date() })
+          .where("id", "=", opts.itemId)
+          .where(sql<boolean>`coalesce(suggested_candidates::text, 'null') in ('null', '[]')`)
+          .execute()
+          .catch((e: Error) => console.warn(`[core-scan] ${opts.itemId}: the interim table was not written:`, e.message));
+      }
+    }
+
+    // A code you keep is routed from its record (heldCandidate): looking at
+    // the photo again only delays its table (#6555, 2.9 s on the owner's tea).
+    const heldHere = (meta as { identified_by?: unknown }).identified_by === "your_records";
+    // A barcode already named by its lookup is routed by that name: its photo
+    // is still looked at (the split offer and the packaging read it), but the
+    // look is stored when it lands and never holds the table back (#6555: it
+    // cost the owner's sugar 4.1 s before the matchmaker began).
+    const namedByCode = !!row.barcode_text && !!row.suggested_name;
+    if (!photoObservations && row.image_file_id && !opts.replay && !heldHere && namedByCode) {
+      const imageId = row.image_file_id;
+      void observeScanPhoto(opts.orgId, imageId, opts.itemId, opts.userId)
+        .then(async (obs) => {
+          if (!obs) return;
+          await db
+            .updateTable("core_scan_inbox_items")
+            .set({
+              suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({
+                photo_observations: obs.text,
+                photo_observed_for: imageId,
+                ...(obs.packaging ? { packaging: obs.packaging } : {}),
+                ...(obs.distinct && obs.distinct >= 2 ? { photo_distinct: obs.distinct, photo_individuals: obs.individuals ?? [] } : {}),
+              })}::jsonb` as never,
+              updated_at: new Date(),
+            })
+            .where("id", "=", opts.itemId)
+            .execute();
+        })
+        // DETACHED: the look feeds the split offer later; the table never waits for it
+        .catch((e: Error) => console.warn(`[core-scan] ${opts.itemId}: photo observation:`, e.message));
+    } else if (!photoObservations && row.image_file_id && !opts.replay && !heldHere) {
       const obs = await Promise.race([
         observeScanPhoto(opts.orgId, row.image_file_id, opts.itemId, opts.userId),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 15_000)),
@@ -9865,12 +10196,6 @@ async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | null> {
       }
     }
 
-    const baseMenu = await assembleMergedMenu(opts.baseUrl, opts.orgSlug, opts.token, opts.orgId);
-    // What this item's OWN batch has already proposed, offered as ordinary axis
-    // values. Without it every item in a bulk scan invents in isolation and a
-    // run of like things scatters across synonyms of one category — see
-    // withProposedCategories for the measurement.
-    const menu = withProposedCategories(baseMenu, await batchProposedCategories(db, row.scan_batch_id, opts.itemId));
     const candidates = await runMatchmaker(
       opts.orgId,
       // Everything the lookup wrote on the row (perceiveRow): the name, the

@@ -78,7 +78,7 @@ function tokens(s: string): string[] {
   return (s.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => t.length >= 3 && !STOP.has(t));
 }
 
-function similarity(a: string, b: string): number {
+export function similarity(a: string, b: string): number {
   const ta = new Set(tokens(a));
   const tb = new Set(tokens(b));
   if (!ta.size || !tb.size) return 0;

@@ -158,7 +158,7 @@ function PlanRow({ it }: { it: ImportPlanItem }) {
         onClick={() => hasDetail && setOpen((o) => !o)}
         className={`flex items-center gap-2 w-full text-left px-2.5 py-1 text-xs ${hasDetail ? "hover:bg-line/20 dark:hover:bg-slate-700/20" : "cursor-default"}`}
       >
-        <span className={`text-[9px] font-mono uppercase w-16 shrink-0 ${ACTION_TEXT[it.action]}`}>
+        <span className={`text-[9px] uppercase w-16 shrink-0 ${ACTION_TEXT[it.action]}`}>
           {ACTION_LABEL[it.action]}
         </span>
         <span className="text-content dark:text-mortar-100 truncate flex-1">{it.name}</span>
@@ -186,7 +186,7 @@ function PlanRow({ it }: { it: ImportPlanItem }) {
         <div className="px-2.5 pb-2 grid grid-cols-2 gap-3">
           {it.fields && (
             <div className="min-w-0">
-              <div className="text-[9px] font-mono uppercase tracking-widest text-accent mb-1">
+              <div className="text-[9px] uppercase tracking-widest text-accent mb-1">
                 {it.action === "create" ? "New entity" : "Coming over"}
               </div>
               <FieldList fields={it.fields} />
@@ -194,7 +194,7 @@ function PlanRow({ it }: { it: ImportPlanItem }) {
           )}
           {it.match?.fields ? (
             <div className="min-w-0">
-              <div className="text-[9px] font-mono uppercase tracking-widest text-faint mb-1 truncate">
+              <div className="text-[9px] uppercase tracking-widest text-faint mb-1 truncate">
                 Currently · {it.match.name}
               </div>
               <FieldList fields={it.match.fields} dim />
@@ -283,7 +283,7 @@ export function SyncConnectionsSection() {
           Install one (paste its manifest JSON), then add a connection through it. */}
       <div className="rounded-lg border border-line dark:border-slate-700 p-2.5 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Sources</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint">Sources</span>
           <button
             type="button"
             onClick={() => setInstalling(true)}
@@ -322,7 +322,7 @@ export function SyncConnectionsSection() {
           deleted: their id-map + config survive, so re-activating resumes them. */}
       {archivedConns.length > 0 && (
         <details className="rounded-lg border border-line/60 dark:border-slate-700/60 bg-subtle/40 dark:bg-slate-900/40 p-2.5">
-          <summary className="text-[10px] font-mono uppercase tracking-widest text-faint cursor-pointer select-none">
+          <summary className="text-[10px] uppercase tracking-widest text-faint cursor-pointer select-none">
             Archived · {archivedConns.length}
           </summary>
           <ul className="mt-2 space-y-1.5">
@@ -492,7 +492,7 @@ function SourceRow({
               defined ONCE above and each connection just carries its sync state,
               instead of a second duplicate list. */}
           <div className="pt-2 mt-1 border-t border-line/40 dark:border-slate-700/40">
-            <div className="text-[9px] font-mono uppercase tracking-widest text-faint mb-1.5">Connections</div>
+            <div className="text-[9px] uppercase tracking-widest text-faint mb-1.5">Connections</div>
             {connections.length > 0 ? (
               <ul className="space-y-1.5">
                 {connections.map((c) => (
@@ -924,16 +924,16 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
           // live toggle + sync-now.
           if (!approved) {
             return (
-              <div key={t.key} className="flex items-center gap-2 text-xs">
+              <div key={t.key} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                 <span className="text-content dark:text-mortar-100">{t.label}</span>
-                <span className="text-[9px] font-mono uppercase tracking-wider text-faint dark:text-slate-500 border border-line dark:border-slate-700 rounded px-1 py-px">
+                <span className="text-[9px] uppercase tracking-wider text-faint dark:text-slate-500 border border-line dark:border-slate-700 rounded px-1 py-px">
                   not imported
                 </span>
                 <div className="flex-1" />
                 <SyncRuleSelect slug={activeSlug} connId={conn.id} entityType={t.key} value={state?.conflict_policy ?? "cobblr"} />
                 <button
                   onClick={() => setPreviewKey(t.key)}
-                  className="text-[11px] text-accent hover:underline shrink-0"
+                  className="min-h-11 text-[11px] text-accent hover:underline shrink-0 sm:min-h-0"
                 >
                   Preview import →
                 </button>
@@ -942,7 +942,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
           }
           return (
             <div key={t.key}>
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <label className="flex items-center gap-1.5 cursor-pointer">
                 <input
                   type="checkbox"
@@ -950,7 +950,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
                   onChange={(e) => configure.mutate({ entityType: t.key, enabled: e.target.checked })}
                 />
                 <span className="text-content dark:text-mortar-100">{t.label}</span>
-                <span className="text-[9px] font-mono uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                <span className="text-[9px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
                   {enabled ? "live" : "paused"}
                 </span>
               </label>
@@ -958,7 +958,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
               {state?.last_run_at && (
                 <span
                   title={state.last_error ?? undefined}
-                  className={`text-[10px] ${state.last_status === "error" || state.last_status === "warning" ? "text-ember-500" : "text-faint"}`}
+                  className={`basis-full break-words text-[10px] sm:basis-auto ${state.last_status === "error" || state.last_status === "warning" ? "text-ember-500" : "text-faint"}`}
                 >
                   {state.last_status === "error"
                     ? `error: ${state.last_error ?? "?"}`
@@ -971,7 +971,7 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
               <SyncRuleSelect slug={activeSlug} connId={conn.id} entityType={t.key} value={state?.conflict_policy ?? "cobblr"} />
               <button
                 onClick={() => setPreviewKey(t.key)}
-                className="text-[11px] text-accent hover:underline shrink-0"
+                className="min-h-11 text-[11px] text-accent hover:underline shrink-0 sm:min-h-0"
               >
                 Preview &amp; sync →
               </button>
@@ -1135,7 +1135,7 @@ function AddSyncConnectionModal({
     <Modal open onClose={onClose} title="Add a sync connection" size="sm">
       <div className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Connector</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Connector</span>
           <select
             value={connectorId}
             onChange={(e) => {
@@ -1151,12 +1151,12 @@ function AddSyncConnectionModal({
           </select>
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Label</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Label</span>
           <input value={label} onChange={(e) => setLabel(e.target.value)} className="input" placeholder={def?.label} />
         </label>
         {def && Object.entries(def.config).map(([key, cfg]) => (
           <label key={key} className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{cfg.label}</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">{cfg.label}</span>
             {key === "base_url" ? (
               <AddressInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="input font-mono" placeholder={cfg.placeholder ?? "https://…"} />
             ) : (
@@ -1178,7 +1178,7 @@ function AddSyncConnectionModal({
             const opts = instancesForKind(et.targetKind);
             return (
               <label key={et.key} className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
                   Import “{et.label}” into
                 </span>
                 <select
@@ -1205,7 +1205,7 @@ function AddSyncConnectionModal({
           })}
         {/* Transport: direct (cloud fetches the URL) vs edge (a local bridge does). */}
         <div>
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">How does Cobblr reach it?</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">How does Cobblr reach it?</span>
           <div className="flex gap-2">
             {(["direct", "edge"] as const).map((t) => (
               <button
@@ -1240,7 +1240,7 @@ function AddSyncConnectionModal({
         {def && Object.keys(def.credentials).length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-1">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint">Credentials</span>
+              <span className="block text-[10px] uppercase tracking-widest text-faint">Credentials</span>
               <button
                 type="button"
                 onClick={() => setCredsJsonMode((m) => !m)}

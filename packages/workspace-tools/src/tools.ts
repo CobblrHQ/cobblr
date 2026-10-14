@@ -14,6 +14,7 @@
 // Adding a capability = one entry here → both surfaces get it. Never add a
 // tool to a consumer directly.
 
+import { HUMAN_ONLY_ACTIONS } from "@cobblr/platform-contract/human-only";
 import { z } from "zod";
 import { type WorkspaceApi, type WorkspaceApiResponse, type ToolResult, toolOk, toolFail, apiErrorMessage } from "./api.js";
 import {
@@ -33,6 +34,14 @@ import { pairingResultPresentation } from "@cobblr/platform-contract/pairing-pre
 
 import { countOf } from "@cobblr/platform-contract/plural";
 import { scanHistoryLines, type ScanHistoryEntryStored } from "@cobblr/platform-contract/scan-history-words";
+/** An action's description down to its first sentence: what it does, for a
+ *  list; the rest is for when the model picks it. */
+export function firstSentence(text: string | undefined): string | undefined {
+  if (!text) return text;
+  const m = /^(.+?[.!?])(\s|$)/s.exec(text.trim());
+  return m ? m[1] : text.trim();
+}
+
 export type ToolMode = "read" | "write";
 
 interface WorkspaceToolBase {
@@ -807,8 +816,8 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       tag: "a tag name, to narrow it to records carrying it",
       view: "a shared saved view's id, to narrow it to the records the view shows",
     },
-    why: "building an automation is consented in the composer, not a card; switching one on or off is an action",
-    covered_by: ["platform:set-wire-enabled"],
+    why: "setting one up, changing, removing and switching one on or off are actions, each confirmed on a card; the composer is for a person who wants to build one by hand, with its live preview of what it would do",
+    covered_by: ["platform:set-wire-enabled", "platform:add-wire", "platform:edit-wire", "platform:remove-wire"],
   },
   {
     id: "fields",
@@ -1047,9 +1056,18 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       offset: z.number().int().min(0).optional().describe("With group_keys, skip this many records within that group."),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
       include_retired: z.boolean().optional().describe("Include archived/retired records when asked about old things; default off."),
+      lent_out: z.boolean().optional().describe("Only things lent out now, with who has each and when it is due back."),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
+      // Lent out is a loan on the record, not a field (record-loans.md): one
+      // read answers it for the kind, whole.
+      if (args.lent_out === true) {
+        const lent = await api.request("GET", `/loans?kind=${encodeURIComponent(String(args.kind))}`);
+        if (lent.status >= 400) return toolFail(apiErrorMessage(lent, "couldn't list what is lent out"));
+        const items = (lent.body?.items as unknown[] | undefined) ?? [];
+        return toolOk({ items, shown: items.length, total: items.length, partial: false });
+      }
       // The cursor carries the query it was made for, so the next page is the
       // next page of THAT list even if a later call words its arguments
       // differently. `o` is the position; `s` marks the any-field scan.
@@ -1417,13 +1435,13 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover actions: no filter returns an index mapping action ids to labels. Pass action_id for its arguments, or kind for applicable actions and arguments. Run invoke_action; send_targets lists destinations and recent sends.",
+      "Discover actions: no filter returns an index mapping action ids to labels. Pass kind for that kind's own actions with their arguments, or action_id for one action in full. Run invoke_action; send_targets lists destinations and recent sends.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     wholeResult: "the index is the menu of every action Cobb can offer; a trimmed index drops actions that exist",
     params: {
       send_targets: z.boolean().optional().describe("Send destinations and your sends"),
-      kind: z.string().optional().describe("Only entity actions applicable to this kind id (workspace actions still included)"),
+      kind: z.string().optional().describe("Only the actions that run on this kind's records or settings"),
       action_id: z.string().optional().describe("One action from the index, with its arguments and consent requirements"),
     },
     execute: async (api, args) => {
@@ -1452,13 +1470,17 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
             }>
           | undefined) ?? [];
       const kind = typeof args.kind === "string" && args.kind.trim() ? args.kind.trim() : null;
-      // When filtering by a record's kind, still surface workspace-level config
-      // actions — they're not record-scoped but the user may want one from here.
-      // A wire-only action is never offered (offerableToAssistant).
+      // A kind's actions are the ones that run on its records, and the
+      // workspace actions that take a kind (lend these, group its fields). The
+      // rest of the workspace's actions are in the index: listing every one of
+      // them, described in full, under any kind made one call about 139 KB
+      // (#6335), more than a turn has room for. A wire-only action is never
+      // offered (offerableToAssistant).
       const actionId = typeof args.action_id === "string" ? args.action_id.trim() : "";
+      const takesAKind = (a: (typeof items)[number]) => !!a.args_schema && "entity_kind" in a.args_schema;
       const picked = items.filter(offerableToAssistant)
         .filter((a) => !actionId || a.id === actionId)
-        .filter((a) => !kind || a.scope === "workspace" || (a.matched_kinds ?? []).includes(kind));
+        .filter((a) => !kind || (a.scope === "workspace" ? takesAKind(a) : (a.matched_kinds ?? []).includes(kind)));
       if (!kind && !actionId) return toolOk({ index: Object.fromEntries(picked.map((a) => [a.id, a.label])) });
       // Project to what a caller needs to actually RUN one. `args` is the
       // decisive field: an action listed without its arguments is an action
@@ -1469,7 +1491,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         picked.map((a) => ({
           id: a.id,
           label: a.label,
-          description: a.description,
+          // Under a kind, a sentence each; action_id gives the whole of one.
+          description: kind && !actionId ? firstSentence(a.description) : a.description,
           // Which module it came from: dropped once in the projection below and
           // caught only by a test that pins it, so it stays named here.
           module_name: a.module_name,
@@ -1481,7 +1504,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           undoable: a.undoable === true,
           // How a person asks for it, so a sentence can be matched to an action
           // rather than guessed at from the id.
-          ...(a.examples?.length ? { said_like: a.examples } : {}),
+          ...(a.examples?.length ? { said_like: kind && !actionId ? a.examples.slice(0, 2) : a.examples } : {}),
           ...(a.scope === "workspace" ? {} : { matched_kinds: a.matched_kinds ?? [] }),
           // Runs on one of those records, OR with no record at all: "put milk
           // on the shopping list" names no record, and without this said the
@@ -2215,7 +2238,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "add_thing",
     description:
-      "The way to add a THING the person has. Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found, fields_refused (tell your person) and hints (empty fields: ask). Lands in the inbox; file: true files it.",
+      "The way to add a THING the person has. Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found, fields_refused (tell your person) and hints (empty fields: ask). Lands in the inbox; file: true files it. Several things in ONE photo: invoke_action core-scan:add-things-from-photo with the photo and a list, and Cobblr crops each.",
     mode: "write",
     params: {
       name: z.string(),
@@ -2604,7 +2627,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
  *  A whole action still passes (structural typing), and the test beside
  *  this holds a `@ts-expect-error` on the flag that fails the typecheck the
  *  day it is added back. */
-export function offerableToAssistant(a: { wire_only?: boolean; internal?: boolean }): boolean {
+export function offerableToAssistant(a: { id?: string; wire_only?: boolean; internal?: boolean }): boolean {
+  // What only a person does is never offered, whatever its declaration says.
+  if (a.id && HUMAN_ONLY_ACTIONS[a.id]) return false;
   return a.wire_only !== true && a.internal !== true;
 }
 

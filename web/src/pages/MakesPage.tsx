@@ -383,7 +383,7 @@ export function MakePage() {
 
       {d.reruns.length > 0 && (
         <div className="mt-6">
-          <h2 className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Made again</h2>
+          <h2 className="text-[10px] uppercase tracking-widest text-faint mb-1">Made again</h2>
           <ul className="space-y-1">
             {d.reruns.map((r) => (
               <li key={r.id} className="text-sm">

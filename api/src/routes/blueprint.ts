@@ -14,6 +14,7 @@
 // owner/admin only (an export reveals every wire/field/view/surface; an
 // install enables modules + creates public surfaces).
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
@@ -339,7 +340,7 @@ export interface BlueprintPlan {
   create_public_surfaces: number;
 }
 
-async function planInstall(orgId: string, m: BlueprintManifestT): Promise<BlueprintPlan> {
+export async function planInstall(orgId: string, m: BlueprintManifestT): Promise<BlueprintPlan> {
   const enabled = new Set(
     (await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute()).map(
       (r) => r.module_name,
@@ -601,11 +602,25 @@ blueprintRouter.get("/export", requireAuth, withTenant, async (req, res, next) =
   }
 });
 
+/** Apply a blueprint and log it: the install route's yes and
+ *  platform:install-blueprint (#6528). */
+export async function installBlueprint(orgId: string, sess: Parameters<typeof applyBlueprint>[1], m: BlueprintManifestT): Promise<BlueprintApplyResult> {
+  const applied = await applyBlueprint(orgId, sess, m);
+  await activity.log({
+    orgId,
+    userId: sess.id,
+    action: "blueprint_installed",
+    ref: { module: null, entityType: "blueprint", entityId: m.id },
+  });
+  return applied;
+}
+
 // POST /install — two-phase. confirm:false → 409 needs_consent with a plan;
 // confirm:true → apply.
+// AI-ACTION: platform:install-blueprint
 blueprintRouter.post("/install", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:install-blueprint"))) return;
     const Body = z.object({ manifest: z.unknown(), confirm: z.boolean().optional() });
     const body = Body.safeParse(req.body);
     if (!body.success) {
@@ -635,18 +650,12 @@ blueprintRouter.post("/install", requireAuth, withTenant, async (req, res, next)
       return;
     }
 
-    const sess = {
+    const applied = await installBlueprint(orgId, {
       id: req.session!.id,
       display_name: req.session!.display_name ?? null,
       auth_method: req.session!.auth_method,
       api_token_id: req.session!.api_token_id ?? null,
-    };
-    const applied = await applyBlueprint(orgId, sess, m);
-    await activity.log({
-      orgId,
-      action: "blueprint_installed",
-      ref: { module: null, entityType: "blueprint", entityId: m.id },
-    });
+    }, m);
     res.status(201).json({ blueprint: { id: m.id, name: m.name, version: m.version }, applied });
   } catch (err) {
     next(err);

@@ -11,7 +11,7 @@ import { api, ApiError } from "../lib/api";
 import { SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 
-const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
 export function BridgeInstallMethod({
   slug,

@@ -28,6 +28,7 @@
 //   npx tsx scripts/lint-search-boxes-are-search-input.ts   (pnpm lint search-boxes-are-search-input)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -96,7 +97,7 @@ export function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-if (process.argv[1]?.endsWith("lint-search-boxes-are-search-input.ts")) for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+if (process.argv[1]?.endsWith("lint-search-boxes-are-search-input.ts")) for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 
 if (violations.length && process.argv[1]?.endsWith("lint-search-boxes-are-search-input.ts")) {
   console.error(`lint:search-boxes-are-search-input - ${violations.length} violation(s):`);

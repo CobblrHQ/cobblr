@@ -26,7 +26,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { reloadPicture, useImageSrc } from "./useImageSrc";
 import { reportBrokenPicture } from "./brokenPictures";
-import { pickThumb, type SwatchFieldDef } from "./swatch";
+import { pickThumb, type SwatchFieldDef } from "./swatch-pick";
 import { entityInitial } from "./entity-initial";
 
 export type PhotoAspect = "square" | "4/3" | "3/4" | "2/3" | "16/9";

@@ -18,6 +18,7 @@ import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type Ope
 import { PickToLight, SubjectLink } from "@cobblr/platform-web";
 import { shortageSentence } from "../shortage.js";
 import { BoardInspection } from "./Inspection.js";
+import { InspectionRegister } from "./InspectionRegister.js";
 import { useRunAction } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { dayLabel } from "@cobblr/platform-contract/day";
@@ -31,6 +32,7 @@ interface Props {
 
 export function BuildsUI({ orgSlug, getToken }: Props) {
   const inspection = useMatch("/builds/inspections/:id");
+  const register = useMatch("/builds/inspections");
   // PRESS-ARGS: the saved inspection supplies the label target; queuing has no other required inputs.
   const run = useRunAction();
   if (inspection?.params.id) {
@@ -40,6 +42,7 @@ export function BuildsUI({ orgSlug, getToken }: Props) {
       if (!outcome.ok || !result.ok) throw new Error(typeof result.error === "string" ? result.error : "The label could not be queued.");
     }} />;
   }
+  if (register) return <InspectionRegister api={new BuildsApi(orgSlug, getToken)} slug={orgSlug} />;
   return <BuildsCollectionUI orgSlug={orgSlug} getToken={getToken} />;
 }
 
@@ -86,6 +89,7 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
       <CollectionHeader
         title="builds"
         kind="builds:build"
+        nav={<Link to="/builds/inspections">Board inspections</Link>}
         actions={
           <button type="button" onClick={() => setCreating(true)} className={headerButton("primary")}>
             <Plus size={14} /> New build

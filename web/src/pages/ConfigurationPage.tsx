@@ -258,7 +258,7 @@ function SearchResults({
             <div className="text-xs text-content dark:text-mortar-200 mt-1">
               {d.description}
             </div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1.5">
+            <div className="text-[10px] uppercase tracking-widest text-faint mt-1.5">
               {CONFIG_SECTIONS[d.section].label}
             </div>
           </div>
@@ -273,7 +273,7 @@ function SearchResults({
           <HOSTED_SECTION.icon size={20} className="text-accent mt-0.5 shrink-0" />
           <div className="min-w-0">
             <div className="font-medium text-content dark:text-mortar-100">{p.label}</div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1.5">
+            <div className="text-[10px] uppercase tracking-widest text-faint mt-1.5">
               {HOSTED_SECTION.label}
             </div>
           </div>

@@ -574,6 +574,7 @@ const SetupBinsBody = z.object({
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// UI-SCREEN: /scan (Live Sort creates numbered bins)
 putawayRouter.post(
   "/putaway/:id/setup-bins",
   asyncHandler(async (req, res) => {
@@ -841,6 +842,7 @@ const ConfirmBody = z.object({
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// UI-SCREEN: /scan (Live Sort confirms the current item)
 putawayRouter.post(
   "/putaway/:id/confirm",
   asyncHandler(async (req, res) => {
@@ -973,6 +975,7 @@ putawayRouter.post(
 const UndoBody = z.object({ entry_id: z.string().uuid() });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// UI-SCREEN: /scan (Live Sort undoes the last placement)
 putawayRouter.post(
   "/putaway/:id/undo",
   asyncHandler(async (req, res) => {

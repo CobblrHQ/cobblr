@@ -10,6 +10,10 @@
   "exports": {
     ".": "./src/index.ts",
     "./app-surface": "./src/app-surface.generated.ts",
+    "./test-budget": {
+      "types": "./src/test-budget.d.mts",
+      "default": "./src/test-budget.mjs"
+    },
     "./*": "./src/*.ts"
   },
   "types": "src/index.ts",

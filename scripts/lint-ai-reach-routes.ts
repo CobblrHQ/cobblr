@@ -502,6 +502,20 @@ if (WRITING) {
 // capability someone gave the assistant — take it out, or it silently excuses
 // the next route that happens to land on the same path.
 const staleBaseline = baseline.filter((k) => !stillUnreachable.has(k));
+
+// `--prune` only REMOVES those lines and can never add one, so merge-pr runs
+// it on the merge tree (lib/generated-files.mjs). Two pull requests that each
+// closed a route otherwise left the second one red against main, carrying the
+// first one's line (#6539 after #6544, 2026-10-14).
+if (process.argv.includes("--prune")) {
+  if (staleBaseline.length) {
+    const keep = Object.fromEntries(Object.entries(baselineReasons).filter(([k]) => stillUnreachable.has(k)));
+    const whole = JSON.parse(readFileSync(BASELINE_FILE, "utf8")) as Record<string, unknown>;
+    writeFileSync(BASELINE_FILE, `${JSON.stringify({ ...whole, unreachable: keep }, null, 2)}\n`);
+    console.log(`ai-reach-routes: pruned ${staleBaseline.length} closed line(s) from ${BASELINE_FILE}`);
+  }
+  process.exit(0);
+}
 if (staleBaseline.length) {
   console.error(
     `✗ ai-reach-routes lint: ${staleBaseline.length} baseline entr(y/ies) no longer match a route.\n` +

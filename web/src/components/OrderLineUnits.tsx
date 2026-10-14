@@ -6,13 +6,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Scissors } from "lucide-react";
 import { NumberStepper, useToast } from "@cobblr/platform-web";
 import { lineReceivedSentence, lineUnitsOf, lineUnitsSentence, lineUnitsSwitchLabel } from "@cobblr/platform-contract/line-units";
 import { api, ApiError, type ScanInboxItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 
-const pill = "inline-flex items-center gap-1 rounded-full border border-line dark:border-slate-700 px-2.5 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
+// A finger's target on a phone, like the Split into button beside them (#6527).
+const pill = "inline-flex min-h-11 items-center gap-1 rounded-full border border-line dark:border-slate-700 px-3 py-1 text-xs font-medium text-content dark:text-mortar-100 hover:bg-subtle disabled:opacity-50";
 
 function useRowMutation<T>(fn: () => Promise<T>, done?: (r: T) => void) {
   const { activeSlug } = useActiveOrg();
@@ -47,6 +49,7 @@ export function OrderLineUnits({ item }: { item: ScanInboxItem }) {
   const [offCount, setOffCount] = useState(1);
   const [offName, setOffName] = useState("");
   const toggle = useRowMutation(() => api.setLineUnits(activeSlug, item.id, units?.mode === "same" ? "different" : "same"));
+  const splitApart = useRowMutation(() => api.setLineUnits(activeSlug, item.id, "different"));
   const splitOff = useRowMutation(() => api.splitOffUnits(activeSlug, item.id, offCount, offName.trim() || undefined), () => {
     setOffOpen(false);
     setOffName("");
@@ -84,6 +87,22 @@ export function OrderLineUnits({ item }: { item: ScanInboxItem }) {
                 Take the last one back
               </button>
             </>
+          )}
+          {/* A pack of different things that is one row now (never split,
+              or put back as one) has a real button to come apart: the
+              sentence above is words, not a control, and the owner's undone
+              pack had none (#6527). Its server restores the parts an undo
+              took out, colours and pictures and all, before it guesses. */}
+          {units.mode === "different" && (
+            <button
+              type="button"
+              disabled={splitApart.isPending}
+              onClick={() => splitApart.mutate()}
+              data-testid="line-units-split"
+              className="inline-flex min-h-11 items-center gap-1 rounded-full bg-cobble-600 hover:bg-cobble-700 px-3 text-xs font-medium text-white disabled:opacity-50"
+            >
+              <Scissors size={14} aria-hidden /> Split into {units.count}
+            </button>
           )}
           <button type="button" className={pill} disabled={toggle.isPending} onClick={() => toggle.mutate()} data-testid="line-units-switch">
             {lineUnitsSwitchLabel(units)}

@@ -24,10 +24,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultConcurrency, runParallel } from "./lib/parallel.mjs";
 import { lintCommand } from "./lib/lint-command.mjs";
+import { workingTreePaths } from "./lib/git-porcelain.mjs";
 import { fetchManifests, latestPasses, lintRoots, lintRootsKey, lintSalt, mergeManifest, rootIds, rootsUnchanged, verdictMode } from "./lib/lint-verdicts.mjs";
 import { record as recordVerdicts, recordShadow } from "./lib/verdict-cache.mjs";
 import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { EMBEDDED_PAYLOADS, PAYLOAD_READERS } from "./lib/embedded-payloads.mjs";
 import { tmpdir } from "node:os";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -211,6 +213,32 @@ async function main() {
   process.once("exit", () => rmSync(readsDir, { recursive: true, force: true }));
   const readsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.jsonl`);
   const inputsFile = (name) => join(readsDir, `${name.replace(/[^A-Za-z0-9_.-]/g, "_")}.inputs.jsonl`);
+  // THE PRE-PUSH RUN COSTS THE SIZE OF THE CHANGE (#6226). A per-file lint (scripts/lib/lint-only-files.ts) checks
+  // only the files this change touches: committed since the merge base with main, plus the working tree. CI runs
+  // every lint over the whole tree after, so this narrows the push, never the gate. No merge base: no list, and
+  // every lint reads everything as before.
+  let onlyFiles = null;
+  if (reuseCi) {
+    try {
+      const mb = ["origin/main", "forgejo/main", "main"].map((r) => {
+        try {
+          return execFileSync("git", ["merge-base", "HEAD", r], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+        } catch {
+          return "";
+        }
+      }).find(Boolean);
+      if (mb) {
+        const committed = execFileSync("git", ["diff", "--name-only", `${mb}...HEAD`], { cwd: ROOT, encoding: "utf8", maxBuffer: 1024 * 1024 * 1024 }).split("\n").filter(Boolean);
+        const changed = [...new Set([...committed, ...workingTreePaths(ROOT)])];
+        onlyFiles = join(readsDir, "only-files.txt");
+        writeFileSync(onlyFiles, `${changed.join("\n")}\n`);
+        console.log(`[lints] per-file lints check the ${changed.length} file(s) this change touches; CI checks the whole tree`);
+      }
+    } catch (e) {
+      console.log(`[lints] could not list this change's files (${e?.message ?? e}); every lint reads the whole tree`);
+      onlyFiles = null;
+    }
+  }
   const preload = `--require ${join(ROOT, "scripts", "lib", "lint-reads.cjs")}${vctx ? ` --require ${join(ROOT, "scripts", "lib", "lint-inputs.cjs")}` : ""}`;
   const jobs = toRun
     .slice()
@@ -219,12 +247,12 @@ async function main() {
       name,
       cmd: lintCommand(scripts[name]),
       cwd: ROOT,
-      env: { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} ${preload}`.trim(), COBBLR_LINT_READS_FILE: readsFile(name), ...(vctx ? { COBBLR_LINT_INPUTS_FILE: inputsFile(name), COBBLR_LINT_ROOT: ROOT } : {}) },
+      env: { NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} ${preload}`.trim(), COBBLR_LINT_READS_FILE: readsFile(name), ...(onlyFiles ? { COBBLR_LINT_ONLY_FILES: onlyFiles } : {}), COBBLR_LINT_PAYLOADS: JSON.stringify(EMBEDDED_PAYLOADS), ...(PAYLOAD_READERS.includes(name) ? { COBBLR_LINT_READ_PAYLOADS: "1" } : {}), ...(vctx ? { COBBLR_LINT_INPUTS_FILE: inputsFile(name), COBBLR_LINT_ROOT: ROOT } : {}) },
     }));
-  const readMBOf = (name) => {
+  const readMBOf = (name, key = "bytes") => {
     try {
       let bytes = 0;
-      for (const line of readFileSync(readsFile(name), "utf8").split("\n")) if (line.trim()) bytes += JSON.parse(line).bytes ?? 0;
+      for (const line of readFileSync(readsFile(name), "utf8").split("\n")) if (line.trim()) bytes += JSON.parse(line)[key] ?? 0;
       return bytes / 1048576;
     } catch {
       return 0;
@@ -301,7 +329,10 @@ async function main() {
         } else console.log(`[verdicts] shadow check: all ${reusable.size} lint(s) the cache would have reused passed here`);
       }
     }
-    for (const r of results) r.readMB = readMBOf(r.name);
+    for (const r of results) {
+      r.readMB = readMBOf(r.name);
+      r.payloadMB = readMBOf(r.name, "payloadBytes");
+    }
     const cpu = results.reduce((s, r) => s + r.ms, 0);
     const wall = Date.now() - started;
     const slowest = results
@@ -387,7 +418,14 @@ async function main() {
     if (overRead.length) {
       console.error(
         `\n[lints] ✗ ${overRead.length} lint(s) over their read budget:\n` +
-          overRead.map((r) => `    ${r.name}  ${r.why}`).join("\n") +
+          overRead
+            .map((r) => {
+              const payload = results.find((x) => x.name === r.name)?.payloadMB ?? 0;
+              // The usual reason, named: a source walk that reads the base64 build.
+              const why = payload >= 0.1 ? `\n      ${payload.toFixed(1)} MB of it is an embedded payload (${EMBEDDED_PAYLOADS.join(", ")}): it is one of PAYLOAD_READERS in scripts/lib/embedded-payloads.mjs; take it off unless it must read the payload` : "";
+              return `    ${r.name}  ${r.why}${why}`;
+            })
+            .join("\n") +
           `\n\n  A lint that reads the whole tree to find one pattern, or re-reads a file per\n` +
           `  row or per variable, grows with the repo until it is the CI job. Read each file\n` +
           `  once, or let \`git grep -l -F <pattern>\` pick the files first. If the reads are\n` +

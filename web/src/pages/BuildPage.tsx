@@ -574,7 +574,7 @@ export function BuildPage() {
       {/* Step 1 — pick kinds + intent */}
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
             {mode === "workspace"
               ? "Describe the workspace you want"
               : isAppMode
@@ -675,8 +675,8 @@ export function BuildPage() {
             {scopeOpen && (
               <div className="mt-2 rounded-lg border border-line dark:border-slate-700 p-2.5">
                 <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
-                    // pick up to 3
+                  <span className="text-[10px] uppercase tracking-widest text-faint">
+                    pick up to 3
                   </span>
                   <span className="text-[11px] text-faint dark:text-slate-500">
                     fewer is more reliable - the AI wires to the wrong thing when handed everything
@@ -759,7 +759,7 @@ export function BuildPage() {
       {prompt && (
         <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="text-[10px] uppercase tracking-widest text-faint">
               1. Copy this prompt → run it in your AI
             </span>
             <CopyButton text={prompt} label="Copy prompt" />
@@ -775,7 +775,7 @@ export function BuildPage() {
             </ul>
           )}
           <div>
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
               2. Paste the result here
             </span>
             <textarea
@@ -831,7 +831,7 @@ export function BuildPage() {
               </div>
               {preview.fields_added.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Fields added</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Fields added</div>
                   <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {preview.fields_added.map((f, i) => (
                       <li key={i}>
@@ -844,7 +844,7 @@ export function BuildPage() {
               )}
               {preview.wires_added.length > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Automations</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Automations</div>
                   <ul className="text-sm text-content dark:text-mortar-100 space-y-0.5">
                     {preview.wires_added.map((w, i) => (
                       <li key={i}>
@@ -857,7 +857,7 @@ export function BuildPage() {
               )}
               {(preview.instances_created ?? []).map((inst) => (
                 <div key={inst.instance_name}>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1">
                     New section · <span className="text-emerald-600 dark:text-emerald-400">{inst.display_name}</span>
                     <span className="normal-case text-faint"> (a table of {pluralise(itemNounFor({ itemNoun: inst.item_noun }))})</span>
                   </div>
@@ -878,7 +878,7 @@ export function BuildPage() {
               ))}
               {(preview.nav_headings ?? []).map((h) => (
                 <div key={h.name}>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Nav grouping</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Nav grouping</div>
                   <div className="text-sm text-content dark:text-mortar-100">
                     Group <span className="font-medium">{h.members.map((m) => m.target_id).join(", ")}</span> under a{" "}
                     <span className="font-medium">{h.name}</span> heading.
@@ -1004,6 +1004,7 @@ export function BuildPage() {
               <ul className="text-sm text-content dark:text-mortar-100 space-y-1">
                 {validation.errors.map((e, i) => (
                   <li key={i}>
+                    {/* mono: the validation error's code */}
                     <span className="font-mono text-[10px] uppercase tracking-wider text-ember-500">{e.code}</span>{" "}
                     {e.message}
                   </li>

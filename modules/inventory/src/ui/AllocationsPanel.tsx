@@ -34,8 +34,8 @@ export function AllocationsPanel({ partId }: { partId: string }) {
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // allocations
+      <div className="text-[10px] uppercase tracking-widest text-accent">
+        allocations
       </div>
       {list.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (
@@ -124,7 +124,7 @@ function ReserveForm({ partId }: { partId: string }) {
 
   return (
     <form onSubmit={submit} className="border-t border-line dark:border-slate-700 pt-3 mt-3 space-y-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         Reserve for…
       </div>
       <div className="flex gap-2">
@@ -288,7 +288,7 @@ function StatusBadge({ status }: { status: AllocationStatus }) {
   };
   const v = map[status];
   return (
-    <span className={`text-[9px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded shrink-0 ${v.cls}`}>
+    <span className={`text-[9px] uppercase tracking-widest px-1.5 py-0.5 rounded shrink-0 ${v.cls}`}>
       {v.label}
     </span>
   );

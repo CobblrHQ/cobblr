@@ -27,6 +27,7 @@ import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
 import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
+import { asksToVerifyEmail } from "../lib/email-verify";
 
 /** Account-menu row for how Cobblr reaches you, with Discord's state beside
  *  it (the owner, 2026-09-29). It always opens the notifications page, where
@@ -174,7 +175,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             <div className="text-[11px] text-faint dark:text-slate-400 truncate">{user.email}</div>
             {/* Unverified state lives here permanently (the top banner is
                 one-dismissal now) — the action stays reachable. */}
-            {user.email_verified === false && (
+            {asksToVerifyEmail(user) && (
               <button
                 type="button"
                 onClick={() => void api.resendVerification().catch(() => undefined)}
@@ -289,7 +290,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             heading={
               <>
                 <div className="my-1 border-t border-line dark:border-slate-700" />
-                <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
+                <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
               </>
             }
           />
@@ -298,7 +299,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           {isAdmin && (
             <>
               <div className="my-1 border-t border-line dark:border-slate-700" />
-              <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400 flex items-center gap-1.5">
+              <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-400 flex items-center gap-1.5">
                 <ShieldCheck size={11} /> Platform
               </div>
               {/* Plain anchor: the console is a top-level mount OUTSIDE this
@@ -422,7 +423,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             <div className="text-[11px] text-faint dark:text-slate-400 truncate">{user.email}</div>
             {/* Unverified state lives here permanently (the top banner is
                 one-dismissal now) — the action stays reachable. */}
-            {user.email_verified === false && (
+            {asksToVerifyEmail(user) && (
               <button
                 type="button"
                 onClick={() => void api.resendVerification().catch(() => undefined)}
@@ -537,7 +538,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
             heading={
               <>
                 <div className="my-1 border-t border-line dark:border-slate-700" />
-                <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
+                <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-400">{COMMUNITY_HEADING}</div>
               </>
             }
           />
@@ -546,7 +547,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           {isAdmin && (
             <>
               <div className="my-1 border-t border-line dark:border-slate-700" />
-              <div className="px-3 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-400 flex items-center gap-1.5">
+              <div className="px-3 py-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-400 flex items-center gap-1.5">
                 <ShieldCheck size={11} /> Platform
               </div>
               {/* Plain anchor: the console is a top-level mount OUTSIDE this
@@ -600,7 +601,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
 
 function SuperAdminChip() {
   return (
-    <span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-widest bg-cobble-100 text-cobble-700 dark:bg-cobble-500/20 dark:text-cobble-300 px-1.5 py-0.5 rounded">
+    <span className="inline-flex items-center gap-1 text-[9px] uppercase tracking-widest bg-cobble-100 text-cobble-700 dark:bg-cobble-500/20 dark:text-cobble-300 px-1.5 py-0.5 rounded">
       <ShieldCheck size={9} /> super-admin
     </span>
   );

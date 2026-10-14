@@ -188,7 +188,7 @@ export function DashboardTile({
     >
       <div className="flex items-center gap-2">
         <Icon size={13} className={attention ? "text-ember-500" : "text-accent"} />
-        <span className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 truncate">
+        <span className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 truncate">
           {label}
         </span>
         <span className="ml-auto flex items-baseline gap-1 min-w-0">

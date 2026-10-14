@@ -19,6 +19,7 @@ import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
 import { noteFarmActive } from "./farm-active.js";
 import { ownedDeviceRefs } from "./detectors/owned.js";
+import { lentDeviceRefs } from "./detectors/lent.js";
 import type { RemoteDevice } from "./drivers/types.js";
 
 export const ASSIGN_QUEUE = "digifab.assign";
@@ -96,6 +97,8 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
   );
   // Single-owner: printers an external detector owns aren't Cobblr's to drive.
   const owned = await ownedDeviceRefs(db);
+  // A printer lent out is away: it takes no plate until it is back.
+  const lent = await lentDeviceRefs(db, orgId);
 
   // F-3: surface an assignment send-failure instead of swallowing it.
   // A send that failed may still have left the job mid-`assigning`/`sent` on a
@@ -150,7 +153,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     let materialBlock: string | null = null;
     for (const m of members) {
       const key = `${m.connection_id}:${m.remote_device_id}`;
-      if (busy.has(key) || attention.has(key) || owned.has(key)) continue; // F-1: skip occupied/uncleared; single-owner: skip detector-owned
+      if (busy.has(key) || attention.has(key) || owned.has(key) || lent.has(key)) continue; // F-1: skip occupied/uncleared; single-owner: skip detector-owned
       const dev = (await devicesFor(m.connection_id)).find((d) => d.id === m.remote_device_id);
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
 

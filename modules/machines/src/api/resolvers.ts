@@ -189,6 +189,7 @@ function toResolvedMachine(row: {
   return {
     kind: "machines:machine",
     id: row.id,
+    instance: row.instance && row.instance !== "machines" ? row.instance : null,
     title: row.name,
     subtitle: row.state,
     detailUrl,

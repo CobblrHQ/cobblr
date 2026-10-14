@@ -102,7 +102,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
 
       {/* New-code style: self-describing vs opaque. Existing codes unaffected. */}
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+        <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
           New-code style
         </div>
         <div className="flex gap-2">
@@ -156,7 +156,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
 
       {/* Custom label base URL — durable codes that survive leaving this instance. */}
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
-        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
           <Globe size={12} /> Label base URL
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -336,7 +336,7 @@ function Pill({
   }[tone];
   return (
     <span
-      className={`text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded ${cls}`}
+      className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${cls}`}
     >
       {text}
     </span>

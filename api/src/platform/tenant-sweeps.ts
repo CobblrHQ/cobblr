@@ -19,8 +19,10 @@
 // spread over its cadence rather than fired at t+0, so nothing storms at
 // boot, and the hourly bundle-updates lands off the exact hour. Every pass
 // holds its own advisory lock for the length of the walk (exclusive.ts), so
-// two api processes never walk one pass at once; a pass whose lock is held
-// elsewhere sits this round out.
+// two api processes never schedule one pass at once; a pass whose lock is held
+// elsewhere sits this round out. Each workspace visit also holds its
+// workspace lock. A named run takes only those visit locks, so another
+// workspace's slow visit cannot hold an explicit run behind the whole round.
 //
 // A visit that throws fails that workspace for that pass and the walk goes
 // on; a workspace whose pool cannot open (a full Postgres) is logged once per
@@ -214,7 +216,7 @@ export async function runSweepEnableSteps(
 export const RUN_NOW_LOCK_WAIT_MS = 60_000;
 const LOCK_RETRY_MS = 250;
 
-/** Run one pass now: tests and admin doors. Waits for the pass's lock. */
+/** Run one pass now: tests and admin doors. A named run waits only for its workspace visits. */
 export async function runTenantSweep(name: string, opts: { orgIds?: string[]; now?: Date } = {}): Promise<TenantSweepRunResult> {
   const r = registry.get(name);
   if (!r) throw new Error(`tenant sweep: no pass named "${name}"`);
@@ -294,6 +296,10 @@ export async function walkWith(
   for (const pass of passes) {
     const result: TenantSweepRunResult = { visited: 0, failed: 0, backlog: false, stopped: false, results: [], skipped: false, failures: [] };
     out.set(pass.name, result);
+    if (opts.orgIds !== undefined) {
+      scoped.push({ pass, orgs: new Set(), result, release: async () => {} });
+      continue;
+    }
     let held: { release: () => Promise<void> } | null = null;
     for (;;) {
       try {
@@ -348,9 +354,7 @@ export async function walkWith(
 
     const gate = new Gate(deps.concurrency);
     let poolRefusals = 0;
-    const visit = async (orgId: string) => {
-      const here = scoped.filter((s) => s.orgs.has(orgId) && !s.result.stopped);
-      if (here.length === 0) return;
+    const visitHeld = async (orgId: string, here: Scoped[]) => {
       let db: unknown;
       try {
         db = await deps.openDb(orgId);
@@ -386,6 +390,38 @@ export async function walkWith(
         }
       } finally {
         await deps.releaseDb(orgId).catch(() => {});
+      }
+    };
+    const visit = async (orgId: string) => {
+      const here = scoped.filter((s) => s.orgs.has(orgId) && !s.result.stopped);
+      if (!here.length) return;
+      const deadline = Date.now() + (opts.waitForLockMs ?? 0);
+      let lock: { release: () => Promise<void> } | null = null;
+      try {
+        for (;;) {
+          lock = await deps.holdLock(`tenant-sweep-visit:${orgId}`);
+          if (lock || Date.now() >= deadline) break;
+          await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+        }
+      } catch (err) {
+        for (const s of here) {
+          s.result.failed++;
+          s.result.backlog = true;
+          noteFailure(s.pass.name, s.result, orgId, `lock: ${(err as Error).message}`);
+        }
+        return;
+      }
+      if (!lock) {
+        for (const s of here) {
+          s.result.skipped = true;
+          if (opts.orgIds === undefined && quiet.has(orgId)) quietVisits.get(s.pass.name)?.delete(orgId);
+        }
+        return;
+      }
+      try {
+        await visitHeld(orgId, here);
+      } finally {
+        await lock.release().catch(() => {});
       }
     };
     // The budget: `concurrency` workspaces in flight, the rest queued.

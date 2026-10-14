@@ -8,7 +8,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, MapPin, ScanLine, Tag, Undo2 } from "lucide-react";
-import { EntityPhoto, PlacePickList, noteRecentPlace, usePageTitle, usePhotoPick, usePlatformWeb, useRunAction, useToast, type PlaceChoice } from "@cobblr/platform-web";
+import { EntityPhoto, MoveToChoices, noteRecentPlace, usePageTitle, usePhotoPick, usePlatformWeb, useRunAction, useToast, type PlaceChoice } from "@cobblr/platform-web";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useInventory } from "./context";
 import { placeChoices } from "./BulkMoveToPlace";
@@ -202,7 +202,7 @@ export function RecountPage() {
           </div>
           {picking && (
             <div className="rounded-md border border-line dark:border-slate-700">
-              <PlacePickList slug={orgSlug} places={placeChoices(locs.data?.items ?? [])} holders={[]} onPick={choosePlace} />
+              <MoveToChoices slug={orgSlug} places={placeChoices(locs.data?.items ?? [])} holders={[]} onPick={choosePlace} />
             </div>
           )}
           {Capture && (
@@ -258,6 +258,19 @@ export function RecountPage() {
         </div>
       )}
 
+      {open && (
+        <p className="flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400" data-testid="recount-more-phones">
+          <span className="min-w-0 flex-1">More hands: open this recount on another signed-in phone, or set a scan station to it in the station's settings. A thing is never counted twice.</span>
+          <button
+            type="button"
+            onClick={() => void navigator.clipboard?.writeText(window.location.href).then(() => toast.success("Link copied."), () => toast.error("The link could not be copied."))}
+            className="min-h-11 rounded-md border border-line dark:border-slate-600 px-3 text-xs"
+          >
+            Copy link
+          </button>
+        </p>
+      )}
+
       {(() => {
         // Labels for next time: the things counted that carry no code to scan.
         const bare = r.expected.filter((e) => e.seen && !e.barcode);
@@ -273,7 +286,7 @@ export function RecountPage() {
 
       {r.new.length > 0 && (
         <section className="space-y-1">
-          <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">New: not on record</h3>
+          <h3 className="text-[10px] uppercase tracking-widest text-accent">New: not on record</h3>
           <ul className="divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700">
             {r.new.map((n) => (
               <li key={n.scan_id} className="flex items-center gap-2 px-3 py-2 text-sm">
@@ -290,7 +303,7 @@ export function RecountPage() {
       )}
 
       <section className="space-y-1">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">Expected: tap one to count it</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-accent">Expected: tap one to count it</h3>
         <ul className="divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700" data-testid="recount-expected">
           {r.expected.map((e) => (
             <li key={e.id} className="flex items-center gap-2 px-2 py-1.5" data-testid="recount-row" data-seen={e.seen ? "true" : "false"}>

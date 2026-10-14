@@ -111,16 +111,16 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
         <table className="w-full text-sm">
           <thead className="bg-subtle/50 dark:bg-slate-800/40">
             <tr>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
+              <th className="text-left text-[10px] uppercase tracking-widest text-faint px-3 py-2">
                 Member
               </th>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
+              <th className="text-left text-[10px] uppercase tracking-widest text-faint px-3 py-2">
                 Role
               </th>
-              <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
+              <th className="text-left text-[10px] uppercase tracking-widest text-faint px-3 py-2">
                 Grants
               </th>
-              <th className="text-right text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
+              <th className="text-right text-[10px] uppercase tracking-widest text-faint px-3 py-2">
                 Actions
               </th>
             </tr>
@@ -135,7 +135,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <div className="text-[10px] font-mono text-faint">{m.email}</div>
                 </td>
                 <td className="px-3 py-2">
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                  <span className="text-[10px] uppercase tracking-widest text-accent">
                     {m.role}
                   </span>
                 </td>
@@ -147,7 +147,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                     type="button"
                     disabled={regen.isPending}
                     onClick={() => regen.mutate(m.id)}
-                    className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
+                    className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
                     title="Generate a new temp password for this user"
                   >
                     <RefreshCw size={11} /> reset pwd
@@ -162,7 +162,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
       <Modal open={open} onClose={() => setOpen(false)} title="New user" size="sm">
         <form onSubmit={submit} className="space-y-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
               Email
             </span>
             <input
@@ -175,7 +175,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
               Display name
             </span>
             <input
@@ -187,7 +187,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
               Role
             </span>
             <select

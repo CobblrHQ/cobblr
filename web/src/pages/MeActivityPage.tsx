@@ -112,7 +112,7 @@ export function MeActivityPage() {
 
       {sections.map((s, i) => (
         <section key={`${s.day}|${s.orgSlug}|${i}`}>
-          <div className="mb-2 flex items-center gap-2 flex-wrap text-[10px] font-mono uppercase tracking-widest">
+          <div className="mb-2 flex items-center gap-2 flex-wrap text-[10px] uppercase tracking-widest">
             <span className="text-accent">{s.day}</span>
             <span className="text-faint dark:text-slate-600">·</span>
             <button

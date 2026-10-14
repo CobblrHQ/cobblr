@@ -80,13 +80,13 @@ export function PrinterConfigModal({
     <Modal open={open} onClose={onClose} title="Printer" subtitle={printer.name}>
       <div className="space-y-4">
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">name</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">name</span>
           <input className={field} value={name} onChange={(e) => setName(e.target.value)} />
         </label>
 
         {loadedSizeLabel && (
           <div>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printing</span>
+            <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">printing</span>
             <div className="mt-1 text-sm text-content dark:text-mortar-100">{loadedSizeLabel}</div>
             <div className="text-[11px] text-faint dark:text-slate-500 mt-0.5">
               Set by the label picker on this page, so it always matches what prints.
@@ -95,7 +95,7 @@ export function PrinterConfigModal({
         )}
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">print position</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">print position</span>
           <div className="flex items-center gap-2">
             <input
               className={`${field} w-24`}
@@ -115,7 +115,7 @@ export function PrinterConfigModal({
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">darkness</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">darkness</span>
           <div className="flex items-center gap-2">
             <DragInput
               className="w-40"

@@ -29,6 +29,7 @@ import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "./middleware.js";
 import { hashToken, mintTokenString } from "./api-tokens.js";
+import { IP_LIMITS_OFF } from "../platform/ip-limiter.js";
 
 export const MCP_PATH = "/api/v1/hooks/mcp";
 export const OAUTH_SCOPES = ["cobblr:look", "cobblr:change"] as const;
@@ -84,7 +85,7 @@ function makeLimiter(windowMs: number, max: number): (key: string) => boolean {
     return true;
   };
 }
-const LIMITS_OFF = process.env.NODE_ENV === "test" || !!process.env.COBBLR_TEST_ORG_POOL;
+const LIMITS_OFF = IP_LIMITS_OFF;
 const registerLimiter = makeLimiter(60_000, 20);
 const tokenLimiter = makeLimiter(60_000, 60);
 const over = (l: (k: string) => boolean, req: Request) => !LIMITS_OFF && !l(req.ip ?? "unknown");

@@ -56,31 +56,45 @@ async function kindsCarrying(entityKind: string, orgIds: readonly string[]): Pro
   return out;
 }
 
-/** Insert one def's rows for every target whose workspace still exists, in
- *  one statement. A workspace deleted after the caller read its list (a test
- *  tearing its own down, a person deleting one during a boot) would fail the
- *  whole statement on the org foreign key and keep the field from every other
- *  workspace (#4937): the targets are re-read against `orgs` and, if one goes
- *  between that read and the write, written again without it. */
-async function insertForLiveWorkspaces<T extends { orgId: string }>(targets: readonly T[], row: (t: T) => Insertable<ModuleFieldDefsTable>): Promise<number> {
-  let left = [...targets];
-  for (let attempt = 0; ; attempt++) {
-    if (left.length === 0) return 0;
-    const live = new Set((await meta.selectFrom("orgs").select("id").where("id", "in", [...new Set(left.map((t) => t.orgId))]).execute()).map((o) => o.id));
-    left = left.filter((t) => live.has(t.orgId));
-    if (left.length === 0) return 0;
+/** Insert one def's rows for every target whose workspace still exists. One
+ *  statement for all of them first; a workspace deleted after the caller read
+ *  its list (a test tearing its own down, a person deleting one during a boot)
+ *  fails that statement on the org foreign key, and then each workspace is
+ *  written on its own, so one that is gone costs only its own row and every
+ *  other workspace still gets the field (#4937). Retrying the one statement
+ *  could lose every time on a box deleting many workspaces at once; this
+ *  cannot. `liveOrgs` is the liveness read, a test's to replace. */
+export async function insertForLiveWorkspaces<T extends { orgId: string }>(
+  targets: readonly T[],
+  row: (t: T) => Insertable<ModuleFieldDefsTable>,
+  liveOrgs: (ids: string[]) => Promise<Set<string>> = async (ids) => new Set((await meta.selectFrom("orgs").select("id").where("id", "in", ids).execute()).map((o) => o.id)),
+): Promise<number> {
+  if (targets.length === 0) return 0;
+  const live = await liveOrgs([...new Set(targets.map((t) => t.orgId))]);
+  const left = targets.filter((t) => live.has(t.orgId));
+  if (left.length === 0) return 0;
+  const insert = (ts: readonly T[]) =>
+    meta
+      .insertInto("module_field_defs")
+      .values(ts.map(row))
+      .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
+      .returning("id")
+      .execute();
+  try {
+    return (await insert(left)).length;
+  } catch (err) {
+    if ((err as { code?: string }).code !== "23503") throw err;
+  }
+  let added = 0;
+  for (const orgId of new Set(left.map((t) => t.orgId))) {
     try {
-      const rows = await meta
-        .insertInto("module_field_defs")
-        .values(left.map(row))
-        .onConflict((b) => b.columns(["org_id", "entity_kind", "name"]).doNothing())
-        .returning("id")
-        .execute();
-      return rows.length;
+      added += (await insert(left.filter((t) => t.orgId === orgId))).length;
     } catch (err) {
-      if ((err as { code?: string }).code !== "23503" || attempt >= 2) throw err;
+      // Gone since the read: its rows went with it.
+      if ((err as { code?: string }).code !== "23503") throw err;
     }
   }
+  return added;
 }
 
 /** Write these contributed field defs into the given workspaces where they are

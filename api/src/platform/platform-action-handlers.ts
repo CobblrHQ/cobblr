@@ -1,4 +1,14 @@
 import { exportSendFile } from "./record-send-file.js";
+import { createPairing, deletePairing, updatePairing } from "./pairings-ops.js";
+import { linkWords } from "./record-kind-spellings.js";
+import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
+import { BindingCreate, BindingPatch, createWire, deleteWire, readWire, updateWire } from "./wire-ops.js";
+import { isOwnerOrAdmin } from "./people-ops.js";
+import { DASHBOARD_SECTION_IDS, DASHBOARD_SECTION_TITLE } from "@cobblr/platform-contract/dashboard-sections";
+import { DashboardLayoutShape, readDashboardLayout, saveDashboardLayout } from "./dashboard-layout.js";
+import { sendOutboundTest } from "./outbound-email.js";
+import { setFaces } from "./faces.js";
+import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract";
 import { registerPushDeviceHandlers } from "./push-device-actions.js";
 import { importSendFile, undoSendFileImport } from "./record-send-import.js";
 import { confirmSendFile, restoreSendFileSource } from "./record-send-file-confirm.js";
@@ -6,6 +16,7 @@ import { ExportFileBody, ImportFileBody, sendFileInput, parseSendFile } from "..
 import { SendError, sendRecords, previewSend, undoSend, type SendRequest } from "./record-send.js";
 import { SendBody } from "../routes/record-send.js";
 import { EditRecordActionLayout, editRecordActionLayout, readRecordActionLayout } from "./record-action-layout.js";
+import { EditRecordPanelLayout, RecordPanelLayout, editRecordPanelLayout, readRecordPanelLayout } from "./record-panel-layout.js";
 import { ACTION_GROUPS, similarActionGroup } from "@cobblr/platform-contract/action-groups";
 import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-schema";
 import { restore as restoreDeletedRecord } from "./deleted-records.js";
@@ -34,9 +45,11 @@ import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
 import { MAX_STEPS, jobOfWords, myAiDefaultsView, pickMyAiStep, saveMyAiDefaults } from "./my-ai-defaults.js";
-import { actionLabelOf, registerHandler, registerPlanner, registerRequester, registerUndo } from "./actions.js";
+import { actionLabelOf, invoke as invokeAction, registerHandler, registerPlanner, registerRequester, registerUndo } from "./actions.js";
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import { bringBack, markGone } from "./dispositions.js";
+import { lend, returnLoan } from "./custody.js";
+import type { RecordLoan } from "@cobblr/platform-contract/loan";
 import { offerRecords, offerTargets } from "./share-offers.js";
 import { findShareTarget, shareRecords, stopSharingRecords, shareCollection } from "./share-picks.js";
 import { describeInviteScope, inviteToShare } from "./share-invite.js";
@@ -67,6 +80,7 @@ import { turnPresetOff, turnPresetOn } from "./field-preset-switch.js";
 import { groupFields, ungroupFields } from "./field-sections.js";
 import { demoteInstance, promoteCategory } from "./instance-promote.js";
 import { listInstances } from "./instances.js";
+import { registerSetListPresentationAction } from "./set-list-presentation-action.js";
 import { countInstanceItems, getInstance, provisionInstance, tearDownInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
@@ -315,7 +329,69 @@ async function resolveRecordActionArrangement(ctx: ActionInvokeContext) {
   return { ok: true as const, input, kind, actions };
 }
 
+/** The panels a record can show, by id and title, from every module's
+ *  manifest: the names a person or the assistant may use for them. */
+function recordPanels(): Array<{ id: string; title: string }> {
+  return listEntries().flatMap((e) =>
+    ((e.manifest.contributes as { panels?: Array<{ id: string; surface: string; title?: string }> } | undefined)?.panels ?? [])
+      .filter((p) => p.surface === "entity-detail-panel")
+      .map((p) => ({ id: p.id, title: p.title ?? p.id })),
+  );
+}
+
+async function resolvePanelArrangement(ctx: ActionInvokeContext) {
+  const parsed = EditRecordPanelLayout.safeParse(ctx.args);
+  if (!parsed.success) return { ok: false as const, error: "Choose a kind of record and the panels to hide, show or order." };
+  const input = parsed.data;
+  const kinds = await listKindsForOrg(ctx.orgId);
+  const word = input.kind.toLowerCase();
+  const kind = kinds.find((k) => k.id === input.kind || k.display_name.toLowerCase() === word || k.display_name_plural?.toLowerCase() === word);
+  if (!kind) return { ok: false as const, error: "Choose a kind of record in this workspace." };
+  input.kind = kind.id;
+  const panels = recordPanels();
+  const idOf = (w: string) => panels.find((p) => p.id === w || p.title.toLowerCase() === w.toLowerCase())?.id ?? null;
+  for (const list of [input.panels, input.order]) {
+    for (let i = 0; i < (list?.length ?? 0); i++) {
+      const id = idOf(list![i]!);
+      if (!id) return { ok: false as const, error: `There is no panel called ${list![i]} on a record.` };
+      list![i] = id;
+    }
+  }
+  if (input.panels?.length && input.hidden === undefined) return { ok: false as const, error: "Say whether to hide those panels or show them." };
+  return { ok: true as const, input, kind, panels };
+}
+
 export function registerPlatformActionHandlers(): void {
+  registerPlanner("platform.arrange-record-panels", async (ctx) => {
+    const resolved = await resolvePanelArrangement(ctx);
+    if (!resolved.ok) return { error: resolved.error };
+    const { input, kind, panels } = resolved;
+    const current = await readRecordPanelLayout(ctx.orgId, kind.id);
+    if (input.expected_revision !== undefined && input.expected_revision !== current.revision) return { error: "The panels changed since you opened them. Refresh before saving." };
+    const name = (id: string) => panels.find((p) => p.id === id)?.title ?? id;
+    const lines: string[] = [];
+    if (input.layout) {
+      lines.push("Replace the arrangement with these choices.");
+      for (const [id, c] of Object.entries(input.layout.panels)) lines.push(`${name(id)}: ${[c.hidden ? "hidden" : "shown", c.order !== undefined ? `position ${c.order + 1}` : null].filter(Boolean).join(", ")}.`);
+    } else {
+      if (input.panels?.length) lines.push(`${input.hidden ? "Hide" : "Show"} ${input.panels.map(name).join(", ")}.`);
+      if (input.order?.length) lines.push(`Put them in this order: ${input.order.map(name).join(", ")}.`);
+    }
+    return { title: `Arrange the panels on ${kind.display_name_plural ?? kind.display_name}`, lines };
+  });
+  registerHandler("platform.arrange-record-panels", async (ctx) => {
+    const resolved = await resolvePanelArrangement(ctx);
+    if (!resolved.ok) return { ok: false, error: resolved.error };
+    const { input, kind } = resolved;
+    try {
+      const result = await editRecordPanelLayout(ctx.orgId, input);
+      return { ok: true, summary: `Arranged the panels on ${kind.display_name_plural ?? kind.display_name}.`, data: { kind: kind.id, before: result.before, revision: result.revision } };
+    } catch (err) { return { ok: false, error: (err as Error).message }; }
+  });
+  registerUndo("platform.arrange-record-panels", (result) => {
+    const parsed = z.object({ kind: z.string(), before: RecordPanelLayout, revision: z.number() }).safeParse((result as { data?: unknown } | null)?.data);
+    return parsed.success ? { action_id: "platform:arrange-record-panels", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
+  });
   registerPushDeviceHandlers();
   registerPlanner("platform.edit-record-actions", async (ctx) => {
     const resolved = await resolveRecordActionArrangement(ctx);
@@ -1520,6 +1596,7 @@ export function registerPlatformActionHandlers(): void {
   const findThing = async (
     orgId: string,
     said: string,
+    presentation = false,
   ): Promise<
     | { targetKind: "entity_kind" | "instance"; targetId: string; label: string; before: { name: string; plural: string } }
     | { error: string }
@@ -1544,7 +1621,7 @@ export function registerPlatformActionHandlers(): void {
     // was written where nothing looked, and a rename through the assistant
     // said done and changed nothing (#4495).
     const instanceRowId = (i: { module_name: string; instance_name: string }) => `${i.module_name}:${i.instance_name}`;
-    const byInstanceName = instances.find((i) => !i.is_default && i.instance_name === said.trim());
+    const byInstanceName = instances.find((i) => (presentation || !i.is_default) && (i.instance_name === said.trim() || (presentation && instanceRowId(i) === said.trim())));
     if (byInstanceName) {
       const id = instanceRowId(byInstanceName);
       const label = labelOf("instance", id, byInstanceName.display_name ?? byInstanceName.instance_name);
@@ -1557,6 +1634,12 @@ export function registerPlatformActionHandlers(): void {
     }
     const byKindId = kinds.find((k) => k.id === said.trim());
     if (byKindId) {
+      if (presentation) {
+        const instance = instances.find((i) => byKindId.instance_name
+          ? i.instance_name === byKindId.instance_name
+          : i.is_default && i.module_name === byKindId.module_name);
+        if (instance) return findThing(orgId, instanceRowId(instance), true);
+      }
       const label = labelOf("entity_kind", byKindId.id, byKindId.display_name);
       return {
         targetKind: "entity_kind",
@@ -1581,11 +1664,16 @@ export function registerPlatformActionHandlers(): void {
       // matched as well as the singular rather than instead of it.
       const plural = pluralOf("entity_kind", k.id, k.display_name_plural ?? pluralise(label));
       const before = { name: label, plural };
-      candidates.push({ label, targetKind: "entity_kind", targetId: k.id, before });
-      if (plural !== label) candidates.push({ label: plural, targetKind: "entity_kind", targetId: k.id, before });
+      const instance = presentation ? instances.find((i) => k.instance_name
+        ? i.instance_name === k.instance_name
+        : i.is_default && i.module_name === k.module_name) : undefined;
+      const targetKind = instance ? "instance" as const : "entity_kind" as const;
+      const targetId = instance ? instanceRowId(instance) : k.id;
+      candidates.push({ label, targetKind, targetId, before });
+      if (plural !== label) candidates.push({ label: plural, targetKind, targetId, before });
     }
     for (const i of instances) {
-      if (i.is_default) continue;
+      if (i.is_default && !presentation) continue;
       const id = instanceRowId(i);
       const label = labelOf("instance", id, i.display_name ?? i.instance_name);
       candidates.push({
@@ -1610,7 +1698,7 @@ export function registerPlatformActionHandlers(): void {
       const others = hit.ambiguous.filter(
         (a) => !(a.targetKind === "instance") && !(inst && a.targetId === `${inst.targetId.split(":").pop()}:item`),
       );
-      if (inst && others.length === 0) {
+      if (inst && others.length === 0 && (!presentation || new Set(hit.ambiguous.map((a) => `${a.targetKind}:${a.targetId}`)).size === 1)) {
         return { targetKind: "instance", targetId: inst.targetId, label: inst.label, before: inst.before };
       }
       const distinct = [...new Set(hit.ambiguous.map((a) => `${a.targetKind}:${a.targetId}`))];
@@ -1622,6 +1710,8 @@ export function registerPlatformActionHandlers(): void {
     }
     return { targetKind: hit.targetKind, targetId: hit.targetId, label: hit.label, before: hit.before };
   };
+
+  registerSetListPresentationAction((orgId, said) => findThing(orgId, said, true));
 
   // The rename, before the card: which thing, and what it is called now.
   registerPlanner("platform.rename-thing", async (ctx: ActionInvokeContext) => {
@@ -1658,6 +1748,58 @@ export function registerPlatformActionHandlers(): void {
       summary: `"${found.label}" is now called ${plural}`,
       data: { target: found.targetId, name, plural, before: found.before },
     };
+  });
+
+  // A list's sections (faces): stock, lending, service... on, off or handed
+  // back to the list's own fields (faces.ts setFaces).
+  registerHandler("platform.set-faces", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    let kind = str(args.entity_kind);
+    let called = kind;
+    if (!kind) {
+      const said = str(args.target);
+      if (!said) return { ok: false, error: "name the list (target) or pass its kind (entity_kind)" };
+      const found = await findThing(ctx.orgId, said);
+      if ("error" in found) return { ok: false, error: found.error };
+      kind = found.targetKind === "instance" ? `${found.targetId.split(":").pop()}:item` : found.targetId;
+      called = found.label;
+    }
+    const names = (key: string) => readListArg(args, key).map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+    const change: Partial<Record<FaceName, boolean | null>> = {};
+    const unknown: string[] = [];
+    for (const [list, value] of [[names("on"), true], [names("off"), false], [names("clear"), null]] as const) {
+      for (const f of list) {
+        if ((FACE_NAMES as readonly string[]).includes(f)) change[f as FaceName] = value;
+        else unknown.push(f);
+      }
+    }
+    if (unknown.length) return { ok: false, error: `not a section: ${unknown.join(", ")}. The sections are ${FACE_NAMES.join(", ")}.` };
+    if (!Object.keys(change).length) return { ok: false, error: "say which sections to turn on, off or clear" };
+    const before = await setFaces(ctx.orgId, kind, change);
+    const said = (Object.entries(change) as Array<[FaceName, boolean | null]>).map(([f, v]) => `${FACE_LABELS[f]} ${v === null ? "follows its fields" : v ? "on" : "off"}`);
+    return { ok: true, summary: `${called}: ${said.join(", ")}.`, data: { entity_kind: kind, changed: Object.keys(change), before } };
+  });
+  // The confirm card names each section and what happens to it.
+  registerPlanner("platform.set-faces", async (ctx: ActionInvokeContext) => {
+    const args = (ctx.args ?? {}) as Record<string, unknown>;
+    const called = str(args.entity_kind) || str(args.target);
+    if (!called) return { error: "name the list (target) or pass its kind (entity_kind)" };
+    const lines: string[] = [];
+    for (const [key, words] of [["on", "on"], ["off", "off"], ["clear", "follows its fields"]] as const) {
+      for (const f of readListArg(args, key).map((x) => String(x).trim().toLowerCase()).filter(Boolean)) {
+        if (!(FACE_NAMES as readonly string[]).includes(f)) return { error: `not a section: ${f}. The sections are ${FACE_NAMES.join(", ")}.` };
+        lines.push(`${FACE_LABELS[f as FaceName]}: ${words}`);
+      }
+    }
+    if (!lines.length) return { error: "say which sections to turn on, off or clear" };
+    return { title: `Sections for ${called}`, lines };
+  });
+  registerUndo("platform.set-faces", (result) => {
+    const d = (result as { data?: { entity_kind?: unknown; changed?: unknown; before?: Record<string, unknown> } } | null)?.data;
+    if (typeof d?.entity_kind !== "string" || !Array.isArray(d.changed)) return null;
+    const was = d.before ?? {};
+    const pick = (v: boolean | undefined) => (d.changed as string[]).filter((f) => (typeof was[f] === "boolean" ? was[f] : undefined) === v);
+    return { action_id: "platform:set-faces", args: { entity_kind: d.entity_kind, on: pick(true), off: pick(false), clear: pick(undefined) } };
   });
 
   // What a kind calls the things inside its records, by the list's name.
@@ -1753,6 +1895,127 @@ export function registerPlatformActionHandlers(): void {
     return hit;
   };
 
+  // The dashboard's arrangement, a blueprint, and an app's records brought
+  // over (#6528): the dashboard's, the Backup screen's and the account menu's
+  // own operations.
+  const listSaid = (v: unknown) => str(v).split(",").map((x) => x.trim()).filter(Boolean);
+  registerHandler("platform.arrange-dashboard", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const before = await readDashboardLayout(ctx.orgId);
+    if (str(a.restore)) {
+      let parsed;
+      try { parsed = DashboardLayoutShape.safeParse(JSON.parse(str(a.restore))); } catch { parsed = null; }
+      if (!parsed?.success) return { ok: false, error: "restore is not an arrangement Undo saved" };
+      await saveDashboardLayout(ctx.orgId, ctx.userId, parsed.data);
+      return { ok: true, summary: "The dashboard is arranged as it was.", data: { before } };
+    }
+    const layout = {
+      widgets: before.widgets.map((w) => ({ ...w })),
+      sections: before.sections?.length ? before.sections.map((s) => ({ ...s })) : DASHBOARD_SECTION_IDS.map((id) => ({ id, hidden: false })),
+    };
+    const resolve = (said: string): { list: "sections" | "widgets"; id: string } | { error: string } => {
+      const t = said.toLowerCase();
+      const section = DASHBOARD_SECTION_IDS.find((id) => id === t || DASHBOARD_SECTION_TITLE[id] === t);
+      if (section) return { list: "sections", id: section };
+      if (layout.widgets.some((w) => w.id === said)) return { list: "widgets", id: said };
+      const m = findModule(said);
+      if ("error" in m) return { error: `no card or section called "${said}"; sections: ${DASHBOARD_SECTION_IDS.map((id) => DASHBOARD_SECTION_TITLE[id]).join(", ")}; cards are named by their feature` };
+      return { list: "widgets", id: m.name };
+    };
+    const entry = (r: { list: "sections" | "widgets"; id: string }) => {
+      const list = layout[r.list] as Array<{ id: string; hidden: boolean; span?: number }>;
+      let e = list.find((x) => x.id === r.id);
+      if (!e) { e = { id: r.id, hidden: false }; list.push(e); }
+      return e;
+    };
+    const changed: string[] = [];
+    for (const [arg, apply, word] of [
+      ["hide", (e: { hidden: boolean }) => { e.hidden = true; }, "hidden"],
+      ["show", (e: { hidden: boolean }) => { e.hidden = false; }, "shown"],
+      ["wide", (e: { span?: number }) => { e.span = 2; }, "wide"],
+      ["normal", (e: { span?: number }) => { delete e.span; }, "normal width"],
+    ] as const) {
+      const names = listSaid(a[arg]);
+      for (const said of names) {
+        const r = resolve(said);
+        if ("error" in r) return { ok: false, error: r.error };
+        if ((arg === "wide" || arg === "normal") && r.list === "sections") return { ok: false, error: `"${said}" is a section; only a card can be wide` };
+        apply(entry(r) as never);
+      }
+      if (names.length) changed.push(`${inWords(names)} ${word}`);
+    }
+    const first = listSaid(a.first);
+    if (first.length) {
+      for (const list of ["sections", "widgets"] as const) {
+        const named: string[] = [];
+        for (const said of first) {
+          const r = resolve(said);
+          if ("error" in r) return { ok: false, error: r.error };
+          if (r.list === list) { entry(r); named.push(r.id); }
+        }
+        const arr = layout[list] as Array<{ id: string }>;
+        arr.sort((x, y) => (named.includes(x.id) ? named.indexOf(x.id) : named.length) - (named.includes(y.id) ? named.indexOf(y.id) : named.length));
+      }
+      changed.push(`${inWords(first)} first`);
+    }
+    if (!changed.length) return { ok: false, error: "say what to hide, show, put first, or make wide or normal" };
+    const parsed = DashboardLayoutShape.parse(layout);
+    await saveDashboardLayout(ctx.orgId, ctx.userId, parsed);
+    return { ok: true, summary: `On the dashboard: ${changed.join("; ")}.`, data: { before } };
+  });
+  registerUndo("platform.arrange-dashboard", (result) => {
+    const before = (result as { data?: { before?: unknown } } | null)?.data?.before;
+    return before ? { action_id: "platform:arrange-dashboard", args: { restore: JSON.stringify(before) } } : null;
+  });
+
+  const blueprintSaid = async (raw: string) => {
+    const { BlueprintManifest } = await import("../routes/blueprint.js");
+    let json: unknown;
+    try { json = JSON.parse(raw); } catch { return { error: "That is not a blueprint's JSON." } as const; }
+    const p = BlueprintManifest.safeParse((json as { manifest?: unknown } | null)?.manifest ?? json);
+    if (!p.success) return { error: `That blueprint does not read right: ${p.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}` } as const;
+    return { m: p.data };
+  };
+  registerPlanner("platform.install-blueprint", async (ctx) => {
+    const b = await blueprintSaid(str((ctx.args ?? {}).blueprint));
+    if ("error" in b) return { error: String(b.error) };
+    const { planInstall } = await import("../routes/blueprint.js");
+    const plan = await planInstall(ctx.orgId, b.m);
+    const lines = [
+      plan.enable_modules.length ? `Turns on ${inWords(plan.enable_modules)}` : "",
+      plan.install_bundles.length ? `Installs ${countOf(plan.install_bundles.length, "bundle")}` : "",
+      plan.create_instances ? `Creates ${countOf(plan.create_instances, "list")}` : "",
+      plan.create_field_defs ? `Adds ${countOf(plan.create_field_defs, "field")}` : "",
+      plan.create_wires ? `Sets up ${countOf(plan.create_wires, "automation")}` : "",
+      plan.create_saved_views ? `Saves ${countOf(plan.create_saved_views, "view")}` : "",
+      plan.create_public_surfaces ? `Publishes ${countOf(plan.create_public_surfaces, "public page")}, which anyone with the link can open` : "",
+    ].filter(Boolean);
+    return { title: `Install the ${b.m.name} blueprint`, lines: lines.length ? lines : ["Nothing here changes; the workspace already has all of it."] };
+  });
+  registerHandler("platform.install-blueprint", async (ctx: ActionInvokeContext) => {
+    const b = await blueprintSaid(str((ctx.args ?? {}).blueprint));
+    if ("error" in b) return { ok: false, error: String(b.error) };
+    const { installBlueprint } = await import("../routes/blueprint.js");
+    const u = ctx.userId ? await meta.selectFrom("users").select(["display_name"]).where("id", "=", ctx.userId).executeTakeFirst() : undefined;
+    const applied = await installBlueprint(ctx.orgId, { id: ctx.userId ?? "", display_name: u?.display_name ?? null, auth_method: "session" }, b.m);
+    const warn = applied.bundle_warnings.length ? ` ${countOf(applied.bundle_warnings.length, "bundle")} did not install: ${applied.bundle_warnings.map((w) => `${w.id} (${w.error})`).join("; ")}.` : "";
+    return { ok: true, summary: `The ${b.m.name} blueprint is installed.${warn}`, data: { blueprint: b.m.id, applied } };
+  });
+
+  registerHandler("platform.import-app", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).from);
+    if (!said) return { ok: false, error: "from is required (the app's name or address)" };
+    if (!ctx.userId) return { ok: false, error: "Only a person can copy their own app's records." };
+    try {
+      const { importFromOwnApp } = await import("./provision-app.js");
+      const r = await importFromOwnApp(ctx.orgId, ctx.userId, said);
+      if (!r.ok) return { ok: false, error: r.message };
+      return { ok: true, summary: `${countOf(r.imported, "record")} copied from ${r.from}. ${r.from} keeps its own.`, data: { imported: r.imported, instance: r.instance, from: r.from } };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  });
+
   registerHandler("platform.promote-category", async (ctx: ActionInvokeContext) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const category = str(args.category);
@@ -1841,7 +2104,11 @@ export function registerPlatformActionHandlers(): void {
       return { ok: false, error: `${from.module} records cannot be moved between lists.` };
     }
     try {
-      const result = await moveRecords(ctx.orgId, from.module, ids, from.name, to.name);
+      // The screen's move asks which custom fields to bring along (its preview
+      // names the ones the target lacks); the assistant's move takes the same
+      // answer, so the two doors move a record the same way.
+      const carry = readListArg(args, "carry_fields").map((f) => String(f).trim()).filter(Boolean);
+      const result = await moveRecords(ctx.orgId, from.module, ids, from.name, to.name, carry.length ? { carryFields: carry } : {});
       const n = result.moved.length;
       // Every record it moved, by its NEW kind: the panel draws each as a chip
       // that opens it where it now lives.
@@ -2010,6 +2277,284 @@ export function registerPlatformActionHandlers(): void {
       action_id: "platform:mark-gone",
       args: { entity_kind: d.kind, ids: rows.map((r) => r.id), how: first.how, on: first.on, price: first.price, to: first.to, note: first.note },
     };
+  });
+
+  // Links between two records (pairings-ops.ts, #6528): the record page's
+  // Links panel and these actions run the same three operations.
+  registerHandler("platform.link-records", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const d = { source_kind: str(a.source_kind), source_id: str(a.source_id), target_kind: str(a.target_kind), target_id: str(a.target_id), relationship_kind: str(a.relationship_kind) };
+    const missing = Object.entries(d).filter(([, v]) => !v).map(([k]) => k);
+    if (missing.length) return { ok: false, error: `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} required - read both records first and pass their real kinds and ids` };
+    for (const [kind, id] of [[d.source_kind, d.source_id], [d.target_kind, d.target_id]] as const) {
+      if (!(await lookup(ctx.orgId, kind, id))) return { ok: false, error: `There is no record with the id ${id} here. Read both records first and pass their real ids.` };
+    }
+    const out = await createPairing(ctx.orgId, ctx.userId, { ...d, notes: str(a.notes) || null });
+    if (!out.ok) return { ok: false, error: out.message };
+    const [from, to] = await Promise.all([lookup(ctx.orgId, d.source_kind, d.source_id), lookup(ctx.orgId, d.target_kind, d.target_id)]);
+    return { ok: true, summary: `${from?.title ?? "It"} is linked to ${to?.title ?? "the other"} (${linkWords(d.relationship_kind)}).`, data: { id: out.row.id, touched: [{ kind: d.source_kind, id: d.source_id }, { kind: d.target_kind, id: d.target_id }] } };
+  });
+  registerUndo("platform.link-records", (result) => {
+    const id = (result as { data?: { id?: unknown } } | null)?.data?.id;
+    return typeof id === "string" ? { action_id: "platform:unlink-records", args: { id } } : null;
+  });
+
+  registerHandler("platform.edit-link", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const id = str(a.id);
+    if (!id) return { ok: false, error: "id (the link's id, from list_related) is required" };
+    const out = await updatePairing(ctx.orgId, id, { notes: str(a.notes) || null });
+    if (!out.ok) return { ok: false, error: out.message };
+    return { ok: true, summary: out.row.notes ? "The link's note is changed." : "The link's note is cleared.", data: { id, notes_before: out.before.notes ?? null } };
+  });
+  registerUndo("platform.edit-link", (result) => {
+    const d = (result as { data?: { id?: unknown; notes_before?: unknown } } | null)?.data;
+    return typeof d?.id === "string" ? { action_id: "platform:edit-link", args: { id: d.id, notes: typeof d.notes_before === "string" ? d.notes_before : "" } } : null;
+  });
+
+  registerHandler("platform.unlink-records", async (ctx: ActionInvokeContext) => {
+    const id = str((ctx.args ?? {}).id);
+    if (!id) return { ok: false, error: "id (the link's id, from list_related) is required" };
+    const out = await deletePairing(ctx.orgId, id);
+    if (!out.ok) return { ok: false, error: out.message };
+    const b = out.before;
+    return { ok: true, summary: `Unlinked (${linkWords(b.relationship_kind)}).`, data: { before: { source_kind: b.source_kind, source_id: b.source_id, target_kind: b.target_kind, target_id: b.target_id, relationship_kind: b.relationship_kind, notes: b.notes ?? null } } };
+  });
+  registerUndo("platform.unlink-records", (result) => {
+    const b = (result as { data?: { before?: Record<string, unknown> } } | null)?.data?.before;
+    return b ? { action_id: "platform:link-records", args: { ...b, ...(b.notes ? {} : { notes: undefined }) } } : null;
+  });
+
+  // Automations (wire-ops.ts, #6528): the Automations screen and these actions
+  // run the same three operations and the same checks.
+  const WIRE_FIELDS = ["source_kind", "action_id", "trigger_type", "trigger_event", "trigger_schedule", "args", "filter", "target", "template", "label", "ask", "enabled"] as const;
+  const wireFields = (a: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    for (const k of WIRE_FIELDS) {
+      const v = a[k];
+      if (v === undefined || v === "") continue;
+      // A json argument may arrive as text from a wire's own form.
+      out[k] = typeof v === "string" && ["args", "filter", "ask"].includes(k) ? JSON.parse(v) : typeof v === "string" && k === "target" && v.trim().startsWith("{") ? JSON.parse(v) : v;
+    }
+    return out;
+  };
+  const zodSaid = (issues: Array<{ path: PropertyKey[]; message: string }>) => issues.map((i) => (i.path.length ? `${i.path.join(".")}: ${i.message}` : i.message)).join("; ");
+  const wireArgsOf = (row: Record<string, unknown>) => {
+    const out: Record<string, unknown> = {};
+    for (const k of WIRE_FIELDS) if (row[k] !== null && row[k] !== undefined) out[k] = row[k];
+    return out;
+  };
+
+  // An automation runs its action later with nobody asked, so one set up
+  // through the assistant may never run what only a person does, and its card
+  // names who it would message.
+  const wireTargetRefusal = (actionId: unknown, args: unknown): string | null =>
+    typeof actionId === "string" ? humanOnlyRefusal(actionId, (args && typeof args === "object" ? args : null) as Record<string, unknown> | null) : null;
+  const MESSAGE_ACTION = "core-notifications:message-someone";
+  const wireCardLines = async (orgId: string, w: Record<string, unknown>): Promise<string[]> => {
+    const runs = (await actionLabelOf(String(w.action_id ?? ""))) ?? String(w.action_id ?? "its action");
+    const when = w.trigger_type === "event" ? `when ${String(w.trigger_event ?? "its event")} happens` : w.trigger_type === "schedule" ? `on the schedule ${String(w.trigger_schedule ?? "")}` : "when a person presses it";
+    const lines = [`Runs "${runs}" ${when}${w.source_kind ? `, on ${String(w.source_kind)}` : ""}.`];
+    if (w.action_id === MESSAGE_ACTION) {
+      const a = (typeof w.args === "string" ? JSON.parse(w.args) : w.args ?? {}) as { to?: unknown; via?: unknown };
+      const to = str(a.to);
+      const { listPeople } = await import("./people.js");
+      const person = to ? (await listPeople(orgId)).find((p) => p.id === to || p.name.trim().toLowerCase() === to.trim().toLowerCase()) : undefined;
+      lines.push(
+        !to ? "Messages someone: nobody named yet."
+          : person && !person.member ? `Messages ${person.name}, who is not a member, by ${a.via === "text" ? "text message" : "email"} from this workspace's own sender.`
+            : `Messages ${person?.name ?? to} through their own notifications.`,
+      );
+    }
+    return lines;
+  };
+  registerPlanner("platform.add-wire", async (ctx) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const refused = wireTargetRefusal(a.action_id, a.args);
+    if (refused) return { error: refused };
+    return { title: `Set up an automation${a.label ? `: ${String(a.label)}` : ""}`, lines: await wireCardLines(ctx.orgId, a) };
+  });
+  registerPlanner("platform.edit-wire", async (ctx) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const row = str(a.wire_id) ? await readWire(ctx.orgId, str(a.wire_id)) : null;
+    if (!row) return { error: "No such automation here." };
+    const merged = { ...wireArgsOf(row as unknown as Record<string, unknown>), ...wireFields(a) };
+    const refused = wireTargetRefusal(merged.action_id, merged.args);
+    if (refused) return { error: refused };
+    return { title: `Change the automation${merged.label ? ` "${String(merged.label)}"` : ""}`, lines: await wireCardLines(ctx.orgId, merged) };
+  });
+
+  registerHandler("platform.add-wire", async (ctx: ActionInvokeContext) => {
+    let fields: Record<string, unknown>;
+    try {
+      fields = wireFields((ctx.args ?? {}) as Record<string, unknown>);
+    } catch {
+      return { ok: false, error: "args, filter and ask are JSON objects" };
+    }
+    const refusedTarget = wireTargetRefusal(fields.action_id, fields.args);
+    if (refusedTarget) return { ok: false, error: refusedTarget };
+    const parsed = BindingCreate.safeParse(fields);
+    if (!parsed.success) return { ok: false, error: zodSaid(parsed.error.issues) };
+    const out = await createWire(ctx.orgId, ctx.userId, parsed.data);
+    if (!out.ok) return { ok: false, error: out.message };
+    const runs = (await actionLabelOf(out.row.action_id)) ?? "its action";
+    return { ok: true, summary: `The automation is set up: it runs "${runs}".`, data: { wire_id: out.row.id } };
+  });
+  registerUndo("platform.add-wire", (result) => {
+    const id = (result as { data?: { wire_id?: unknown } } | null)?.data?.wire_id;
+    return typeof id === "string" ? { action_id: "platform:remove-wire", args: { wire_id: id } } : null;
+  });
+
+  registerHandler("platform.edit-wire", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const id = str(a.wire_id);
+    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup) is required" };
+    let fields: Record<string, unknown>;
+    try {
+      fields = wireFields(a);
+    } catch {
+      return { ok: false, error: "args, filter and ask are JSON objects" };
+    }
+    if (!Object.keys(fields).length) return { ok: false, error: "say what to change: its trigger, action, args, filter, target or label" };
+    const current = await readWire(ctx.orgId, id);
+    const merged = { ...(current ? wireArgsOf(current as unknown as Record<string, unknown>) : {}), ...fields };
+    const refusedTarget = wireTargetRefusal(merged.action_id, merged.args);
+    if (refusedTarget) return { ok: false, error: refusedTarget };
+    const parsed = BindingPatch.safeParse(fields);
+    if (!parsed.success) return { ok: false, error: zodSaid(parsed.error.issues) };
+    const out = await updateWire(ctx.orgId, id, parsed.data);
+    if (!out.ok) return { ok: false, error: out.message };
+    const was = wireArgsOf(out.before as unknown as Record<string, unknown>);
+    const before = Object.fromEntries(Object.keys(fields).map((k) => [k, was[k] ?? null]));
+    return { ok: true, summary: "The automation is changed.", data: { wire_id: id, before } };
+  });
+  registerUndo("platform.edit-wire", (result) => {
+    const d = (result as { data?: { wire_id?: unknown; before?: Record<string, unknown> } } | null)?.data;
+    return typeof d?.wire_id === "string" && d.before ? { action_id: "platform:edit-wire", args: { wire_id: d.wire_id, ...d.before } } : null;
+  });
+
+  registerHandler("platform.remove-wire", async (ctx: ActionInvokeContext) => {
+    const id = str((ctx.args ?? {}).wire_id);
+    if (!id) return { ok: false, error: "wire_id (the automation's id, from get_workspace_setup) is required" };
+    const out = await deleteWire(ctx.orgId, id);
+    if (!out.ok) return { ok: false, error: out.message };
+    return { ok: true, summary: "The automation is removed.", data: { wire_id: id, before: wireArgsOf(out.before as unknown as Record<string, unknown>) } };
+  });
+  registerUndo("platform.remove-wire", (result) => {
+    const b = (result as { data?: { before?: Record<string, unknown> } } | null)?.data?.before;
+    return b ? { action_id: "platform:add-wire", args: b } : null;
+  });
+
+  // The test email (outbound-email.ts, #6528): the Email screen's own send,
+  // with its exact owner/admin rule. Inviting someone and handing on their
+  // things are a person's own steps (human-only.ts), not actions.
+  const notAdmin = "Only a workspace owner or admin can do that.";
+  registerHandler("platform.test-outbound-email", async (ctx: ActionInvokeContext) => {
+    if (!(await isOwnerOrAdmin(ctx.orgId, ctx.userId))) return { ok: false, error: notAdmin };
+    const org = await meta.selectFrom("orgs").select("name").where("id", "=", ctx.orgId).executeTakeFirst();
+    const r = await sendOutboundTest(ctx.orgId, org?.name ?? "this workspace", ctx.userId!, str((ctx.args ?? {}).subject) || null);
+    if (!r.ok) return { ok: false, error: r.message };
+    return { ok: true, summary: `A test is on its way to ${r.to}.`, data: { to: r.to, status: r.status } };
+  });
+
+  // A thing lent out, and back: an overlay on every kind (custody.ts, #6335).
+  registerHandler("platform.lend", async (ctx: ActionInvokeContext) => {
+    const { args, kind, ids } = goneArgs(ctx);
+    if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
+    const holder = str(args.holder);
+    if (!holder && !str(args.holder_id)) return { ok: false, error: "who has it (holder, or holder_id from People) is required" };
+    const r = await lend(ctx.orgId, ctx.userId, kind, ids, {
+      holder,
+      holder_id: str(args.holder_id) || null,
+      reason: str(args.reason) || null,
+      since: str(args.since) || null,
+      due_back: str(args.due_back) || null,
+      note: str(args.note) || null,
+    });
+    if (!r.ok) return { ok: false, error: r.error };
+    const n = r.done.length;
+    return {
+      ok: true,
+      summary: n === 1 ? `${r.done[0]!.title} is with ${r.holder}.` : `${n} records are with ${r.holder}.`,
+      data: { kind, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
+    };
+  });
+  registerPlanner("platform.lend", async (ctx: ActionInvokeContext) => {
+    const { args, kind, ids } = goneArgs(ctx);
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const holder = str(args.holder);
+    if (!holder && !str(args.holder_id)) return { error: "who has it (holder, or holder_id from People) is required" };
+    const lines = await goneTitles(ctx.orgId, kind, ids);
+    return { title: `Lend ${countOf(lines.length, "record")} to ${holder || "them"}`, lines };
+  });
+  // A loan that replaced an earlier one is undone by lending it back to the
+  // earlier holder; a fresh loan by its return.
+  registerUndo("platform.lend", (result) => {
+    const d = (result as { data?: { kind?: unknown; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
+    const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordLoan | null } => typeof b.id === "string");
+    if (!rows.length || typeof d?.kind !== "string") return null;
+    if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id) } };
+    const first = rows[0]!.before;
+    if (!first || !rows.every((r) => JSON.stringify(r.before) === JSON.stringify(first))) return null;
+    return { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first } };
+  });
+
+  registerHandler("platform.return", async (ctx: ActionInvokeContext) => {
+    const { kind, ids } = goneArgs(ctx);
+    if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
+    const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids);
+    if (!r.ok) return { ok: false, error: r.error };
+    const n = r.done.length;
+    // Repaired: its service log says by whom and what, through the log's own
+    // action, so it reads and undoes like any other entry. A workspace
+    // without the service log still gets the thing back.
+    const logged: string[] = [];
+    const entries: string[] = [];
+    if (ctx.args?.repaired === true) {
+      for (const d of r.done) {
+        const said = await invokeAction("core-maintenance:log", {
+          ...ctx,
+          scope: "entity",
+          entity: { kind, id: d.id },
+          args: { name: `Repaired by ${d.before?.holder ?? "them"}`, ...(str(ctx.args?.work) ? { notes: str(ctx.args?.work) } : {}) },
+        }).catch(() => null);
+        const ran = said as { ok?: unknown; result?: { id?: unknown } } | null;
+        if (ran?.ok === true) {
+          logged.push(d.id);
+          if (typeof ran.result?.id === "string") entries.push(ran.result.id);
+        }
+      }
+    }
+    return {
+      ok: true,
+      summary: `${n === 1 ? `${r.done[0]!.title} is back.` : `${n} records are back.`}${logged.length ? " The repair is in its service log." : ""}`,
+      data: { kind, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })), service_entries: entries },
+    };
+  });
+  registerPlanner("platform.return", async (ctx: ActionInvokeContext) => {
+    const { kind, ids } = goneArgs(ctx);
+    if (!kind) return { error: "entity_kind (the kind of record) is required" };
+    if (!ids.length) return { error: "ids are required - read the records first and pass their real ids, never their names" };
+    const lines = await goneTitles(ctx.orgId, kind, ids);
+    return { title: `Mark ${countOf(lines.length, "record")} as back`, lines };
+  });
+  // Lent again, to the same person on the same terms: one undo per call, so it
+  // is offered only when every record was out the same way.
+  registerUndo("platform.return", (result) => {
+    const d = (result as { data?: { kind?: unknown; before?: Array<{ id?: unknown; before?: RecordLoan | null }>; service_entries?: unknown } } | null)?.data;
+    const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordLoan } => typeof b.id === "string" && !!b.before);
+    if (!rows.length || typeof d?.kind !== "string" || rows.length !== (d?.before ?? []).length) return null;
+    const first = rows[0]!.before;
+    if (!rows.every((r) => JSON.stringify(r.before) === JSON.stringify(first))) return null;
+    // The repair it logged comes out of the service log with it.
+    const entries = Array.isArray(d.service_entries) ? d.service_entries.filter((e): e is string => typeof e === "string") : [];
+    return [
+      { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first } },
+      ...entries.map((entry_id) => ({ action_id: "core-maintenance:remove-entry", args: { entry_id } })),
+    ];
   });
 
   // Hand records over to someone a share links to (share-offers.ts).

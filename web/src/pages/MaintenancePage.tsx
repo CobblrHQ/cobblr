@@ -198,7 +198,7 @@ function MaintenanceCard({
             </Link>
             {due && (
               <span
-                className={`text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded ${due.cls}`}
+                className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${due.cls}`}
               >
                 {due.label}
               </span>

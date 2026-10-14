@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext";
 import { api } from "../lib/api";
 import { useToast } from "@cobblr/platform-web";
 import { getShareViewToken } from "../lib/share-view";
+import { asksToVerifyEmail } from "../lib/email-verify";
 
 export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "sidebar" } = {}) {
   const { user } = useAuth();
@@ -29,7 +30,7 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
   const [sent, setSent] = useState(false);
 
   // A View as through a share borrows someone else's eyes, not their account.
-  if (!user || user.email_verified !== false || dismissed || getShareViewToken()) return null;
+  if (!user || !asksToVerifyEmail(user) || dismissed || getShareViewToken()) return null;
 
   async function resend() {
     setBusy(true);

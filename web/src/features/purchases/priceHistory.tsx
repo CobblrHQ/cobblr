@@ -85,11 +85,11 @@ export function PriceHistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const stats = q.data?.stats;
   if (!stats || items.length === 0) return null;
 
-  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const head = "text-[10px] uppercase tracking-widest text-accent";
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-baseline justify-between gap-2">
-        <div className={head}>// price history</div>
+        <div className={head}>price history</div>
         <div className="text-[11px] text-faint font-mono">
           {stats.purchases} purchase{stats.purchases === 1 ? "" : "s"}
         </div>

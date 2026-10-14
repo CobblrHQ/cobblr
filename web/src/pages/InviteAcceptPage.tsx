@@ -284,7 +284,7 @@ export function InviteAcceptPage() {
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block text-left">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
       {children}
     </label>
   );

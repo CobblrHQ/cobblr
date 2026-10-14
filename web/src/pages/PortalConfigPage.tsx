@@ -107,19 +107,19 @@ export function PortalConfigPage() {
         <Link
           to={`/portal/${activeSlug}`}
           target="_blank"
-          className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition inline-flex items-center gap-1"
+          className="text-[11px] uppercase tracking-widest text-accent hover:text-accent transition inline-flex items-center gap-1"
         >
           preview <ExternalLink size={10} />
         </Link>
       </ConfigHeaderActions>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // branding
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          branding
         </div>
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Display name
             </span>
             <input
@@ -130,7 +130,7 @@ export function PortalConfigPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Logo URL
             </span>
             <input
@@ -141,7 +141,7 @@ export function PortalConfigPage() {
             />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Members land in
             </span>
             <select value={defaultApp} onChange={(e) => setDefaultApp(e.target.value)} className="input">
@@ -155,7 +155,7 @@ export function PortalConfigPage() {
             </span>
           </label>
           <label className="block col-span-2">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
               Welcome markdown
             </span>
             <textarea
@@ -170,8 +170,8 @@ export function PortalConfigPage() {
       </div>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // launcher theme
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          launcher theme
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500">
           {themeTokens ? (
@@ -205,8 +205,8 @@ export function PortalConfigPage() {
       </div>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // admin dashboard theme
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          admin dashboard theme
         </div>
         <p className="text-[11px] text-faint dark:text-slate-500">
           Brands <strong>this</strong> admin dashboard (the shell you're in now): the whole thing
@@ -234,8 +234,8 @@ export function PortalConfigPage() {
       </div>
 
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // pinned views
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          pinned views
         </div>
         {pinnedViews.length === 0 && (
           <div className="text-xs text-faint italic">
@@ -253,7 +253,7 @@ export function PortalConfigPage() {
               </span>
               <span className="flex-1 text-sm text-content dark:text-mortar-100 truncate">
                 {v.name}{" "}
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+                <span className="text-[10px] uppercase tracking-widest text-faint">
                   ({v.entity_kind})
                 </span>
               </span>
@@ -292,7 +292,7 @@ export function PortalConfigPage() {
 
         {unpinnedViews.length > 0 && (
           <div className="pt-2 border-t border-line dark:border-slate-800">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-2">
+            <div className="text-[10px] uppercase tracking-widest text-faint mb-2">
               + available saved views
             </div>
             <div className="flex flex-wrap gap-1.5">

@@ -98,14 +98,14 @@ export function ScanStationsPage() {
         <button className={button} onClick={() => setShowCard((v) => !v)}>{showCard ? "Hide controls" : "Printable controls"}</button>
       </div>
       {showCard && <section aria-label="Station controls" className="space-y-3 rounded-lg border border-line dark:border-slate-600 p-4">
-        <h2 className="text-sm font-mono uppercase tracking-widest text-accent">Station controls</h2>
+        <h2 className="text-sm uppercase tracking-widest text-accent">Station controls</h2>
         <p className="text-sm text-muted">Use the station button to undo with a short press or end with a long press. A barcode reader can scan these controls.</p>
         <div className="flex flex-wrap gap-4">{controls.data?.map((c) => <div key={c.label} className="text-center"><img src={c.image} alt={`${c.label} control QR`} width={160} height={160} /><p>{c.label}</p><button className={button} disabled={change.isPending} onClick={() => change.mutate({ type: "tag", action: c.code })}>Write {c.label} to a tag</button></div>)}</div>
         {d.command?.status === "waiting" && <p role="status">Tap the next tag at this station.</p>}
         {d.command?.message && <p role={d.command.status === "failed" ? "alert" : "status"}>{d.command.message}</p>}
         <button className={button} onClick={() => window.print()}>Print controls</button>
       </section>}
-      <h2 className="text-sm font-mono uppercase tracking-widest text-accent">Sessions</h2>
+      <h2 className="text-sm uppercase tracking-widest text-accent">Sessions</h2>
       <ul className="space-y-3">{sessions.data?.pages.flatMap((page) => page.items).map((s) => <li key={s.id}>
         <Link to={`/scan/stations/${id}/sessions/${s.id}`} className="text-accent underline">{new Date(s.started_at).toLocaleString()} · {countOf(s.count, "action")} · {s.ended_at ? "Review" : "Active"}</Link>
       </li>)}</ul>

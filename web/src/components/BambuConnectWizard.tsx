@@ -35,7 +35,7 @@ export function BambuConnectWizard({
   const [label, setLabel] = useState("");
 
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const err = (e: unknown) => toast.error(e instanceof ApiError ? e.message : String(e));
   const arrive = (r: Extract<BambuLoginResponse, { status: "ready" }>) => { setDevices(r.devices); setStep("review"); };
 

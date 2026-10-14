@@ -14,6 +14,8 @@ import { decodeBarcodeImage } from "./lib/decode-barcode-image";
 import { photoSuggestionsWhenOn } from "./lib/photoSuggestionsWhenOn";
 import { FormBarcodeCapture } from "./components/FormBarcodeCapture";
 import { RecordPhoto } from "./components/RecordPhoto";
+import { LocationTreePicker } from "./components/LocationTreePicker";
+import { LocationChipPicker } from "./components/LocationChipPicker";
 import { CobbHead } from "./components/CobbHead";
 // Flows load when one is opened (the flow host gives each a boundary).
 const NewFromTemplateFlow = lazy(() => import("./flows/NewFromTemplateFlow").then((m) => ({ default: m.NewFromTemplateFlow })));
@@ -45,6 +47,8 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
         appMode={!!appMode}
         flows={WORKSPACE_FLOWS}
         recordPhoto={RecordPhoto}
+        locationPicker={LocationTreePicker}
+        locationChips={LocationChipPicker}
         barcodeCapture={FormBarcodeCapture}
         decodeBarcodeImage={decodeBarcodeImage}
         // The app owns what Cobb looks like; the package owns the button that
@@ -117,6 +121,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
               .orgModules(slug)
               .then((r) => [...KERNEL_PANELS, ...r.items.filter((m) => m.enabled).flatMap((m) => m.panels ?? [])]),
           panelPresence: (slug, kind, id, collection) => api.panelPresence(slug, kind, id, collection),
+          recordPanelLayout: (slug, kind) => api.recordPanelLayout(slug, kind),
           fieldValues: (slug, kind, field, opts) => api.fieldValues(slug, kind, field, opts),
           addresses: (slug, q) => api.addresses(slug, q),
           sellerOffer: (slug, kind) => api.sellerOffer(slug, kind),

@@ -119,7 +119,7 @@ export function ScanItemSheetFooter({
     // on that line its words wrap inside it. So no width, text size or label
     // can push an action off the screen or over its neighbour
     // (e2e/sheet-footer-never-clips.mjs walks every state).
-    <StickyBottomBar testId="sheet-footer" className="z-20 flex flex-wrap items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))]">
+    <StickyBottomBar testId="sheet-footer" className="z-20 flex flex-wrap items-center justify-end gap-2 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 py-2 pb-[max(0.5rem,var(--inset-bottom))] pl-[max(0.75rem,var(--inset-left))] pr-[max(0.75rem,var(--inset-right))]">
       <button
         type="button"
         onClick={onDiscard}

@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-13
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-14
 ---
 
 A recount adds a new spool under its filament type, and asks which type when two read alike

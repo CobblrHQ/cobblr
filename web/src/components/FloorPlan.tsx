@@ -61,7 +61,7 @@ import { groupPins, groupableFields, shortFor } from "../lib/pinGroups";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { DEFAULT_SILL_MM, closetWalls, doorFitsWall, edgeOf, frontEdge, intoRoom, planFlags, readCloset, roomWalls, rotated, type ClosetDoor, type Edge, type PlanItem } from "@cobblr/platform-contract/plan-clearance";
+import { DEFAULT_SILL_MM, closetWalls, doorFitsWall, edgeOf, flagIsRed, frontEdge, intoRoom, planFlags, readCloset, roomWalls, rotated, type ClosetDoor, type Edge, type PlanItem } from "@cobblr/platform-contract/plan-clearance";
 import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -383,7 +383,7 @@ function PlanFor({
   // collision — see collidingIds).
   const colliding = useMemo(() => {
     const items = [
-      ...placed.filter((p) => p.loc.kind !== "area").map((p) => ({ id: p.loc.id, rect: p.rect })),
+      ...placed.filter((p) => p.loc.kind !== "area").map((p) => ({ id: p.loc.id, rect: p.rect, holds: true })),
       ...placedOccupants.map((p) => ({ id: `${p.ent.kind}:${p.ent.id}`, rect: p.rect })),
       // A thing at its real footprint takes its real room on the floor.
       ...(onFloor ? sized.things.map((t) => ({ id: t.key, rect: t.rect })) : []),
@@ -1117,6 +1117,7 @@ function PlanFor({
             name: p.loc.name,
             box: live?.id === p.loc.id ? live.rect : p.rect,
             h_mm: hasOwnLayout(p.loc.metadata) ? (readBound(p.loc.metadata)?.d_mm ?? null) : null,
+            holds: true,
           })),
         ...sized.things.filter((t) => !t.shelfId).map((t) => ({ id: t.key, name: t.name, box: live?.id === t.key ? live.rect : t.rect, h_mm: t.size.h_mm ?? null })),
       ]
@@ -1563,7 +1564,7 @@ function PlanFor({
               {(showZones || edit || placing || !!readCloset(byId.get(z.id)?.metadata?.floorplan)) && (
                 <span
                   data-zone-label={z.name}
-                  className="absolute font-mono text-[10px] uppercase tracking-[.2em] text-cobble-600/40 dark:text-cobble-300/30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
+                  className="absolute text-[10px] uppercase tracking-[.2em] text-cobble-600/40 dark:text-cobble-300/30 pointer-events-none -translate-x-1/2 -translate-y-1/2"
                   style={{ left: pct(r.x_mm + r.w_mm / 2, bound.w_mm), top: pct(r.y_mm + r.d_mm / 2, bound.d_mm) }}
                 >
                   {z.name}
@@ -1621,7 +1622,7 @@ function PlanFor({
                   ${outlines.get(loc.id)?.border ?? "border border-slate-400 dark:border-slate-500"} text-content dark:text-slate-200
                   ${edit ? "cursor-move touch-none" : "cursor-pointer hover:border-accent hover:text-accent"}
                   ${colliding.has(loc.id) ? "border-dashed !border-ember-500 ring-1 ring-ember-500/60" : ""}
-                  ${inTheWay.some((f) => f.kind === "door" || f.kind === "room") ? "!border-ember-500 ring-2 ring-ember-500/60" : inTheWay.length ? "ring-2 ring-amber-500/60" : ""}
+                  ${inTheWay.some(flagIsRed) ? "!border-ember-500 ring-2 ring-ember-500/60" : inTheWay.length ? "ring-2 ring-amber-500/60" : ""}
                   ${front ? FRONT_EDGE[front] : ""}
                   ${selected ? "ring-1 ring-accent border-accent" : ""}
                   ${placing?.over === loc.id ? "ring-2 ring-accent border-accent" : ""}`}
@@ -2042,7 +2043,7 @@ function SectionHead({
         )}
       </h2>
       {edit && (
-        <span className="font-mono text-[10px] uppercase tracking-widest text-accent">editing</span>
+        <span className="text-[10px] uppercase tracking-widest text-accent">editing</span>
       )}
       <div className="flex-1" />
       {children}
@@ -3171,7 +3172,7 @@ function EntityPanel({
   return (
     <div className="flex items-center gap-3 flex-wrap rounded-md border border-cobble-300/60 dark:border-cobble-700/60 bg-cobble-50 dark:bg-slate-800 px-3 py-2">
       <span className="text-xs font-medium text-content dark:text-slate-200">{ent.name}</span>
-      <span className="font-mono text-[10px] uppercase tracking-widest text-faint">
+      <span className="text-[10px] uppercase tracking-widest text-faint">
         {ent.kind.split(":")[1]}
       </span>
       <DimInput label="wide" mm={rect.w_mm} unit={unit} onCommit={(v) => onResize(ent, { w_mm: v })} />

@@ -56,8 +56,8 @@ export function HealthPage() {
         endpoint and look at the HTTP status (503 ⇒ red).
       </p>
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        {"// module probes"}
+      <div className="text-[10px] uppercase tracking-widest text-accent">
+        {"module probes"}
       </div>
       {snap.isLoading && <div className="text-xs text-faint">loading…</div>}
       {snap.data && Object.keys(probes).length === 0 && (

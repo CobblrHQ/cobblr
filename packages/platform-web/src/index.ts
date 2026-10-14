@@ -7,6 +7,11 @@ export {
   PlatformWebProvider,
   RecordPhoto,
   type RecordPhotoProps,
+  LocationPicker,
+  type LocationPickerProps,
+  type PickedHolder,
+  LocationChips,
+  type LocationChipsProps,
   usePlatformWeb, useViewerRole, useActiveWorkspaceSlug,
   useFlowHost,
   type FlowComponent,
@@ -15,6 +20,7 @@ export {
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { RecordDisposition } from "./RecordDisposition";
+export { RecordLoan } from "./RecordLoan";
 export { BulkShareWith } from "./BulkShareWith";
 export type { SuggestedEdit } from "./types";
 export { BulkGiveTo } from "./BulkGiveTo";
@@ -32,6 +38,7 @@ export { summariseParts, summaryLine, type TileSummary } from "./tileSummary";
 export { EntityChip } from "./EntityChip";
 export { SubjectLink, subjectRoute } from "./SubjectLink";
 export { EntityThumb } from "./EntityThumb";
+export { PhoneRecordList, usePhoneLayout, type PhoneRecordRow, type PhoneRecordListProps } from "./PhoneRecordList";
 export { Swatch } from "./Swatch";
 export { ColourInput } from "./ColourInput";
 export { entityInitial } from "./entity-initial";
@@ -45,7 +52,7 @@ export {
   pickThumb,
   type SwatchFieldDef,
   type ThumbChoice,
-} from "./swatch";
+} from "./swatch-pick";
 export {
   buildLocationForest,
   flattenLocationForest,
@@ -83,7 +90,7 @@ export { SelectableTile, SELECTED_TILE, type SelectableTileProps } from "./Selec
 export { PhotoSourceBadge, AiMark } from "./PhotoSourceBadge";
 export { FooterActionPopover, type FooterActionPopoverProps } from "./FooterActionPopover";
 export { BulkTagAction } from "./BulkTagAction";
-export { PlacePickList, readRecentPlaces, noteRecentPlace, type PlaceChoice } from "./PlacePickList";
+export { MoveToChoices, readRecentPlaces, noteRecentPlace, type PlaceChoice } from "./MoveToChoices";
 export { CustomFieldsPanel, RelationSelect, MemberSelect } from "./CustomFieldsPanel";
 export { TipLine, pickTip, registerTip, registeredTips, type Tip, type TipState, type TipStripProps } from "./tips";
 export { useRecordInPath, type RecordInPathOptions } from "./useRecordInPath";
@@ -316,7 +323,7 @@ export { registerBottomChrome, registerCornerChrome, stackBottomChrome, stackCor
 export { useLayerStack, topLayerZ, stackedZ, isTopLayer, inTopLayer } from "./layer-stack";
 export { useDialogFocus, tabbables } from "./useDialogFocus";
 export { DragInput, type DragInputProps } from "./DragInput";
-export { OverlayLayer, PopoverLayer, BackdropLayer, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
+export { OverlayLayer, PopoverLayer, BackdropLayer, useCloseOnPageScroll, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
 

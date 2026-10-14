@@ -52,7 +52,7 @@ export function AppSettingsPage() {
       </p>
 
       <div className="mt-6">
-        <div className="mb-2 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+        <div className="mb-2 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
           Show in the menu
         </div>
         <ul className="divide-y divide-line dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
@@ -90,7 +90,7 @@ export function AppSettingsPage() {
         </ul>
         {addable.length > 0 && (
           <>
-            <div className="mt-6 mb-2 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+            <div className="mt-6 mb-2 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
               Not in the menu
             </div>
             <ul className="divide-y divide-line dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900" data-testid="apps-not-in-menu">

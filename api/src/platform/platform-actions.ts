@@ -104,6 +104,12 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: { kind: { label: "Kind of record", type: "text", required: true }, group: { label: "Group", type: "text" }, label: { label: "Group name", type: "text" }, actions: { label: "Actions to move", type: "list" }, order: { label: "Group order", type: "number" }, hidden: { label: "Hidden", type: "boolean" }, primary: { label: "Primary", type: "boolean" }, layout: { label: "Complete layout", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/record-actions
+    id: "platform:arrange-record-panels", group: "organise", label: "Arrange record panels", description: "Hide the panels a kind of record does not need, or put them in another order: Loaded filament above Service schedule on 3D printers, say. Hidden panels can be shown again, and changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.arrange-record-panels", user_invokable: true, undoable: true,
+    examples: ["hide Bench instrument on 3D printers", "put Loaded filament first on printers"],
+    args_schema: { kind: { label: "Kind of record", type: "text", required: true }, panels: { label: "Panels to hide or show", type: "list" }, hidden: { label: "Hidden", type: "boolean" }, order: { label: "Panels in order, top first", type: "list" }, layout: { label: "Complete arrangement", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /configuration/people
     group: "more",
     id: "platform:add-person", run_by: "member", label: "Add a person", icon: "user-plus",
@@ -634,6 +640,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       ids: { label: "The records to move, by id (read them first)", type: "list", required: true },
       to: { label: "The list to move them into (e.g. Tea)", type: "text", required: true },
       from: { label: "The list they are in now (optional; worked out from the records when left blank)", type: "text" },
+      carry_fields: { label: "Custom fields to bring along by name, so their values stay labelled in the new list (the move's preview names the ones it lacks)", type: "list" },
     },
     version: "0.1.0",
   },
@@ -681,6 +688,229 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
       ids: { label: "The records, by id (read them first)", type: "list", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: "+ Link" on its Links panel)
+    group: "organise",
+    id: "platform:link-records",
+    min_role: "member",
+    run_by: "member",
+    label: "Link two records",
+    description:
+      "Link one record to another, saying how they relate: a part and the project that uses it, a manual and the machine it is for. Pass the source and target as kind and id (read both records first) and relationship_kind, a short word for the link (uses, part-of, manual-for). The link shows on both records. The same two, the same way, once.",
+    icon: "link",
+    scope: "workspace",
+    invoke_handler: "platform.link-records",
+    user_invokable: true,
+    // platform:unlink-records takes it away again; nothing else changes
+    undoable: true,
+    examples: ["link the M3 screws to the printer build project", "this manual is for the drill press"],
+    args_schema: {
+      source_kind: { label: "The first record's kind", type: "text", required: true },
+      source_id: { label: "The first record's id", type: "text", required: true },
+      target_kind: { label: "The record it links to: its kind", type: "text", required: true },
+      target_id: { label: "The record it links to: its id", type: "text", required: true },
+      relationship_kind: { label: "How they relate, in a word (uses, part-of, manual-for)", type: "text", required: true },
+      notes: { label: "A note on the link", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: a link's note on its Links panel)
+    group: "organise",
+    id: "platform:edit-link",
+    min_role: "member",
+    run_by: "member",
+    label: "Change a link's note",
+    description:
+      "Change the note on a link between two records. Pass the link's id (list_related gives each link with its id) and the new note; an empty note clears it.",
+    icon: "link",
+    scope: "workspace",
+    invoke_handler: "platform.edit-link",
+    user_invokable: true,
+    // the note it had is put back
+    undoable: true,
+    examples: ["note on that link: only the left-hand spindle"],
+    args_schema: {
+      id: { label: "The link's id", type: "text", required: true },
+      notes: { label: "The note (empty clears it)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: Unlink on its Links panel)
+    group: "organise",
+    id: "platform:unlink-records",
+    min_role: "member",
+    run_by: "member",
+    label: "Unlink two records",
+    description:
+      "Take away a link between two records. Both records stay as they are; only the link goes. Pass the link's id (list_related gives each link with its id). A thing's link to its type is changed where the types are kept, not here.",
+    icon: "unlink",
+    scope: "workspace",
+    invoke_handler: "platform.unlink-records",
+    user_invokable: true,
+    // the same link is made again, note and all
+    undoable: true,
+    examples: ["the screws aren't for that project any more", "unlink the manual from the lathe"],
+    args_schema: {
+      id: { label: "The link's id", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/automations
+    group: "organise",
+    id: "platform:add-wire",
+    min_role: "admin",
+    label: "Set up an automation",
+    description:
+      "Set up an automation (a wire): when something happens to a kind of record, or on a schedule, or as a button on its records, run one action. Pass source_kind, action_id and the trigger; the action's arguments go in args. It is checked as the Automations screen checks one: an event something sends, a filter that reads, a trigger the kind can carry, an action that can run. Runs on the workspace, not a record.",
+    icon: "workflow",
+    scope: "workspace",
+    invoke_handler: "platform.add-wire",
+    user_invokable: true,
+    // NOT undoable: an automation acts on its own later, so a person sees
+    // the card before it is saved. Its undo (platform:remove-wire) is offered.
+    undoable: false,
+    examples: ["when stock of a part runs low, add it to the shopping list", "every Monday remind me to check the printers"],
+    args_schema: {
+      source_kind: { label: "The kind of record it watches or runs on (e.g. inventory:part)", type: "text", required: true },
+      action_id: { label: "The action it runs (list_actions)", type: "text", required: true },
+      trigger_type: { label: "When it runs: user-invoked (a button), event, on-create, on-update, on-delete or schedule", type: "text" },
+      trigger_event: { label: "For trigger_type event: the event it listens for", type: "text" },
+      trigger_schedule: { label: "For trigger_type schedule: an RRULE (F, required: true=WEEKLY;BYDAY=MO)", type: "text" },
+      args: { label: "The action's arguments, as an object", type: "json" },
+      filter: { label: "Only when the record matches this filter (field: value)", type: "json" },
+      target: { label: "What it runs on: \"self\" (default), \"none\", or {rel, dir, kind} to reach a linked record", type: "json" },
+      template: { label: "A message template, for actions that send one", type: "text" },
+      label: { label: "For a button: what it says", type: "text" },
+      ask: { label: "For a button: what it asks before it runs", type: "json" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/automations
+    group: "organise",
+    id: "platform:edit-wire",
+    min_role: "admin",
+    label: "Change an automation",
+    description:
+      "Change an automation (a wire) by its id, which get_workspace_setup (automations) lists: its trigger, its action, its arguments, its filter or its target. Only the fields given change; it keeps its id and its history. Turning one on or off is platform:set-wire-enabled. Runs on the workspace, not a record.",
+    icon: "workflow",
+    scope: "workspace",
+    invoke_handler: "platform.edit-wire",
+    user_invokable: true,
+    // NOT undoable, as add-wire; its undo puts the changed fields back.
+    undoable: false,
+    examples: ["make the low stock automation fire at 2 instead of 5", "point the restock wire at the Pantry list"],
+    args_schema: {
+      wire_id: { label: "The automation's id", type: "text", required: true },
+      source_kind: { label: "The kind of record it watches or runs on (e.g. inventory:part)", type: "text" },
+      action_id: { label: "The action it runs (list_actions)", type: "text" },
+      trigger_type: { label: "When it runs: user-invoked (a button), event, on-create, on-update, on-delete or schedule", type: "text" },
+      trigger_event: { label: "For trigger_type event: the event it listens for", type: "text" },
+      trigger_schedule: { label: "For trigger_type schedule: an RRULE (F=WEEKLY;BYDAY=MO)", type: "text" },
+      args: { label: "The action's arguments, as an object", type: "json" },
+      filter: { label: "Only when the record matches this filter (field: value)", type: "json" },
+      target: { label: "What it runs on: \"self\" (default), \"none\", or {rel, dir, kind} to reach a linked record", type: "json" },
+      template: { label: "A message template, for actions that send one", type: "text" },
+      label: { label: "For a button: what it says", type: "text" },
+      ask: { label: "For a button: what it asks before it runs", type: "json" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/automations
+    group: "organise",
+    id: "platform:remove-wire",
+    min_role: "admin",
+    label: "Remove an automation",
+    description:
+      "Remove an automation (a wire) by its id, which get_workspace_setup (automations) lists. Nothing it already did is undone; it only stops for good. To pause one instead, platform:set-wire-enabled. Runs on the workspace, not a record.",
+    icon: "trash-2",
+    scope: "workspace",
+    invoke_handler: "platform.remove-wire",
+    user_invokable: true,
+    // NOT undoable, as add-wire; its undo sets the same automation up again.
+    undoable: false,
+    examples: ["delete the automation that emails me about the kiln"],
+    args_schema: {
+      wire_id: { label: "The automation's id", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/email
+    group: "more",
+    id: "platform:test-outbound-email",
+    // min_role "admin" is the rank floor; the handler applies the exact rule,
+    // as the Email screen does.
+    min_role: "admin",
+    label: "Send a test email",
+    description:
+      "Send a test email through this workspace's own outbound mail, to your own account's address only, to check it works before a customer is emailed. Setting the mail provider up is done on the Email screen, never here. Owners and admins only.",
+    icon: "mail",
+    scope: "workspace",
+    invoke_handler: "platform.test-outbound-email",
+    user_invokable: true,
+    // NOT undoable: a sent email cannot be taken back.
+    undoable: false,
+    examples: ["does my email setup work?", "send me a test email"],
+    args_schema: {
+      subject: { label: "Its subject line, to find it in your inbox (default: Test from Cobblr)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: "Lend…" in its actions, RecordLoan)
+    group: "lifecycle",
+    id: "platform:lend",
+    min_role: "grantable",
+    label: "Lend it out",
+    description:
+      "Record that someone has things for now: who has it (holder, their name; or holder_id, someone on the People list), why (reason: repair, borrowed, or the person's words), the day it went (since, YYYY-MM-DD; today when left out), when it is due back (due_back, YYYY-MM-DD) and a note. Nothing else on the record changes: it keeps its place, which it returns to, and its state. Read the records first and pass their real ids and their kind.",
+    icon: "hand-helping",
+    scope: "workspace",
+    invoke_handler: "platform.lend",
+    user_invokable: true,
+    // platform:return ends it, and is registered as its undo
+    undoable: true,
+    examples: ["I dropped the Dremel off with Sam to fix it", "lent the ladder to Sam until Friday", "my brother borrowed the drill"],
+    args_schema: {
+      entity_kind: { label: "The kind of record (e.g. machines:machine)", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      holder: { label: "Who has it, by name (or holder_id instead)", type: "text" },
+      holder_id: { label: "Who has it, from the People list", type: "text" },
+      reason: { label: "Why: repair, borrowed, or your own words", type: "text" },
+      since: { label: "The day it went (YYYY-MM-DD; today when left out)", type: "text" },
+      due_back: { label: "Due back (YYYY-MM-DD)", type: "text" },
+      note: { label: "A note", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /machines (and every record page: "It's back" on the line of a thing lent out)
+    group: "lifecycle",
+    id: "platform:return",
+    min_role: "grantable",
+    label: "It's back",
+    description:
+      "Things lent out are back: the loan ends, and each is at its own place again in the state it was in. Back from a repair, say whether it was repaired (repaired: true or false) and what was done (work); a repair goes in its service log as \"Repaired by <who>\". Read the records first and pass their real ids and their kind.",
+    icon: "undo-2",
+    scope: "workspace",
+    invoke_handler: "platform.return",
+    user_invokable: true,
+    // platform:lend with the loan each record had is its undo
+    undoable: true,
+    examples: ["Sam gave the Dremel back, the carriage clip is fixed", "the ladder is back"],
+    args_schema: {
+      entity_kind: { label: "The kind of record", type: "text", required: true },
+      ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      repaired: { label: "Back from a repair: was it repaired?", type: "boolean" },
+      work: { label: "What was done, for its service log", type: "text" },
     },
     version: "0.1.0",
   },
@@ -804,7 +1034,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Share with someone",
     description:
-      "Put records in a share with a person, so a copy of each appears in their shared workspace and keeps in step. Records already shared with them are left as they are. Name the person (with) as their name or the share's id, or as an email address to invite someone new (owner or admin): the invite is emailed when this Cobblr can send mail, works only for that address, and the summary says whether it was emailed or gives the link to send. For a whole list, pass collection: true and entity_kind from list_record_kinds, without ids. Otherwise read the records first and pass their real ids and their kind.",
+      "Put records in a share with a person, so a copy of each appears in their shared workspace and keeps in step. Records already shared with them are left as they are. Name the person (with) as their name or the share's id, someone already shared with. Sharing with a new email address brings a new person in, so the person does that themselves under Share with…: offer to open it, never pass an email here. For a whole list, pass collection: true and entity_kind from list_record_kinds, without ids. Otherwise read the records first and pass their real ids and their kind.",
     icon: "share-2",
     scope: "workspace",
     invoke_handler: "platform.share-with",
@@ -817,7 +1047,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       entity_kind: { label: "The kind of record", type: "text", required: true },
       ids: { label: "The records, by id (read them first)", type: "list" },
       collection: { label: "Share the whole collection, including future records (owner or admin)", type: "boolean" },
-      with: { label: "Who to share them with: the person's name, the share's id, or an email address to invite someone new", type: "text", required: true },
+      with: { label: "Who to share them with: the person's name or the share's id (someone already shared with)", type: "text", required: true },
     },
     version: "0.3.0",
   },
@@ -1034,6 +1264,71 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     },
     version: "0.1.0",
   },
+  {
+    // UI-SCREEN: / (the dashboard's Arrange)
+    group: "organise",
+    id: "platform:arrange-dashboard",
+    min_role: "admin",
+    label: "Arrange the dashboard",
+    description:
+      "Arrange this workspace's dashboard: hide or show a card or a section, put some first, make a card wide or normal. Name a section as the dashboard does (up next, at a glance, your views, from your scanner, recent activity) and a card by its feature (Machines, Purchases). Members never see this dashboard. Undo puts the whole arrangement back. Runs on the workspace, not a record.",
+    icon: "layout-dashboard",
+    scope: "workspace",
+    invoke_handler: "platform.arrange-dashboard",
+    user_invokable: true,
+    // Only the arrangement changes, and Undo puts back exactly what was there.
+    undoable: true,
+    examples: ["hide recent activity on the dashboard", "put machines first", "make the purchases card wide"],
+    args_schema: {
+      hide: { label: "Cards or sections to hide, comma separated", type: "text" },
+      show: { label: "Cards or sections to show, comma separated", type: "text" },
+      first: { label: "Cards or sections to put first, in this order, comma separated", type: "text" },
+      wide: { label: "Cards to make wide, comma separated", type: "text" },
+      normal: { label: "Cards to make normal width, comma separated", type: "text" },
+      restore: { label: "A whole arrangement to put back, as Undo saved it (JSON)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/backup (Install a blueprint)
+    group: "organise",
+    id: "platform:install-blueprint",
+    min_role: "admin",
+    label: "Install a blueprint",
+    description:
+      "Install a blueprint, a whole workspace's setup exported from another workspace (its features, bundles, lists, fields, automations, views and public pages), pasted as its JSON. The card lists what it will turn on and create, public pages included, before anything happens. Runs on the workspace, not a record.",
+    icon: "layers",
+    scope: "workspace",
+    invoke_handler: "platform.install-blueprint",
+    user_invokable: true,
+    // It reshapes the workspace and can publish pages: the card is the yes.
+    undoable: false,
+    examples: ["install this blueprint: {...}", "set this workspace up like my other one (here's its export)"],
+    args_schema: {
+      blueprint: { label: "The blueprint, its exported JSON", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: / (an app's account menu: Do more with Cobblr, bring my records over)
+    group: "organise",
+    id: "platform:import-app",
+    min_role: "admin",
+    label: "Copy an app's records into this workspace",
+    description:
+      "Copy the records of one of your own Cobblr apps (Cobblr for Yarn and the like, a workspace of its own) into this workspace: its table and fields are set up here, then every record is copied. The app keeps its records; nothing there changes. Name the app as it is called, or its address. You must be an owner or admin of both. Runs on the workspace, not a record.",
+    icon: "download",
+    scope: "workspace",
+    invoke_handler: "platform.import-app",
+    user_invokable: true,
+    // It copies records into this workspace from another: the card is the yes.
+    undoable: false,
+    examples: ["bring my yarn app's records over", "copy everything from Cobblr for Yarn into here"],
+    args_schema: {
+      from: { label: "The app, by its name or address", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
   // UI-SCREEN: /configuration/presentation (and the pencil on every record's Contents heading)
   {
     group: "organise",
@@ -1054,13 +1349,41 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     },
     version: "0.1.0",
   },
+  // UI-SCREEN: /configuration/presentation
+  // ACTION-TEMPLATE: kernel actions live in this registry, outside the module scaffolder.
   {
     group: "organise",
+    id: "platform:set-list-presentation",
+    min_role: "grantable",
+    label: "Change how a list is presented",
+    description: "Change how a list is shown: its icon, visibility in navigation, navigation order, grouping heading, and whether it appears at the top level. It also sets the word for one record and for several (item_noun); to rename the list itself, use platform:rename-thing. Name the list as it is called now or give its kind ID. Omitted settings stay as they are. Empty text or null restores a default, and null navigation order restores default ordering. Undo puts the changed settings back. Runs on the workspace.",
+    icon: "sliders-horizontal",
+    scope: "workspace",
+    invoke_handler: "platform.set-list-presentation",
+    user_invokable: true,
+    undoable: true,
+    examples: ["hide Bookshelf from navigation", "give my tools the wrench icon", "call one thing in Bookshelf a book and several books", "nest Spices under Inventory"],
+    args_schema: {
+      target: { label: "The list, by its current name or kind ID", type: "text" },
+      entity_kind: { label: "Kind ID, instead of a list name", type: "text" },
+      icon: { label: "Icon name, such as wrench; empty restores the default", type: "text" },
+      hidden: { label: "Hide from navigation", type: "boolean" },
+      nav_order: { label: "Navigation order; lower comes first, null restores the default", type: "number" },
+      group_label: { label: "Heading over this list's categories; empty restores the default", type: "text" },
+      top_level: { label: "Show as a top-level entry; false nests under its module, null restores the default", type: "boolean" },
+      item_noun: { label: "What one record is called; empty restores the default", type: "text" },
+      item_noun_plural: { label: "What several records are called; empty derives it from the singular", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    group: "organise",
+    // UI-SCREEN: /configuration/presentation (edit the singular and plural labels)
     id: "platform:rename-thing",
     min_role: "grantable",
     label: "Rename what a list is called",
     description:
-      "Change the words this workspace uses for a kind of record or a list: Parts becomes Spools, Machines becomes Printers. It renames the LABEL only, everywhere it is shown (navigation, headings, buttons); nothing recorded moves and no id changes. Give both the singular and the plural when they are not the plain +s. Runs on the workspace, not a record. Use get_workspace_setup to see what the lists are called now.",
+      "Rename a list or a kind of record: Parts becomes Spools, Machines becomes Printers. It renames the LABEL only, everywhere it is shown (navigation, headings, buttons); nothing recorded moves and no id changes. Give both the singular and the plural when they are not the plain +s. Runs on the workspace, not a record. Use get_workspace_setup to see what the lists are called now.",
     icon: "text-cursor-input",
     scope: "workspace",
     invoke_handler: "platform.rename-thing",
@@ -1072,6 +1395,30 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       target: { label: "What to rename, by what it is called now (e.g. Parts)", type: "text", required: true },
       name: { label: "What to call one of them (e.g. Spool)", type: "text", required: true },
       plural: { label: "What to call several (e.g. Spools). Defaults to the name plus s", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/presentation (and every record page: "+ Lending", "+ Stock" under its details)
+    group: "organise",
+    id: "platform:set-faces",
+    min_role: "grantable",
+    label: "Turn a section on or off for a list",
+    description:
+      "Show or hide a kind of detail for every record of a kind or list: stock (counts and reorder), perishable (use-by dates), serialized (serial numbers), maintained (service), lendable (lending) or container (what is inside). Name the list (target, as it is called now) or pass its kind (entity_kind). on and off are lists of those names; clear hands a choice back to the list's own fields. Nothing recorded is deleted: a section turned off keeps its values for when it comes back.",
+    icon: "layers",
+    scope: "workspace",
+    invoke_handler: "platform.set-faces",
+    user_invokable: true,
+    // setting the choices back as they were is the undo
+    undoable: true,
+    examples: ["track lending on my tools", "turn on use-by dates for the pantry", "stop showing stock on the bookshelf"],
+    args_schema: {
+      target: { label: "The list, by what it is called now (e.g. Tools)", type: "text" },
+      entity_kind: { label: "Or the kind of record (e.g. machines:machine)", type: "text" },
+      on: { label: "Sections to turn on (stock, perishable, serialized, maintained, lendable, container)", type: "list" },
+      off: { label: "Sections to turn off", type: "list" },
+      clear: { label: "Sections to hand back to the list's own fields", type: "list" },
     },
     version: "0.1.0",
   },
@@ -1144,6 +1491,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
+    // UI-SCREEN: /configuration/general (Simple mode toggle)
     id: "platform:set-simple-mode",
     min_role: "grantable",
     label: "Turn simple mode on or off",
@@ -1189,7 +1537,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Turn an automation on or off",
     description:
-      "Switch one automation (wire) on or off by its id — find the id with get_workspace_setup (automations). Toggling only stops or restarts behavior the user already set up; automations cannot be created or edited this way. Runs on the workspace, not a record.",
+      "Switch one automation (wire) on or off by its id — find the id with get_workspace_setup (automations). Toggling only stops or restarts behavior the user already set up; platform:add-wire sets one up and platform:edit-wire changes one. Runs on the workspace, not a record.",
     icon: "toggle-left",
     scope: "workspace",
     invoke_handler: "platform.set-wire-enabled",

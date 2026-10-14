@@ -40,7 +40,7 @@ export function NavRowMenu({ slug, label, members, candidates, className = "" }:
 export function NavSplitRow({ slug, group, candidates, appMode = false, onNavigate, handle = {} }: { slug: string; group: { label: string; members: RowCollection[] }; candidates: RowCollection[]; appMode?: boolean; onNavigate?: () => void; handle?: Record<string, unknown> }) {
   const label = group.label || "Collections";
   return <div role="group" aria-label={`${label} navigation row`} className="flex min-w-0 items-center rounded border border-line dark:border-slate-700">
-    <span {...handle} title={label} className="min-w-0 truncate pl-2 text-[10px] font-mono uppercase text-faint dark:text-slate-500">{group.label || "⋮"}</span>
+    <span {...handle} title={label} className="min-w-0 truncate pl-2 text-[10px] uppercase text-faint dark:text-slate-500">{group.label || "⋮"}</span>
     {group.members.map((mem, i) => <span key={mem.name} className="flex shrink-0 items-center">
       {i > 0 && <span aria-hidden className="text-faint dark:text-slate-500">|</span>}
       <NavLink to={navTargetFor(mem.name, appMode)} aria-label={stripNavStem(mem.displayName, group.label)} onClick={onNavigate} className={({ isActive }) => "whitespace-nowrap px-1.5 py-2 text-sm transition " + (isActive ? "text-accent font-semibold bg-subtle dark:bg-slate-800" : "text-muted dark:text-slate-400 hover:text-accent")}>{stripNavStem(mem.displayName, group.label)}</NavLink>

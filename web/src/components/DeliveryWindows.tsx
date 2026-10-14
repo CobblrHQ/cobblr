@@ -180,11 +180,11 @@ function ChannelCadence({
         <span className="text-sm font-medium text-content dark:text-mortar-100">
           {channel.label}
         </span>
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <span className="text-[10px] uppercase tracking-widest text-faint">
           {channel.hint}
         </span>
         {row.pending_count > 0 && (
-          <span className="ml-auto text-[10px] font-mono uppercase tracking-widest text-amber-500">
+          <span className="ml-auto text-[10px] uppercase tracking-widest text-amber-500">
             {row.pending_count} waiting
           </span>
         )}
@@ -228,7 +228,7 @@ function ChannelCadence({
         )}
 
       <div className="flex items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <span className="text-[10px] uppercase tracking-widest text-faint">
           {draft.timezone}
         </span>
         {dirty && (
@@ -305,11 +305,11 @@ function Cadence({
           className="input w-auto text-xs px-2 py-1"
         />
       )}
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+      <span className="text-[10px] uppercase tracking-widest text-faint">
         {hint}
       </span>
       {pending > 0 && (
-        <span className="text-[10px] font-mono uppercase tracking-widest text-amber-500">
+        <span className="text-[10px] uppercase tracking-widest text-amber-500">
           {pending} queued
         </span>
       )}

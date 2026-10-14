@@ -1,8 +1,10 @@
 import { FACT_SCOPES } from "@cobblr/platform-contract/fact-scope";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { RecordTemplateSchema, ReceiptDraftSchema, RenewalBindingSchema } from "@cobblr/platform-contract/record-creation";
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
 import { ACTION_GROUPS, similarActionGroup } from "@cobblr/platform-contract/action-groups";
 import { RecordActionLayout } from "@cobblr/platform-contract/action-groups-schema";
+import { RecordPanelLayout } from "../platform/record-panel-layout.js";
 import { bundleFieldReference } from "../platform/bundle-field-reference.js";
 // Bundles — publishable artifacts that bundle multiple wires +
 // field defs into one install. Phase 4 C.2: export current org
@@ -21,7 +23,7 @@ import { describeKept, moduleRecordCount, previewPlaces, releaseUnclaimed, type 
 import { resolveEnabledFeatures, featuresToOffer as pickFeaturesToOffer } from "../platform/feature-defaults.js";
 import { sql, type Kysely } from "kysely";
 import type { MetaDB } from "../db/schema.js";
-import { platform, fieldTypeTakesUnit, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema } from "@cobblr/platform-contract";
+import { platform, fieldTypeTakesUnit, CatalogSchemaConfig, packFieldIssues, FieldRoleSchema, FieldTypeSchema, isFieldScope, parseFieldScope, FaceSchema, InstanceNameRegex } from "@cobblr/platform-contract";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -254,7 +256,7 @@ const SavedViewEntry = z.object({
  *  drives the "New <noun>" button + create-modal title; `qty_unit` the default unit. */
 const InstanceEntry = z.object({
   module: z.string().min(1),
-  instance_name: z.string().min(1).regex(/^[a-z0-9][a-z0-9-]*$/),
+  instance_name: z.string().min(1).regex(InstanceNameRegex),
   display_name: z.string().min(1),
   glyph: z.string().optional(),
   item_noun: z.string().optional(),
@@ -463,6 +465,9 @@ const CatalogEntry = z.object({
 
 export const BundleManifest = z.object({
   record_actions: z.record(RecordActionLayout).default({}),
+  /** A kind's panels as the bundle arranges them by default (#6337): which
+   *  are hidden and their order. The workspace's own choices sit over it. */
+  record_panels: z.record(RecordPanelLayout).default({}),
   id: z.string().min(1),
   version: z.string().min(1),
   name: z.string().min(1),
@@ -3265,13 +3270,14 @@ bundlesRouter.post(
   },
 );
 
+// AI-ACTION: platform:remove-bundle
 bundlesRouter.delete(
   "/:id",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:remove-bundle"))) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });

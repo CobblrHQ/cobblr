@@ -35,7 +35,7 @@ const SWITCH = /&&\s*false\s*\)|\|\|\s*true\s*\)|\bif\s*\(\s*(?:false|true)\s*\)
 /** The files that could hold one: git grep picks them, so only those are read. */
 function candidates(): string[] {
   try {
-    return execFileSync("git", ["grep", "--untracked", "-lE", "&&[[:space:]]*false[[:space:]]*\\)|\\|\\|[[:space:]]*true[[:space:]]*\\)|if[[:space:]]*\\([[:space:]]*(false|true)[[:space:]]*\\)|RED PROOF", "--", ...ROOTS.map((r) => `:(glob)${r}/**/*.ts`), ...ROOTS.map((r) => `:(glob)${r}/**/*.tsx`)], { encoding: "utf8" })
+    return execFileSync("git", ["grep", "--untracked", "-lE", "&&[[:space:]]*false[[:space:]]*\\)|\\|\\|[[:space:]]*true[[:space:]]*\\)|if[[:space:]]*\\([[:space:]]*(false|true)[[:space:]]*\\)|RED PROOF", "--", ...ROOTS.map((r) => `:(glob)${r}/**/*.ts`), ...ROOTS.map((r) => `:(glob)${r}/**/*.tsx`)], { maxBuffer: 1024 * 1024 * 1024, encoding: "utf8" })
       .split("\n").filter((f) => f && !/\.test\.tsx?$/.test(f));
   } catch (e) {
     const err = e as { status?: number };

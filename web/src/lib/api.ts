@@ -618,6 +618,9 @@ export interface SessionUser {
    *  Optional for back-compat with cached responses; treat undefined as true
    *  (don't nag a session that predates the field). */
   email_verified?: boolean;
+  /** False when no email can reach anyone from this install (no sender
+   *  configured), so verification is impossible and is never asked for. */
+  can_verify_email?: boolean;
   /** True when this user's email is in the platform's
    *  SUPERADMIN_EMAILS env var. Unlocks the /super-admin/* shell. */
   is_platform_admin?: boolean;
@@ -1267,6 +1270,10 @@ export interface ContributedPanel {
   surface: "module-page-tab" | "entity-detail-panel" | "configuration-section";
   target: string;
   title: string;
+  /** The collections it serves, by stable name, and whether it also shows
+   *  where its module says the record has its data (#6337). */
+  collections?: string[];
+  presence?: boolean;
 }
 
 export interface OrgModuleListItem {
@@ -1562,6 +1569,9 @@ export const api = {
       /** A public demo's shared login, to show and pre-fill. Null on every instance
        *  that has not deliberately published one. */
       demo_signin?: { email: string; password: string; note: string | null } | null;
+      /** An Offline CA install's root certificate, on plain HTTP, for a phone to
+       *  trust once before its camera works. Null on every other install. */
+      phone_certificate_url?: string | null;
     }>("GET", "/auth/config"),
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
   // generate a least-privilege devices:edge token in-flow, and by the API Recipes
@@ -2731,11 +2741,12 @@ export const api = {
     ),
   // Pillar B — actions + invocation
   listActions: (slug: string, kind: string) =>
-    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[]; lifecycle?: boolean; layout?: import("@cobblr/platform-contract/action-groups").RecordActionLayout; pins?: Record<string, boolean> }>(
+    request<{ items: PlatformAction[]; bindings: PlatformActionBinding[]; dormant?: PlatformDormantAction[]; lifecycle?: boolean; lendable?: boolean; layout?: import("@cobblr/platform-contract/action-groups").RecordActionLayout; pins?: Record<string, boolean> }>(
       "GET",
       `/orgs/${slug}/actions?kind=${encodeURIComponent(kind)}`,
     ),
   setRecordActionPin: (slug: string, kind: string, action: string, pinned: boolean) => request<void>("PUT", `/orgs/${slug}/record-action-pins`, { kind, action, pinned }),
+  recordPanelLayout: (slug: string, kind: string) => request<{ layout: import("@cobblr/platform-contract/record-panel-layout").RecordPanelLayout; revision: number }>("GET", `/orgs/${slug}/record-panel-layout?kind=${encodeURIComponent(kind)}`),
   recordActionLayout: (slug: string, kind: string) => request<{ layout: import("@cobblr/platform-contract/action-groups").RecordActionLayout; revision: number; pins: Record<string, boolean> }>("GET", `/orgs/${slug}/record-action-layout?kind=${encodeURIComponent(kind)}`),
   tidySuggestions: (slug: string) => request<{ available: boolean; enabled: boolean; items: Array<{ id: string; candidate: import("@cobblr/platform-contract").TidyCandidate }> }>("GET", `/orgs/${slug}/tidy-suggestions`),
   setTidySuggestions: (slug: string, enabled: boolean) => request<{ enabled: boolean }>("PATCH", `/orgs/${slug}/tidy-suggestions`, { enabled }),
@@ -3309,6 +3320,7 @@ export const api = {
   meMarkAllNotificationsRead: () =>
     request<{ count: number }>("POST", "/me/notifications/read-all"),
   meNotificationStreamTicket: () => request<{ ticket: string }>("POST", "/me/notifications/stream-ticket"),
+  recordStreamTicket: (slug: string) => request<{ ticket: string }>("POST", `/orgs/${slug}/records/stream-ticket`),
   meNotificationKinds: (orgId: string) =>
     request<{ items: NotificationKindEntry[] }>("GET", `/me/notification-kinds?org_id=${encodeURIComponent(orgId)}`),
   meMarkNotificationUnread: (id: string) =>
@@ -4693,6 +4705,9 @@ export const api = {
   // Instances (workspace_module_instances) — multi-instance modules.
   // A workspace can install one module multiple times under different
   // names. See docs/architecture/instances.md.
+  setScanFallback: (slug: string, instance: string) =>
+    request<ModuleInstance>("POST", `/orgs/${slug}/instances/${instance}/scan-fallback`, {}),
+
   listInstances: (slug: string, moduleName?: string) =>
     request<{ items: ModuleInstance[] }>(
       "GET",
@@ -5176,6 +5191,16 @@ export const api = {
     request<{ address: string; label: string; settings: StationSettings; has_pin: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/stations/screens/${address}`, body),
   stationLookup: (slug: string, address: string, body: { code: string } | { record: { kind: string; id: string } }) =>
     request<StationLookup>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/lookup`, body),
+  /** A scan into the recount this station is set to (#6302): counted, new, or a question. */
+  stationRecount: (slug: string, address: string, body: { code?: string; text?: string; record_id?: string; type_id?: string; new?: boolean }) =>
+    request<import("@cobblr/platform-contract/station-screen").StationRecountAnswer>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/recount`, body),
+  /** The recounts still open, to choose one for a station to scan into. */
+  openRecounts: (slug: string) => request<{ items: Array<{ id: string; label: string; updated_at: string }> }>("GET", `/orgs/${slug}/modules/inventory/recounts`),
+  /** What a decoded code already is in this workspace, from its own records
+   *  only (#6436): asked the instant a code decodes, so a thing you have shows
+   *  at once while the photo and the scan are still being sent. */
+  scanKnown: (slug: string, code: string) =>
+    request<{ known: ScanKnownCode | null }>("GET", `/orgs/${slug}/modules/core-scan/scan/known?code=${encodeURIComponent(code)}`),
   stationCount: (slug: string, address: string, body: { request_id: string; kind: string; entity_id: string; op: StationStockOp; value?: number }) =>
     request<StationMove & { replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/count`, body),
   stationUndo: (slug: string, address: string, requestId: string) =>
@@ -5471,6 +5496,11 @@ export const api = {
     request<UndoReport>("POST", `/orgs/${slug}/modules/core-import/sheets/imports/${id}/undo`, force ? { force: true } : {}),
   /** Bulk import (inbox-export interop + generic CSV). `file` is the picked File;
    *  mapping only matters for plain CSVs. */
+  listScanImportRuns: (slug: string) =>
+    request<{ items: Array<{ id: string; created_at: string; source_label: string | null; item_count: number; created_count: number; replaced_count: number; undone_at: string | null }> }>("GET", `/orgs/${slug}/modules/core-scan/import/runs`),
+  undoScanImport: (slug: string, id: string) =>
+    request<{ undone: true; run_id: string; items_removed: number; items_restored: number }>("POST", `/orgs/${slug}/modules/core-scan/import/runs/${id}/undo`, {}),
+
   scanImportPreview: async (slug: string, file: File, mapping?: Record<string, string>) => {
     const form = new FormData();
     form.set("file", file);
@@ -5503,6 +5533,7 @@ export const api = {
       created_ids: string[];
       photos_fetched: number;
       photos_failed: number;
+      run_id?: string;
       dry_run?: boolean;
     }>(`/api/v1/orgs/${slug}/modules/core-scan/import?${qs.toString()}`, form, file);
   },
@@ -5630,11 +5661,14 @@ export const api = {
        *  case (the corrected answer = ground truth). Ignored for non-admins. */
       save_eval_case?: boolean;
       eval_note?: string;
+      /** "I just ran out of this" (#6526): filed with none on hand, and onto
+       *  the shopping list (services/ran-out.ts). */
+      ran_out?: boolean;
     },
   ) =>
     filed(
       slug,
-      request<{ item: ScanInboxItem; created: { id: string } }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`, body),
+      request<{ item: ScanInboxItem; created: { id: string }; ran_out?: ScanRanOutAnswer }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/confirm`, body),
       (r) => ({ filed: [{ item: r.item, createdId: r.created?.id ?? null }] }),
     ),
   /** Paired-scan: the scanned product IS the active bin itself — write the
@@ -5921,9 +5955,13 @@ export const api = {
       };
       /** How many were bought (add-qty / replace); the row's own when absent. */
       qty?: number;
+      /** With `count`: all of it was used up (#6526), and it goes on the
+       *  shopping list. No change or total needed. */
+      ran_out?: boolean;
     },
   ) =>
     request<{
+      ran_out?: ScanRanOutAnswer;
       item: ScanInboxItem;
       entity_title: string;
       new_qty: number | null;
@@ -6092,6 +6130,14 @@ export const api = {
     }),
   removeScanPhoto: (slug: string, id: string, fileId: string) =>
     request<ScanInboxItem>("DELETE", `/orgs/${slug}/modules/core-scan/inbox/${id}/photos/${fileId}`),
+  /** Split a photo into the things a person named (#6342): each name a row
+   *  with its own crop, one group with Undo split. 409 count_mismatch says
+   *  what the photo shows when it disagrees, and adds nothing. */
+  splitScanItemByNames: (slug: string, id: string, names: string[]) =>
+    request<{ group: { item_id: string; check: string | null }; items: Array<{ item_id: string; crop: string }> }>("POST", `/orgs/${slug}/modules/core-scan/scan/assistant/photo`, {
+      item_id: id,
+      items: names.map((name) => ({ name })),
+    }),
   /** Split a group photo into separate items (vision segments + crops). */
   splitScanItem: (slug: string, id: string) =>
     request<{ children: ScanInboxItem[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/split`),
@@ -6126,6 +6172,9 @@ export const api = {
     ),
   unsplitScanItem: (slug: string, id: string) =>
     request<{ parent: ScanInboxItem; discarded: number }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/unsplit`),
+  /** Split again: the parts an Undo split took out come back (#6527). */
+  redoSplitScanItem: (slug: string, id: string) =>
+    request<{ parent: ScanInboxItem; parts: string[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/redo-split`),
   /** Undo a combine from either row: the kept one or one it absorbed (#3639). */
   uncombineScanItem: (slug: string, id: string) =>
     request<{ kept: ScanInboxItem; restored: string[] }>("POST", `/orgs/${slug}/modules/core-scan/inbox/${id}/uncombine`),
@@ -8014,6 +8063,7 @@ export interface ModuleInstance {
    *  between its tables). The server has sent this since the mover shipped;
    *  the type just never caught up. */
   movable?: boolean;
+  is_scan_fallback?: boolean;
 }
 
 export interface NavHeadingMember {
@@ -8129,6 +8179,15 @@ export interface ScanCandidate {
 }
 
 /** One field on a scan-menu table (a trimmed field def). */
+/** What Ran out did (#6526): it is at none, and whether it reached the list. */
+export interface ScanRanOutAnswer {
+  took: boolean;
+  on_list: boolean;
+  /** The list asked which list it goes on (none chosen yet). */
+  needs_list: boolean;
+  note: string | null;
+}
+
 export interface ScanMenuField {
   name: string;
   label: string;
@@ -9464,6 +9523,8 @@ export interface DigifabFleetDevice {
   /** An external detector owns this printer's detection + camera — Cobblr stands
    *  down its own watch/assignment/camera pull for it. */
   managed_by_detector?: boolean;
+  /** Lent out (record-loans.md): "Lent to Sam Lee.", and the farm sends it nothing. */
+  lent?: string | null;
   /** F-1: finished/failed a print — needs a human bed-clear before it's assignable. */
   /** plate_qty: how many the plate's job makes, when it produces a build. */
   needs_attention: { reason: string; since: string; plate_qty?: number | null } | null;
@@ -10395,6 +10456,8 @@ export interface PlanDraft {
   created_at: string;
   updated_at: string;
   applied_at: string | null;
+  /** While applied: each planned key and the real place Apply made of it. */
+  made?: Record<string, string> | null;
 }
 
 /** What a floor plan import did (or, on a dry run, would do). */
@@ -10739,6 +10802,7 @@ export interface PlatformBundle {
 
 export interface PlatformBundleManifest {
   record_actions?: Record<string, import("@cobblr/platform-contract/action-groups").RecordActionLayout>;
+  record_panels?: Record<string, import("@cobblr/platform-contract/record-panel-layout").RecordPanelLayout>;
   /** Why this manifest declares fields on a module's BASE kind rather than on
    *  an instance of its own; lint:bundle-fields-on-own-kinds refuses base-kind
    *  fields without it. */
@@ -11227,6 +11291,17 @@ export interface CutterStationView {
 }
 
 /** A record action a Station offers on a known thing (#4640). */
+/** A scanned code's record in this workspace, answered from its own records. */
+export interface ScanKnownCode {
+  title: string;
+  kind: string;
+  id: string;
+  instance: string | null;
+  qty: number | null;
+  unit: string | null;
+  image_path: string | null;
+}
+
 export interface StationRecordAction {
   id: string;
   label: string;

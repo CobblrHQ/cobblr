@@ -57,6 +57,24 @@ export function plannedRack(opts: {
   ];
 }
 
+/** Rename a planned rack without changing the keys its shelves and things use. */
+export function renamePlannedRack(body: PlanDraftBody, id: string, name: string): PlanDraftBody {
+  const rack = body.planned.find((p) => `${PLANNED_PREFIX}${p.key}` === id && !p.parent.startsWith(PLANNED_PREFIX));
+  if (!rack) throw new Error("Choose a planned rack in this layout to rename.");
+  const next = name.trim();
+  if (!next || next.length > 180) throw new Error("Use a rack name of 1 to 180 characters.");
+  return {
+    ...body,
+    planned: body.planned.map((p) => {
+      if (p === rack) return { ...p, name: next };
+      // Only names made by plannedRack follow the rack's name; custom shelf names stay.
+      const suffix = p.name.slice(rack.name.length);
+      if (p.parent === id && p.name.startsWith(rack.name) && /^ shelf \d+$/.test(suffix)) return { ...p, name: `${next}${suffix}` };
+      return p;
+    }),
+  };
+}
+
 /** The places as the draft would leave them: each real place with its move
  *  applied (spot and parent), and each planned one as a place of its own
  *  whose id is `planned:<key>`. Nothing else about a place changes. */
@@ -95,6 +113,21 @@ export function placesUnderDraft<L extends { id: string; name: string; parent_id
     } as Omit<L, "id"> & { id: string; planned: true });
   }
   return out;
+}
+
+/** An applied draft as it is drawn: each planned place Apply made is the
+ *  real place now (`made`: planned key to its id), so it is not drawn a
+ *  second time beside it, still marked planned (#6363), and what the draft
+ *  put on a planned shelf stands on the real one. Unapplied, or undone, the
+ *  body is drawn as it is. */
+export function bodyAsApplied(body: PlanDraftBody, made: Readonly<Record<string, string>> | null | undefined): PlanDraftBody {
+  if (!made || !Object.keys(made).length) return body;
+  const real = (ref: string) => (ref.startsWith(PLANNED_PREFIX) ? (made[ref.slice(PLANNED_PREFIX.length)] ?? ref) : ref);
+  return {
+    moves: body.moves,
+    things: Object.fromEntries(Object.entries(body.things).map(([k, t]) => [k, { ...t, into: real(t.into) }])),
+    planned: body.planned.filter((p) => !(p.key in made)).map((p) => ({ ...p, parent: real(p.parent) })),
+  };
 }
 
 /** What applying the draft would do, counted, for the button that does it

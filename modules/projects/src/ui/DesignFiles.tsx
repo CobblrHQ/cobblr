@@ -176,8 +176,8 @@ export function DesignFiles({ designId }: { designId: string }) {
       data-testid="design-files-panel"
     >
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // pattern &amp; photos
+        <div className="text-[10px] uppercase tracking-widest text-accent">
+          pattern &amp; photos
         </div>
         <div className="flex items-center gap-3">
           {hasPattern && state?.status === "pending" && (
@@ -268,7 +268,7 @@ export function DesignFiles({ designId }: { designId: string }) {
                 {a.filename}
               </button>
               {a.role === "pattern" && (
-                <span className="shrink-0 text-[9px] font-mono uppercase tracking-widest border border-cobble-300 dark:border-cobble-700 text-accent rounded px-1.5 py-0.5">
+                <span className="shrink-0 text-[9px] uppercase tracking-widest border border-cobble-300 dark:border-cobble-700 text-accent rounded px-1.5 py-0.5">
                   pattern
                 </span>
               )}
@@ -354,7 +354,7 @@ function CandidateStrip({
 }) {
   return (
     <div className="mb-3" data-testid="pattern-photo-strip">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
         {state.candidates.length} image{state.candidates.length === 1 ? "" : "s"} in the pattern - tap one to use it as the photo
       </div>
       <div className="flex gap-2 overflow-x-auto pb-1">
@@ -420,7 +420,7 @@ function DesignThumb({ thumb, alt, fromPattern, onOpen }: { thumb: string; alt: 
     >
       <EntityPhoto src={thumb} alt={alt} aspect="square" placeholder={null} className="rounded-md border border-line dark:border-slate-700 hover:border-accent transition">
         {fromPattern && (
-          <span className="absolute bottom-1 left-1 bg-surface/90 dark:bg-slate-900/90 text-accent text-[9px] font-mono uppercase tracking-widest rounded px-1 py-0.5">
+          <span className="absolute bottom-1 left-1 bg-surface/90 dark:bg-slate-900/90 text-accent text-[9px] uppercase tracking-widest rounded px-1 py-0.5">
             from pattern
           </span>
         )}

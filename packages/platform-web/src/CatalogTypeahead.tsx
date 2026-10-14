@@ -121,7 +121,7 @@ export function CatalogTypeahead({
           <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
             {selected.title}
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-300 truncate">
+          <div className="text-[10px] uppercase tracking-widest text-accent dark:text-cobble-300 truncate">
             {subtitleFor
               ? subtitleFor(selected)
               : `${selected.catalog_name} · #${selected.external_id}`}
@@ -162,7 +162,7 @@ export function CatalogTypeahead({
           )}
           {groupByCatalog(hits).map(([catalogName, group]) => (
             <div key={catalogName}>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-3 pt-2 pb-1 sticky top-0 bg-surface dark:bg-slate-900">
+              <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 px-3 pt-2 pb-1 sticky top-0 bg-surface dark:bg-slate-900">
                 {catalogName}
               </div>
               {group.map((h) => {

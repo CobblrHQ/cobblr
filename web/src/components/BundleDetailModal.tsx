@@ -839,7 +839,7 @@ export function BundleDetailModal(props: Props) {
             }
           >
             {isUpdate && (
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              <div className="text-[10px] uppercase tracking-widest text-accent">
                 what's new since v{installedVersion}
               </div>
             )}
@@ -864,7 +864,7 @@ export function BundleDetailModal(props: Props) {
         {!isFreshInstall && releaseNotes.length === 0 && manifest?.changelog && (
           <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3">
             <div className="flex items-baseline gap-2 mb-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">release notes</span>
+              <span className="text-[10px] uppercase tracking-widest text-accent">release notes</span>
               {manifest.released_at && (
                 <span className="text-[10px] font-mono text-faint dark:text-slate-500">
                   {releaseDay(manifest.released_at)}
@@ -879,7 +879,7 @@ export function BundleDetailModal(props: Props) {
             installed (field/wire/view level), not just a changelog sentence. */}
         {updateDiff && (
           <div className="rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-1.5">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
+            <div className="text-[10px] uppercase tracking-widest text-accent">
               what this update changes
             </div>
             {updateDiff.fields.added.length > 0 && (
@@ -1090,7 +1090,7 @@ export function BundleDetailModal(props: Props) {
               ) : (
                 <ChevronRight size={15} className="text-faint shrink-0" />
               )}
-              <span className="text-[10px] font-mono uppercase tracking-widest text-accent shrink-0">
+              <span className="text-[10px] uppercase tracking-widest text-accent shrink-0">
                 {showTech ? "hide details" : "details"}
               </span>
               <div className="flex-1" />
@@ -1189,7 +1189,7 @@ export function BundleDetailModal(props: Props) {
                           {f.name}
                         </code>
                         <span className="flex-1">{f.display_label}</span>
-                        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+                        <span className="text-[10px] uppercase tracking-widest text-faint">
                           {f.type}
                         </span>
                       </li>
@@ -1200,7 +1200,7 @@ export function BundleDetailModal(props: Props) {
 
               {effectiveManifest && (
                 <details className="text-xs">
-                  <summary className="font-mono uppercase tracking-widest text-[10px] text-faint cursor-pointer">
+                  <summary className="uppercase tracking-widest text-[10px] text-faint cursor-pointer">
                     View raw manifest JSON
                   </summary>
                   <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200 max-h-64">
@@ -1218,7 +1218,7 @@ export function BundleDetailModal(props: Props) {
             <button
               onClick={handleUninstall}
               disabled={removing}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> uninstall bundle
             </button>
@@ -1239,7 +1239,7 @@ export function BundleDetailModal(props: Props) {
               <button
                 onClick={handleUninstall}
                 disabled={removing}
-                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition"
+                className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition"
               >
                 remove
               </button>
@@ -1277,7 +1277,7 @@ export function BundleDetailModal(props: Props) {
             <button
               onClick={downloadManifest}
               disabled={!effectiveManifest}
-              className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+              className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
               title="Download the manifest JSON"
             >
               <Download size={11} /> download
@@ -1298,8 +1298,8 @@ export function BundleDetailModal(props: Props) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        // {title}
+      <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+        {title}
       </div>
       {children}
     </div>

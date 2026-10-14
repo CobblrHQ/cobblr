@@ -14,6 +14,7 @@
 import { BASE } from "./helpers.js";
 import type { TenantSweepRunResult } from "@cobblr/platform-contract";
 import { settledSweepRound } from "../../scripts/lib/settled-sweep-round.mjs";
+import { worn } from "../../scripts/lib/load-factor.mjs";
 
 export interface TestSupportInit {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -81,10 +82,20 @@ export function testPushServiceEndpoint(box: string): string {
   return `${BASE}/api/v1/test-support/push-service/${encodeURIComponent(box)}`;
 }
 
+/** How long a sweep round waits for passes the scheduler is walking, worn at the box's load. */
+export const sweepRoundDeadline = () => worn(90_000);
+
+/** The timeout a test that runs a sweep round declares: the round's own wait and room to spare,
+ *  so the round reports a pass still busy by name before the test runner kills the test with a
+ *  bare "timed out in 60000ms" (#6411's merge: the receipt test died at 60 s inside a 90 s wait,
+ *  behind a pass the full suite's scheduler was walking across 430 workspaces). Every test that
+ *  calls testSupportSweepRound says so (a-test-that-runs-a-sweep-round-outlasts-its-wait.test.ts). */
+export const sweepRoundBudget = () => sweepRoundDeadline() + worn(30_000);
+
 /** Every registered sweep, one round, for one workspace. A pass the scheduler is walking at that moment
  *  holds its lock and is skipped, which the door answers as 500: that round is asked again until no
  *  pass is skipped (scripts/lib/settled-sweep-round.mjs). A pass that FAILED throws at once. */
-export async function testSupportSweepRound(orgId: string, deadlineMs = 90_000): Promise<{ passes: number; failed: unknown[] }> {
+export async function testSupportSweepRound(orgId: string, deadlineMs = sweepRoundDeadline()): Promise<{ passes: number; failed: unknown[] }> {
   return settledSweepRound(
     async () => {
       const res = await testSupport("run-all-sweeps", { body: { org_id: orgId }, allow: [500] });
@@ -92,4 +103,25 @@ export async function testSupportSweepRound(orgId: string, deadlineMs = 90_000):
     },
     { deadlineMs },
   );
+}
+
+/** ONE named pass for one workspace, asked again while the scheduler holds its
+ *  lock, and giving up well inside the test's own timeout so a busy box says
+ *  which pass was busy rather than timing the test out. Prefer it to
+ *  testSupportSweepRound when a test needs one pass: a round of every pass
+ *  costs whatever every pass costs under the full suite's load. */
+export async function testSupportSweepSettled(name: string, orgId: string, deadlineMs = worn(40_000)): Promise<TenantSweepRunResult> {
+  const until = Date.now() + deadlineMs;
+  for (;;) {
+    const result = await testSupportJson<TenantSweepRunResult>("run-sweep", { body: { name, org_id: orgId } });
+    if (result.skipped) {
+      if (Date.now() >= until) throw new Error(`${name} was still busy after ${deadlineMs} ms`);
+      await new Promise((r) => setTimeout(r, 500));
+      continue;
+    }
+    if (result.failed !== 0 || result.visited !== 1 || result.results?.length !== 1 || result.results[0]?.orgId !== orgId) {
+      throw new Error(`${name} did not complete for ${orgId}: ${JSON.stringify(result)}`);
+    }
+    return result;
+  }
 }

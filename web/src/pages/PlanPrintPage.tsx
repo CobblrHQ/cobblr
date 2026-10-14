@@ -110,7 +110,7 @@ export function PrintPlan({
   // Paper has no hover and no selection outline, so an overlapped rect just
   // disappears under whatever paints after it (the sliver A1 printed as). Mark
   // collisions so a wrong plan reads as wrong rather than as a rendering flaw.
-  const collides = collidingIds(boxes.map(({ loc, rect }) => ({ id: loc.id, rect })));
+  const collides = collidingIds(boxes.map(({ loc, rect }) => ({ id: loc.id, rect, holds: true })));
   return (
     <div style={{ breakInside: "avoid", marginTop: multi ? 28 : 16 }}>
       {multi && <h2 style={{ fontSize: 15, margin: "0 0 8px" }}>{owner.name}</h2>}

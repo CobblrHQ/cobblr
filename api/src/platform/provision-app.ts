@@ -296,6 +296,35 @@ export async function importAppData(
   return { imported, instance: app.instanceName };
 }
 
+/** The graduation import from one of the person's own managed apps, named by
+ *  its address or its name: the route and platform:import-app (#6528). The
+ *  source must be an app the person owns or administers, as importAppData
+ *  says; a membership alone does not let anyone copy a workspace's records
+ *  out of it. */
+export async function importFromOwnApp(
+  targetOrgId: string,
+  userId: string,
+  said: string,
+): Promise<{ ok: true; imported: number; instance: string; from: string } | { ok: false; status: number; code: string; message: string }> {
+  const mine = await meta
+    .selectFrom("orgs as o")
+    .innerJoin("org_memberships as m", "m.org_id", "o.id")
+    .select(["o.id", "o.slug", "o.name", "o.app_mode", "m.role"])
+    .where("m.user_id", "=", userId)
+    .execute();
+  const t = said.trim().toLowerCase();
+  const hits = mine.filter((o) => o.slug === said.trim() || o.name.trim().toLowerCase() === t);
+  if (hits.length === 0) return { ok: false, status: 404, code: "source_not_found", message: "That source workspace isn't one of yours." };
+  if (hits.length > 1) return { ok: false, status: 409, code: "ambiguous_source", message: `More than one of your workspaces is called ${said}; use its address.` };
+  const source = hits[0]!;
+  if (source.id === targetOrgId) return { ok: false, status: 400, code: "same_workspace", message: "Source and target are the same workspace." };
+  // role-gate: exact — copying a workspace's records out is its owner's or admin's governance, never an editor's or a member's.
+  if (source.role !== "owner" && source.role !== "admin") return { ok: false, status: 403, code: "forbidden", message: `Only an owner or admin of ${source.name} can copy its records out.` };
+  if (!source.app_mode) return { ok: false, status: 400, code: "not_an_app", message: `${source.name} isn't a managed app.` };
+  const r = await importAppData(source.id, targetOrgId, userId);
+  return { ok: true, ...r, from: source.name };
+}
+
 export class ProvisionAppError extends Error {
   constructor(public code: string, message: string, public detail?: unknown) {
     super(message);

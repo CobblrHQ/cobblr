@@ -366,7 +366,8 @@ export async function sendAndWatch(db: Parameters<typeof sendJob>[0], orgId: str
   const r = await sendJob(db, orgId, jobId, approval, batchPermit);
   if (!r.ok) {
     if(r.code==="send_failed"&&r.shouldPoll)await enqueuePoll(orgId,jobId);
-    const message = (r.code === "send_failed" || r.code === "material_not_ready") ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
+    // A refusal that carries its own sentence says it; the table covers the rest.
+    const message = "message" in r ? r.message : (SEND_REFUSALS[r.code] ?? "no such job");
     return { ok: false as const, code: r.code, message };
   }
   if (r.shouldPoll) await enqueuePoll(orgId, jobId);
@@ -405,7 +406,7 @@ jobsRouter.post(
     if (!r.ok) {
       const status = r.code === "not_found" ? 404 : 409;
       const message =
-        r.code === "material_not_ready" ? r.message : r.code === "not_found"
+        "message" in r ? r.message : r.code === "not_found"
           ? "no such job"
           : r.code === "batch_approval_required"
             ? "Start this print from its batch card so its approval and bed check are recorded."

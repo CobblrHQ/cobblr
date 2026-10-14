@@ -768,7 +768,7 @@ function ExpandedSheet({
         </div>
       )}
       <label className="block px-3 mt-2.5">
-        <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">What is it</span>
+        <span className="block text-[9.5px] uppercase tracking-widest text-white/40 mb-1">What is it</span>
         <input
           // Correcting, the field starts empty: the name there was just
           // turned down, and leaving it in the box was how an empty-looking
@@ -805,11 +805,11 @@ function ExpandedSheet({
 
       <div className="flex items-end gap-3 px-3 mt-2.5">
         <div>
-          <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Quantity</span>
+          <span className="block text-[9.5px] uppercase tracking-widest text-white/40 mb-1">Quantity</span>
           <QtyStepper value={shownQty} onSet={setTo} big />
         </div>
         <div className="flex-1 min-w-0">
-          <span className="block text-[9.5px] font-mono uppercase tracking-widest text-white/40 mb-1">Location</span>
+          <span className="block text-[9.5px] uppercase tracking-widest text-white/40 mb-1">Location</span>
           <button
             type="button"
             onClick={onPickLocation}

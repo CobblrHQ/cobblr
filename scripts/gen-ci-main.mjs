@@ -155,7 +155,7 @@ export const IMPACT_DROPS = [
   "Say what this run covered (suite / affected, suite / full)",
   "The impact map's shadow",
   "Report the impact map's shadow",
-  "Record the coverage cells the tests claim (main pushes)",
+  "Record the coverage cells the tests claim (main runs)",
   "Find the merge that turned main red (main, on red)",
   "Report this merge's verdict to the red tip that asked (bisect runs)",
   "Deploy if the images are pushed (else the image side deploys)",

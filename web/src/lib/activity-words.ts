@@ -190,6 +190,9 @@ export const FEED_VERBS: Readonly<Record<string, string>> = {
   record_lost: "lost",
   record_scrapped: "disposed of",
   record_brought_back: "got back",
+  // A thing lent out, and back (platform:lend / return, #6335).
+  record_lent: "lent out",
+  record_returned: "got back from a loan",
   // A thing handed over through a share, filed: the friend gave it (#4683).
   record_sent: "sent from another workspace",
   record_handed_over: "gave you",

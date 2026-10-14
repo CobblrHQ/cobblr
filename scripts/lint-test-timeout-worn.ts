@@ -23,6 +23,7 @@
 import ts from "typescript";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -121,7 +122,7 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 
 if (violations.length) {
   console.error(`lint:test-timeout-worn - ${violations.length} violation(s):`);

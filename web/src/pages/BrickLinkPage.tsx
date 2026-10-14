@@ -358,7 +358,7 @@ export function BrickLinkPage() {
             className="rounded-xl border-2 border-dashed border-line hover:border-accent dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4 transition"
           >
             <div>
-              <h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">Wanted list</h2>
+              <h2 className="text-[10px] uppercase tracking-widest text-accent">Wanted list</h2>
               <p className="text-sm text-muted dark:text-slate-400">Upload or drop the file you downloaded from BrickLink, or paste it.</p>
               <a href="https://www.bricklink.com/v2/wanted/list.page" target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">Open your wanted lists on BrickLink</a>
             </div>
@@ -415,7 +415,7 @@ export function BrickLinkPage() {
       {tab === "order" && (
         <div className="space-y-5">
           <div ref={orderArea} data-testid="bricklink-order-intake" onDragOver={(event) => event.preventDefault()} onDrop={(event) => dropFiles(event, (files) => void takeOrderFiles(files))} className="rounded-xl border-2 border-dashed border-line hover:border-accent dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4 transition">
-            <div><h2 className="text-[10px] font-mono uppercase tracking-widest text-accent">Order import</h2><p className="text-sm text-muted dark:text-slate-400">Upload or drop the order file you downloaded from BrickLink, or paste it. It becomes a Purchase with its lines.</p></div>
+            <div><h2 className="text-[10px] uppercase tracking-widest text-accent">Order import</h2><p className="text-sm text-muted dark:text-slate-400">Upload or drop the order file you downloaded from BrickLink, or paste it. It becomes a Purchase with its lines.</p></div>
             <button type="button" onClick={() => orderInput.current?.click()} disabled={parseOrder.isPending} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"><FileText size={14} />{parseOrder.isPending ? "Reading…" : "Choose order file"}</button>
             <input ref={orderInput} type="file" accept={ORDER_ACCEPT} className="hidden" onChange={(event) => { const files = event.target.files ? Array.from(event.target.files) : []; event.target.value = ""; void takeOrderFiles(files); }} />
             <details><summary className="cursor-pointer text-sm text-accent">Paste instead</summary><label className="mt-3 block"><span className="sr-only">Order file contents</span><textarea value={csv} onChange={(event) => setCsv(event.target.value)} rows={6} placeholder="Paste the contents of your downloaded order file" className="input font-mono text-base sm:text-sm" /></label><div className="mt-2 flex justify-end"><button type="button" onClick={() => parseOrder.mutate(csv)} disabled={parseOrder.isPending || !csv.trim()} className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"><FileText size={14} />{parseOrder.isPending ? "Reading…" : "Preview"}</button></div></details>
@@ -462,21 +462,21 @@ function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <span className="text-[10px] uppercase tracking-widest text-faint">
           {result.counts.items} items
         </span>
         {result.counts.parts > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             {result.counts.parts} parts
           </span>
         )}
         {result.counts.sets > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             {result.counts.sets} sets
           </span>
         )}
         {result.counts.minifigs > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             {result.counts.minifigs} minifigs
           </span>
         )}
@@ -496,7 +496,7 @@ function ParsedWantedTable({ result }: { result: ParseWantedResponse }) {
           {result.items.map((item, i) => (
             <tr key={`${item.item_type}-${item.item_id}-${item.color_id}-${i}`}>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                <span className="text-[10px] uppercase tracking-widest text-accent">
                   {TYPE_LABEL[item.item_type] ?? item.item_type}
                 </span>
               </Td>
@@ -523,7 +523,7 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">diff</span>
+        <span className="text-[10px] uppercase tracking-widest text-faint">diff</span>
         <CountChip n={diff.counts.have} label="have" tone="emerald" />
         <CountChip n={diff.counts.partial} label="partial" tone="amber" />
         <CountChip n={diff.counts.need} label="need" tone="rose" />
@@ -547,7 +547,7 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
               <Td>
                 <span
                   className={
-                    "inline-block px-2 py-0.5 rounded-full text-[10px] font-mono uppercase tracking-widest border " +
+                    "inline-block px-2 py-0.5 rounded-full text-[10px] uppercase tracking-widest border " +
                     STATUS_STYLE[e.status]
                   }
                 >
@@ -555,7 +555,7 @@ function DiffTable({ diff }: { diff: DiffResponse }) {
                 </span>
               </Td>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                <span className="text-[10px] uppercase tracking-widest text-accent">
                   {TYPE_LABEL[e.wanted.item_type] ?? e.wanted.item_type}
                 </span>
               </Td>
@@ -590,24 +590,24 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <div className="px-4 py-2 bg-subtle/50 dark:bg-slate-800/40 border-b border-line dark:border-slate-700 flex flex-wrap items-center gap-3">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+        <span className="text-[10px] uppercase tracking-widest text-faint">
           {countOf(result.summary.line_count, "line")}
         </span>
         {result.summary.order_id && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             order {result.summary.order_id}
           </span>
         )}
-        <span className="text-[10px] font-mono uppercase tracking-widest text-muted">
+        <span className="text-[10px] uppercase tracking-widest text-muted">
           {formatStoredMoney(result.summary.total, "amount")} total
         </span>
         {result.summary.parts > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             {result.summary.parts} parts
           </span>
         )}
         {result.summary.sets > 0 && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+          <span className="text-[10px] uppercase tracking-widest text-accent">
             {result.summary.sets} sets
           </span>
         )}
@@ -629,7 +629,7 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
           {result.lines.map((line, i) => (
             <tr key={`${line.item_id}-${line.color_id}-${i}`}>
               <Td>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+                <span className="text-[10px] uppercase tracking-widest text-accent">
                   {TYPE_LABEL[line.item_type] ?? line.item_type}
                 </span>
               </Td>
@@ -669,7 +669,7 @@ function CountChip({
     slate: "text-muted",
   };
   return (
-    <span className={`text-[10px] font-mono uppercase tracking-widest ${colors[tone]}`}>
+    <span className={`text-[10px] uppercase tracking-widest ${colors[tone]}`}>
       {n} {label}
     </span>
   );
@@ -678,7 +678,7 @@ function CountChip({
 function WarningsPanel({ warnings }: { warnings: string[] }) {
   return (
     <div className="rounded-xl border border-amber-200 dark:border-amber-700/40 bg-amber-50 dark:bg-amber-900/10 p-4 text-xs text-amber-700 dark:text-amber-300 space-y-1">
-      <div className="font-mono uppercase tracking-widest text-[10px] text-amber-600 mb-1">
+      <div className="uppercase tracking-widest text-[10px] text-amber-600 mb-1">
         warnings
       </div>
       {warnings.map((w, i) => (
@@ -697,7 +697,7 @@ function Th({
 }) {
   return (
     <th
-      className={`px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-faint ${
+      className={`px-3 py-2 text-[10px] uppercase tracking-widest text-faint ${
         align === "right" ? "text-right" : "text-left"
       }`}
     >

@@ -109,7 +109,7 @@ export function LinksSection({
   return (
     <section className={compact ? "w-full" : undefined} data-testid="links-section">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">// links</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-accent">links</h3>
         <button type="button" onClick={() => setOpen(true)} className="text-xs text-accent inline-flex items-center gap-1 min-h-8" data-testid="link-add">
           <Plus size={12} /> Link
         </button>

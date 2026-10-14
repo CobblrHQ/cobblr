@@ -17,7 +17,7 @@
 // See docs/design-decisions/location-floor-plan.md, "Planning a layout".
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { platform } from "@cobblr/platform-contract";
-import { placesUnderDraft, plannedRack } from "@cobblr/platform-contract/plan-draft";
+import { bodyAsApplied, placesUnderDraft, plannedRack, renamePlannedRack } from "@cobblr/platform-contract/plan-draft";
 import { isRotation, ownSize, planFlags, readCloset, roomWalls, rotated, type PlanBox, type PlanFlag, type PlanWall } from "@cobblr/platform-contract/plan-clearance";
 import { OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
 import type { Kysely } from "kysely";
@@ -86,6 +86,8 @@ export interface PlanDraft {
   created_at: Date;
   updated_at: Date;
   applied_at: Date | null;
+  /** While applied: each planned key and the real place Apply made of it. */
+  made: Record<string, string> | null;
 }
 
 /** What an apply did: enough to undo it, and to say it. */
@@ -115,15 +117,17 @@ function readBody(raw: unknown): DraftBody {
   return parsed.success ? parsed.data : { moves: {}, things: {}, planned: [] };
 }
 
-function rowToDraft(r: { id: string; location_id: string; name: string; body: unknown; created_at: Date; updated_at: Date; applied_at: Date | null }): PlanDraft {
-  return { id: r.id, location_id: r.location_id, name: r.name, body: readBody(r.body), created_at: r.created_at, updated_at: r.updated_at, applied_at: r.applied_at };
+function rowToDraft(r: { id: string; location_id: string; name: string; body: unknown; created_at: Date; updated_at: Date; applied_at: Date | null; applied?: unknown }): PlanDraft {
+  const created = r.applied_at ? (r.applied as Partial<ApplyResult> | null)?.created : null;
+  const made = Array.isArray(created) ? Object.fromEntries(created.map((c) => [c.key, c.id])) : null;
+  return { id: r.id, location_id: r.location_id, name: r.name, body: readBody(r.body), created_at: r.created_at, updated_at: r.updated_at, applied_at: r.applied_at, made };
 }
 
 export async function listDrafts(orgId: string, locationId: string): Promise<PlanDraft[]> {
   const db = await dbOf(orgId);
   const rows = await db
     .selectFrom("core_locations_plan_drafts")
-    .select(["id", "location_id", "name", "body", "created_at", "updated_at", "applied_at"])
+    .select(["id", "location_id", "name", "body", "created_at", "updated_at", "applied_at", "applied"])
     .where("location_id", "=", locationId)
     .orderBy("created_at", "asc")
     .execute();
@@ -134,7 +138,7 @@ export async function getDraft(orgId: string, id: string): Promise<PlanDraft | n
   const db = await dbOf(orgId);
   const r = await db
     .selectFrom("core_locations_plan_drafts")
-    .select(["id", "location_id", "name", "body", "created_at", "updated_at", "applied_at"])
+    .select(["id", "location_id", "name", "body", "created_at", "updated_at", "applied_at", "applied"])
     .where("id", "=", id)
     .executeTakeFirst();
   return r ? rowToDraft(r) : null;
@@ -268,78 +272,78 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
       throw new DraftRefused(`The layout plans two places called ${p.name} side by side. Rename one.`);
     }
     if (!p.parent.startsWith(PLANNED) && (await siblingNamed(db, p.parent, p.name))) {
-      throw new DraftRefused(`There is already a place called ${p.name} there. Rename the planned one.`);
+      throw new DraftRefused(`There is already a place called ${p.name} there. Choose Rename planned rack beside its name in the layout.`);
     }
   }
 
-  // Planned places, parents first.
+  // From here it writes. Each step notes what it changes before it changes
+  // it, so a failure anywhere is taken back exactly, the way Undo would, and
+  // the draft stays unapplied: a half-built rack nobody can undo is what
+  // staging was left with after a 500 (#6369).
   const created: ApplyResult["created"] = [];
-  const made = new Map<string, string>();
-  const resolve = (ref: string): string | null => (ref.startsWith(PLANNED) ? (made.get(ref.slice(PLANNED.length)) ?? null) : ref);
-  let left = [...body.planned];
-  while (left.length) {
-    const ready = left.filter((p) => resolve(p.parent) !== null);
-    if (!ready.length) throw new DraftRefused("The planned places in this layout name each other as parents in a loop.");
-    for (const p of ready) {
-      const parentId = resolve(p.parent)!;
-      const parent = await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst();
-      const fp: Record<string, unknown> = { x_mm: Math.round(p.rect.x_mm), y_mm: Math.round(p.rect.y_mm), w_mm: Math.round(p.rect.w_mm), d_mm: Math.round(p.rect.d_mm), ...(p.rect.rot ? { rot: p.rect.rot } : {}) };
-      if (p.face) fp.face = { w_mm: Math.round(p.face.w_mm), d_mm: Math.round(p.face.d_mm), view: "front", unit: "mm" };
-      const ins = await db
-        .insertInto("core_locations_locations")
-        .values({ name: p.name, parent_id: parentId, depth: (parent?.depth ?? 0) + 1, kind: "container", metadata: { floorplan: fp } as never })
-        .returning(["id", "name"])
-        .executeTakeFirstOrThrow();
-      made.set(p.key, ins.id);
-      created.push({ key: p.key, id: ins.id, name: ins.name });
-      await platform().activity.log({
-        orgId,
-        userId,
-        action: "location_created",
-        ref: { module: "core-locations", entityType: "location", entityId: ins.id },
-        diff: { name: ins.name, parent_id: parentId, via: `layout ${draft.name}` },
-      });
-    }
-    left = left.filter((p) => !made.has(p.key));
-  }
-
-  // Places that move.
   const moved: ApplyResult["moved"] = [];
-  for (const [locId, m] of Object.entries(body.moves)) {
-    const cur = byId.get(locId)!;
-    const before = { parent_id: cur.parent_id, floorplan: (cur.metadata as { floorplan?: unknown } | null)?.floorplan ?? null };
-    let changed = false;
-    if (m.parent_id !== undefined) {
-      const to = resolve(m.parent_id);
-      if (to && to !== cur.parent_id) {
-        await reparent(db, locId, to);
-        changed = true;
-      }
-    }
-    if (m.rect) {
-      const fp = floorplanOf(cur.metadata);
-      const next: Record<string, unknown> = { ...fp, x_mm: Math.round(m.rect.x_mm), y_mm: Math.round(m.rect.y_mm), w_mm: Math.round(m.rect.w_mm), d_mm: Math.round(m.rect.d_mm) };
-      // The turn is the draft's to say: none in the draft is none on the rack.
-      if (m.rect.rot) next.rot = m.rect.rot;
-      else delete next.rot;
-      if (["x_mm", "y_mm", "w_mm", "d_mm", "rot"].some((k) => fp[k] !== next[k])) {
-        await setFloorplan(db, locId, next);
-        changed = true;
-      }
-    }
-    if (changed) moved.push({ id: locId, name: cur.name, before });
-  }
-
-  // Things, through the placement seam.
   const things: ApplyResult["things"] = [];
-  const names = new Map(
-    (await platform().entities.lookupMany(orgId, Object.values(body.things).map((t) => ({ kind: t.kind, id: t.id })), { system: true }).catch(() => [])).map((e) => [`${e.kind}:${e.id}`, e.title]),
-  );
-  const contentsOf = new Map<string, Awaited<ReturnType<ReturnType<typeof platform>["placement"]["contents"]>>>();
-  const contents = async (c: { kind: string; id: string }) => {
-    const k = `${c.kind}:${c.id}`;
-    if (!contentsOf.has(k)) contentsOf.set(k, await platform().placement.contents({ orgId, container: c }));
-    return contentsOf.get(k)!;
+  const applyWrites = async (): Promise<ApplyResult> => {
+    // Planned places, parents first.
+    const made = new Map<string, string>();
+    const resolve = (ref: string): string | null => (ref.startsWith(PLANNED) ? (made.get(ref.slice(PLANNED.length)) ?? null) : ref);
+    let left = [...body.planned];
+    while (left.length) {
+      const ready = left.filter((p) => resolve(p.parent) !== null);
+      if (!ready.length) throw new DraftRefused("The planned places in this layout name each other as parents in a loop.");
+      for (const p of ready) {
+        const parentId = resolve(p.parent)!;
+        const parent = await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst();
+        const fp: Record<string, unknown> = { x_mm: Math.round(p.rect.x_mm), y_mm: Math.round(p.rect.y_mm), w_mm: Math.round(p.rect.w_mm), d_mm: Math.round(p.rect.d_mm), ...(p.rect.rot ? { rot: p.rect.rot } : {}) };
+        if (p.face) fp.face = { w_mm: Math.round(p.face.w_mm), d_mm: Math.round(p.face.d_mm), view: "front", unit: "mm" };
+        const ins = await db
+          .insertInto("core_locations_locations")
+          .values({ name: p.name, parent_id: parentId, depth: (parent?.depth ?? 0) + 1, kind: "container", metadata: { floorplan: fp } as never })
+          .returning(["id", "name"])
+          .executeTakeFirstOrThrow();
+        made.set(p.key, ins.id);
+        created.push({ key: p.key, id: ins.id, name: ins.name });
+        await platform().activity.log({
+          orgId,
+          userId,
+          action: "location_created",
+          ref: { module: "core-locations", entityType: "location", entityId: ins.id },
+          diff: { name: ins.name, parent_id: parentId, via: `layout ${draft.name}` },
+        });
+      }
+      left = left.filter((p) => !made.has(p.key));
+    }
+
+    // Places that move.
+    for (const [locId, m] of Object.entries(body.moves)) {
+      const cur = byId.get(locId)!;
+      const before = { parent_id: cur.parent_id, floorplan: (cur.metadata as { floorplan?: unknown } | null)?.floorplan ?? null };
+      const to = m.parent_id !== undefined ? resolve(m.parent_id) : null;
+      const reparents = !!to && to !== cur.parent_id;
+      const fp = floorplanOf(cur.metadata);
+      let next: Record<string, unknown> | null = null;
+      if (m.rect) {
+        next = { ...fp, x_mm: Math.round(m.rect.x_mm), y_mm: Math.round(m.rect.y_mm), w_mm: Math.round(m.rect.w_mm), d_mm: Math.round(m.rect.d_mm) };
+        // The turn is the draft's to say: none in the draft is none on the rack.
+        if (m.rect.rot) next.rot = m.rect.rot;
+        else delete next.rot;
+        if (!["x_mm", "y_mm", "w_mm", "d_mm", "rot"].some((k) => fp[k] !== next![k])) next = null;
+      }
+      if (!reparents && !next) continue;
+      moved.push({ id: locId, name: cur.name, before });
+      if (reparents) await reparent(db, locId, to!);
+      if (next) await setFloorplan(db, locId, next);
+    }
+
+    // Things, through the placement seam.
+    const names = new Map(
+      (await platform().entities.lookupMany(orgId, Object.values(body.things).map((t) => ({ kind: t.kind, id: t.id })), { system: true }).catch(() => [])).map((e) => [`${e.kind}:${e.id}`, e.title]),
+    );
+    const contentsOf = new Map<string, Awaited<ReturnType<ReturnType<typeof platform>["placement"]["contents"]>>>();
+    const contents = async (c: { kind: string; id: string }) => {
+      const k = `${c.kind}:${c.id}`;
+      if (!contentsOf.has(k)) contentsOf.set(k, await platform().placement.contents({ orgId, container: c }));
+      return contentsOf.get(k)!;
   };
   for (const t of Object.values(body.things)) {
     const intoId = resolve(t.into);
@@ -358,6 +362,7 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
       placedBy: userId,
       via: `layout ${draft.name}`,
     });
+    // Noted once it has moved: a refused place moved nothing to take back.
     things.push({
       kind: t.kind,
       id: t.id,
@@ -389,21 +394,41 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
     .execute();
   void platform().events.emit("core-locations.location.updated", { orgId, locationId: room.id });
   return result;
+  };
+  try {
+    return await applyWrites();
+  } catch (e) {
+    console.error(`[core-locations] applying layout ${draft.id} failed; taking back what it did:`, e);
+    const why = e instanceof DraftRefused ? e.message : e instanceof Error ? e.message.replace(/^placement:\s*/, "") : "";
+    try {
+      await revertApplied(orgId, db, { created, moved, things }, userId, "Apply did not finish");
+    } catch (undoErr) {
+      // What could not be taken back stays on the draft as applied, so Undo
+      // is there for it: never a change outside any step a person can undo.
+      console.error(`[core-locations] taking back layout ${draft.id} failed too:`, undoErr);
+      const partial: ApplyResult = { draft: { id: draft.id, name: draft.name }, room: { id: room.id, name: room.name }, created, moved, things, note: `${draft.name} was only partly applied.` };
+      await db
+        .updateTable("core_locations_plan_drafts")
+        .set({ applied_at: new Date(), applied: JSON.stringify(partial) as never, updated_at: new Date() } as never)
+        .where("id", "=", draft.id)
+        .execute();
+      throw new DraftRefused(`${draft.name} was only partly applied${why ? ` (${why})` : ""}, and part of it could not be taken back. Use Undo on ${draft.name} to put the rest back.`);
+    }
+    throw new DraftRefused(`${draft.name} could not be applied${why ? `: ${why}` : ""}. Nothing changed.`);
+  }
 }
 
-/** Undo an apply: each thing still where it put it goes back, each place
- *  back to its spot and parent, and a planned place it made is deleted (its
- *  things already back out). The draft can then be changed and applied again. */
-export async function undoApply(
+/** Take back what an apply did, last first: each thing still where it put
+ *  it goes back, each place back to its spot and parent, and each planned
+ *  place it made is deleted. Undo runs it on a whole apply; a failed apply
+ *  runs it on the part it got through. */
+async function revertApplied(
   orgId: string,
-  id: string,
+  db: Db,
+  applied: Pick<ApplyResult, "created" | "moved" | "things">,
   userId: string | null,
-): Promise<{ things: number; places: number; deleted: number; leftWhereTheyAre: number; note: string }> {
-  const db = await dbOf(orgId);
-  const row = await db.selectFrom("core_locations_plan_drafts").select(["id", "name", "applied", "applied_at"]).where("id", "=", id).executeTakeFirst();
-  if (!row) throw new DraftRefused("There is no such layout.");
-  const applied = row.applied as ApplyResult | null;
-  if (!row.applied_at || !applied) throw new DraftRefused(`${row.name} has not been applied.`);
+  via: string,
+): Promise<{ things: number; places: number; deleted: number; leftWhereTheyAre: number }> {
   let things = 0;
   let leftWhereTheyAre = 0;
   for (const t of [...applied.things].reverse()) {
@@ -421,7 +446,7 @@ export async function undoApply(
         slot: t.before.slot,
         position: (t.before.position as never) ?? null,
         placedBy: userId,
-        via: "Undo",
+        via,
       });
     } else {
       await platform().placement.remove({ orgId, containee: ref });
@@ -438,6 +463,23 @@ export async function undoApply(
   }
   let deleted = 0;
   for (const c of [...applied.created].reverse()) if (await deletePlace(orgId, c.id, userId)) deleted++;
+  return { things, places, deleted, leftWhereTheyAre };
+}
+
+/** Undo an apply: each thing still where it put it goes back, each place
+ *  back to its spot and parent, and a planned place it made is deleted (its
+ *  things already back out). The draft can then be changed and applied again. */
+export async function undoApply(
+  orgId: string,
+  id: string,
+  userId: string | null,
+): Promise<{ things: number; places: number; deleted: number; leftWhereTheyAre: number; note: string }> {
+  const db = await dbOf(orgId);
+  const row = await db.selectFrom("core_locations_plan_drafts").select(["id", "name", "applied", "applied_at"]).where("id", "=", id).executeTakeFirst();
+  if (!row) throw new DraftRefused("There is no such layout.");
+  const applied = row.applied as ApplyResult | null;
+  if (!row.applied_at || !applied) throw new DraftRefused(`${row.name} has not been applied.`);
+  const { things, places, deleted, leftWhereTheyAre } = await revertApplied(orgId, db, applied, userId, "Undo");
   await db.updateTable("core_locations_plan_drafts").set({ applied_at: null, applied: null, updated_at: new Date() } as never).where("id", "=", id).execute();
   await platform().activity.log({
     orgId,
@@ -464,6 +506,7 @@ export async function describeDraft(orgId: string, id: string) {
   const db = await dbOf(orgId);
   const draft = await getDraft(orgId, id);
   if (!draft) throw new DraftRefused("There is no such layout.");
+  const body = bodyAsApplied(draft.body, draft.made);
   const all = await db.selectFrom("core_locations_locations").select(["id", "name", "parent_id", "metadata", "kind"]).execute();
   const kids = (pid: string) => all.filter((l) => l.parent_id === pid);
   type Shelf = { id: string; name: string; rack: string; w_mm: number | null; h_mm: number | null; planned: boolean };
@@ -471,7 +514,7 @@ export async function describeDraft(orgId: string, id: string) {
   const rackName = new Map<string, string>();
   const racks = [
     ...kids(draft.location_id).filter((l) => l.kind === "container").map((l) => ({ id: l.id, name: l.name, planned: false })),
-    ...draft.body.planned.filter((p) => p.parent === draft.location_id).map((p) => ({ id: `${PLANNED}${p.key}`, name: p.name, planned: true })),
+    ...body.planned.filter((p) => p.parent === draft.location_id).map((p) => ({ id: `${PLANNED}${p.key}`, name: p.name, planned: true })),
   ];
   for (const r of racks) {
     rackName.set(r.id, r.name);
@@ -479,7 +522,7 @@ export async function describeDraft(orgId: string, id: string) {
       const fp = floorplanOf(s.metadata);
       shelves.push({ id: s.id, name: s.name, rack: r.name, w_mm: Number(fp.w_mm) || null, h_mm: Number(fp.d_mm) || null, planned: false });
     }
-    for (const p of draft.body.planned.filter((p) => p.parent === r.id)) {
+    for (const p of body.planned.filter((p) => p.parent === r.id)) {
       shelves.push({ id: `${PLANNED}${p.key}`, name: p.name, rack: r.name, w_mm: p.rect.w_mm, h_mm: p.rect.d_mm, planned: true });
     }
   }
@@ -491,7 +534,7 @@ export async function describeDraft(orgId: string, id: string) {
       where.set(`${c.kind}:${c.id}`, { kind: c.kind, id: c.id, into: s.id, x_mm: (c.position as { x_mm?: number } | null)?.x_mm ?? null });
     }
   }
-  for (const [k, t] of Object.entries(draft.body.things)) where.set(k, { kind: t.kind, id: t.id, into: t.into, x_mm: t.x_mm ?? null });
+  for (const [k, t] of Object.entries(body.things)) where.set(k, { kind: t.kind, id: t.id, into: t.into, x_mm: t.x_mm ?? null });
   const refs = [...where.values()];
   const found = await platform().entities.lookupMany(orgId, refs.map((r) => ({ kind: r.kind, id: r.id })), { system: true }).catch(() => []);
   const sizeNames = new Map<string, string[]>();
@@ -542,7 +585,7 @@ function floorOf(
   racks: Array<{ id: string; name: string; planned: boolean; x_mm: number; y_mm: number; w_mm: number; d_mm: number; rot: number; own_w_mm: number; own_d_mm: number; h_mm: number | null }>;
   flags: PlanFlag[];
 } {
-  const places = placesUnderDraft(all.map((l) => ({ ...l, metadata: (l.metadata ?? {}) as Record<string, unknown> })), draft.body);
+  const places = placesUnderDraft(all.map((l) => ({ ...l, metadata: (l.metadata ?? {}) as Record<string, unknown> })), bodyAsApplied(draft.body, draft.made));
   const roomRow = places.find((p) => p.id === draft.location_id);
   const fp = floorplanOf(roomRow?.metadata);
   const w = Number(fp.w_mm), d = Number(fp.d_mm);
@@ -565,7 +608,7 @@ function floorOf(
       return { id: k.id, name: k.name, planned: "planned" in k, ...box, rot: box.rot ?? 0, own_w_mm: own.w_mm, own_d_mm: own.d_mm, h_mm: Number(face?.d_mm) > 0 ? Number(face!.d_mm) : null };
     });
   const aisle = Number(fp.aisle_mm) > 0 ? Number(fp.aisle_mm) : null;
-  const flags = planFlags({ room: { w_mm: w, d_mm: d, walls }, items: racks.map((r) => ({ id: r.id, name: r.name, box: { x_mm: r.x_mm, y_mm: r.y_mm, w_mm: r.w_mm, d_mm: r.d_mm }, h_mm: r.h_mm })), aisle_mm: aisle });
+  const flags = planFlags({ room: { w_mm: w, d_mm: d, walls }, items: racks.map((r) => ({ id: r.id, name: r.name, box: { x_mm: r.x_mm, y_mm: r.y_mm, w_mm: r.w_mm, d_mm: r.d_mm }, h_mm: r.h_mm, holds: true })), aisle_mm: aisle });
   return { room: { w_mm: w, d_mm: d, aisle_mm: aisle, walls }, racks, flags };
 }
 
@@ -719,14 +762,22 @@ export function registerPlanDraftHandlers(): void {
       };
       const list = listOf(a.put);
       const racks = listOf(a.move);
-      if (!list.length && !racks.length) throw new DraftRefused("Pass `put`: a list of {kind, id, into, x_mm?}, or `move`: a list of {id, x_mm?, y_mm?, turn?}.");
+      const renames = listOf(a.rename);
+      if (!list.length && !racks.length && !renames.length) throw new DraftRefused("Pass `put`: a list of {kind, id, into, x_mm?}, or `move`: a list of {id, x_mm?, y_mm?, turn?}, or `rename`: a list of {id, name} for planned racks.");
       const things = { ...d.body.things };
       for (const p of list) {
         const kind = str(p.kind), id = str(p.id), into = str(p.into);
         if (!kind || !id || !into) throw new DraftRefused("Each thing to put needs kind, id and into (a place id, or planned:<key>).");
         things[`${kind}:${id}`] = { kind, id, into, ...(typeof p.x_mm === "number" ? { x_mm: p.x_mm } : {}), ...(typeof p.y_mm === "number" ? { y_mm: p.y_mm } : {}) };
       }
-      const body = { ...d.body, things, moves: { ...d.body.moves }, planned: [...d.body.planned] };
+      let body = { ...d.body, things, moves: { ...d.body.moves }, planned: [...d.body.planned] };
+      for (const r of renames) {
+        try {
+          body = renamePlannedRack(body, str(r.id), str(r.name));
+        } catch (e) {
+          throw new DraftRefused(e instanceof Error ? e.message : String(e));
+        }
+      }
       if (racks.length) {
         // A rack moved or turned on the room's floor, as the planner's drag
         // and Turn do: a turn is about its middle and keeps it in the room.
@@ -755,8 +806,8 @@ export function registerPlanDraftHandlers(): void {
         }
       }
       await updateDraft(ctx.orgId, d.id, { body });
-      const said = [list.length ? plural(list.length, "thing", "things") + " placed" : null, racks.length ? plural(racks.length, "rack", "racks") + " moved" : null].filter(Boolean).join(", ");
-      return { draft_id: d.id, put: list.length, moved: racks.length, note: `${d.name}: ${said} in the draft. Nothing has moved yet.` };
+      const said = [list.length ? plural(list.length, "thing", "things") + " placed" : null, racks.length ? plural(racks.length, "rack", "racks") + " moved" : null, renames.length ? plural(renames.length, "planned rack", "planned racks") + " renamed" : null].filter(Boolean).join(", ");
+      return { draft_id: d.id, put: list.length, moved: racks.length, renamed: renames.length, note: `${d.name}: ${said} in the draft. Nothing has moved yet.` };
     }),
   );
   h.registerHandler(

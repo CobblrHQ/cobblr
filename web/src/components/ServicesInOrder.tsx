@@ -40,7 +40,7 @@ export function ServicesInOrder() {
   return (
     <div className="mt-5">
       <div className="flex items-baseline gap-2">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">Services</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-accent">Services</h3>
         <span className="flex-1" />
         <Link to="/services/runs" className="text-xs text-accent hover:underline">
           Recent runs →

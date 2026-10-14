@@ -128,7 +128,7 @@ export function CreateConnectionModal({
   });
 
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
   return (
     <Modal open onClose={onClose} title="Add a connection" size="md">
@@ -348,7 +348,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
     onSuccess: (result) => { if (result.pairs.length) setCreated(result); else { toast.success(machines.length > 1 ? `${machines.length} machines connected.` : "Machine connected."); onCreated(result.firstId); } },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add the connection(s)."),
   });
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   if (created) return <div className="space-y-3">{created.pairs.map(pair => <div key={pair.id}><h3>{pair.name}</h3><SnapmakerPairing slug={activeSlug} connectionId={pair.id} onPaired={() => setCreated(previous => previous && ({ ...previous, pairs: previous.pairs.map(p => p.id === pair.id ? { ...p, paired: true } : p) }))} /></div>)}<button type="button" className="min-h-11 rounded border border-line px-3 py-2 disabled:opacity-50" disabled={created.pairs.some(p => !p.paired)} onClick={() => onCreated(created.firstId)}>Finish setup</button></div>;
   return (
@@ -391,7 +391,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
           return (
             <div key={m.key} className="rounded border border-line dark:border-slate-700 p-2.5 space-y-2">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{i === 0 ? "First machine" : `Machine ${i + 1}`}</span>
+                <span className="text-[10px] uppercase tracking-wider text-faint">{i === 0 ? "First machine" : `Machine ${i + 1}`}</span>
                 <div className="flex-1" />
                 {machines.length > 1 && (
                   <button aria-label="Remove machine" type="button" onClick={() => setMachines((ms) => ms.filter((x) => x.key !== m.key))} title="Remove machine" className="text-faint hover:text-ember-500 transition">
@@ -716,11 +716,11 @@ function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion,
           <Fragment key={ri}>
             {drag != null &&
               (gapHot ? (
-                <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] font-mono uppercase tracking-wider text-accent/80"}>
+                <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] uppercase tracking-wider text-accent/80"}>
                   new row
                 </div>
               ) : (
-                <div data-drop-gap={ri} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] font-mono uppercase tracking-wider text-accent/50">
+                <div data-drop-gap={ri} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] uppercase tracking-wider text-accent/50">
                   new row
                 </div>
               ))}
@@ -771,11 +771,11 @@ function ReorderableRows({ slug, devices, gridCls, spanOf, canDrag, dataVersion,
       })}
       {drag != null &&
         (target?.kind === "gap" && target.gap === rows.length ? (
-          <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] font-mono uppercase tracking-wider text-accent/80"}>
+          <div data-drop-placeholder className={slotCls + " h-20 flex items-center justify-center text-[10px] uppercase tracking-wider text-accent/80"}>
             new row
           </div>
         ) : (
-          <div data-drop-gap={rows.length} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] font-mono uppercase tracking-wider text-accent/50">
+          <div data-drop-gap={rows.length} className="h-6 rounded border border-dashed border-accent/30 bg-accent/5 flex items-center justify-center text-[9px] uppercase tracking-wider text-accent/50">
             new row
           </div>
         ))}
@@ -1035,7 +1035,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
               return (
                 <div key={sec.key} className="space-y-1.5">
                   {sec.label && (
-                    <div className="text-[11px] font-mono uppercase tracking-wider text-faint flex items-center gap-1.5">
+                    <div className="text-[11px] uppercase tracking-wider text-faint flex items-center gap-1.5">
                       {sec.isPool && <Layers size={11} className="text-accent" />}
                       {sec.label}
                       {sec.isPool && <span className="text-faint/70">· {sec.devices.length} machine{sec.devices.length === 1 ? "" : "s"}</span>}
@@ -1111,7 +1111,7 @@ function MachinePhotoFill({ src, alt }: { src: string; alt: string }) {
         className="!bg-transparent"
         placeholder={<span className="flex flex-col items-center gap-1 text-faint text-[11px] font-sans"><Camera size={18} /> no camera</span>}
       >
-        <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/55 text-[9px] font-mono uppercase tracking-wider text-white/85 inline-flex items-center gap-1">
+        <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-black/55 text-[9px] uppercase tracking-wider text-white/85 inline-flex items-center gap-1">
           <Camera size={9} /> no camera
         </span>
       </EntityPhoto>
@@ -1368,7 +1368,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   const doneBy = etaMin != null && etaMin > 0 ? new Date(Date.now() + etaMin * 60_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
   // Blocking reason — say WHY a machine isn't doing anything (SimplyPrint's
   // strongest pattern). Attention has its own richer banner below.
-  const blocked = d.monitor_only ? "Dashboard monitoring only" : !d.enabled ? "disabled, not taking jobs" : d.klass === "offline" ? "offline, check the machine" : d.klass === "error" && !att ? "error, see the manager" : null;
+  const blocked = d.lent ? d.lent : d.monitor_only ? "Dashboard monitoring only" : !d.enabled ? "disabled, not taking jobs" : d.klass === "offline" ? "offline, check the machine" : d.klass === "error" && !att ? "error, see the manager" : null;
   // WHY this machine is in the "Needs you" bucket — always named on the tile,
   // never a bare amber ring. The deviceBucket() rule is: needs_attention (the
   // Cobblr bed-clear gate), OR klass "error", OR klass "complete". The last one
@@ -1395,7 +1395,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
     onDragLeave: () => setDropHover(false),
     onDrop: (e: React.DragEvent) => void onDrop(e),
   };
-  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${!dense && pairsOnItsCard(d) ? WIDE_CARD : ""} ${d.enabled || pairsOnItsCard(d) ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
+  const rootCls = `relative rounded-lg border overflow-hidden ${dropHover ? "border-cobble-500 ring-2 ring-cobble-500/40" : att ? "border-amber-400 dark:border-amber-700" : st.ring} bg-subtle dark:bg-slate-800/50 ${!dense && pairsOnItsCard(d) ? WIDE_CARD : ""} ${(d.enabled && !d.lent) || pairsOnItsCard(d) ? "" : "opacity-50"} ${selecting ? "cursor-pointer" : ""} ${selected ? "ring-2 ring-cobble-500" : ""}`;
 
   // Camera-wall tile — the feed is the card; status + progress ride as an
   // overlay strip. Streams/snapshots regardless of state (that's the point of
@@ -1478,7 +1478,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
               <div className="text-[9px] font-mono text-faint mt-0.5 truncate">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</div>
             </>
           ) : (
-            <div className={`text-[9px] font-mono uppercase tracking-wider truncate ${st.text}`}>{needsShort ?? blocked ?? d.state}</div>
+            <div className={`text-[9px] uppercase tracking-wider truncate ${st.text}`}>{needsShort ?? blocked ?? d.state}</div>
           )}
         </div>
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
@@ -1536,7 +1536,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       </div>
       {subtitle && <div className="text-[10px] text-faint truncate">{subtitle}</div>}
       <div className="flex flex-wrap items-center gap-2 mt-0.5">
-        <span className={`text-[10px] font-mono uppercase tracking-wider ${st.text}`}>{laser ? laserState(d.state) : d.state}</span>
+        <span className={`text-[10px] uppercase tracking-wider ${st.text}`}>{laser ? laserState(d.state) : d.state}</span>
         {d.stage && (
           <span className={`text-[10px] font-medium ${d.state === "unpaired" && d.station_kind === "print" ? "text-content break-words whitespace-normal" : "text-accent truncate"}`} title="current stage">{d.stage}</span>
         )}
@@ -1702,7 +1702,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
               {jobDisplayName(job)}
             </div>
             {job.priority > 0 && (
-              <span className={"text-[9px] font-mono uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600 dark:text-ember-400" : "bg-amber-500/15 text-amber-600")}>
+              <span className={"text-[9px] uppercase px-1 rounded shrink-0 " + (job.priority >= 20 ? "bg-ember-500/15 text-ember-600 dark:text-ember-400" : "bg-amber-500/15 text-amber-600")}>
                 {job.priority >= 20 ? "urgent" : "high"}
               </span>
             )}
@@ -1734,7 +1734,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
               </button>
             )}
           </div>
-          {job.status === "paused" && <div className="text-[10px] font-mono uppercase tracking-wider text-amber-600 mt-0.5">paused</div>}
+          {job.status === "paused" && <div className="text-[10px] uppercase tracking-wider text-amber-600 mt-0.5">paused</div>}
           {pct != null && (
             <>
               <div className="mt-1 h-1 rounded bg-line dark:bg-slate-700 overflow-hidden">
@@ -1822,7 +1822,7 @@ function JogPad({
           {onHome ? (
             <button type="button" disabled={disabled} onClick={onHome} className={pad} title="Home all axes">⌂</button>
           ) : (
-            <span className="text-[9px] font-mono uppercase text-faint">X/Y</span>
+            <span className="text-[9px] uppercase text-faint">X/Y</span>
           )}
         </div>
         <div className={cell}>{btn("X+", "x", step)}</div>
@@ -1834,13 +1834,13 @@ function JogPad({
       {has("z") && (
         <div className="flex flex-col items-center gap-1">
           {btn("Z+", "z", step)}
-          <span className="text-[9px] font-mono uppercase text-faint">Z</span>
+          <span className="text-[9px] uppercase text-faint">Z</span>
           {btn("Z−", "z", -step)}
         </div>
       )}
       {/* Step selector */}
       <div className="flex flex-col gap-1">
-        <span className="text-[9px] font-mono uppercase text-faint">Step</span>
+        <span className="text-[9px] uppercase text-faint">Step</span>
         <SegmentedChoice
           stack
           label="Step"
@@ -1899,7 +1899,7 @@ export function ControlsPanel({ slug, connId, deviceId, name, telemetry, lanActi
             const homeAction = g.key === "motion" ? cs.find((c) => c.kind === "action") : undefined;
             return (
               <div key={g.key}>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1.5">{g.label}</div>
+                <div className="text-[10px] uppercase tracking-widest text-faint mb-1.5">{g.label}</div>
                 {/* Motion renders as a directional jog pad; Home rides inside it. */}
                 {g.key === "motion" && jog ? (
                   <JogPad
@@ -2013,7 +2013,7 @@ function SourceChip({ kind }: { kind: "sd" | "cloud" }) {
   return (
     <span
       className={
-        "inline-flex items-center text-[9px] font-mono uppercase tracking-wider px-1 py-px rounded border " +
+        "inline-flex items-center text-[9px] uppercase tracking-wider px-1 py-px rounded border " +
         (kind === "sd"
           ? "text-faint border-line dark:border-slate-700"
           : "text-accent border-accent/40 bg-accent/5")
@@ -2278,7 +2278,7 @@ export function FilesPanel({ slug, connId, deviceId, onZoom, history, onOpenPrin
       )}
       {unmatched.length > 0 && (
         <>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint pt-1">
+          <div className="text-[10px] uppercase tracking-widest text-faint pt-1">
             Printed before - file no longer on the printer
           </div>
           <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded max-h-48 overflow-y-auto">
@@ -2534,7 +2534,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
         : r.device.trim().toLowerCase() === device.name.trim().toLowerCase(),
     )
     .slice(0, 60); // enough to annotate a full SD card + a meaningful history tail
-  const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+  const lbl = "text-[10px] uppercase tracking-widest text-faint";
 
   return (
     <>
@@ -2909,11 +2909,11 @@ export function MachineDigifabPanel({
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-accent">
           {words.kind === "3d-printer" ? <Printer size={12} /> : <Send size={12} />} {words.manager}
         </div>
         {link && (
-          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider text-content dark:text-mortar-200">
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[10px] uppercase tracking-wider text-content dark:text-mortar-200">
             <span className={`w-1.5 h-1.5 rounded-full ${chip.dot}`} />
             {chip.label}
           </span>
@@ -2934,7 +2934,7 @@ export function MachineDigifabPanel({
             <button
               onClick={() => removeLink.mutate(link.id)}
               disabled={removeLink.isPending}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
+              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1 disabled:opacity-50"
             >
               <Trash2 size={11} /> unlink
             </button>
@@ -2962,7 +2962,7 @@ export function MachineDigifabPanel({
       ) : (
         <div className="flex flex-wrap items-end gap-2">
           <div className="block">
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-faint mb-1">
               <label htmlFor={managerPickerId}>Manager</label>
               <button type="button" onClick={() => setCreateConnOpen(true)} className="text-accent hover:underline normal-case tracking-normal">
                 + new
@@ -2997,7 +2997,7 @@ export function MachineDigifabPanel({
             if (devs.length === 1) return <span className="text-[11px] text-muted dark:text-slate-400 self-center">→ {devs[0]!.name} <span className="text-faint dark:text-slate-500">(direct)</span></span>;
             return (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{capitalise(words.device)}</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">{capitalise(words.device)}</span>
                 <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} className="input !py-1 text-xs !w-auto">
                   <option value="">choose…</option>
                   {devs.map((d) => (<option key={d.id} value={d.id}>{d.name}</option>))}

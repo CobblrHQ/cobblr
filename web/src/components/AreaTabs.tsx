@@ -32,7 +32,7 @@ export function AreaTabs({ tabs, area }: { tabs: AreaTab[]; area: string }) {
   const { pathname } = useLocation();
   return (
     <div className="flex items-center gap-1 mb-4">
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-2">
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mr-2">
         {area}
       </span>
       {tabs.map((t) => {

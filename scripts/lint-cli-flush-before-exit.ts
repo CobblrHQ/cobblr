@@ -30,6 +30,7 @@
 //   npx tsx scripts/lint-cli-flush-before-exit.ts   (pnpm run lint cli-flush-before-exit)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites: commands run inside the api container. Their stdout
  *  and stderr are pipes (docker exec), which is exactly where the truncation
@@ -85,7 +86,7 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 for (const file of walk(HARNESS_ROOT)) {
   const src = readFileSync(file, "utf8");
   if (PRINTS_CAPTURED_OUTPUT.test(src)) violations.push(...check(file, src));

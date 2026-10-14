@@ -11,7 +11,7 @@ import { listInviteScope } from "@cobblr/platform-contract/share-scope";
 import { api } from "../lib/api";
 import { InviteForm } from "../components/ShareInviteForm";
 
-const heading = "text-[10px] font-mono uppercase tracking-widest text-accent";
+const heading = "text-[10px] uppercase tracking-widest text-accent";
 
 export function ListShareFlow({ args, onClose }: { args: Record<string, unknown>; onClose: () => void }) {
   const { orgSlug, role } = usePlatformWeb();

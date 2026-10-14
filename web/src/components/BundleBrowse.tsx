@@ -4,7 +4,7 @@
 // "one catalog, four costumes" happened. Both now compose from here:
 //
 //   splitCatalog()       - the ready-made vs full-setup classifier
-//   BundleSection        - a labelled tile-grid section ("// ready-made bundles")
+//   BundleSection        - a labelled tile-grid section ("ready-made bundles")
 //   BundleTile           - one bundle as a tile (glyph · name · badges · blurb)
 //
 // Click SEMANTICS stay per-surface (the panel selects-to-prime the hero; the
@@ -36,7 +36,7 @@ export function BundleSection({ title, hint, children }: { title: string; hint: 
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">{title}</span>
+        <span className="text-[10px] uppercase tracking-widest text-accent">{title}</span>
         <span className="text-[11px] text-faint dark:text-slate-500">{hint}</span>
       </div>
       <ul className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">{children}</ul>

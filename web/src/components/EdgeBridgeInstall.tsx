@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import { BridgeInstallMethod } from "./BridgeInstallMethod";
 
-const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
 export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?: string }) {
   const [label, setLabel] = useState("Home bridge");

@@ -119,7 +119,7 @@ export function SidebarNav({
               <div key={m.name}>
                 <div
                   {...handle}
-                  className="px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none"
+                  className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 select-none"
                 >
                   {m.displayName}
                 </div>
@@ -198,7 +198,7 @@ export function SidebarNav({
   );
   // The same quiet stem an instance nav-group uses, so the grown sidebar reads
   // as one vocabulary: a small label, the rows under it.
-  const stemCls = "px-3 pt-2 pb-0.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 select-none";
+  const stemCls = "px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 select-none";
 
   return (
     <div className="flex flex-col h-full min-h-0">

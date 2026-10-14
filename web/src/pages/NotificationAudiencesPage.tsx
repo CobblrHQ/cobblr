@@ -74,7 +74,7 @@ export function NotificationAudiencesPage() {
       />
       {[...byModule.entries()].map(([module, items]) => (
         <section key={module} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-4">
-          <h2 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">{module}</h2>
+          <h2 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">{module}</h2>
           {items.map((k) => (
             <KindRow key={k.event_type} slug={activeSlug} kind={k} members={members.data?.items ?? []} />
           ))}

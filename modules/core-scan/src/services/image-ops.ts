@@ -8,6 +8,7 @@ import { ITEMS_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas
 // is destroyed (rotate keeps the old id in metadata.extra_photos; split's
 // parent keeps its photo and is soft-resolved, restorable).
 
+import { countOf } from "@cobblr/platform-contract";
 import sharp from "sharp";
 import { seenCountOf } from "./seen-count.js";
 import { platform } from "@cobblr/platform-contract";
@@ -177,6 +178,18 @@ export const SPLIT_PROMPT =
   '"box": {"x": <0..1>, "y": <0..1>, "w": <0..1>, "h": <0..1>}}]}. ' +
   "If the photo really shows only ONE item, reply {\"items\": []}.";
 
+/** The split prompt told what the photo holds: the pieces a person (or their
+ *  assistant) listed, in their words, with where each sits when they said.
+ *  The model boxes those, by those names, instead of counting for itself. */
+export function splitPromptFor(expected: readonly { name: string; where?: string | null }[]): string {
+  const list = expected.map((e, i) => `${i + 1}. ${e.name}${e.where ? ` (${e.where})` : ""}`).join("\n");
+  return (
+    SPLIT_PROMPT +
+    `\n\nThe person says this photo shows exactly these ${countOf(expected.length, "item")}:\n${list}\n` +
+    "Box each of them, using the name given for it, in the same order. If you see a different number of distinct items than listed, list what you actually see instead."
+  );
+}
+
 export interface SplitItem {
   name: string;
   brand: string | null;
@@ -236,6 +249,7 @@ export async function detectSplitItems(
   orgId: string,
   fileId: string,
   userId?: string | null,
+  expected?: readonly { name: string; where?: string | null }[],
 ): Promise<{ items: SplitItem[]; failed: boolean }> {
   const src = await readBytes(orgId, fileId);
   if (!src) return { items: [], failed: true };
@@ -249,7 +263,7 @@ export async function detectSplitItems(
       input: { output_schema: ITEMS_OUTPUT_SCHEMA,
         image_b64: shown.toString("base64"),
         image_media_type: src.mime,
-        prompt: SPLIT_PROMPT,
+        prompt: expected?.length ? splitPromptFor(expected) : SPLIT_PROMPT,
       },
       source: { kind: "core-scan:split", id: fileId },
       userId: userId ?? undefined,

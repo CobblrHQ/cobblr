@@ -62,6 +62,7 @@ export interface ContributedPanelSpec {
 
 export { panelShows, collectionNameOf, type PanelRecordShape } from "./panel-shows";
 import { panelShows, collectionNameOf, type PanelRecordShape } from "./panel-shows";
+import { arrangePanels, panelLayoutKey } from "@cobblr/platform-contract/record-panel-layout";
 
 export type DetailPanelComponent = ComponentType<{ ctx: EntityDetailPanelCtx }>;
 
@@ -221,7 +222,18 @@ export function ContributedDetailPanels({
     facesOn: on as ReadonlySet<string>,
     present: new Set(presence.data?.present ?? []),
   };
-  const panels = all.filter((p) => panelShows(p, shape, placement));
+  // And the workspace's say over the ones that apply: hidden, and in what
+  // order, per kind of record (its collection's when it has one, #6337).
+  const layoutKey = panelLayoutKey(ctx.kind ?? target, collection);
+  const arranged = useQuery({
+    queryKey: ["record-panel-layout", orgSlug, layoutKey],
+    queryFn: () => api.recordPanelLayout!(orgSlug, layoutKey),
+    enabled: !!api.recordPanelLayout,
+    staleTime: 60_000,
+  });
+  // Held until the arrangement is read, so a hidden panel never flashes up.
+  if (api.recordPanelLayout && arranged.isLoading) return null;
+  const panels = arrangePanels(all.filter((p) => panelShows(p, shape, placement)), arranged.data?.layout);
   if (panels.length === 0) return null;
   return (
     <>

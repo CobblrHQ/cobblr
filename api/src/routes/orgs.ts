@@ -32,7 +32,7 @@ import * as activity from "../platform/activity.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
-import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importAppData, pointScanFallbackAtApp } from "../platform/provision-app.js";
+import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importFromOwnApp, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
 import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleRetiredError } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
@@ -600,32 +600,21 @@ orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, 
 // instance + fields exist here, then copies the items. Owner/admin of the target;
 // the caller must also be a member of the source. Source data is left untouched.
 const ImportAppBody = z.object({ source_slug: z.string().min(1) });
+// AI-ACTION: platform:import-app
 orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "platform:import-app"))) return;
     const parsed = ImportAppBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
       return;
     }
-    // The source must be one of the caller's own workspaces.
-    const source = await meta
-      .selectFrom("orgs as o")
-      .innerJoin("org_memberships as m", "m.org_id", "o.id")
-      .select(["o.id"])
-      .where("o.slug", "=", parsed.data.source_slug)
-      .where("m.user_id", "=", req.session!.id)
-      .executeTakeFirst();
-    if (!source) {
-      res.status(404).json({ error: { code: "source_not_found", message: "That source workspace isn't one of yours." } });
+    const r = await importFromOwnApp(req.tenant!.org.id, req.session!.id, parsed.data.source_slug);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
-    if (source.id === req.tenant!.org.id) {
-      res.status(400).json({ error: { code: "same_workspace", message: "Source and target are the same workspace." } });
-      return;
-    }
-    const result = await importAppData(source.id, req.tenant!.org.id, req.session!.id);
-    res.json(result);
+    res.json({ imported: r.imported, instance: r.instance });
   } catch (err) {
     if (err instanceof ProvisionAppError) {
       res.status(400).json({ error: { code: err.code, message: err.message, details: err.detail } });

@@ -94,7 +94,7 @@ export function PeoplePage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
-      <h2 className="text-[11px] font-mono uppercase tracking-widest text-muted">{`// ${title}`}</h2>
+      <h2 className="text-[11px] uppercase tracking-widest text-muted">{`${title}`}</h2>
       <div className="space-y-2">{children}</div>
     </section>
   );
@@ -186,7 +186,7 @@ function Row({
             </>
           )}
         </div>
-        {person.member && !person.left && <span className="text-[10px] font-mono uppercase tracking-widest text-muted">member</span>}
+        {person.member && !person.left && <span className="text-[10px] uppercase tracking-widest text-muted">member</span>}
         {!person.member && !person.user_id && canWrite && !editing && (
           <button type="button" className="text-xs text-accent hover:underline" onClick={() => setEditing(true)} data-testid="people-edit">
             Edit

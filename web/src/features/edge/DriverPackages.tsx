@@ -66,14 +66,14 @@ export function DriverPackages({ slug, hasBridge }: { slug: string; hasBridge: b
   const canSave =
     KIND_RE.test(draft.kind) && !!draft.version.trim() && SHA_RE.test(draft.sha256) && !!draft.source.trim();
 
-  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const head = "text-[10px] uppercase tracking-widest text-accent";
   const field =
     "w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1 text-xs";
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-baseline justify-between gap-2">
-        <div className={head}>// driver packages</div>
+        <div className={head}>driver packages</div>
         {!adding && (
           <button
             type="button"

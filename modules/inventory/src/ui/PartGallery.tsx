@@ -185,7 +185,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       }}
     >
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 flex items-center gap-2">
+        <h3 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 flex items-center gap-2">
           <Camera size={11} /> Photos
           {dragOver && (
             <span className="text-accent normal-case tracking-normal font-normal">
@@ -196,7 +196,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         <button
           type="button"
           onClick={photo.pick}
-          className="text-[11px] font-mono uppercase tracking-widest text-muted hover:text-accent inline-flex items-center gap-1"
+          className="text-[11px] uppercase tracking-widest text-muted hover:text-accent inline-flex items-center gap-1"
         >
           <Upload size={11} /> {upload.isPending ? "uploading…" : "add"}
         </button>
@@ -229,7 +229,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                 <div className="relative">
                   <GalleryImg thumb={thumbUrl(att.file_id)} alt={att.filename} onOpen={() => setViewing(i)} />
                   {isCover && (
-                    <div className="absolute top-1 left-1 text-[9px] font-mono uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
+                    <div className="absolute top-1 left-1 text-[9px] uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
                       cover
                     </div>
                   )}

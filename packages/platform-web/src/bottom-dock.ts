@@ -143,6 +143,13 @@ function layout(): void {
   const list = [...members.values()].sort((a, b) => a.order - b.order);
   const { offsets, total } = stackBottomChrome(list.map((m) => heightOf(m.el)));
   list.forEach((m, i) => m.el.style.setProperty(MEMBER_BOTTOM_VAR, `${offsets[i]}px`));
+  // The lowest bar that shows sits on the home bar's inset and paints it in
+  // its own colour (floating-chrome.css); the dock starts above the inset.
+  const edge = list.find((m) => heightOf(m.el) > 0)?.el;
+  for (const m of list) {
+    if (m.el === edge) m.el.setAttribute("data-fc-edge", "");
+    else m.el.removeAttribute("data-fc-edge");
+  }
   const root = document.documentElement;
   if (total > 0) root.style.setProperty(BOTTOM_CHROME_HEIGHT_VAR, `${total}px`);
   else root.style.removeProperty(BOTTOM_CHROME_HEIGHT_VAR);
@@ -171,7 +178,7 @@ function layout(): void {
   const clearance = bottomClearance(total, stacked);
   if (clearance > 0) root.style.setProperty(BOTTOM_CLEARANCE_VAR, `${clearance}px`);
   else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
-  document.body.style.paddingBottom = clearance > 0 ? `${clearance}px` : "";
+  document.body.style.paddingBottom = clearance > 0 ? `calc(var(--inset-bottom, 0px) + ${clearance}px)` : "";
   // Measured after the stacking above, so the rect is where the piece now is.
   const vh = typeof window !== "undefined" ? window.innerHeight : 0;
   const reserve = overlayBottomReserve(vh, [...overOverlays].map((el) => {
@@ -208,6 +215,7 @@ export function registerBottomChrome(el: HTMLElement): () => void {
     members.delete(el);
     ro?.unobserve(el);
     el.style.removeProperty(MEMBER_BOTTOM_VAR);
+    el.removeAttribute("data-fc-edge");
     scheduleDockLayout();
   };
 }

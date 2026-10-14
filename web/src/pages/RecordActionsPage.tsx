@@ -3,19 +3,88 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ACTION_GROUPS, type RecordActionLayout } from "@cobblr/platform-contract/action-groups";
 import { firstActionSentence, usePageTitle, useRunAction, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { api } from "../lib/api";
+import { api, type PlatformEntityKind } from "../lib/api";
+import { arrangePanels, type RecordPanelLayout } from "@cobblr/platform-contract/record-panel-layout";
 import { randomId } from "@cobblr/platform-contract/random-id";
 
 export function RecordActionsPage() {
-  usePageTitle("Record actions");
+  usePageTitle("Record actions and panels");
   const { activeSlug } = useActiveOrg();
   const kinds = useQuery({ queryKey: ["entity-kinds", activeSlug], queryFn: () => api.listEntityKinds(activeSlug) });
   const [kind, setKind] = useState("");
   return <div className="space-y-6">
     <p className="text-sm text-muted">Personal pins belong to each person and follow them across devices.</p>
     <label className="block space-y-1"><span className="text-sm text-content">Kind of record</span><select className="w-full rounded-lg border border-line bg-surface p-2 text-content" value={kind} onChange={(e) => setKind(e.target.value)}><option value="">Choose a kind</option>{kinds.data?.items.map((k) => <option key={k.id} value={k.id}>{k.display_name_plural ?? k.display_name}</option>)}</select></label>
+    {kind && kinds.data && <PanelArrangement key={`panels:${activeSlug}:${kind}`} kind={kind} kinds={kinds.data.items} />}
     {kind && <LayoutEditor key={`${activeSlug}:${kind}`} kind={kind} />}
   </div>;
+}
+
+/** The panels on this kind of record: hide the ones it does not need and put
+ *  the rest in order (#6337). Lists the panels that can apply to it: aimed at
+ *  its kind (or its collection's base kind, or every kind), and, when a panel
+ *  names its collections, this one among them or shown where its data is. */
+function PanelArrangement({ kind, kinds }: { kind: string; kinds: PlatformEntityKind[] }) {
+  const { activeSlug } = useActiveOrg();
+  const qc = useQueryClient();
+  const toast = useToast();
+  // PRESS-ARGS: the editor supplies the kind, the complete arrangement and the revision it opened.
+  const run = useRunAction();
+  const k = kinds.find((x) => x.id === kind);
+  // registry-filter-ok: a collection's panels aim at its module's own kinds, the ones without an instance.
+  const targets = new Set(["*", kind, ...(k?.instance_name ? kinds.filter((x) => x.module_name === k.module_name && !x.instance_name).map((x) => x.id) : [])]);
+  const modules = useQuery({ queryKey: ["org-modules", activeSlug], queryFn: () => api.orgModules(activeSlug) });
+  const current = useQuery({ queryKey: ["record-panel-layout", activeSlug, kind], queryFn: () => api.recordPanelLayout(activeSlug, kind) });
+  const [draft, setDraft] = useState<RecordPanelLayout | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (current.data && !draft) { setDraft(structuredClone(current.data.layout)); setRevision(current.data.revision); } }, [current.data, draft]);
+  if (current.isError || modules.isError) return <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">Panels could not be loaded. Refresh to try again.</p>;
+  if (!draft || !modules.data) return <p className="text-sm text-muted">Loading panels…</p>;
+  // registry-filter-ok: a panel that names collections applies to this kind only when it is one of them.
+  const applies = modules.data.items
+    .filter((m) => m.enabled)
+    .flatMap((m) => m.panels ?? [])
+    .filter((p) => p.surface === "entity-detail-panel" && targets.has(p.target))
+    .filter((p) => !p.collections?.length || p.presence || (k?.instance_name ? p.collections.includes(k.instance_name) : false));
+  const ordered = arrangePanels(applies, { panels: Object.fromEntries(Object.entries(draft.panels).map(([id, c]) => [id, { order: c.order }])) });
+  const move = (index: number, by: number) => {
+    const ids = ordered.map((p) => p.id);
+    const [id] = ids.splice(index, 1);
+    ids.splice(index + by, 0, id!);
+    const panels = { ...draft.panels };
+    ids.forEach((pid, i) => { panels[pid] = { ...panels[pid], order: i }; });
+    setDraft({ panels });
+  };
+  const setHidden = (id: string, hidden: boolean) => setDraft({ panels: { ...draft.panels, [id]: { ...draft.panels[id], hidden } } });
+  const save = async () => {
+    setBusy(true);
+    try {
+      const response = await run({ actionId: "platform:arrange-record-panels", args: { kind, layout: draft, expected_revision: revision } }, { undo: "shown-here" });
+      const result = response.result as { ok?: boolean; error?: string; data?: { revision: number; before: RecordPanelLayout } };
+      if (!result.ok) throw new Error(result.error ?? "The panels could not be saved.");
+      setRevision(result.data!.revision);
+      await qc.invalidateQueries({ queryKey: ["record-panel-layout", activeSlug] });
+      toast.action("Panels saved.", { actionLabel: "Undo", onAction: async () => {
+        const undone = await run({ actionId: "platform:arrange-record-panels", args: { kind, layout: result.data!.before, expected_revision: result.data!.revision } }, { undo: "is-undo" });
+        const back = undone.result as { ok?: boolean; error?: string; data?: { revision: number } };
+        if (!back.ok) { toast.error(back.error ?? "The panels could not be restored."); return; }
+        setDraft(result.data!.before); setRevision(back.data!.revision);
+        await qc.invalidateQueries({ queryKey: ["record-panel-layout", activeSlug] });
+      } });
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
+  };
+  return <section className="space-y-3" data-testid="record-panels">
+    <h2 className="text-sm font-semibold text-content">Panels</h2>
+    <p className="text-xs text-muted">The panels under a record's details. Hide the ones this kind does not need and put the rest in the order you want them.</p>
+    {applies.length === 0 ? <p className="text-sm text-muted">No panels apply to this kind of record.</p> : <ul className="space-y-2">{ordered.map((p, index) => <li key={p.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-2">
+      <span className="min-w-0 flex-1 text-sm text-content">{p.title}</span>
+      <label className="flex min-h-11 items-center gap-2 text-sm text-content"><input type="checkbox" checked={draft.panels[p.id]?.hidden ?? false} onChange={(e) => setHidden(p.id, e.target.checked)} />Hide</label>
+      <button type="button" aria-label={`Move ${p.title} up`} disabled={!index} className="min-h-11 min-w-11 rounded border border-line px-3 text-sm disabled:opacity-30" onClick={() => move(index, -1)}>↑</button>
+      <button type="button" aria-label={`Move ${p.title} down`} disabled={index === ordered.length - 1} className="min-h-11 min-w-11 rounded border border-line px-3 text-sm disabled:opacity-30" onClick={() => move(index, 1)}>↓</button>
+    </li>)}</ul>}
+    <button type="button" disabled={busy || applies.length === 0} onClick={() => void save()} className="min-h-11 rounded-lg bg-cobble-600 px-4 py-2 text-sm text-white disabled:opacity-50">{busy ? "Saving…" : "Save panels"}</button>
+  </section>;
 }
 function LayoutEditor({ kind }: { kind: string }) {
   const { activeSlug } = useActiveOrg();

@@ -4,7 +4,7 @@
 // See docs/design-decisions/location-floor-plan.md.
 
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
-import { doorFitsWall, isEdge, isRotation, readCloset, wallSegments as contractWallSegments, type PlanOpening, type PlanWall, type Rotation } from "@cobblr/platform-contract/plan-clearance";
+import { boxHolds, collisions, doorFitsWall, isEdge, isRotation, readCloset, wallSegments as contractWallSegments, type PlanOpening, type PlanWall, type Rotation } from "@cobblr/platform-contract/plan-clearance";
 
 /** A door, a window or a plain opening in a wall; a door may say its leaf,
  *  hinge and swing, a window its sill (plan-clearance.ts). */
@@ -380,33 +380,21 @@ export function rectsOverlap(a: FpRect, b: FpRect): boolean {
   );
 }
 
-/** Is `inner` held by `outer` — inside its bounds AND appreciably smaller?
+/** Is `inner` held by `outer`: inside its bounds AND appreciably smaller?
  *  The size test is what stops two identical rects reading as containment. */
 export function rectContains(outer: FpRect, inner: FpRect): boolean {
-  const within =
-    inner.x_mm >= outer.x_mm &&
-    inner.y_mm >= outer.y_mm &&
-    inner.x_mm + inner.w_mm <= outer.x_mm + outer.w_mm &&
-    inner.y_mm + inner.d_mm <= outer.y_mm + outer.d_mm;
-  if (!within) return false;
-  const outerArea = outer.w_mm * outer.d_mm;
-  const innerArea = inner.w_mm * inner.d_mm;
-  return outerArea > 0 && innerArea <= outerArea * 0.9;
+  return boxHolds(outer, inner);
 }
 
 /** Ids of every rect that collides with another: they overlap, and neither is
- *  simply holding the other. O(n²), and a plan holds tens of rects. */
-export function collidingIds(items: Array<{ id: string; rect: FpRect }>): Set<string> {
+ *  a place (`holds`) holding the other. Two things never hold each other, so
+ *  a printer set down inside another printer's footprint collides (#6368).
+ *  The rule is plan-clearance's `collisions`, so the planner says the same. */
+export function collidingIds(items: Array<{ id: string; rect: FpRect; holds?: boolean }>): Set<string> {
   const hit = new Set<string>();
-  for (let i = 0; i < items.length; i++) {
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i]!;
-      const b = items[j]!;
-      if (!rectsOverlap(a.rect, b.rect)) continue;
-      if (rectContains(a.rect, b.rect) || rectContains(b.rect, a.rect)) continue;
-      hit.add(a.id);
-      hit.add(b.id);
-    }
+  for (const [a, b] of collisions(items.map((i) => ({ id: i.id, box: i.rect, holds: i.holds })))) {
+    hit.add(a.id);
+    hit.add(b.id);
   }
   return hit;
 }

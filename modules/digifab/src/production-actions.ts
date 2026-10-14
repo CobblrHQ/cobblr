@@ -181,7 +181,7 @@ export async function exportProductionReport(db: Kysely<DigifabDB>, orgId: strin
  return { file_id: file.fileId, units: units.length, attempts: rows.length };
 }
 function testRunEntity(row: Selectable<DigifabDB["digifab_test_runs"]>) {
- return { kind: "digifab:test-run", id: row.id, title: `${row.plan.name} · Attempt ${row.attempt}`, subtitle: row.result?.status ?? "Prepared", detailUrl: openRecordPath("digifab:test-run", row.id), fields: { ...(row.metadata ?? {}), plan_version: row.plan_version, plan_hash: row.plan_hash, status: row.result?.status ?? "prepared", result: row.result, unit_kind: row.unit_kind, unit_id: row.unit_id, operator_id: row.operator_id, station: row.station, jig_id: row.jig_id, jig_cycle: row.jig_cycle } };
+ return { kind: "digifab:test-run", id: row.id, title: `${row.plan.name} · Attempt ${row.attempt}`, subtitle: row.result?.status ?? "Prepared", detailUrl: openRecordPath("digifab:test-run", row.id), fields: { ...(row.metadata ?? {}), name: `${row.plan.name} · Attempt ${row.attempt}`, plan_version: row.plan_version, plan_hash: row.plan_hash, status: row.result?.status ?? "prepared", result: row.result, unit_kind: row.unit_kind, unit_id: row.unit_id, operator_id: row.operator_id, station: row.station, jig_id: row.jig_id, jig_cycle: row.jig_cycle } };
 }
 let registered = false;
 export function registerProductionTest() {

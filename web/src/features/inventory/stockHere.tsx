@@ -114,7 +114,7 @@ export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3" data-testid="stock-here">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// stock here</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">stock here</div>
         <span className="text-xs text-muted dark:text-slate-400">
           {items.length} {items.length === 1 ? "thing" : "things"}
           {low ? ` · ${low} low` : ""}
@@ -127,7 +127,7 @@ export function StockHerePanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       {[...byCollection.entries()].map(([kind, rows]) => (
         <div key={kind}>
           {byCollection.size > 1 && (
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">{labels.collection(kind)}</div>
+            <div className="text-[10px] uppercase tracking-widest text-faint mb-1">{labels.collection(kind)}</div>
           )}
           <ul className="divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700">
             {rows.map((r) => (

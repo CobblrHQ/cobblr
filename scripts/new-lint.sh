@@ -72,6 +72,8 @@ const fs = require("fs");
 const [slug, rule, incident, roots, fix, file] = process.argv.slice(2);
 let t = fs.readFileSync("scripts/templates/lint.template.ts", "utf8");
 const sub = (k, v) => { t = t.split(k).join(v); };
+// The template sits in scripts/templates/; the lint it becomes sits in scripts/.
+sub('from "../lib/', 'from "./lib/');
 sub("__RULE__", rule); sub("__INCIDENT__", incident); sub("__ROOTS__", roots); sub("__FIX_HINT__", fix.replace(/"/g, '\\"')); sub("__SLUG__", slug);
 fs.writeFileSync(file, t);
 NODE

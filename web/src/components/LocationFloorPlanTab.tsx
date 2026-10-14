@@ -158,13 +158,13 @@ export function LocationFloorPlanTab({
         <div className="flex flex-wrap items-center gap-2">
           {areas.length > 0 && (
             <>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">area</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">area</span>
               {areas.map(chip)}
             </>
           )}
           {containers.length > 0 && (
             <>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 ml-1">container</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 ml-1">container</span>
               {containers.map(chip)}
             </>
           )}

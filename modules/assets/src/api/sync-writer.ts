@@ -9,6 +9,7 @@
 // to the same asset; an emit here would re-fire the wire. Same reasoning as
 // inventory's writer (see modules/inventory/src/api/sync-writer.ts).
 
+import { custodyFromLoan } from "./custody.js";
 import { adoptAxisValuesIntoField, findRowIdByKey, mergeRowMetadata, platform, restoreRow, snapshotRow, snapshotRowTree, restoreRowTree, rowVersionOf, updateRowAt } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { AssetsDB } from "../db.js";
@@ -63,6 +64,10 @@ export function registerAssetsWriter(): void {
     // duplicated (#3836).
     findByKey: async (orgId, key, value) => findRowIdByKey(await platform().tenants.getDb(orgId), "assets_assets", key, value),
     mergeMetadata: async (orgId, id, fields) => mergeRowMetadata(await platform().tenants.getDb(orgId), "assets_assets", id, fields),
+    // A loan shows in Who has it and Due back (custody.ts), and Due back is
+    // already a deadline the calendar and Needs you read.
+    onLoan: custodyFromLoan,
+    loanDueField: "due_back",
     async create(orgId, fields) {
       const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
       const inserted = await db

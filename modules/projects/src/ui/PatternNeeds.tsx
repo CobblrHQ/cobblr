@@ -106,7 +106,7 @@ export function PatternNeedsPanel({
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5" data-testid="pattern-needs-panel">
       <div className="flex items-center gap-2 mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// what this pattern needs</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">what this pattern needs</div>
         {s && s.read.status !== "none" && s.read.status !== "pending" && s.read.pattern_file_id && (
           <button
             type="button"
@@ -161,7 +161,7 @@ export function PatternNeedsPanel({
                   {/* The pattern's own short name (MC, A) is a tag; a longer note
                       ("Designer used …") reads as a line under the title. */}
                   {n.label && n.label.length <= 16 && (
-                    <span className="inline-block mb-1 text-[10px] font-mono uppercase tracking-widest px-1.5 py-0.5 rounded border border-line dark:border-slate-600 text-muted">
+                    <span className="inline-block mb-1 text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-line dark:border-slate-600 text-muted">
                       {n.label}
                     </span>
                   )}

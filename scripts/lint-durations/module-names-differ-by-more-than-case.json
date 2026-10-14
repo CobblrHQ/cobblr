@@ -1,0 +1,10 @@
+{
+  "lint": "lint:module-names-differ-by-more-than-case",
+  "run": "node scripts/lint-module-names-differ-by-more-than-case.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-14",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -243,7 +243,7 @@ export function Lightbox({ items, index, onIndex = () => {}, onClose, searchSlot
       <div
         className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2"
         // Clear of the home-indicator strip, where a swipe up beats the tap.
-        style={{ paddingBottom: "max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))" }}
+        style={{ paddingBottom: "max(1rem, calc(var(--inset-bottom) + 0.5rem))" }}
         onClick={stop}
       >
         {searchSlot}

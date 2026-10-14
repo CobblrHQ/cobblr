@@ -21,6 +21,8 @@
 //   npx tsx scripts/lint-__SLUG__.ts   (pnpm lint __SLUG__)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isEmbeddedPayload } from "../lib/embedded-payloads.mjs";
+import { onlyChanged } from "../lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -44,7 +46,8 @@ function* walk(dir: string): Generator<string> {
     if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) yield p;
+    // An embedded payload (a base64 build) holds no code to judge and is megabytes.
+    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && !isEmbeddedPayload(p)) yield p;
   }
 }
 
@@ -64,7 +67,8 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+// The pre-push run hands a per-file lint only the change's files (lib/lint-only-files.ts); CI checks the whole tree.
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 
 if (violations.length) {
   console.error(`lint:__SLUG__ - ${violations.length} violation(s):`);

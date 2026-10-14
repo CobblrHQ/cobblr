@@ -8,6 +8,7 @@
 // identical. Providers without tool support (e.g. a bridge target that
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
+import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
@@ -998,11 +999,19 @@ async function answerTurn(
         // The way back for another action is not something to call.
         const internal = internalActionRefusal(typed, await actionsIncludingInternal(c));
         if (internal) return internal;
+        // What only a person does (human-only.ts) gets no card at all, so
+        // there is nothing to press on the assistant's say-so.
+        const human = humanOnlyRefusal(typed, (a.args as Record<string, unknown> | undefined) ?? null);
+        if (human) return human;
         // platform:group_fields for platform:group-fields: the model chose the
         // right action and typed the separator its own way. Correct it in
         // place rather than refusing the turn.
         const real = resolveActionId(typed, (await actionIds(c)) ?? []);
-        if (real && real !== typed) a.action_id = real;
+        if (real && real !== typed) {
+          a.action_id = real;
+          const humanReal = humanOnlyRefusal(real, (a.args as Record<string, unknown> | undefined) ?? null);
+          if (humanReal) return humanReal;
+        }
         const schema = await actionArgsSchema(c, real ?? typed);
         // Right action, right value, its own name for the argument
         // ({name: "shipments"} for {module}). Corrected in place, like the id

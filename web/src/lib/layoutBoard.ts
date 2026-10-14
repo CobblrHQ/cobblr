@@ -147,6 +147,22 @@ export function labelFor(name: string, short: string, wPx: number, hPx: number, 
   return fits ?? (short !== name ? (bare ?? short) : tail);
 }
 
+/** The small type a box falls back to (8 px on 8 px lines), when nothing it
+ *  could say fits at its normal size. */
+export const SMALL_CHAR_PX = 4.5;
+export const SMALL_LINE_PX = 8;
+
+/** What a box drawn `wPx` by `hPx` says, and whether in the small type: the
+ *  label `labelFor` picks when it fits at the normal size, else the one that
+ *  fits in the small type, else the small type's own last resort. A Bambu A1
+ *  mini on a narrow face (two options side by side) was given "A1 mini" at
+ *  10 px in a box with room for four letters, and drew half of it (#5463). */
+export function chipLabel(name: string, short: string, wPx: number, hPx: number, charPx = 5.6, linePx = 12): { text: string; small: boolean } {
+  const normal = labelFor(name, short, wPx, hPx, charPx, linePx);
+  if (fitsIn(normal, Math.floor((wPx - 4) / charPx), Math.floor((hPx - 2) / linePx))) return { text: normal, small: false };
+  return { text: labelFor(name, short, wPx, hPx, SMALL_CHAR_PX, SMALL_LINE_PX), small: true };
+}
+
 /** Each shelf keeps this many px at its top for its name and its fit. */
 export const SHELF_BAND_PX = 26;
 

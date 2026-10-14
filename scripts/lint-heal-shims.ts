@@ -22,6 +22,7 @@
 // Run: npx tsx scripts/lint-heal-shims.ts
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SRC = join(ROOT, "api", "src");
@@ -33,7 +34,8 @@ const walk = (dir: string) => {
     if (e.name === "node_modules" || e.name === "dist") continue;
     const p = join(dir, e.name);
     if (e.isDirectory()) walk(p);
-    else if (e.name.endsWith(".ts")) files.push(p);
+    // A payload (a bundled bridge, base64) holds no shim and grows with every re-embed.
+    else if (e.name.endsWith(".ts") && !isEmbeddedPayload(relative(ROOT, p))) files.push(p);
   }
 };
 walk(SRC);

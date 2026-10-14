@@ -86,6 +86,8 @@ function toResolved(row: {
   id: string;
   name: string;
   short_name: string | null;
+  description: string | null;
+  image_path: string | null;
   metadata?: Record<string, unknown> | null;
   kind: "area" | "container";
   parent_id: string | null;
@@ -100,6 +102,8 @@ function toResolved(row: {
     fields: {
       name: row.name,
       short_name: row.short_name,
+      description: row.description,
+      image_path: row.image_path,
       kind: row.kind,
       parent_id: row.parent_id,
       depth: row.depth,

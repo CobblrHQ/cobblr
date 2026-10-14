@@ -76,7 +76,7 @@ export function OAuthConsentPage() {
         </div>
 
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Workspace</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Workspace</span>
           <select className="input" value={workspace || d.workspaces[0]?.id || ""} onChange={(e) => setWorkspace(e.target.value)}>
             {d.workspaces.map((w) => (
               <option key={w.id} value={w.id}>
@@ -87,7 +87,7 @@ export function OAuthConsentPage() {
         </label>
 
         <div className="space-y-1.5">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">What it can do</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">What it can do</span>
           <SegmentedChoice
             stack
             label="What it can do"

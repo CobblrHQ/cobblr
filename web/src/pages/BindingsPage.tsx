@@ -73,7 +73,7 @@ export function BindingsPage() {
 
       <div>
         <div className="flex items-center gap-3 mb-2">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// existing wires</div>
+          <div className="text-[10px] uppercase tracking-widest text-accent">existing wires</div>
           <div className="flex items-center gap-0.5 text-[10px] font-mono">
             {(["list", "graph"] as const).map((v) => (
               <button
@@ -136,7 +136,7 @@ export function BindingsPage() {
                   <div className="flex-1" />
                   <label
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer"
+                    className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer"
                   >
                     <input
                       type="checkbox"
@@ -214,7 +214,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
   return (
     <div>
       <div className="flex items-center gap-3 mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// recent wire activity</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">recent wire activity</div>
         <div className="flex items-center gap-1 text-[10px] font-mono">
           {(["all", "failed"] as const).map((f) => (
             <button
@@ -259,7 +259,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
               }
             >
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={"text-[10px] font-mono uppercase " + (failed ? "text-ember-500" : "text-moss-600")}>
+                <span className={"text-[10px] uppercase " + (failed ? "text-ember-500" : "text-moss-600")}>
                   {failed ? "failed" : "fired"}
                 </span>
                 <span className="font-mono text-[10px] text-faint">{new Date(it.occurred_at).toLocaleString()}</span>

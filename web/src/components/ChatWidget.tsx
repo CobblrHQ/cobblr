@@ -54,7 +54,7 @@ import {
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, useRailTab } from "./SideRail";
-import { ContextChip, PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
+import { ContextChip, PopoverLayer, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
 import { ServiceJobCard } from "./ServiceJobCard";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -227,14 +227,13 @@ export function ModelChip({
       setOpen(false);
     };
     document.addEventListener("mousedown", close);
-    window.addEventListener("scroll", close, true);
     window.addEventListener("resize", place);
     return () => {
       document.removeEventListener("mousedown", close);
-      window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", place);
     };
   }, [open]);
+  useCloseOnPageScroll(open, () => setOpen(false));
   // Focus goes INTO the menu when it opens. The pill sits in the Ask Cobb
   // panel, which is escape-exempt, so an Esc pressed with focus still on the
   // pill would never reach the menu.

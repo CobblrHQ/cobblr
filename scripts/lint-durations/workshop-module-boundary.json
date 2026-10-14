@@ -1,0 +1,10 @@
+{
+  "lint": "lint:workshop-module-boundary",
+  "run": "node scripts/lint-workshop-module-boundary.ts",
+  "rows": [
+    "new-module"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-15",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

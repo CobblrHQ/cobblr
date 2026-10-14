@@ -24,6 +24,7 @@
 //   npx tsx scripts/lint-folded-faces-keep-values.ts   (pnpm lint folded-faces-keep-values)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 const ROOTS = ["web/src", "packages/platform-web/src", "modules"];
 const SKIP = /(^|\/)faces\.tsx$/;
@@ -82,7 +83,7 @@ function check(file: string, src: string): Violation[] {
 }
 
 const violations: Violation[] = [];
-for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 
 if (violations.length) {
   console.error(`lint:folded-faces-keep-values - ${violations.length} violation(s):`);

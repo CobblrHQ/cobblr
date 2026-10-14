@@ -1,4 +1,4 @@
-import { entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton } from "@cobblr/platform-web";
+import { entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -108,13 +108,13 @@ function PurchasesInsights({ summary }: { summary: OrderSummary }) {
   const topVendors = summary.top_vendors.map((v) => [v.vendor ?? "(no vendor)", v.spend] as const);
   const maxMonth = Math.max(1, ...months.map((m) => monthTotals[m.key] ?? 0));
   const maxVendor = Math.max(1, ...topVendors.map(([, v]) => v));
-  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const head = "text-[10px] uppercase tracking-widest text-accent";
   const card = "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4";
 
   return (
     <div className="grid md:grid-cols-2 gap-3">
       <div className={card}>
-        <div className={head}>// spend, last 6 months</div>
+        <div className={head}>spend, last 6 months</div>
         <div className="flex items-end gap-2 h-28 mt-3">
           {months.map((m) => {
             const total = monthTotals[m.key] ?? 0;
@@ -136,7 +136,7 @@ function PurchasesInsights({ summary }: { summary: OrderSummary }) {
         </div>
       </div>
       <div className={card}>
-        <div className={head}>// top vendors by spend</div>
+        <div className={head}>top vendors by spend</div>
         <div className="space-y-2 mt-3">
           {topVendors.map(([name, val]) => (
             <div key={name}>
@@ -158,7 +158,7 @@ function PurchasesInsights({ summary }: { summary: OrderSummary }) {
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-3.5 py-2.5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{label}</div>
       <div className="text-lg font-bold text-content dark:text-mortar-100 leading-tight mt-0.5">{value}</div>
       {hint && <div className="text-[10px] text-faint mt-0.5">{hint}</div>}
     </div>
@@ -293,6 +293,17 @@ export function PurchasesPage() {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "desc" }));
   // Header stats: over every order the filters match, from the server.
   const filteredSpend = shown?.spend ?? 0;
+  const loadMoreBar = orders.hasNextPage && (
+    <div className="flex items-center justify-center gap-3 border-t border-line dark:border-slate-700 px-3 py-2 text-xs text-muted">
+      <span>
+        Showing {filtered.length} of {shown?.count ?? "more"}
+      </span>
+      <button type="button" onClick={() => void orders.fetchNextPage()} disabled={orders.isFetchingNextPage} className="rounded border border-line dark:border-slate-600 px-3 py-1 font-medium text-content dark:text-mortar-100 hover:border-accent disabled:opacity-50">
+        {orders.isFetchingNextPage ? "Loading…" : "Load more"}
+      </button>
+    </div>
+  );
+  const phone = usePhoneLayout();
   const receiptsCount = whole?.from_receipts ?? 0;
 
   const [newOpen, setNewOpen] = useState(false);
@@ -422,10 +433,31 @@ export function PurchasesPage() {
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-10 text-center text-sm text-muted">
           {orders.isError ? "Couldn't load your orders." : totalOrders === 0 ? "No orders yet. Log the first with the + above." : "No matches with the current filters."}
         </div>
+      ) : phone ? (
+        <div className="space-y-2">
+          <PhoneRecordList
+            label="Orders"
+            rows={rows.map((o) => ({
+              id: o.id,
+              name: o.vendor || o.order_number || "Order",
+              state: o.status,
+              identity: [o.vendor ? o.order_number : null],
+              fields: [
+                { label: "Ordered", value: fmtOrderDate(o.ordered_at) },
+                { label: "Arrived", value: fmtOrderDate(o.arrived_at) },
+                { label: "Items", value: o.item_count != null ? String(o.item_count) : null },
+                { label: "Total", value: money(o.total, o.currency) },
+              ],
+            }))}
+            onOpen={(id) => navigate(`/purchases/${id}`)}
+            selection={{ selected, onToggle: toggleRow, onSelectAll: (checked) => setSelected(checked ? new Set(filtered.map((r) => r.id)) : new Set()) }}
+          />
+          {loadMoreBar}
+        </div>
       ) : (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+          <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             <tr>
               <th className="w-8 px-3 py-2">
                 <input
@@ -512,16 +544,7 @@ export function PurchasesPage() {
             </tfoot>
           )}
         </table>
-        {orders.hasNextPage && (
-          <div className="flex items-center justify-center gap-3 border-t border-line dark:border-slate-700 px-3 py-2 text-xs text-muted">
-            <span>
-              Showing {filtered.length} of {shown?.count ?? "more"}
-            </span>
-            <button type="button" onClick={() => void orders.fetchNextPage()} disabled={orders.isFetchingNextPage} className="rounded border border-line dark:border-slate-600 px-3 py-1 font-medium text-content dark:text-mortar-100 hover:border-accent disabled:opacity-50">
-              {orders.isFetchingNextPage ? "Loading…" : "Load more"}
-            </button>
-          </div>
-        )}
+        {loadMoreBar}
       </div>
       )
       )}
@@ -579,7 +602,7 @@ function StatusPill({ status }: { status: Order["status"] }) {
     cancelled: "bg-ember-100 text-ember-700 dark:bg-ember-700/40 dark:text-ember-200",
   };
   return (
-    <span className={"inline-block px-1.5 py-0.5 rounded font-mono uppercase tracking-widest text-[9px] " + palette[status]}>
+    <span className={"inline-block px-1.5 py-0.5 rounded uppercase tracking-widest text-[9px] " + palette[status]}>
       {status}
     </span>
   );
@@ -873,8 +896,8 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
 
           <div>
             <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-                // line items ({items.length})
+              <div className="text-[10px] uppercase tracking-widest text-accent">
+                line items ({items.length})
               </div>
               {o.status !== "arrived" && o.status !== "cancelled" && items.some((i) => !i.received_at) && !addingTracking && (
                 <button type="button" onClick={() => setAddingTracking(true)} className="text-xs text-accent hover:underline">
@@ -936,7 +959,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
             {roleSatisfies(activeOrg?.role ?? null, ["owner", "admin"]) ? (
               <button
                 onClick={handleDelete}
-                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+                className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
               >
                 <Trash2 size={11} /> delete order
               </button>
@@ -1009,7 +1032,7 @@ function OrderLineItem({
       <span className="flex-1 min-w-0" data-testid="order-line-name">
         <span className={partDeleted ? "text-faint line-through text-sm" : "text-content dark:text-mortar-100 text-sm"}>{name}</span>
         {partDeleted && (
-          <span className="ml-2 text-[9px] font-mono uppercase tracking-wider text-ember-500 border border-ember-500/40 bg-ember-500/10 rounded px-1.5 py-0.5">
+          <span className="ml-2 text-[9px] uppercase tracking-wider text-ember-500 border border-ember-500/40 bg-ember-500/10 rounded px-1.5 py-0.5">
             part deleted
           </span>
         )}
@@ -1120,7 +1143,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
             need: fieldNeed("vendor", { control: "picker", label: "Vendor" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Vendor</span>
                 <VendorPicker
                   slug={activeSlug}
                   vendorId={vendorId}
@@ -1134,7 +1157,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
             need: fieldNeed("order_number", { control: "text", label: "Order #" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
                 <input value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="input" />
               </label>
             ),
@@ -1143,7 +1166,7 @@ function NewOrderModal({ open, onClose }: { open: boolean; onClose: () => void }
             need: fieldNeed("status", { control: "choice", label: "Status" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
                 <select value={status} onChange={(e) => setStatus(e.target.value as Order["status"])} className="input">
                   {STATUSES.map((s) => (
                     <option key={s} value={s}>{s}</option>
@@ -1450,7 +1473,7 @@ function VendorDetailPane({
           />
 
           <div>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">// orders ({v.orders.length})</div>
+            <div className="text-[10px] uppercase tracking-widest text-accent mb-2">orders ({v.orders.length})</div>
             {v.orders.length === 0 ? (
               <div className="text-xs text-faint italic">No orders from this vendor yet.</div>
             ) : (

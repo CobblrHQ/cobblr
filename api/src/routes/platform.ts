@@ -1,10 +1,15 @@
 import { wiresSaid } from "../platform/wire-said.js";
+import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
+import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire } from "../platform/wire-ops.js";
+import { isLendable, listOpenLoans } from "../platform/custody.js";
+import { sayLoan } from "@cobblr/platform-contract/loan";
 import { presentPanels } from "../platform/panel-presence.js";
 import { markRequestReadOnly } from "../lib/request-context.js";
 import { readGroupKeys } from "@cobblr/platform-contract/grouped-list";
 import { makeSlidingWindowLimiter } from "@cobblr/platform-contract/rate-limit";
 import { revealSecretField } from "../platform/secret-fields.js";
 import { readRecordActionLayout, setRecordActionPin } from "../platform/record-action-layout.js";
+import { readRecordPanelLayout } from "../platform/record-panel-layout.js";
 import { commonBulkFields } from "../platform/bulk-set-field.js";
 // Platform-level routes for the registries + wires.
 //
@@ -17,9 +22,8 @@ import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { Router, type Request } from "express";
 import { PLATFORM_ACTIONS } from "../platform/platform-actions.js";
 import { z } from "zod";
-import { BindingAsk, BindingLabel, bindingAskOf } from "@cobblr/platform-contract/binding-ask";
+import { bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
-import { parseWireFilter } from "../platform/wire-filter.js";
 import { sql } from "kysely";
 import { platform, isActionRefusal, crashSentence, uploadOne } from "@cobblr/platform-contract";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
@@ -33,7 +37,7 @@ import { labelVia } from "./label-via.js";
 import { actionRefusal, actionSafety } from "../platform/ai-action-door.js";
 import { getTenantDb } from "../db/tenant.js";
 import { listEntries } from "../modules/registry.js";
-import { LIFECYCLE_TRIGGERS, isLifecycleTrigger, lifecycleRefusal } from "../platform/wire-lifecycle.js";
+import { LIFECYCLE_TRIGGERS } from "../platform/wire-lifecycle.js";
 import * as activity from "../platform/activity.js";
 import { checkAvailability as checkAiAvailability, aiChainFor, getProvider as getAiProvider, type AiChainStep } from "../platform/ai.js";
 import { verificationFrom, verificationLabel } from "@cobblr/platform-contract/connection-verification";
@@ -43,7 +47,7 @@ import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { actionGateOf } from "../platform/action-gates.js";
 import { issueUndos, issuedUndoFor, spendIssuedUndo } from "../platform/issued-undos.js";
-import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester, wireCheckRefusal, typedWireArgs } from "../platform/actions.js";
+import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
@@ -79,6 +83,7 @@ import { addressesUsed, nearestBias } from "../platform/addresses-used.js";
 import { addressLookup, LOOKUP_MIN_CHARS, LOOKUP_TIMEOUT_MS } from "../platform/address-lookup.js";
 import type { AddressValue } from "@cobblr/platform-contract/address";
 import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
+import { currentVia } from "../lib/request-context.js";
 
 /** The person's own assistant reading for them: an MCP client or the relay
  *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
@@ -545,6 +550,12 @@ platformOrgRouter.put("/:slug/record-action-pins", requireAuth, withTenant, asyn
     res.status(204).end();
   } catch (err) { next(err); }
 });
+platformOrgRouter.get("/:slug/record-panel-layout", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (typeof req.query.kind !== "string") { res.status(400).json({ error: { code: "missing_kind", message: "Choose a record kind." } }); return; }
+    res.json(await readRecordPanelLayout(req.tenant!.org.id, req.query.kind));
+  } catch (err) { next(err); }
+});
 platformOrgRouter.get("/:slug/record-action-layout", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (typeof req.query.kind !== "string") { res.status(400).json({ error: { code: "missing_kind", message: "Choose a record kind." } }); return; }
@@ -629,6 +640,9 @@ platformOrgRouter.get(
         dormant: dormant.map((a) => ({ group: a.group, primary: a.primary, id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
         bindings: bindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
         lifecycle: !!(writer?.retire && writer.unretire),
+        // A loan is metadata on the record, in a table the open-loans read
+        // can find (custody.ts isLendable).
+        lendable: isLendable(writer),
       });
     } catch (err) {
       next(err);
@@ -823,6 +837,17 @@ platformOrgRouter.post(
       // door, or the in-app chat's relay) never runs an action that needs
       // one. Asked here because every door arrives here; asking only in the
       // relay's tool call left the others running it unasked.
+      // What only a person does (human-only.ts) is refused to every assistant
+      // door, confirmed or not: MCP, the relay, and the in-app chat's own
+      // calls (via "assistant").
+      const viaKind = currentVia()?.kind;
+      if (req.session?.ai_door || viaKind === "assistant" || viaKind === "mcp") {
+        const human = humanOnlyRefusal(parsed.data.actionId, (parsed.data.args ?? null) as Record<string, unknown> | null);
+        if (human) {
+          res.status(403).json({ error: { code: "human_only", message: human } });
+          return;
+        }
+      }
       if (req.session?.ai_door) {
         const refused = actionRefusal(await actionSafety(parsed.data.actionId));
         if (refused) {
@@ -1046,92 +1071,6 @@ platformOrgRouter.post(
 
 // ──────────────────────── bindings (wires) ─────────────────────────
 
-// Q1 wire target — see docs/architecture/wires-and-bundles.md.
-// Mirror of the WireTarget schema in @cobblr/platform-contract; kept
-// inline here to keep the route's request validation independent of
-// the manifest contract (different concerns, same shape).
-const BindingTarget = z.union([
-  z.literal("self"),
-  // No entity context — the action self-targets from its args (inbound-
-  // webhook-style wires). See WireTarget in platform-contract.
-  z.literal("none"),
-  z.object({
-    rel: z.string().min(1),
-    dir: z.enum(["in", "out"]).optional(),
-    kind: z.string().optional(),
-  }),
-]);
-
-const BindingCreate = z
-  .object({
-    source_kind: z.string(),
-    action_id: z.string(),
-    trigger_type: z
-      .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
-      .default("user-invoked"),
-    // .nullish() not .optional(): the web form sends `null` for an
-    // unset field (not `undefined`), and `.optional()` rejected null —
-    // which 400'd the default "user-invoked, no template" wire. The
-    // superRefine checks below are truthiness-based, so null reads as
-    // "absent" correctly, and the insert already coalesces `?? null`.
-    trigger_event: z.string().nullish(),
-    /** RRULE string for schedule-triggered wires (Q4). Null/absent for
-     *  every other trigger type. See wires-and-bundles.md Q4. */
-    trigger_schedule: z.string().nullish(),
-    template: z.string().max(2000).nullish(),
-    filter: z.record(z.unknown()).optional(),
-    args: z.record(z.unknown()).optional(),
-    /** A button's own label and what it asks before it runs (binding-ask.ts). */
-    label: BindingLabel.nullish(),
-    ask: BindingAsk.nullish(),
-    /** What entity the action fires on. Default "self" (action runs on
-     *  the source entity); object form opts into cross-module pairing
-     *  traversal. See wires-and-bundles.md Q1. */
-    target: BindingTarget.optional(),
-  })
-  .superRefine((data, ctx) => {
-    // Cross-field correctness: each trigger type has a required
-    // companion field. A wire missing its companion would silently
-    // never fire — fail loud at create time instead.
-    if (data.trigger_type === "event" && !data.trigger_event) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "trigger_event is required when trigger_type is 'event'",
-        path: ["trigger_event"],
-      });
-    }
-    if (data.trigger_type === "schedule" && !data.trigger_schedule) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "trigger_schedule (an RRULE) is required when trigger_type is 'schedule'",
-        path: ["trigger_schedule"],
-      });
-    }
-    if (data.trigger_type !== "event" && data.trigger_event) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "trigger_event is only meaningful when trigger_type is 'event' — remove it or change trigger_type",
-        path: ["trigger_event"],
-      });
-    }
-    if ((data.label || data.ask?.length) && data.trigger_type !== "user-invoked") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "label and ask are for a button (trigger_type 'user-invoked'); a wire that fires on its own has nobody to ask",
-        path: ["label"],
-      });
-    }
-    if (data.trigger_type !== "schedule" && data.trigger_schedule) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "trigger_schedule is only meaningful when trigger_type is 'schedule' — remove it or change trigger_type",
-        path: ["trigger_schedule"],
-      });
-    }
-  });
 
 // The workspace actions a wire can run on no record (target "none"): what
 // the composer offers for "No record". Record actions come from
@@ -1153,21 +1092,6 @@ platformOrgRouter.get(
   },
 );
 
-/** Every event some module declares it emits (manifest `exposes.events`,
- *  held to having an emitter by lint:manifest-advertises-what-it-has). A wire
- *  on anything else never runs. */
-function declaredWireEvents(): Set<string> {
-  const out = new Set<string>();
-  for (const entry of listEntries()) for (const ev of entry.manifest.exposes?.events ?? []) out.add(ev);
-  return out;
-}
-
-/** Why a wire on this event would never run, or null when something sends it. */
-function silentEventRefusal(triggerType: string | null | undefined, event: string | null | undefined): string | null {
-  if (triggerType !== "event" || !event) return null;
-  if (declaredWireEvents().has(event)) return null;
-  return `Nothing sends "${event}", so a wire on it would never run. Pick an event from the list.`;
-}
 
 // The events an event-triggered wire can fire on — the union of every
 // ENABLED module's manifest-declared `exposes.events`. Powers the wire
@@ -1253,13 +1177,19 @@ platformOrgRouter.get(
   },
 );
 
-/** Why a wire on "a record is created / updated / deleted" of this kind could
- *  never run (wire-lifecycle.ts), or null. */
-async function lifecycleWireRefusal(orgId: string, sourceKind: string, triggerType: string): Promise<string | null> {
-  if (!isLifecycleTrigger(triggerType)) return null;
-  const { base, instance } = await platform().entities.resolveKind(orgId, sourceKind);
-  return lifecycleRefusal(base, triggerType, !!instance);
-}
+
+// What is lent out now, whatever kind (record-loans.md): who has each, why,
+// since when and until when. ?kind= narrows it to one kind.
+// AI-REACH: reads
+platformOrgRouter.get("/:slug/loans", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" && req.query.kind ? req.query.kind : undefined;
+    const items = await listOpenLoans(req.tenant!.org.id, { kind });
+    res.json({ items: items.map((l) => ({ kind: l.kind, id: l.id, title: l.title, said: sayLoan(l.loan), ...l.loan })) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Which "a record is created / updated / deleted" triggers a kind can carry,
 // and why not when it cannot: the composer offers only the ones that run.
@@ -1281,6 +1211,7 @@ platformOrgRouter.get("/:slug/wire-lifecycle", requireAuth, withTenant, async (r
   }
 });
 
+// AI-ACTION: platform:add-wire
 platformOrgRouter.post(
   "/:slug/bindings",
   requireAuth,
@@ -1289,7 +1220,7 @@ platformOrgRouter.post(
     try {
       // Wires drive automation (incl. privileged actions). Creating one is
       // an admin operation — not for read-only guests/members. Audit #3.
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:add-wire"))) return;
       const parsed = BindingCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -1297,235 +1228,71 @@ platformOrgRouter.post(
         });
         return;
       }
-      const silent = silentEventRefusal(parsed.data.trigger_type, parsed.data.trigger_event);
-      if (silent) {
-        res.status(400).json({ error: { code: "unknown_event", message: silent } });
+      const out = await createWire(req.tenant!.org.id, req.session?.id ?? null, parsed.data);
+      if (!out.ok) {
+        res.status(out.status).json({ error: { code: out.code, message: out.message } });
         return;
       }
-      if (parsed.data.filter != null) {
-        const { error: ferr } = parseWireFilter(parsed.data.filter);
-        if (ferr) {
-          res.status(400).json({ error: { code: "invalid_wire_filter", message: ferr } });
-          return;
-        }
-      }
-      const dead = await lifecycleWireRefusal(req.tenant!.org.id, parsed.data.source_kind, parsed.data.trigger_type);
-      if (dead) {
-        res.status(400).json({ error: { code: "wire_never_runs", message: dead } });
-        return;
-      }
-      const cannot = await wireCheckRefusal(parsed.data.action_id, req.tenant!.org.id, parsed.data.args ?? {});
-      if (cannot) {
-        res.status(400).json({ error: { code: "wire_cannot_run", message: cannot } });
-        return;
-      }
-      // Saved as the action reads it: a boolean as a boolean (#6130).
-      parsed.data.args = (await typedWireArgs(parsed.data.action_id, parsed.data.args)) ?? undefined;
-      const inserted = await meta
-        .insertInto("entity_action_bindings")
-        .values({
-          org_id: req.tenant!.org.id,
-          // Who made it: an automation that reaches outside the workspace
-          // names this person as having set it up (#6070).
-          created_by: req.session?.id ?? null,
-          source_kind: parsed.data.source_kind,
-          action_id: parsed.data.action_id,
-          trigger_type: parsed.data.trigger_type,
-          trigger_event: parsed.data.trigger_event ?? null,
-          trigger_schedule: parsed.data.trigger_schedule ?? null,
-          template: parsed.data.template ?? null,
-          filter: parsed.data.filter
-            ? sql`${JSON.stringify(parsed.data.filter)}::jsonb`
-            : null,
-          args: parsed.data.args
-            ? sql`${JSON.stringify(parsed.data.args)}::jsonb`
-            : null,
-          label: parsed.data.label ?? null,
-          ask: parsed.data.ask?.length ? sql`${JSON.stringify(parsed.data.ask)}::jsonb` : null,
-          // Default "self" (column default + explicit here so the
-          // returning row carries it). Object form serialises to jsonb.
-          target: parsed.data.target
-            ? sql`${JSON.stringify(parsed.data.target)}::jsonb`
-            : sql`'"self"'::jsonb`,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "wire_created",
-        ref: { module: null, entityType: "binding", entityId: inserted.id },
-        diff: {
-          source_kind: parsed.data.source_kind,
-          action_id: parsed.data.action_id,
-          trigger_type: parsed.data.trigger_type,
-        },
-      });
-      res.status(201).json(inserted);
+      res.status(201).json(out.row);
     } catch (err) {
       next(err);
     }
   },
 );
 
+// AI-ACTION: platform:edit-wire
 platformOrgRouter.patch(
   "/:slug/bindings/:id",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:edit-wire"))) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
         return;
       }
       // Full edit: any wire field may change, not just template/enabled — so a
-      // user can re-point an existing wire (source kind / action / trigger /
-      // args / target) from the composer without losing its id + firing
-      // history. Every field is optional; only the ones present are written.
-      const Patch = z.object({
-        source_kind: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-        action_id: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-        trigger_type: z
-          .enum(["user-invoked", "event", "on-create", "on-update", "on-delete", "schedule"])
-          .optional(),
-        trigger_event: z.string().nullish(),
-        trigger_schedule: z.string().nullish(),
-        template: z.string().max(2000).nullable().optional(),
-        filter: z.record(z.unknown()).nullable().optional(),
-        args: z.record(z.unknown()).nullable().optional(),
-        target: BindingTarget.optional(),
-        enabled: z.boolean().optional(),
-        label: BindingLabel.nullish(),
-        ask: BindingAsk.nullish(),
-      });
-      const parsed = Patch.safeParse(req.body);
+      // user can re-point an existing wire from the composer without losing
+      // its id + firing history. Only the fields present are written.
+      const parsed = BindingPatch.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
           error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
         });
         return;
       }
-      if (parsed.data.trigger_event) {
-        const silent = silentEventRefusal("event", parsed.data.trigger_event);
-        if (silent) {
-          res.status(400).json({ error: { code: "unknown_event", message: silent } });
-          return;
-        }
-      }
-      if (parsed.data.filter != null) {
-        const { error: ferr } = parseWireFilter(parsed.data.filter);
-        if (ferr) {
-          res.status(400).json({ error: { code: "invalid_wire_filter", message: ferr } });
-          return;
-        }
-      }
-      if (parsed.data.source_kind !== undefined || parsed.data.trigger_type !== undefined) {
-        const before = await meta
-          .selectFrom("entity_action_bindings")
-          .select(["source_kind", "trigger_type"])
-          .where("id", "=", id)
-          .where("org_id", "=", req.tenant!.org.id)
-          .executeTakeFirst();
-        if (before) {
-          const dead = await lifecycleWireRefusal(req.tenant!.org.id, parsed.data.source_kind ?? before.source_kind, parsed.data.trigger_type ?? before.trigger_type);
-          if (dead) {
-            res.status(400).json({ error: { code: "wire_never_runs", message: dead } });
-            return;
-          }
-        }
-      }
-      // A changed action or arguments is checked as a new wire is (#6070).
-      if (parsed.data.action_id !== undefined || parsed.data.args !== undefined) {
-        const was = await meta
-          .selectFrom("entity_action_bindings")
-          .select(["action_id", "args"])
-          .where("id", "=", id)
-          .where("org_id", "=", req.tenant!.org.id)
-          .executeTakeFirst();
-        if (was) {
-          const cannot = await wireCheckRefusal(parsed.data.action_id ?? was.action_id, req.tenant!.org.id, parsed.data.args !== undefined ? parsed.data.args ?? {} : was.args ?? {});
-          if (cannot) {
-            res.status(400).json({ error: { code: "wire_cannot_run", message: cannot } });
-            return;
-          }
-        }
-      }
-      // Build the SET only from supplied keys; jsonb columns (filter/args/target)
-      // serialise the same way the create route does.
-      const d = parsed.data;
-      if (d.args) {
-        // Saved as the action reads it: a boolean as a boolean (#6130).
-        const actionId = d.action_id ?? (await meta.selectFrom("entity_action_bindings").select("action_id").where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst())?.action_id;
-        if (actionId) d.args = (await typedWireArgs(actionId, d.args)) ?? d.args;
-      }
-      const setObj: Record<string, unknown> = { updated_at: new Date() };
-      if (d.source_kind !== undefined) setObj.source_kind = d.source_kind;
-      if (d.action_id !== undefined) setObj.action_id = d.action_id;
-      if (d.trigger_type !== undefined) setObj.trigger_type = d.trigger_type;
-      if (d.trigger_event !== undefined) setObj.trigger_event = d.trigger_event ?? null;
-      if (d.trigger_schedule !== undefined) setObj.trigger_schedule = d.trigger_schedule ?? null;
-      if (d.template !== undefined) setObj.template = d.template ?? null;
-      if (d.enabled !== undefined) setObj.enabled = d.enabled;
-      if (d.filter !== undefined) setObj.filter = d.filter ? sql`${JSON.stringify(d.filter)}::jsonb` : null;
-      if (d.args !== undefined) setObj.args = d.args ? sql`${JSON.stringify(d.args)}::jsonb` : null;
-      if (d.target !== undefined) setObj.target = sql`${JSON.stringify(d.target)}::jsonb`;
-      if (d.label !== undefined) setObj.label = d.label ?? null;
-      if (d.ask !== undefined) setObj.ask = d.ask?.length ? sql`${JSON.stringify(d.ask)}::jsonb` : null;
-      // The wire as it was: the log says what this edit changed (#4517).
-      const wasWire = await meta.selectFrom("entity_action_bindings").selectAll().where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst();
-      const updated = await meta
-        .updateTable("entity_action_bindings")
-        .set(setObj)
-        .where("id", "=", id)
-        .where("org_id", "=", req.tenant!.org.id)
-        .returningAll()
-        .executeTakeFirst();
-      if (!updated) {
-        res.status(404).json({ error: { code: "not_found", message: "binding not found" } });
+      const out = await updateWire(req.tenant!.org.id, id, parsed.data);
+      if (!out.ok) {
+        res.status(out.status).json({ error: { code: out.code, message: out.message } });
         return;
       }
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "wire_updated",
-        ref: { module: null, entityType: "binding", entityId: updated.id },
-        diff: parsed.data,
-        before: wasWire,
-      });
-      res.json(updated);
+      res.json(out.row);
     } catch (err) {
       next(err);
     }
   },
 );
 
+// AI-ACTION: platform:remove-wire
 platformOrgRouter.delete(
   "/:slug/bindings/:id",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:remove-wire"))) return;
       const id = req.params.id;
       if (!id) {
         res.status(400).json({ error: { code: "missing_id", message: "id required" } });
         return;
       }
-      const deleted = await meta
-        .deleteFrom("entity_action_bindings")
-        .where("id", "=", id)
-        .where("org_id", "=", req.tenant!.org.id)
-        .returning("id")
-        .executeTakeFirst();
-      if (!deleted) {
-        res.status(404).json({ error: { code: "not_found", message: "binding not found" } });
+      const out = await deleteWire(req.tenant!.org.id, id);
+      if (!out.ok) {
+        res.status(out.status).json({ error: { code: out.code, message: out.message } });
         return;
       }
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "wire_deleted",
-        ref: { module: null, entityType: "binding", entityId: deleted.id },
-      });
       res.status(204).end();
     } catch (err) {
       next(err);

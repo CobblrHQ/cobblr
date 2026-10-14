@@ -16,7 +16,7 @@
 // refuses a bare `fixed` outside this package, so an author reaching for one
 // has to say which of these it is.
 
-import { forwardRef, useCallback, useLayoutEffect, useRef, type CSSProperties, type ForwardedRef, type HTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties, type ForwardedRef, type HTMLAttributes, type ReactNode } from "react";
 import { OverlayFlag } from "./overlay-open";
 import { useLayerStack } from "./layer-stack";
 import { useDialogFocus } from "./useDialogFocus";
@@ -154,6 +154,26 @@ export const BackdropLayer = forwardRef<HTMLDivElement, LayerProps>(function Bac
     </div>
   );
 });
+
+/** Close an anchored layer when the PAGE scrolls under it (its position was
+ *  measured once at open), never when its own list scrolls. A capture
+ *  listener on window hears every element's scroll, the menu's own included:
+ *  the scan card's File into menu closed on the first swipe through its
+ *  tables, and the owner's next tap landed on Undo split under it (#6527). */
+export function useCloseOnPageScroll(open: boolean, close: () => void) {
+  const latest = useRef(close);
+  latest.current = close;
+  useEffect(() => {
+    if (!open || typeof window === "undefined") return;
+    const onScroll = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest(`.${POPOVER_LAYER_CLASS}, .${OVERLAY_LAYER_CLASS}`)) return;
+      latest.current();
+    };
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [open]);
+}
 
 /** For a layer that must be a button (a keyboard-invisible click-catcher) or
  *  another tag: the class names, so the tag stays the caller's. */

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Modal, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction } from "@cobblr/platform-web";
+import { LocationPicker, Modal, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { useInventory } from "./context";
 import type { FamilyPayload } from "./api";
@@ -10,7 +9,7 @@ import { randomId } from "@cobblr/platform-contract";
 type Receipt = { part_id: string; already_received: boolean; quantity: number };
 
 export function ReceivePackage({ data }: { data: FamilyPayload }) {
-  const { api, basePath } = useInventory();
+  const { basePath } = useInventory();
   const { decodeBarcodeImage } = usePlatformWeb();
   const { label } = useFieldPresentation(`${data.child}:item`);
   // PRESS-ARGS: the receiving form supplies the label, confirmed count and collection; print carries the saved package.
@@ -33,7 +32,6 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
   const [printed, setPrinted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const places = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations(), enabled: open });
   const packages = [...data.types.flatMap(t => t.children), ...data.unclaimed];
   const childPath = basePath.replace(/\/instances\/[^/]+$/, `/instances/${data.child}`);
 
@@ -106,7 +104,7 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
             <label>Attrition (%)<input type="number" min="0" max="100" step="any" className={input} value={attrition} onChange={e => setAttrition(e.target.value)} /></label>
             <label>Storage<select className={input} value={storage} onChange={e => setStorage(e.target.value)}>{["sealed", "dry", "open"].map(v => <option key={v}>{v}</option>)}</select></label>
             <label>Earlier exposure (hours)<input type="number" min="0" step="any" className={input} value={exposed} onChange={e => setExposed(e.target.value)} /></label>
-            <label>Location<select className={input} value={location} onChange={e => setLocation(e.target.value)}><option value="">Choose later</option>{places.data?.items.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+            <LocationPicker label="Location" value={location || null} onChange={(id) => setLocation(id ?? "")} noneLabel="Choose later" placeholder="Choose later" />
             <label>Receive into<select className={input} value={topUp} onChange={e => setTopUp(e.target.value)}><option value="">New package</option>{packages.filter(p => String(p.metadata.mpn ?? "").toLowerCase() === mpn.toLowerCase()).map(p => <option key={p.id} value={p.id}>{p.name} · {p.metadata.lot_code ? String(p.metadata.lot_code) : "no lot"} · {p.qty} left</option>)}</select></label>
           </div>
           <p className="text-xs text-muted">Lot: {String(fields.lot_code ?? "not on label")} · Date code: {String(fields.date_code ?? "not on label")}. An unknown MSL blocks use until confirmed on the part.</p>

@@ -40,7 +40,7 @@ export function LaserSetupPanel({slug,connectionId,deviceId,blocked,stationToken
   await sendCommission(configuration);
  };
  return <section className="rounded border border-line p-4 space-y-3" aria-label="Laser setup">
-  <h2 className="text-xl font-semibold font-mono uppercase tracking-wide">Laser setup</h2>
+  <h2 className="text-xl font-semibold uppercase tracking-wide">Laser setup</h2>
   <p>{report?.firmware==="galvo"?"Check the lens field and set focus at the machine. A galvo has no mechanical Home.":"Check the controller before loading a job. Home moves the head to its reference position. Clear the bed and check the machine first."}</p>
   <div className="flex flex-wrap gap-3"><button className={button} disabled={busy||blocked} onClick={()=>void read()}>Check laser setup</button>{report?.firmware!=="galvo"&&<button className={button} disabled={busy||blocked||!stationToken||!report?.canHome} onClick={()=>void read(true)}>Home laser</button>}</div>
   {busy&&<p role="status">Waiting for the controller. Stop remains available.</p>}

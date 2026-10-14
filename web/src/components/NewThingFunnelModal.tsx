@@ -324,13 +324,13 @@ export function NewThingFunnelModal({
                       {copy?.headline ?? (m.displayName ?? m.name)}
                     </span>
                     {isSuggested && (
-                      <span className="text-[10px] font-mono uppercase tracking-wider rounded-full bg-accent/10 text-accent px-1.5 py-0.5">
+                      <span className="text-[10px] uppercase tracking-wider rounded-full bg-accent/10 text-accent px-1.5 py-0.5">
                         suggested
                       </span>
                     )}
                     {!m.enabled && (
                       <span
-                        className="text-[10px] font-mono uppercase tracking-wider rounded-full bg-subtle dark:bg-slate-800 text-faint dark:text-slate-400 px-1.5 py-0.5"
+                        className="text-[10px] uppercase tracking-wider rounded-full bg-subtle dark:bg-slate-800 text-faint dark:text-slate-400 px-1.5 py-0.5"
                         title={`${m.displayName ?? m.name} isn't on in this workspace yet - creating this turns it on.`}
                       >
                         will be turned on

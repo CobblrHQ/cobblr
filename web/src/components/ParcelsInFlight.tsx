@@ -153,7 +153,7 @@ export function ParcelsInFlight({
         {/* No count beside this. Every row already says its own state, and a
             box that self-hides is never long enough for a tally to tell you
             something the rows do not. */}
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// on its way</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">on its way</div>
       </div>
 
       <div className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded-lg overflow-hidden bg-surface dark:bg-slate-900">

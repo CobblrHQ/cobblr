@@ -150,7 +150,7 @@ export function AllAppsPage() {
       )}
       {sections.map((s) => (
         <section key={s.title} aria-label={s.title} className="space-y-2">
-          <h2 className="text-[11px] font-mono uppercase tracking-widest text-faint">
+          <h2 className="text-[11px] uppercase tracking-widest text-faint">
             {s.title} <span className="text-muted">({s.apps.length})</span>
           </h2>
           {s.blurb && <p className="text-xs text-muted dark:text-slate-400">{s.blurb}</p>}

@@ -286,7 +286,7 @@ export function useMentionPicker(
           >
             <AtSign size={12} className="shrink-0 text-faint" />
             <span className="truncate">{c.label}</span>
-            <span className="ml-auto shrink-0 text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="ml-auto shrink-0 text-[10px] uppercase tracking-widest text-faint">
               {c.hint}
             </span>
           </button>

@@ -97,12 +97,12 @@ export function QuickCreateLocation({
   const fieldCls =
     "w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
   const labelCls =
-    "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+    "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
   return (
     <div className="mt-2 rounded-lg border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">New location</span>
+        <span className="text-[10px] uppercase tracking-widest text-accent">New location</span>
         <button
           title="Close"
           type="button"

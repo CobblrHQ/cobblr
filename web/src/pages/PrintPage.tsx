@@ -226,11 +226,11 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
               <PrinterIcon size={16} className="text-accent" />
               <span className="font-medium text-content dark:text-mortar-100">{printerDisplayName(p.name)}</span>
               {p.is_default && (
-                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent">
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-cobble-100 dark:bg-cobble-900/30 text-accent">
                   <Star size={10} /> default
                 </span>
               )}
-              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">
+              <span className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-subtle dark:bg-slate-800 text-muted dark:text-slate-400">
                 {/* browser-bluetooth and browser-serial are two ways WE reach the
                     same class of device; to the owner both are just Bluetooth. */}
                 {p.driver === "browser-bluetooth" || p.driver === "browser-serial" ? "bluetooth" : p.driver}

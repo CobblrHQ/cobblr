@@ -68,7 +68,7 @@
     "why": "The automations page lists each binding as source kind, arrow, action id: it is the composer's own list, and the id is what the person chose when they made the binding and what they would edit."
   },
   {
-    "key": "web/src/pages/BuildPage.tsx::<span className=\"font-mono text-xs\">{label(w.source_kind)}</span> → <span className=\"font-medium\">{w.action_id}</span>{\" \"}",
+    "key": "web/src/pages/BuildPage.tsx::<span className=\"font-mono text-xs\">{label(w.source_kind)}</span> \u2192 <span className=\"font-medium\">{w.action_id}</span>{\" \"}",
     "why": "The builder's preview of the bundle it is about to install lists the automations the manifest will carry; nothing has fired yet, so there is no row with the action's words, and the id is what the manifest will say."
   },
   {
@@ -84,7 +84,7 @@
     "why": "The installed drivers list on the digital fabrication page: a driver's kind is the driver family it belongs to as the package declared it, shown small beside the driver's name and key for the person managing installs."
   },
   {
-    "key": "web/src/pages/DigifabPage.tsx::<span className=\"uppercase font-mono\">{item.kind}</span>",
+    "key": "web/src/pages/DigifabPage.tsx::<span className=\"uppercase\">{item.kind}</span>",
     "why": "A print library item's kind is its file format (stl, gcode, 3mf), and a file format reads in capitals beside the plate count and size; it is the format, not a module:kind id."
   },
   {

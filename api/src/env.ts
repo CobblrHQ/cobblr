@@ -37,6 +37,18 @@ const Schema = z.object({
   // Boot-time bake size (the PoC / in-job path). An offline image/tarball bake
   // sets its own size; this is the fallback when the pool starts empty.
   COBBLR_TEST_ORG_POOL_SIZE: z.coerce.number().int().positive().optional(),
+  // HARNESS and STAGING only: deliver a recorded .eml to a workspace through the Email Worker's ingest
+  // (platform/email-delivery-door.ts, which refuses it on a node with an inbound secret or a request guard).
+  COBBLR_EMAIL_DELIVERY_DOOR: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
+
+  // HARNESS-ONLY: a stack that walks many specs at once from one address (the nightly walk) turns
+  // the per-address sign-in and signup limits off. A production node refuses to boot with it
+  // (platform/ip-limiter.ts reads it, and refuses there).
+  COBBLR_IP_LIMITS_OFF: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
 
   // Auth & secrets. In production a dev/placeholder value is refused at boot
   // by assertNoDevSecretsInProd (below) — not just length-checked here.
@@ -203,6 +215,13 @@ const Schema = z.object({
   TRY_SANDBOX_MAX_LIVE: z.coerce.number().int().positive().default(100),
   TRY_SANDBOX_MAX_PER_IP_PER_HOUR: z.coerce.number().int().positive().default(2),
   TRY_SANDBOX_MAX_PER_HOUR: z.coerce.number().int().positive().default(60),
+  /** What one workspace may send people in an hour, through the People and
+   *  Email screens and the assistant alike (platform/send-limits.ts, #6528):
+   *  invites that email someone, hand-offs of a person's things, and test
+   *  emails. A hosted workspace must not be a way to mail strangers. */
+  INVITES_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
+  HAND_OFFS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
+  TEST_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(5)),
   /** How often expired sandboxes are swept. Minutes, unlike the trial reaper's
    *  6h: an hour-long sandbox that lingers for six is not an hour-long one. */
   TRY_SANDBOX_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),

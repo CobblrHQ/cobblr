@@ -591,7 +591,7 @@ export function LocationsPage() {
               <CheckSquare size={13} />
               {allShownSelected ? "Deselect all" : "Select all"}
             </button>
-            <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+            <h2 className="text-xs uppercase tracking-widest text-faint dark:text-slate-500">
               Areas
             </h2>
             <span className="text-xs text-muted dark:text-slate-400">
@@ -631,7 +631,7 @@ export function LocationsPage() {
         {looseContainers.length > 0 && (
           <div className="mt-7 pt-4 border-t border-line dark:border-slate-700">
             <div className="flex items-baseline gap-2 mb-1">
-              <h2 className="text-xs font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              <h2 className="text-xs uppercase tracking-widest text-faint dark:text-slate-500">
                 Unsorted containers
               </h2>
               <span className="text-xs text-muted dark:text-slate-400">
@@ -896,7 +896,7 @@ function LocationCard({
           {/* Hidden on a phone: the name is what you are looking for, and the
               KindIcon to its left already distinguishes area from container.
               Keeping the word cost ~9 characters of the name on every row. */}
-          <span className="hidden sm:inline text-[10px] uppercase font-mono tracking-widest text-faint dark:text-slate-500">
+          <span className="hidden sm:inline text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
             {node.kind}
           </span>
           <button
@@ -1063,7 +1063,7 @@ function ZoneCard({
           {node.image_path ? <EntityThumb src={node.image_path} alt={node.name} size={18} /> : <AreaIcon size={12} className="text-accent shrink-0" />}
           <Link
             to={`/locations/${node.id}`}
-            className="font-mono text-[11px] uppercase tracking-wider font-medium text-content dark:text-mortar-100 hover:text-accent"
+            className="text-[11px] uppercase tracking-wider font-medium text-content dark:text-mortar-100 hover:text-accent"
           >
             {node.name}
           </Link>
@@ -1397,7 +1397,7 @@ export function LocationFormModal({
             need: fieldNeed("name", { control: "text", label: "Name" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Name
                 </span>
                 <input
@@ -1423,7 +1423,7 @@ export function LocationFormModal({
                 {stacked && expansion && (
                   <div className="mt-1.5 rounded-md border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 px-2.5 py-2">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
+                      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
                         Count from
                       </span>
                       {([
@@ -1488,7 +1488,7 @@ export function LocationFormModal({
             need: fieldNeed("shortName", { control: "text", label: "Short name (optional)" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Short name (optional)
                 </span>
                 <input
@@ -1506,7 +1506,7 @@ export function LocationFormModal({
           },
         ]} />
         <div className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Kind
           </span>
           {/* Two buttons, not a dropdown (the author): the choice is binary and each

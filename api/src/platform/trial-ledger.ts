@@ -17,6 +17,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { isDefaultModule } from "../modules/enable.js";
+import { attachmentsOfFile } from "./files.js";
 import { USER_SOURCE } from "./bundle-claims.js";
 import { listKindsForOrg, lookupMany } from "./entities.js";
 
@@ -314,6 +315,15 @@ export async function trialLedger(orgId: string): Promise<TrialLedger> {
     const path = (rec.fields as { image_path?: unknown }).image_path ?? rec.image_path;
     const id = typeof path === "string" ? PICTURE_ID_IN_PATH.exec(path)?.[1] : undefined;
     if (id && id !== rec.id) pictures.add(id);
+  }
+  // Seed covers can arrive after handoff. Their gallery owner was made before it,
+  // so it is absent from byKind; a live owner's photo still belongs to that record.
+  for (const id of byKind.get("core-files:file") ?? []) {
+    if (pictures.has(id)) continue;
+    const owners = (await attachmentsOfFile(orgId, id) ?? [])
+      .filter((a) => a.role === "gallery")
+      .map((a) => ({ kind: `${a.source_module}:${a.source_type}`, id: a.source_id }));
+    if (owners.length && (await lookupMany(orgId, owners)).length) pictures.add(id);
   }
   for (const [kind, ids] of byKind) {
     const own = ids.filter((id) => !pictures.has(id));

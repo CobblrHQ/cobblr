@@ -54,8 +54,8 @@ export function MagicLinkPanel({ email, next }: { email: string; next?: string |
 
   return (
     <div className="mt-4 bg-surface/60 dark:bg-slate-900/40 border border-line dark:border-slate-700 rounded-xl p-4 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // or without a password
+      <div className="text-[10px] uppercase tracking-widest text-accent">
+        or without a password
       </div>
       <button
         type="button"

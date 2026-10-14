@@ -128,7 +128,7 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
   return (
     <section data-testid="scanner-queue" className="space-y-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// from your scanner - waiting to file ({queue.total})</span>
+        <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">from your scanner - waiting to file ({queue.total})</span>
         <div className="flex-1" />
         <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
           review all in the Scan Inbox →

@@ -146,8 +146,8 @@ export function TagsSection({
   return (
     <section>
       {!compact && (
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-          // tags
+        <h3 className="text-[10px] uppercase tracking-widest text-accent mb-2">
+          tags
         </h3>
       )}
       <div className="flex flex-wrap gap-2 items-center">
@@ -187,7 +187,7 @@ export function TagsSection({
         {showQuiet && quiet.length > 0 && (
           <button
             onClick={() => setShowQuiet(false)}
-            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition"
+            className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition"
           >
             fewer
           </button>
@@ -632,8 +632,8 @@ export function FilesSection({
       }
     >
       {!compact && (
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2 flex items-center gap-2">
-          // photos and files
+        <h3 className="text-[10px] uppercase tracking-widest text-accent mb-2 flex items-center gap-2">
+          photos and files
           {dragOver && (
             <span className="text-accent font-normal normal-case tracking-normal">
               drop to upload
@@ -723,7 +723,7 @@ export function FilesSection({
               title={`Preview ${att.filename}`}
             >
               <Eye size={14} className="mb-1 text-faint group-hover:text-accent" />
-              <div className="font-mono text-[10px] uppercase">
+              <div className="text-[10px] uppercase">
                 {att.mime_type.split("/")[1] ?? att.filename.split(".").pop() ?? "file"}
               </div>
               <div className="truncate w-full mt-0.5">{att.filename}</div>
@@ -737,7 +737,7 @@ export function FilesSection({
               className="w-20 h-20 shrink-0 flex flex-col items-center justify-center text-xs text-muted border border-line dark:border-slate-700 rounded hover:border-cobble-500 transition p-2 text-center"
               title={att.filename}
             >
-              <div className="font-mono text-[10px] uppercase">
+              <div className="text-[10px] uppercase">
                 {att.mime_type.split("/")[1] ?? "file"}
               </div>
               <div className="truncate w-full mt-1">{att.filename}</div>

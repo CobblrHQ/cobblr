@@ -220,7 +220,7 @@ export function sectionForHostedPanel(): HostedSectionId {
 }
 
 export const CONFIG_DESTINATIONS: ConfigDestination[] = [
-  { section: "workspace", icon: Sliders, label: "Record actions", description: "Arrange action menus, choose primary actions and hide actions for each kind of record.", to: "/configuration/record-actions", minRole: "admin", keywords: ["menus", "buttons", "pin", "groups", "toolbar"] },
+  { section: "workspace", icon: Sliders, label: "Record actions and panels", description: "Hide or reorder the panels on each kind of record, and arrange its action menus, primary actions and hidden actions.", to: "/configuration/record-actions", minRole: "admin", keywords: ["menus", "buttons", "pin", "groups", "toolbar", "panels", "hide", "order"] },
   { section: "system", icon: Trash2, label: "Recently deleted", description: "Restore records deleted in the last 30 days, or remove them forever.", to: "/configuration/recently-deleted", minRole: "member", keywords: ["trash", "restore", "undo", "deleted"] },
   { label: "Tidy", description: "Tidy-up suggestions for the things you keep.", icon: Home, section: "workspace", to: "/configuration/tidy", keywords: ["tidy", "organise", "overnight"] },
   // ── Workspace ─────────────────────────────────────────────────────

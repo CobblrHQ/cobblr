@@ -69,6 +69,8 @@ export interface CoverageCell {
   /** The CI or nightly run number, when a run wrote it. */
   run?: number | null;
   note?: string;
+  /** Evidence from the latest completed full main API suite, kept apart from partial verdicts. */
+  full_run?: { at: string; result: CoverageResult | "missing"; commit: string; run: number };
 }
 
 export interface CoverageMatrix {
@@ -81,6 +83,8 @@ export interface CoverageMatrix {
   /** The newest cell per surface × dimension, and only that one. */
   cells: CoverageCell[];
   /** Covered pairs per night, so the percentage can be watched going up. */
+  /** No snapshot means no completed full suite has recorded its verdicts yet. */
+  full_run?: { at: string; commit: string; run: number; cells: CoverageCell[] };
   history?: Array<{ night: string; covered: number; total: number }>;
 }
 
@@ -104,15 +108,22 @@ export function cellState(cell: CoverageCell | undefined | null, now: Date | num
 
 /** Why a pass reads stale, or null when it does not: it is older than
  *  STALE_AFTER_DAYS (or undated), or the surface changed after it was walked.
- *  The second is checked first, because it is the stronger reason: a pass
- *  from yesterday on a page that changed this morning proves nothing. */
-export function staleReason(cell: CoverageCell, now: Date | number = Date.now(), surface?: Pick<CoverageSurface, "changed_at"> | null): "changed" | "old" | null {
+ *  Full-suite proof takes precedence over surface change times. A deleted
+ *  claim is stale until another test actually judges that cell. */
+export function staleReason(cell: CoverageCell, now: Date | number = Date.now(), surface?: Pick<CoverageSurface, "changed_at"> | null): "changed" | "old" | "missing" | null {
   if (cell.result !== "pass") return null;
   const at = Date.parse(cell.at);
   if (!Number.isFinite(at)) return "old";
+  const full = cell.full_run;
+  const fullAt = full ? Date.parse(full.at) : NaN;
+  const nowMs = typeof now === "number" ? now : now.getTime();
+  if (Number.isFinite(fullAt)) {
+    if (full?.result === "missing" && at <= fullAt) return "missing";
+    if (full?.result === "pass" && (at <= fullAt || nowMs - fullAt <= STALE_AFTER_DAYS * DAY_MS))
+      return nowMs - fullAt > STALE_AFTER_DAYS * DAY_MS ? "old" : null;
+  }
   const changed = surface?.changed_at ? Date.parse(surface.changed_at) : NaN;
   if (Number.isFinite(changed) && at < changed) return "changed";
-  const nowMs = typeof now === "number" ? now : now.getTime();
   return nowMs - at > STALE_AFTER_DAYS * DAY_MS ? "old" : null;
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A scan inbox row, item screen or session strip draws its words in the app's own face: font-mono only on a code, an id or a barcode's digits, with a mono: line saying which, or on an uppercase label.
+// A scan inbox row, item screen or session strip draws its words in the app's own face: font-mono only on a code, an id or a barcode's digits, with a mono: line saying which.
 //
 // THE BUG THIS PREVENTS. The owner, 2026-10-12 (#6099): 'Orion Fans · Den' and 'Add barcode' in a code font on the strip and the item screen, again
 //
@@ -8,10 +8,10 @@
 // said what the code font is for.
 //
 // THE RULE. In the inbox row, the item screen, the session strip and the
-// match banner, a line with font-mono passes when it is an uppercase label
-// (the eyebrow style: "PICTURES", "CATALOG"), or when it or the line above
+// match banner, a line with font-mono passes only when it or the line above
 // says `mono: <what it is>` (a barcode's digits, a tracking number, a hex
-// code). Anything else is words in a code font, and fails.
+// code). Anything else is words in a code font, and fails; an uppercase
+// label too, since #6337 took the code font off every one.
 //
 // THE BOUNDARY. These five files are the scan inbox's rows, where the owner
 // read it; the app has some 560 other code-font uses (an id in a modal, a
@@ -58,7 +58,6 @@ function check(file: string, src: string): Violation[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
     if (!/\bfont-mono\b/.test(line)) continue;
-    if (/\buppercase\b/.test(line)) continue;
     if (/mono: \S/.test(line) || /mono: \S/.test(lines[i - 1] ?? "")) continue;
     out.push({ file, line: i + 1, what: "words in a code font: font-mono with no mono: <what it is> line" });
   }

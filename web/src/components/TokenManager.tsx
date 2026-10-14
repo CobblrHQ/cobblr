@@ -105,7 +105,7 @@ export function TokenManager({
         <div className="flex-1" />
         <button
           onClick={() => setMintOpen(true)}
-          className="text-[10px] font-mono uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+          className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
         >
           <Plus size={12} /> mint token
         </button>
@@ -152,18 +152,18 @@ export function TokenManager({
               <div className="flex items-baseline gap-2 flex-wrap">
                 <span className="font-medium text-content dark:text-mortar-100">{t.name}</span>
                 {t.revoked_at && (
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">
+                  <span className="text-[10px] uppercase tracking-widest text-ember-500">
                     revoked
                   </span>
                 )}
                 {t.expires_at && new Date(t.expires_at) < new Date() && !t.revoked_at && (
-                  <span className="text-[10px] font-mono uppercase tracking-widest text-ember-500">
+                  <span className="text-[10px] uppercase tracking-widest text-ember-500">
                     expired
                   </span>
                 )}
                 {t.scopes && t.scopes.length > 0 ? (
                   <span
-                    className="text-[10px] font-mono uppercase tracking-widest text-cobble-600 dark:text-cobble-400"
+                    className="text-[10px] uppercase tracking-widest text-cobble-600 dark:text-cobble-400"
                     title={`Restricted token: ${t.scopes.join(", ")}`}
                   >
                     scoped: {t.scopes.join(", ")}
@@ -171,7 +171,7 @@ export function TokenManager({
                 ) : (
                   <span
                     className={
-                      "text-[10px] font-mono uppercase tracking-widest " +
+                      "text-[10px] uppercase tracking-widest " +
                       (isLegacyFullToken(t) ? "text-ember-500" : "text-faint dark:text-slate-500")
                     }
                   >
@@ -394,7 +394,7 @@ function MintModal({
     >
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Name
           </span>
           <input
@@ -406,7 +406,7 @@ function MintModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Expires
           </span>
           <select
@@ -430,11 +430,11 @@ function MintModal({
         {variant === "operator" ? (
           <div className="block">
             <div className="flex items-baseline justify-between mb-1 gap-3">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
                 Scopes{" "}
                 {scopes.size === 0 && <span className="text-ember-500">(pick at least one)</span>}
               </span>
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
                 {scopes.size} selected
               </span>
             </div>
@@ -481,7 +481,7 @@ function MintModal({
           <>
             {offered.length > 0 && (
               <div className="space-y-1.5">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Opens</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Opens</span>
                 <SegmentedChoice
                   stack
                   label="Opens"
@@ -497,7 +497,7 @@ function MintModal({
             {!narrow && (
             <>
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                 Workspace
               </span>
               <select
@@ -514,7 +514,7 @@ function MintModal({
               </select>
             </label>
             <div className="space-y-1.5">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Access</span>
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Access</span>
               <SegmentedChoice
                 stack
                 label="Access"
@@ -605,7 +605,7 @@ function RevealedModal({
                 : "The old token still works. Update wherever it is used, then revoke it."}
             </p>
             <div className="flex items-center justify-between gap-3">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate">
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 truncate">
                 {revealed.supersedes.name}
               </span>
               <button

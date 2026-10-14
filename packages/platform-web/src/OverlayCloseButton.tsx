@@ -22,8 +22,8 @@ export function OverlayCloseButton({ onClose }: { onClose: () => void }) {
         // The island's bottom edge IS the inset, so clear it by a hair rather
         // than landing flush against it. Unnotched hardware reports 0 and keeps
         // the original 12px.
-        top: "max(0.75rem, calc(env(safe-area-inset-top) + 0.5rem))",
-        right: "max(0.75rem, env(safe-area-inset-right))",
+        top: "max(0.75rem, calc(var(--safe-top) + 0.5rem))",
+        right: "max(0.75rem, var(--inset-right))",
       }}
       // 44px is the smallest reliable touch target; the visual circle stays the
       // size it was, the reachable area does not.

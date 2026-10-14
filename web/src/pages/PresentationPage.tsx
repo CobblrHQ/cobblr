@@ -10,7 +10,7 @@ import { useState } from "react";
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { Modal, NounChoiceButtons, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, NounChoiceButtons, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useRunAction, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -20,6 +20,7 @@ import { pluralise } from "@cobblr/platform-contract/plural";
 import { FACE_NAMES, FACE_LABELS, type FaceName } from "@cobblr/platform-contract/field-vocabulary";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
+import { ListOrganisation } from "../components/ListOrganisation";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
 
@@ -144,8 +145,8 @@ export function PresentationPage() {
       <HeadingsBuilder />
 
       <div className="border-t border-line dark:border-slate-700 pt-3">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-          // entries
+        <div className="text-[10px] uppercase tracking-widest text-accent mb-1">
+          entries
         </div>
       </div>
 
@@ -173,6 +174,7 @@ export function PresentationPage() {
               });
               if (ok) reset.mutate(row.override);
             }}
+            organise={row.target_kind === "instance" ? <ListOrganisation slug={activeSlug} instance={(instances.data?.items ?? []).find((i) => `${i.module_name}:${i.instance_name}` === row.target_id)!} siblings={instances.data?.items ?? []} /> : undefined}
             onFields={(() => {
               // The entity kind whose native fields this row's form renders:
               // a kind row IS that kind; an instance row resolves to its
@@ -217,6 +219,7 @@ function PresentationRow({
   onEdit,
   onReset,
   onFields,
+  organise,
 }: {
   row: {
     target_kind: "entity_kind" | "instance" | "bundle";
@@ -229,6 +232,7 @@ function PresentationRow({
   onEdit: () => void;
   onReset: () => void;
   onFields?: () => void;
+  organise?: import("react").ReactNode;
 }) {
   const o = row.override;
   const label = o?.display_label ?? row.defaultLabel;
@@ -237,16 +241,17 @@ function PresentationRow({
   return (
     <div
       className={
-        "rounded border bg-surface dark:bg-slate-900 px-3 py-2 flex items-center gap-3 " +
+        "rounded border bg-surface dark:bg-slate-900 px-3 py-2 flex flex-wrap items-center gap-3 " +
         (hidden ? "border-line dark:border-slate-700 opacity-60" : "border-line dark:border-slate-700")
       }
     >
+      {organise}
       {/* Fixed-width so the KIND/INSTANCE tag column is the same width on every
           row (INSTANCE is wider than KIND) — the title column then starts at the
           same x and the rows align left-to-right. */}
       <span
         className={
-          "shrink-0 w-16 text-[10px] font-mono uppercase tracking-widest " +
+          "shrink-0 w-16 text-[10px] uppercase tracking-widest " +
           (row.target_kind === "instance" ? "text-accent" : "text-faint")
         }
       >
@@ -320,6 +325,8 @@ function PresentationCreateModal({
 }) {
   const { activeSlug } = useActiveOrg();
   const changeShape = useChangeWorkspaceShape();
+  // PRESS-ARGS: Save carries the selected list and every presentation value from this form.
+  const run = useRunAction();
   const [label, setLabel] = useState(target.defaultLabel);
   const [plural, setPlural] = useState("");
   const [icon, setIcon] = useState("");
@@ -338,32 +345,37 @@ function PresentationCreateModal({
   const toast = useToast();
 
   const save = useMutation({
-    mutationFn: () => {
-      // Only the keys this form owns. The server merges, and null clears, so a
-      // rename can no longer drop the bundle's item_noun the way it once did.
+    mutationFn: async () => {
       const config: Record<string, unknown> = {
-        group_label: groupLabel.trim() || null,
-        presents_as_top_level: nestUnderModule ? false : null,
-        item_noun: itemNoun.trim() || null,
-        item_noun_plural: itemNounPlural.trim() || null,
         faces: Object.keys(faces).length ? faces : null,
       };
-      return changeShape(() => api.upsertOverride(activeSlug, {
-        target_kind: target.target_kind,
-        target_id: target.target_id,
-        display_label: label.trim() || null,
-        display_label_plural: plural.trim() || null,
-        icon: icon.trim() || null,
-        hidden,
-        nav_order: navOrder === "" ? null : Number(navOrder),
-        config,
-      }));
+      return changeShape(async () => {
+        const out = await run({ actionId: "platform:set-list-presentation", args: {
+          target: target.target_id,
+          icon: icon.trim() || null,
+          hidden,
+          nav_order: navOrder === "" ? null : Number(navOrder),
+          ...(showGroupLabel ? { group_label: groupLabel.trim() || null } : {}),
+          ...(showNestToggle ? { top_level: nestUnderModule ? false : null } : {}),
+          ...(showItemNoun ? { item_noun: itemNoun.trim() || null, item_noun_plural: itemNounPlural.trim() || null } : {}),
+        } });
+        const result = out.result as { ok?: boolean; error?: string } | null;
+        if (!result?.ok) throw new Error(result?.error || "The presentation settings were not saved.");
+        if (label.trim() === target.defaultLabel && !plural.trim() && !Object.keys(faces).length) return out;
+        // AI-ACTION: platform:rename-thing, platform:set-faces, platform:rename-contents
+        return api.upsertOverride(activeSlug, {
+          target_kind: target.target_kind,
+          target_id: target.target_id,
+          display_label: label.trim() || null,
+          display_label_plural: plural.trim() || null,
+          config,
+        });
+      });
     },
     onSuccess: () => {
-      toast.success("Override saved.");
       onSaved();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
   return (
@@ -433,6 +445,8 @@ function PresentationEditModal({
 }) {
   const { activeSlug } = useActiveOrg();
   const changeShape = useChangeWorkspaceShape();
+  // PRESS-ARGS: Save carries the selected list and every presentation value from this form.
+  const run = useRunAction();
   const [label, setLabel] = useState(override.display_label ?? "");
   const [plural, setPlural] = useState(override.display_label_plural ?? "");
   const [icon, setIcon] = useState(override.icon ?? "");
@@ -471,32 +485,38 @@ function PresentationEditModal({
   const toast = useToast();
 
   const save = useMutation({
-    mutationFn: () => {
-      // Only the keys this form owns; the server merges the rest. A null clears.
+    mutationFn: async () => {
       const config: Record<string, unknown> = {
-        group_label: groupLabel.trim() || null,
-        presents_as_top_level: nestUnderModule ? false : null,
-        item_noun: itemNoun.trim() || null,
-        item_noun_plural: itemNounPlural.trim() || null,
         faces: Object.keys(faces).length ? faces : null,
         contents_label: contentsWord.trim().slice(0, 40) || null,
       };
-      return changeShape(() => api.upsertOverride(activeSlug, {
-        target_kind: override.target_kind,
-        target_id: override.target_id,
-        display_label: label.trim() || null,
-        display_label_plural: plural.trim() || null,
-        icon: icon.trim() || null,
-        hidden,
-        nav_order: navOrder === "" ? null : Number(navOrder),
-        config,
-      }));
+      return changeShape(async () => {
+        const out = await run({ actionId: "platform:set-list-presentation", args: {
+          target: override.target_id,
+          icon: icon.trim() || null,
+          hidden,
+          nav_order: navOrder === "" ? null : Number(navOrder),
+          ...(showGroupLabel ? { group_label: groupLabel.trim() || null } : {}),
+          ...(showNestToggle ? { top_level: nestUnderModule ? false : null } : {}),
+          ...(showItemNoun ? { item_noun: itemNoun.trim() || null, item_noun_plural: itemNounPlural.trim() || null } : {}),
+        } });
+        const result = out.result as { ok?: boolean; error?: string } | null;
+        if (!result?.ok) throw new Error(result?.error || "The presentation settings were not saved.");
+        if (label.trim() === (override.display_label ?? "") && plural.trim() === (override.display_label_plural ?? "") && JSON.stringify(faces) === JSON.stringify(override.config?.faces ?? {}) && contentsWord.trim() === (override.config?.contents_label ?? "")) return out;
+        // AI-ACTION: platform:rename-thing, platform:set-faces, platform:rename-contents
+        return api.upsertOverride(activeSlug, {
+          target_kind: override.target_kind,
+          target_id: override.target_id,
+          display_label: label.trim() || null,
+          display_label_plural: plural.trim() || null,
+          config,
+        });
+      });
     },
     onSuccess: () => {
-      toast.success("Override saved.");
       onSaved();
     },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
   return (
@@ -674,7 +694,7 @@ function PresentationFields({
   return (
     <>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Display label
         </span>
         <input
@@ -687,7 +707,7 @@ function PresentationFields({
         />
       </label>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Plural label (optional)
         </span>
         <input
@@ -698,44 +718,52 @@ function PresentationFields({
         />
       </label>
       {showItemNoun && setItemNoun && setItemNounPlural && (
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              One of them is called
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                One of them is called
+              </span>
+              <input
+                type="text"
+                value={itemNoun ?? ""}
+                onChange={(e) => setItemNoun(e.target.value)}
+                // vocab-lint-ok: this IS the field that sets the workspace's word; the
+                // placeholder shows the generic default it replaces.
+                placeholder="item"
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                More than one
+              </span>
+              <input
+                type="text"
+                value={itemNounPlural ?? ""}
+                onChange={(e) => setItemNounPlural(e.target.value)}
+                placeholder={itemNoun?.trim() ? pluralise(itemNoun.trim()) : "items"}
+                className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              />
+            </label>
+            <span className="col-span-2 -mt-1 block text-[11px] text-faint dark:text-slate-500">
+              The word for ONE thing inside, which is not the name of the collection:
+              a Bookshelf holds books. It names the New button, the empty state and
+              the counts. Leave the plural blank and it is worked out from the singular.
             </span>
-            <input
-              type="text"
-              value={itemNoun ?? ""}
-              onChange={(e) => setItemNoun(e.target.value)}
-              // vocab-lint-ok: this IS the field that sets the workspace's word; the
-              // placeholder shows the generic default it replaces.
-              placeholder="item"
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
-          <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-              More than one
-            </span>
-            <input
-              type="text"
-              value={itemNounPlural ?? ""}
-              onChange={(e) => setItemNounPlural(e.target.value)}
-              placeholder={itemNoun?.trim() ? pluralise(itemNoun.trim()) : "items"}
-              className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            />
-          </label>
+          </div>
           {/* Faces: what a record in this collection shows beyond its title,
               photo and fields. Auto follows the signal (an expiry field makes
               it perishable; physical and one-of-a-kind makes it serviced). */}
           <fieldset className="block">
             <legend className="text-xs font-medium text-content dark:text-mortar-100">What a record here shows</legend>
             <p className="text-[11px] text-faint dark:text-slate-500 mt-0.5 mb-1.5">Auto follows what the fields say. Turn a face on to add its section to every record; off to hide it even when the fields suggest it.</p>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
               {FACE_NAMES.map((f) => (
                 <label key={f} className="flex items-center justify-between gap-2 text-sm text-content dark:text-mortar-100">
                   <span>{FACE_LABELS[f]}</span>
                   <select
+                    aria-label={`${FACE_LABELS[f]} face`}
                     value={typeof faces[f] === "boolean" ? String(faces[f]) : "auto"}
                     onChange={(e) => {
                       const v = e.target.value;
@@ -756,16 +784,11 @@ function PresentationFields({
               ))}
             </div>
           </fieldset>
-          <span className="col-span-2 -mt-1 block text-[11px] text-faint dark:text-slate-500">
-            The word for ONE thing inside, which is not the name of the collection:
-            a Bookshelf holds books. It names the New button, the empty state and
-            the counts. Leave the plural blank and it is worked out from the singular.
-          </span>
-        </div>
+        </>
       )}
       {showGroupLabel && setGroupLabel && (
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             Categories heading (optional)
           </span>
           <input
@@ -783,7 +806,7 @@ function PresentationFields({
         </label>
       )}
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Icon (lucide name, optional)
         </span>
         <input
@@ -795,7 +818,7 @@ function PresentationFields({
         />
       </label>
       <label className="block">
-        <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           Nav order (optional)
         </span>
         <input
@@ -978,7 +1001,7 @@ function FieldsEditorModal({ entityKind, title, onClose }: { entityKind: string;
               <span className="w-32 shrink-0 flex flex-col gap-0.5 min-w-0" title={f.name}>
                 <span className="text-[10px] font-mono text-faint truncate">{f.name}</span>
                 {f.source !== "native" && (
-                  <span className="text-[9px] font-mono uppercase tracking-wide text-accent dark:text-cobble-400">
+                  <span className="text-[9px] uppercase tracking-wide text-accent dark:text-cobble-400">
                     {f.source}
                   </span>
                 )}

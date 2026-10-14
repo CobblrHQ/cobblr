@@ -12,42 +12,13 @@
 // owner/admin only — but the layout is workspace-scoped, not per-user.
 
 import { Router } from "express";
-import { z } from "zod";
-import { sql } from "kysely";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
-import { requireRole } from "../auth/capability.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { meta } from "../db/meta.js";
-import * as activity from "../platform/activity.js";
+import { DashboardLayoutShape, saveDashboardLayout } from "../platform/dashboard-layout.js";
 
 export const dashboardRouter = Router({ mergeParams: true });
-
-const DashboardLayoutShape = z.object({
-  widgets: z
-    .array(
-      z.object({
-        // Opaque to the server — owned by the web registry. Bounded so a
-        // bad client can't store unbounded ids.
-        id: z.string().min(1).max(120),
-        hidden: z.boolean().default(false),
-        // Tile width in grid columns (1 = normal, 2 = wide). Bounded.
-        span: z.number().int().min(1).max(2).optional(),
-      }),
-    )
-    .max(200)
-    .default([]),
-  // Order + visibility of the whole dashboard sections (at_a_glance /
-  // pinned_views / recent_activity). Optional — absent = default order.
-  sections: z
-    .array(
-      z.object({
-        id: z.string().min(1).max(60),
-        hidden: z.boolean().default(false),
-      }),
-    )
-    .max(50)
-    .optional(),
-});
 
 dashboardRouter.get(
   "/:slug/dashboard-layout",
@@ -67,6 +38,7 @@ dashboardRouter.get(
   },
 );
 
+// AI-ACTION: platform:arrange-dashboard
 dashboardRouter.put(
   "/:slug/dashboard-layout",
   requireAuth,
@@ -74,7 +46,7 @@ dashboardRouter.put(
   async (req, res, next) => {
     try {
       // Arranging the dashboard is configuration: the admin tier, by rank.
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:arrange-dashboard"))) return;
       const parsed = DashboardLayoutShape.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -82,26 +54,7 @@ dashboardRouter.put(
         });
         return;
       }
-      await meta
-        .updateTable("orgs")
-        .set({
-          // jsonb-replace-ok: the user PUTs their whole layout; there is no other writer to preserve
-          dashboard_layout: sql`${JSON.stringify(parsed.data)}::jsonb` as never,
-          updated_at: new Date(),
-        })
-        .where("id", "=", req.tenant!.org.id)
-        .execute();
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        userId: req.session!.id,
-        action: "dashboard_layout_updated",
-        // history-before-ok: a workspace setting, logged as counts; no record's fields changed.
-        ref: { module: null, entityType: "org", entityId: req.tenant!.org.id },
-        diff: {
-          widgets: parsed.data.widgets.length,
-          hidden: parsed.data.widgets.filter((w) => w.hidden).length,
-        },
-      });
+      await saveDashboardLayout(req.tenant!.org.id, req.session!.id, parsed.data);
       res.json({ layout: parsed.data });
     } catch (err) {
       next(err);

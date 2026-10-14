@@ -14,7 +14,7 @@ import { useState, type ReactNode } from "react";
 import { usePhotoPick } from "@cobblr/platform-web";
 import { scanToolsFold, scanToolsFoldGroups } from "@cobblr/platform-contract/scan-triage";
 import type { ScanTool, ScanToolHints } from "@cobblr/platform-contract/scan-tools";
-import { Camera, ChevronDown, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
+import { Camera, ChevronDown, PackageX, Pencil, ReceiptText, RefreshCw, RotateCcw, Scissors, Sparkles, Undo2, X } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
 import { displayName } from "@cobblr/platform-contract/display-identity";
 import { ScanItemSheetHeader, ScanItemSheetFooter, type ScanItemSheetNav } from "./ScanItemSheet";
@@ -149,7 +149,7 @@ function ReviewBlock({ r, barcode }: { r: NonNullable<ScanItemScreenProps["revie
       aria-label="Needs your review"
       className="rounded-xl border border-amber-400/70 bg-amber-50 dark:bg-amber-900/15 dark:border-amber-500/50 px-3 py-2.5 space-y-2"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-300">Needs your review</div>
+      <div className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-300">Needs your review</div>
       <div className="text-[15px] font-medium leading-snug text-content dark:text-mortar-100">{r.prompt}</div>
       {r.because && <div className="text-xs leading-snug text-muted dark:text-slate-300">{r.because}</div>}
       {r.choices.length > 0 && (
@@ -256,7 +256,7 @@ function Section({ title, children, aside }: { title: string; children: ReactNod
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">{title}</h3>
+        <h3 className="text-[10px] uppercase tracking-widest text-accent">{title}</h3>
         {aside}
       </div>
       {children}
@@ -309,7 +309,7 @@ function Picture({
       ) : (
         <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-line dark:border-slate-700 text-sm text-faint">{empty}</div>
       )}
-      <figcaption className="mt-1 text-[10px] font-mono uppercase tracking-widest text-faint">{caption}</figcaption>
+      <figcaption className="mt-1 text-[10px] uppercase tracking-widest text-faint">{caption}</figcaption>
     </figure>
   );
 }
@@ -526,4 +526,4 @@ export function ScanItemScreen(p: ScanItemScreenProps) {
 
 // Icons the card reaches for when it builds the action list, re-exported so
 // ScanPage does not grow another import line per verb.
-export const screenIcons = { receipt: <ReceiptText size={14} />, replay: <RefreshCw size={14} />, undo: <Undo2 size={14} />, split: <Scissors size={14} /> };
+export const screenIcons = { receipt: <ReceiptText size={14} />, replay: <RefreshCw size={14} />, undo: <Undo2 size={14} />, split: <Scissors size={14} />, ranOut: <PackageX size={14} /> };

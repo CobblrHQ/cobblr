@@ -354,6 +354,17 @@ export async function stampOwnRecordMatch(db: Kysely<CoreScanDB>, orgId: string,
   }
 }
 
+/** What a scanned code already is in this workspace, answered from its own
+ *  records only (#6436): the scanner shows it the moment the code decodes,
+ *  before the photo is sent or any outside lookup is asked. Null when nothing
+ *  here holds the code. Never asks the network: findTracked reads records. */
+export async function knownByCode(orgId: string, code: string): Promise<{ title: string; kind: string; id: string; instance: string | null; qty: number | null; unit: string | null; image_path: string | null } | null> {
+  const found = await findTracked(orgId, matchQuery({ barcode_text: code, suggested_name: null, suggested_manufacturer: null, suggested_metadata: null } as never, null, null));
+  const best = found.barcode_matches[0];
+  if (!best) return null;
+  return { title: best.title, kind: best.kind, id: best.id, instance: best.instance ?? null, qty: best.qty ?? null, unit: best.unit ?? null, image_path: best.image_path ?? null };
+}
+
 /** The workspace's own record for this code, by its barcode or identifier
  *  fields (local and indexed; never a name guess), stamped the way the card
  *  reads a match. Null when nothing here holds it, or the lookup failed: a

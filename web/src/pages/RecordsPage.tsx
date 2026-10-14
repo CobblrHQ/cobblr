@@ -19,6 +19,8 @@ import {
   CustomFieldsPanel,
   EntityActionsBar,
   EntityThumb,
+  PhoneRecordList,
+  usePhoneLayout,
   EntityTile,
   FieldPack,
   ViewModeToggle,
@@ -261,10 +263,27 @@ function RecordsTable({
   kind: string;
 }) {
   const suggestions = usePhotoSuggestions(kind, rows.map((r) => r.id));
+  const phone = usePhoneLayout();
+  if (phone) {
+    return (
+      <PhoneRecordList
+        rows={rows.map((r) => ({
+          id: r.id,
+          name: r.name,
+          picture: <EntityThumb src={r.image_path} suggestedSrc={suggestedSrcFor(suggestions, r.id, r.image_path)} pictureState={pictureStateFor(suggestions, r.id, r.image_path)} alt={r.name} size={40} />,
+          fields: customCols.map((d) => {
+            const v = (r.metadata as Record<string, unknown>)[d.name];
+            return { label: d.display_label, value: v === null || v === undefined || v === "" ? null : String(v) };
+          }),
+        }))}
+        onOpen={onOpen}
+      />
+    );
+  }
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           <tr>
             <th className="text-left px-3 py-2">Name</th>
             {customCols.map((d) => (
@@ -455,7 +474,7 @@ export function RecordDetailModal({
           <div className="pt-3 border-t border-line dark:border-slate-700 flex items-center justify-between">
             <button
               onClick={handleDelete}
-              className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+              className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
             >
               <Trash2 size={11} /> delete {noun}
             </button>
@@ -553,7 +572,7 @@ function NewRecordModal({
             need: fieldNeed("name", { control: "text", label: "Name" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
                 <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
               </label>
             ),

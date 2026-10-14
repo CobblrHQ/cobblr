@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { LocationTreePicker } from "../../components/LocationTreePicker";
 import { SendPreviewCards, downloadBlob, useToast } from "@cobblr/platform-web";
 import type { SendFile, SendReceipt } from "@cobblr/platform-contract/send-file";
 import { api } from "../../lib/api";
@@ -23,7 +23,6 @@ export function SendFileImport({slug, file, onImported, onReset}: {slug: string;
   const [requestId,setRequestId] = useState(() => randomId());
   const receiptFile = file as SendReceipt;
   const packet = file.format === "cobblr-send" ? file : null;
-  const places = useQuery({queryKey: ["send-file-places",slug],queryFn: () => api.listEntities(slug,"core-locations:location"),enabled: !!packet});
   const args = () => ({packet: packet!,collection: collection || null,field_map: map,add_fields: addFields,create_matching: createMatching,duplicate,location: location && location !== "unplaced" ? location : null,...(location === "unplaced" ? {placement: "unplaced" as const} : {})});
   async function check() {
     setBusy(true); setFailure("");
@@ -46,7 +45,7 @@ export function SendFileImport({slug, file, onImported, onReset}: {slug: string;
     {!result && packet && <>
       <label className="block">Collection<select aria-label="Collection" value={collection} onChange={(e) => {setCollection(e.target.value);setPreview(null);}} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">{preview?.items[0]?.collection ? `Matching: ${preview.items[0].collection}` : "Find the matching collection"}</option>{preview?.collections?.map((c) => <option key={c.kind} value={c.kind}>{c.label}</option>)}</select></label>
       {preview?.can_configure && <label className="flex gap-2"><input type="checkbox" checked={createMatching} onChange={(e) => {setCreateMatching(e.target.checked);setPreview(null);}} />Create a matching collection here if needed</label>}
-      <label className="block">Placement<select aria-label="Placement" value={location} onChange={(e) => {setLocation(e.target.value);setPreview(null);}} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose later if needed</option><option value="unplaced">Arrive unplaced</option>{places.data?.items.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>
+      <div className="space-y-1"><LocationTreePicker label="Placement" value={location && location !== "unplaced" ? location : null} onChange={(id) => {setLocation(id ?? "");setPreview(null);}} placeholder={location === "unplaced" ? "Arrive unplaced" : "Choose later if needed"} noneLabel="Choose later if needed" /><label className="flex items-center gap-2"><input type="checkbox" checked={location === "unplaced"} onChange={(e) => {setLocation(e.target.checked ? "unplaced" : "");setPreview(null);}} />Arrive unplaced</label></div>
       {preview && <><SendPreviewCards items={preview.items} canConfigure={!!preview.can_configure} onDrop={(label) => {setMap({...map,[label]: null});setPreview(null);}} onAdd={(label) => {setAddFields([...addFields,label]);setPreview(null);}} />{preview.version_warnings?.map((w) => <p key={w} className="text-sm text-muted">{w}</p>)}{preview.items.some((i) => i.duplicate) && <label className="block">Sent before<select aria-label="Sent before" value={duplicate ?? ""} onChange={(e) => setDuplicate(e.target.value as "update" | "another")} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose what to do</option><option value="update">Update the earlier copy</option><option value="another">Make another copy</option></select></label>}</>}
     </>}
     {!result && !packet && <><p>This file says the {receiptFile.phase === "undone" ? "import was undone" : "items were imported"} in {receiptFile.target.name} ({receiptFile.target.instance}) by {receiptFile.target.person}.</p>{receiptPreview && <p role="status">{receiptPreview.summary}</p>}</>}

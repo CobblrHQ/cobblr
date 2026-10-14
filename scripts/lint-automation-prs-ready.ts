@@ -23,6 +23,7 @@
 //   npx tsx scripts/lint-automation-prs-ready.ts   (pnpm lint automation-prs-ready)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 const ROOTS = (process.env.LINT_AUTOMATION_PRS_ROOTS ?? "scripts,.forgejo/workflows").split(",");
 const HELPER = "scripts/lib/open-ready-pr.mjs";
@@ -69,7 +70,7 @@ export function check(file: string, src: string): Violation[] {
 
 if (process.argv[1]?.endsWith("lint-automation-prs-ready.ts")) {
   const violations: Violation[] = [];
-  for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+  for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
   if (violations.length) {
     console.error(`lint:automation-prs-ready - ${violations.length} violation(s):`);
     for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);

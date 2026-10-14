@@ -197,6 +197,35 @@ export function windowZones(wall: PlanWall, o: PlanOpening, room: { w_mm: number
 
 const overlaps = (p: PlanBox, q: PlanBox) => p.x_mm < q.x_mm + q.w_mm && q.x_mm < p.x_mm + p.w_mm && p.y_mm < q.y_mm + q.d_mm && q.y_mm < p.y_mm + p.d_mm;
 
+/** Does `inner` stand wholly inside `outer`, and is it appreciably smaller?
+ *  The size test keeps two identical boxes (one hiding the other) from
+ *  reading as one holding the other. */
+export function boxHolds(outer: PlanBox, inner: PlanBox): boolean {
+  const within =
+    inner.x_mm >= outer.x_mm &&
+    inner.y_mm >= outer.y_mm &&
+    inner.x_mm + inner.w_mm <= outer.x_mm + outer.w_mm &&
+    inner.y_mm + inner.d_mm <= outer.y_mm + outer.d_mm;
+  const outerArea = outer.w_mm * outer.d_mm;
+  return within && outerArea > 0 && inner.w_mm * inner.d_mm <= outerArea * 0.9;
+}
+
+/** Every pair standing in the same floor space: their boxes share area, and
+ *  neither is a place holding the other. Two printers on one spot collide
+ *  however much smaller one is (#6368). O(n²); a plan holds tens of boxes. */
+export function collisions<T extends { box: PlanBox; holds?: boolean }>(items: readonly T[]): Array<[T, T]> {
+  const out: Array<[T, T]> = [];
+  for (let i = 0; i < items.length; i++) {
+    for (let j = i + 1; j < items.length; j++) {
+      const a = items[i]!, b = items[j]!;
+      if (!overlaps(a.box, b.box)) continue;
+      if ((a.holds && boxHolds(a.box, b.box)) || (b.holds && boxHolds(b.box, a.box))) continue;
+      out.push([a, b]);
+    }
+  }
+  return out;
+}
+
 /** Its own width and depth, whichever way it is turned on the plan. */
 export function ownSize(b: PlanBox): { w_mm: number; d_mm: number } {
   return b.rot === 90 || b.rot === 270 ? { w_mm: b.d_mm, d_mm: b.w_mm } : { w_mm: b.w_mm, d_mm: b.d_mm };
@@ -229,6 +258,9 @@ export interface PlanItem {
   /** How tall it stands, when known: a window it stands before matters only
    *  when it is taller than the sill. */
   h_mm?: number | null;
+  /** A place (a rack, a bin) that can hold what stands wholly inside it, so
+   *  that is not a collision. A thing never holds another thing. */
+  holds?: boolean;
 }
 
 /** One obstacle around a box, for gaps: another thing, a wall inside the
@@ -306,10 +338,17 @@ export function gapsAround(box: PlanBox, others: PlanItem[], room: PlanRoom): Re
 }
 
 export interface PlanFlag {
-  kind: "room" | "door" | "window" | "aisle";
+  kind: "room" | "overlap" | "door" | "window" | "aisle";
   /** The things it is about. */
   ids: string[];
   text: string;
+}
+
+/** How loud a flag is drawn: red for what cannot stand as drawn (past a
+ *  wall, in another thing's spot, in a door's swing), amber for what only
+ *  gets in the way (a window, a narrow aisle). Every drawing asks here. */
+export function flagIsRed(f: Pick<PlanFlag, "kind">): boolean {
+  return f.kind === "room" || f.kind === "overlap" || f.kind === "door";
 }
 
 const n = (v: number) => Math.round(v).toLocaleString("en-US");
@@ -318,11 +357,11 @@ const wallWord = (wall: PlanWall, room: PlanRoom) => {
   return e ? `the ${e} wall` : "the inside wall";
 };
 
-/** What is wrong with where things stand: a thing in a door's swing, a thing
- *  taller than a window's sill in front of it, and (when `aisle_mm` is set)
- *  each gap between two things, or a thing and a wall, that a person would
- *  walk down and that is narrower than it. A window never refuses a place; it
- *  only says so. */
+/** What is wrong with where things stand: two things in one spot, a thing
+ *  in a door's swing, a thing taller than a window's sill in front of it,
+ *  and (when `aisle_mm` is set) each gap between two things, or a thing and a
+ *  wall, that a person would walk down and that is narrower than it. A
+ *  window never refuses a place; it only says so. */
 export function planFlags(opts: { room: PlanRoom; items: PlanItem[]; aisle_mm?: number | null }): PlanFlag[] {
   const { room, items } = opts;
   const flags: PlanFlag[] = [];
@@ -332,6 +371,11 @@ export function planFlags(opts: { room: PlanRoom; items: PlanItem[]; aisle_mm?: 
   for (const it of items) {
     const why = outsideRoom(it.box, room);
     if (why) flags.push({ kind: "room", ids: [it.id], text: `${it.name} does not fit the room: ${why}` });
+  }
+  // Two things cannot stand in one spot. Said, never refused: a layout is
+  // somewhere to try things.
+  for (const [a, b] of collisions(items)) {
+    flags.push({ kind: "overlap", ids: [a.id, b.id], text: `${a.name} and ${b.name} stand in the same floor space` });
   }
   for (const w of room.walls ?? []) {
     for (const o of w.openings ?? []) {

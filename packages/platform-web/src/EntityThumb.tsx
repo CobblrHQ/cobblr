@@ -26,7 +26,7 @@
 
 import { EntityPhoto } from "./EntityPhoto";
 import { PICTURE_STATE_TEXT, type PictureState } from "./photoSuggestions";
-import type { SwatchFieldDef } from "./swatch";
+import type { SwatchFieldDef } from "./swatch-pick";
 
 interface Props {
   src?: string | null;

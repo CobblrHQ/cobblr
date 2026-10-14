@@ -26,7 +26,7 @@ export function BambuPrinterPicker({
             <span className="text-sm text-content dark:text-mortar-100 flex-1">
               {d.name}{d.model ? ` · ${d.model}` : ""}
             </span>
-            <span className={"text-[10px] font-mono uppercase " + (d.online ? "text-emerald-500" : "text-faint")}>
+            <span className={"text-[10px] uppercase " + (d.online ? "text-emerald-500" : "text-faint")}>
               {d.online ? "online" : "offline"}
             </span>
           </>

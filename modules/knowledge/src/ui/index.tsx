@@ -322,7 +322,7 @@ function EntryEditor({
         {/* Image — e.g. a scanner CONFIG-barcode screenshot (store it, don't
             regenerate — exact Code-128 must be scanned from the image). */}
         <div>
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Image</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint">Image</span>
           {imageSrc ? (
             <div className="mt-1 relative inline-block">
               {/* A barcode on screen scans better big: a tap opens it in the shared viewer. */}
@@ -360,7 +360,7 @@ function EntryEditor({
 
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Body</span>
+            <span className="text-[10px] uppercase tracking-widest text-faint">Body</span>
             {entry && (
               <button
                 type="button"

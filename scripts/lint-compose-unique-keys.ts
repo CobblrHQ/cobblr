@@ -36,7 +36,7 @@ interface Violation {
 
 /** Every tracked compose file (git ls-files), so an untracked scratch copy never fails CI. */
 function composeFiles(): string[] {
-  const out = execFileSync("git", ["ls-files"], { encoding: "utf8" });
+  const out = execFileSync("git", ["ls-files"], { maxBuffer: 1024 * 1024 * 1024, encoding: "utf8" });
   return out.split("\n").filter((f) => /(^|\/)(docker-)?compose[^/]*\.ya?ml$/.test(f) && ROOTS.some((r) => r === "." || f.startsWith(r)));
 }
 

@@ -19,7 +19,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
-import { AmountControl, colorSwatch, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
+import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { InventoryProvider, useInventory } from "./context";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
@@ -239,7 +239,6 @@ function AddForm({ data, initialType, onDone }: { data: FamilyPayload; initialTy
   const [newName, setNewName] = useState("");
   const [qty, setQty] = useState("1");
   const [locationId, setLocationId] = useState("");
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   const add = useMutation({
     mutationFn: () =>
       api.addToFamily({
@@ -285,18 +284,9 @@ function AddForm({ data, initialType, onDone }: { data: FamilyPayload; initialTy
           How much{data.child_unit && data.child_unit !== "each" ? ` (${data.child_unit})` : ""}
           <input className={input} inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} />
         </label>
-        <label className="block flex-[2] basis-40 text-xs text-muted">
-          Where
-          <select className={input} value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-            <option value="">No place</option>
-            {locs.data?.items.map((l) => (
-              <option key={l.id} value={l.id}>
-                {"  ".repeat(l.depth)}
-                {l.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex-[2] basis-40">
+          <LocationPicker label="Where" value={locationId || null} onChange={(id) => setLocationId(id ?? "")} noneLabel="No place" placeholder="No place" size="sm" />
+        </div>
       </div>
       <div className="flex gap-2 justify-end">
         <button type="button" className="px-3 py-1.5 text-sm text-muted" onClick={onDone}>
@@ -446,7 +436,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
       {[...groups.entries()].map(([key, types]) => (
         <div key={key || "all"} className="space-y-2">
           {key && (
-            <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-faint pt-1">
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-faint pt-1">
               {view === "colour" && colorSwatch(key) ? <TypeSwatch value={key} /> : null}
               {view === "colour" && colorSwatch(key) ? "" : key}
             </div>

@@ -22,7 +22,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle } from "@cobblr/platform-web";
+import { rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -549,7 +549,7 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
       <div className="min-w-0 space-y-2 p-2">
         {!leaf && children.map(render)}
         {leaf && <>
-          <div className="hidden sm:block"><TableRenderer slug={slug} kind={view.entity_kind} items={rows} columns={columns} selection={selection} /></div>
+          <div className="hidden sm:block"><TableRenderer slug={slug} kind={view.entity_kind} items={rows} columns={columns} selection={selection} layout="table" /></div>
           <div className="divide-y divide-line sm:hidden">{rows.map((r) => <div key={r.id} className="min-w-0 py-2">
             <div className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} aria-label={`Select ${r.title}`} /><RecordLink row={r} className="min-w-0 break-words font-medium">{r.title}</RecordLink></div>
             {columns.includes("subtitle") && r.subtitle && <p className="ml-6 break-words text-xs text-muted">{r.subtitle}</p>}
@@ -702,7 +702,7 @@ export function CalendarRenderer({ slug, kind, items, cfg }: { slug: string; kin
         <button onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Previous month" aria-label="Previous month"><ChevronLeft size={16} /></button>
         <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-[9rem] text-center">{MONTHS[cursor.m]} {cursor.y}</span>
         <button onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1 rounded hover:bg-subtle dark:hover:bg-slate-800 transition" title="Next month" aria-label="Next month"><ChevronRight size={16} /></button>
-        <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] font-mono uppercase tracking-widest text-accent hover:underline">today</button>
+        <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] uppercase tracking-widest text-accent hover:underline">today</button>
         <div className="flex-1" />
         <span className="hidden sm:inline text-[10px] font-mono text-faint dark:text-slate-500">on <code>{dateField}</code> · {placed} of {items.length}</span>
       </div>
@@ -738,7 +738,7 @@ export function CalendarRenderer({ slug, kind, items, cfg }: { slug: string; kin
         <BoardDnd enabled={movable} label={dayWords} keys={dayCoordinates} onMove={moveTo}>
           <div className="grid grid-cols-7 bg-subtle/60 dark:bg-slate-800/40 border-b border-line dark:border-slate-700">
             {WEEKDAYS.map((w) => (
-              <div key={w} className="px-2 py-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
+              <div key={w} className="px-2 py-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
             ))}
           </div>
           <div className="grid grid-cols-7">
@@ -1482,6 +1482,7 @@ export function TableRenderer({
   columns,
   groupBy,
   selection,
+  layout = "auto",
 }: {
   slug: string;
   kind: string;
@@ -1490,6 +1491,10 @@ export function TableRenderer({
   groupBy?: string;
   /** When present, renders a checkbox column for bulk actions. */
   selection?: { selected: Set<string>; toggle: (id: string) => void };
+  /** "auto" stacks the rows on a phone (a wide table shows a row's name or its
+   *  state, never both, #6340); "table" always draws the table, for a caller
+   *  that has its own phone layout. */
+  layout?: "auto" | "table";
 }) {
   // Default to title + subtitle when no visible_fields declared.
   // When declared, render each as a column read from row.fields.
@@ -1519,6 +1524,33 @@ export function TableRenderer({
     for (const [key, rows] of orderedGroups(groupRows(items, groupBy, areaOf), declared)) if (rows.length) groups.push({ key, rows });
   } else {
     groups.push({ key: "", rows: items });
+  }
+
+  const phone = usePhoneLayout();
+  const routeFor = useDetailRoute(slug);
+  const navigate = useNavigate();
+  if (phone && layout === "auto" && !groupBy) {
+    const stateCol = cols.find((c) => c === "state" || c === "status");
+    const shown = cols.filter((c) => c !== "title" && c !== "subtitle" && c !== stateCol && !(c === "qty" && stock.on));
+    const byId = new Map(items.map((r) => [r.id, r]));
+    return (
+      <PhoneRecordList
+        rows={items.map((r) => ({
+          id: r.id,
+          name: cols.includes("title") ? r.title : formatCell(cols[0]!, r, fields.find((f) => f.name === cols[0])?.money) || r.title,
+          state: stateCol ? formatCell(stateCol, r) : null,
+          identity: [cols.includes("subtitle") ? r.subtitle : null],
+          fields: shown.map((c) => ({ label: headerOf(c) || humanize(c), value: formatCell(c, r, fields.find((f) => f.name === c)?.money) })),
+          trailing: stock.on ? stock.stepper(r) : undefined,
+        }))}
+        onOpen={(id) => {
+          const r = byId.get(id);
+          const href = r && routeFor(r.kind, r.id, (r as { detailUrl?: string | null }).detailUrl);
+          if (href) navigate(href);
+        }}
+        selection={selection ? { selected: selection.selected, onToggle: (id) => selection.toggle(id) } : undefined}
+      />
+    );
   }
 
   const Row = (r: ViewRow) => (
@@ -1557,19 +1589,19 @@ export function TableRenderer({
             {cols.map((c) => (
               <th
                 key={c}
-                className="px-3 py-1.5 text-left font-mono text-[10px] uppercase text-muted tracking-wider"
+                className="px-3 py-1.5 text-left text-[10px] uppercase text-muted tracking-wider"
               >
                 {headerOf(c)}
               </th>
             ))}
-            {stockCol && <th className="px-3 py-1.5 text-right font-mono text-[10px] uppercase text-muted tracking-wider">{headerOf("qty")}</th>}
+            {stockCol && <th className="px-3 py-1.5 text-right text-[10px] uppercase text-muted tracking-wider">{headerOf("qty")}</th>}
           </tr>
         </thead>
         {groupBy ? (
           groups.map((g) => (
             <tbody key={g.key}>
               <tr className="bg-cobble-50/70 dark:bg-cobble-900/20">
-                <td colSpan={selectCols} className="px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-accent">
+                <td colSpan={selectCols} className="px-3 py-1 text-[10px] uppercase tracking-widest text-accent">
                   {g.key === NO_GROUP ? NO_GROUP_LABEL : g.key} · {g.rows.length}
                 </td>
               </tr>
@@ -1782,7 +1814,7 @@ export function HeatmapRenderer({ items, cfg }: { items: ViewRow[]; cfg: Record<
       <div className="overflow-x-auto pb-1">
         <div className="flex gap-1 mb-1">
           {monthLabels.map((m, i) => (
-            <div key={i} className="w-3 text-[8px] font-mono uppercase tracking-wide text-faint dark:text-slate-500 whitespace-nowrap leading-none">
+            <div key={i} className="w-3 text-[8px] uppercase tracking-wide text-faint dark:text-slate-500 whitespace-nowrap leading-none">
               {m}
             </div>
           ))}

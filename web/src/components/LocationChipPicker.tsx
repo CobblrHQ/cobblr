@@ -18,8 +18,11 @@
 //   • a pre-filled selection auto-opens its area's panel so it's visible.
 //
 // "Areas", not "Rooms" — the platform's declared kind (an Outside or a Garage
-// zone is an area, not a room). kind="area" (the camera's "assign a room")
-// keeps the plain flat chip wrap: nothing to expand when bins never show.
+// zone is an area, not a room).
+//
+// No prop narrows what can be picked. The camera once passed kind="area" for
+// an areas-only wrap, and the owner could not choose a shelf or bin inside an
+// area (#6438); lint:capabilities (location:one-picker) refuses one coming back.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -39,9 +42,6 @@ import { recentLocations } from "../lib/recentLocations";
 interface Props {
   value: string | null;
   onChange: (value: string | null) => void;
-  /** Restrict to one kind. "area" = areas only (the camera's scan area);
-   *  omit for the full picker (areas + their containers). */
-  kind?: Location["kind"];
   /** Exclude one id (e.g. don't offer a location as its own parent). */
   excludeId?: string;
   className?: string;
@@ -61,7 +61,7 @@ const ACC: LocationAccessors<Location> = {
   isContainer: (l) => l.kind === "container",
 };
 
-export function LocationChipPicker({ value, onChange, kind, excludeId, className, suggestion, withShortcuts }: Props) {
+export function LocationChipPicker({ value, onChange, excludeId, className, suggestion, withShortcuts }: Props) {
   const { activeSlug } = useActiveOrg();
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -269,7 +269,6 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
         <QuickCreateLocation
           slug={activeSlug}
           all={list.data?.items ?? []}
-          defaultKind={kind}
           onClose={() => setCreateOpen(false)}
           onCreated={(loc) => {
             onChange(loc.id);
@@ -285,21 +284,6 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
       )}
     </>
   );
-
-  // The camera's areas-only mode: a plain flat chip wrap (nothing to expand).
-  if (kind === "area") {
-    return (
-      <div className={"space-y-3 " + (className ?? "")}>
-        {flatAreas.length === 0 && <div className="text-sm text-faint">No areas yet.</div>}
-        <div className="flex flex-wrap gap-1.5">
-          {flatAreas.map((l) => (
-            <Chip key={l.id} l={l} icon="area" />
-          ))}
-        </div>
-        {newLocationButton}
-      </div>
-    );
-  }
 
   const openNode = openAreaId ? flatAreas.find((n) => n.id === openAreaId) ?? null : null;
   const openContainers = openNode ? openNode.children.filter((c) => c.kind === "container") : [];
@@ -384,7 +368,7 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
                   ref={panelRef}
                   className="basis-full min-w-0 rounded-md border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/40 p-2"
                 >
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1.5">
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1.5">
                     In {nameOf(openNode)}
                   </div>
                   <ContainerTree nodes={openContainers} />
@@ -402,7 +386,7 @@ export function LocationChipPicker({ value, onChange, kind, excludeId, className
             type="button"
             onClick={() => setLooseOpen((o) => !o)}
             aria-expanded={looseOpen}
-            className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-faint hover:text-muted transition mb-1.5"
+            className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-faint hover:text-muted transition mb-1.5"
           >
             <ChevronDown size={12} className={`transition ${looseOpen ? "" : "-rotate-90"}`} />
             Loose containers

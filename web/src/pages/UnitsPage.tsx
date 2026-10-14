@@ -179,11 +179,11 @@ function UnitList({ title, rows, slug, deletable }: { title: string; rows: UnitD
 
   return (
     <section className="space-y-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// {title}</div>
+      <div className="text-[10px] uppercase tracking-widest text-accent">{title}</div>
       <div className="rounded-xl border border-line dark:border-slate-700 divide-y divide-line dark:divide-slate-800">
         {CATEGORIES.filter((c) => byCat[c]?.length).map((cat) => (
           <div key={cat} className="p-3">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">{cat}</div>
+            <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">{cat}</div>
             <div className="flex flex-wrap gap-1.5">
               {(byCat[cat] ?? []).map((u) => (
                 <span key={u.code} className="inline-flex items-center gap-1.5 rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1 text-xs">
@@ -207,7 +207,7 @@ function UnitList({ title, rows, slug, deletable }: { title: string; rows: UnitD
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
       {children}
     </label>
   );

@@ -33,7 +33,7 @@ export function InboxDocuments({
   if (!documents.length) return null;
   return (
     <section data-testid="inbox-documents" aria-label="Documents not read yet" className="space-y-2">
-      <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">
+      <h3 className="text-[10px] uppercase tracking-widest text-accent">
         {documents.length === 1 ? "1 document not read yet" : `${documents.length} documents not read yet`}
       </h3>
       {documents.map((d) => (

@@ -190,7 +190,7 @@ export function BrowsePanel() {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-hidden">
       <div className="flex items-center gap-3 border-b border-line dark:border-slate-700 px-3 py-2 flex-wrap">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">// add labels</span>
+        <span className="text-[10px] uppercase tracking-widest text-accent">add labels</span>
         <div className="flex-1" />
         <SearchInput value={q} onChange={setQ} placeholder="search this tab…" aria-label="Search this tab" size="sm" wrapperClassName="w-48" />
       </div>
@@ -276,7 +276,7 @@ export function BrowsePanel() {
 function SectionHeader({ label, count }: { label: string; count: number }) {
   return (
     <div className="flex items-baseline gap-2 mb-1.5 px-0.5">
-      <h3 className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <h3 className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         {label}
       </h3>
       <span className="text-[10px] font-mono text-faint dark:text-slate-500">{count}</span>

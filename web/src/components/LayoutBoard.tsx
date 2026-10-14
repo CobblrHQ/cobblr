@@ -5,11 +5,11 @@
 // paper with a scale bar and the sizes written in. The picture is
 // lib/layoutBoard.ts; this only draws it and reports drags.
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { RotateCw } from "lucide-react";
 import { isShortcut } from "@cobblr/platform-web";
-import { frontEdge, ownSize, rotated, type Edge, type PlanFlag } from "@cobblr/platform-contract/plan-clearance";
-import { faceWidthPx, labelFor, type Board, type BoardRack, type BoardThing } from "../lib/layoutBoard";
+import { flagIsRed, frontEdge, ownSize, rotated, type Edge, type PlanFlag } from "@cobblr/platform-contract/plan-clearance";
+import { chipLabel, faceWidthPx, type Board, type BoardRack, type BoardThing } from "../lib/layoutBoard";
 import { nameUnder } from "../lib/planFit";
 import type { FpBound, FpRect } from "../lib/floorplanGeometry";
 import { GapReadout, PlanFlagList, PlanSymbols } from "./PlanSymbols";
@@ -84,18 +84,21 @@ export function startThingDrag(e: React.PointerEvent, key: string, el: HTMLEleme
 /** About how wide a line of 10 px text is, per character. */
 const CHAR_PX = 5.6;
 
-function ThingBox({ t, bound, editable, onDrop, print, pxPerMm }: { t: BoardThing; bound: FpBound; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean; pxPerMm: number | null }) {
+function ThingBox({ t, bound, editable, onDrop, print, pxPerMm, flags = [] }: { t: BoardThing; bound: FpBound; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean; pxPerMm: number | null; flags?: readonly PlanFlag[] }) {
   const ref = useRef<HTMLDivElement>(null);
   // A finger's tap shows the whole name (there is no hover to read it by).
   const [peek, setPeek] = useState(false);
   const r = t.rect!;
-  const bad = t.overhang || t.tooTall;
-  const why = [t.overhang ? "hangs off the front" : null, t.tooTall ? "taller than the space" : null].filter(Boolean).join(", ");
+  // The name the box has room for, at the size it has room for.
+  const label = pxPerMm === null ? { text: t.name, small: false } : chipLabel(t.name, t.short, r.w_mm * pxPerMm, r.d_mm * pxPerMm, CHAR_PX);
+  const bad = t.overhang || t.tooTall || flags.some(flagIsRed);
+  const why = [t.overhang ? "hangs off the front" : null, t.tooTall ? "taller than the space" : null, ...flags.map((f) => f.text)].filter(Boolean).join(", ");
   return (
     <div
       ref={ref}
       data-layout-thing={t.id}
       data-moved={t.moved ? "true" : undefined}
+      data-in-the-way={flags.length ? flags.map((f) => f.kind).join(" ") : undefined}
       title={why ? `${t.name}: ${why}` : t.name}
       onPointerDown={editable ? (e) => startThingDrag(e, t.key, ref.current!, onDrop) : undefined}
       onClick={(e) => {
@@ -113,8 +116,8 @@ function ThingBox({ t, bound, editable, onDrop, print, pxPerMm }: { t: BoardThin
     >
       {/* The whole name where it fits on one line, else the short one,
           never a name cut in the middle. */}
-      <span data-thing-name="" className="block max-h-full overflow-hidden break-words leading-[12px]">
-        {pxPerMm === null ? t.name : labelFor(t.name, t.short, r.w_mm * pxPerMm, r.d_mm * pxPerMm, CHAR_PX)}
+      <span data-thing-name="" className={`block max-h-full overflow-hidden break-words ${label.small ? "text-[8px] leading-[8px]" : "leading-[12px]"}`}>
+        {label.text}
       </span>
       {print && !!t.size && <span className="block text-[8px]">{Math.round(t.size.w_mm)} wide</span>}
       {peek && (
@@ -142,16 +145,66 @@ function UnsizedChip({ t, editable, onDrop, print }: { t: BoardThing; editable: 
   );
 }
 
-function RackFace({ rack, editable, onDrop, print, maxHeight, faceWidth }: { rack: BoardRack; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean; maxHeight: number; faceWidth?: number }) {
-  const face = rack.face!;
-  const width = faceWidth ?? faceWidthPx(face, maxHeight);
+/** The px width this element is really drawn at, once laid out; `planned`
+ *  until then. A face asks for a width, but a narrow row (two options side
+ *  by side on a phone) shrinks it, and a name judged by the asked-for width
+ *  was chosen too long and cut off (#5463). */
+function useDrawnWidth<T extends HTMLElement>(planned: number): [React.RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [drawn, setDrawn] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setDrawn(el.getBoundingClientRect().width || null);
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, drawn ?? planned];
+}
+
+function PlannedRackName({ rack, onRename }: { rack: BoardRack; onRename: (id: string, name: string) => void }) {
+  const [name, setName] = useState<string | null>(null);
+  if (name === null) return (
+    <button type="button" onClick={() => setName(rack.name)} className="min-h-11 rounded border border-line dark:border-slate-600 px-2 text-sm text-accent hover:border-accent">
+      Rename planned rack
+    </button>
+  );
   return (
-    <figure data-layout-rack={rack.id} className="m-0 flex flex-col gap-1" style={{ width }}>
+    <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => {
+      e.preventDefault();
+      if (!name.trim()) return;
+      onRename(rack.id, name.trim());
+      setName(null);
+    }}>
+      <label className="flex min-w-0 flex-col text-xs text-muted dark:text-slate-400">
+        Planned rack name
+        <input autoFocus maxLength={180} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => {
+          if (e.key === "Escape") { e.preventDefault(); setName(null); }
+        }} className="min-h-11 w-full max-w-60 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 text-base text-content dark:text-slate-100" />
+      </label>
+      <button type="submit" disabled={!name.trim()} className="min-h-11 rounded bg-cobble-600 px-3 text-sm text-white disabled:opacity-50">Save rack name</button>
+      <button type="button" onClick={() => setName(null)} className="min-h-11 rounded border border-line dark:border-slate-600 px-3 text-sm text-content dark:text-slate-200">Cancel rack rename</button>
+    </form>
+  );
+}
+
+function RackFace({ rack, editable, onDrop, print, maxHeight, faceWidth, onRenameRack }: { rack: BoardRack; editable: boolean; onDrop: (d: ThingDrop) => void; print: boolean; maxHeight: number; faceWidth?: number; onRenameRack?: (id: string, name: string) => void }) {
+  const face = rack.face!;
+  const planned = faceWidth ?? faceWidthPx(face, maxHeight);
+  // Every size judgement below (which name fits, how much a narrow face says)
+  // is made at the width the face is really drawn, never the one it asked for.
+  const [figure, width] = useDrawnWidth<HTMLElement>(planned);
+  return (
+    <figure ref={figure} data-layout-rack={rack.id} className="m-0 flex flex-col gap-1" style={{ width: planned }}>
       <figcaption className={`text-xs font-medium ${print ? "text-black" : "text-content dark:text-slate-200"}`}>
         {rack.name}
         {rack.planned && <span className={`ml-1 font-normal ${print ? "" : "text-accent"}`}>(planned)</span>}
         {print && <span className="ml-1 font-normal">{mm(face.w_mm)} × {mm(face.d_mm)}</span>}
       </figcaption>
+      {editable && !print && rack.planned && onRenameRack && <PlannedRackName rack={rack} onRename={onRenameRack} />}
       <div
         className={`relative w-full border-2 ${print ? "border-black bg-white" : `${rack.planned ? "border-dashed border-accent" : "border-slate-500 dark:border-slate-400"} bg-surface dark:bg-slate-900`}`}
         style={{ aspectRatio: `${face.w_mm} / ${face.d_mm}` }}
@@ -190,6 +243,14 @@ function RackFace({ rack, editable, onDrop, print, maxHeight, faceWidth }: { rac
         ))}
         {rack.shelves.flatMap((s) => s.things.map((t) => <ThingBox key={t.key} t={t} bound={face} editable={editable} onDrop={onDrop} print={print} pxPerMm={width / face.w_mm} />))}
       </div>
+      {rack.shelves.some((s) => s.things.some((t) => t.overhang || t.tooTall)) && <ul data-layout-fit-problems={rack.id} className={`space-y-1 text-xs break-words ${print ? "text-black" : "text-ember-700 dark:text-ember-300"}`}>
+        {rack.shelves.flatMap((s) => s.things.filter((t) => t.overhang || t.tooTall).map((t) => (
+          <li key={t.key}>
+            {nameUnder(s.name, rack.name)}, {t.name}: {[t.overhang ? "hangs off the front" : null, t.tooTall ? "taller than the space" : null].filter(Boolean).join(", ")}.
+            {" "}Use {t.overhang && t.tooTall ? "a deeper rack and a shelf with more height" : t.overhang ? "a deeper rack" : "a shelf with more height"}.
+          </li>
+        )))}
+      </ul>}
     </figure>
   );
 }
@@ -277,7 +338,7 @@ function FloorRack({
     window.addEventListener("pointerup", up);
     window.addEventListener("keydown", key);
   };
-  const blocksDoor = flags.some((f) => f.kind === "door" || f.kind === "room");
+  const blocksDoor = flags.some(flagIsRed);
   const said = flags.map((f) => f.text).join("; ");
   return (
     <div
@@ -310,6 +371,7 @@ export function LayoutBoard({
   editable,
   onDrop,
   onMoveRack,
+  onRenameRack,
   print = false,
   maxFaceHeight = 320,
   faceWidth,
@@ -318,6 +380,7 @@ export function LayoutBoard({
   editable: boolean;
   onDrop: (d: ThingDrop) => void;
   onMoveRack: (id: string, rect: FpRect) => void;
+  onRenameRack?: (id: string, name: string) => void;
   print?: boolean;
   maxFaceHeight?: number;
   /** Draw every face this wide (px), filling a column; else by maxFaceHeight. */
@@ -344,6 +407,7 @@ export function LayoutBoard({
           {selRack && (
             <div data-testid="layout-rack-tools" className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted dark:text-slate-400">
               <span className="font-medium text-content dark:text-slate-200">{selRack.name}</span>
+              {selRack.planned && onRenameRack && <PlannedRackName key={selRack.id} rack={selRack} onRename={onRenameRack} />}
               <span>
                 {mm(ownSize(selRack.rect!).w_mm)} wide, {mm(ownSize(selRack.rect!).d_mm)} deep
               </span>
@@ -379,7 +443,7 @@ export function LayoutBoard({
                 <span
                   key={c.id}
                   data-layout-closet={c.id}
-                  className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 font-mono text-[9px] uppercase tracking-[.15em] text-muted dark:text-slate-500"
+                  className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 text-[9px] uppercase tracking-[.15em] text-muted dark:text-slate-500"
                   style={{ left: pct(c.rect.x_mm + c.rect.w_mm / 2, b.w_mm), top: pct(c.rect.y_mm + c.rect.d_mm / 2, b.d_mm) }}
                 >
                   {c.name}
@@ -410,7 +474,7 @@ export function LayoutBoard({
             ))}
             {live && editable && <GapReadout room={b} walls={board.room.walls} box={live.rect} others={onFloor.filter((o) => o.id !== live.id)} />}
             {board.floor.filter((t) => t.rect).map((t) => (
-              <ThingBox key={t.key} t={t} bound={b} editable={editable} onDrop={onDrop} print={print} pxPerMm={null} />
+              <ThingBox key={t.key} t={t} bound={b} editable={editable} onDrop={onDrop} print={print} pxPerMm={null} flags={flagsOf(t.key)} />
             ))}
           </div>
           </div>
@@ -431,7 +495,7 @@ export function LayoutBoard({
           <h3 className={`mb-1 text-xs font-medium ${print ? "text-black" : "text-muted dark:text-slate-400"}`}>Racks, from the front</h3>
           <div className="flex flex-wrap items-end gap-4">
             {faces.map((r) => (
-              <RackFace key={r.id} rack={r} editable={editable} onDrop={onDrop} print={print} maxHeight={maxFaceHeight} faceWidth={faceWidth} />
+              <RackFace key={r.id} rack={r} editable={editable} onDrop={onDrop} print={print} maxHeight={maxFaceHeight} faceWidth={faceWidth} onRenameRack={onRenameRack} />
             ))}
           </div>
         </section>

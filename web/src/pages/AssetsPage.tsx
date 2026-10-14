@@ -7,6 +7,7 @@ import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, Mo
 // extra columns automatically (no code change here).
 
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
+import { lentWhy, readRecordLoan } from "@cobblr/platform-contract/loan";
 import { useEffect, useState, type FormEvent } from "react";
 import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
@@ -35,6 +36,8 @@ import {
   FooterActionPopover,
   BulkTagAction,
   EntityThumb,
+  PhoneRecordList,
+  usePhoneLayout,
   EntityTile,
   ViewModeToggle,
   useViewMode,
@@ -282,14 +285,14 @@ export function AssetsPage({
               type="button"
               onClick={() => setShowArchived(!showArchived)}
               aria-pressed={showArchived}
-              className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] font-mono uppercase tracking-widest transition ${showArchived ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
+              className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] uppercase tracking-widest transition ${showArchived ? "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200" : "text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800"}`}
             >
               {showArchived ? "Back to the register" : `Gone or put away (${list.data?.archived_count ?? 0})`}
             </button>
           ) : lensModule ? (
             <Link
               to="/assets"
-              className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] font-mono uppercase tracking-widest hover:bg-cobble-200 transition`}
+              className={`${HEADER_CONTROL} gap-1 px-2.5 rounded-md bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200 text-[10px] uppercase tracking-widest hover:bg-cobble-200 transition`}
               title="Clear lens"
             >
               lens: {lensModule.displayName} ×
@@ -342,7 +345,7 @@ export function AssetsPage({
       ) : groupBy ? (
         groupItems(filtered, groupBy).map((g) => (
           <div key={g.key} className="space-y-2">
-            <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
+            <h3 className="text-xs uppercase tracking-widest text-accent">{g.key}</h3>
             {viewMode === "tiles" ? (
               <AssetsTiles rows={g.rows} onOpen={openAsset} kind={instance ? `${instance}:item` : ENTITY_KIND} />
             ) : (
@@ -545,10 +548,31 @@ function AssetsTable({
   // The column header must respect a bundle relabel too, or the list says
   // "Manufacturer" while the detail page says "Make".
   const fp = useFieldPresentation(instance ? `${instance}:item` : ENTITY_KIND);
+  const phone = usePhoneLayout();
+  if (phone) {
+    return (
+      <PhoneRecordList
+        rows={rows.map((a) => ({
+          id: a.id,
+          name: a.name,
+          picture: <EntityThumb src={a.image_path} suggestedSrc={suggestedSrcFor(suggestions, a.id, a.image_path)} pictureState={pictureStateFor(suggestions, a.id, a.image_path)} alt={a.name} size={40} />,
+          state: a.state,
+          identity: [a.manufacturer, a.model, fp.hidden("type") ? null : a.type],
+          fields: customCols.map((d) => {
+            const v = (a.metadata as Record<string, unknown>)[d.name];
+            return { label: d.display_label, value: v === null || v === undefined || v === "" ? null : String(v) };
+          }),
+          quantity: a.quantity,
+        }))}
+        onOpen={onOpen}
+        selection={{ selected, onToggle, onSelectAll }}
+      />
+    );
+  }
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full text-sm">
-        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           <tr>
             <th className="w-8 px-3 py-2">
               <input
@@ -603,7 +627,7 @@ function AssetsTable({
               <td className="px-3 py-2 text-muted dark:text-slate-400">{a.model || "—"}</td>
               {!fp.hidden("type") && <td className="px-3 py-2 text-muted dark:text-slate-400">{a.type || "—"}</td>}
               <td className="px-3 py-2">
-                <span className="font-mono text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
+                <span className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                   {a.state}
                 </span>
               </td>
@@ -745,7 +769,7 @@ export function AssetDetailModal({
           {/* Wide record layout: the cover large on the LEFT, fields on the
               RIGHT — so an image-bearing record (a book, a wine, a machine)
               uses the width instead of scrolling tall. Stacks on phones. */}
-          <RecordFaces kind={kind} target={instance ? { target_kind: "instance", target_id: `assets:${instance}` } : { target_kind: "entity_kind", target_id: ENTITY_KIND }}>
+          <RecordFaces kind={kind}>
           <ContributedDetailPanels
             target={ENTITY_KIND}
             placement="summary"
@@ -772,7 +796,12 @@ export function AssetDetailModal({
                   Archived on {new Date(a.archived_at).toLocaleDateString()}. It keeps its history; Restore to the register brings it back.
                 </p>
               ) : null}
-              {fp.hidden("location_id") && (
+              {fp.hidden("location_id") && readRecordLoan(a.metadata) ? (
+                // Lent out: it keeps the place it returns to, and moves once it is back.
+                <button type="button" disabled title={lentWhy(readRecordLoan(a.metadata)!)} className="rounded border border-line px-2 py-1 text-xs text-muted opacity-50 dark:border-slate-600">
+                  Move to…
+                </button>
+              ) : fp.hidden("location_id") && (
                 <LocationTreePicker triggerLabel="Move to…" description={moveDescription ?? undefined} value={a.location_id} onChange={(id) => update.mutate({ location_id: id })} size="sm" thing={{ kind: ENTITY_KIND, id: a.id }} onPlaced={refreshPlace} />
               )}
               <EntityActionsBar
@@ -784,8 +813,11 @@ export function AssetDetailModal({
                   // Bring back on its line; Put away and Restore are for the
                   // shelf, not for that.
                   ...(readRecordDisposition(a.metadata) ? ["assets:archive", "assets:restore"] : []),
-                  // Got it back only means something while it is lent out.
-                  ...((a.metadata as Record<string, unknown> | null)?.assigned_to ? [] : ["assets:got-back"]),
+                  // Lend… and It's back on the loan line are this page's door
+                  // for lending (record-loans.md); the asset's own pair runs
+                  // the same loan for a station and the assistant.
+                  "assets:lend",
+                  "assets:got-back",
                   a.archived_at ? "assets:archive" : "assets:restore",
                 ]}
               />
@@ -883,13 +915,13 @@ export function AssetDetailModal({
             <div className="flex items-center gap-4">
               <button
                 onClick={handleDelete}
-                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
+                className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition flex items-center gap-1"
               >
                 <Trash2 size={11} /> delete {noun}
               </button>
               <button
                 onClick={() => setMoveOpen(true)}
-                className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-accent transition flex items-center gap-1"
+                className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition flex items-center gap-1"
               >
                 <ArrowRightLeft size={11} /> move to…
               </button>
@@ -1015,7 +1047,7 @@ function NewAssetModal({
         {barcode.controls}
         {barcodeImage && <div className="flex items-center gap-2"><EntityThumb src={barcodeImage} alt="Photo from barcode" size={96} /><button type="button" className="text-sm text-accent underline" onClick={() => setBarcodeImage("")}>Remove photo</button></div>}
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Name</span>
           <input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="input" />
         </label>
         <FieldPack items={[
@@ -1027,7 +1059,7 @@ function NewAssetModal({
             need: fieldNeed("manufacturer", { control: "text", label: fp.label("manufacturer", "Manufacturer") }),
             node: (
               <div className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{fp.label("manufacturer", "Manufacturer")}</span>
                 <UsedValueInput kind={instance ? `${instance}:item` : ENTITY_KIND} field="manufacturer" label={fp.label("manufacturer", "Manufacturer")} value={manufacturer} onCommit={(v) => setManufacturer(v ?? "")} live />
               </div>
             ),
@@ -1036,7 +1068,7 @@ function NewAssetModal({
             need: fieldNeed("category", { control: "text", label: "Type / category" }),
             node: (
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Type / category</span>
                 <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder='e.g. "Appliance", "Hand tool"' className="input" />
               </label>
             ),
@@ -1185,7 +1217,7 @@ function VinDecodeField({
 
   return (
     <label className="block min-w-0">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {fp.label("serial_number", "VIN")}
       </span>
       <div className="flex items-center gap-2">

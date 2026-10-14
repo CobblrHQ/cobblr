@@ -84,7 +84,7 @@ export function QueuePage() {
       {items.length > 0 && (
         <div className={"rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 " + FEED_SCROLL_PAGE_INNER}>
           <table className="w-full text-sm">
-            <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+            <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
               <tr>
                 <th className="text-left px-3 py-2">Queue</th>
                 <th className="text-left px-3 py-2">Status</th>
@@ -140,7 +140,7 @@ function StatusChip({ status }: { status: QueueJob["status"] }) {
   };
   return (
     <span
-      className={`px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider ${palette[status]}`}
+      className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider ${palette[status]}`}
     >
       {status}
     </span>

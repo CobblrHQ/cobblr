@@ -220,7 +220,7 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
                 </div>
               )}
               {subtitle && (
-                <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mt-0.5">
+                <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mt-0.5">
                   {subtitle}
                 </div>
               )}

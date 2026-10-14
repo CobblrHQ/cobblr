@@ -36,6 +36,7 @@ import { LaserPlanRefusal, recordFinishedLayout } from "../laser-plans.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { ownedDeviceRefs } from "../detectors/owned.js";
+import { lentDeviceRefs } from "../detectors/lent.js";
 import { readLightBurnReadiness } from "../lightburn-readiness.js";
 import { classify, fleetState } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
@@ -296,6 +297,8 @@ fleetRouter.get(
     // Printers an external detector owns — Cobblr stands down its camera pull for
     // them (the detector handles detection); one query for the whole floor.
     const owned = await ownedDeviceRefs(db);
+    // Printers lent out (record-loans.md): away, and the farm skips them.
+    const lent = await lentDeviceRefs(db, orgId).catch(() => new Map<string, string>());
 
     const connections = await mapLimit(conns, MAX_CONCURRENT_LISTS, async (c) => {
         try {
@@ -391,6 +394,8 @@ fleetRouter.get(
               // Free-form layout: order in the flow + explicit row start.
               sort_order: setting?.sort_order ?? null,
               row_break: setting?.row_break ?? false,
+              // Lent out: "Lent to Sam Lee." The farm sends it nothing.
+              lent: lent.get(`${c.id}:${d.id}`) ?? null,
               // F-1: needs a bed-clear ack before it's assignable again.
               needs_attention: att
                 ? { reason: att.reason, since: att.created_at, plate_qty: att.job_id ? (plateQty.get(att.job_id) ?? null) : null }

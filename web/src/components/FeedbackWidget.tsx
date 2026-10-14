@@ -486,7 +486,7 @@ function WidgetCommunityLinks({ user }: { user?: { community_links?: CommunityLi
         containerClassName="border-t border-line dark:border-slate-700 pt-3 space-y-1.5"
         withBlurb
         iconClassName="text-accent mt-0.5"
-        heading={<div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">Or ask somewhere</div>}
+        heading={<div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">Or ask somewhere</div>}
         itemClassName="flex items-start gap-2.5 rounded-md px-2 py-1.5 -mx-2 hover:bg-subtle dark:hover:bg-slate-800/60 transition"
       />
   );

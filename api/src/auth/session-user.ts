@@ -18,6 +18,7 @@
 // cannot reach one and not the other.
 
 import { meta } from "../db/meta.js";
+import { hasAuthEmailSender } from "../platform/hosted-seams.js";
 
 /** Every column the client is given about itself. Add account-level
  *  preferences HERE, not in a route. */
@@ -48,5 +49,9 @@ export async function loadSessionUser(userId: string) {
     .where("id", "=", userId)
     .executeTakeFirstOrThrow();
   const { email_verified_at, ...rest } = user;
-  return { ...rest, email_verified: email_verified_at !== null };
+  // Whether a verification email can reach anyone at all: an install with no
+  // email sender (the setup builder's "Email: None") can never verify, and
+  // asked its operator to on the first screen anyway, with a Resend that sent
+  // nothing (#6442). The client asks only when this is true.
+  return { ...rest, email_verified: email_verified_at !== null, can_verify_email: hasAuthEmailSender() };
 }

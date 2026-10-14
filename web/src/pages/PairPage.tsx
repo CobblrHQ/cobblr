@@ -123,7 +123,7 @@ export function PairPage() {
                 below.
               </p>
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Pair code
                 </span>
                 <input

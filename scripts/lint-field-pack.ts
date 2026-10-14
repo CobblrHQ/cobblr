@@ -51,6 +51,7 @@
 //   npx tsx scripts/lint-field-pack.ts   (pnpm run lint field-pack)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites: the app's pages and components, the shared package
  *  and module UIs. */
@@ -121,7 +122,7 @@ export function check(file: string, src: string): Violation[] {
 
 if (process.argv[1] && /lint-field-pack\.ts$/.test(process.argv[1])) {
   const violations: Violation[] = [];
-  for (const root of ROOTS) for (const file of walk(root)) violations.push(...check(file, readFileSync(file, "utf8")));
+  for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
   if (violations.length) {
     console.error(`lint:field-pack - ${violations.length} violation(s):`);
     for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);

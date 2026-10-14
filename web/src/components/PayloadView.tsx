@@ -119,7 +119,7 @@ function Messages({ turns }: { turns: Array<Record<string, unknown>> }) {
     <div className="space-y-2">
       {turns.map((m, i) => (
         <div key={i} className="rounded border border-line dark:border-slate-700 overflow-hidden">
-          <div className="px-2 py-1 bg-subtle dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-accent">
+          <div className="px-2 py-1 bg-subtle dark:bg-slate-800 text-[10px] uppercase tracking-widest text-accent">
             {String(m.role ?? "message")}
           </div>
           <div className="px-2 py-1.5 text-xs">
@@ -218,7 +218,7 @@ export function PayloadView({
     <div>
       <div className="flex items-center gap-2 mb-1">
         {label && (
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{label}</div>
+          <div className="text-[10px] uppercase tracking-widest text-accent">{label}</div>
         )}
         {/* Always offered. This used to appear only for parseable JSON, on the
             theory that plain text has no pretty form — but it does (it is

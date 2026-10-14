@@ -26,7 +26,7 @@ export function WorkspaceIntegrations({ slug, name, canEnable, offers }: { slug:
   const integrations = (modules.data?.items ?? []).filter((m) => m.integration && (m.enabled || offers));
   if (!integrations.length) return null;
   return <section className="space-y-2" aria-label={`Services for ${name}`}>
-    <h2 className="text-sm font-mono uppercase tracking-widest text-accent">Services for {name}</h2>
+    <h2 className="text-sm uppercase tracking-widest text-accent">Services for {name}</h2>
     {integrations.map((m) => <div key={m.name} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3">
       <div className="font-medium">{m.displayName}</div>
       <p className="text-sm text-muted dark:text-slate-400">{m.description}</p>

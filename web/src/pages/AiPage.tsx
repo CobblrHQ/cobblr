@@ -1086,7 +1086,7 @@ function MonthTotals({
       <div className={"text-lg font-semibold " + (tone ?? "text-content dark:text-mortar-100")}>
         {value}
       </div>
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint">{label}</div>
     </div>
   );
   return (
@@ -1440,7 +1440,7 @@ function AiActivitySection({ slug }: { slug: string }) {
           <thead>
             <tr className="border-b border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-800/40 text-left">
               {["When", "Capability", "AI", "Model", "Tokens", "Source", ""].map((h) => (
-                <th key={h} className="px-3 py-1.5 font-mono text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
+                <th key={h} className="px-3 py-1.5 text-[10px] uppercase text-muted tracking-wider whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>

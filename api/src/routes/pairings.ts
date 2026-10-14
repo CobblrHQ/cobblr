@@ -8,15 +8,14 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
-import { requireRole } from "../auth/capability.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withTenant } from "../middleware/tenant.js";
-import * as activity from "../platform/activity.js";
-import { linkWords, recordKindSpellings } from "../platform/record-kind-spellings.js";
+import { recordKindSpellings } from "../platform/record-kind-spellings.js";
+import { createPairing, deletePairing, updatePairing } from "../platform/pairings-ops.js";
 import { listOverrides } from "../platform/entity-kind-overrides.js";
-import { familiesFromOverrides, familiesOf } from "../platform/families.js";
+import { familiesFromOverrides } from "../platform/families.js";
 import { resolveKind } from "../platform/entities.js";
 
 export const pairingsRouter = Router({ mergeParams: true });
@@ -140,9 +139,10 @@ pairingsRouter.get("/link-kinds", requireAuth, withTenant, async (req, res, next
   }
 });
 
+// AI-ACTION: platform:link-records
 pairingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "platform:link-records"))) return;
     const parsed = PairingCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -150,67 +150,12 @@ pairingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
       });
       return;
     }
-    const d = parsed.data;
-    const orgId = req.tenant!.org.id;
-    const [sourceKinds, targetKinds] = await Promise.all([recordKindSpellings(orgId, d.source_kind), recordKindSpellings(orgId, d.target_kind)]);
-    if (d.source_id === d.target_id && sourceKinds.includes(d.target_kind)) {
-      res.status(400).json({ error: { code: "self_link", message: "A thing cannot be linked to itself." } });
+    const out = await createPairing(req.tenant!.org.id, req.session!.id, parsed.data);
+    if (!out.ok) {
+      res.status(out.status).json({ error: { code: out.code, message: out.message, ...(out.existing_id ? { existing_id: out.existing_id } : {}) } });
       return;
     }
-    // The same two records, the same meaning, the same way round: once. A
-    // second one shows the link twice on both records and means nothing more.
-    // Checked under a lock on the pair, so a double tap cannot slip two in.
-    const pairKey = `${orgId}|${d.source_id}|${d.target_id}|${d.relationship_kind}`;
-    const outcome = await meta.transaction().execute(async (trx) => {
-      await sql`select pg_advisory_xact_lock(hashtext(${pairKey}))`.execute(trx);
-      const already = await trx
-        .selectFrom("entity_pairings")
-        .select("id")
-        .where("org_id", "=", orgId)
-        .where("source_id", "=", d.source_id)
-        .where("target_id", "=", d.target_id)
-        .where("relationship_kind", "=", d.relationship_kind)
-        .where("source_kind", "in", sourceKinds)
-        .where("target_kind", "in", targetKinds)
-        .executeTakeFirst();
-      if (already) return { already: already.id } as const;
-      const row = await trx
-        .insertInto("entity_pairings")
-        .values({
-          org_id: req.tenant!.org.id,
-          source_kind: parsed.data.source_kind,
-          source_id: parsed.data.source_id,
-          target_kind: parsed.data.target_kind,
-          target_id: parsed.data.target_id,
-          relationship_kind: parsed.data.relationship_kind,
-          notes: parsed.data.notes ?? null,
-          metadata: parsed.data.metadata
-            ? (sql`${JSON.stringify(parsed.data.metadata)}::jsonb` as unknown as Record<string, unknown>)
-            : ({} as Record<string, unknown>),
-          created_by: req.session!.id,
-        })
-        .returningAll()
-        .executeTakeFirstOrThrow();
-      return { row } as const;
-    });
-    if ("already" in outcome) {
-      res.status(409).json({ error: { code: "already_linked", message: `These two are already linked (${linkWords(d.relationship_kind)}).`, existing_id: outcome.already } });
-      return;
-    }
-    const inserted = outcome.row;
-    await activity.log({
-      orgId: req.tenant!.org.id,
-      action: "pairing_created",
-      ref: { module: null, entityType: "pairing", entityId: inserted.id },
-      diff: {
-        source_kind: parsed.data.source_kind,
-        target_kind: parsed.data.target_kind,
-        relationship_kind: parsed.data.relationship_kind,
-        // What the link is about, so every feed names and opens the record.
-        subject: { kind: parsed.data.source_kind, id: parsed.data.source_id },
-      },
-    });
-    res.status(201).json(inserted);
+    res.status(201).json(out.row);
   } catch (err) {
     next(err);
   }
@@ -220,9 +165,10 @@ const PairingPatch = z.object({
   notes: z.string().max(2000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+// AI-ACTION: platform:edit-link
 pairingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "platform:edit-link"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -235,63 +181,31 @@ pairingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => 
       });
       return;
     }
-    const updated = await meta
-      .updateTable("entity_pairings")
-      .set({
-        ...(parsed.data.notes !== undefined && { notes: parsed.data.notes }),
-        ...(parsed.data.metadata && {
-          metadata: sql`${JSON.stringify(parsed.data.metadata)}::jsonb` as unknown as Record<string, unknown>,
-        }),
-      })
-      .where("id", "=", id)
-      .where("org_id", "=", req.tenant!.org.id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!updated) {
-      res.status(404).json({ error: { code: "not_found", message: "pairing not found" } });
+    const out = await updatePairing(req.tenant!.org.id, id, parsed.data);
+    if (!out.ok) {
+      res.status(out.status).json({ error: { code: out.code, message: out.message } });
       return;
     }
-    res.json(updated);
+    res.json(out.row);
   } catch (err) {
     next(err);
   }
 });
 
+// AI-ACTION: platform:unlink-records
 pairingsRouter.delete("/:id", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "platform:unlink-records"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
-    // A thing's link to its type is the family's to change, not a Links row's:
-    // taken away here, a spool would be left with no type (#3990).
-    const fixedRels = new Set((await familiesOf(req.tenant!.org.id)).map((f) => f.rel));
-    if (fixedRels.size) {
-      const row = await meta.selectFrom("entity_pairings").select("relationship_kind").where("id", "=", id).where("org_id", "=", req.tenant!.org.id).executeTakeFirst();
-      if (row && fixedRels.has(row.relationship_kind)) {
-        res.status(409).json({ error: { code: "family_link", message: "This is its type. Change the type where the types are kept, not here." } });
-        return;
-      }
-    }
-    const deleted = await meta
-      .deleteFrom("entity_pairings")
-      .where("id", "=", id)
-      .where("org_id", "=", req.tenant!.org.id)
-      .returning(["id", "source_kind", "source_id"])
-      .executeTakeFirst();
-    if (!deleted) {
-      res.status(404).json({ error: { code: "not_found", message: "pairing not found" } });
+    const out = await deletePairing(req.tenant!.org.id, id);
+    if (!out.ok) {
+      res.status(out.status).json({ error: { code: out.code, message: out.message } });
       return;
     }
-    await activity.log({
-      orgId: req.tenant!.org.id,
-      action: "pairing_deleted",
-      ref: { module: null, entityType: "pairing", entityId: deleted.id },
-      // The link is gone by the time a feed reads this row: say its record now.
-      diff: { subject: { kind: deleted.source_kind, id: deleted.source_id } },
-    });
     res.status(204).end();
   } catch (err) {
     next(err);

@@ -10,7 +10,8 @@
 
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { JustFiledNotice } from "./JustFiledNotice";
-import { Fragment, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazyShellHost } from "../lib/lazyShellHost";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { ModuleOffGate } from "./ModuleOffGate";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
@@ -36,8 +37,8 @@ import { ChatLauncher } from "./ChatLauncher";
 import "../lib/open-chat-buffer";
 // The conversation panels load after the page has drawn, not with it (#4945).
 // Each stays mounted once loaded, so a conversation survives close and reopen.
-const ChatPanel = lazy(() => import("./ChatWidget").then((m) => ({ default: m.ChatPanel })));
-const DiscussionTab = lazy(() => import("./DiscussionTab").then((m) => ({ default: m.DiscussionTab })));
+const ChatPanel = lazyShellHost(() => import("./ChatWidget").then((m) => ({ default: m.ChatPanel })));
+const DiscussionTab = lazyShellHost(() => import("./DiscussionTab").then((m) => ({ default: m.DiscussionTab })));
 import { SideRail, useRailActiveTab } from "./SideRail";
 import { PinnedTab } from "./PinnedTab";
 import { GlobalScanWedge } from "./GlobalScanWedge";
@@ -51,6 +52,7 @@ import { useNavHasRow } from "./useNavModules";
 import { SearchButton } from "./FootSearch";
 import { api, getToken, isFocused } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useRecordStream } from "../hooks/useRecordStream";
 import { configurationReachable } from "../lib/configuration-nav";
 import { useAuth } from "../auth/AuthContext";
 import { useWorkspaceContentProbe } from "../lib/workspaceContent";
@@ -62,11 +64,11 @@ import { SIDEBAR_FOOT_ORDER, type SidebarFootSlot } from "./sidebar-foot";
 // The tour runs once in a while; its code loads when it starts.
 // Hosts that wait for a shortcut or an event: they load just after the first
 // paint instead of in it (the dashboard's first-load budget, #5971).
-const FeedbackWidget = lazy(() => import("./FeedbackWidget").then((m) => ({ default: m.FeedbackWidget })));
-const PhotoCaptureHost = lazy(() => import("./PhotoCaptureHost").then((m) => ({ default: m.PhotoCaptureHost })));
-const CommandPalette = lazy(() => import("./CommandPalette").then((m) => ({ default: m.CommandPalette })));
-const QuickAddSheet = lazy(() => import("./QuickAddSheet").then((m) => ({ default: m.QuickAddSheet })));
-const GuidedTour = lazy(() => import("../tour/GuidedTour").then((m) => ({ default: m.GuidedTour })));
+const FeedbackWidget = lazyShellHost(() => import("./FeedbackWidget").then((m) => ({ default: m.FeedbackWidget })));
+const PhotoCaptureHost = lazyShellHost(() => import("./PhotoCaptureHost").then((m) => ({ default: m.PhotoCaptureHost })));
+const CommandPalette = lazyShellHost(() => import("./CommandPalette").then((m) => ({ default: m.CommandPalette })));
+const QuickAddSheet = lazyShellHost(() => import("./QuickAddSheet").then((m) => ({ default: m.QuickAddSheet })));
+const GuidedTour = lazyShellHost(() => import("../tour/GuidedTour").then((m) => ({ default: m.GuidedTour })));
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
@@ -255,6 +257,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     document.documentElement.style.setProperty("--app-header-bottom", `calc(var(--top-chrome-height, 0px) + ${barHidden ? 0 : el.offsetHeight}px)`);
   }, [barHidden]);
   const { activeOrg } = useActiveOrg();
+  // A record written elsewhere (MCP, another device) shows here (#6337).
+  useRecordStream(activeSlug, activeOrg?.slug === activeSlug ? activeOrg.role : null);
   const qc = useQueryClient();
   // Managed-app mode: no workspace switching, no platform nav — just the app.
   const appMode = activeOrg?.app_mode ?? null;
@@ -441,7 +445,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
             length) can crowd "Cobblr" down to "Co..." — reported 2026-07-29. */}
-        <Link to="/" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
+        <Link to="/" title="Home" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">Cobblr</span>
         </Link>
@@ -466,7 +470,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             type="button"
             onClick={demoToast}
             title="Fire a sample toast (dev chip tradition)"
-            className={`absolute right-0 top-2 z-0 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
+            className={`absolute right-0 top-2 z-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
           >
             {envBanner.label}
           </button>
@@ -518,7 +522,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
     // Feedback is a "reach the makers" nudge, not a workspace tool, so it opens
     // the meta cluster under the rule rather than heading the foot. The
     // floating pill is suppressed in full-sidebar (App.tsx).
-    feedback: <Suspense fallback={null}><FeedbackWidget asRow /></Suspense>,
+    feedback: <FeedbackWidget asRow />,
     // Configuration lives HERE, not behind the account menu: the menu detour
     // (open menu → Configuration → back into the sidebar) was the exact loop
     // the author flagged.
@@ -558,11 +562,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         while scrolled; everywhere else the band must yield once content can
         pass beneath it. */}
     <DesktopDragStrip pinned={navMode === "side" && !navAutoHide} topBar={!fullSide} />
-    {tour.open && (
-      <Suspense fallback={null}>
-        <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />
-      </Suspense>
-    )}
+    {tour.open && <GuidedTour steps={DASHBOARD_TOUR} onClose={tour.close} />}
     <div className="min-h-screen grid grid-rows-[auto_1fr] grid-cols-1">
       {fontFace && <style dangerouslySetInnerHTML={{ __html: fontFace }} />}
       {/* Header + the email-verify nudge share the grid's auto row, so the
@@ -588,7 +588,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         aria-hidden
         data-testid="status-area"
         className="z-20 md:hidden bg-canvas dark:bg-slate-800"
-        style={{ height: "env(safe-area-inset-top)" }}
+        style={{ height: "var(--inset-top)" }}
       />
       {/* The shell's own top chrome: in place (its spacer and its measurement
           live beside it in the grid) and it never yields, since every overlay
@@ -609,7 +609,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         // renders UNDER the status-bar clock. env() is 0 in a normal browser
         // tab, so nothing changes there. e2e/mobile-overflow.mjs asserts it.
         style={{
-          paddingTop: "env(safe-area-inset-top)",
+          paddingTop: "var(--safe-top)",
           ...(skin ? { borderTop: "4px solid var(--app-accent)" } : {}),
         }}
       >
@@ -628,7 +628,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
 
             It reads the same in all three shells, which is the point. In the PWA
             and in a notched browser the webview is edge-to-edge, so
-            `env(safe-area-inset-top)` on the header supplies the inset; in the
+            `var(--safe-top)` on the header supplies the inset; in the
             native app iOS insets the WEBVIEW and env() is 0. Different routes,
             same final position, so this padding is the only knob and turning it
             moves all three together. */}
@@ -670,7 +670,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
                 the chip can't push the right menu off-screen. */}
             {envBanner && (
               <span
-                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
+                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
               >
                 {envBanner.label}
               </span>
@@ -681,7 +681,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             <button
               type="button"
               onClick={demoToast}
-              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBanner.chip}`}
+              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest ${envBanner.chip}`}
               title={`You are on the ${envBanner.label} environment, not production. Click: fire a sample toast.`}
             >
               {envBanner.label}
@@ -773,16 +773,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           Exactly one mount per tab: a second is a second conversation stacked
           over the first (ChatWidget.test.ts pins this). */}
       <SideRail open={chatOpen} setOpen={setChatOpen} initialTab={restoreTab}>
-        {panelsWanted && (
-          <Suspense fallback={null}>
-            <ChatPanel open={chatOpen} setOpen={setChatOpen} />
-          </Suspense>
-        )}
-        {panelsWanted && (
-          <Suspense fallback={null}>
-            <DiscussionTab />
-          </Suspense>
-        )}
+        {panelsWanted && <ChatPanel open={chatOpen} setOpen={setChatOpen} />}
+        {panelsWanted && <DiscussionTab />}
         <PinnedTab />
       </SideRail>
 
@@ -861,14 +853,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           from any screen (off the Scan tab) and always toasts — no silent drop.
           Stands down on the Scan page, which owns the wedge there. */}
       {activeSlug ? <GlobalScanWedge activeSlug={activeSlug} /> : null}
-      <Suspense fallback={null}><PhotoCaptureHost /></Suspense>
+      <PhotoCaptureHost />
       {/* Quick Access — pinned Knowledge Base entries, one tap from any page
           (renders only when the knowledge module is enabled). */}
       {activeSlug ? <QuickAccess activeSlug={activeSlug} /> : null}
       {/* ⌘K — do or find anything (redesign B4). */}
-      <Suspense fallback={null}><CommandPalette /></Suspense>
+      <CommandPalette />
       {/* The palette's "Add a thing": the dashboard's capture, from anywhere. */}
-      {activeSlug ? <Suspense fallback={null}><QuickAddSheet slug={activeSlug} /></Suspense> : null}
+      {activeSlug ? <QuickAddSheet slug={activeSlug} /> : null}
       {/* ? — every key the app answers to, from the one registry. */}
       <ShortcutsSheet />
       {/* Bring your spreadsheet: one sheet, opened from any door (openSheetImport). */}

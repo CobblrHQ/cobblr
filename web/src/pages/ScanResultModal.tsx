@@ -6,11 +6,12 @@
 // re-arms the scanner. The item lands in the inbox either way, so desktop
 // triage still works; this just lets you set qty / commit on the spot.
 
+import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
 import type { ScanCountSessionMode } from "@cobblr/platform-contract/scan-count";
 import { useEffect, useState } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, Loader2, MapPin, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
+import { Camera, Check, CheckCircle, Loader2, MapPin, PackageX, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
 import { useToast, EntityPhoto, WorkspaceLink } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -48,6 +49,7 @@ export function ScanResultModal({
   barcode,
   item: itemProp,
   pending,
+  known,
   scanArea,
   scanAreaId,
   getFrameBlob,
@@ -70,6 +72,10 @@ export function ScanResultModal({
   item?: ScanInboxItem | null;
   /** The page's ingest is still in flight ("Looking up…"). */
   pending?: boolean;
+  /** The thing this code already is in the workspace (#6436), known the moment
+   *  it decoded: shown at once in place of "Looking up…" while the scan is
+   *  still being sent. */
+  known?: { title: string; qty: number | null } | null;
   /** The scanner session's area (a location name) — stamped on the item as
    *  `scan_area` at ingest, shown back in the card. */
   scanArea?: string | null;
@@ -360,6 +366,8 @@ export function ScanResultModal({
       : null;
   const recordRoute = useDetailRoute(activeSlug);
   const listRoute = useListRoute(activeSlug);
+  // "I just ran out of this" (#6526), beside Add: kept at none, onto the list.
+  const ranOutHere = useRanOut(item, viewer, menuQ.data?.items ?? null, () => onClose("handled"));
   const fileHere = useMutation({
     mutationFn: () => quickFileRow(activeSlug, item!, oneTap!),
     onSuccess: ({ installed, filed }) => {
@@ -473,7 +481,16 @@ export function ScanResultModal({
           </div>
           <div className="min-w-0 flex-1">
             {pending && !item ? (
-              <div className="text-sm text-muted animate-pulse">Looking up…</div>
+              known ? (
+                // A thing you have, from your own records the moment it decoded:
+                // never "Looking up…" while the photo is still on its way.
+                <div data-testid="scan-known">
+                  <div className="text-base font-semibold text-content dark:text-mortar-100 line-clamp-3">{known.title}</div>
+                  <div className="text-sm text-emerald-700 dark:text-emerald-400">You already have this</div>
+                </div>
+              ) : (
+                <div className="text-sm text-muted animate-pulse">Looking up…</div>
+              )
             ) : (
               // CLAMPED, because it is the only unbounded thing in the sheet and
               // the sheet is not allowed to scroll (reported 2026-08-03). Catalog
@@ -628,7 +645,7 @@ export function ScanResultModal({
             stepper here would ask the same question twice (#3884). */}
         {!alreadyOwned && !inventoryCheck && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-muted">quantity</span>
+            <span className="text-[10px] uppercase tracking-widest text-muted">quantity</span>
             <QtyStepper value={qty} onSet={setQty} big />
           </div>
         )}
@@ -700,6 +717,18 @@ export function ScanResultModal({
               Saved to the inbox - file it from there.
             </div>
           )
+        )}
+        {!looking && ranOutHere.offered && (
+          <button
+            type="button"
+            data-testid="sheet-ran-out"
+            disabled={ranOutHere.pending || busy}
+            onClick={ranOutHere.run}
+            title={RAN_OUT_HINT}
+            className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
+          >
+            {ranOutHere.pending ? <Loader2 size={15} className="animate-spin" /> : <PackageX size={15} />} {RAN_OUT_LABEL}
+          </button>
         )}
 
         {/* Paired-scan: the bin's QR said WHICH record; this UPC says WHAT it

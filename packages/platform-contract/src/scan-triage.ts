@@ -1661,3 +1661,33 @@ export function scanSplitUncut(row: ScanTriageRow): { sentence: string; why: str
   const why = splitUncutWords(typeof meta.crop_reason === "string" ? meta.crop_reason : null);
   return { sentence: "Not cut out of the group photo, so it shows all of it.", why: `It could not be cut out: ${why}.` };
 }
+
+/** What "Ran out" does with a scan row (#6526): the one rule the inbox card,
+ *  the camera, the station and the core-scan:ran-out action read.
+ *  - `take`: the row is one thing you keep that keeps a count; it goes to
+ *    none through Used it up.
+ *  - `add`: nothing you keep is this; it is added with none on hand into
+ *    where the row was going, when that table keeps a count.
+ *  - `none`: not offered, and why (a move or a sort, a match only a person
+ *    can settle, two things matched, a table with no count). */
+export type RanOutPlan =
+  | { kind: "take"; match: ScanTrackedMatch }
+  | { kind: "add" }
+  | { kind: "none"; why: string };
+
+export function ranOutPlan(row: ScanTriageRow, destination: { counted: boolean } | null): RanOutPlan {
+  if (!isPending(row)) return { kind: "none", why: "it is filed already" };
+  const purpose = scanPurpose(row);
+  if (purpose === "move" || purpose === "sort") return { kind: "none", why: "this scan moves or sorts a thing, it does not count it" };
+  const m = scanTrackedMatch(row);
+  if (m) {
+    if (m.confirm) return { kind: "none", why: m.confirm };
+    if (m.of > 1) return { kind: "none", why: `${m.of} things you keep match it; open it and pick one` };
+    if (!m.kind || !m.id) return { kind: "none", why: "its match is not finished yet" };
+    if (!m.counted) return { kind: "none", why: `${m.title} is one thing, not a count` };
+    return { kind: "take", match: m };
+  }
+  if (!destination) return { kind: "none", why: "it has nowhere to go yet; choose a table first" };
+  if (!destination.counted) return { kind: "none", why: "that table keeps no count" };
+  return { kind: "add" };
+}

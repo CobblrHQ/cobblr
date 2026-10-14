@@ -86,7 +86,7 @@ export function ActionLabelPage() {
   return card(
     <>
       <header className="space-y-1">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">action label</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">action label</div>
         <h1 className="text-xl font-semibold text-content dark:text-mortar-100">{label.data.title}</h1>
         {label.data.hint && <p className="text-sm text-muted dark:text-slate-400">{label.data.hint}</p>}
       </header>

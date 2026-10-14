@@ -95,8 +95,8 @@ export function UnitsPanel({ partId }: { partId: string }) {
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-        // units on file{items.length > 0 ? ` (${items.length})` : ""}
+      <div className="text-[10px] uppercase tracking-widest text-accent">
+        units on file{items.length > 0 ? ` (${items.length})` : ""}
       </div>
       {list.isLoading && <div className="text-xs text-faint dark:text-slate-500">loading…</div>}
       {items.length === 0 && !list.isLoading && (

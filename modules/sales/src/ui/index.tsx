@@ -283,7 +283,7 @@ function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; or
             need: fieldNeed("customer", { control: "picker", label: "Customer" }),
             node: (
               <div>
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
                 <CustomerPicker api={api} customerId={customerId} customerName={customerName} onChange={(id, name) => { setCustomerId(id); setCustomerName(name); }} />
               </div>
             ),
@@ -292,7 +292,7 @@ function NewOrderModal({ api, orgSlug, onClose, onCreated }: { api: SalesApi; or
             need: fieldNeed("order_number", { control: "text", label: "Order #" }),
             node: (
               <div>
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order #</span>
                 <input aria-label="Order number" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
               </div>
             ),
@@ -453,7 +453,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   need: fieldNeed("customer", { control: "picker", label: "Customer" }),
                   node: (
                     <div>
-                      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
+                      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Customer</span>
                       <CustomerPicker api={api} customerId={d.customer_id} customerName={d.customer_name ?? ""} onChange={(id, name) => update.mutate({ customer_id: id, customer_name: name || null })} />
                     </div>
                   ),
@@ -462,7 +462,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   need: fieldNeed("status", { control: "choice", label: "Status", choices: STATUSES }),
                   node: (
                     <div>
-                      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
+                      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Status</span>
                       <select aria-label="Status" value={d.status} onChange={(e) => (e.target.value === "cancelled" ? cancel.mutate(undefined) : update.mutate({ status: e.target.value as SalesOrderStatus }))} className="w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm">
                         {STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
                       </select>
@@ -512,7 +512,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             {/* line items */}
             <div>
               <div className="flex items-baseline justify-between mb-1.5">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-muted">Line items</span>
+                <span className="text-[10px] uppercase tracking-widest text-muted">Line items</span>
                 <span data-testid="order-total" className="text-sm font-semibold text-content dark:text-mortar-100">{linesTotalWords(orderTotal(d.items, fieldCurrency(d.metadata, "total", currency)))}</span>
               </div>
               {d.items.length === 0 && <div className="text-sm text-muted italic">No line items yet. Add what was sold.</div>}
@@ -709,7 +709,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
             onSubmit={(e) => { e.preventDefault(); make.mutate({ lineId: making.lineId, qty: making.qty }); }}
           >
             <label className="block">
-              <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">How many</span>
+              <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">How many</span>
               <NumberField
                 min={1}
                 integer
@@ -779,7 +779,7 @@ function OrderDateField({ value, onSave }: { value: string; onSave: (v: string |
   const f = useFieldDraft(value);
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order date</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order date</span>
       <input
         type="date"
         value={f.draft}
@@ -806,7 +806,7 @@ function ShipToField({ value, onSave }: { value: string; onSave: (v: string | nu
   };
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Ship to</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Ship to</span>
       <textarea
         rows={2}
         value={f.draft}
@@ -829,7 +829,7 @@ function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string
   };
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order number</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order number</span>
       <input
         value={f.draft}
         onChange={(e) => f.setDraft(e.target.value)}
@@ -890,7 +890,7 @@ function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; order
     <Modal open onClose={onClose} title="Ship this order" size="md">
       <div className="space-y-4">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Tracking number</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Tracking number</span>
           <input
             autoFocus
             value={typed}
@@ -912,7 +912,7 @@ function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; order
 
         <div>
           <div className="flex items-baseline justify-between mb-1">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+            <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
               What the customer reads{p?.notice.to ? `, to ${p.notice.to}` : ""}
             </span>
             <button type="button" onClick={copy} disabled={!p} className="inline-flex items-center gap-1 text-xs text-accent hover:underline disabled:opacity-50">
@@ -1006,7 +1006,7 @@ function OrderHistory({ api, orderId }: { api: SalesApi; orderId: string }) {
   if (rows.length === 0) return null;
   return (
     <div>
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5">History</span>
+      <span className="block text-[10px] uppercase tracking-widest text-muted mb-1.5">History</span>
       <ol className="space-y-1">
         {rows.map((h) => (
           <li key={h.id} className="flex flex-wrap items-baseline gap-x-2 text-xs">

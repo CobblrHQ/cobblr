@@ -83,6 +83,7 @@ function nativeFieldsOf(k: PlatformEntityKind) {
 function langPreamble(lang: Lang, envToken: string): string[] {
   if (lang === "curl") return [`# Load your token from the env, never inline it:`, `#   export COBBLR_TOKEN="${envToken}"`];
   if (lang === "python") return [`# pip install requests python-dotenv  ·  .env: COBBLR_TOKEN=${envToken}`, "import os, requests", "from dotenv import load_dotenv", "load_dotenv()"];
+  // mono: a JavaScript sample's comment line
   return [`// npm i dotenv  ·  .env (never commit it): COBBLR_TOKEN=${envToken}`, 'import "dotenv/config";'];
 }
 /** The create CALL only (no preamble/imports) — shared by the on-screen snippet

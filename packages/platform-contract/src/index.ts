@@ -437,6 +437,18 @@ export function packFieldIssues(f: {
 
 export const EntityKindIdRegex = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*$/;
 
+/** A workspace collection's name ("3d-printers", "pantry"): what the
+ *  instance and bundle routes accept, and so the first half of the kind its
+ *  records carry ("3d-printers:item"). */
+export const InstanceNameRegex = /^[a-z0-9][a-z0-9-]*$/;
+
+/** Any kind a record can carry: a module's (`machines:machine`, which
+ *  EntityKindIdRegex governs where modules declare them) or a collection's
+ *  (`3d-printers:item`). Built from InstanceNameRegex so the two cannot
+ *  disagree: a collection named with a leading digit was refused by
+ *  placement, and laying out a 3D printer answered 500 (#6369). */
+export const KindRefRegex = new RegExp(`^(?:[a-z][a-z0-9_-]*|${InstanceNameRegex.source.slice(1, -1)}):[a-z][a-z0-9_-]*$`);
+
 // ─────────────── Decode field-role vocabulary (P3) ────────────────
 //
 // The generalization seam of the identifier-decoder registry (VIN is its only
@@ -2854,6 +2866,14 @@ export interface ScannableInfo {
 export interface EntityWriter {
   /** Owning row table, used for predicates that must run before paging. */
   table?: string;
+  /** A kind that shows a loan in fields of its own (an asset's "Who has it")
+   *  keeps them in step here; the kernel calls it after every lend and
+   *  return (record-loans.md). `null` is "back". */
+  onLoan?(orgId: string, id: string, loan: { holder_id: string | null; due_back: string | null } | null): Promise<void>;
+  /** The kind keeps a loan's due day in this date field of its own, which
+   *  already reaches the calendar and Needs you, so the kernel's loan rows
+   *  leave it out rather than say it twice. */
+  loanDueField?: string;
   /** Create an entity; returns the new entity's id. */
   create(orgId: string, fields: Record<string, unknown>): Promise<string>;
   update(orgId: string, id: string, fields: Record<string, unknown>): Promise<void>;

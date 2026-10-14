@@ -207,7 +207,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
   const body = (
     <>
       <div className="flex items-center justify-between px-3 py-2 border-b border-line dark:border-slate-700 shrink-0">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">notifications</div>
+        <div className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">notifications</div>
         <div className="flex items-center gap-2">
           {count > 0 && (
             <button
@@ -431,7 +431,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
         <Link
           to="/me/notifications"
           onClick={() => setOpen(false)}
-          className="flex-1 px-3 py-2 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
+          className="flex-1 px-3 py-2 text-[11px] uppercase tracking-widest text-accent hover:text-accent transition text-center"
         >
           see all →
         </Link>
@@ -439,7 +439,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
           to={NOTIFICATION_SETTINGS_PATH}
           onClick={() => setOpen(false)}
           data-testid="bell-notification-settings"
-          className="flex-1 px-3 py-2 border-l border-line dark:border-slate-700 text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent transition text-center"
+          className="flex-1 px-3 py-2 border-l border-line dark:border-slate-700 text-[11px] uppercase tracking-widest text-accent hover:text-accent transition text-center"
         >
           Notification settings
         </Link>

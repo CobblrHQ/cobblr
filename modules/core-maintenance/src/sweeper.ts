@@ -18,6 +18,7 @@
 
 import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
+import { loanOfFields } from "@cobblr/platform-contract/loan";
 import { platform, countOf } from "@cobblr/platform-contract";
 import type { CoreMaintenanceDB } from "./db.js";
 import { reconcileSchedules } from "./schedules-store.js";
@@ -163,6 +164,9 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       // the schedule's own reason uses.
       const { reason: tone, days: daysUntil } = calendarDue(new Date(row.scheduled_at), new Date(), null);
       const record = await platform().entities.lookup(org.id, `${row.entity_module}:${row.entity_type}`, row.entity_id);
+      // Lent out: its reminders are paused, not spent. Left un-notified, the
+      // entry speaks up on the first sweep after it is back.
+      if (loanOfFields(record?.fields)) continue;
       const message = row.cancel_notice_days != null ? `Cancel ${record?.title ?? row.name} by ${cancelBy(new Date(row.scheduled_at), row.cancel_notice_days).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric" })} or it renews` : `${row.name}${record?.title ? ` on ${record.title}` : ""}: ${(row.schedule_id && reasons.get(row.schedule_id)) || tone}`;
 
       // Event for user-authored wires.

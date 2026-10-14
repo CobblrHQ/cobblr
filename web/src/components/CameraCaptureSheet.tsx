@@ -162,7 +162,7 @@ export function CameraCaptureSheet({
         )}
         <div
           className="absolute top-0 inset-x-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent text-white"
-          style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
+          style={{ paddingTop: "max(0.75rem, var(--safe-top))" }}
         >
           <span className="text-sm font-medium truncate">{mode === "preview" ? "Use this shot?" : title}</span>
           {shootError && (
@@ -183,7 +183,7 @@ export function CameraCaptureSheet({
       </div>
       <div
         className="shrink-0 bg-black/90 px-6 pt-4 flex items-center justify-center gap-8"
-        style={{ paddingBottom: "max(1.25rem, env(safe-area-inset-bottom))" }}
+        style={{ paddingBottom: "max(1.25rem, var(--inset-bottom))" }}
       >
         {/* Choose from the device, beside the shutter rather than only when
             there is no camera. The picture you want is often already ON the

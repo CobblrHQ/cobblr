@@ -16,10 +16,10 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 export function InstallPointer({ at, label }: { at: "bottom-right" | "bottom-center" | "top-right"; label: string }) {
   const place =
     at === "bottom-right"
-      ? "right-2 items-end bottom-[max(0.75rem,env(safe-area-inset-bottom))]"
+      ? "right-2 items-end bottom-[max(0.75rem,var(--inset-bottom))]"
       : at === "bottom-center"
-        ? "left-1/2 -translate-x-1/2 items-center bottom-[max(0.75rem,env(safe-area-inset-bottom))]"
-        : "right-2 items-end top-[max(0.5rem,env(safe-area-inset-top))] flex-col-reverse";
+        ? "left-1/2 -translate-x-1/2 items-center bottom-[max(0.75rem,var(--inset-bottom))]"
+        : "right-2 items-end top-[max(0.5rem,var(--top-edge))] flex-col-reverse";
   return createPortal(
     <div data-install-pointer={at} className={`fixed z-[400] flex flex-col gap-1 pointer-events-none ${place}`}>
       <span className="whitespace-nowrap rounded-full bg-blue-500 px-2.5 py-1 text-xs font-semibold text-white shadow-lg">{label}</span>

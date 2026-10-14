@@ -111,7 +111,7 @@ export function CodesPanel() {
       )}
 
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">codes by kind</div>
+        <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">codes by kind</div>
         <p className="text-[11px] text-muted dark:text-slate-400 mb-2.5">
           <span className="font-medium text-content dark:text-mortar-100">Find an item by its short human-readable code</span> (like{" "}
           <span className="font-mono">p1</span>): type it in the box above, no scanning needed. Each list's code starts with a{" "}

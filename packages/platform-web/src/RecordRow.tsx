@@ -154,7 +154,7 @@ function RowActionButton({ kind, id, binding }: { kind: string; id: string; bind
         disabled={pending}
         title={armed ? `${explain} - press again to confirm` : explain}
         className={
-          "transition px-1 text-[10px] font-mono uppercase tracking-widest " +
+          "transition px-1 text-[10px] uppercase tracking-widest " +
           (flash === "ok"
             ? "text-moss-600"
             : flash === "err"

@@ -92,6 +92,9 @@ importers:
       pino-http:
         specifier: ^10.3.0
         version: 10.5.0
+      postal-mime:
+        specifier: ^2.7.6
+        version: 2.7.6
       rrule:
         specifier: ^2.8.1
         version: 2.8.1
@@ -228,6 +231,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.100.10(react@19.2.6)
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -246,6 +252,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.0.1))
 
   modules/core-activity-log:
     dependencies:
@@ -1004,6 +1013,9 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       '@types/express':
         specifier: ^4.17.21
         version: 4.17.25
@@ -1013,9 +1025,15 @@ importers:
       '@types/unzipper':
         specifier: ^0.10.11
         version: 0.10.11
+      rrule:
+        specifier: ^2.8.1
+        version: 2.8.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.0.1))
 
   modules/inventory:
     dependencies:
@@ -4422,6 +4440,9 @@ packages:
 
   polygon-clipping@0.15.7:
     resolution: {integrity: sha512-nhfdr83ECBg6xtqOAJab1tbksbBAOMUltN60bU+llHVOL0e5Onm1WpAXXWXVB39L8AJFssoIhEVuy/S90MmotA==}
+
+  postal-mime@2.7.6:
+    resolution: {integrity: sha512-UUlyE2KlxmvwMGq060onF/VWU3zD6dVW31FwokQ5v26jWd35fbs2MoTFzh+jXnPwAyV2MULMKXcBInGOl5TO6Q==}
 
   postcss-import@15.1.0:
     resolution: {integrity: sha512-hpr+J05B2FVYUAXHeK1YyI267J/dDDhMU6B6civm8hSY1jYJnBXxzKDKDswzJmtLHryrjhnDjqqp/49t8FALew==}
@@ -7951,6 +7972,8 @@ snapshots:
     dependencies:
       robust-predicates: 3.0.3
       splaytree: 3.2.3
+
+  postal-mime@2.7.6: {}
 
   postcss-import@15.1.0(postcss@8.5.14):
     dependencies:

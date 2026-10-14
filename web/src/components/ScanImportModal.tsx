@@ -5,8 +5,12 @@
 import { SendFileImport } from "../features/sharing/SendFileImport";
 import { SendFileSchema, SendReceiptSchema, type SendFile, type SendReceipt } from "@cobblr/platform-contract/send-file";
 import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { FileUp, CheckCircle2, AlertTriangle } from "lucide-react";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useToast, useConfirm, QueryError } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -30,6 +34,31 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
   onImported: () => void;
 }) {
   const toast = useToast();
+  const confirm = useConfirm();
+  const qc = useQueryClient();
+  const { activeOrg } = useActiveOrg();
+  const canUndo = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
+  const [undoing, setUndoing] = useState<string | null>(null);
+  const [undoError, setUndoError] = useState("");
+  const runs = useQuery({ queryKey: [...scanInboxKeys.all(slug), "import-runs"], queryFn: () => api.listScanImportRuns(slug), enabled: open });
+  const undo = async (id: string) => {
+    if (undoing) return;
+    const yes = await confirm({ title: "Undo this import?", message: "Removes the items it added and restores the items it replaced. Changes made to those items since the import will be lost.", confirmLabel: "Undo import", destructive: true });
+    if (!yes) return;
+    setUndoing(id);
+    setUndoError("");
+    try {
+      const r = await api.undoScanImport(slug, id);
+      await qc.invalidateQueries({ queryKey: scanInboxKeys.all(slug) });
+      onImported();
+      toast.success(`Import undone. ${countOf(r.items_removed, "item")} removed, ${countOf(r.items_restored, "item")} restored.`);
+      if (summary?.run_id === id) setSummary(null);
+    } catch (e) {
+      setUndoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUndoing(null);
+    }
+  };
   const [sendFile,setSendFile] = useState<SendFile | SendReceipt | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -71,7 +100,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
         mapping: Object.keys(mapping).length ? mapping : undefined,
       });
       setSummary(s);
-      if (!s.dry_run && s.imported_count > 0) onImported();
+      if (!s.dry_run && s.imported_count > 0) { onImported(); void runs.refetch(); }
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Import failed.");
     } finally {
@@ -96,6 +125,7 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
               <input
                 type="file"
                 data-testid="scan-import-file"
+                aria-label="Import file"
                 accept=".json,.csv,application/json,text/csv"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -246,6 +276,17 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
             </div>
           </div>
         )}
+        {!sendFile && <details className="space-y-2 border-t border-line pt-2">
+          <summary className="min-h-11 cursor-pointer py-2 font-medium">Recent imports</summary>
+          {runs.isLoading && <p>Loading imports…</p>}
+          {runs.isError && <QueryError what="recent imports" onRetry={() => void runs.refetch()} />}
+          {runs.data?.items.length === 0 && <p className="text-muted">No imports yet.</p>}
+          {runs.data?.items.map((r) => <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-md border border-line p-2">
+            <span className="min-w-0 flex-1 break-words">{r.source_label || "File import"}<span className="block text-xs text-muted">{new Date(r.created_at).toLocaleString()} · {countOf(r.created_count, "item")} added, {countOf(r.replaced_count, "item")} replaced</span></span>
+            {r.undone_at ? <span role="status">Undone</span> : canUndo && <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2" disabled={undoing !== null || busy} onClick={() => void undo(r.id)}>Undo import</button>}
+          </div>)}
+          {undoError && <p role="alert" className="text-ember-600 dark:text-ember-400">{undoError}</p>}
+        </details>}
       </div>
     </Modal>
   );

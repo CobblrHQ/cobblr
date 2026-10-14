@@ -84,7 +84,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // git grep: the whole tree in well under a second, where walking it read every file.
   let hits = "";
   try {
-    hits = execFileSync("git", ["grep", "--untracked", "-nE", "@cobblr/[^\"']+\\.test[\"']", "--", "*.ts", "*.tsx", "*.mts", "*.mjs", "*.js"], { encoding: "utf8" });
+    hits = execFileSync("git", ["grep", "--untracked", "-nE", "@cobblr/[^\"']+\\.test[\"']", "--", "*.ts", "*.tsx", "*.mts", "*.mjs", "*.js"], { maxBuffer: 1024 * 1024 * 1024, encoding: "utf8" });
   } catch {
     hits = ""; // git grep exits 1 when nothing matches
   }

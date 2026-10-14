@@ -37,7 +37,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, Hash, ImagePlus, Loader2, MapPin, Package, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, ArrowRight, Camera, Check, Flashlight, ImagePlus, Loader2, MapPin, Plus, ScanLine, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { ScanAreaChip } from "../components/scan-camera/ScanAreaChip";
+import { ScanModeButton } from "../components/scan-camera/ScanModeButton";
+import { flagsFor, scanModeOf, scanPurposeOf, type ScanMode } from "../components/scan-camera/scanMode";
 import { useLater, LiveSurfaceProvider, Modal, usePageTitle, useOverlayOpenFlag, useLockPageScroll, useLayerStack, useEscapeToClose, usePasteImage, registerBottomChrome } from "@cobblr/platform-web";
 import { classifyScanPayload, scannerIgnores, typedVerdict } from "../lib/scanPayload";
 import { doorPlan, frameFromImage, type DoorPlan } from "../lib/imageDoor";
@@ -45,7 +48,8 @@ import { captureRoute } from "../lib/captureRoute";
 import { useDeployEnv } from "../lib/deploy-env";
 import { ManualScanField } from "../components/ManualScanField";
 import { NfcScanButton } from "../components/NfcScanButton";
-import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
+import { ingestBarcode } from "../lib/scanIngest";
+import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanKnownCode, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
 import { PHOTO_WANTED_ARM_MODE, nextWanted, photoQueue, promptLabel } from "../lib/photoQueue";
@@ -103,7 +107,7 @@ type Phase = "idle" | "scanning" | "resolving" | "result";
 // the top chrome on a notched phone. One constant, three overlays — they each
 // carried their own copy of this magic number, so any change to the chrome's
 // height had to be remembered in three places.
-const UNDER_TOP_CHROME = "max(4.5rem, calc(env(safe-area-inset-top) + 3.5rem))";
+const UNDER_TOP_CHROME = "max(4.5rem, calc(var(--safe-top) + 3.5rem))";
 
 // How long a code must be ABSENT from the frame before it counts as a new scan.
 // The detect loop fires every animation frame, so a code held in view produces
@@ -409,6 +413,9 @@ export function ScanCameraPage() {
   // (the operator: "if I'm moving fast… I should be able to do that").
   const [resultItem, setResultItem] = useState<ScanInboxItem | null>(null);
   const [ingestBusy, setIngestBusy] = useState(false);
+  // What the decoded code already is here, from the workspace's own records
+  // (#6436): asked before the photo is even sent, shown the moment it answers.
+  const [knownCode, setKnownCode] = useState<{ code: string; known: ScanKnownCode } | null>(null);
   const ingestKeyRef = useRef<string | null>(null);
   const earlyIntentRef = useRef<"discard" | "retake" | "photo" | null>(null);
   const resultItemRef = useRef<ScanInboxItem | null>(null);
@@ -637,7 +644,7 @@ export function ScanCameraPage() {
     }
     return !countMode && localStorage.getItem("cobblr-scan-sort-mode") === "1";
   });
-  purposeRef.current = countMode ? "count" : sortMode ? "sort" : moveMode ? "move" : "arrival";
+  purposeRef.current = scanPurposeOf({ moveMode, countMode, sortMode });
   useEffect(() => {
     localStorage.setItem("cobblr-scan-count-mode", countMode ? "1" : "0");
     localStorage.setItem("cobblr-scan-sort-mode", sortMode ? "1" : "0");
@@ -716,6 +723,17 @@ export function ScanCameraPage() {
       return !v;
     });
   }, []);
+  // One setting with four values: choosing one turns the others off.
+  const scanMode = scanModeOf({ moveMode, countMode, sortMode });
+  const chooseMode = useCallback(
+    (m: ScanMode) => {
+      const want = flagsFor(m);
+      if (countMode !== want.countMode) toggleCountMode();
+      if (sortMode !== want.sortMode) toggleSortMode();
+      if (moveMode !== want.moveMode) toggleMoveMode();
+    },
+    [countMode, sortMode, moveMode, toggleCountMode, toggleSortMode, toggleMoveMode],
+  );
   // Sort mode on → start/resume the caller's live put-away session.
   useEffect(() => {
     if (!sortMode) return;
@@ -1819,6 +1837,7 @@ export function ScanCameraPage() {
     setPendingBarcode(null);
     setResultItem(null);
     setIngestBusy(false);
+    setKnownCode(null);
     ingestKeyRef.current = null;
     resultItemRef.current = null;
     setPhase(streamRef.current ? "scanning" : "idle");
@@ -2104,7 +2123,16 @@ export function ScanCameraPage() {
     setIngestBusy(true);
     const barcode = pendingBarcode;
     const purpose = pendingPurposeRef.current ?? purposeRef.current;
-    void (async () => {
+    // Your own records first, on their own (scanIngest.ts): a code you already
+    // have is named before the photo is uploaded (the owner's tea sat on
+    // "Looking up…" for the seconds the camera frame took to send).
+    void ingestBarcode({
+      code: barcode,
+      known: (c) => api.scanKnown(activeSlug, c),
+      onKnown: (known) => {
+        if (ingestKeyRef.current === key) setKnownCode({ code: barcode, known });
+      },
+      send: async () => {
       try {
         const frame = await (frameBlobRef.current ?? Promise.resolve(null)).catch(() => null);
         const [batchId, frameFileId] = await Promise.all([
@@ -2160,7 +2188,8 @@ export function ScanCameraPage() {
       } finally {
         if (ingestKeyRef.current === key) setIngestBusy(false);
       }
-    })();
+      },
+    });
   }, [phase, pendingBarcode, activeSlug, armFor, ensureBatchId, onSaved, qc, rearm, showFilingNote, noteError]);
 
   // An action taken while the lookup is still running: the sheet closes NOW,
@@ -2327,7 +2356,7 @@ export function ScanCameraPage() {
         ref={topChromeRef}
         data-testid="camera-top-chrome"
         className="absolute top-0 inset-x-0 flex items-center gap-1.5 p-4"
-        style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}
+        style={{ paddingTop: "max(1rem, var(--safe-top))" }}
       >
         {running && hasTorch ? (
           <button
@@ -2359,97 +2388,22 @@ export function ScanCameraPage() {
           </button>
         ) : null}
         {/* No slot is kept for a light the camera does not have: at 390px the
-            empty 40px clipped Count to its icon (#4146). A camera that reports
-            a light moves the strip once, when the stream starts.
-            Where you are and how scans behave. At 320px these five and Close
-            needed more room than the strip had, and the last one out was
-            Close (#4033). So they scroll sideways between the two pinned
-            ends, and Close never leaves the right edge. */}
-        <div className="flex flex-1 min-w-0 items-center gap-1.5 overflow-x-auto no-scrollbar" data-testid="camera-mode-strip">
-        {containerBin ? (
-          /* Container bin — you scanned a machine/asset QR, so every scan files
-             INTO it (a placement). Tap to clear. */
-          <button
-            type="button"
-            onClick={() => {
-              setContainerBin(null);
-              containerBinRef.current = null;
-            }}
-            title="Scanning into this container - tap to clear"
-            className="inline-flex items-center gap-1.5 bg-cobble-600/85 hover:bg-cobble-600 rounded-full px-3 py-1.5 text-white text-xs min-w-[7rem] flex-1"
-          >
-            <Package size={13} className="shrink-0" />
-            <span className="truncate min-w-0 flex-1 text-left">
-              Into {containerName ?? "container"}
-            </span>
-            <X size={12} className="text-white/70 shrink-0" />
-          </button>
-        ) : (
-          /* Area chip — where you're standing; stamped on every save. */
-          <button
-            type="button"
-            onClick={() => setAssignOpen(true)}
-            className="inline-flex items-center gap-1.5 bg-black/50 hover:bg-black/70 rounded-full px-3 py-1.5 text-white text-xs min-w-[5.5rem] flex-1"
-          >
-            <MapPin
-              size={13}
-              className={`shrink-0 ${areaName ? "text-emerald-400" : "text-white/60"}`}
-            />
-            <span className="truncate min-w-0 flex-1 text-left">{areaName ?? "Set area"}</span>
-          </button>
-        )}
-        {/* Move mode — scan a tracked item → it MOVES to the active bin,
-            no triage stop (needs an area set to have somewhere to move to). */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!moveMode && countMode) toggleCountMode();
-            if (!moveMode && sortMode) toggleSortMode();
-            toggleMoveMode();
+            empty 40px clipped Count to its icon (#4146). Where you are, then
+            what a scan does: one Mode button where Move, Sort and Count were
+            three pills, so the area takes the rest of the bar and nothing
+            scrolls sideways at 320 (#4033, #6438). Each is a component that
+            moves to the bottom-left slot with one line. */}
+        <div className="flex flex-1 min-w-0 items-center gap-1.5" data-testid="camera-mode-strip">
+        <ScanAreaChip
+          areaName={areaName}
+          containerName={containerBin ? (containerName ?? null) : false}
+          onSetArea={() => setAssignOpen(true)}
+          onClearContainer={() => {
+            setContainerBin(null);
+            containerBinRef.current = null;
           }}
-          aria-pressed={moveMode}
-          title="Move mode: scanning something you already track moves it to the active area"
-          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
-            moveMode ? "bg-emerald-500 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
-          }`}
-        >
-          <ArrowLeftRight size={13} /> Move
-        </button>
-        {/* Sort mode (Live Sort) — scan a thing, get told which bin it goes
-            in, tap Done. The streaming put-away session, on the camera. */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!sortMode && countMode) toggleCountMode();
-            if (!sortMode && moveMode) toggleMoveMode();
-            toggleSortMode();
-          }}
-          aria-pressed={sortMode}
-          title="Sort mode: every scan gets a destination bin directive - put it there, tap Done, next"
-          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
-            sortMode ? "bg-cobble-600 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
-          }`}
-        >
-          <Zap size={13} /> Sort
-        </button>
-        {/* Count mode — a stocktake: a scan of something you have opens in
-            Set total. Sort sends every scan to a bin instead of the sheet, so
-            the two never run together. */}
-        <button
-          type="button"
-          onClick={() => {
-            if (!countMode && sortMode) toggleSortMode();
-            if (!countMode && moveMode) toggleMoveMode();
-            toggleCountMode();
-          }}
-          aria-pressed={countMode}
-          title="Count mode: every scan of something you have asks for the total on the shelf"
-          className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs shrink-0 ${
-            countMode ? "bg-amber-500 text-white" : "bg-black/50 text-white/70 hover:bg-black/70"
-          }`}
-        >
-          <Hash size={13} /> Count
-        </button>
+        />
+        <ScanModeButton mode={scanMode} onChoose={chooseMode} />
         </div>
         <button
           type="button"
@@ -2558,7 +2512,7 @@ export function ScanCameraPage() {
         ref={bottomChromeRef}
         data-testid="camera-bottom-chrome"
         className="absolute bottom-0 inset-x-0 p-4 space-y-3"
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+        style={{ paddingBottom: "max(1rem, var(--inset-bottom))" }}
       >
         {/* SORT MODE banner — the directive lives ON the viewfinder; the
             camera never pauses and no modal opens. */}
@@ -2694,6 +2648,7 @@ export function ScanCameraPage() {
             barcode={pendingBarcode}
             item={resultItem}
             pending={ingestBusy}
+            known={knownCode && knownCode.code === pendingBarcode ? knownCode.known : null}
             scanArea={areaName}
             scanAreaId={areaId}
             getFrameBlob={() => frameBlobRef.current}
@@ -3023,7 +2978,6 @@ export function ScanCameraPage() {
             </div>
             <LocationChipPicker
               value={placingItem.target_location_id ?? null}
-              kind="area"
               onChange={(id) => {
                 const it = placingItem;
                 setPlacingItem(null);
@@ -3049,7 +3003,7 @@ export function ScanCameraPage() {
               Stamped on everything you scan or photograph this session, so triage
               knows where it lives.
             </p>
-            <LocationChipPicker value={areaId} onChange={setAreaId} kind="area" />
+            <LocationChipPicker value={areaId} onChange={setAreaId} />
             <div className="flex justify-end gap-2 pt-1">
               {areaId && (
                 <button

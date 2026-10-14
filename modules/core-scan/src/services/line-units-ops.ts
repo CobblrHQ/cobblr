@@ -12,7 +12,8 @@ import { mergeMeta } from "./metadata.js";
 import { rejoinPart, splitOffPart, splitRowIntoParts, type Admit } from "./row-parts.js";
 import { fillLine, lineForOrderItem, unfillLine } from "./line-slots.js";
 import { relineAfterChange, splitOrderLineForParts, type PurchaseHttp } from "./receipt-purchase.js";
-import { undoSplit } from "./undo-split.js";
+import { redoSplit, undoSplit } from "./undo-split.js";
+import { appendScanHistory } from "./scan-history.js";
 import { reportReceived } from "./receipt-order.js";
 
 /** Who is acting, and how to reach the rest of the workspace as them. */
@@ -71,6 +72,16 @@ export async function setLineUnits(d: LineDoor, itemId: string, mode: "same" | "
     return { ok: true, ids: [row.id] };
   }
   if (Number(meta.line_received ?? 0) > 0) return refuse(409, "counted", "Some of this line's units are already counted by scan. Take them back off first.");
+  // A line that was split and put back as one comes apart into the SAME
+  // parts, with the colours, pictures and names they had, never a fresh
+  // guess of unnamed ones: the owner's pack of ten, undone by a stray tap,
+  // had no way back (#6527).
+  const again = await redoSplit(d.db, row.id, purchaseOf(d));
+  if (again.ok) {
+    await d.db.updateTable("core_scan_inbox_items").set({ suggested_metadata: mergeMeta({ line_units: { mode: "different", by: "person" } }) as never }).where("id", "=", row.id).execute();
+    await appendScanHistory(d.db, row.id, { action: "resplit", note: `${again.parts.length} split item${again.parts.length === 1 ? "" : "s"} back` });
+    return { ok: true, ids: again.parts };
+  }
   const pack = meta.line_pack as { each?: string | null } | undefined;
   const parts = Array.from({ length: units.count }, () => ({
     name: row.suggested_name ?? "Part of an order line",

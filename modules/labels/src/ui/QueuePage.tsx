@@ -1101,7 +1101,7 @@ export function QueuePage() {
                 filtering (system print). Lets you narrow to a roll and reach 50×30. */}
             {toolbar.connectCtas && (
               <label className="flex items-center gap-1.5">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printing on</span>
+                <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">printing on</span>
                 <select
                   value={mediaType}
                   onChange={(e) => setMediaType(e.target.value as MediaTypeFilter)}
@@ -1114,7 +1114,7 @@ export function QueuePage() {
               </label>
             )}
             <label className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">media</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">media</span>
               <select
                 value={paperKey}
                 onChange={(e) => {
@@ -1171,7 +1171,7 @@ export function QueuePage() {
               </button>
             )}
             <label className="flex items-center gap-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">label</span>
               <select
                 value={sizeKey}
                 onChange={(e) => {
@@ -1211,7 +1211,7 @@ export function QueuePage() {
                 className="flex items-center gap-1.5"
                 title="Turn the label content 90°, so a landscape face (like 50 × 30 mm) prints portrait. On by default where turning gives the text more room than it loses; click to decide for yourself. The media itself is unchanged."
               >
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">turn</span>
+                <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">turn</span>
                 <button
                   type="button"
                   role="switch"
@@ -1312,7 +1312,6 @@ export function QueuePage() {
                       increaseLabel="More copies"
                       icons
                       iconSize={11}
-                      prefix="×"
                       buttonClassName="w-5 h-5 grid place-items-center rounded border border-line dark:border-slate-700 text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 disabled:opacity-30 disabled:cursor-not-allowed transition"
                       inputClassName="font-mono text-xs text-muted dark:text-slate-400 w-7 bg-transparent text-center tabular-nums"
                       onChange={(n) => setQty.mutate({ id: it.id, qty: n })}
@@ -1667,8 +1666,8 @@ export function SheetPreview({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-        <span>// sheet preview</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] uppercase tracking-widest text-accent mb-2">
+        <span>sheet preview</span>
         <span className="text-faint dark:text-slate-500">{mediaLabel ? `${mediaLabel} · ` : ""}{sheetCount > 1 ? `${sheetCount} sheets` : "1 sheet"}{actual ? " · actual size" : ""}</span>
         {scan && (
           <span

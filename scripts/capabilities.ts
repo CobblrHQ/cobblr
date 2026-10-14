@@ -178,10 +178,10 @@ export const CAPABILITIES: Capability[] = [
   {
     kind: "requires-prop",
     id: "photos:host-editor",
-    what: "the workspace shell supplies its shared record photo editor to module pages",
-    why: "a module photo field cannot reach the shared web picker without the host component",
+    what: "the workspace shell supplies its shared record photo editor and location picker to module pages",
+    why: "a module photo field cannot reach the shared web picker without the host component, and a module that chose a place drew its own flat <select> of locations instead (#6438)",
     component: "PlatformWebProvider",
-    required: ["recordPhoto"],
+    required: ["recordPhoto", "locationPicker", "locationChips"],
     // The one provider, mounted by the shell and by the Station (#4640).
     scope: ["web/src/WorkspacePlatformWeb.tsx"],
   },
@@ -278,6 +278,18 @@ export const CAPABILITIES: Capability[] = [
     except: {
       "packages/platform-web/src/local-network.test.ts": "the browser gate's own test names the addresses it must refuse",
     },
+  },
+  {
+    kind: "owns",
+    id: "layout:safe-area-tokens",
+    what: "the screen's safe area (the status bar, the Dynamic Island, the home bar): read once, in packages/platform-web/src/floating-chrome.css, as --inset-top / --inset-bottom / --inset-left / --inset-right, --safe-top (what is left below the reserved top bars) and --top-edge",
+    why:
+      "the update notice became a bar that reserves the top and was drawn from the screen's edge, under the clock and the Dynamic Island, " +
+      "while the header and every sheet padded env(safe-area-inset-top) themselves; under a bar that already took the inset they would have paid it twice (#6550)",
+    owner: "packages/platform-web/src/floating-chrome.css",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "web/src/**/*.css", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/ui/**/*.tsx"],
+    detect: /env\(\s*safe-area-inset-/,
+    use: "var(--safe-top) under the top bars (a header, an overlay, a sheet), var(--top-edge) from the screen's top, var(--inset-bottom) at the foot; a bar at an edge is a FloatingChrome, which pays the inset itself",
   },
   {
     kind: "owns",
@@ -1482,13 +1494,39 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "scan:one-destination-picker",
+    what: "choosing which table a scanned thing is filed into: the list, its order and the menu that shows it",
+    why:
+      "a split line's parent offered a native select of the menu alone while its parts offered the card's own menu with their suggestions first, so one screen gave the same parts two lists in two orders; " +
+      "and the card's menu could not be scrolled on a phone, closed under the swipe, and the owner's next tap undid his split pack of ten (#6527)",
+    owner: "web/src/components/DestinationPicker.tsx",
+    // Every surface that files a scan into a table. The order is
+    // destinationChoices (web/src/lib/scanDestination.ts).
+    scope: [
+      "web/src/pages/ScanInboxCard.tsx",
+      "web/src/pages/ScanPhoneRow.tsx",
+      "web/src/pages/ScanPage.tsx",
+      "web/src/components/SplitLineGroup.tsx",
+      "web/src/components/ScannerQueue.tsx",
+    ],
+    // A listbox option or a native select drawn beside a table key is a
+    // second picker.
+    detect: /role="option"|^\s*<select\b/,
+    also: /entryKey\(|installs on add/,
+    use: "<DestinationPicker options={destinationChoices(menu, candidates)} value onPick trigger> from web/src/components/DestinationPicker.tsx",
+  },
+  {
+    kind: "owns",
     id: "location:one-picker",
     what: "choosing a location, including choosing a PARENT for one",
     why: "three pickers accumulated because each replacement was written as a drop-in and then applied only to the surface that prompted it. LocationPicker was superseded in 2026-08 and still rendered a native <select> on six call sites in Records/Assets/Machines, and two separate forms hand-rolled their own parent dropdown, one of them re-implementing the no-cycles closure beside it (2026-08-17)",
     owner: "web/src/components/LocationTreePicker.tsx",
     // The surfaces that PICK one. The chip picker is a peer implementation for
     // the scan flow's density (documented in the 2026-08-07 audit, H7) and is
-    // deliberately out of scope rather than in breach.
+    // deliberately out of scope rather than in breach. The whole UI (web/src,
+    // every module UI, platform-web) is held by lint:one-location-picker: no
+    // hand-made <select> of locations, no second picker, no prop that narrows
+    // one (the camera's kind="area" hid every shelf, #6438).
     scope: [
       "web/src/pages/LocationsPage.tsx",
       "web/src/pages/RecordsPage.tsx",
@@ -1499,7 +1537,7 @@ export const CAPABILITIES: Capability[] = [
     // Rendering a hierarchy's depth as indentation is the tell that someone is
     // drawing a location tree into an <option> list by hand.
     detect: /\.repeat\([^)]*\bdepth\b/,
-    use: "<LocationTreePicker> (drill-down; pass excludeSubtreeOf when choosing a parent, it computes the no-cycles closure itself), or <LocationChipPicker> for the scan flow's chip density",
+    use: "<LocationTreePicker> (drill-down; pass excludeSubtreeOf when choosing a parent, it computes the no-cycles closure itself), <LocationChipPicker> for the scan flow's chip density, or LocationPicker from @cobblr/platform-web in a module UI",
   },
   {
     kind: "owns",

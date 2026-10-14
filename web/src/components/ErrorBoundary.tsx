@@ -56,6 +56,11 @@ interface State {
 
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null, reloading: false };
+  private dropOnline: (() => void) | null = null;
+
+  componentWillUnmount(): void {
+    this.dropOnline?.();
+  }
 
   static getDerivedStateFromError(error: Error): State {
     // Surface a calm "updating" state for stale-chunk errors instead of the
@@ -65,6 +70,16 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error(`[error-boundary:${this.props.scope ?? "app"}]`, error, info.componentStack);
+    if (isChunkLoadError(error) && typeof navigator !== "undefined" && navigator.onLine === false) {
+      // Offline the code cannot arrive, and a reload would only trade the page
+      // for the browser's own offline error (#6482). Say so, and try again once
+      // the device is back.
+      this.setState({ reloading: false });
+      const again = () => this.setState({ error: null, reloading: false });
+      window.addEventListener("online", again, { once: true });
+      this.dropOnline = () => window.removeEventListener("online", again);
+      return;
+    }
     if (isChunkLoadError(error)) {
       // The boot guard (web/public/boot-guard.js) owns what a failed load does,
       // at the start and for a page: retry soon, then after a backoff, then say

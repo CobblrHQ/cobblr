@@ -121,7 +121,7 @@ export function CropPhotoModal({
 
       <div
         className="shrink-0 w-full max-w-3xl mx-auto p-4 space-y-2"
-        style={{ paddingBottom: "max(1rem, calc(env(safe-area-inset-bottom) + 0.5rem))" }}
+        style={{ paddingBottom: "max(1rem, calc(var(--inset-bottom) + 0.5rem))" }}
         onClick={stop}
       >
         <p className="text-[11px] text-white/60 text-center">

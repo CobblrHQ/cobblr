@@ -26,10 +26,67 @@ export function RecordPhoto(props: RecordPhotoProps) {
   return Photo ? <Photo {...props} /> : <EntityPhoto src={props.src} alt={props.alt} size={props.size ?? 96} />;
 }
 
+/** Choosing a location, as a module page asks for one. The host supplies the
+ *  platform's one picker (web/src/components/LocationTreePicker): a module UI
+ *  cannot import it, and a module that drew its own <select> of locations
+ *  offered a flat list with no rooms, shelves or bins in it (#6438). */
+export interface LocationPickerProps {
+  value: string | null;
+  onChange: (value: string | null) => void;
+  label?: string;
+  placeholder?: string;
+  /** What the "no place" row says: "No place", "All locations" for a filter. */
+  noneLabel?: string;
+  size?: "sm" | "md";
+  className?: string;
+  /** Offer the things that hold things (a Backpack, a toolbox) too, and hand
+   *  the chosen one back: the page moves the record its own way. */
+  onPickHolder?: (holder: PickedHolder) => void;
+  /** The holder the record is inside now, shown as the selection. */
+  pickedHolder?: PickedHolder | null;
+}
+
+/** A thing that holds things, as the picker offers and shows it. */
+export interface PickedHolder {
+  kind: string;
+  id: string;
+  title: string;
+  /** "Desk drawer, in Office"; empty when it has no place of its own. */
+  line: string;
+}
+
+/** The host's picker. The workspace shell always supplies it
+ *  (lint:capabilities, photos:host-editor requires it); without a host, as in
+ *  a test that mounts a page alone, the field says where it is and nothing more. */
+export function LocationPicker(props: LocationPickerProps) {
+  const Picker = useContext(Ctx)?.locationPicker;
+  if (!Picker) return <span className="text-sm text-faint">{props.label ?? props.placeholder ?? "Location"}</span>;
+  return <Picker {...props} />;
+}
+
+/** The same choice as an inline wrap of chips (the scan flow's picker,
+ *  web/src/components/LocationChipPicker), for a list that sits inside a
+ *  popover or sheet of its own: an area's chevron opens its shelves and bins. */
+export interface LocationChipsProps {
+  value: string | null;
+  onChange: (value: string | null) => void;
+  /** Show the Recent row and a search box, for a long list of places. */
+  withShortcuts?: boolean;
+  className?: string;
+}
+
+export function LocationChips(props: LocationChipsProps) {
+  const Chips = useContext(Ctx)?.locationChips;
+  if (!Chips) return <span className="text-sm text-faint">Locations</span>;
+  return <Chips {...props} />;
+}
+
 interface PlatformWebCtx {
   /** The host photo editor, including the shared web picker. */
   barcodeCapture?: ComponentType<BarcodeCaptureProps>;
   recordPhoto?: ComponentType<RecordPhotoProps>;
+  locationPicker?: ComponentType<LocationPickerProps>;
+  locationChips?: ComponentType<LocationChipsProps>;
   decodeBarcodeImage?: (file: File) => Promise<string | null>;
   api: PlatformWebApi;
   orgSlug: string;
@@ -84,6 +141,8 @@ export function PlatformWebProvider({
   flows,
   cobbIcon,
   recordPhoto,
+  locationPicker,
+  locationChips,
   decodeBarcodeImage,
   barcodeCapture,
   children,
@@ -92,6 +151,8 @@ export function PlatformWebProvider({
   orgSlug: string;
   barcodeCapture?: ComponentType<BarcodeCaptureProps>;
   recordPhoto?: ComponentType<RecordPhotoProps>;
+  locationPicker?: ComponentType<LocationPickerProps>;
+  locationChips?: ComponentType<LocationChipsProps>;
   decodeBarcodeImage?: (file: File) => Promise<string | null>;
   role?: string | null;
   appMode?: boolean;
@@ -111,7 +172,7 @@ export function PlatformWebProvider({
   );
   const Active = active && flows ? flows[active.flow] : null;
   return (
-    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, decodeBarcodeImage, barcodeCapture }}>
+    <Ctx.Provider value={{ api, orgSlug, role, appMode, cobbIcon, recordPhoto, locationPicker, locationChips, decodeBarcodeImage, barcodeCapture }}>
       <FlowCtx.Provider value={{ openFlow }}>
         {children}
         {/* A flow may be a lazy component (the shell loads a flow's code when it

@@ -120,7 +120,7 @@ export function AdminLayout() {
             <span className="font-display font-extrabold tracking-tight truncate">Cobblr</span>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
-            <span className="inline-flex items-center rounded-full border border-cobble-500/40 bg-cobble-500/10 px-2 py-0.5 text-[10px] font-mono uppercase tracking-widest text-cobble-700 dark:border-cobble-400/40 dark:bg-cobble-400/10 dark:text-cobble-300">
+            <span className="inline-flex items-center rounded-full border border-cobble-500/40 bg-cobble-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-cobble-700 dark:border-cobble-400/40 dark:bg-cobble-400/10 dark:text-cobble-300">
               super-admin
             </span>
           </div>
@@ -133,7 +133,7 @@ export function AdminLayout() {
             return (
               <div key={g ?? "__front__"}>
                 {g && (
-                  <div className="px-2 pb-1 text-[9px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+                  <div className="px-2 pb-1 text-[9px] uppercase tracking-widest text-faint dark:text-slate-500">
                     {g}
                   </div>
                 )}
@@ -184,7 +184,7 @@ export function AdminLayout() {
           <div className="px-4 py-2.5 flex items-center gap-2 min-w-0">
             <ShieldCheck size={16} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
             <span className="font-display font-extrabold tracking-tight text-sm">Cobblr</span>
-            <span className="text-[10px] font-mono uppercase tracking-widest text-cobble-700 dark:text-cobble-300">
+            <span className="text-[10px] uppercase tracking-widest text-cobble-700 dark:text-cobble-300">
               super-admin
             </span>
             <div className="flex-1" />

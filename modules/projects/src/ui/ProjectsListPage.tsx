@@ -1,8 +1,8 @@
-import { RecordFormModal, NewItemMenu, SnippetText, workspaceFetch } from "@cobblr/platform-web";
+import { RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import {
@@ -323,8 +323,8 @@ export function ProjectsListPage() {
         if (rows.length === 0) return null;
         return (
           <section key={s}>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-2">
-              // {STATUS_LABEL[s] ?? s}{" "}
+            <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
+              {STATUS_LABEL[s] ?? s}{" "}
               <span className="text-faint dark:text-slate-500">({rows.length})</span>
             </div>
             <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-700">
@@ -349,7 +349,7 @@ export function ProjectsListPage() {
                     <div className="flex items-baseline gap-3">
                       <span className="font-medium text-content dark:text-mortar-100">{p.name}</span>
                       {p.priority && (
-                        <span className="text-[10px] font-mono text-faint dark:text-slate-500 uppercase">
+                        <span className="text-[10px] text-faint dark:text-slate-500 uppercase">
                           {p.priority}
                         </span>
                       )}
@@ -481,18 +481,36 @@ function ProjectsViewTable({
     ({ status: "Status", priority: "Priority", target_date: "Target" } as Record<string, string>)[f] ??
     fieldDefs.find((d) => d.name === f)?.display_label ??
     projHumanize(f);
+  const phone = usePhoneLayout();
+  const navigate = useNavigate();
   return (
     <div className="space-y-4">
       {projGroup(rows, groupBy).map((g) => (
         <section key={g.key} className="space-y-2">
           {groupBy && (
-            <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
+            <h3 className="text-[10px] uppercase tracking-widest text-accent">
+              {g.key} <span className="text-faint dark:text-slate-500">({g.rows.length})</span>
             </h3>
           )}
+          {phone ? (
+            <PhoneRecordList
+              rows={g.rows.map((p) => ({
+                id: p.id,
+                name: p.name,
+                state: cols.includes("status") ? projCellValue(p, "status") : null,
+                fields: cols
+                  .filter((c) => c !== "status")
+                  .map((c) => {
+                    const raw = projCellValue(p, c);
+                    return { label: label(c), value: raw && !/^https?:\/\//.test(raw) ? raw : null };
+                  }),
+              }))}
+              onOpen={(id) => navigate(`${basePath}/${id}`)}
+            />
+          ) : (
           <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+              <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                 <tr>
                   <th className="text-left px-3 py-2">Name</th>
                   {cols.map((c) => (
@@ -532,6 +550,7 @@ function ProjectsViewTable({
               </tbody>
             </table>
           </div>
+          )}
         </section>
       ))}
     </div>

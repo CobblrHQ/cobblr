@@ -52,6 +52,7 @@ const PERSONAL = "one person's own inbox and choices, tied to accounts the targe
 
 export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   record_action_layouts: { travels: "backup" },
+  record_panel_layouts: { travels: "backup" },
   record_action_pins: { travels: "never", why: PERSONAL },
   push_subscriptions: { travels: "never", why: "a browser on one device, subscribed to this server's own push key; restored elsewhere it is a key that server cannot sign for, so a device turns notifications on again there" },
   deleted_records: { travels: "never", why: "deleted before-images expire in the workspace where the deletion happened" },

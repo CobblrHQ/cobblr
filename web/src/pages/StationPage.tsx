@@ -31,14 +31,17 @@ import {
   type StationLookup,
   type StationRecord,
   type StationRecordNow,
+  type StationRecountAnswer,
   type StationSettings,
   type StationStockOp,
 } from "@cobblr/platform-contract/station-screen";
 import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership, type StationRecordAction } from "../lib/api";
 import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
 import { useBarcodeWedge } from "../lib/useBarcodeWedge";
-import { AskBeforeRun, DragInput, OverlayLayer, readTypedNumber, SearchInput, useEscapeToClose, useLater, SegmentedChoice, type Asking, WorkspaceLink } from "@cobblr/platform-web";
+import { AskBeforeRun, DragInput, OverlayLayer, readTypedNumber, useEscapeToClose, useLater, SegmentedChoice, type Asking, WorkspaceLink } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
+import { LocationChipPicker } from "../components/LocationChipPicker";
+import { LocationTreePicker } from "../components/LocationTreePicker";
 import { FixedActiveOrgProvider } from "../auth/ActiveOrgContext";
 import { WorkspacePlatformWeb } from "../WorkspacePlatformWeb";
 import { InboxCard } from "./ScanInboxCard";
@@ -342,6 +345,8 @@ type View =
   | { kind: "record"; record: StationRecord; countable: boolean }
   | { kind: "outside"; title: string }
   | { kind: "new"; item: ScanInboxItem }
+  /** A scan into the recount this station is set to (#6302). */
+  | { kind: "recount"; answer: StationRecountAnswer; asked: { code?: string } }
   | { kind: "error"; message: string };
 
 interface LastMove {
@@ -394,11 +399,19 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     [settings.flash, settings.sound, later],
   );
 
+  // The quiet time counts from when an answer is on the screen, not from the
+  // scan: a slow lookup's card was taken away a moment after it showed, and
+  // one slower than the quiet time said "Ready to scan" while still looking
+  // (#6490). A changed answer (the new thing's name arriving) starts it again.
+  useEffect(() => {
+    if (view.kind !== "ready" && view.kind !== "looking") touchedAt.current = Date.now();
+  }, [view]);
+
   // Back to "Ready to scan" after the station's quiet time, unless a keypad
-  // or a picker is open (somebody is mid-answer).
+  // or a picker is open (somebody is mid-answer) or it is still looking.
   useEffect(() => {
     const id = window.setInterval(() => {
-      if (view.kind === "ready" || keypad || mover || settingsOpen) return;
+      if (view.kind === "ready" || view.kind === "looking" || keypad || mover || settingsOpen) return;
       if (Date.now() - touchedAt.current > settings.reset_seconds * 1000) {
         setView({ kind: "ready" });
         setLast(null);
@@ -547,6 +560,20 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       const scan = stationScanOf(raw);
       if (scan.kind === "ignore") return;
       setView({ kind: "looking", code: raw });
+      if (settings.recount_id) {
+        // A recount station counts the thing; a Cobblr label goes as scanned,
+        // and the recount knows whose it is.
+        const asked = { code: scan.kind === "label" ? raw : scan.code };
+        try {
+          const answer = await api.stationRecount(slug, address, asked);
+          setView({ kind: "recount", answer, asked });
+          signal(answer.result === "matched" || answer.result === "new");
+        } catch (e) {
+          setView({ kind: "error", message: unreachable(e) ? "No connection. Scan it again when the network is back." : errText(e) });
+          signal(false);
+        }
+        return;
+      }
       let found: StationLookup;
       try {
         if (scan.kind === "label") {
@@ -593,7 +620,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         signal(false);
       }
     },
-    [slug, address, settings.action, settings.count_repeats, settings.new_location_id, count, signal, props.qr],
+    [slug, address, settings.action, settings.count_repeats, settings.new_location_id, settings.recount_id, count, signal, props.qr],
   );
 
   useBarcodeWedge({ enabled: !keypad && !settingsOpen && !asking, onScan: (c) => void onScan(c) });
@@ -629,7 +656,9 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       if (++n > 30) return window.clearInterval(id);
       try {
         const item = await api.getScanItem(slug, newId);
-        setView((v) => (v.kind === "new" && v.item.id === newId ? { kind: "new", item } : v));
+        // The same answer is the same view: only a changed row restarts the
+        // quiet time, or a card nobody touches would stay up for a minute.
+        setView((v) => (v.kind === "new" && v.item.id === newId && v.item.updated_at !== item.updated_at ? { kind: "new", item } : v));
       } catch {
         // quiet: the card already shows the item; the next tick asks again.
       }
@@ -655,7 +684,9 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             )}
             <div className="min-w-0">
             <div className="truncate text-sm font-medium text-muted">{props.label}</div>
-            {settings.action !== "ask" && (
+            {settings.recount_id ? (
+              <div className="text-xs text-muted" data-testid="station-recounting">Recounting {settings.recount_label ?? "a collection"}: every scan counts, nothing changes until it is finished</div>
+            ) : settings.action !== "ask" && (
               <div className="text-xs text-muted">One-tap: {settings.action === "add-one" ? "every scan adds 1" : "every scan uses 1"}</div>
             )}
             </div>
@@ -690,6 +721,23 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             </Ready>
           )}
           {view.kind === "looking" && <Centered title="Looking it up…" body={view.code} />}
+          {view.kind === "recount" && (
+            <RecountAnswer
+              answer={view.answer}
+              onPick={async (body) => {
+                touchedAt.current = Date.now();
+                try {
+                  const answer = await api.stationRecount(slug, address, { ...view.asked, ...body });
+                  setView({ kind: "recount", answer, asked: view.asked });
+                  signal(true);
+                } catch (e) {
+                  setView({ kind: "error", message: errText(e) });
+                  signal(false);
+                }
+              }}
+              onDone={() => setView({ kind: "ready" })}
+            />
+          )}
           {view.kind === "error" && <Notice tone="bad" title={view.message} onDismiss={() => setView({ kind: "ready" })} />}
           {view.kind === "outside" && (
             <Notice tone="bad" title={`${view.title} isn't kept at ${props.label}.`} body="Scan it at its own station, or change which collections this station keeps in its settings." onDismiss={() => setView({ kind: "ready" })} />
@@ -751,7 +799,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           />
         )}
         {mover && view.kind === "record" && (
-          <PlacePicker
+          <MoveToSheet
             places={places.data ?? []}
             onCancel={() => setMover(false)}
             onPick={async (loc) => {
@@ -777,7 +825,6 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             label={props.label}
             settings={settings}
             menu={menu.data ?? []}
-            places={places.data ?? []}
             onClose={() => setSettingsOpen(false)}
             onSaved={() => void qc.invalidateQueries({ queryKey: ["station-screen", slug, address] })}
             onForget={props.onForget}
@@ -935,22 +982,58 @@ function Keypad({ title, start, decimal = false, onCancel, onDone }: { title: st
   );
 }
 
-function PlacePicker({ places, onCancel, onPick }: { places: Location[]; onCancel: () => void; onPick: (l: Location) => void }) {
-  const [q, setQ] = useState("");
-  const shown = places.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())).slice(0, 40);
+/** What a recount station's scan answered, large enough to read from across
+ *  a shelf, with the choices when it is a question (#6302). */
+function RecountAnswer(props: { answer: StationRecountAnswer; onPick: (body: { record_id?: string; type_id?: string; new?: boolean }) => void; onDone: () => void }) {
+  const a = props.answer;
+  const asks = a.result === "ask" || a.result === "ask_type";
+  return (
+    <div className="w-full max-w-3xl space-y-4" data-testid="station-recount">
+      <div className={`text-2xl font-semibold ${a.result === "new" ? "text-amber-700 dark:text-amber-400" : asks ? "" : "text-moss-700 dark:text-moss-300"}`}>{a.summary}</div>
+      {a.progress && !asks && (
+        <div className="text-lg text-muted">
+          {a.progress.seen} of {a.progress.expected} seen{a.progress.new ? `, ${a.progress.new} new` : ""}
+        </div>
+      )}
+      {asks && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {(a.candidates ?? []).map((c) => (
+            <BigButton key={c.id} tone="plain" onClick={() => props.onPick(a.result === "ask" ? { record_id: c.id } : { type_id: c.id, new: true })}>
+              <span className="text-left">
+                {c.title}
+                {c.place ? <span className="block text-sm font-normal text-muted">{c.place}</span> : null}
+              </span>
+            </BigButton>
+          ))}
+          <BigButton tone="plain" onClick={() => props.onPick({ new: true })}>
+            None of these: it's new
+          </BigButton>
+        </div>
+      )}
+      <div className="flex justify-end">
+        <button type="button" onClick={props.onDone} className="px-3 py-2 text-lg text-muted underline-offset-2 hover:underline">
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Where a record moves to: the platform's chip picker, so a shelf or bin
+ *  inside a room is one tap away, never a list cut off at 40 (#6438). */
+function MoveToSheet({ places, onCancel, onPick }: { places: Location[]; onCancel: () => void; onPick: (l: Location) => void }) {
   return (
     <Overlay onCancel={onCancel} label="Move to">
       <div className="text-xl font-medium">Move to…</div>
-      <div className="my-3">
-        <SearchInput value={q} onChange={setQ} placeholder="Search places" aria-label="Search places" size="lg" />
-      </div>
-      <div className="max-h-[50vh] space-y-2 overflow-y-auto">
-        {shown.map((p) => (
-          <button key={p.id} type="button" onClick={() => onPick(p)} className="block w-full rounded-xl border border-line px-4 py-3 text-left text-lg hover:border-cobble-400 dark:border-slate-600" style={{ paddingLeft: `${1 + Math.min(p.depth, 4) * 0.75}rem` }}>
-            {p.name}
-          </button>
-        ))}
-        {!shown.length && <p className="text-muted">No place by that name.</p>}
+      <div className="mt-3 max-h-[60vh] overflow-y-auto">
+        <LocationChipPicker
+          value={null}
+          withShortcuts
+          onChange={(id) => {
+            const loc = id ? places.find((p) => p.id === id) : null;
+            if (loc) onPick(loc);
+          }}
+        />
       </div>
     </Overlay>
   );
@@ -964,7 +1047,6 @@ function SettingsSheet(props: {
   label: string;
   settings: StationSettings;
   menu: Array<{ kind: string; label: string }>;
-  places: Location[];
   onClose: () => void;
   onSaved: () => void;
   onForget: () => void;
@@ -977,6 +1059,7 @@ function SettingsSheet(props: {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const set = <K extends keyof StationSettings>(k: K, v: StationSettings[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const recounts = useQuery({ queryKey: ["open-recounts", props.slug], queryFn: () => api.openRecounts(props.slug).then((r) => r.items), retry: false, enabled: unlocked });
   const save = async () => {
     setSaving(true);
     setError("");
@@ -1036,6 +1119,31 @@ function SettingsSheet(props: {
               )}
             </div>
           </Field>
+          <Field label="Recount">
+            {/* A recount this station scans into (#6302): its scans count things of
+                it, and no stock changes until the recount is finished. */}
+            {recounts.isError ? (
+              <p className="text-sm text-muted">Choose a recount for this station from a signed-in phone or computer.</p>
+            ) : (
+              <select
+                value={draft.recount_id ?? ""}
+                onChange={(e) => {
+                  const pick = (recounts.data ?? []).find((r) => r.id === e.target.value);
+                  setDraft((d) => ({ ...d, recount_id: pick?.id ?? null, recount_label: pick?.label ?? null }));
+                }}
+                className="w-full rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800"
+                aria-label="Recount this station scans into"
+              >
+                <option value="">None: an ordinary station</option>
+                {draft.recount_id && !(recounts.data ?? []).some((r) => r.id === draft.recount_id) && <option value={draft.recount_id}>{draft.recount_label ?? "The recount it is set to"}</option>}
+                {(recounts.data ?? []).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </Field>
           <Field label="New things go to">
             <div className="grid gap-2 sm:grid-cols-2">
               <select value={draft.new_kind ?? ""} onChange={(e) => set("new_kind", e.target.value || null)} className="rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="Collection for new things">
@@ -1046,14 +1154,7 @@ function SettingsSheet(props: {
                   </option>
                 ))}
               </select>
-              <select value={draft.new_location_id ?? ""} onChange={(e) => set("new_location_id", e.target.value || null)} className="rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="Place for new things">
-                <option value="">No place</option>
-                {props.places.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              <LocationTreePicker value={draft.new_location_id ?? null} onChange={(id) => set("new_location_id", id)} placeholder="No place" noneLabel="No place" />
             </div>
           </Field>
           <Field label="Collections this station keeps">

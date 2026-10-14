@@ -112,6 +112,11 @@ export const NOT_APPLICABLE: Array<{ paths: RegExp; dims: string[]; why: string 
     dims: [...ORG_ROLES, "volume"],
     why: "opened signed out from a link: there is no workspace, so no role and no volume",
   },
+  { paths: /^\/start\/:app$/, dims: [...ORG_ROLES, "volume"], why: "managed signup creates a new account and workspace, independent of existing workspace roles or populated records" },
+  { paths: /^\/email-change\/:token$/, dims: [...ORG_ROLES, "volume"], why: "the confirmation token authorises the address change, independent of workspace roles or volume" },
+  { paths: /^\/email-change\/revert\/:token$/, dims: [...ORG_ROLES, "volume"], why: "the revert token authorises account recovery, independent of workspace roles or volume" },
+  { paths: /^\/join\/:token$/, dims: [...ORG_ROLES, "volume"], why: "the signup token creates a new workspace and redirects signed-in accounts home, so no existing role or volume applies" },
+  { paths: /^\/invite\/:token$/, dims: [...ORG_ROLES, "volume"], why: "the invite token grants membership rather than using an existing workspace role, and the page holds no volume" },
   {
     // A station screen signs in with the station's own token, set up by the
     // workspace's owner: no member, editor or guest ever holds it.

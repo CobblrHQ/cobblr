@@ -5,10 +5,12 @@ import { assetsRouter } from "./assets.js";
 import { registerAssetsResolvers } from "./resolvers.js";
 import { registerActionHandlers } from "./action-handlers.js";
 import { registerAssetsWriter } from "./sync-writer.js";
+import { registerLoansFromCustodyHeal } from "../heal-loans-from-custody.js";
 
 registerAssetsResolvers();
 registerActionHandlers();
 registerAssetsWriter(); // silent cross-module writer (core-mobility et al.)
+registerLoansFromCustodyHeal();
 // Declare assets:asset as a scan target. (Audit 2026-06-26 follow-up — was a
 // hardcoded entry in core-scan's SCANNABLE/endpoint/qty maps.)
 platform().entities.registerScannable("assets:asset", {

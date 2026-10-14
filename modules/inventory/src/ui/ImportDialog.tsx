@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, FileUp } from "lucide-react";
-import { Modal } from "@cobblr/platform-web";
+import { LocationPicker, Modal } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import type { ImportResponse } from "./api";
 import { InventoryApiError } from "./api";
@@ -23,7 +23,6 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
   const [error, setError] = useState<string | null>(null);
 
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
 
   const dryRun = useMutation({
     mutationFn: () =>
@@ -84,7 +83,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
             />
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
                   Default category (if row's blank)
                 </span>
                 <select value={defaultCat} onChange={(e) => setDefaultCat(e.target.value)} className="input">
@@ -96,20 +95,12 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                   ))}
                 </select>
               </label>
-              <label className="block">
-                <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
-                  Default location (if row's blank)
-                </span>
-                <select value={defaultLoc} onChange={(e) => setDefaultLoc(e.target.value)} className="input">
-                  <option value=""> - none - </option>
-                  {locs.data?.items.map((l) => (
-                    <option key={l.id} value={l.id}>
-                      {"  ".repeat(l.depth)}
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <LocationPicker
+                label="Default location (if row's blank)"
+                value={defaultLoc || null}
+                onChange={(id) => setDefaultLoc(id ?? "")}
+                noneLabel="No default"
+              />
             </div>
             {error && <div className="text-xs text-ember-500">{error}</div>}
             <div className="flex gap-2">
@@ -155,7 +146,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
             <div className="rounded-md border border-line dark:border-slate-700 max-h-[280px] overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="bg-mortar-100 dark:bg-slate-800 sticky-in-scroller">
-                  <tr className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+                  <tr className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                     <th className="px-2 py-1.5 text-left">#</th>
                     <th className="px-2 py-1.5 text-left">Name</th>
                     <th className="px-2 py-1.5 text-right">{PART_FIELD_LABELS.qty}</th>

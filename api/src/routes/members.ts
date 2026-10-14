@@ -6,7 +6,8 @@
 // signed in can accept. (No SMTP yet — we don't need email-based
 // flow until later.)
 
-import { Router, type Request } from "express";
+import { sendLimitRefusal } from "../platform/send-limits.js";
+import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -275,7 +276,9 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
 // link is still copied to the inviter's clipboard regardless. Best-effort — never
 // fails the mint.
 export async function deliverInvite(opts: {
-  req: Request;
+  /** Where the link points: linkOrigin(req) from a route, the configured
+   *  public address from an action (link-origin.ts). */
+  origin: string;
   email: string;
   token: string;
   role: string;
@@ -284,8 +287,8 @@ export async function deliverInvite(opts: {
   inviteId: string;
   expiresAt: Date;
 }): Promise<void> {
-  const { req, email, token, role, orgName, inviterId, inviteId, expiresAt } = opts;
-  const inviteUrl = `${linkOrigin(req)}/invite/${token}`;
+  const { origin, email, token, role, orgName, inviterId, inviteId, expiresAt } = opts;
+  const inviteUrl = `${origin}/invite/${token}`;
   const inviter = await meta
     .selectFrom("users")
     .select(["display_name", "email"])
@@ -388,6 +391,12 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
       });
       return;
     }
+    // An invite that emails someone is one of the workspace's sends for the
+    // hour, by the same count as the People screen and the assistant.
+    if (parsed.data.email) {
+      const limited = await sendLimitRefusal(req.tenant!.org.id, "invite");
+      if (limited) return void res.status(429).json({ error: { code: "rate_limited", message: limited } });
+    }
     // A join link runs until it is revoked: the pace, not a date, is what
     // stops one that got out. An ordinary invite still lasts two weeks.
     const expiresAt = parsed.data.expires_at
@@ -425,7 +434,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     if (parsed.data.email) {
       // DETACHED: the invite email; the invite exists and its link is shown to whoever made it
       void deliverInvite({
-        req,
+        origin: linkOrigin(req),
         email: parsed.data.email,
         token,
         role: parsed.data.role,

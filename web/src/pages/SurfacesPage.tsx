@@ -83,7 +83,7 @@ export function SurfacesPage() {
                 {s.scope_type}
               </span>
               {!s.enabled && (
-                <span className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
+                <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
                   paused
                 </span>
               )}
@@ -336,7 +336,7 @@ function EditSurfaceModal({
         </label>
 
         <div className="border-t border-line dark:border-slate-700 pt-3 space-y-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
+          <div className="text-[10px] uppercase tracking-widest text-muted">
             theming
           </div>
           <div>
@@ -498,7 +498,7 @@ function SurfaceStatsModal({
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
     <div className="border border-line dark:border-slate-700 rounded p-3">
-      <div className="text-[10px] uppercase font-mono text-muted tracking-wider">
+      <div className="text-[10px] uppercase text-muted tracking-wider">
         {label}
       </div>
       <div className="text-2xl font-semibold text-content dark:text-mortar-100 mt-0.5">
@@ -723,7 +723,7 @@ function CreateSurfaceModal({
           </>
         )}
         <div className="border-t border-line dark:border-slate-700 pt-3 space-y-3">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted">
+          <div className="text-[10px] uppercase tracking-widest text-muted">
             theming (optional)
           </div>
           <div>

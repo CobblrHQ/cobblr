@@ -21,8 +21,8 @@
 
 import { GENERIC_NOUNS } from "@cobblr/platform-contract/table-fit";
 import type { Kysely } from "kysely";
-import { identifierFieldNames, platform, type ResolvedEntity, type ScannableKind, SYSTEM_VIEWER } from "@cobblr/platform-contract";
-import { scanTargetsForOrg, scanTargetsRegistered } from "./scan-target.js";
+import { identifierFieldNames, platform, type EntityListQuery, type EntityViewer, type ResolvedEntity, type ScannableKind, SYSTEM_VIEWER } from "@cobblr/platform-contract";
+import { scanTargetsForOrg } from "./scan-target.js";
 import { isJunkName } from "./enrich.js";
 import { identifierEquals, identifierForms } from "./identifier-equals.js";
 import { sameProduct, versionsAgree } from "@cobblr/platform-contract/same-product";
@@ -323,12 +323,7 @@ function nativeLabel(record: { fields?: Array<{ name: string; label?: string | n
 }
 
 async function kindsForOrg(orgId: string): Promise<OrgKind[]> {
-  let kinds: ScannableKind[];
-  try {
-    kinds = await scanTargetsForOrg(orgId);
-  } catch {
-    return scanTargetsRegistered().map((k) => ({ ...k, nativeIdentifiers: [] }));
-  }
+  const kinds: ScannableKind[] = await scanTargetsForOrg(orgId);
   return kinds.map((k) => ({
     kind: k.kind,
     noun: k.noun,
@@ -407,6 +402,12 @@ export function sameFamily(
   });
 }
 
+async function checkedTrackedList(orgId: string, kind: string, query: EntityListQuery, viewer?: EntityViewer) {
+  const result = await platform().entities.list(orgId, kind, query, viewer);
+  if (result.failed || result.unlisted) throw new Error(`Could not check existing records in ${kind}`);
+  return result;
+}
+
 export async function findTracked(
   orgId: string,
   opts: {
@@ -444,50 +445,45 @@ export async function findTracked(
     const identifierByKind = await identifierFieldsByKind(orgId);
     const perKind = await Promise.all(
       kinds.map(async (k) => {
-        try {
-          // Every spelling of the code: a record stamped from the skein's
-          // UPC-A is the product its bulk sticker's GTIN-14 names (#3729).
-          const found = new Map<string, ResolvedEntity>();
+        // Every spelling of the code: a record stamped from the skein's
+        // UPC-A is the product its bulk sticker's GTIN-14 names (#3729).
+        const found = new Map<string, ResolvedEntity>();
+        for (const form of identifierForms(barcode)) {
+          // SYSTEM-READ: the post-verify below reads the code from the row;
+          // a hidden identifier must still match, or the scan files a duplicate.
+          const res = await checkedTrackedList(orgId, k.kind, { filter: { barcode: form }, limit: 3 }, SYSTEM_VIEWER);
+          for (const e of res.items) found.set(`${e.kind}:${e.id}`, e);
+        }
+        // Post-verify: only rows whose metadata REALLY carries this code, in
+        // any spelling, count (a resolver that ignored the filter returns
+        // arbitrary rows).
+        const byBarcode = [...found.values()]
+          .filter((e) => identifierEquals(metaBarcode(e.fields), barcode))
+          .map((e) => toMatch(e, k, "barcode", expiryByKind.get(e.kind)));
+        // Identifier tier: the code equals an identifier-ROLE field on the
+        // record (a book's ISBN, a declared serial). Probed by each form the
+        // code can take (an ISBN-10 and its ISBN-13 are one book) and
+        // post-verified the same way, since a resolver may ignore the filter.
+        const idFields = [
+          ...(identifierByKind.get(k.kind) ?? []),
+          ...k.nativeIdentifiers,
+        ];
+        const seen = new Set(byBarcode.map((m) => `${m.kind}:${m.id}`));
+        const byIdentifier: TrackedMatch[] = [];
+        for (const f of idFields) {
           for (const form of identifierForms(barcode)) {
-            // SYSTEM-READ: the post-verify below reads the code from the row;
-            // a hidden identifier must still match, or the scan files a duplicate.
-            const res = await platform().entities.list(orgId, k.kind, { filter: { barcode: form }, limit: 3 }, SYSTEM_VIEWER);
-            for (const e of res.items) found.set(`${e.kind}:${e.id}`, e);
-          }
-          // Post-verify: only rows whose metadata REALLY carries this code, in
-          // any spelling, count (a resolver that ignored the filter returns
-          // arbitrary rows).
-          const byBarcode = [...found.values()]
-            .filter((e) => identifierEquals(metaBarcode(e.fields), barcode))
-            .map((e) => toMatch(e, k, "barcode", expiryByKind.get(e.kind)));
-          // Identifier tier: the code equals an identifier-ROLE field on the
-          // record (a book's ISBN, a declared serial). Probed by each form the
-          // code can take (an ISBN-10 and its ISBN-13 are one book) and
-          // post-verified the same way, since a resolver may ignore the filter.
-          const idFields = [
-            ...(identifierByKind.get(k.kind) ?? []),
-            ...k.nativeIdentifiers,
-          ];
-          const seen = new Set(byBarcode.map((m) => `${m.kind}:${m.id}`));
-          const byIdentifier: TrackedMatch[] = [];
-          for (const f of idFields) {
-            for (const form of identifierForms(barcode)) {
-              const r = await platform()
-                // SYSTEM-READ: verifies the identifier on the row, hidden or not.
-                .entities.list(orgId, k.kind, { filter: { [f.name]: form }, limit: 3 }, SYSTEM_VIEWER)
-                .catch(() => ({ items: [] as ResolvedEntity[] }));
-              for (const e of r.items) {
-                const key = `${e.kind}:${e.id}`;
-                if (seen.has(key) || !identifierEquals(fieldValue(e.fields, f.name), barcode)) continue;
-                seen.add(key);
-                byIdentifier.push({ ...toMatch(e, k, "identifier", expiryByKind.get(e.kind)), matched_label: f.label });
-              }
+            // SYSTEM-READ: verifies the identifier on the row, hidden or not.
+            const r = await checkedTrackedList(orgId, k.kind, { filter: { [f.name]: form }, limit: 3 }, SYSTEM_VIEWER);
+            for (const e of r.items) {
+              const key = `${e.kind}:${e.id}`;
+              if (seen.has(key) || !identifierEquals(fieldValue(e.fields, f.name), barcode)) continue;
+              seen.add(key);
+              byIdentifier.push({ ...toMatch(e, k, "identifier", expiryByKind.get(e.kind)), matched_label: f.label });
             }
           }
-          return [...byBarcode, ...byIdentifier];
-        } catch {
-          return [];
         }
+        return [...byBarcode, ...byIdentifier];
+
       }),
     );
     barcodeMatches.push(...perKind.flat());
@@ -508,10 +504,8 @@ export async function findTracked(
         const out: TrackedMatch[] = [];
         const probe = async (field: string, label: string, read: (e: ResolvedEntity) => unknown) => {
           for (const form of spellings) {
-            const r = await platform()
-              // SYSTEM-READ: verifies the part number on the row, hidden or not.
-              .entities.list(orgId, k.kind, { filter: { [field]: form }, limit: 5 }, SYSTEM_VIEWER)
-              .catch(() => ({ items: [] as ResolvedEntity[] }));
+            // SYSTEM-READ: verifies the part number on the row, hidden or not.
+            const r = await checkedTrackedList(orgId, k.kind, { filter: { [field]: form }, limit: 5 }, SYSTEM_VIEWER);
             for (const e of r.items) {
               const key = `${e.kind}:${e.id}`;
               if (seen.has(key) || !identifierEquals(read(e), partNumber)) continue;
@@ -520,14 +514,11 @@ export async function findTracked(
             }
           }
         };
-        try {
-          await probe("sku", "part number", (e) => (e.fields.metadata as Record<string, unknown> | null | undefined)?.sku);
-          for (const f of [...(identifierByKind.get(k.kind) ?? []), ...k.nativeIdentifiers]) {
-            await probe(f.name, f.label, (e) => fieldValue(e.fields, f.name));
-          }
-        } catch {
-          // a kind that cannot be probed has no match to offer
+        await probe("sku", "part number", (e) => (e.fields.metadata as Record<string, unknown> | null | undefined)?.sku);
+        for (const f of [...(identifierByKind.get(k.kind) ?? []), ...k.nativeIdentifiers]) {
+          await probe(f.name, f.label, (e) => fieldValue(e.fields, f.name));
         }
+
         return out;
       }),
     );
@@ -550,44 +541,39 @@ export async function findTracked(
       const nameKinds = opts.tables?.length ? kinds.filter((k) => sameFamily(k, opts.tables!)) : kinds;
       const perKind = await Promise.all(
         nameKinds.map(async (k) => {
-          try {
-            const byId = new Map<string, ResolvedEntity>();
-            const pages = await Promise.all(
-              probes.map((t) =>
-                platform()
-                  .entities.list(orgId, k.kind, { q: t, limit: 8 })
-                  .catch(() => ({ items: [] as ResolvedEntity[] })),
-              ),
-            );
-            for (const page of pages)
-              for (const e of page.items) byId.set(`${e.kind}:${e.id}`, e);
-            return [...byId.values()]
-              .filter((e) => !seen.has(`${e.kind}:${e.id}`))
-              // An entity that already carries a DIFFERENT barcode is a
-              // different SKU — never offer it as a fuzzy match
-              // (stops link-barcode from clobbering the wrong entity's code).
-              .filter((e) => {
-                const b = metaBarcode(e.fields);
-                return !b || !barcode || b === barcode;
-              })
-              // The maker and the kind on EITHER side are taken out of the
-              // count: the scan's brand and category, and the record's own
-              // manufacturer and category fields.
-              .map((e) => ({ e, ...nameOverlap(want, e.title, knownWords(opts, e.fields)) }))
-              .filter(({ pass }) => pass)
-              // The identity the two sides already carry outranks the word
-              // overlap that got them here: a record with a different set
-              // number, model or ISBN, or a different model number in its
-              // name, is a different product (same-product.ts, one rule
-              // with the inbox's Combine offer). Two LEGO sets were offered
-              // as one by their shared "building set" (#2977).
-              .filter(({ e }) => sameProduct({ name, fields: opts.fields ?? null }, { name: e.title, fields: e.fields }).verdict !== "different")
-              // The same version on both sides is the strongest name evidence
-              // there is: it ranks above a match that only shares words.
-              .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared: shared + (versionsAgree(name, e.title) ? 2 : 0) }));
-          } catch {
-            return [];
-          }
+          const byId = new Map<string, ResolvedEntity>();
+          const pages = await Promise.all(
+            probes.map((t) =>
+              checkedTrackedList(orgId, k.kind, { q: t, limit: 8 }),
+            ),
+          );
+          for (const page of pages)
+            for (const e of page.items) byId.set(`${e.kind}:${e.id}`, e);
+          return [...byId.values()]
+            .filter((e) => !seen.has(`${e.kind}:${e.id}`))
+            // An entity that already carries a DIFFERENT barcode is a
+            // different SKU — never offer it as a fuzzy match
+            // (stops link-barcode from clobbering the wrong entity's code).
+            .filter((e) => {
+              const b = metaBarcode(e.fields);
+              return !b || !barcode || b === barcode;
+            })
+            // The maker and the kind on EITHER side are taken out of the
+            // count: the scan's brand and category, and the record's own
+            // manufacturer and category fields.
+            .map((e) => ({ e, ...nameOverlap(want, e.title, knownWords(opts, e.fields)) }))
+            .filter(({ pass }) => pass)
+            // The identity the two sides already carry outranks the word
+            // overlap that got them here: a record with a different set
+            // number, model or ISBN, or a different model number in its
+            // name, is a different product (same-product.ts, one rule
+            // with the inbox's Combine offer). Two LEGO sets were offered
+            // as one by their shared "building set" (#2977).
+            .filter(({ e }) => sameProduct({ name, fields: opts.fields ?? null }, { name: e.title, fields: e.fields }).verdict !== "different")
+            // The same version on both sides is the strongest name evidence
+            // there is: it ranks above a match that only shares words.
+            .map(({ e, shared }) => ({ m: toMatch(e, k, "name", expiryByKind.get(e.kind)), shared: shared + (versionsAgree(name, e.title) ? 2 : 0) }));
+
         }),
       );
       // The three best THINGS, with every place of each: three places of one

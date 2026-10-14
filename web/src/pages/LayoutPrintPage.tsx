@@ -3,9 +3,11 @@
 // Chrome-less like the plan print (PlanPrintPage) and always light: its one
 // job is paper. Saving it as a PDF is the browser's print dialog.
 
+import { useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { usePageTitle } from "@cobblr/platform-web";
+import { bodyAsApplied } from "@cobblr/platform-contract/plan-draft";
 import { api } from "../lib/api";
 import { useLayoutBoard } from "../lib/useLayoutBoard";
 import { LayoutPrint } from "../components/LayoutPrint";
@@ -14,7 +16,8 @@ export function LayoutPrintPage() {
   const { slug = "", id = "", draftId = "" } = useParams<{ slug: string; id: string; draftId: string }>();
   const drafts = useQuery({ queryKey: ["plan-drafts", slug, id], queryFn: () => api.planDrafts(slug, id), enabled: !!slug && !!id });
   const draft = drafts.data?.items.find((d) => d.id === draftId) ?? null;
-  const { board, room, loading } = useLayoutBoard(slug, id, draft?.body ?? null, 300);
+  const drawn = useMemo(() => (draft ? bodyAsApplied(draft.body, draft.made) : null), [draft]);
+  const { board, room, loading } = useLayoutBoard(slug, id, drawn, 300);
   usePageTitle(room && draft ? `${room.name}: ${draft.name} (to scale)` : "Layout");
   if (drafts.isLoading || loading) return <div className="p-6">Loading…</div>;
   if (!draft || !board) return <div className="p-6">That layout is not there.</div>;

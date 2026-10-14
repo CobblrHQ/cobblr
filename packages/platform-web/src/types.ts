@@ -209,6 +209,8 @@ export interface PlatformWebApi {
     /** The kind's records can be marked as sold or given away and brought
      *  back (its writer retires and unretires). */
     lifecycle?: boolean;
+    /** The kind can be lent out and come back (platform:lend / platform:return). */
+    lendable?: boolean;
   }>;
   setRecordActionPin?(slug: string, kind: string, action: string, pinned: boolean): Promise<unknown>;
   /** Turn a module on for the workspace (an owner's or admin's act). Optional:
@@ -230,6 +232,9 @@ export interface PlatformWebApi {
     },
   ): Promise<{ ok: boolean; result: unknown; undo?: unknown; affected?: { kinds: string[]; entity?: { kind: string; id: string } } }>;
   lookupEntity(slug: string, kind: string, id: string): Promise<PlatformResolvedEntity>;
+  /** Where a record sits, as one line ("Front Hallway"); a host without it
+   *  shows a loan without "returns to". */
+  placementPath?(slug: string, kind: string, id: string): Promise<{ line: string }>;
   requestLight?(slug: string, ref: { kind: string; id: string }, reason?: "shown" | "found" | "picked" | "put-away" | "label-scanned"): Promise<{ requested: boolean; place: string | null; note: string }>;
   /** Who this workspace can hand things to (its shares), and what it has
    *  handed over. Optional: a host without sharing offers no Give to. */
@@ -309,6 +314,8 @@ export interface PlatformWebApi {
   /** The presence-declared panels that have something to show on one record
    *  (GET /orgs/:slug/panel-presence, #6337). */
   panelPresence?(slug: string, kind: string, id: string, collection?: string | null): Promise<{ present: string[] }>;
+  /** How the workspace arranges the panels on this kind of record: hidden ones and their order (#6337). */
+  recordPanelLayout?(slug: string, kind: string): Promise<{ layout: import("@cobblr/platform-contract/record-panel-layout").RecordPanelLayout; revision: number }>;
   /** Pictures suggested for records made without one (#3818), by kind, or by
    *  record id alone (kind null). Optional: a host without it shows none. */
   listPhotoSuggestions?(slug: string, kind: string | null, ids?: string[]): Promise<{ items: PhotoSuggestionRow[] }>;

@@ -35,7 +35,7 @@ export function SyncRuleSelect({ slug, connId, entityType, value }: { slug: stri
         value={value}
         disabled={save.isPending}
         onChange={(e) => save.mutate(e.target.value as SyncConflictPolicy)}
-        className="rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-1 py-0.5 text-[10px] text-content dark:text-mortar-100"
+        className="rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-800 px-1 py-0.5 text-[10px] text-content dark:text-mortar-100 min-h-11 sm:min-h-0"
       >
         {CONFLICT_POLICIES.map((p) => (
           <option key={p} value={p}>
@@ -61,7 +61,7 @@ export function SyncAsks({ slug, connId, entityType, state }: { slug: string; co
   const conflicts = state.last_conflicts?.conflicts ?? [];
   const ambiguous = state.last_conflicts?.ambiguous ?? [];
   if (!conflicts.length && !ambiguous.length) return null;
-  const btn = "rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50";
+  const btn = "rounded border border-line dark:border-slate-700 px-1.5 py-0.5 text-[10px] text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50 min-h-11 sm:min-h-0";
   return (
     <div data-testid="sync-asks" className="ml-5 mt-1 space-y-1 border-l border-line dark:border-slate-700 pl-2">
       {ambiguous.map((a) => (
@@ -69,9 +69,10 @@ export function SyncAsks({ slug, connId, entityType, state }: { slug: string; co
           <span>
             <strong>{a.record}</strong> could be a record you already have:
           </span>
-          {a.candidates.map((c) => (
+          {a.candidates.map((c, i) => (
             <button key={c.id} type="button" disabled={answer.isPending} onClick={() => answer.mutate({ external_id: a.external_id, action: "link", cobblr_id: c.id })} className={btn}>
               Same as {c.name}
+              {a.candidates.filter((o) => o.name === c.name).length > 1 ? ` (${a.candidates.slice(0, i + 1).filter((o) => o.name === c.name).length} of ${a.candidates.filter((o) => o.name === c.name).length})` : ""}
             </button>
           ))}
           <button type="button" disabled={answer.isPending} onClick={() => answer.mutate({ external_id: a.external_id, action: "create" })} className={btn}>

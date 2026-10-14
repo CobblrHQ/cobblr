@@ -280,7 +280,7 @@ export function CustomFieldsPanel({
                 else next.add(s.id);
                 return next;
               })}
-              className="w-full flex items-center gap-1.5 text-left text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1 hover:text-content dark:hover:text-slate-200 transition"
+              className="w-full flex items-center gap-1.5 text-left text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1 hover:text-content dark:hover:text-slate-200 transition"
             >
               <span aria-hidden className={"inline-block transition-transform " + (open ? "rotate-90" : "")}>›</span>
               <span className="flex-1">{s.name}</span>
@@ -297,7 +297,7 @@ export function CustomFieldsPanel({
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
-          className="text-[10px] font-mono uppercase tracking-widest text-accent hover:text-accent transition"
+          className="text-[10px] uppercase tracking-widest text-accent hover:text-accent transition"
         >
           {showAll ? "− hide empty fields" : `+ ${hidden.length} more field${hidden.length === 1 ? "" : "s"}`}
         </button>
@@ -485,7 +485,7 @@ function PlainRow({
   const reading = def.type === "measure" && draft.trim() ? parseMeasure(draft, { unit: def.unit ?? null }) : null;
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
         {usingFallback && (
@@ -535,7 +535,7 @@ function MoneyRow({ def, value, onCommit, currency, onCurrencyChange }: { def: P
   const props = { value, storage: moneyStorageOf(def) ?? "amount" as const, ariaLabel: def.display_label, className: fieldPackControlClass };
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -570,7 +570,7 @@ function ComputedRow({
   const str = shown == null ? "" : String(shown);
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         <span className="ml-2 normal-case tracking-normal text-faint dark:text-slate-500">worked out, not typed</span>
       </span>
@@ -599,7 +599,7 @@ function ServerManagedRow({ def, value }: { def: PlatformFieldDef; value: unknow
   const isDate = def.type === "date";
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         <span className="ml-2 italic text-accent normal-case tracking-normal">auto</span>
       </span>
@@ -773,7 +773,7 @@ function RelationRow({
 }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -796,7 +796,7 @@ function PeopleRow({
 }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -830,7 +830,7 @@ function BoolRow({
         onChange={(e) => onCommit(e.target.checked)}
         className="accent-cobble-500 h-4 w-4"
       />
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -860,7 +860,7 @@ function MarkdownRow({
   const { draft, setDraft, committed } = useFieldDraft(initial);
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -894,7 +894,7 @@ function ColorRow({
   const { draft, setDraft, committed } = useFieldDraft(initial);
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>
@@ -951,7 +951,7 @@ function ChoiceRow({
 }) {
   return (
     <div className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {def.display_label}
         {def.required ? <span className="text-ember-500"> *</span> : null}
       </span>

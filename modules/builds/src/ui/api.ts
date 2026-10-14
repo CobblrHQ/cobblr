@@ -5,6 +5,7 @@
 // seam, never an inventory import. Works standalone; the picker is just empty
 // when inventory isn't enabled.
 
+import type { ResolvedEntity } from "@cobblr/platform-contract";
 import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
 
 export interface BuildSummary {
@@ -169,6 +170,11 @@ export class BuildsApiError extends Error {
 
 export class BuildsApi {
   inspectionResources(orderId: string, ordinal?: number) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionResources>>>("GET", `/assembly-orders/${orderId}/inspection-resources${ordinal ? `?ordinal=${ordinal}` : ""}`); }
+  async listInspections(q: string, offset: number) {
+    const params = new URLSearchParams({ q, offset: String(offset), limit: "50" });
+    const res = await workspaceFetch(`/api/v1/orgs/${this.slug}/entities/builds:inspection?${params}`, { headers: this.headers() });
+    return this.parse<{ items: ResolvedEntity[] }>(res);
+  }
   inspection(id: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").inspectionView>>>("GET", `/assembly-inspections/${id}`); }
   assemblyRecall(code: string) { return this.req<Awaited<ReturnType<typeof import("../api/inspection.js").assemblyRecall>>>("GET", `/assembly-recall?code=${encodeURIComponent(code)}`); }
   reflowResources(orderId: string) {

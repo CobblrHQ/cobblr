@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-13
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-14
 ---
 
 Recount with the phone camera, read a label off a photo for things with no barcode, and print Cobblr labels so the next recount is a scan

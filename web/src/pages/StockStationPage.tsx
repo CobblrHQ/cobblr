@@ -78,7 +78,7 @@ export function StockStationPage() {
     <p>Scan the QR label on the sheet, roll, spool, bottle or tool you have loaded. Stock confirmation does not start a machine.</p>
     <div className="flex flex-wrap items-end gap-3"><label className="text-sm flex-1 min-w-0">Slot or colour<input aria-label="Slot or colour" className="input min-h-12 w-full" required maxLength={80} value={slot} onChange={e => setSlot(e.target.value)} /></label><button className={button} disabled={busy || !slot.trim()} onClick={() => setScanning(true)}>Scan stock QR</button></div>
     {error && <p role="alert" className="text-red-700 dark:text-red-300">{error}</p>}{message && <p role="status">{message}</p>}
-    <section className="space-y-3"><h2 className="text-sm font-mono uppercase tracking-wide">Loaded stock</h2>
+    <section className="space-y-3"><h2 className="text-sm uppercase tracking-wide">Loaded stock</h2>
       {!query.data?.loaded.length && <p className="text-muted">No stock confirmed at this station.</p>}
       {loaded.map((s, i) => { const at = query.data!.loaded[i]!; return <article key={at.part_id} className="rounded border border-line p-4 space-y-3">
         {s.isError && <QueryError what="Loaded stock could not be read." onRetry={() => void s.refetch()} />}
@@ -86,7 +86,7 @@ export function StockStationPage() {
         <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void load(at.part_id, false, at.slot).catch(() => {})}>Unload stock</button>{s.data && <><button className={button} onClick={() => void print(s.data!.kind, at.part_id)}>Print stock label</button><Link className={button} to={`/open/${encodeURIComponent(s.data.kind)}/${at.part_id}`}>Open stock record</Link></>}</div>
       </article>; })}
     </section>
-    <section className="space-y-3"><h2 className="text-sm font-mono uppercase tracking-wide">Choose stock</h2><SearchInput value={q} onChange={value => { setQ(value); setOffset(0); }} placeholder="Find stock" />
+    <section className="space-y-3"><h2 className="text-sm uppercase tracking-wide">Choose stock</h2><SearchInput value={q} onChange={value => { setQ(value); setOffset(0); }} placeholder="Find stock" />
       {query.isError && <QueryError what="Stock could not be loaded." onRetry={() => void query.refetch()} />}
       {query.data?.items.map(stock => <article key={stock.id} className="rounded border border-line p-3 flex flex-wrap items-center justify-between gap-3"><div className="min-w-0 break-words"><strong>{stock.name}</strong><p className="text-sm text-muted">{stock.shape} · {formatStockAmount(stock.remaining, stock.unit)} remaining{stock.low ? " · Low stock" : ""}</p></div><button className={button} disabled={busy || stock.remaining <= 0 || !slot.trim()} onClick={() => void load(stock.id).catch(() => {})}>Load {stock.name}</button></article>)}
       {query.data && <div className="flex flex-wrap items-center gap-3"><button className={button} disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 500))}>Previous stock</button><span className="text-sm">{query.data.total == null ? "Stock count unavailable" : countOf(query.data.total, "stock record")}</span><button className={button} disabled={query.data.total != null && offset + query.data.items.length >= query.data.total} onClick={() => setOffset(offset + 500)}>Next stock</button></div>}

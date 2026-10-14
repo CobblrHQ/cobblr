@@ -118,13 +118,13 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <h3 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           maintenance
         </h3>
         <button
           type="button"
           onClick={() => setAdding(true)}
-          className="text-[11px] font-mono uppercase tracking-widest text-accent hover:text-accent inline-flex items-center gap-1"
+          className="text-[11px] uppercase tracking-widest text-accent hover:text-accent inline-flex items-center gap-1"
           data-testid="maintenance-add"
         >
           <Plus size={11} /> add
@@ -141,7 +141,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
 
       {scheduled.length > 0 && (
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-amber-600 mb-1.5 flex items-center gap-1">
+          <div className="text-[10px] uppercase tracking-widest text-amber-600 mb-1.5 flex items-center gap-1">
             <Calendar size={10} /> scheduled
           </div>
           <ul className="space-y-1.5">
@@ -169,7 +169,7 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
       <MutationError mutation={remove} className="block" />
       {history.length > 0 && (
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-widest text-muted mb-1.5 flex items-center gap-1">
+          <div className="text-[10px] uppercase tracking-widest text-muted mb-1.5 flex items-center gap-1">
             <History size={10} /> history
           </div>
           <ul className="space-y-1.5">
@@ -469,7 +469,7 @@ function AddEntryModal({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

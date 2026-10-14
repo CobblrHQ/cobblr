@@ -56,7 +56,7 @@ export function ActivityPage() {
       <div className="flex items-center gap-4 flex-wrap text-xs">
         <div className="flex items-center gap-1.5">
           <Filter size={11} className="text-faint" />
-          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">made</span>
+          <span className="uppercase tracking-widest text-[10px] text-muted">made</span>
           {(["all", "session", "api_token", "system"] as const).map((f) => (
             <button
               key={f}
@@ -74,7 +74,7 @@ export function ActivityPage() {
           ))}
         </div>
         <label className="flex items-center gap-1.5">
-          <span className="font-mono uppercase tracking-widest text-[10px] text-muted">about</span>
+          <span className="uppercase tracking-widest text-[10px] text-muted">about</span>
           <input
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
@@ -159,7 +159,7 @@ function AuthBadge({ method }: { method: AuthMethod }) {
   return (
     <span
       className={
-        "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-mono uppercase tracking-widest text-[9px] " +
+        "inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded uppercase tracking-widest text-[9px] " +
         cfg.cls
       }
     >

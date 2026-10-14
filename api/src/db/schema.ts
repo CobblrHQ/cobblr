@@ -1843,6 +1843,8 @@ export interface TidyRouteCacheTable {
 }
 export interface RecordActionLayoutsTable { org_id: string; entity_kind: string; state: Generated<unknown>; revision: Generated<number> }
 export interface RecordActionPinsTable { org_id: string; user_id: string; entity_kind: string; state: Generated<unknown> }
+/** Which panels a kind of record hides and their order (#6337, migration 20261014-222). */
+export interface RecordPanelLayoutsTable { org_id: string; entity_kind: string; state: Generated<unknown>; revision: Generated<number> }
 
 /** The Vault (#5242, migration 20261011-215): folders of personal documents
  *  readable only by their access list, files encrypted at rest. */
@@ -1907,6 +1909,7 @@ export interface MetaDB {
   vault_events: VaultEventsTable;
   csp_violations: CspViolationsTable;
   record_action_layouts: RecordActionLayoutsTable;
+  record_panel_layouts: RecordPanelLayoutsTable;
   record_action_pins: RecordActionPinsTable;
   tidy_suggestions: TidySuggestionsTable;
   tidy_suppressions: TidySuppressionsTable;

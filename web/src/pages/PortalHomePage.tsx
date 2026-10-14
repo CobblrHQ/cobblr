@@ -130,7 +130,7 @@ export function PortalHomePage() {
                     {a.name}
                   </div>
                   <div
-                    className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate"
+                    className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 truncate"
                     style={mutedStyle(skin)}
                   >
                     app
@@ -190,7 +190,7 @@ export function PortalHomePage() {
                   {v.name}
                 </div>
                 <div
-                  className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate"
+                  className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 truncate"
                   style={mutedStyle(skin)}
                 >
                   {labels.collection(v.entity_kind)} · {labels.viewType(v.view_type)}

@@ -65,7 +65,7 @@ function FeedbackThread({ item }: { item: MyFeedbackItem }) {
     <li className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
       <div className="flex items-baseline gap-2 flex-wrap">
         <span>{TYPE_EMOJI[item.type] ?? "•"}</span>
-        <span className="text-[10px] font-mono uppercase tracking-widest text-muted">
+        <span className="text-[10px] uppercase tracking-widest text-muted">
           {STATUS_LABEL[item.status] ?? item.status}
         </span>
         <span className="flex-1" />
@@ -111,7 +111,7 @@ function Bubble({ role, from, text, at }: { role: "user" | "team"; from: string;
           (team ? "bg-subtle dark:bg-slate-800 text-content dark:text-mortar-100" : "bg-cobble-600 text-white")
         }
       >
-        <div className={"text-[10px] font-mono uppercase tracking-widest mb-0.5 " + (team ? "text-accent" : "text-white/70")}>
+        <div className={"text-[10px] uppercase tracking-widest mb-0.5 " + (team ? "text-accent" : "text-white/70")}>
           {from}
         </div>
         <div className="whitespace-pre-wrap break-words">{text}</div>

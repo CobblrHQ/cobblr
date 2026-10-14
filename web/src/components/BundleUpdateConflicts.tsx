@@ -97,7 +97,7 @@ export function BundleUpdateConflicts({
       className="rounded-md border border-amber-400 dark:border-amber-600 bg-amber-50/60 dark:bg-amber-900/20 p-3 space-y-3"
     >
       <div>
-        <div className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-400">
+        <div className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-400">
           {conflicts.length === 1 ? "1 thing to decide" : `${conflicts.length} things to decide`}
         </div>
         <p className="text-sm text-content dark:text-mortar-200 mt-0.5">
@@ -129,11 +129,11 @@ export function BundleUpdateConflicts({
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                 <div className="min-w-0">
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">yours</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">yours</div>
                   <Value conflict={c} side="yours" />
                 </div>
                 <div className="min-w-0">
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">the update's</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-0.5">the update's</div>
                   <Value conflict={c} side="theirs" />
                 </div>
               </div>

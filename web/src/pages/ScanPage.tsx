@@ -32,7 +32,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose } from "@cobblr/platform-web";
+import { useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -141,6 +141,7 @@ import { FiledRowView, FiledSummaryView } from "./ScanFiledRow";
 import { useFiledRows, withFiledRows } from "../lib/filedRows";
 import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
+import { useUndoSplit } from "../lib/useUndoSplit";
 import { countOf } from "@cobblr/platform-contract/plural";
 export type { ScanTarget } from "./scanInboxShared";
 
@@ -878,7 +879,7 @@ export function ScanPage() {
           onClick={() => combineMut.mutate({ ids, keepId: item.id })}
           className="flex-1 min-w-0 text-left rounded border border-amber-300 dark:border-amber-700/70 hover:bg-amber-100/60 dark:hover:bg-amber-900/30 px-2.5 py-1.5 disabled:opacity-50"
         >
-          <div className="text-[10px] font-mono uppercase tracking-widest text-amber-700 dark:text-amber-500">
+          <div className="text-[10px] uppercase tracking-widest text-amber-700 dark:text-amber-500">
             keep {label}
             {keepsPhoto ? " (your photo)" : ""}
           </div>
@@ -1287,15 +1288,7 @@ export function ScanPage() {
   // A split parent in this list did not create an entry; it made N inbox
   // items. Sending it back would leave them (the api refuses); undoing the
   // split is the revert that fits, and it is the one offered.
-  const undoSplit = useMutation({
-    mutationFn: (id: string) => api.unsplitScanItem(activeSlug, id),
-    onSuccess: (r) => {
-      toast.success(`Split undone: the group photo is back in the inbox and its ${r.discarded} piece${r.discarded === 1 ? "" : "s"} ${r.discarded === 1 ? "is" : "are"} in Recently deleted.`);
-      setHighlightId(r.parent.id);
-      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
-  });
+  const undoSplit = useUndoSplit({ onDone: (parent) => setHighlightId(parent.id) });
   const splitPieces = (it: ScanInboxItem): number =>
     ((it.suggested_metadata as { split_into?: unknown } | null)?.split_into as unknown[] | undefined)?.length ?? 0;
   // Revert a set of committed items. Returns who ACTUALLY went back and, for
@@ -1562,6 +1555,15 @@ export function ScanPage() {
   // reads, so a row a member cannot file is not counted by the strip beside
   // it (scanViewer.ts, #3122).
   const viewer = useScanViewer(menu);
+  // A split part's table and values, as its card would file it (#6456): what
+  // tells the split's group that its parts are alike.
+  const splitRouteOf = useCallback(
+    (it: ScanInboxItem) => {
+      const c = destinationCandidateOf(it, viewer);
+      return c ? { module: c.module, instance: c.instance ?? null, kind: c.kind ?? null, label: (c as { label?: string }).label ?? null, fields: c.fields ?? null } : null;
+    },
+    [viewer],
+  );
 
   // Location is core-locations' noun, and that capability auto-enables
   // everywhere — so "module enabled" gates nothing. The author's rule: the field
@@ -2080,12 +2082,7 @@ export function ScanPage() {
   // Same reason the destination menu closes on scroll: the panel's position is
   // measured once at open, so a page that scrolls underneath leaves it floating
   // away from its button. Close rather than chase it.
-  useEffect(() => {
-    if (!trackingPopover) return;
-    const onScroll = () => setTrackingPopover(null);
-    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
-  }, [trackingPopover]);
+  useCloseOnPageScroll(!!trackingPopover, () => setTrackingPopover(null));
   const setOrderRef = useMutation({
     mutationFn: (v: { batchId: string; orderRef: string | null }) =>
       api.setReceiptOrderRef(activeSlug, v.batchId, v.orderRef),
@@ -3105,7 +3102,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           )}
           {bulkLocOpen && (
             <div className="w-full pt-2 mt-1 border-t border-line/40 dark:border-slate-700/60">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1.5">
+              <div className="text-[10px] uppercase tracking-widest text-faint mb-1.5">
                 File the selection into
               </div>
               {/* Chips, not a dropdown — one tap files the whole selection into a
@@ -4632,6 +4629,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           parts={e.parts}
                           renderPart={card}
                           onAddAll={(ids) => confirmItemsToTheirCandidate(ids)}
+                          routeOf={splitRouteOf}
+                          menu={menu}
                         />
                       ),
                     )}

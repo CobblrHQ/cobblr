@@ -3,9 +3,15 @@
 // People entry, and `due_back`), so the asset page, Needs you (an overdue
 // `due_back`) and every reader see the same answer, and both undo to exactly
 // what was there before.
+//
+// The platform's loan (record-loans.md) is the same fact for every kind, so
+// the two are kept in step both ways: these actions open or end the loan, and
+// a loan made anywhere else (the record page's Lend…, the assistant's
+// platform:lend) writes these fields through the writer's onLoan.
 
 import { sql, type Kysely } from "kysely";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { platform, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import type { AssetsDB } from "../db.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,6 +55,32 @@ async function writeCustody(orgId: string, db: Kysely<AssetsDB>, id: string, nex
   });
 }
 
+/** Open, move or end the platform's loan to match the fields just written. */
+async function mirrorLoan(ctx: ActionInvokeContext, db: Kysely<AssetsDB>, id: string, next: Custody): Promise<void> {
+  const row = await db.selectFrom("assets_assets").select("metadata").where("id", "=", id).executeTakeFirst();
+  const open = readRecordLoan(row?.metadata);
+  const base = { orgId: ctx.orgId, userId: ctx.userId, event: ctx.event, scope: "workspace" as const };
+  const r = next.assigned_to
+    ? open?.holder_id === next.assigned_to && open.due_back === next.due_back
+      ? null
+      : await platform().actions.invoke("platform:lend", { ...base, args: { entity_kind: "assets:asset", ids: [id], holder_id: next.assigned_to, ...(next.due_back ? { due_back: next.due_back } : {}) } })
+    : open
+      ? await platform().actions.invoke("platform:return", { ...base, args: { entity_kind: "assets:asset", ids: [id] } })
+      : null;
+  if (r && (r as { ok?: unknown }).ok !== true) console.error(`[assets] the loan on ${id} did not follow Who has it:`, (r as { error?: unknown }).error);
+}
+
+/** The writer's onLoan: a loan made anywhere shows in Who has it and Due
+ *  back. A holder who is not on the People list leaves Who has it empty. */
+export async function custodyFromLoan(orgId: string, id: string, loan: { holder_id: string | null; due_back: string | null } | null): Promise<void> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
+  const before = await readCustody(db, id);
+  if (!before) return;
+  const next: Custody = { assigned_to: loan?.holder_id && UUID_RE.test(loan.holder_id) ? loan.holder_id : null, due_back: loan?.due_back ?? null };
+  if (next.assigned_to === before.assigned_to && next.due_back === before.due_back) return;
+  await writeCustody(orgId, db, id, next, before);
+}
+
 export function registerCustodyHandlers(): void {
   platform().actions.registerHandler("assets.lend", async (ctx) => {
     const asset = requireActionEntity(ctx);
@@ -61,6 +93,7 @@ export function registerCustodyHandlers(): void {
     const before = await readCustody(db, asset.id);
     if (!before) return { ok: false, error: "That asset is not here any more." };
     await writeCustody(ctx.orgId, db, asset.id, { assigned_to: to, due_back: due }, before);
+    await mirrorLoan(ctx, db, asset.id, { assigned_to: to, due_back: due });
     return { ok: true, summary: `${before.name} is lent out${due ? `, due back ${due}` : ""}.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
   });
 
@@ -71,6 +104,7 @@ export function registerCustodyHandlers(): void {
     if (!before) return { ok: false, error: "That asset is not here any more." };
     if (!before.assigned_to && !before.due_back) return { ok: true, skipped: true, summary: `${before.name} was not lent out.` };
     await writeCustody(ctx.orgId, db, asset.id, { assigned_to: null, due_back: null }, before);
+    await mirrorLoan(ctx, db, asset.id, { assigned_to: null, due_back: null });
     return { ok: true, summary: `${before.name} is back.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
   });
 
@@ -85,6 +119,7 @@ export function registerCustodyHandlers(): void {
       due_back: typeof a.due_back === "string" && a.due_back ? a.due_back : null,
     };
     await writeCustody(ctx.orgId, db, asset.id, next, before);
+    await mirrorLoan(ctx, db, asset.id, next);
     return { ok: true, summary: `${before.name} is back to how it was.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
   });
 

@@ -12,7 +12,7 @@
 import type { ReactNode } from "react";
 import { EntityPhoto } from "./EntityPhoto";
 import { PICTURE_STATE_TEXT, type PictureState } from "./photoSuggestions";
-import type { SwatchFieldDef } from "./swatch";
+import type { SwatchFieldDef } from "./swatch-pick";
 
 /** The grid every wall of tiles sits in: two across on a phone, and above that
  *  as many ~180px columns as fit, so a desktop wall is a wall of slots rather
@@ -128,7 +128,7 @@ export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, va
           </span>
         )}
         {badge && (
-          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
+          <span className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-surface/85 dark:bg-slate-900/85 backdrop-blur text-content dark:text-mortar-100">
             {badge}
           </span>
         )}

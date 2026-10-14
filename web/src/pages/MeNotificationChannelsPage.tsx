@@ -160,7 +160,7 @@ export function MeNotificationChannelsPage() {
         <>
           {orgs.length > 1 && (
             <div className="flex items-center gap-2 text-xs">
-              <span className="font-mono uppercase tracking-widest text-accent">
+              <span className="uppercase tracking-widest text-accent">
                 workspace:
               </span>
               <select aria-label="Workspace"
@@ -285,7 +285,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
         </button>
         <div className="ml-auto flex items-center gap-1">
           <span
-            className="text-[10px] font-mono uppercase tracking-widest text-faint"
+            className="text-[10px] uppercase tracking-widest text-faint"
             title="Fires a test.notification through EVERY binding in this workspace at the chosen priority. Use the per-row test button to fire one binding in isolation."
           >
             test all:
@@ -324,7 +324,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
       {q.data && q.data.items.length > 0 && (
         <div className="border border-line dark:border-slate-700 rounded-xl overflow-hidden">
           <table className="w-full text-xs">
-            <thead className="bg-subtle dark:bg-slate-800/50 text-[10px] font-mono uppercase tracking-widest text-faint">
+            <thead className="bg-subtle dark:bg-slate-800/50 text-[10px] uppercase tracking-widest text-faint">
               <tr>
                 <th className="text-left px-3 py-2">Channel</th>
                 <th className="text-left px-3 py-2">Event</th>
@@ -604,8 +604,8 @@ function AddBindingModal({
 
         {channelDef.fields.length > 0 && (
           <div className="space-y-2 border-t border-line dark:border-slate-700 pt-3">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // {channelDef.label.toLowerCase()} config
+            <div className="text-[10px] uppercase tracking-widest text-accent">
+              {channelDef.label.toLowerCase()} config
             </div>
             <FieldPack
               items={visibleFields(channelDef, config).map((f) => ({

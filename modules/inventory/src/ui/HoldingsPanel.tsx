@@ -6,7 +6,7 @@ import { useStockWrites } from "./stock-writes";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useConfirm, useToast } from "@cobblr/platform-web";
+import { LocationPicker, useConfirm, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { HoldingRows, RollupLine, lotWords } from "./HoldingRows";
 import { CombineSuggestionFor } from "./CombineSuggestions";
@@ -141,7 +141,6 @@ export function HoldingsPanel({ partId, unit, gone = false }: { partId: string; 
   const [min, setMin] = useState("");
 
   const holdings = useQuery({ queryKey: ["inventory-holdings", partId], queryFn: () => api.listHoldings(partId) });
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["inventory-holdings"] });
@@ -178,15 +177,16 @@ export function HoldingsPanel({ partId, unit, gone = false }: { partId: string; 
 
   const rows = holdings.data?.rows ?? [];
   const held = new Set(rows.map((r) => r.location_id).filter(Boolean));
+  const alreadyHere = !!locationId && held.has(locationId);
   const several = rows.length > 1;
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (locationId) add.mutate();
+    if (locationId && !alreadyHere) add.mutate();
   };
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3" data-testid="holdings-panel">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// where it's kept</div>
+      <div className="text-[10px] uppercase tracking-widest text-accent">where it's kept</div>
       {cardId !== partId && (
         <div className="text-xs text-muted dark:text-slate-400">
           One place of{" "}
@@ -244,19 +244,10 @@ export function HoldingsPanel({ partId, unit, gone = false }: { partId: string; 
         </button>
       ) : (
         <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-          <label className="flex flex-col text-[11px] text-muted dark:text-slate-400 min-w-[10rem] flex-1">
-            Place
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input text-sm" aria-label="Place">
-              <option value="">Choose a place</option>
-              {(locs.data?.items ?? []).map((l) => (
-                <option key={l.id} value={l.id} disabled={held.has(l.id)}>
-                  {"  ".repeat(l.depth)}
-                  {l.name}
-                  {held.has(l.id) ? " (already here)" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="min-w-[10rem] flex-1">
+            <LocationPicker label="Place" value={locationId || null} onChange={(id) => setLocationId(id ?? "")} placeholder="Choose a place" size="sm" />
+            {alreadyHere && <p className="mt-1 text-[11px] text-muted dark:text-slate-400">Already here: change its count in the row above.</p>}
+          </div>
           <label className="flex flex-col text-[11px] text-muted dark:text-slate-400 w-20">
             How many
             <input className="input text-sm" inputMode="decimal" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="0" aria-label="How many" />
@@ -267,7 +258,7 @@ export function HoldingsPanel({ partId, unit, gone = false }: { partId: string; 
           </label>
           <button
             type="submit"
-            disabled={!locationId || add.isPending}
+            disabled={!locationId || alreadyHere || add.isPending}
             className="rounded-md bg-cobble-600 hover:bg-cobble-500 text-white text-xs font-medium px-3 py-1.5 transition disabled:opacity-50"
           >
             {add.isPending ? "Adding…" : "Add"}

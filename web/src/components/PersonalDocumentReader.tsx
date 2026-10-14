@@ -124,7 +124,7 @@ export function FileBillOfSaleButton({ file, onFiled }: { file: File | Blob; onF
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
     {askVin && <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (vin.trim()) void send(vin.trim()); }}>
       <label className="text-sm">VIN
-        <input className="mt-1 block w-56 rounded border border-line px-2 py-1 font-mono uppercase" value={vin} onChange={(e) => setVin(e.target.value)} maxLength={20} autoComplete="off" spellCheck={false} />
+        <input className="mt-1 block w-56 rounded border border-line px-2 py-1 uppercase" value={vin} onChange={(e) => setVin(e.target.value)} maxLength={20} autoComplete="off" spellCheck={false} />
       </label>
       <button type="submit" disabled={busy || !vin.trim()} className="rounded bg-accent px-3 py-1.5 text-sm text-white disabled:opacity-50">{busy ? "Filing…" : "File with this VIN"}</button>
     </form>}

@@ -129,6 +129,20 @@ export interface StationSettings {
    *  and printed from the settings; nothing here works without it. */
   qr_use_one: boolean;
   qr_actions: string[];
+  /** A recount this station scans into (#6302): every scan counts a thing
+   *  of it instead of changing stock, so several screens and phones count one
+   *  collection at once. Null: an ordinary station. */
+  recount_id: string | null;
+  /** The recount's name, kept with it so the screen can say what it counts. */
+  recount_label: string | null;
+}
+
+/** What a scan into a station's recount answered (inventory:recount-scan). */
+export interface StationRecountAnswer {
+  result: "matched" | "new" | "ask" | "ask_type";
+  summary: string;
+  candidates?: Array<{ id: string; title: string; place: string | null; image_path: string | null }>;
+  progress?: { seen: number; expected: number; new: number } | null;
 }
 
 export const STATION_CAMERAS = ["off", "front", "rear", "ask"] as const;
@@ -172,6 +186,8 @@ export const DEFAULT_STATION_SETTINGS: StationSettings = {
   back_label: "Home Assistant",
   qr_use_one: true,
   qr_actions: [],
+  recount_id: null,
+  recount_label: null,
 };
 
 /** The stock move a One-tap station makes on every scan of a known thing,
@@ -206,6 +222,8 @@ export function stationSettingsOf(raw: unknown): StationSettings {
     back_label: str(r.back_label)?.slice(0, 40) ?? d.back_label,
     qr_use_one: typeof r.qr_use_one === "boolean" ? r.qr_use_one : d.qr_use_one,
     qr_actions: Array.isArray(r.qr_actions) ? r.qr_actions.filter((a): a is string => typeof a === "string" && /^[a-z0-9-]+:[a-z0-9-]+$/.test(a)).slice(0, 20) : d.qr_actions,
+    recount_id: typeof r.recount_id === "string" && /^[0-9a-f-]{36}$/i.test(r.recount_id) ? r.recount_id : null,
+    recount_label: typeof r.recount_id === "string" && /^[0-9a-f-]{36}$/i.test(r.recount_id) ? str(r.recount_label)?.slice(0, 120) ?? null : null,
   };
 }
 

@@ -130,7 +130,7 @@ export function ScanRulesPage() {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+          <h2 className="text-sm uppercase tracking-widest text-faint dark:text-slate-500">
             Rules {rules.length > 0 && `(${rules.length})`}
           </h2>
           {isAdmin && (
@@ -355,7 +355,7 @@ function RuleCard({
 function SubBox({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-1 rounded border border-line dark:border-slate-800 bg-mortar-50 dark:bg-slate-950 px-2 py-1">
-      <span className="text-[9px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
+      <span className="text-[9px] uppercase tracking-widest text-faint dark:text-slate-500">{label}</span>
       <span>{children}</span>
     </span>
   );
@@ -373,7 +373,7 @@ function TestBox({ slug, hasRules }: { slug: string; hasRules: boolean }) {
   });
   return (
     <section className="rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 space-y-2">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         Test a payload
       </div>
       <div className="flex gap-2">
@@ -665,7 +665,7 @@ function ChildrenEditor({ base, value, onChange }: { base: string; value: Record
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <fieldset className="rounded-md border border-line dark:border-slate-700 p-3 space-y-3">
-      <legend className="px-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">{title}</legend>
+      <legend className="px-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{title}</legend>
       {children}
     </fieldset>
   );

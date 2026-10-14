@@ -39,6 +39,7 @@ import { storeHostForReceipt } from "./services/store-product.js";
 import { storeProductPass } from "./services/pack-parts.js";
 import { intakeRow, OWN_MATCH_CHECKED, stampOwnRecordMatch, type InsertValues } from "./services/intake.js";
 import { refreshCatalogImageByName } from "./services/enrich-photo.js";
+import { partCandidates } from "./services/row-parts.js";
 
 /** Heal one workspace. Cheap on the happy path: one indexed read. */
 export async function healForwardedStoreHostIn(
@@ -50,7 +51,7 @@ export async function healForwardedStoreHostIn(
   const rows = await db
     .selectFrom("core_scan_inbox_items as i")
     .innerJoin("core_scan_batches as b", "b.id", "i.scan_batch_id")
-    .select(["i.id", "i.scan_batch_id", "i.created_by_user_id", "i.suggested_name", "i.suggested_candidates", "b.source_file_id", "b.origin_from"])
+    .select(["i.id", "i.scan_batch_id", "i.created_by_user_id", "i.suggested_name", "i.suggested_candidates", "i.suggested_metadata", "b.source_file_id", "b.origin_from"])
     .where("i.status", "=", "pending")
     .where("i.source_kind", "=", "receipt")
     .where("b.origin", "=", "email")
@@ -70,12 +71,19 @@ export async function healForwardedStoreHostIn(
       await db.updateTable("core_scan_inbox_items").set({ suggested_metadata: mergeMeta({ store_host: host }) as never }).where("id", "=", r.id).execute();
       const outcome = await storeProductPass({
         db,
+        ...(refreshPicture ? { refreshPicture } : {}),
         orgId,
         itemId: r.id,
         userId: r.created_by_user_id ?? null,
         admit: async (values) => {
           const part = (await intakeRow({ db, orgId, orgSlug: "", userId: r.created_by_user_id ?? null, token: null, baseUrl: "", door: "receipt", values: values as InsertValues })).row as { id: string };
-          if (r.suggested_candidates) await db.updateTable("core_scan_inbox_items").set({ suggested_candidates: JSON.stringify(r.suggested_candidates) as never }).where("id", "=", part.id).execute();
+          // The line's table, as a part carries it: never the pack's mixed
+          // colour or its count (#6456).
+          if (r.suggested_candidates) {
+            const partMeta = JSON.parse(String((values as { suggested_metadata?: unknown }).suggested_metadata ?? "{}")) as Record<string, unknown>;
+            const carried = partCandidates(r.suggested_candidates, (r.suggested_metadata ?? {}) as Record<string, unknown>, { n: Number((values as { quantity?: unknown }).quantity ?? 1), meta: partMeta });
+            await db.updateTable("core_scan_inbox_items").set({ suggested_candidates: JSON.stringify(carried) as never }).where("id", "=", part.id).execute();
+          }
           return part;
         },
       });

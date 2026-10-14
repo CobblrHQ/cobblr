@@ -221,7 +221,7 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
             </span>
             <button
               onClick={() => setShowAll((s) => !s)}
-              className="font-mono uppercase tracking-widest text-[10px] text-accent hover:text-accent transition"
+              className="uppercase tracking-widest text-[10px] text-accent hover:text-accent transition"
             >
               {showAll ? `back to ${scopeToParent}` : "show all modules"}
             </button>
@@ -267,9 +267,9 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
 
         {workshop.length > 0 && (
           <details className="mt-4 pt-3 border-t border-line dark:border-slate-700 group">
-            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
               <span>
-                {"// workshop pack ("}
+                {"workshop pack ("}
                 {workshop.length}
                 {workshop.some((m) => m.enabled)
                   ? ` · ${workshop.filter((m) => m.enabled).length} on`
@@ -305,9 +305,9 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
 
         {more.length > 0 && (
           <details className="mt-4 pt-3 border-t border-line dark:border-slate-700 group">
-            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
               <span>
-                {"// more modules ("}
+                {"more modules ("}
                 {more.length}
                 {more.some((m) => m.enabled)
                   ? ` · ${more.filter((m) => m.enabled).length} on`
@@ -338,8 +338,8 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
 
         {corePlatform.length > 0 && (
           <details className="mt-5 pt-3 border-t border-line dark:border-slate-700 group">
-            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
-              <span>// platform infrastructure ({corePlatform.length})</span>
+            <summary className="cursor-pointer list-none flex items-center justify-between text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent dark:hover:text-cobble-400 transition">
+              <span>platform infrastructure ({corePlatform.length})</span>
               <span className="text-faint dark:text-slate-600 group-open:rotate-90 transition-transform">▸</span>
             </summary>
             <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-2 mb-2 italic">
@@ -444,7 +444,7 @@ function ParentCard({
       />
       {kids.length > 0 && (
         <div className="pl-9 pr-3 pb-3 space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+          <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
             categories
           </div>
           {kids.map((k) => (
@@ -567,7 +567,7 @@ function Row({
           <button
             onClick={onDisable}
             disabled={busy}
-            className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 py-1"
+            className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 py-1"
           >
             disable
           </button>
@@ -575,7 +575,7 @@ function Row({
           <button
             onClick={onEnable}
             disabled={busy || blocked || !!m.retirement}
-            className="text-[10px] font-mono uppercase tracking-widest px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             enable
           </button>
@@ -632,7 +632,7 @@ function CoreRow({
         <button
           onClick={onDisable}
           disabled={busy}
-          className="text-[10px] font-mono uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 shrink-0"
+          className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 shrink-0"
         >
           disable
         </button>
@@ -640,7 +640,7 @@ function CoreRow({
         <button
           onClick={onEnable}
           disabled={busy || blocked || !!m.retirement}
-          className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+          className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           enable
         </button>

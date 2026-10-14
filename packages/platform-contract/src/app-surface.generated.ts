@@ -366,15 +366,18 @@ export const GENERATED_SURFACE: Capability[] = [
     ]
   },
   {
-    "feature": "Record actions",
-    "does": "Arrange action menus, choose primary actions and hide actions for each kind of record.",
+    "feature": "Record actions and panels",
+    "does": "Hide or reorder the panels on each kind of record, and arrange its action menus, primary actions and hidden actions.",
     "where": "/configuration/record-actions",
     "also": [
       "menus",
       "buttons",
       "pin",
       "groups",
-      "toolbar"
+      "toolbar",
+      "panels",
+      "hide",
+      "order"
     ]
   },
   {

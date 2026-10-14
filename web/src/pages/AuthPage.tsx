@@ -183,7 +183,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
                 right instance before logging in. Prod = no chip. */}
             {envBadge && (
               <span
-                className={`inline-block mt-1.5 rounded px-2 py-0.5 text-[10px] font-mono font-bold uppercase tracking-widest ${envBadge.chip}`}
+                className={`inline-block mt-1.5 rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest ${envBadge.chip}`}
               >
                 {envBadge.label}
               </span>
@@ -222,8 +222,8 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             aria-live="polite"
             className="bg-surface dark:bg-slate-900/70 backdrop-blur border border-line dark:border-slate-700 rounded-xl p-6 shadow-sm text-center space-y-4"
           >
-            <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-              // account created
+            <div className="text-[10px] uppercase tracking-widest text-accent">
+              account created
             </div>
             <div
               className="mx-auto h-8 w-8 rounded-full border-2 border-cobble-200 border-t-cobble-600 animate-spin"
@@ -252,8 +252,8 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           onSubmit={submit}
           className="bg-surface dark:bg-slate-900/70 backdrop-blur border border-line dark:border-slate-700 rounded-xl p-5 shadow-sm space-y-3"
         >
-          <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1">
-            // {mode === "login" ? "sign in" : "create account"}
+          <div className="text-[10px] uppercase tracking-widest text-accent mb-1">
+            {mode === "login" ? "sign in" : "create account"}
           </div>
 
           {mode === "signup" && (
@@ -388,7 +388,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
         {label}
       </span>
       {children}

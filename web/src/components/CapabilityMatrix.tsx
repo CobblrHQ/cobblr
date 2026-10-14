@@ -217,8 +217,8 @@ export function CapabilityMatrix({
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
       <div className="px-4 py-3 border-b border-line dark:border-slate-800 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
-          // who can do what
+        <span className="text-[10px] uppercase tracking-widest text-accent">
+          who can do what
         </span>
         <span className="inline-flex items-center gap-1 text-[11px] text-faint dark:text-slate-500">
           <Shield size={11} className="text-accent" /> implicit
@@ -246,7 +246,7 @@ export function CapabilityMatrix({
         <table className="w-full text-sm border-separate border-spacing-0">
           <thead>
             <tr>
-              <th className="sticky-in-scroller left-0 z-30 bg-subtle dark:bg-slate-800 border-b border-line dark:border-slate-700 text-left text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 px-3 py-2 min-w-[16rem]">
+              <th className="sticky-in-scroller left-0 z-30 bg-subtle dark:bg-slate-800 border-b border-line dark:border-slate-700 text-left text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 px-3 py-2 min-w-[16rem]">
                 Capability
               </th>
               {columns.map((c) => (

@@ -38,6 +38,7 @@ import {
   type StationLookup,
   type StationMove,
   type StationRecord,
+  type StationRecountAnswer,
   type StationRecordNow,
   type StationActionRun,
   type StationSettings,
@@ -49,7 +50,7 @@ import { findTracked } from "../services/entity-match.js";
 import { matchQuery, trackedMatchStampAt } from "../services/tracked-stamp.js";
 import { moveQuantity, scanTargetOf } from "../services/scan-target.js";
 import { isActionStep, type ActionUndoStep } from "@cobblr/platform-contract/action-undo";
-import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 
 export const stationsRouter = Router({ mergeParams: true });
 
@@ -521,6 +522,74 @@ function actorOf(req: Request): ActionInvokeActor {
   const auth_method = s.auth_method === "session" ? "session" : "api_token";
   return { user_id: s.id, display_name: s.display_name ?? null, auth_method, api_token_id: s.api_token_id ?? null, api_token_name: null };
 }
+
+const RecountBody = z.object({
+  code: optionalText(500),
+  record_id: optionalUuid(),
+  type_id: optionalUuid(),
+  new: z.boolean().optional(),
+  text: optionalText(400),
+});
+
+// A station set to a recount (#6302) counts each thing scanned into it, through
+// inventory's own recount door, and changes no stock: several screens and
+// phones holding the station's QR can count one collection at once, and the
+// recount keeps any one record from being counted twice. Nothing on the
+// records changes until a person finishes the recount.
+// AI-REACH: exempt, the tablet's scan into its recount; the assistant scans into a recount through inventory:recount-scan.
+stationsRouter.post(
+  "/stations/screens/:address/recount",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const address = addressOf(req);
+    if (!address) return void res.status(404).json({ error: { code: "not_found", message: "No such station." } });
+    const parsed = RecountBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const b = parsed.data;
+    const { org } = tenantContext(req);
+    const { settings, label } = await screenOf(tenantDb(req), address);
+    if (!settings.recount_id) {
+      return void res.status(409).json({ error: { code: "not_recounting", message: `${label} is not counting a recount. Choose one in its settings.` } });
+    }
+    if (isQrPhone(req) && qrTooFast(req)) {
+      return void res.status(429).json({ error: { code: "too_fast", message: "That is a lot of scans. Wait a minute, then try again." } });
+    }
+    let result: unknown;
+    try {
+      result = await platform().actions.invoke("inventory:recount-scan", {
+        orgId: org.id,
+        userId: sessionUser(req).id,
+        scope: "workspace",
+        event: { name: null, payload: {}, actor: actorOf(req), timestamp: new Date().toISOString(), trigger_type: "user-invoked" },
+        args: {
+          recount_id: settings.recount_id,
+          ...(b.code ? { barcode: b.code } : {}),
+          ...(b.text ? { text: b.text } : {}),
+          ...(b.record_id ? { record_id: b.record_id } : {}),
+          ...(b.type_id ? { type_id: b.type_id } : {}),
+          ...(b.new ? { new: true } : {}),
+          ...(settings.new_location_id ? { place_id: settings.new_location_id } : {}),
+        },
+      });
+    } catch (err) {
+      const refusal = (err as { name?: string; message?: string } | null)?.name === "ActionRefusal" ? (err as Error).message : null;
+      if (!refusal) console.error(`[core-scan] station ${address} recount scan failed:`, err);
+      return void res.status(409).json({ error: { code: "recount_refused", message: refusal ?? "That scan could not be counted. Scan it again." } });
+    }
+    const r = result as { ok?: unknown; error?: unknown; summary?: unknown; data?: Record<string, unknown> } | null;
+    if (r?.ok !== true) {
+      return void res.status(409).json({ error: { code: "recount_refused", message: typeof r?.error === "string" && r.error ? r.error : "That scan could not be counted." } });
+    }
+    const d = r.data ?? {};
+    const answer: StationRecountAnswer = {
+      result: d.result === "ask" || d.result === "ask_type" || d.result === "new" ? d.result : "matched",
+      summary: typeof r.summary === "string" ? r.summary : "",
+      ...(Array.isArray(d.candidates) ? { candidates: d.candidates as StationRecountAnswer["candidates"] } : {}),
+      progress: (d.progress as StationRecountAnswer["progress"]) ?? null,
+    };
+    res.json(answer);
+  }),
+);
 
 // AI-REACH: exempt, the tablet's press of a record's own action; the assistant runs the same action through invoke_action.
 stationsRouter.post(

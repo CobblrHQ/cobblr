@@ -122,7 +122,7 @@ export function PortalViewPage() {
                   {item.title}
                 </div>
                 {item.subtitle && (
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 truncate">
+                  <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 truncate">
                     {item.subtitle}
                   </div>
                 )}

@@ -98,7 +98,7 @@ export function CalendarPage() {
           <button aria-label="Next month" onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Next month">
             <ChevronRight size={16} />
           </button>
-          <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] font-mono uppercase tracking-widest text-accent hover:underline">
+          <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] uppercase tracking-widest text-accent hover:underline">
             today
           </button>
         </div>
@@ -112,7 +112,7 @@ export function CalendarPage() {
       <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
         <div className="grid grid-cols-7 bg-surface dark:bg-slate-900 border-b border-line dark:border-slate-700">
           {WEEKDAYS.map((w) => (
-            <div key={w} className="px-2 py-1.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
+            <div key={w} className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
           ))}
         </div>
         <div className="grid grid-cols-7">
@@ -169,7 +169,7 @@ function WhereToBe({ events, onOpen }: { events: CalendarEvent[]; onOpen: (ev: C
   if (placed.length === 0) return null;
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3" data-testid="calendar-where">
-      <h2 className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">Where to be this month</h2>
+      <h2 className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-2">Where to be this month</h2>
       <ul className="divide-y divide-line dark:divide-slate-700">
         {placed.map((ev) => (
           <li key={ev.id} className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-baseline sm:gap-3" data-testid="calendar-where-row">

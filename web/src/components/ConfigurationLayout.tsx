@@ -143,7 +143,7 @@ export function ConfigSidebarBody() {
         <div key={g.id} className="mb-3">
           <NavLink
             to={`/configuration/s/${g.id}`}
-            className="block px-2.5 pt-1.5 pb-1 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent"
+            className="block px-2.5 pt-1.5 pb-1 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent"
           >
             {g.label}
           </NavLink>

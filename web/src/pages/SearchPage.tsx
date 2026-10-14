@@ -174,7 +174,7 @@ export function SearchPage() {
       {/* Active filter chips — clear individually with the × button. */}
       {(tag || selectedKinds.size > 0 || q) && (
         <div className="flex items-center gap-2 flex-wrap text-xs">
-          <span className="font-mono uppercase tracking-wider text-faint text-[10px]">
+          <span className="uppercase tracking-wider text-faint text-[10px]">
             filters
           </span>
           {q && (
@@ -195,7 +195,7 @@ export function SearchPage() {
 
       {/* Kind picker — list each registered kind as a toggleable chip. */}
       <div role="group" aria-label="Kinds to search" className="flex items-center gap-2 flex-wrap text-xs">
-        <span className="font-mono uppercase tracking-wider text-faint text-[10px]">
+        <span className="uppercase tracking-wider text-faint text-[10px]">
           kinds
         </span>
         {(entityKinds.data?.items ?? []).map((k) => {
@@ -222,7 +222,7 @@ export function SearchPage() {
 
       {/* Tag input — narrow to entities carrying a tag, no view required. */}
       <div className="flex items-center gap-2 text-xs">
-        <span className="font-mono uppercase tracking-wider text-faint text-[10px]">
+        <span className="uppercase tracking-wider text-faint text-[10px]">
           tag
         </span>
         <SearchInput value={tag ?? ""} onChange={(v) => setParam("tag", v || null)} placeholder="filter by tag name…" aria-label="Filter by tag name" size="sm" wrapperClassName="w-48" />
@@ -302,7 +302,7 @@ export function SearchPage() {
                     )}
                   </span>
                   {locName(h) && (
-                    <span className="ml-auto shrink-0 font-mono text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5">
+                    <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5">
                       {locName(h)}
                     </span>
                   )}

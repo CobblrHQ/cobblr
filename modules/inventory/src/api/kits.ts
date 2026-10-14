@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { ActionRefusal, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { ActionRefusal, KindRefRegex, platform, readJsonArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 import { checkKitOutput, checkKitReservation, groupKitLines, kitFingerprint } from "../kit-reservation.js";
 import { storageView } from "./storage.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { stockMoved } from "./stock-moved.js";
 const Request = z.object({
-  target_kind: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/), target_id: z.string().uuid(), operation: z.enum(["reserve", "check", "release", "consume"]),
+  target_kind: z.string().regex(KindRefRegex), target_id: z.string().uuid(), operation: z.enum(["reserve", "check", "release", "consume"]),
   lines: z.array(z.object({ part_id: z.string().uuid(), kind: z.string().min(3), qty: z.number().int().positive().max(1_000_000_000), role: z.enum(["component", "blank"]).optional() })).max(5000).optional(),
   output: z.object({ part_id: z.string().uuid(), kind: z.string().min(3), qty: z.number().int().positive().max(1_000_000) }).optional(),
   confirmed_placed: z.boolean().default(false),

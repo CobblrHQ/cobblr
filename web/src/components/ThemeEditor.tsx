@@ -55,7 +55,7 @@ export function ThemeEditor({
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-[10px] font-mono uppercase tracking-widest text-faint">Look &amp; feel</span>
+        <span className="text-[10px] uppercase tracking-widest text-faint">Look &amp; feel</span>
         {theme && (
           <button type="button" onClick={() => onChange(null)} className="text-[11px] text-faint hover:text-ember-500">
             Reset to default
@@ -78,7 +78,7 @@ export function ThemeEditor({
       </div>
       <div className="flex flex-wrap gap-4 items-end">
         <label className="text-xs text-content dark:text-mortar-200">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Font</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Font</span>
           <select
             value={theme?.font ?? "sans"}
             onChange={(e) => onChange({ font: e.target.value as AppTheme["font"] })}
@@ -92,7 +92,7 @@ export function ThemeEditor({
           </select>
         </label>
         <label className="text-xs text-content dark:text-mortar-200">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Corners (px)</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Corners (px)</span>
           <NumberField
             min={0}
             max={36}
@@ -113,7 +113,7 @@ export function ThemeEditor({
             <div className="w-9 h-9 rounded border border-dashed border-line dark:border-slate-600" />
           )}
           <div className="text-xs">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Logo</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Logo</span>
             <label className="text-accent hover:underline cursor-pointer">
               upload
               <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadAsset(e.target.files?.[0], "logo", 500_000)} />
@@ -124,7 +124,7 @@ export function ThemeEditor({
           </div>
         </div>
         <div className="text-xs">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Custom font</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">Custom font</span>
           <div className="flex items-center gap-2">
             <label className="text-accent hover:underline cursor-pointer">
               {theme?.font_url ? "replace" : "upload"}

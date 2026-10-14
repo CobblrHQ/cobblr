@@ -56,7 +56,7 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
 
           {others.length > 0 && (
             <div>
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+              <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
                 Your other workspaces
               </div>
               <ul className="border border-line dark:border-slate-700 rounded divide-y divide-slate-100 dark:divide-slate-800">

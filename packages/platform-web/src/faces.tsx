@@ -13,6 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FACE_LABELS, FACE_NAMES, type FaceName } from "@cobblr/platform-contract/field-vocabulary";
 import { usePlatformWeb } from "./context";
 import { MutationError } from "./MutationError";
+import { useRunAction } from "./run-action";
 
 export interface FacesVerdict {
   kind: string;
@@ -75,24 +76,21 @@ const Opened = createContext<{ opened: ReadonlySet<FaceName>; open: (f: FaceName
 
 /** Wrap a record's detail body. Sections ask `useFaceOn(face)`; the row at
  *  the bottom offers whatever is dormant. */
-export function RecordFaces({
-  kind,
-  /** The override target the collection's config lives under: an instance's
-   *  `<module>:<instance>`, or a base kind's own id. */
-  target,
-  children,
-}: {
-  kind: string;
-  target: { target_kind: "instance" | "entity_kind"; target_id: string };
-  children: ReactNode;
-}) {
-  const { api, orgSlug } = usePlatformWeb();
+export function RecordFaces({ kind, children }: { kind: string; children: ReactNode }) {
+  const { orgSlug } = usePlatformWeb();
   const qc = useQueryClient();
   const { on, verdict } = useFaces(kind);
   const [opened, setOpened] = useState<Set<FaceName>>(new Set());
+  // The assistant's door too (platform:set-faces), so "+ Lending" is
+  // something Cobb and the MCP server can do, and it offers its Undo.
+  // PRESS-ARGS: the chip is the face it turns on and the kind is this record's; nothing is left to ask.
+  const runAction = useRunAction();
   const turnOn = useMutation({
-    mutationFn: (face: FaceName) =>
-      api.upsertOverride!(orgSlug, { ...target, config: { faces: { ...(verdict ? Object.fromEntries(verdict.explicit.map((f) => [f, verdict.faces.includes(f)])) : {}), [face]: true } } }),
+    mutationFn: async (face: FaceName) => {
+      const run = await runAction({ actionId: "platform:set-faces", args: { entity_kind: kind, on: [face] } });
+      const res = run.result as { ok?: boolean; error?: string } | null;
+      if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
+    },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["faces", orgSlug, kind] }),
   });
   const ctx = useMemo(
@@ -111,7 +109,7 @@ export function RecordFaces({
       {children}
       {dormant.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-line dark:border-slate-700">
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">More about this item</span>
+          <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">More about this item</span>
           {dormant.map((f) => (
             <button
               key={f}

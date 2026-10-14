@@ -324,7 +324,7 @@ function stationQrScopeAllows(key: string, method: string, rel: string): boolean
   if (!address) return false;
   const own = `^${ORG}/modules/core-scan/stations/screens/${address}`;
   if (method === "GET" && new RegExp(`${own}(/actions|/scans/next)?$`).test(rel)) return true;
-  if (method === "POST" && new RegExp(`${own}/(lookup|count|undo|actions/run|actions/undo)$`).test(rel)) return true;
+  if (method === "POST" && new RegExp(`${own}/(lookup|count|undo|actions/run|actions/undo|recount)$`).test(rel)) return true;
   return STATION_QR_READS.some(([m, re]) => m === method && re.test(rel));
 }
 

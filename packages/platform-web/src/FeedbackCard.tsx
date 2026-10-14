@@ -44,7 +44,7 @@ export function PriorityChip({ priority }: { priority: "urgent" | "high" | "medi
   return (
     <span
       className={
-        "px-1.5 py-0.5 rounded font-mono uppercase text-[10px] font-semibold " +
+        "px-1.5 py-0.5 rounded uppercase text-[10px] font-semibold " +
         (PRIORITY_CHIP[priority] ?? PRIORITY_CHIP.low)
       }
     >
@@ -152,7 +152,7 @@ export function FeedbackCard({
           </span>
         )}
         <span>
-          {emoji} <span className="font-mono uppercase text-accent">{typeLabel}</span>
+          {emoji} <span className="uppercase text-accent">{typeLabel}</span>
         </span>
         {f.triage_priority && <PriorityChip priority={f.triage_priority} />}
         {f.origin === "discord" && (
@@ -253,7 +253,7 @@ export function FeedbackCard({
       )}
       {f.followups?.length > 0 && (
         <div className="border-l-2 border-indigo-300 dark:border-indigo-700 pl-2.5 space-y-1.5">
-          <div className="text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
+          <div className="text-[10px] uppercase tracking-wide text-faint dark:text-slate-500">
             💬 {f.followups.length} follow-up{f.followups.length === 1 ? "" : "s"}
           </div>
           {f.followups.map((fu, i) => (
@@ -266,7 +266,7 @@ export function FeedbackCard({
       )}
       {f.triaged_at && (
         <div className="rounded-lg border border-line/70 dark:border-slate-800 bg-subtle/60 dark:bg-slate-800/40 p-2.5 space-y-1.5">
-          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-faint dark:text-slate-500">
             <span>🤖 AI triage</span>
             <ValidViableChip ok={(f as { triage_valid?: boolean | null }).triage_valid ?? null} label="valid" />
             <ValidViableChip ok={(f as { triage_viable?: boolean | null }).triage_viable ?? null} label="viable" />

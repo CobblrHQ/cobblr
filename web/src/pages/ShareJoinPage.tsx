@@ -8,6 +8,7 @@
 
 import { dropShareInvite, holdShareInvite } from "../lib/share-invite-pending";
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { usePageTitle, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
@@ -15,8 +16,8 @@ import { useAuth } from "../auth/AuthContext";
 import { urlHandleFor } from "../auth/ActiveOrgContext";
 import { CenteredCard } from "../components/CenteredCard";
 
-function inviteFromHash(): { raw: string; from: string | null; name: string | null; workspace: string | null; own: boolean } | null {
-  const raw = window.location.hash.replace(/^#/, "");
+function inviteFromHash(hash: string): { raw: string; from: string | null; name: string | null; workspace: string | null; own: boolean } | null {
+  const raw = hash.replace(/^#/, "");
   if (!raw) return null;
   try {
     const t = JSON.parse(atob(raw.replace(/-/g, "+").replace(/_/g, "/"))) as { u?: string; n?: string; w?: string; p?: string };
@@ -27,7 +28,8 @@ function inviteFromHash(): { raw: string; from: string | null; name: string | nu
 }
 
 export function ShareJoinPage() {
-  const invite = inviteFromHash();
+  const { hash } = useLocation();
+  const invite = inviteFromHash(hash);
   usePageTitle(invite?.own ? "Connect your other Cobblr" : "A share for you");
   const { user } = useAuth();
   const toast = useToast();

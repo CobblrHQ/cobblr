@@ -93,7 +93,7 @@ function PrintingProfileForm({ slug, machineId }: { slug: string; machineId: str
 
   return (
     <section data-testid="printing-profile" className="space-y-3 rounded-lg border border-line dark:border-slate-700 p-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
         <SlidersHorizontal size={12} aria-hidden />
         Printing profile
       </div>

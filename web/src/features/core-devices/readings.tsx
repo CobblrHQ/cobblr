@@ -8,7 +8,7 @@ export function ReadingsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const items = readings.data?.items ?? [];
   if (!items.length) return null;
   return <section className="space-y-2">
-    <h3 className="text-[10px] font-mono uppercase tracking-widest text-accent">Sensor readings</h3>
+    <h3 className="text-[10px] uppercase tracking-widest text-accent">Sensor readings</h3>
     {items.map(item => <p key={item.id} className="text-sm"><span className="text-muted">{item.device}: </span>{item.value === null ? "Waiting for a reading" : `${item.value} ${item.unit || ""}`}{item.sampled_at && <span className="text-xs text-muted"> · {new Date(item.sampled_at).toLocaleString()}</span>}</p>)}
   </section>;
 }

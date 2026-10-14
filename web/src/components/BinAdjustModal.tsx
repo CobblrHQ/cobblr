@@ -127,7 +127,7 @@ export function BinAdjustModal({
           <div className="min-w-0 flex-1">
             <div className="font-medium text-content dark:text-mortar-100 leading-snug">{item.title}</div>
             {item.subtitle && <div className="text-xs text-muted truncate">{item.subtitle}</div>}
-            <div className="text-[11px] font-mono uppercase tracking-widest text-muted mt-0.5">
+            <div className="text-[11px] uppercase tracking-widest text-muted mt-0.5">
               the only {labels.noun(item.kind)} in this bin
             </div>
           </div>
@@ -167,7 +167,7 @@ export function BinAdjustModal({
             />
             {[1, 5, 10].map(chip)}
           </div>
-          <div className="mt-1 text-center text-[11px] font-mono uppercase tracking-widest text-muted">
+          <div className="mt-1 text-center text-[11px] uppercase tracking-widest text-muted">
             {!valid ? (
               <span className="text-ember-600 dark:text-ember-300 normal-case tracking-normal">A count is a whole number, 0 or more</span>
             ) : pending ? (

@@ -100,8 +100,8 @@ export function ActionsPage() {
         return (
           <>
             <div className="space-y-3">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-accent">
-                // tunable - trait-based, adjust per axis
+              <div className="text-[10px] uppercase tracking-widest text-accent">
+                tunable - trait-based, adjust per axis
               </div>
               {tunable.length === 0 ? (
                 <p className="text-sm text-faint dark:text-slate-500">
@@ -112,8 +112,8 @@ export function ActionsPage() {
               )}
             </div>
             <div className="space-y-3 pt-4">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
-                // fixed scope - declared by each module, shown for reference
+              <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
+                fixed scope - declared by each module, shown for reference
               </div>
               <p className="text-xs text-faint dark:text-slate-500">
                 These actions' scope is part of their module's code: either a
@@ -189,7 +189,7 @@ function ActionCard({
         </span>
         <span className="text-[10px] font-mono text-faint">{action.id}</span>
         {action.overridden && (
-          <span className="text-[10px] font-mono uppercase tracking-widest text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+          <span className="text-[10px] uppercase tracking-widest text-accent dark:text-cobble-300 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
             overridden
           </span>
         )}
@@ -221,7 +221,7 @@ function ActionCard({
 
         {editable && (
           <>
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">
+            <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
               applies to entities matching
             </div>
             <TraitScopePicker
@@ -236,7 +236,7 @@ function ActionCard({
               <button
                 onClick={() => save.mutate()}
                 disabled={!dirty || selected.size === 0 || save.isPending}
-                className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded border border-cobble-300 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                className="text-[10px] uppercase tracking-widest px-3 py-1.5 rounded border border-cobble-300 dark:border-cobble-700 text-accent dark:text-cobble-300 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 save
               </button>
@@ -244,7 +244,7 @@ function ActionCard({
                 <button
                   onClick={() => revert.mutate()}
                   disabled={revert.isPending}
-                  className="text-[10px] font-mono uppercase tracking-widest px-3 py-1.5 rounded text-faint hover:text-ember-500 transition flex items-center gap-1"
+                  className="text-[10px] uppercase tracking-widest px-3 py-1.5 rounded text-faint hover:text-ember-500 transition flex items-center gap-1"
                 >
                   <RotateCcw size={11} />
                   revert to default

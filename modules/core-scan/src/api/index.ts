@@ -28,6 +28,17 @@ import { registerOperatorServices } from "../services/operator-services.js";
 import { offerIntake } from "../services/offer-intake.js";
 import { offersRouter } from "./offers.js";
 import { platform } from "@cobblr/platform-contract";
+import { registerAddThingsFromPhotoAction } from "./add-things-from-photo-action.js";
+import { registerUndoSplitAction } from "./undo-split-action.js";
+import { registerRedoSplitAction } from "./redo-split-action.js";
+import { registerRanOutAction } from "./ran-out-action.js";
+
+registerRanOutAction();
+
+registerUndoSplitAction();
+registerRedoSplitAction();
+
+registerAddThingsFromPhotoAction();
 
 registerPersonalDocumentReader(readPersonalDocumentLocally);
 registerScanHandlers();

@@ -209,3 +209,26 @@ export async function outboundEmailLog(orgId: string, source?: { kind: string; i
   if (source) q = q.where("source_kind", "=", source.kind).where("source_id", "=", source.id);
   return q.orderBy("created_at", "desc").limit(limit).execute();
 }
+
+/** Send a test to the person asking, so they see it arrive before a customer
+ *  does. Only ever to their own account's address: the Email screen's Send a
+ *  test and the assistant's platform:test-outbound-email (#6528). */
+export async function sendOutboundTest(orgId: string, orgName: string, userId: string, subject?: string | null) {
+  const { meta } = await import("../db/meta.js");
+  const me = await meta.selectFrom("users").select(["email"]).where("id", "=", userId).executeTakeFirst();
+  if (!me?.email) return { ok: false as const, status: 400, code: "no_address", message: "Your account has no email address to send the test to." };
+  const { sendLimitRefusal } = await import("./send-limits.js");
+  const limited = await sendLimitRefusal(orgId, "test_email");
+  if (limited) return { ok: false as const, status: 429, code: "rate_limited", message: limited };
+  const r = await sendFromWorkspace(orgId, {
+    to: me.email,
+    subject: subject?.trim().slice(0, 200) || "Test from Cobblr",
+    text: `This is a test of ${orgName}'s outbound email. If you can read it, emails to your customers will arrive the same way.`,
+    sentBy: userId,
+  });
+  if (!r.ok) return { ok: false as const, status: r.reason === "not_configured" ? 409 : 502, code: r.reason, message: r.message };
+  // Counted by send-limits: a test that went out is one of the hour's.
+  const { log } = await import("./activity.js");
+  await log({ orgId, userId, action: "outbound_email_tested", ref: { module: null, entityType: "org", entityId: orgId }, diff: { to: me.email } });
+  return { ok: true as const, to: me.email, status: r.status };
+}

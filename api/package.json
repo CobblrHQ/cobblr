@@ -36,6 +36,7 @@
     "pg": "^8.13.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
+    "postal-mime": "^2.7.6",
     "rrule": "^2.8.1",
     "sharp": "^0.33.5",
     "ts-tracking-number": "^1.0.17",

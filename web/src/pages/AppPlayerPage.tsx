@@ -398,7 +398,7 @@ function ViewBlock({
                   {item.title}
                 </div>
                 {item.subtitle && (
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint truncate" style={mutedStyle(theme)}>
+                  <div className="text-[10px] uppercase tracking-widest text-faint truncate" style={mutedStyle(theme)}>
                     {item.subtitle}
                   </div>
                 )}
@@ -450,7 +450,7 @@ function StatBlock({
       <span className="text-2xl font-bold text-content dark:text-mortar-100 tabular-nums" style={accentStyle(theme)}>
         {value === null ? "…" : `${value.toLocaleString()}${floor ? "+" : ""}`}
       </span>
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint mt-0.5" style={mutedStyle(theme)}>
+      <span className="text-[10px] uppercase tracking-widest text-faint mt-0.5" style={mutedStyle(theme)}>
         {label ?? (agg === "count" ? "count" : `sum ${field ?? ""}${times ? ` × ${times}` : ""}`)}
       </span>
     </div>
@@ -662,7 +662,7 @@ function RecordView({
             {ent.data.title}
           </h2>
           {ent.data.subtitle && (
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <div className="text-[10px] uppercase tracking-widest text-faint">
               {ent.data.subtitle}
             </div>
           )}
@@ -673,7 +673,7 @@ function RecordView({
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
           {fields.map(([k, v]) => (
             <div key={k} className="min-w-0">
-              <dt className="text-[10px] font-mono uppercase tracking-widest text-faint">
+              <dt className="text-[10px] uppercase tracking-widest text-faint">
                 {k}
               </dt>
               <dd className="text-content dark:text-mortar-100 truncate">

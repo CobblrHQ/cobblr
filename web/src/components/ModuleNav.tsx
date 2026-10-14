@@ -33,7 +33,7 @@ import { isInvoluntaryFold, layoutExpressed, shouldOfferSidebar } from "../lib/n
 import { NavCountBadge } from "./NavCountBadge";
 import { useNavBadges } from "./useNavBadges";
 import { useNavModules, HEADING_PREFIX, NAVGROUP_PREFIX, navTargetFor, surfaceTops } from "./useNavModules";
-import { PopoverLayer, lazyOverlay } from "@cobblr/platform-web";
+import { FloatingChrome, PopoverLayer, lazyOverlay } from "@cobblr/platform-web";
 
 const ModulePickerModal = lazyOverlay(() => import("./ModulePickerModal").then((m) => ({ default: m.ModulePickerModal })));
 import { NavSplitRow, NavRowMenu } from "./NavSplitRow";
@@ -289,7 +289,7 @@ function MoreMenu({
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
 
   useLayoutEffect(() => {
-    if ((!open && !offerSidebar) || !triggerRef.current) return;
+    if (!open || !triggerRef.current) return;
     function reposition() {
       const r = triggerRef.current!.getBoundingClientRect();
       // Right-align the 256px panel to the trigger so it never runs off
@@ -303,7 +303,7 @@ function MoreMenu({
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [open, offerSidebar]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -380,7 +380,7 @@ function MoreMenu({
                       <NavCountBadge count={badge} label={top.displayName} className="ml-auto" />
                     </NavLink>
                   ) : (
-                    <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+                    <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
                       {top.displayName}
                     </div>
                   )}
@@ -420,45 +420,41 @@ function MoreMenu({
         </PopoverLayer>,
         document.body,
       )}
-      {/* The one-time offer: a small card, not a modal, anchored where the
-          fold just happened. Both answers write a layout to the account, so
-          the dismissal is the record and nothing new is stored. */}
-      {offerSidebar && pos && createPortal(
-        <PopoverLayer
-          role="dialog"
+      {/* The one-time offer: a bar along the top, not a modal. A card over
+          the page covered what was under it (a metric's name, a tag's Edit)
+          until it was answered (#6499), so it takes its own room at the top,
+          as the new-version notice does, and the page starts below it. Both
+          answers write a layout to the account, so the dismissal is the
+          record and nothing new is stored. */}
+      {offerSidebar && (
+        <FloatingChrome
+          anchor="top"
+          reserveTop
+          yields={false}
+          role="region"
           aria-label="Switch to the sidebar?"
           data-nav-graduation-offer
-          // Right edge on the trigger, like the menu; wider than the menu so
-          // the two buttons sit on one line each (they wrapped at w-64).
-          style={{ left: Math.max(8, pos.left + 256 - 304), top: pos.top + 6 }}
-          className="w-[304px] rounded-xl border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 shadow-lg z-[59] p-3 space-y-2"
+          className="z-[59] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2 text-center shadow-sm"
         >
-          <p className="text-[13px] text-content dark:text-mortar-100 leading-snug">
-            Your workspace outgrew the top bar. Switch to the sidebar?
-          </p>
+          <span className="text-[13px] text-content dark:text-mortar-100">Your workspace outgrew the top bar. Switch to the sidebar?</span>
           {/* Both buttons write a permanent preference, so neither may promise
               a trial: "Try it" did, and was not one. */}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setNavLayout("side")}
-              className="px-2.5 py-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium whitespace-nowrap transition"
-            >
-              Use the sidebar
-            </button>
-            <button
-              type="button"
-              onClick={() => setNavLayout("top")}
-              className="px-2.5 py-1 rounded-md border border-line dark:border-slate-600 text-xs text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 whitespace-nowrap transition"
-            >
-              Keep the top bar
-            </button>
-          </div>
-          <p className="text-[11px] text-faint dark:text-slate-500 leading-snug">
-            Change it anytime in Your account → Appearance.
-          </p>
-        </PopoverLayer>,
-        document.body,
+          <button
+            type="button"
+            onClick={() => setNavLayout("side")}
+            className="px-2.5 py-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium whitespace-nowrap transition"
+          >
+            Use the sidebar
+          </button>
+          <button
+            type="button"
+            onClick={() => setNavLayout("top")}
+            className="px-2.5 py-1 rounded-md border border-line dark:border-slate-600 text-xs text-muted dark:text-slate-400 hover:text-content dark:hover:text-mortar-100 whitespace-nowrap transition"
+          >
+            Keep the top bar
+          </button>
+          <span className="text-[11px] text-faint dark:text-slate-500">Change it anytime in Your account → Appearance.</span>
+        </FloatingChrome>
       )}
     </div>
   );
@@ -592,9 +588,9 @@ function ModuleGroupChip({
           onMouseEnter={stayOpen}
           onMouseLeave={hoverClose}
           style={{ left: pos.left, top: pos.top }}
-          className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60] overflow-hidden"
+          className="w-64 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-lg z-[60]"
         >
-          <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+          <div className="px-3 py-2 border-b border-line dark:border-slate-700 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             {parent.name.startsWith(HEADING_PREFIX)
               ? parent.displayName.toLowerCase()
               : (parent.groupLabel?.toLowerCase()

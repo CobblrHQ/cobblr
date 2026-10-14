@@ -339,7 +339,7 @@ export function PlaceItemsView({
     <div className="flex flex-col min-h-0 gap-2" data-testid="place-preview">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint">In</div>
+          <div className="text-[10px] uppercase tracking-widest text-faint">In</div>
           <div className="font-medium text-content dark:text-mortar-100">{pathOf(previewId, byId)}</div>
           <div className="text-xs text-muted">
             {previewRows.length === 0 ? "Nothing here yet" : `${previewRows.length} ${previewRows.length === 1 ? "thing" : "things"} here`}
@@ -491,7 +491,7 @@ export function PlaceItemsView({
             </span>
             {sheetOpen ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
           </button>
-          {sheetOpen && <div className="h-[55dvh] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex flex-col">{railBody}</div>}
+          {sheetOpen && <div className="h-[55dvh] px-3 pb-3 flex flex-col">{railBody}</div>}
         </FloatingChrome>
       )}
 

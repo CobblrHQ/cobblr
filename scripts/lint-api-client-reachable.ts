@@ -26,7 +26,7 @@ const BASELINE = new Set([
   "markNotificationRead", "markAllNotificationsRead", "mintAppToken",
   "setDigifabDevicePosition", "patchDigifabChannel", "deleteInstance",
   "updateNavHeading", "updateSyncConnection", "putawayConfirm", "setupPutawayBins",
-  "putawayUndo", "getPutawayCurrent", "backfillScanCatalogPhotos", "matchScanItem",
+  "putawayUndo", "getPutawayCurrent", "backfillScanCatalogPhotos",
   "peekAnswer", "invokeAi", "aiChat", "aiChatWrites",
 ]);
 

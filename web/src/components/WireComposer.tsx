@@ -37,7 +37,7 @@ import {
   type WireTarget,
 } from "../lib/wire-composer";
 
-const L = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+const L = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
 
 // `editing` switches the composer to edit-an-existing-wire mode: state prefills
 // from the binding and Save PATCHes it (preserving id + firing history) instead
@@ -298,7 +298,7 @@ export function WireComposer({
       }}
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4"
     >
-      <div className="text-[10px] font-mono uppercase tracking-widest text-accent">{ed ? "// edit wire" : "// new wire"}</div>
+      <div className="text-[10px] uppercase tracking-widest text-accent">{ed ? "edit wire" : "new wire"}</div>
 
       {/* live plain-language preview — a read-only summary of the wire, not an
           editable field; styled as a left-accent callout so it doesn't read like
@@ -595,7 +595,7 @@ export function WireComposer({
         <button
           type="button"
           onClick={() => setShowConds((v) => !v)}
-          className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent transition"
+          className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent transition"
         >
           {showConds ? "▾" : "▸"} only when {conditions.filter((c) => c.path.trim()).length > 0 ? `${conditions.filter((c) => c.path.trim()).length} condition${conditions.filter((c) => c.path.trim()).length === 1 ? "" : "s"} hold` : "… (conditions, optional)"}
         </button>
@@ -659,7 +659,7 @@ export function WireComposer({
         <button
           type="button"
           onClick={() => setShowTarget((s) => !s)}
-          className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent transition"
+          className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 hover:text-accent transition"
         >
           {showTarget ? "▾" : "▸"} run on {target === "self" ? "the record itself" : "linked records"} (advanced)
         </button>

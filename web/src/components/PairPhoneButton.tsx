@@ -107,6 +107,23 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [addrIdx, setAddrIdx] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // An Offline CA install: the phone must trust this box's certificate once, or
+  // its camera never opens (a camera needs a secure context). The box serves the
+  // certificate on plain HTTP; this is the QR to it (#6443).
+  const [certUrl, setCertUrl] = useState<string | null>(null);
+  const certCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.authConfig().then((c) => { if (!cancelled) setCertUrl(c.phone_certificate_url ?? null); }, () => { /* no step to show: the pairing QR still works */ });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (!certUrl || !certCanvasRef.current) return;
+    const canvas = certCanvasRef.current;
+    void import("qrcode").then(({ default: QRCode }) => QRCode.toCanvas(canvas, certUrl, { width: 160, margin: 4, color: { dark: "#1e293b", light: "#ffffff" } }).catch(() => {
+      /* canvas failed: the printed address below is the fallback */
+    }));
+  }, [certUrl, phase]);
 
   const claimUrl = info ? info.claim_options[addrIdx]?.url ?? "" : "";
 
@@ -192,6 +209,20 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
 
         {phase === "showing" && info && (
           <>
+            {certUrl && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/15 p-3 space-y-2" data-testid="pair-trust-certificate">
+                <div className="text-xs font-semibold text-content dark:text-mortar-100">1 · Trust this box, once per phone</div>
+                <p className="text-[11px] text-muted dark:text-slate-400">
+                  This Cobblr signs its own certificate, so your phone has to trust it before the camera will open. Scan this, then:
+                  iPhone: install the profile, then Settings, General, About, Certificate Trust Settings, and turn it on. Android: install it as a CA certificate.
+                </p>
+                <div className="bg-white dark:bg-white rounded-md p-2 grid place-items-center">
+                  <canvas ref={certCanvasRef} />
+                </div>
+                <div className="font-mono text-[10px] break-all text-center text-content dark:text-mortar-200">{certUrl}</div>
+                <div className="text-xs font-semibold text-content dark:text-mortar-100 pt-1">2 · Sign your phone in</div>
+              </div>
+            )}
             <div className="bg-white border border-line dark:border-slate-700 rounded-lg p-3 grid place-items-center">
               <canvas ref={canvasRef} />
             </div>

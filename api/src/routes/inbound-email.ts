@@ -19,6 +19,12 @@
 
 import { ingestOrderEmail, orderEmailToken } from "../platform/order-email.js";
 import { Router } from "express";
+import { readFile } from "node:fs/promises";
+import { uploadedFile } from "@cobblr/platform-contract/upload";
+import { uploadMiddleware } from "../platform/uploads.js";
+import { requireAuth } from "../auth/middleware.js";
+import { withTenant } from "../middleware/tenant.js";
+import { payloadFromEml } from "../platform/email-delivery-door.js";
 import { z } from "zod";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
 import { isNoReplyAddress, replyTokenFrom } from "../platform/inbound-email-address.js";
@@ -76,7 +82,7 @@ interface DispatchResult {
 
 /** Route a payload to its handler. Shared by the live POST and reprocess, so a
  *  replayed message runs the identical pipeline. */
-async function dispatchInbound(payload: InboundPayload): Promise<DispatchResult> {
+export async function dispatchInbound(payload: InboundPayload, resolved?: { userId: string; orgId: string }): Promise<DispatchResult> {
   const { to, from_email, text, html, subject, message_id, attachments } = payload;
   // A reply to one of OUR one-way notifications (receipt-noreply@ / noreply@) is
   // NOT an ingest — dropping it stops a "what is this?" reply becoming a junk
@@ -96,7 +102,7 @@ async function dispatchInbound(payload: InboundPayload): Promise<DispatchResult>
     const out = await ingestOrderEmail(payload, orderToken);
     return { status: out.status, body: { handled: "order", ...out.body }, record: { handler: "order", org_id: out.orgId ?? null, user_id: out.userId ?? null, outcome: out.body } };
   }
-  const out = await ingestReceiptEmail({ to, from_email, text, html, subject, message_id, attachments: attachments ?? [] });
+  const out = await ingestReceiptEmail({ to, from_email, text, html, subject, message_id, attachments: attachments ?? [], ...(resolved ? { resolved } : {}) });
   return {
     status: out.status,
     body: { handled: "receipt", ...out.body },
@@ -170,6 +176,46 @@ inboundEmailRouter.post("/inbound-email/:id/reprocess", async (req, res, next) =
     const result = await dispatchInbound(payload);
     await recordInboundOutcome(id, result.record);
     res.status(result.status).json({ reprocessed: id, ...result.body });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── The staging delivery door (api/src/platform/email-delivery-door.ts) ──────
+// A signed-in member sends a recorded .eml to their own workspace; it goes
+// through the dispatcher the Email Worker's POST uses. Mounted only when the
+// stack switches it on (COBBLR_EMAIL_DELIVERY_DOOR), refused at boot on a node
+// that receives real mail or keeps a public request guard.
+
+export const emailDeliveryRouter = Router({ mergeParams: true });
+
+const emlUpload = uploadMiddleware({ maxBytes: 30 * 1024 * 1024, noun: "email", personalDocument: true });
+
+// UI-SCREEN: none (a harness door: walks and tests send a recorded email through it)
+// AI-REACH: exempt — a staging and harness door that stands in for the Email Worker; it is not mounted on a node that receives real mail, so there is nothing for the assistant to do with it
+emailDeliveryRouter.post("/:slug/email-delivery", requireAuth, withTenant, emlUpload, async (req, res, next) => {
+  // ROLE: any member (it files mail into the caller's own workspace, as forwarding to their own address would)
+  try {
+    const userId = (req as unknown as { session?: { id: string } }).session?.id;
+    const orgId = (req as unknown as { tenant?: { org: { id: string } } }).tenant?.org.id;
+    const file = uploadedFile(req);
+    if (!userId || !orgId) {
+      res.status(401).json({ error: { code: "no_auth", message: "Auth required." } });
+      return;
+    }
+    if (!file?.size) {
+      res.status(400).json({ error: { code: "no_file", message: "Send the .eml as the multipart field file." } });
+      return;
+    }
+    const payload = await payloadFromEml(await readFile(file.path), "receipts+delivery-door@staging.invalid");
+    if (!payload) {
+      res.status(200).json({ ignored: true, reason: "nothing_usable" });
+      return;
+    }
+    const archiveId = await archiveInboundEmail(payload);
+    const result = await dispatchInbound(payload, { userId, orgId });
+    if (archiveId) await recordInboundOutcome(archiveId, result.record);
+    res.status(result.status).json(archiveId ? { archive_id: archiveId, ...result.body } : result.body);
   } catch (err) {
     next(err);
   }

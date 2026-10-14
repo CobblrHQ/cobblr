@@ -71,7 +71,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
               location's metadata as-is.
             </div>
             <label className="block">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint block mb-1">CSV</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint block mb-1">CSV</span>
               <textarea value={csv} onChange={(e) => { setCsv(e.target.value); setPreview(null); }} rows={8} placeholder={"name,kind,parent,ext_id\nGarage,area,,12\nShelf 3,container,Garage,40"} className={field + " w-full font-mono text-xs"} />
             </label>
             <div className="flex items-center gap-3">

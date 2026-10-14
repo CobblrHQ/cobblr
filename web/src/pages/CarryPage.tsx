@@ -52,7 +52,7 @@ function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen grid place-items-center bg-canvas text-content px-6 py-10" data-testid="carry-page">
       <div className="max-w-lg w-full">
-        <p className="font-mono text-xs uppercase tracking-widest text-faint">from your trial</p>
+        <p className="text-xs uppercase tracking-widest text-faint">from your trial</p>
         {children}
       </div>
     </div>

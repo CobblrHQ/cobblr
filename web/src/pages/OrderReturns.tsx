@@ -74,7 +74,7 @@ export function OrderReturns({
   return (
     <section aria-label="Returns" data-testid="order-returns">
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-accent">// returns ({list.length})</div>
+        <div className="text-[10px] uppercase tracking-widest text-accent">returns ({list.length})</div>
         {arrived && returnable.length > 0 && startLine === null && (
           <button type="button" onClick={() => onStartLine("")} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline">
             <Undo2 size={13} /> Start a return

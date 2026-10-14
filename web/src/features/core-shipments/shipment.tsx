@@ -101,13 +101,13 @@ export function ShipmentPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
 
   if (!number) return null;
 
-  const head = "text-[10px] font-mono uppercase tracking-widest text-accent";
+  const head = "text-[10px] uppercase tracking-widest text-accent";
   const status = statusQ.data?.status ?? null;
   const style = status ? STATE_STYLE[status.state] : null;
 
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-      <div className={head}>// shipment</div>
+      <div className={head}>shipment</div>
 
       {carrierQ.isLoading ? (
         <div className="text-xs text-faint italic" aria-busy="true">

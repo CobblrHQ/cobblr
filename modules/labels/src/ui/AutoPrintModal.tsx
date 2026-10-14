@@ -101,7 +101,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
               until you turn it on, rather than appearing out of nowhere. */}
           <div className={`space-y-3 pl-6 transition-opacity ${enabled ? "" : "opacity-50 pointer-events-none select-none"}`} aria-disabled={!enabled}>
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">printer</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">printer</span>
               <select className={sel} value={printerId} onChange={(e) => setPrinterId(e.target.value)}>
                 <option value="">Choose a printer…</option>
                 {printers.map((p) => (
@@ -118,7 +118,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
 
             {!isBle && (
               <label className="flex flex-col gap-1">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">label size</span>
+                <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">label size</span>
                 <select className={sel} value={sizeKey} onChange={(e) => setSizeKey(e.target.value)}>
                   <option value="">Choose a size…</option>
                   <optgroup label="Built-in">
@@ -138,7 +138,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
             )}
 
             <label className="flex flex-col gap-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">print when</span>
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">print when</span>
               <select className={sel} value={mode} onChange={(e) => setMode(e.target.value as Exclude<FireMode, "manual">)}>
                 {(Object.keys(MODE_LABEL) as Array<keyof typeof MODE_LABEL>)
                   .filter((m) => !(isBle && m === "fill-media"))
@@ -150,7 +150,7 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
 
             {mode === "count" && (
               <label className="flex flex-col gap-1">
-                <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">every</span>
+                <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">every</span>
                 <div className="flex items-center gap-2">
                   <input type="number" min={1} max={200} value={count} onChange={(e) => setCount(e.target.value)} className={`${sel} w-20`} />
                   <span className="text-sm text-faint dark:text-slate-400">labels</span>

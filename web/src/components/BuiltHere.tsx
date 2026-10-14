@@ -111,7 +111,7 @@ export function BuiltHere({
   const lines = ledgerLines(ledger);
   return (
     <section className="mt-6 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4" data-testid="built-here">
-      <h2 className="text-[11px] font-mono uppercase tracking-widest text-accent">{heading}</h2>
+      <h2 className="text-[11px] uppercase tracking-widest text-accent">{heading}</h2>
       {lines.length === 0 ? (
         <p className="mt-1.5 text-sm text-muted" data-testid="built-nothing">
           Nothing of your own yet: the records here are the ones the sandbox came with.

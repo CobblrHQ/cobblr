@@ -29,7 +29,7 @@ import { sourceFiles } from "./lib/glob-exclude.mjs";
 // bound hides, whatever the operands are called (`answeredAt - started`
 // evaded a narrower pattern). Lower bounds are counts, never wall clocks.
 const ELAPSED = /Date\.now\(\)|performance\.now\(\)/;
-const BOUND = /\.(toBeLessThan|toBeLessThanOrEqual)\(/;
+const BOUND = /\.(toBeLessThan|toBeLessThanOrEqual|lessThan|lt|lte)\(|\bexpect\([^)]*\)\.toSatisfy\(|\bassert\.(isBelow|isAtMost)\(/;
 
 interface Violation {
   file: string;
@@ -38,7 +38,7 @@ interface Violation {
 }
 
 const violations: Violation[] = [];
-for (const file of sourceFiles("api/tests/*.test.ts")) {
+for (const file of sourceFiles("api/tests/**/*.test.ts")) {
   const src = readFileSync(file, "utf8");
   if (!ELAPSED.test(src)) continue;
   const lines = src.split("\n");

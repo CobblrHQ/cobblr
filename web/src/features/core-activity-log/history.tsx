@@ -191,7 +191,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const items = groupHistory(entries);
   const name = (e: ActivityEntry) => e.entity_title || ctx.entityTitle || "Its";
   const time = (at: string, muted = false) => (
-    <span className={`ml-auto shrink-0 font-mono text-[10px] ${muted ? "text-faint/80" : "text-faint"}`} title={new Date(at).toLocaleString()}>
+    <span className={`ml-auto shrink-0 tabular-nums text-[10px] ${muted ? "text-faint/80" : "text-faint"}`} title={new Date(at).toLocaleString()}>
       {relativeTime(at)}
     </span>
   );
@@ -206,8 +206,8 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   ) : null;
   return (
     <div data-testid="record-history" className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-widest text-accent">
-        <History size={12} aria-hidden /> {"// history"}
+      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-accent">
+        <History size={12} aria-hidden /> {"history"}
       </div>
       {restoring && (
         <div className="rounded-lg border border-line dark:border-slate-700 p-3 space-y-2 text-sm">

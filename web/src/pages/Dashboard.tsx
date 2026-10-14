@@ -18,6 +18,7 @@ import { activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activit
 // /projects/tasks?blocked=1 and 404. Each query stays cached for
 // 30s so navigating away + back doesn't refire everything.
 
+import { DASHBOARD_SECTION_IDS, DASHBOARD_SECTION_TITLE, type DashboardSectionId } from "@cobblr/platform-contract/dashboard-sections";
 import { SubjectLink } from "../components/SubjectLink";
 import { getShareViewToken } from "../lib/share-view";
 import { isSandboxSession } from "../lib/sandbox-session";
@@ -126,7 +127,7 @@ export function QuickLinks({ slug }: { slug: string }) {
     // duplication - eight large buttons holding the first ~250px of every
     // dashboard above any actual content.
     <div className="md:hidden">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-2">
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-2">
         Jump to
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -487,7 +488,7 @@ function AttentionFeed({ slug }: { slug: string }) {
   const cards = composeAttention(items);
   return (
     <section className="space-y-1.5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500">// needs you</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">needs you</div>
       {/* Things with a date are what a reminder is for: the moment to say a
           Discord message can bring them to you. */}
       <DiscordReminderOffer hasDated={cards.some((c) => c.type === "dated")} />
@@ -558,7 +559,7 @@ function UpNext({ slug, editing }: { slug: string; editing: boolean }) {
               <div key={b.id}>
                 <div
                   className={
-                    "px-3 py-1 text-[10px] font-mono uppercase tracking-widest " +
+                    "px-3 py-1 text-[10px] uppercase tracking-widest " +
                     (b.id === "overdue"
                       ? "bg-ember-50 dark:bg-ember-950/30 text-ember-700 dark:text-ember-400"
                       : "bg-subtle dark:bg-slate-800/50 text-faint dark:text-slate-500")
@@ -605,7 +606,7 @@ function UpNextRow({
       </span>
       {/* Which module this came from. Without it "Replace filter" and "Replace
           filter" from two different sources are the same row twice. */}
-      <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 shrink-0">
+      <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 shrink-0">
         {event.sourceLabel ?? event.source}
       </span>
       <span
@@ -1019,7 +1020,7 @@ export function WorkspaceHeader({
     <header className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900/40 px-4 py-2.5">
       {guest && (
         <div className="text-[11px] text-faint dark:text-slate-400">
-          you're a <span className="font-mono uppercase text-accent">{role}</span> in this workspace
+          you're a <span className="uppercase text-accent">{role}</span> in this workspace
         </div>
       )}
       {/* Compact message strip — one line + action per message: bundle-update
@@ -1289,15 +1290,9 @@ function arrangeWidgets(
 // which is a thing you read once. arrangeSections slots a newly-added section
 // at its DEFAULT-order neighbour, so an already-arranged dashboard gets this at
 // the top rather than appended under recent activity.
-const SECTION_IDS = ["up_next", "at_a_glance", "pinned_views", "scan_inbox", "recent_activity"] as const;
-type SectionId = (typeof SECTION_IDS)[number];
-const SECTION_TITLE: Record<SectionId, string> = {
-  up_next: "up next",
-  at_a_glance: "at a glance",
-  pinned_views: "your views",
-  scan_inbox: "from your scanner",
-  recent_activity: "recent activity",
-};
+const SECTION_IDS = DASHBOARD_SECTION_IDS;
+type SectionId = DashboardSectionId;
+const SECTION_TITLE = DASHBOARD_SECTION_TITLE;
 
 interface SectionDraft {
   id: SectionId;
@@ -1451,7 +1446,7 @@ function ArrangeableBody({
           {!editing ? (
             <button
               onClick={startArrange}
-              className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition"
+              className="inline-flex items-center gap-1.5 text-[11px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-accent transition"
               title="Reorder, hide, and resize the dashboard"
             >
               <Sliders size={13} /> arrange dashboard
@@ -1461,14 +1456,14 @@ function ArrangeableBody({
               <button
                 onClick={() => setDraft(null)}
                 disabled={save.isPending}
-                className="text-[11px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content transition"
+                className="text-[11px] uppercase tracking-widest text-faint dark:text-slate-500 hover:text-content transition"
               >
                 cancel
               </button>
               <button
                 onClick={() => save.mutate()}
                 disabled={save.isPending}
-                className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-[11px] font-mono uppercase tracking-widest transition disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2.5 py-1 text-[11px] uppercase tracking-widest transition disabled:opacity-50"
               >
                 {save.isPending ? "saving…" : "done"}
               </button>
@@ -1500,7 +1495,7 @@ function ArrangeableBody({
           >
             <div className="flex items-center gap-2 mb-2">
               <GripVertical size={14} className="text-faint dark:text-slate-600 cursor-grab" />
-              <span className="text-[10px] font-mono uppercase tracking-widest text-accent">
+              <span className="text-[10px] uppercase tracking-widest text-accent">
                 {SECTION_TITLE[s.id]}
               </span>
               <div className="flex-1" />
@@ -2246,8 +2241,8 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
 
 function SectionTitle({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={"text-[10px] font-mono uppercase tracking-widest text-accent " + (className ?? "mb-2")}>
-      // {children}
+    <div className={"text-[10px] uppercase tracking-widest text-accent " + (className ?? "mb-2")}>
+      {children}
     </div>
   );
 }

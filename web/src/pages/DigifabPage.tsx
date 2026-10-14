@@ -269,7 +269,7 @@ export function DigifabPage({
               <div className="flex-1 min-w-0 cursor-pointer" onClick={() => toggleExpanded(c.id)}>
                 <div className="text-sm font-medium text-content dark:text-mortar-100 truncate flex items-center gap-2">
                   {c.label}
-                  <span className="text-[10px] font-mono uppercase tracking-wider text-faint">{c.type === "edge_adapter" ? "Your bridge" : c.type === "bambu" ? "Bambu" : c.type}</span>
+                  <span className="text-[10px] uppercase tracking-wider text-faint">{c.type === "edge_adapter" ? "Your bridge" : c.type === "bambu" ? "Bambu" : c.type}</span>
                   {c.capabilities?.routing && (
                     <span className="text-[10px] font-mono text-moss-600 dark:text-moss-400">routing</span>
                   )}
@@ -426,7 +426,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
   });
   const toggle = (id: string) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const shares_ = shares.data?.items ?? [];
   return (
     <Modal open onClose={onClose} title="Share machines" size="md">
@@ -476,7 +476,7 @@ function ShareMachinesModal({ slug, edgeConns, onClose }: { slug: string; edgeCo
         </label>
         {link ? (
           <div className="rounded border border-moss-300 dark:border-moss-800 bg-moss-50/50 dark:bg-moss-900/20 p-2 space-y-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-moss-700 dark:text-moss-400">Share link - copy it now, shown once</div>
+            <div className="text-[10px] uppercase tracking-widest text-moss-700 dark:text-moss-400">Share link - copy it now, shown once</div>
             <div className="flex items-center gap-2">
               <code className="flex-1 text-[11px] break-all text-content dark:text-mortar-200">{link}</code>
               <button type="button" onClick={() => { void navigator.clipboard?.writeText(link); toast.success("Copied"); }} className="text-[10px] text-accent hover:underline shrink-0">Copy</button>
@@ -573,7 +573,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         deploy. Installed drivers appear in the <span className="font-medium">Add connection</span> dropdown.
       </p>
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Built-in</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Built-in</div>
       <ul className="flex flex-wrap gap-2 mb-4">
         {builtins.map((b) => (
           <li key={b.key} className="text-xs px-2 py-1 rounded border border-line dark:border-slate-700 text-content dark:text-mortar-200">
@@ -582,7 +582,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         ))}
       </ul>
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Installed</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Installed</div>
       {installed.length === 0 ? (
         <div className="text-[13px] text-muted italic mb-4">None yet - paste a manifest below.</div>
       ) : (
@@ -609,7 +609,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
 
       {/* One-click catalog — the common managers (Duet/OctoPrint/Klipper/…)
           install without pasting any JSON. */}
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Available to install</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Available to install</div>
       {(() => {
         const have = new Set([...builtins.map((b) => b.key), ...installed.map((d) => d.key)]);
         const shelf = (catalog.data?.drivers ?? []).filter((c) => !have.has(c.id));
@@ -637,7 +637,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
         );
       })()}
 
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Install a custom driver (paste a manifest)</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Install a custom driver (paste a manifest)</div>
       <textarea
         value={manifest}
         onChange={(e) => setManifest(e.target.value)}
@@ -754,7 +754,7 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
   return (
     <div>
       <div className="flex items-baseline justify-between mb-1">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint">Prints per day</div>
+        <div className="text-[10px] uppercase tracking-widest text-faint">Prints per day</div>
         <div className="text-[10px] text-faint tabular-nums">
           {h ? (
             <span className="text-content dark:text-mortar-100">
@@ -818,7 +818,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
   // The threshold the slider is on while it is dragged; it saves on release.
   const [dragged, setDragged] = useState<number | null>(null);
   const threshold = dragged ?? c?.threshold ?? 0;
-  const lbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+  const lbl = "text-[10px] uppercase tracking-widest text-faint";
   return (
     <div className="pt-2">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-content dark:text-mortar-100">
@@ -901,7 +901,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
   );
 }
 
-const detLbl = "text-[10px] font-mono uppercase tracking-widest text-faint";
+const detLbl = "text-[10px] uppercase tracking-widest text-faint";
 
 // Backend='detector' config: pick a configured external detector + open the
 // manager to add/edit/test them.
@@ -1045,7 +1045,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
     <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-medium text-content dark:text-mortar-100">{det.label}</span>
-        <span className="text-[9px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded bg-mortar-100 dark:bg-mortar-800 text-faint">{det.key}</span>
+        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-mortar-100 dark:bg-mortar-800 text-faint">{det.key}</span>
         {!det.enabled && <span className="text-[9px] text-faint">(disabled)</span>}
         <div className="ml-auto flex items-center gap-2">
           <button type="button" onClick={() => test.mutate()} disabled={test.isPending} className="text-cobble-600 dark:text-cobble-400 hover:underline">Test</button>
@@ -1247,7 +1247,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
   const rate = s && s.total ? Math.round((s.completed / s.total) * 100) : null;
   const stat = (label: string, value: string) => (
     <div className="rounded border border-line dark:border-slate-700 px-2.5 py-1.5">
-      <div className="text-[10px] font-mono uppercase tracking-widest text-faint">{label}</div>
+      <div className="text-[10px] uppercase tracking-widest text-faint">{label}</div>
       <div className="text-lg font-semibold text-content dark:text-mortar-100">{value}</div>
     </div>
   );
@@ -1275,7 +1275,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
               {hist.data?.series && hist.data.series.length > 0 && <PrintTrendChart series={hist.data.series} />}
               {(hist.data?.by_device.length ?? 0) > 0 && (
                 <div>
-                  <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">By machine</div>
+                  <div className="text-[10px] uppercase tracking-widest text-faint mb-1">By machine</div>
                   <ul className="text-xs space-y-0.5">
                     {[...hist.data!.by_device]
                       .sort((a, b) => b.total - a.total)
@@ -1295,7 +1295,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                 </div>
               )}
               <div>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mb-1">Recent jobs</div>
+                <div className="text-[10px] uppercase tracking-widest text-faint mb-1">Recent jobs</div>
                 {hist.data!.recent.length === 0 ? (
                   <div className="text-xs text-muted italic">No finished jobs in this window.</div>
                 ) : (
@@ -1758,7 +1758,7 @@ function JobDetailModal({
 
   const row = (label: string, value: ReactNode) => (
     <div className="flex gap-3 py-1.5 border-b border-line/60 dark:border-slate-800 last:border-0">
-      <span className="w-32 shrink-0 text-[11px] font-mono uppercase tracking-wider text-faint pt-0.5">{label}</span>
+      <span className="w-32 shrink-0 text-[11px] uppercase tracking-wider text-faint pt-0.5">{label}</span>
       <span className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100 break-words">{value}</span>
     </div>
   );
@@ -1869,7 +1869,7 @@ function ConnectionEditModal({ connection, onClose, onSaved }: { connection: Dig
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   return (
     <Modal open onClose={onClose} title={`Edit "${connection.label}"`} size="md">
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-3">
@@ -2154,7 +2154,7 @@ function NewJobModal({
   });
 
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   const machineList = machines.data?.items ?? [];
   const printerList = printers.data?.items ?? [];
   const fileList = files.data?.items ?? [];
@@ -2581,7 +2581,7 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
       <div className="p-2 space-y-1 flex-1 flex flex-col">
         <div className="text-xs text-content dark:text-mortar-100 truncate" title={item.name}>{item.name}</div>
         <div className="flex items-center gap-1 text-[10px] text-faint flex-wrap">
-          <span className="uppercase font-mono">{item.kind}</span>
+          <span className="uppercase">{item.kind}</span>
           {item.plate_count > 1 && <span>· {item.plate_count} plates</span>}
           <span>· {size}</span>
           {item.metadata?.material && <span>· {item.metadata.material}</span>}
@@ -2644,7 +2644,7 @@ export function LibrarySendModal({ item, slug, onClose }: { item: DigifabLibrary
   const poolList = pools.data?.items ?? [];
   const deviceList = devices.data?.items ?? [];
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint mb-1";
   const ready = mode === "pool" ? !!poolId : !!connectionId && !!deviceId;
   return (
     <RecordFormModal open onClose={onClose} title={`Send "${item.name}"`}>
@@ -2924,7 +2924,7 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
   });
 
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   return (
     <Modal open onClose={onClose} title="Import from FDM Monster" size="md">
       <form
@@ -3093,7 +3093,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
   });
 
   const field = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
-  const lbl = "block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
+  const lbl = "block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1";
   return (
     <Modal open onClose={onClose} title="Add several printers" size="lg">
       <form
@@ -3137,7 +3137,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
         {rows.length > 0 && (
           <div className="border border-line dark:border-slate-700 rounded">
             <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-line dark:border-slate-800">
-              <span className="text-[11px] font-mono uppercase tracking-widest text-faint">{rows.length} printer{rows.length === 1 ? "" : "s"}</span>
+              <span className="text-[11px] uppercase tracking-widest text-faint">{rows.length} printer{rows.length === 1 ? "" : "s"}</span>
               <button
                 type="button"
                 onClick={detect}
@@ -3291,7 +3291,7 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
               <li key={r.id} className="flex items-center gap-2">
                 <span className="font-medium text-content dark:text-mortar-200">{r.name}</span>
                 <span>{r.completed_qty}/{r.target_qty}</span>
-                <span className="uppercase text-[10px] font-mono">{r.status}</span>
+                <span className="uppercase text-[10px]">{r.status}</span>
               </li>
             ))}
           </ul>
@@ -3421,7 +3421,7 @@ function RunRow({
       <div className="flex items-center gap-2 text-sm">
         <span className="font-medium text-content dark:text-mortar-100">{run.name}</span>
         {run.status === "paused" && (
-          <span className="text-[10px] font-mono uppercase rounded-full px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">paused</span>
+          <span className="text-[10px] uppercase rounded-full px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">paused</span>
         )}
         <span className="text-xs text-muted dark:text-slate-400 flex-1 truncate">{jobDisplayName(run)}</span>
         <span className="text-xs font-mono text-content dark:text-mortar-200">{run.completed_qty}/{run.target_qty}</span>

@@ -31,7 +31,7 @@ const ROOT = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "
 // the one cost the budget's re-measure cannot subtract.
 const files = (() => {
   try {
-    return execFileSync("git", ["-C", ROOT, "grep", "--untracked", "-l", "-e", "credential\\.helper=", "--", "*.mjs", "*.cjs", "*.js", "*.ts", "*.sh", "*.bash", "*.yml", "*.yaml"], { encoding: "utf8" })
+    return execFileSync("git", ["-C", ROOT, "grep", "--untracked", "-l", "-e", "credential\\.helper=", "--", "*.mjs", "*.cjs", "*.js", "*.ts", "*.sh", "*.bash", "*.yml", "*.yaml"], { maxBuffer: 1024 * 1024 * 1024, encoding: "utf8" })
       .split("\n").filter(Boolean);
   } catch (e) {
     // git grep exits 1 when nothing matches: no file mentions the helper.

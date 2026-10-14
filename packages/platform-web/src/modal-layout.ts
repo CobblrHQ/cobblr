@@ -34,14 +34,14 @@ export function modalPanelLayout(overLive: boolean, fillHeight: boolean, stickyF
     // The status bar sits over the sheet's first points on a notched phone,
     // the same way the home indicator sits over its last: the title of a
     // record modal was drawn under the clock (reported 2026-09-09).
-    "pt-[env(safe-area-inset-top)] sm:pt-0 " +
+    "pt-[var(--safe-top)] sm:pt-0 " +
     // A sheet that fills the screen must not hand a scroll at its end to the
     // page behind it.
     "overscroll-contain " +
     // The home indicator sits over the sheet's last few points, so pad the
     // footer up off it (0 in a browser / on desktop), unless the body's own
     // sticky footer already does.
-    (stickyFooter ? "" : "pb-[env(safe-area-inset-bottom)] sm:pb-0 ") +
+    (stickyFooter ? "" : "pb-[var(--inset-bottom)] sm:pb-0 ") +
     (fillHeight ? "sm:min-h-[calc(var(--overlay-height,100dvh)-4rem)] " : "")
   );
 }

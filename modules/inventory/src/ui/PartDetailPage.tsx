@@ -2,7 +2,7 @@ import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
@@ -242,7 +242,6 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   // Things that hold things (a Backpack) are places too: offered beside the
   // locations, and the part says it is inside one ("Backpack, in Desk drawer").
-  const holders = useQuery({ queryKey: ["placement-holders"], queryFn: () => api.listHolders() });
   const where = useQuery({ queryKey: ["placement-path", "inventory:part", id], queryFn: () => api.partPath(id!), enabled: !!id });
   const inside = where.data?.inside ?? null;
   const matched = useMatchedCatalogEntry(id);
@@ -458,7 +457,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   ];
 
   return (
-    <RecordFaces kind={entityKind} target={instance ? { target_kind: "instance", target_id: `inventory:${instance}` } : { target_kind: "entity_kind", target_id: "inventory:part" }}>
+    <RecordFaces kind={entityKind}>
     <div className="space-y-5">
 
       <ReconcileCard
@@ -573,7 +572,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               />
               <div className="flex flex-wrap items-center gap-2 mt-1">
                 {p.asset_id != null && (
-                  <span className="text-[11px] font-mono uppercase tracking-widest text-muted dark:text-slate-400 bg-mortar-100 dark:bg-slate-800 rounded px-2 py-0.5">
+                  <span className="text-[11px] uppercase tracking-widest text-muted dark:text-slate-400 bg-mortar-100 dark:bg-slate-800 rounded px-2 py-0.5">
                     #{String(p.asset_id).padStart(3, "0")}
                   </span>
                 )}
@@ -713,34 +712,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                   need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
-                      <select
-                        aria-label={fp.label("location", "Location")}
-                        value={inside ? `${inside.kind}|${inside.id}` : (p.location_id ?? "")}
-                        onChange={(e) => placeIn.mutate(e.target.value)}
-                        className="input"
-                      >
-                        <option value=""> - none - </option>
-                        {locs.data?.items.map((l) => (
-                          <option key={l.id} value={l.id}>
-                            {"  ".repeat(l.depth)}
-                            {l.name}
-                          </option>
-                        ))}
-                        {(holders.data?.items ?? []).some((h) => h.id !== p.id) && (
-                          <optgroup label="Inside something">
-                            {holders.data!.items
-                              .filter((h) => h.id !== p.id)
-                              .map((h) => (
-                                <option key={`${h.kind}|${h.id}`} value={`${h.kind}|${h.id}`}>
-                                  {h.line ? `${h.title}, in ${h.line}` : h.title}
-                                </option>
-                              ))}
-                          </optgroup>
-                        )}
-                        {inside && !(holders.data?.items ?? []).some((h) => h.kind === inside.kind && h.id === inside.id) && (
-                          <option value={`${inside.kind}|${inside.id}`}>{where.data!.line}</option>
-                        )}
-                      </select>
+                      <LocationPicker
+                        value={inside ? null : (p.location_id ?? null)}
+                        onChange={(id) => placeIn.mutate(id ?? "")}
+                        pickedHolder={inside ? { kind: inside.kind, id: inside.id, title: where.data?.line ?? "", line: "" } : null}
+                        onPickHolder={(h) => (h.id === p.id ? toast.error("A thing cannot go inside itself.") : placeIn.mutate(`${h.kind}|${h.id}`))}
+                        noneLabel="No location"
+                      />
                     </Field>
                   ),
                 }
@@ -783,7 +761,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           (Spool → Filament type). Editable: re-picking re-links the pairing. */}
       {parent && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+          <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
             {parent.label ?? "Type"}
           </div>
           <ParentPicker
@@ -823,7 +801,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {!hide("warranty") && (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
-        <h3 className="text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+        <h3 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
         </h3>
         <FieldPack
@@ -1272,7 +1250,7 @@ function FlatConsumptionPanel({
       <section className="rounded-xl border border-line dark:border-slate-700 p-4 space-y-3">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-content dark:text-mortar-100">Consumption</h3>
-          <span className="text-[10px] font-mono uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
+          <span className="text-[10px] uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5">
             tracked by {label}
           </span>
         </div>
@@ -1353,7 +1331,7 @@ function FlatConsumptionPanel({
 
       {rows.length > 0 && (
         <div className="space-y-1">
-          <div className="text-[11px] font-mono uppercase tracking-wider text-faint">History</div>
+          <div className="text-[11px] uppercase tracking-wider text-faint">History</div>
           <ul className="divide-y divide-line dark:divide-slate-800">
             {rows.map((r) => {
               const d = Number(r.delta);
@@ -1578,13 +1556,13 @@ function PerUnitConsumptionPanel({
         {/* Provenance chip (§8.3) — is the full amount derived or typed? */}
         {derived && sourceLabel ? (
           <span
-            className="text-[10px] font-mono uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5"
+            className="text-[10px] uppercase tracking-wider text-accent dark:text-cobble-300 bg-cobble-50 dark:bg-cobble-900/40 border border-cobble-200 dark:border-cobble-800 rounded px-1.5 py-0.5"
             title={`Each ${countUnit || "unit"}'s full amount comes from “${sourceLabel}”.`}
           >
             full from {sourceLabel}
           </span>
         ) : unitCapacity != null ? (
-          <span className="text-[10px] font-mono uppercase tracking-wider text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
+          <span className="text-[10px] uppercase tracking-wider text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5">
             set manually
           </span>
         ) : null}
@@ -1810,7 +1788,7 @@ function OpenUnitCard({
       {/* Heading — in the expanded face, the per-skein binding label ("· Winter
           scarf" / "· unbound partial"), else just "open ·" once several exist. */}
       {expanded && (
-        <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-wider">
+        <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider">
           <span className="text-faint">open · {unit.name}</span>
           {binding ? (
             <span className="text-accent dark:text-cobble-300 normal-case font-sans">for {binding.label}</span>

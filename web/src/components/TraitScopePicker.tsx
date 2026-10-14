@@ -155,7 +155,7 @@ export function TraitScopePicker({
         <div className="flex-1 min-w-0 space-y-2">
           {broad.length > 0 && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
+              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mr-1">
                 start from
               </span>
               {broad.map((p) => (
@@ -167,7 +167,7 @@ export function TraitScopePicker({
           <div className="space-y-1.5">
             {TRAIT_AXES.map(({ axis, poles }) => (
               <div key={axis} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                <span className="w-24 shrink-0 text-[11px] font-mono uppercase tracking-wide text-faint dark:text-slate-500">
+                <span className="w-24 shrink-0 text-[11px] uppercase tracking-wide text-faint dark:text-slate-500">
                   {axis}
                 </span>
                 {poles.map((pole) => (
@@ -198,7 +198,7 @@ export function TraitScopePicker({
 
         {profiles.length > 0 && (
           <div className="md:w-52 shrink-0 md:border-l md:border-line md:dark:border-slate-700 md:pl-4">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
+            <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
               or a known shape
             </div>
             <div className="flex flex-col gap-1.5">
@@ -216,7 +216,7 @@ export function TraitScopePicker({
 
       {/* Live preview — the abstract choice, made concrete. */}
       <div className="rounded-md bg-subtle dark:bg-slate-800/50 px-3 py-2">
-        <div className="text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+        <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
           {previewVerb} {matches.length} entity kind{matches.length === 1 ? "" : "s"}
         </div>
         {matches.length > 0 ? (

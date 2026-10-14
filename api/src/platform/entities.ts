@@ -288,6 +288,14 @@ export interface ViewerReadScope {
 /** What SYSTEM_VIEWER reads with: everything. */
 const SYSTEM_READ_SCOPE: ViewerReadScope = { all: true, caps: new Set() };
 
+async function viewerReadScope(orgId: string, fieldReadScopes: Record<string, string> | null, viewer?: EntityViewer): Promise<ViewerReadScope | undefined> {
+  if (viewer?.system) return SYSTEM_READ_SCOPE;
+  if (!fieldReadScopes || !viewer) return undefined;
+  return viewer.userId
+    ? effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member")
+    : { all: false, caps: new Set() };
+}
+
 
 /** The fields a reader may see on THIS workspace's records: the kind's
  *  exposable fields, and, for the person's own assistant, the fields the kind
@@ -667,13 +675,8 @@ export async function lookup(
   if (!resolver) return null;
   const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
-  // Single-hop / cross-module lookups carry no resolved capability set,
-  // so read-scope gating here is fail-closed: gated fields are withheld
-  // (these paths feed cross-module renderers + internal callers, which
-  // never need commercial fields like cost). Member-facing field
-  // visibility flows through list() with a viewer.
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
-  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
+  const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
   const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
 
   // Own workspace first — common case, no cross-workspace traffic.
@@ -694,7 +697,7 @@ export async function lookup(
       // whitelist above was already computed from the requested kind, so this is
       // consistent.
       const own = await ownWhitelist(orgId, kind, whitelist, viewer);
-      const projected = { ...applyExposableProjection(resolved, own, fieldReadScopes, systemScope, publicRead, viewer, secretContext), kind };
+      const projected = { ...applyExposableProjection(resolved, own, fieldReadScopes, readScope, publicRead, viewer, secretContext), kind };
       return applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(orgId, await applyComputedFields(orgId, await applyCustomFieldValues(orgId, projected))), { publicRead }));
     }
   } catch (err) {
@@ -752,7 +755,6 @@ export async function lookupMany(
   refs: ReadonlyArray<{ kind: string; id: string }>,
   viewer?: EntityViewer,
 ): Promise<ResolvedEntity[]> {
-  const systemScope = viewer?.system ? SYSTEM_READ_SCOPE : undefined;
   if (refs.length === 0) return [];
   const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
   // Group refs by kind so each kind's resolver gets its own fan-out.
@@ -770,15 +772,13 @@ export async function lookupMany(
       const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
       if (!resolver) return [] as ResolvedEntity[];
       const whitelist = await getExposableFields(kind);
-      // Cross-module batched read — fail-closed on gated fields (no
-      // viewer capability set here; commercial fields never flow to
-      // foreign module renderers).
       const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+      const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
       const resolved = await Promise.all(
         ids.map(async (id) => {
           try {
             const r = await resolver(orgId, id);
-            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, systemScope, viewer?.publicRead, viewer, secretContext) : null;
+            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, readScope, viewer?.publicRead, viewer, secretContext) : null;
           } catch (err) {
             console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
             return null;
@@ -981,18 +981,7 @@ export async function list(
   if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [], unlisted: "module-off" };
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId);
-  // Resolve the viewer's field-read access ONLY when the kind actually
-  // gates fields AND a viewer was supplied. No viewer is fail-closed
-  // (gated fields withheld); SYSTEM_VIEWER is internal logic that must
-  // decide from the truth. A supplied-but-unidentified viewer is gated
-  // conservatively (no caps).
-  let readScope: ViewerReadScope | undefined;
-  if (viewer?.system) readScope = SYSTEM_READ_SCOPE;
-  else if (fieldReadScopes && viewer) {
-    readScope = viewer.userId
-      ? await effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member")
-      : { all: false, caps: new Set() };
-  }
+  const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
 
   const by = normalizeGrouping(query.group_by);
   if (by.length) {

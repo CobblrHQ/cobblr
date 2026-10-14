@@ -158,7 +158,7 @@ export function AddressPicker({ label, value, onCommit, required, startEditing }
   }
 
   const heading = (
-    <span id={`${id}-label`} className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
+    <span id={`${id}-label`} className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">
       {label}
       {required ? <span className="text-ember-500"> *</span> : null}
     </span>

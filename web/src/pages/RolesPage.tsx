@@ -105,7 +105,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
                     {r.description}
                   </div>
                 )}
-                <div className="text-[10px] font-mono uppercase tracking-widest text-faint mt-1">
+                <div className="text-[10px] uppercase tracking-widest text-faint mt-1">
                   {r.member_count} member{r.member_count === 1 ? "" : "s"} ·{" "}
                   {r.capabilities.length} capabilit{r.capabilities.length === 1 ? "y" : "ies"}
                 </div>
@@ -155,13 +155,13 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
 
       {roles.length > 0 && members.length > 0 && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
-          <div className="text-[10px] font-mono uppercase tracking-widest text-faint px-3 pt-2 pb-1">
+          <div className="text-[10px] uppercase tracking-widest text-faint px-3 pt-2 pb-1">
             Assignments
           </div>
           <table className="w-full text-sm">
             <thead className="bg-subtle/50 dark:bg-slate-800/40">
               <tr>
-                <th className="text-left text-[10px] font-mono uppercase tracking-widest text-faint px-3 py-2">
+                <th className="text-left text-[10px] uppercase tracking-widest text-faint px-3 py-2">
                   Member
                 </th>
                 {roles.map((r) => (
@@ -371,7 +371,7 @@ function RoleEditorModal({
     <Modal open={open} onClose={onClose} title={role ? "Edit role" : "New role"} size="lg">
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
             Name
           </span>
           <input
@@ -385,7 +385,7 @@ function RoleEditorModal({
           />
         </label>
         <label className="block">
-          <span className="block text-[10px] font-mono uppercase tracking-widest text-faint mb-1">
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
             Description (optional)
           </span>
           <input
@@ -398,12 +398,12 @@ function RoleEditorModal({
         </label>
         <div>
           <div className="flex items-baseline justify-between mb-1">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <div className="text-[10px] uppercase tracking-widest text-faint">
               Capabilities
             </div>
             {/* Echoes the count the finished role shows on the roles page, so
                 the modal reads like the thing it is about to create. */}
-            <div className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <div className="text-[10px] uppercase tracking-widest text-faint">
               {picked.size} selected
             </div>
           </div>
@@ -413,7 +413,7 @@ function RoleEditorModal({
           <div className="max-h-[26rem] overflow-y-auto rounded-md border border-line dark:border-slate-700 p-2 space-y-3">
             {byModule.map(([mod, list]) => (
               <div key={mod}>
-                <div className="text-[10px] font-mono uppercase tracking-widest text-accent mb-1 px-1">
+                <div className="text-[10px] uppercase tracking-widest text-accent mb-1 px-1">
                   {mod}
                 </div>
                 <div className="grid sm:grid-cols-2 gap-x-3">

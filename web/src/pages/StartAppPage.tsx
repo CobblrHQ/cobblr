@@ -164,17 +164,17 @@ export function StartAppPage() {
         ) : (
         <form onSubmit={submit} className="space-y-3 rounded-xl border border-line dark:border-slate-700 p-5 bg-white dark:bg-slate-900">
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Your name</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Your name</span>
             <input type="text" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} required autoFocus
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Email</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Email</span>
             <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
           </label>
           <label className="block">
-            <span className="block text-[10px] font-mono uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Password</span>
+            <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Password</span>
             <PasswordInput autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8}
               className="w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm" />
             <span className="block text-[10px] text-faint dark:text-slate-500 mt-1">At least 8 characters.</span>

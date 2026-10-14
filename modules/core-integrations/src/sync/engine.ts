@@ -435,7 +435,38 @@ type UpsertAction = "created" | "updated" | "linked" | "noop" | "ask";
  *  of the same name and kind) is merged field by field under the section's
  *  rule: what the person changed in Cobblr is kept, never written over. One
  *  that might be several is asked about, never created or guessed (#6336). */
-async function upsertOne(
+function upsertOne(
+  db: Kysely<CoreIntegrationsDB>,
+  ref: SyncConnectionRef,
+  type: SyncEntityType,
+  record: SyncRecord,
+  run: RunCtx,
+): Promise<{ action: UpsertAction; tagsFailed: number; unmapped: Unmapped[] }> {
+  return oneAtATime(`${ref.connectorRowId}:${type.key}:${record.externalId}`, () => upsertOneLocked(db, ref, type, record, run));
+}
+
+/** Work for one source id runs one at a time, in order. Create-or-link is a
+ *  look then a write, so two pushes for the same new record (a webhook retry,
+ *  a push racing a poll) both looked, both found nothing, and both created: a
+ *  second machine the id-map never pointed at. The id-map's first-writer-wins
+ *  insert withdraws the loser's copy, but not before the loser's own look at
+ *  the first copy could miss it. Waiting turns the second push into a plain
+ *  update of what the first made. Held per source id, so different records
+ *  still run side by side. */
+const turns = new Map<string, Promise<unknown>>();
+async function oneAtATime<T>(key: string, work: () => Promise<T>): Promise<T> {
+  const before = turns.get(key) ?? Promise.resolve();
+  const mine = before.then(work, work);
+  const tail = mine.catch(() => undefined);
+  turns.set(key, tail);
+  try {
+    return await mine;
+  } finally {
+    if (turns.get(key) === tail) turns.delete(key);
+  }
+}
+
+async function upsertOneLocked(
   db: Kysely<CoreIntegrationsDB>,
   ref: SyncConnectionRef,
   type: SyncEntityType,

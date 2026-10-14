@@ -219,7 +219,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
         data.surface.scope_type === "collection") && (
         <>
           <header className="mb-4 flex items-baseline gap-3">
-            <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+            <span className="text-[10px] uppercase tracking-widest text-faint">
               {data.view?.entity_kind ?? data.collection?.kind ?? "items"}
             </span>
             <span className="text-xs text-faint">
@@ -290,7 +290,7 @@ function PublicShell({
             </>
           )}
           <div className="flex-1" />
-          <span className="text-[10px] font-mono uppercase tracking-widest text-faint">
+          <span className="text-[10px] uppercase tracking-widest text-faint">
             public · read-only
           </span>
         </div>

@@ -29,7 +29,7 @@ import {
 } from "@cobblr/platform-contract/store-product";
 import type { CoreScanDB } from "../db.js";
 import { mergeMeta } from "./metadata.js";
-import { splitRowIntoParts, type PartsRow, type RowPart } from "./row-parts.js";
+import { partNameWithoutWhole, splitRowIntoParts, type PartsRow, type RowPart } from "./row-parts.js";
 import { knownPackFor, knownPackForLine, packOptionsOf, type KnownPack } from "@cobblr/platform-contract/known-packs";
 import { askPackNetwork, type PackKey } from "./pack-network.js";
 import { storeVariantOf } from "@cobblr/platform-contract/same-product";
@@ -60,11 +60,34 @@ export interface StoreProductPassOpts {
    *  stamp does it when it lands. */
   purchase?: PurchaseHttp | null;
   splitOrderLine?: typeof splitOrderLineForParts;
+  /** The picture's one door (enrich-photo.ts refreshCatalogImageByName);
+   *  tests pass their own. */
+  refreshPicture?: (orgId: string, itemId: string, name: string) => Promise<unknown>;
 }
 
 export type StoreProductOutcome = "skipped" | "unread" | "read" | "split" | "pack-unread";
 
 export async function storeProductPass(o: StoreProductPassOpts): Promise<StoreProductOutcome> {
+  const out = await storeProductPassOnce(o);
+  if (out === "split") await pictureTheLine(o);
+  return out;
+}
+
+/** A split line stays on the page as its parts' parent, and its parent shows
+ *  the line's picture (#6456). The split ends the line's own plan before its
+ *  picture step, so a line with none gets one now through the picture's one
+ *  door: the email's photo, then the store's, then a search. */
+async function pictureTheLine(o: StoreProductPassOpts): Promise<void> {
+  const line = await o.db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", o.itemId).executeTakeFirst();
+  if (!line || line.catalog_image_file_id) return;
+  const refresh = o.refreshPicture ?? (await import("./enrich-photo.js")).refreshCatalogImageByName;
+  await refresh(o.orgId, o.itemId, line.suggested_name ?? "").catch((e: Error) => {
+    platform().health.notePassFailure("core-scan.pack-line-picture", o.orgId, e);
+    console.warn(`[core-scan] ${o.itemId}: the split line's picture:`, e.message);
+  });
+}
+
+async function storeProductPassOnce(o: StoreProductPassOpts): Promise<StoreProductOutcome> {
   const row = await o.db.selectFrom("core_scan_inbox_items").selectAll().where("id", "=", o.itemId).executeTakeFirst();
   if (!row || row.source_kind !== "receipt" || row.status !== "pending") return "skipped";
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
@@ -173,7 +196,10 @@ async function splitIntoColours(
     // colour to fill in, and the pack's own photo; it is an ordinary row a
     // person corrects on the card.
     const alone = colour ? variantInColour(product, variant, colour) : null;
-    const name = colour ? (alone ? `${product.title} - ${alone.title}` : `${product.title} ${colour}`) : `${product.title}, colour unknown`;
+    // The store sells a colour alone as its own 10 kg variant; one spool of
+    // the pack is not that variant's weight (#6456).
+    const named = colour ? (alone ? `${product.title} - ${alone.title}` : `${product.title} ${colour}`) : `${product.title}, colour unknown`;
+    const name = partNameWithoutWhole(named, (meta.line_pack as { whole?: unknown } | undefined)?.whole, pack);
     const photo = colour ? variantPhoto(alone) : variantPhoto(variant);
     return {
       name,

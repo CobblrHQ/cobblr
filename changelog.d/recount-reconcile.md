@@ -3,6 +3,7 @@ type: feature
 scope: inventory
 date: 2026-10-13
 docs_target: docs/USER_GUIDE.md#3.1 Inventory
+docs_published: 2026-10-14
 ---
 
 Finish a recount with a preview of what changes, choose what happens to things not seen, and undo the whole recount in one press

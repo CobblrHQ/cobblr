@@ -1,7 +1,7 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
+import { LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -27,6 +27,7 @@ import { noteOf, TableConnectorImport, useCreateDoor, viewCardFields } from "@co
 import { useFieldPresentation } from "./useFieldPresentation";
 import { CARD_NATIVE_FIELDS } from "./card-native-fields";
 import { useDisclosure } from "./useDisclosure";
+import { AddSeveralItems } from "./AddSeveralItems";
 import { NewPartDialog } from "./NewPartDialog";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
 import { ImportDialog } from "./ImportDialog";
@@ -102,6 +103,7 @@ export function PartsListPage() {
   const noFilterBar = nothingToFilter(facets.data, activeFilters, !!search);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [addingSeveral, setAddingSeveral] = useState(false);
   // `?new=1` (a view's empty state, a card) opens the form on arrival.
   const closeCreateDoor = useCreateDoor(useCallback(() => setAdding(true), []));
   const [importing, setImporting] = useState(false);
@@ -536,15 +538,9 @@ export function PartsListPage() {
         </select>
         )}
         {offered.has("location") && (
-        <select value={locationId} onChange={(e) => setLocationId(e.target.value)} className="input !w-auto" aria-label="Location">
-          <option value="">All locations</option>
-          {locs.data?.items.map((l) => (
-            <option key={l.id} value={l.id}>
-              {"  ".repeat(l.depth)}
-              {l.name}
-            </option>
-          ))}
-        </select>
+        <div role="group" aria-label="Location">
+          <LocationPicker value={locationId || null} onChange={(id) => setLocationId(id ?? "")} noneLabel="All locations" placeholder="All locations" size="sm" />
+        </div>
         )}
         {offered.has("state") && (
         <select value={state} onChange={(e) => setState(e.target.value as StateFilter)} className="input !w-auto" aria-label="State">
@@ -705,6 +701,7 @@ export function PartsListPage() {
             >
               <FileDown size={14} /> {exporting ? "exporting…" : "Export CSV"}
             </button>
+            <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm" onClick={() => setAddingSeveral(true)}>Add several</button>
             <button
               onClick={() => setImporting(true)}
               className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -744,6 +741,7 @@ export function PartsListPage() {
         >
           <FileDown size={14} /> {exporting ? "exporting…" : "Export CSV"}
         </button>
+        <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm" onClick={() => setAddingSeveral(true)}>Add several</button>
         <button
           onClick={() => setImporting(true)}
           className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -898,7 +896,7 @@ export function PartsListPage() {
       {partItems.length > 0 && groupBy
         ? groupItems(partItems, groupBy, areaOf).map((g) => (
             <div key={g.key} className="space-y-2">
-              <h3 className="text-xs font-mono uppercase tracking-widest text-accent">{g.key}</h3>
+              <h3 className="text-xs uppercase tracking-widest text-accent">{g.key}</h3>
               {viewMode === "tiles" ? (
                 <PartsTileGrid items={g.rows} basePath={basePath} />
               ) : (
@@ -945,7 +943,7 @@ export function PartsListPage() {
           <button
             onClick={() => void parts.fetchNextPage()}
             disabled={parts.isFetchingNextPage}
-            className="text-xs font-mono uppercase tracking-widest px-4 py-2 rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40"
+            className="text-xs uppercase tracking-widest px-4 py-2 rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40"
           >
             {parts.isFetchingNextPage
               ? "loading…"
@@ -957,6 +955,7 @@ export function PartsListPage() {
           results: a thing just scanned is in no table until it is filed. */}
       <InboxWaitingStrip destination={instance ?? "inventory"} q={search} />
 
+      {addingSeveral && <AddSeveralItems onClose={() => setAddingSeveral(false)} />}
       {adding && (
         <NewPartDialog
           onClose={(created) => {
@@ -1184,14 +1183,9 @@ function PartsTable({
   // quantity: a measured one is part of the value, a countable one is noise.
   const units = useUnits();
   const cats = useQuery({ queryKey: ["inventory-categories"], queryFn: () => api.listCategories() });
-  const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   const catOptions = useMemo(
     () => (cats.data?.items ?? []).map((c) => ({ id: c.id, label: c.name })),
     [cats.data],
-  );
-  const locOptions = useMemo(
-    () => (locs.data?.items ?? []).map((l) => ({ id: l.id, label: l.name })),
-    [locs.data],
   );
   const setCol = (p: PartListItem, col: NativePartCol, v: unknown) =>
     commit.mutate({ id: p.id, patch: { [col]: v } });
@@ -1238,7 +1232,7 @@ function PartsTable({
       <div className="hidden md:block rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 overflow-x-auto">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
-          <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] font-mono uppercase tracking-widest text-muted dark:text-slate-400">
+          <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             <th className="w-8 px-3 py-2">
               <input
                 type="checkbox"
@@ -1358,13 +1352,7 @@ function PartsTable({
                     p.location_id == null && p.location_name ? (
                       <span data-testid="held-in" title="Inside something: move it from its page">{p.location_name}</span>
                     ) : (
-                      <EditableCell
-                        def={nativeDef("location_id", fp.label("location", "Location"), "text")}
-                        value={p.location_id}
-                        options={locOptions}
-                        fallbackLabel={p.location_name}
-                        onCommit={(v) => setCol(p, "location_id", v)}
-                      />
+                      <LocationCell label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
                     )
                   )}
                 </td>
@@ -1633,13 +1621,7 @@ function PartsTable({
                       {p.location_id == null && p.location_name ? (
                         <span data-testid="held-in">{p.location_name}</span>
                       ) : (
-                        <EditableCell
-                          def={nativeDef("location_id", fp.label("location", "Location"), "text")}
-                          value={p.location_id}
-                          options={locOptions}
-                          fallbackLabel={p.location_name}
-                          onCommit={(v) => setCol(p, "location_id", v)}
-                        />
+                        <LocationCell label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
                       )}
                     </span>
                   )}
@@ -1711,6 +1693,31 @@ function CardFieldRows({
         </Fragment>
       ))}
     </dl>
+  );
+}
+
+/** A row's Location, changed in place: the platform's chips in a sheet (an
+ *  area's chevron opens its shelves and bins), never a flat list (#6438). */
+function LocationCell({ label, value, name, onCommit }: { label: string; value: string | null; name: string | null | undefined; onCommit: (id: string | null) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} title={`Change ${label.toLowerCase()}`} className="truncate text-left hover:underline">
+        {name || <span className="text-faint">—</span>}
+      </button>
+      {open && (
+        <Modal open onClose={() => setOpen(false)} title={label} size="sm">
+          <LocationChips
+            value={value}
+            withShortcuts
+            onChange={(id) => {
+              setOpen(false);
+              if (id && id !== value) onCommit(id);
+            }}
+          />
+        </Modal>
+      )}
+    </>
   );
 }
 

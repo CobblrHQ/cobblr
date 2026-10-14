@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.26.7",
+  version: "0.26.8",
   displayName: "Labels",
   description:
     "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",
@@ -93,6 +93,7 @@ export default defineModule({
         // (frozen) group keeps the printed stickers valid and only changes new
         // labels (keep_existing), so it's always safe to run.
         group: "label",
+        // UI-SCREEN: /labels (Codes panel prefix and code-in-QR controls)
         id: "labels:set-code",
         runBy: "member",
         examples: ["change the code prefix", "stop printing codes on those labels"],

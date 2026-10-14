@@ -41,8 +41,11 @@ import { join } from "node:path";
 const ROOTS = ["web/src", "packages/platform-web/src", "modules"];
 const SKIP = /(\.test\.|\.spec\.|\/dist\/|\/node_modules\/|\/__tests__\/)/;
 const MARKER = "EXTERNAL-IMAGE-OK:";
-/** A file mentioning any of these can be handed a core-files path. */
-const INTERNAL_SOURCE = /image_path|imagePath|image_field|fileRawUrl|core-files|\/raw\b/;
+/** A file mentioning any of these can be handed a core-files path. The scan
+ *  row's picture resolver (lib/rowPictures.ts) hands one out under another
+ *  name: a split pack's parent drew its picture from it straight into an
+ *  <img>, and the owner saw a broken image on his phone (#6456). */
+const INTERNAL_SOURCE = /image_path|imagePath|image_field|fileRawUrl|core-files|\/raw\b|rowPictures|scanFileUrl|shownPictureUrl/;
 /** How far above the tag the escape-hatch comment may sit. */
 const LOOKBACK = 6;
 
