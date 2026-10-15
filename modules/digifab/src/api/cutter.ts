@@ -10,6 +10,7 @@ import {ReviewRequired} from "../drivers/job-review.js";
 import {CutterMachine,NewCutterProfile,NewCutterPlan,CutterReportSchema,createCutterProfile,createCutterPlan,recordCutterUse} from "../cutter-plans.js";
 import {cutterStock,cutterStationKey} from "../cutter-stock.js";
 import {CutterControlSchema,cutterControl} from "../cutter-controls.js";
+import {isStopControl,RUN_MACHINES} from "../motion-gate.js";
 import {requireCutterStation} from "../cutter-station.js";
 export const cutterRouter=Router({mergeParams:true});
 const refuse=(res:import("express").Response,error:unknown)=>{if(!(error instanceof ReviewRequired||error instanceof z.ZodError))throw error;res.status(409).json({error:{code:"cutter_refused",message:error.message}});};
@@ -36,13 +37,13 @@ cutterRouter.get("/station",asyncHandler(async(req,res)=>{
  const job=plan?await db.selectFrom("digifab_jobs").selectAll().where("id","=",plan.job_id).executeTakeFirst():null;
  try{res.json({plan:plan??null,job:job??null,attention:attention??null,stock:await cutterStock(orgId,b.data.connection_id,b.data.device_id),station_key:cutterStationKey(b.data.connection_id,b.data.device_id)});}catch(error){refuse(res,error);}
 }));
-// AI-ACTION: digifab:cutter-batch
+// AI-ACTION: digifab:station-run
 cutterRouter.post("/jobs/:id/outcome",asyncHandler(async(req,res)=>{
- // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
- if(!(await requireCapability(req, res, "digifab:cutter-batch")))return;
+ // ADMIN-ONLY: the admin tier, or an operator: recording a cut at its station (#6672)
+ if(!(await requireCapability(req, res, "digifab:station-run")))return;
  const body=CutterReportSchema.extend({station_token:z.string().min(32).max(128)}).safeParse(req.body);if(!body.success)return badBody(res,body.error);
  const db=tenantDb(req),orgId=tenantContext(req).org.id;
  try{const saved=await db.selectFrom("digifab_cutter_plans").selectAll().where("job_id","=",req.params.id!).executeTakeFirst();if(!saved)throw new ReviewRequired("Choose a prepared cutter job.");await requireCutterStation(db,saved.connection_id,saved.remote_device_id,body.data.station_token);res.json(await recordCutterUse(db,orgId,saved.job_id,sessionUser(req)?.id ?? "",CutterReportSchema.parse(body.data)));}catch(error){refuse(res,error);}
 }));
 // AI-ACTION: digifab:cutter-control
-cutterRouter.post("/control",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-control")))return;const b=CutterControlSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);try{res.json(await cutterControl(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));
+cutterRouter.post("/control",asyncHandler(async(req,res)=>{if(!(await requireCapability(req, res, "digifab:cutter-control")))return;const b=CutterControlSchema.safeParse(req.body);if(!b.success)return badBody(res,b.error);if(!isStopControl(b.data.operation)&&!(await requireCapability(req, res, RUN_MACHINES)))return;try{res.json(await cutterControl(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}}));

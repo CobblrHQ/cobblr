@@ -373,7 +373,8 @@ export async function mirrorAndDeliverNow(linkId: string, waitMs = 20_000): Prom
     if (Date.now() > until) return { delivered: false, error: null, sent: 0 };
     await new Promise((res) => setTimeout(res, 200));
   }
-  const flushed = await flushShareLinkNow(linkId, Math.max(1_000, until - Date.now()));
+  // Preparing the mirror cannot spend the wait for an already running delivery.
+  const flushed = await flushShareLinkNow(linkId, waitMs);
   const left = await meta
     .selectFrom("share_outbox")
     .select((eb) => eb.fn.countAll<string>().as("n"))

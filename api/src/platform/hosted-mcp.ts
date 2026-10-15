@@ -29,6 +29,7 @@ import { MCP_PATH, originOf, protectedResourceMetadataUrl } from "../auth/oauth.
 import { mcpProxyHeaders } from "../auth/mcp-proxy.js";
 import { actionRefusal } from "./ai-action-door.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { productName } from "./product-name.js";
 
 const SELF_BASE = `${selfOrigin()}/api/v1`;
 const SERVER_INFO = { name: "cobblr", version: "0.1.0" };
@@ -263,7 +264,7 @@ export function writeRefusal(tool: string, mode: WriteMode): string | null {
   // an unconfirmed delete, and an outside assistant reads the same text. So
   // the relay never offers one, whatever the mode.
   if (tool === "delete_record") {
-    return "Deleting needs a person to confirm it, and this connection has no way to show a confirmation. Delete it in Cobblr, where the confirm step appears.";
+    return `Deleting needs a person to confirm it, and this connection has no way to show a confirmation. Delete it in ${productName()}, where the confirm step appears.`;
   }
   if (mode === "auto") return null;
   return mode === "off"
@@ -367,7 +368,7 @@ async function callTool(name: string, args: Json, token: string, defaultSlug: st
   // `workspace` argument can never aim the call — or the write grant minted for
   // it — at a different workspace than the one the user is chatting in.
   if (caller.kind === "held" && caller.lookOnly && (tool.mode === "write" || READ_TOOLS_THAT_POST.has(tool.name))) {
-    throw new Error("This connection's token can look but not change anything. Make changes in Cobblr, or connect with a token that can make changes.");
+    throw new Error(`This connection's token can look but not change anything. Make changes in ${productName()}, or connect with a token that can make changes.`);
   }
   const slug =
     caller.kind === "grant"

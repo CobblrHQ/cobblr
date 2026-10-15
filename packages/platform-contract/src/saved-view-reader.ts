@@ -17,6 +17,8 @@ export interface SavedViewForWire {
   /** The view's stored config (its filter, where and sort), read with
    *  `viewQuery` from @cobblr/platform-contract. */
   config: Record<string, unknown>;
+  /** The view's name, as the person called it ("PETG in use"). */
+  name?: string;
 }
 
 export type SavedViewReader = (orgId: string, viewId: string) => Promise<SavedViewForWire | null>;

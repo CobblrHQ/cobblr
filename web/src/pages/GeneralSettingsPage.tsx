@@ -16,7 +16,8 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { displaySlug } from "../lib/workspaceSlug";
 import { api, isFocused, setFocused } from "../lib/api";
 import { untilDate } from "../components/WorkspaceStateBar";
-import { useKeepWorkspace, useWorkspaceDeletion, workspaceStateKey } from "../components/WorkspaceDeletionBar";
+import { useKeepWorkspace, useWorkspaceDeletion } from "../components/WorkspaceDeletionBar";
+import { workspaceStateKey } from "../lib/workspace-trial";
 
 export function GeneralSettingsPage() {
   usePageTitle("General");

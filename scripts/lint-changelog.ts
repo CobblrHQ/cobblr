@@ -265,13 +265,17 @@ if (malformed.length) {
 // changelog.d is served to users (the /changelog page) AND posted to the public Discord
 // digest, but it is EXCLUDED from the git export — so the export's forbidden gate never
 // checks it. An internal product name leaked to #new-features 2026-08-04 for exactly
-// this reason. Reuse the publish manifest's forbidden list as the single source of truth.
+// this reason. The terms are the export gate's own: the shared identity terms plus the manifest's extras,
+// through scripts/publish/forbidden.mjs (#6598). Neither ships in the public tree, so there the check is
+// skipped (the digest scrub is still the runtime backstop); any other failure to load them is a bug, and throws.
 let forbidden: RegExp[] = [];
 try {
   const mani = JSON.parse(readFileSync("scripts/publish/manifests/core.json", "utf8")) as { forbidden?: string[] };
-  forbidden = (mani.forbidden ?? []).map((p) => new RegExp(p, "g"));
-} catch {
-  /* no manifest → skip (the digest scrub is still the runtime backstop) */
+  const { forbiddenTerms } = (await import("./publish/forbidden.mjs")) as { forbiddenTerms: (m: { forbidden?: string[] }) => string[] };
+  forbidden = forbiddenTerms(mani).map((p) => new RegExp(p, "g"));
+} catch (e) {
+  const code = (e as NodeJS.ErrnoException).code;
+  if (code !== "ENOENT" && code !== "ERR_MODULE_NOT_FOUND") throw e;
 }
 const idLeaks: string[] = [];
 for (const f of touchedEntries) {

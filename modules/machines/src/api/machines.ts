@@ -24,7 +24,7 @@ function answer(res: import("express").Response, out: Refusal | object) {
   else res.json(out);
 }
 
-export const machinesRouter = Router({ mergeParams: true });
+export const machinesRouter: Router = Router({ mergeParams: true });
 
 // Block the read-only `guest` role from every mutating request on this
 // router (covers both the direct mount and the instance-items dispatch

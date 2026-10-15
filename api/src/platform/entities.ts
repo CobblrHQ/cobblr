@@ -172,7 +172,6 @@ export async function resolveKind(orgId: string, kind: string): Promise<{ base: 
 // write is never followed by a stale read.
 const instanceModuleInFlight = ttlCache<{ module_name: string } | undefined>(0);
 const linkedSourcesInFlight = ttlCache<Array<{ id: string; slug: string; name: string }>>(0);
-const namedInstancesInFlight = ttlCache<Array<{ instance_name: string }>>(0);
 
 async function instanceFallbackEntityResolver(
   orgId: string,
@@ -1167,7 +1166,9 @@ async function probeNamedInstance(
   module: string,
   id: string,
 ): Promise<{ instance: string; entity: ResolvedEntity } | null> {
-  const insts = await namedInstancesInFlight.get(`${orgId}:${module}`, () =>
+  // Rows arrive after their own title reads; an in-flight-only load can finish
+  // before the next row asks. Shape writes invalidate this request's answer.
+  const insts = await perRequest(`entity-named-instances:${orgId}:${module}`, () =>
     meta
       .selectFrom("workspace_module_instances")
       .select(["instance_name"])

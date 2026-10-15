@@ -120,6 +120,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "member_left": "left",
   "member_removed": "removed a member from",
   "member_role_changed": "changed a member\u2019s role in",
+  "phone_sign_in_code_minted": "made a phone sign-in code for",
+  "phone_sign_in_code_revoked": "cancelled a phone sign-in code for",
   "metric_created": "created",
   "metric_deleted": "deleted",
   "metric_updated": "updated",
@@ -130,6 +132,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "order_created": "created",
   "order_deleted": "deleted",
   "order_delivered": "received",
+  "sales_document_send_started": "started emailing a quote or invoice for",
+  "order_document_prepared": "prepared a document for",
   "order_emailed": "emailed the customer about",
   "outbound_email_tested": "sent a test email from",
   "order_item_added": "added",
@@ -172,6 +176,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "personal_export_requested": "requested a copy of",
   "portal_config_updated": "updated",
   "project_created": "created",
+  "project_copied": "copied the tasks into",
   "project_updated": "updated",
   "receipt_added_to_stock": "added stock from",
   "receipt_already_counted": "checked stock from",
@@ -196,6 +201,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "sandbox_carried": "brought into a real account",
   "sandbox_handed_over": "started a trial in",
   "scan_committed": "scanned in",
+  "scan_received": "scanned",
   "send_file_confirmed": "confirmed receipt of",
   "send_file_downloaded": "downloaded a send file for",
   "send_file_imported": "imported a send file containing",
@@ -277,11 +283,26 @@ export interface ActivityPresentation {
 const bag = (v: unknown): Record<string, unknown> => v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const text = (v: unknown): string | null => typeof v === "string" && v.trim() ? v.trim() : null;
 const named = (d: Record<string, unknown>): string | null => text(d.name) ?? text(d.title) ?? text(d.label) ?? text(d.display_name) ?? text(d.document) ?? text(d.item);
+/** The outside system a row's change came from, by its own name ("Workshop
+ *  OS"), when an integration's sync made it. A row from before the sync had
+ *  its own kind says "<source> sync" as an automation; it reads the same
+ *  (#6564: "Homebox sync updated 47 locations: …" beside a letter tile). */
+export function activitySyncSource(e: Pick<SummaryEntry, "via_kind" | "via_label">): string | null {
+  if (e.via_kind === "sync") return text(e.via_label) ?? "A sync";
+  if (e.via_kind === "automation") {
+    const m = /^(.+?)\s+sync$/i.exec(text(e.via_label) ?? "");
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
 export function activityActor(e: SummaryEntry, viewerId?: string): string {
   if (viewerId && (e.user_id === viewerId || e.actor?.id === viewerId)) return "You";
   if (e.actor) return text(e.actor.display_name) ?? text(e.actor.email) ?? "A former member";
   if (e.user_id) return "A former member";
   if (e.via_kind === "share") return text(e.via_label) ?? "Someone you share with";
+  const sync = activitySyncSource(e);
+  if (sync) return sync;
   if (e.via_kind === "automation") return text(e.via_label) ?? "An automation";
   return "Cobblr";
 }
@@ -396,6 +417,13 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
       else summary = `${actor} added ${d.kind === "image" ? "a photo" : title}`;
     }
     if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/files/${encodeURIComponent(e.entity_id)}` };
+  } else if (e.action === "scan_received") {
+    // Named by the row now (the namer's context), never its barcode while a
+    // name exists: "You scanned Kirkland Signature Organic Cane Sugar".
+    const scan = bag(d.scan);
+    title = text(scan.name) ?? text(d.barcode) ?? "a thing";
+    summary = `${actor} scanned ${title}`;
+    if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/scan?item=${encodeURIComponent(e.entity_id)}` };
   } else if (e.action === "scan_committed" || e.action === "added_from_scan") {
     title = named(d) ?? text(d.barcode) ?? e.entity_title ?? "a thing";
     summary = `${actor} scanned in ${title}`;

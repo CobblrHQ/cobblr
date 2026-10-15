@@ -16,8 +16,10 @@
 // Load is the host's 1-minute average from /proc/loadavg (not namespaced, so a
 // job container sees the box it is on) over the host's core count, read at the
 // start and at the end of the measured window; the higher reading decides.
-// A bound under a second (SHORT_BOUND_MS) is judged at 0.4 per core instead: its noise is scheduling
-// latency, which starts well before the box is oversubscribed.
+// A bound of a second or less (SHORT_BOUND_MS) is judged at 0.4 per core instead: its noise is
+// scheduling latency, which starts well before the box is oversubscribed. A second is in it: the
+// scan's one-second table budget (#6555) read 1306 ms at 0.85 per core during the full suite and
+// was judged red by the long rule, because the line sat at "under a second" (#6617).
 // WALL_CLOCK_LOAD_MAX is 1.0 per core: over it the box is oversubscribed and
 // every process is waiting for a core, which is what stretches a wall clock.
 // The run that motivated this was at 1.48 (17.8 on 12) and crawling; a runner
@@ -41,8 +43,8 @@ export interface SkippableContext {
 
 export const WALL_CLOCK_LOAD_MAX = Number(process.env.COBBLR_WALL_CLOCK_LOAD_MAX) || 1.0;   // env override exists for proving the skip path, never for CI
 
-/** A bound this short is a scheduling-latency measurement: a box at 0.75 per core (a test job and a docker
- *  build beside it) already stretches a 120 ms median to 170 ms, so it is judged at half the limit. */
+/** A bound this short (or exactly this) is a scheduling-latency measurement: a box at 0.75 per core (a test
+ *  job and a docker build beside it) already stretches a 120 ms median to 170 ms, so it is judged at 0.4. */
 export const SHORT_BOUND_MS = 1000;
 export const WALL_CLOCK_SHORT_LOAD_MAX = Number(process.env.COBBLR_WALL_CLOCK_SHORT_LOAD_MAX) || 0.4;
 
@@ -66,12 +68,16 @@ export function boxLoad(): BoxLoad {
 
 export type WallClockVerdict = "pass" | "fail" | "inconclusive";
 
+/** The per-core load over which a missed bound is inconclusive: one place, so the
+ *  verdict and the message that explains it never disagree. */
+export const loadLimitFor = (maxMs: number): number => (maxMs <= SHORT_BOUND_MS ? WALL_CLOCK_SHORT_LOAD_MAX : WALL_CLOCK_LOAD_MAX);
+
 /** The decision, pure, so it can be tested without a clock or a box. */
 export function judgeWallClock(
   took: number,
   maxMs: number,
   loads: BoxLoad[],
-  loadMax = maxMs < SHORT_BOUND_MS ? WALL_CLOCK_SHORT_LOAD_MAX : WALL_CLOCK_LOAD_MAX,
+  loadMax = loadLimitFor(maxMs),
 ): { verdict: WallClockVerdict; worst: BoxLoad } {
   const worst = loads.reduce((a, b) => (b.ratio > a.ratio ? b : a));
   if (took < maxMs) return { verdict: "pass", worst };
@@ -96,7 +102,7 @@ export function expectElapsedWithin(ctx: SkippableContext, took: number, maxMs: 
 // stable prefix the CI log reader can find; the test shows as skipped, never
 // as passed.
 function inconclusiveLine(why: string, took: number, maxMs: number, worst: BoxLoad): string {
-  return `INCONCLUSIVE (wall clock): ${why}: ${took}ms over the ${maxMs}ms bound on a box at load ${worst.load1.toFixed(1)} on ${worst.cores} cores (${worst.ratio.toFixed(2)} per core, limit ${maxMs < SHORT_BOUND_MS ? WALL_CLOCK_SHORT_LOAD_MAX : WALL_CLOCK_LOAD_MAX}); re-run on a quiet runner`;
+  return `INCONCLUSIVE (wall clock): ${why}: ${took}ms over the ${maxMs}ms bound on a box at load ${worst.load1.toFixed(1)} on ${worst.cores} cores (${worst.ratio.toFixed(2)} per core, limit ${loadLimitFor(maxMs)}); re-run on a quiet runner`;
 }
 
 export function wallClock() {

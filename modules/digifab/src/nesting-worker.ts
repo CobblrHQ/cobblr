@@ -11,6 +11,7 @@ parentPort!.on("message", async (raw: string) => {
   const input = JSON.parse(raw) as { seed: number; attempts: number; quantity: number; separation: number; item: {shape:Polygon}; containers: {shape:Polygon;zones:{quality:number;shape:Polygon}[]}[]; rectangle?: { design: Design; quantity: number; sheets: Sheet[]; spacing: number; kerf: number; rotate: boolean; partial?: boolean } };
   if (input.rectangle) {
    const entry = new URL("./laser-layout.js", import.meta.url);
+   // imports: ./laser-layout.ts
    const { nestParts } = await import(existsSync(entry) ? entry.href : new URL("./laser-layout.ts", import.meta.url).href);
    const r = input.rectangle;
    parentPort!.postMessage({ result: nestParts(r.design,r.quantity,r.sheets,r.spacing,r.kerf,r.rotate,r.partial) });

@@ -39,6 +39,7 @@ import { BundleUpdateConflicts, resolutionsFor, type ConflictChoice } from "./Bu
 import { doorLeadsSomewhere } from "../lib/discord-connect";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { chosenNoun, fillNoun } from "@cobblr/platform-contract/kind-label";
 
 interface InstalledMode {
   mode: "installed";
@@ -149,10 +150,15 @@ export function BundleDetailModal(props: Props) {
       : props.mode === "featured"
         ? (props.installedBundleId ?? null)
         : null;
+  // Remove opens the one Remove dialog every door uses (RemoveBundleDialog):
+  // the same words and the same choice about the bundle's records.
+  const [removing, setRemoving] = useState(false);
+  // Paused while the Remove dialog is up: the removal refreshes every query, and
+  // this one would ask for the bundle it just took out and be refused (404).
   const detail = useQuery({
     queryKey: ["bundle-detail", slug, installedBundleId],
     queryFn: () => api.getBundle(slug, installedBundleId!),
-    enabled: open && !!installedBundleId,
+    enabled: open && !!installedBundleId && !removing,
   });
 
   // Which modules are actually enabled in this workspace — so the read-only
@@ -345,9 +351,6 @@ export function BundleDetailModal(props: Props) {
     },
   });
 
-  // Remove opens the one Remove dialog every door uses (RemoveBundleDialog):
-  // the same words and the same choice about the bundle's records.
-  const [removing, setRemoving] = useState(false);
   function handleUninstall() {
     if (uninstallId) setRemoving(true);
   }
@@ -976,19 +979,24 @@ export function BundleDetailModal(props: Props) {
         {props.mode === "featured" && !isUpdate && nounOffers.length > 0 && (
           <Section title="what do you call these?">
             <div className="space-y-3" data-testid="noun-question">
-              {nounOffers.map((o) => (
+              {nounOffers.map((o) => {
+                // A table named for its own word ("{{Nouns}}": Supplies, or
+                // Notions) reads in the word in force, never the template.
+                const table = fillNoun(o.table, chosenNoun(o.offer, nounChoices[o.instance] ? { singular: nounChoices[o.instance] } : null));
+                return (
                 <div key={o.instance}>
                   <p className="text-sm text-content dark:text-mortar-100 mb-1.5">
-                    {o.of === "unit" ? `Your ${o.table.toLowerCase()} is counted in` : `One thing in ${o.table} is a`}
+                    {o.of === "unit" ? `Your ${table.toLowerCase()} is counted in` : `One thing in ${table} is a`}
                   </p>
                   <NounChoiceButtons
                     offer={o.offer}
                     current={nounChoices[o.instance] ?? null}
-                    label={`What do you call these in ${o.table}?`}
+                    label={`What do you call these in ${table}?`}
                     onPick={(w) => setNounChoices((c) => ({ ...c, [o.instance]: w }))}
                   />
                 </div>
-              ))}
+                );
+              })}
               <p className="text-xs text-faint">Every label says the word you pick. You can change it later in the table's settings.</p>
             </div>
           </Section>

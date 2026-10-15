@@ -124,6 +124,8 @@ export {
 export { Markdown, MarkdownText, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
 export { QrCode } from "./QrCode";
+// The wall QR sheet, shared with every app on the engine so its warning cannot drift (#6738).
+export { printJoinSheet, joinSheetText, joinSheetHtml, joinSheetRole, type JoinSheetOptions, type JoinSheetRole, type JoinSheetPace, type JoinSheetText } from "./join-sheet";
 export { DocThumb, docThumbFor } from "./DocThumb";
 export {
   FilePreview,
@@ -324,6 +326,7 @@ export { useLayerStack, topLayerZ, stackedZ, isTopLayer, inTopLayer } from "./la
 export { useDialogFocus, tabbables } from "./useDialogFocus";
 export { DragInput, type DragInputProps } from "./DragInput";
 export { OverlayLayer, PopoverLayer, BackdropLayer, useCloseOnPageScroll, clampToViewport, POPOVER_GUTTER, OVERLAY_LAYER_CLASS, POPOVER_LAYER_CLASS, BACKDROP_LAYER_CLASS, type LayerProps, type PopoverLayerProps } from "./fixed-layers";
+export { Code } from "./Code";
 export { LiveSurfaceProvider, useOverLiveSurface } from "./live-surface";
 export { describeUnreadableBody } from "./unreadableBody";
 
@@ -382,4 +385,6 @@ export { useStationWakeLock } from "./station-wake-lock";
 export { ConnectCobblr } from "./ConnectCobblr";
 export type { OwnConnections } from "./ConnectCobblr";
 export { GUEST_NOT_SHARED, makesBackgroundWrites, mayRead, refusedForGuest, rememberRole, roleIn, workspaceFetch } from "./acting-role";
+export { PRIMED_FOR_MS, clearPrimedReads, holdPrimedReads, primeReads, primedRead, resetPrimedReads } from "./primed-reads";
+export { resetSharedReads, sharedRead } from "./shared-reads";
 export { StatusRow, type StatusRowProps } from "./StatusRow";

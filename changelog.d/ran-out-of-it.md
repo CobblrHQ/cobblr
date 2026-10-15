@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-15
 ---
 
 Ran out on a scan keeps a thing at none on hand and puts it on the shopping list, whether Cobblr knew it or not

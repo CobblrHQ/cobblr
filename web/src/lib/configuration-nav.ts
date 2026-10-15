@@ -36,6 +36,7 @@ import {
   CopyPlus,
   FileArchive,
   FileText,
+  FolderPlus,
   Globe,
   HeartPulse,
   Home,
@@ -138,7 +139,11 @@ export interface ConfigSectionMeta {
   blurb: string;
   icon: LucideIcon;
   /** Primary action rendered as a BUTTON on the section (rule 3). */
-  action?: { label: string; to: string };
+  action?: {
+    label: string;
+    to: string;
+    page?: Pick<ConfigDestination, "label" | "description" | "icon">;
+  };
 }
 
 export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
@@ -151,7 +156,15 @@ export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
     label: "Build",
     blurb: "What this workspace is made of, and how the pieces connect.",
     icon: Blocks,
-    action: { label: "+ New category", to: "/configuration/new-thing" },
+    action: {
+      label: "+ New thing",
+      to: "/configuration/new-thing",
+      page: {
+        label: "New thing",
+        description: "Add a new kind of thing to track, then choose how it appears in your workspace.",
+        icon: FolderPlus,
+      },
+    },
   },
   people: {
     label: "People",
@@ -257,7 +270,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: CopyPlus,
     label: "Templates",
     description:
-      "Per-workspace entity templates. Stamp out new records pre-filled with defaults + tags.",
+      "Saved starting points for new things: the values and tags that fill in when you make one.",
     to: "/configuration/templates",
     module: "core-templates",
     keywords: ["defaults", "prefill", "stamp"],
@@ -709,6 +722,19 @@ export function destinationForPath(pathname: string): ConfigDestination | null {
   return best;
 }
 
+/** Actions have page context without becoming duplicate navigation leaves. */
+export function configPageForPath(pathname: string): ConfigDestination | null {
+  const destination = destinationForPath(pathname);
+  if (destination) return destination;
+  for (const section of CONFIG_SECTION_ORDER) {
+    const action = CONFIG_SECTIONS[section].action;
+    if (action?.page && pathname === action.to) {
+      return { ...action.page, to: action.to, section };
+    }
+  }
+  return null;
+}
+
 /** May this viewer use the settings page at this route? The nav hides a page
  *  below its role; this is the same answer for someone who arrives by URL, a
  *  bookmark or a link, who would otherwise get the page's controls and a
@@ -731,8 +757,5 @@ export function sectionAction(section: ConfigSection, role: string | null | unde
 
 /** The section a route belongs to, for breadcrumbs + sidebar highlighting. */
 export function sectionForPath(pathname: string): ConfigSection | null {
-  const hit = CONFIG_DESTINATIONS.find(
-    (d) => pathname === d.to || pathname.startsWith(`${d.to}/`),
-  );
-  return hit?.section ?? null;
+  return configPageForPath(pathname)?.section ?? null;
 }

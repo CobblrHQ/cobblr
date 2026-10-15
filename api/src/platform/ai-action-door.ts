@@ -11,6 +11,7 @@
 
 import { actionRunsUnconfirmed, effectNeedsAPerson } from "@cobblr/platform-contract/action-consent";
 import { meta } from "../db/meta.js";
+import { productName } from "./product-name.js";
 
 export interface ActionSafety {
   id: string;
@@ -50,7 +51,7 @@ export function actionRefusal(action: { id: string; label?: string | null; undoa
   const name = action.label ? `"${action.label}"` : action.id;
   if (effectNeedsAPerson(action.effect)) {
     const what = EFFECT_WORDS[action.effect ?? ""] ?? "acts outside the workspace";
-    return `${name} ${what}, so a person always confirms it, and this connection has no way to show a confirmation. Run it from Cobblr, where the confirm step appears.`;
+    return `${name} ${what}, so a person always confirms it, and this connection has no way to show a confirmation. Run it from ${productName()}, where the confirm step appears.`;
   }
-  return `${name} cannot be undone from inside the workspace, so it needs a person to confirm it, and this connection has no way to show a confirmation. Run it from Cobblr, where the confirm step appears. Actions that CAN be undone run from here normally - list_actions marks each one.`;
+  return `${name} cannot be undone from inside the workspace, so it needs a person to confirm it, and this connection has no way to show a confirmation. Run it from ${productName()}, where the confirm step appears. Actions that CAN be undone run from here normally - list_actions marks each one.`;
 }

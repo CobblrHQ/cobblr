@@ -1,4 +1,5 @@
 import { exportSendFile } from "./record-send-file.js";
+import { listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { createPairing, deletePairing, updatePairing } from "./pairings-ops.js";
 import { linkWords } from "./record-kind-spellings.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
@@ -77,11 +78,11 @@ import { choiceLearns, sameChoice, withLearnedChoice } from "@cobblr/platform-co
 import { listOverrides, upsertOverride } from "./entity-kind-overrides.js";
 import { FIELD_PRESETS } from "./field-presets.js";
 import { turnPresetOff, turnPresetOn } from "./field-preset-switch.js";
-import { groupFields, ungroupFields } from "./field-sections.js";
+import { kindsWithHeading, groupFields, ungroupFields } from "./field-sections.js";
 import { demoteInstance, promoteCategory } from "./instance-promote.js";
 import { listInstances } from "./instances.js";
 import { registerSetListPresentationAction } from "./set-list-presentation-action.js";
-import { countInstanceItems, getInstance, provisionInstance, tearDownInstance } from "./instances.js";
+import { countInstanceItems, getInstance, provisionInstance, setScanFallback, tearDownInstance } from "./instances.js";
 import { setWireEnabled } from "./wires.js";
 import { decideApprovalRequest } from "./approvals.js";
 import { confirmHeldChange, heldChangeRequester, keepHeldChange } from "./ai-held-changes.js";
@@ -1109,10 +1110,23 @@ export function registerPlatformActionHandlers(): void {
     // right was told three times that fields were "required" (the 2026-09-22
     // nightly's transcript, #3142).
     const fields = namesOf(args.fields);
-    if (!entityKind || !section || (fields.length === 0 && !renameTo)) {
-      return { error: "entity_kind and section are required, plus either fields or rename_to" };
+    // A rename may leave the kind out: the heading's own name finds it
+    // (kindFromHeading, below). Grouping fields still names the kind.
+    if ((!entityKind && !renameTo) || !section || (fields.length === 0 && !renameTo)) {
+      return { error: "section is required, plus either fields (with entity_kind) or rename_to" };
     }
     return { entityKind, section, renameTo, fields };
+  };
+  /** "rename the Buying heading to Purchasing": no kind said, and only one
+   *  kind's form has a Buying heading, so that is the one (#6562). Two kinds
+   *  with one is a real question, named. */
+  const kindFromHeading = async (orgId: string, read: { entityKind: string; section: string }): Promise<{ entityKind: string } | { error: string }> => {
+    if (read.entityKind) return { entityKind: read.entityKind };
+    const kinds = await kindsWithHeading(orgId, read.section);
+    if (kinds.length === 1) return { entityKind: kinds[0]! };
+    if (kinds.length === 0) return { error: `no form here has a heading called "${read.section}"` };
+    const all = await listKindsForOrg(orgId);
+    return { error: `more than one kind has a "${read.section}" heading: ${kindsInWords(all.filter((k) => kinds.includes(k.id)))}; say which` };
   };
 
   // What grouping would touch, before a card exists: the kind must be one
@@ -1120,8 +1134,11 @@ export function registerPlatformActionHandlers(): void {
   // date and supplier under Buying on parts" with no such field was a card
   // that died on press (#3123).
   registerPlanner("platform.group-fields", async (ctx: ActionInvokeContext) => {
-    const read = readGroupFields((ctx.args ?? {}) as Record<string, unknown>);
-    if ("error" in read) return { error: read.error };
+    const first = readGroupFields((ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in first) return { error: first.error };
+    const k = await kindFromHeading(ctx.orgId, first);
+    if ("error" in k) return { error: k.error };
+    const read = { ...first, entityKind: k.entityKind };
     const kinds = await listKindsForOrg(ctx.orgId);
     const kind = kinds.find((k) => k.id === read.entityKind);
     // ALLOW-INTERNAL-NOUN: echoes the caller's own word for a kind that is not here; there are no words for it, and the kinds that are come in words beside it
@@ -1149,7 +1166,10 @@ export function registerPlatformActionHandlers(): void {
   registerHandler("platform.group-fields", async (ctx: ActionInvokeContext) => {
     const read = readGroupFields((ctx.args ?? {}) as Record<string, unknown>);
     if ("error" in read) return { ok: false, error: read.error };
-    const { entityKind, section, renameTo, fields } = read;
+    const k = await kindFromHeading(ctx.orgId, read);
+    if ("error" in k) return { ok: false, error: k.error };
+    const { section, renameTo, fields } = read;
+    const entityKind = k.entityKind;
     const result = await groupFields(ctx.orgId, entityKind, section, fields, renameTo || undefined);
     if (!result.ok) return { ok: false, error: result.message };
     return {
@@ -1894,6 +1914,134 @@ export function registerPlatformActionHandlers(): void {
     }
     return hit;
   };
+
+  // Bundles from the catalog, their optional parts, their saved versions, and
+  // a feature's scan catch-all (#6528): the Bundles and Presentation screens'
+  // own operations (installBundleDoor, changeBundleFeatures,
+  // revertBundleSnapshot, setScanFallback).
+  const bundleActorFor = async (userId: string | null) => {
+    const u = userId ? await meta.selectFrom("users").select(["display_name"]).where("id", "=", userId).executeTakeFirst() : undefined;
+    return { id: userId ?? "", display_name: u?.display_name ?? null, auth_method: "session" as const };
+  };
+  const doorError = (r: { status: number; body: Record<string, unknown> }) =>
+    String((r.body.error as { message?: string } | undefined)?.message ?? "That did not work.");
+  type FeatureDecl = { key?: string; name?: string };
+  const featureKeys = (features: FeatureDecl[], said: string): { keys: string[] } | { error: string } => {
+    const keys: string[] = [];
+    for (const one of said.split(",").map((x) => x.trim()).filter(Boolean)) {
+      const hit = features.find((f) => f.key?.toLowerCase() === one.toLowerCase() || f.name?.toLowerCase() === one.toLowerCase());
+      if (!hit?.key) return { error: `no part called "${one}"; its parts: ${features.map((f) => f.name ?? f.key).join(", ") || "none"}` };
+      keys.push(hit.key);
+    }
+    return { keys };
+  };
+  const manifestOf = (raw: unknown): { name?: string; features?: FeatureDecl[] } => {
+    const m = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown> | null;
+    return ((m?.manifest as Record<string, unknown> | undefined) ?? m ?? {}) as { name?: string; features?: FeatureDecl[] };
+  };
+
+  registerHandler("platform.install-bundle", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const said = str(a.bundle);
+    if (!said) return { ok: false, error: "bundle is required (its catalog name, e.g. Yarn)" };
+    const catalog = listFlagshipManifests("offerable").map((m) => {
+      const inner = manifestOf(m) as { id?: string; name?: string; features?: FeatureDecl[] };
+      return { id: String(inner.id ?? ""), name: String(inner.name ?? inner.id ?? ""), label: String(inner.name ?? inner.id ?? ""), features: inner.features ?? [] };
+    }).filter((m) => m.id);
+    const hit = catalog.find((m) => m.id === said) ?? matchByLabel(said, catalog);
+    if (!hit) return { ok: false, error: `no bundle called "${said}" in this deployment's catalog` };
+    if ("ambiguous" in hit) return { ok: false, error: `"${said}" could be ${hit.ambiguous.map((x) => `"${x.label}"`).join(" or ")}; which one?` };
+    const already = await meta.selectFrom("bundles").select("id").where("org_id", "=", ctx.orgId).where("external_id", "=", hit.id).executeTakeFirst();
+    if (already) return { ok: false, error: `${hit.name} is already installed; turn its parts on or off with platform:set-bundle-features` };
+    let enabled: string[] | undefined;
+    if (str(a.features)) {
+      const k = featureKeys(hit.features, str(a.features));
+      if ("error" in k) return { ok: false, error: k.error };
+      enabled = k.keys;
+    }
+    const { installBundleDoor } = await import("../routes/bundles.js");
+    const r = await installBundleDoor(ctx.orgId, await bundleActorFor(ctx.userId), { id: hit.id, confirm: true, ...(enabled ? { enabled_features: enabled } : {}) });
+    if (r.status >= 400) return { ok: false, error: doorError(r) };
+    const incomplete = r.body.incomplete as { message?: string } | undefined;
+    return {
+      ok: true,
+      summary: incomplete?.message ? `${hit.name} is installed, but not completely: ${incomplete.message}` : `${hit.name} is installed.`,
+      data: { bundle: hit.name, external_id: hit.id, installed: r.body.installed ?? null },
+    };
+  });
+
+  registerHandler("platform.set-bundle-features", async (ctx: ActionInvokeContext) => {
+    const a = (ctx.args ?? {}) as Record<string, unknown>;
+    const said = str(a.bundle);
+    if (!said) return { ok: false, error: "bundle is required (its name, e.g. Sewing)" };
+    if (!str(a.turn_on) && !str(a.turn_off)) return { ok: false, error: "name the parts to turn_on or turn_off" };
+    const found = await findBundle(ctx.orgId, said);
+    if ("error" in found) return { ok: false, error: found.error };
+    const row = await meta.selectFrom("bundles").select(["manifest", "enabled_features"]).where("id", "=", found.id).executeTakeFirstOrThrow();
+    const features = manifestOf(row.manifest).features ?? [];
+    const on = featureKeys(features, str(a.turn_on));
+    const off = featureKeys(features, str(a.turn_off));
+    if ("error" in on) return { ok: false, error: on.error };
+    if ("error" in off) return { ok: false, error: off.error };
+    const before = (row.enabled_features as string[] | null) ?? [];
+    const next = [...new Set([...before.filter((k) => !off.keys.includes(k)), ...on.keys])];
+    const { changeBundleFeatures } = await import("../routes/bundles.js");
+    const r = await changeBundleFeatures(ctx.orgId, await bundleActorFor(ctx.userId), found.id, next);
+    if (r.status >= 400) return { ok: false, error: doorError(r) };
+    const f = r.body.features as { turned_on: string[]; turned_off: string[] };
+    const named = (keys: string[]) => inWords(keys.map((k) => features.find((x) => x.key === k)?.name ?? k));
+    const parts = [f.turned_on.length ? `${named(f.turned_on)} on` : "", f.turned_off.length ? `${named(f.turned_off)} off` : ""].filter(Boolean);
+    return {
+      ok: true,
+      summary: parts.length ? `${found.name}: ${parts.join(", ")}.` : `${found.name} already had those parts that way.`,
+      data: { bundle: found.name, turned_on: f.turned_on, turned_off: f.turned_off },
+    };
+  });
+  registerUndo("platform.set-bundle-features", (result) => {
+    const d = (result as { data?: { bundle?: string; turned_on?: string[]; turned_off?: string[] } } | null)?.data;
+    if (!d?.bundle || (!d.turned_on?.length && !d.turned_off?.length)) return null;
+    return { action_id: "platform:set-bundle-features", args: { bundle: d.bundle, turn_on: (d.turned_off ?? []).join(", "), turn_off: (d.turned_on ?? []).join(", ") } };
+  });
+
+  const snapshotFor = async (orgId: string, args: Record<string, unknown>) => {
+    const said = str(args.bundle);
+    if (!said) return { error: "bundle is required (its name, e.g. Yarn)" } as const;
+    const found = await findBundle(orgId, said);
+    if ("error" in found) return found;
+    let q = meta.selectFrom("bundle_snapshots").select(["id", "version", "created_at"]).where("org_id", "=", orgId).where("external_id", "=", found.external_id);
+    const wanted = str(args.snapshot_id);
+    if (wanted) q = q.where("id", "=", wanted);
+    const snap = await q.orderBy("created_at", "desc").limit(1).executeTakeFirst();
+    if (!snap) return { error: wanted ? `no saved version ${wanted} of ${found.name}` : `${found.name} has no earlier version saved` } as const;
+    return { bundle: found, snap };
+  };
+  registerPlanner("platform.revert-bundle", async (ctx) => {
+    const s = await snapshotFor(ctx.orgId, (ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in s) return { error: String(s.error) };
+    return { title: `Put ${s.bundle.name} back to version ${s.snap.version}`, lines: [`Saved ${new Date(s.snap.created_at).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })}. Records are kept; the version it replaces is saved.`] };
+  });
+  registerHandler("platform.revert-bundle", async (ctx: ActionInvokeContext) => {
+    const s = await snapshotFor(ctx.orgId, (ctx.args ?? {}) as Record<string, unknown>);
+    if ("error" in s) return { ok: false, error: String(s.error) };
+    const { revertBundleSnapshot } = await import("../routes/bundles.js");
+    const r = await revertBundleSnapshot(ctx.orgId, await bundleActorFor(ctx.userId), s.snap.id);
+    if (r.status >= 400) return { ok: false, error: doorError(r) };
+    return { ok: true, summary: `${s.bundle.name} is back to version ${s.snap.version}.`, data: { bundle: s.bundle.name, version: s.snap.version, snapshot_id: s.snap.id } };
+  });
+
+  registerHandler("platform.set-scan-fallback", async (ctx: ActionInvokeContext) => {
+    const said = str((ctx.args ?? {}).list);
+    if (!said) return { ok: false, error: "list is required (its name)" };
+    const found = await findInstance(ctx.orgId, said);
+    if ("error" in found) return { ok: false, error: found.error };
+    const before = (await listInstances(ctx.orgId)).find((i) => i.module_name === found.module && i.is_scan_fallback && i.instance_name !== found.name);
+    await setScanFallback(ctx.orgId, found.name);
+    return { ok: true, summary: `Scans that fit no list now land in ${found.label}.`, data: { list: found.name, before: before?.instance_name ?? null } };
+  });
+  registerUndo("platform.set-scan-fallback", (result) => {
+    const before = (result as { data?: { before?: string | null } } | null)?.data?.before;
+    return before ? { action_id: "platform:set-scan-fallback", args: { list: before } } : null;
+  });
 
   // The dashboard's arrangement, a blueprint, and an app's records brought
   // over (#6528): the dashboard's, the Backup screen's and the account menu's

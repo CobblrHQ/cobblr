@@ -409,9 +409,30 @@ const RAW_CORPUS: CorpusCase[] = [
   ...ph("workspace", neverOffer, "action:core-locations:reorder", [
     "put the racks in Den in numeric order", "sort the shelves by name",
   ]),
+  // Moving a place's contents, said of places the seed has one of each: the
+  // Garage (the CubePro is in it) and Shelf A.
   ...ph("workspace", neverOffer, "action:core-locations:move-everything", [
-    "move everything from Bin 3 to Bin 7", "merge the two Bin 3s",
+    "move everything from the Garage to Shelf A",
   ]),
+  // The seed has two Bin 3s (Rack 1 and Rack 3). "move everything from Bin 3"
+  // names neither, and "merge the two Bin 3s" names no direction: a move aimed
+  // at one of two look-alikes the words do not pick is bounced by the app's
+  // own guard (ask-dont-rank.ts), so the right answer to both is the question.
+  // Scored as a move, it counted as a miss in 18 and 16 nightlies of 22 (#6562).
+  {
+    say: "move everything from Bin 3 to Bin 7",
+    cat: "workspace",
+    no_ai: neverOffer,
+    ai: "clarify",
+    says: ["Bin 3"],
+  },
+  {
+    say: "merge the two Bin 3s",
+    cat: "workspace",
+    no_ai: neverOffer,
+    ai: "clarify",
+    says: ["Bin 3"],
+  },
   ...ph("workspace", neverOffer, "action:inventory:adjust-stock", [
     "I used 2 of the M3 screws", "add five more of the blue filament",
   ]),

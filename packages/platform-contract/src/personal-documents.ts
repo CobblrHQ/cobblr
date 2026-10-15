@@ -35,11 +35,31 @@ export interface DocumentInput {
 }
 export type PersonalDocumentReader = (input: DocumentInput) => Promise<PersonalDocumentRead>;
 let reader: PersonalDocumentReader | null = null;
-export function registerPersonalDocumentReader(value: PersonalDocumentReader): void { reader = value; }
+const ordinaryRecently = new Map<string, { at: number; read: PersonalDocumentRead }>();
+const ORDINARY_TTL_MS = 15 * 60_000;
+export function registerPersonalDocumentReader(value: PersonalDocumentReader): void { reader = value; ordinaryRecently.clear(); }
 export async function readPersonalDocument(input: DocumentInput): Promise<PersonalDocumentRead> {
   if (reader) return reader(input);
   return { privacy: "personal", kind: "personal", fields: {}, sources: {}, missing: [...FIELDS_FOR_KIND.personal],
     message: "This document could not be read here. It has not been sent to a cloud AI." };
+}
+
+/** Shared intake checks ordinary documents without preparing an assisted
+ *  read. Its verdict follows the same bytes from the upload door into storage,
+ *  within one workspace only: a shared cache would leak through upload speed.
+ *  Personal verdicts are never cached, and still get the requested assistance. */
+export async function readSharedDocument(input: DocumentInput, workspace?: { orgId: string; sha256: string }): Promise<PersonalDocumentRead> {
+  if (input.vault) return readPersonalDocument(input);
+  const key = workspace ? `${workspace.orgId}:${input.mime}:${workspace.sha256}` : null;
+  const kept = key ? ordinaryRecently.get(key) : undefined;
+  if (kept && Date.now() - kept.at < ORDINARY_TTL_MS) return kept.read;
+  const read = await readPersonalDocument(input.assist ? { ...input, assist: undefined } : input);
+  if (read.privacy === "personal") return input.assist ? readPersonalDocument(input) : read;
+  if (key) {
+    ordinaryRecently.set(key, { at: Date.now(), read });
+    if (ordinaryRecently.size > 500) ordinaryRecently.delete(ordinaryRecently.keys().next().value as string);
+  }
+  return read;
 }
 export type PersonalDocumentStorage = (request: { orgId: string; userId: string; input: DocumentInput; filename: string; folderId?: string }) => Promise<{ fileId: string; folderId: string }>;
 let storage: PersonalDocumentStorage | null = null;

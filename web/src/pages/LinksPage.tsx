@@ -351,7 +351,7 @@ function ExpiryBadge({ expiresAt }: { expiresAt: string | null }) {
   }
   return (
     <span
-      className="px-1.5 py-0.5 rounded text-[10px] font-mono text-muted bg-subtle dark:bg-slate-800"
+      className="px-1.5 py-0.5 rounded text-[10px] tabular-nums text-muted bg-subtle dark:bg-slate-800"
       title={new Date(expiresAt).toLocaleString()}
     >
       expires in {days}d

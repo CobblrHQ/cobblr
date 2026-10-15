@@ -514,7 +514,8 @@ export async function startPrint(orgId: string, userId: string | null, makeId: s
 /** Wire it: the slice's completion, and the action Cobb and MCP reach it by. */
 export function registerPrintThis(): void {
   const batchHandler = (operation: "next" | "review" | "cancel"): ActionHandler => async ctx => {
-    if (!ctx.userId || !await platform().auth.userHasRole({ orgId: ctx.orgId, userId: ctx.userId, minRole: operation === "cancel" ? "member" : "admin" })) return { ok: false, error: operation === "cancel" ? "A workspace member cancels the remaining prints." : "An owner or admin manages this batch." };
+    const actionId = operation === "next" ? "digifab:start-next-print" : operation === "review" ? "digifab:review-print-batch" : "digifab:cancel-print-batch";
+    if (!ctx.userId || !await platform().auth.userMayRun({ orgId: ctx.orgId, userId: ctx.userId, actionId })) return { ok: false, error: operation === "cancel" ? "A workspace member cancels the remaining prints." : operation === "next" ? "An admin or an operator starts the next print." : "An owner or admin manages this batch." };
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     const makeId = typeof args.make_id === "string" ? args.make_id : ctx.entity?.kind === MAKE_KIND ? ctx.entity.id : null;
     if (!makeId) return { ok: false, error: "Say which Make's batch to use." };

@@ -212,6 +212,12 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -234,9 +240,6 @@ importers:
       '@testing-library/react':
         specifier: ^16.3.2
         version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
       '@types/react':
         specifier: ^19.0.2
         version: 19.2.14
@@ -1040,6 +1043,15 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      '@types/react-dom':
+        specifier: ^19
+        version: 19.2.3(@types/react@19.2.14)
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -1049,9 +1061,15 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
+      lucide-react:
+        specifier: ^0.469.0
+        version: 0.469.0(react@19.2.6)
       polygon-clipping:
         specifier: 0.15.7
         version: 0.15.7
+      react-dom:
+        specifier: ^19
+        version: 19.2.6(react@19.2.6)
       ws:
         specifier: ^8.22.0
         version: 8.22.0
@@ -1065,9 +1083,6 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.100.10(react@19.2.6)
-      '@types/express':
-        specifier: ^4.17.21
-        version: 4.17.25
       '@types/react':
         specifier: ^19.0.2
         version: 19.2.14
@@ -1234,6 +1249,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.0.1))
 
   modules/projects:
     dependencies:
@@ -1333,6 +1351,9 @@ importers:
       kysely:
         specifier: ^0.27.5
         version: 0.27.6
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -1463,6 +1484,12 @@ importers:
 
   packages/platform-contract:
     dependencies:
+      '@types/node':
+        specifier: ^22.10.5
+        version: 22.19.19
+      kysely:
+        specifier: ^0.27.5
+        version: 0.27.6
       re2js:
         specifier: 2.8.6
         version: 2.8.6
@@ -1476,6 +1503,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@22.19.19)(jsdom@30.0.1(@noble/hashes@2.0.1))
 
   packages/platform-net:
     dependencies:
@@ -1498,16 +1528,28 @@ importers:
       '@cobblr/thermal-print':
         specifier: workspace:*
         version: link:../thermal-print
+      '@types/qrcode':
+        specifier: ^1.5.5
+        version: 1.5.6
+      '@types/react-dom':
+        specifier: ^19
+        version: 19.2.3(@types/react@19.2.14)
+      lucide-react:
+        specifier: ^0.469.0
+        version: 0.469.0(react@19.2.6)
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      react-dom:
+        specifier: ^19
+        version: 19.2.6(react@19.2.6)
+      react-markdown:
+        specifier: ^9.1.0
+        version: 9.1.0(@types/react@19.2.14)(react@19.2.6)
     devDependencies:
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.100.10(react@19.2.6)
-      '@types/qrcode':
-        specifier: ^1.5.5
-        version: 1.5.6
       '@types/react':
         specifier: ^19.0.2
         version: 19.2.14
@@ -1520,6 +1562,8 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+
+  packages/repo-guards: {}
 
   packages/sandbox-init: {}
 
@@ -1583,6 +1627,58 @@ importers:
       assemblyscript:
         specifier: ^0.27.29
         version: 0.27.37
+
+  shells/second-shell:
+    dependencies:
+      '@cobblr/builds':
+        specifier: workspace:*
+        version: link:../../modules/builds
+      '@cobblr/inventory':
+        specifier: workspace:*
+        version: link:../../modules/inventory
+      '@cobblr/platform-web':
+        specifier: workspace:*
+        version: link:../../packages/platform-web
+      '@tanstack/react-query':
+        specifier: ^5.62.7
+        version: 5.100.10(react@19.2.6)
+      lucide-react:
+        specifier: ^0.469.0
+        version: 0.469.0(react@19.2.6)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.6(react@19.2.6)
+      react-router-dom:
+        specifier: ^7.1.1
+        version: 7.15.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.2
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.0.2
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@7.3.3(@types/node@22.19.19)(jiti@1.21.7)(tsx@4.22.0))
+      autoprefixer:
+        specifier: ^10.4.20
+        version: 10.5.0(postcss@8.5.14)
+      postcss:
+        specifier: ^8.4.49
+        version: 8.5.14
+      tailwindcss:
+        specifier: ^3.4.17
+        version: 3.4.19(tsx@4.22.0)
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vite:
+        specifier: ^7.0.0
+        version: 7.3.3(@types/node@22.19.19)(jiti@1.21.7)(tsx@4.22.0)
 
   web:
     dependencies:

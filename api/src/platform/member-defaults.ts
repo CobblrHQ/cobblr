@@ -10,7 +10,8 @@
 export const MEMBER_DEFAULT_CAPABILITIES: readonly string[] = ["inventory:count-stock", "inventory:use-one"];
 
 /** Does this role hold `actionId` without a grant? True for a plain member
- *  (no custom role) and a member-default capability. */
+ *  (no custom role) and a member-default capability; an operator is a member
+ *  who runs the machines, so holds them too (#6672). */
 export function memberHoldsByDefault(role: string, actionId: string, hasCustomRole: boolean): boolean {
-  return role === "member" && !hasCustomRole && MEMBER_DEFAULT_CAPABILITIES.includes(actionId);
+  return (role === "member" || role === "operator") && !hasCustomRole && MEMBER_DEFAULT_CAPABILITIES.includes(actionId);
 }

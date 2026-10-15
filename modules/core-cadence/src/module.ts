@@ -134,6 +134,19 @@ export default defineModule({
       };
       platform().events.on("core-scan.stock.observed", "core-cadence", observed);
       platform().events.on("inventory.stock.observed", "core-cadence", observed);
+      // A shopping line unticked: the purchase its tick filed was never made.
+      platform().events.on("lists.item.unchecked", "core-cadence", async (payload) => {
+        const p = (payload ?? {}) as { orgId?: unknown; itemId?: unknown };
+        if (typeof p.orgId !== "string" || typeof p.itemId !== "string") return;
+        if (!(await cadenceEnabledFor(p.orgId))) return;
+        try {
+          await platform().tenants.withDb(p.orgId, (raw) =>
+            (raw as Kysely<CoreCadenceDB>).deleteFrom("core_cadence_events").where("source_ref", "=", `lists:item:${p.itemId}`).execute(),
+          );
+        } catch (err) {
+          console.warn("[core-cadence] an unticked purchase was not taken back:", (err as Error)?.message ?? err);
+        }
+      });
       // The signals as computed fields. Registered on boot rather than from the
       // api router so a workspace gets them whether or not anything has hit the
       // module's HTTP surface yet.

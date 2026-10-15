@@ -24,6 +24,9 @@ packages:
   # serves it because it is built from @cobblr/platform-web, whose own deps only
   # resolve inside this workspace. The hub serves the built dist/.
   - ops-console
+  # A second app's shell, built against the engine packages in core's own CI (#6593): what it imports
+  # must keep compiling before anything is published.
+  - shells/second-shell
   - packages/*
   - modules/*
   - sandboxed-modules/hello-as

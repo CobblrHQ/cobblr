@@ -8,6 +8,8 @@ import { PRIORITIES, PROJECT_STATUSES } from "../vocab.js";
 import { platform, textSearchWhere } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { copyProject } from "./copy-project.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import {
   latestPatternFileId,
@@ -160,6 +162,24 @@ projectsRouter.post(
   }),
 );
 
+const CopyBody = z.object({ name: z.string().trim().min(1).max(200) });
+// AI-ACTION: projects:copy-project
+// UI-SCREEN: /projects/{id} (the record bar offers Do it again from this project)
+projectsRouter.post(
+  "/:id/copy",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:copy-project"))) return;
+    const parsed = CopyBody.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const made = await copyProject(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, parsed.data.name, instanceOf(req));
+    if (!made) {
+      res.status(404).json({ error: { code: "not_found", message: "project not found" } });
+      return;
+    }
+    res.status(201).json({ ...made.project, tasks: made.tasks });
+  }),
+);
+
 projectsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -287,6 +307,7 @@ function legacyShape(state: PatternNeedsState) {
 // Read an attached pattern PDF into the pattern's needs, now. The page reads
 // by itself (GET /:id/needs); this is the explicit door, and the older name.
 // AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
+// UI-REACH: legacy response shape for pattern-file clients; opening a pattern reads its needs and the current reread control uses the needs API.
 projectsRouter.post(
   "/:id/extract-pattern-file",
   asyncHandler(async (req, res) => {

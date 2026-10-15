@@ -51,6 +51,17 @@ export function registerCadenceActionHandlers(): void {
         ? instantFromInput(args.occurred_at)!
         : new Date();
 
+    // A source that happens once (a shopping line's tick) is one fact however
+    // many times its event is delivered; the reference is what an untick
+    // finds it by to take it back.
+    const ev = (ctx.event?.payload as { once?: unknown; sourceKind?: unknown; sourceId?: unknown } | undefined) ?? {};
+    const sourceRef =
+      typeof args.source_ref === "string" && args.source_ref.trim()
+        ? args.source_ref.trim()
+        : ev.once === true && typeof ev.sourceKind === "string" && typeof ev.sourceId === "string"
+          ? `${ev.sourceKind}:${ev.sourceId}`
+          : null;
+
     const price = Number(args.unit_price);
     // Through the SAME write as the route and the event subscriber. This used
     // to insert directly and pass entity.kind straight through, skipping the
@@ -60,6 +71,10 @@ export function registerCadenceActionHandlers(): void {
     // ledger the route's comment describes. One tea, two histories, and every
     // reader got whichever half it happened to ask for.
     const db = (await platform().tenants.getDb(ctx.orgId)) as unknown as Kysely<CoreCadenceDB>;
+    if (sourceRef && ev.once === true) {
+      const seen = await db.selectFrom("core_cadence_events").select("id").where("source_ref", "=", sourceRef).where("event_type", "=", eventType as "purchase" | "consume" | "adjust" | "discard").executeTakeFirst();
+      if (seen) return { ok: true, skipped: true, reason: "already recorded for this source" };
+    }
     const row = await recordCadenceEvent(db, ctx.orgId, ctx.userId ?? null, {
       entity_kind: entity.kind,
       entity_id: entity.id,
@@ -69,7 +84,7 @@ export function registerCadenceActionHandlers(): void {
       source: source as "scan" | "list" | "manual" | "wire" | "checkin",
       unit_price: Number.isFinite(price) ? price : null,
       occurred_at: occurredAt.toISOString(),
-      ...(typeof args.source_ref === "string" && args.source_ref.trim() ? { source_ref: args.source_ref.trim() } : {}),
+      ...(sourceRef ? { source_ref: sourceRef } : {}),
     });
 
     return { ok: true, event_id: row.id, recorded: eventType, qty_delta: qtyDelta };

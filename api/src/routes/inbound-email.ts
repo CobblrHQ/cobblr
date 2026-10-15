@@ -212,8 +212,12 @@ emailDeliveryRouter.post("/:slug/email-delivery", requireAuth, withTenant, emlUp
       res.status(200).json({ ignored: true, reason: "nothing_usable" });
       return;
     }
-    const archiveId = await archiveInboundEmail(payload);
-    const result = await dispatchInbound(payload, { userId, orgId });
+    // Ingest drops a message whose Message-ID already landed something, anywhere. A real forward
+    // reaches one workspace; a recorded email is delivered to every throwaway one, so its id says
+    // which workspace it is for. The same email twice into one workspace is still the duplicate.
+    const forWorkspace = payload.message_id ? { ...payload, message_id: `${payload.message_id}#${orgId}`.slice(0, 400) } : payload;
+    const archiveId = await archiveInboundEmail(forWorkspace);
+    const result = await dispatchInbound(forWorkspace, { userId, orgId });
     if (archiveId) await recordInboundOutcome(archiveId, result.record);
     res.status(result.status).json(archiveId ? { archive_id: archiveId, ...result.body } : result.body);
   } catch (err) {

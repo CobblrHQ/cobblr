@@ -11,7 +11,7 @@
 // the API and Cobb give one answer (lint:route-and-action-gate-agree).
 
 import { roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
-import { list } from "../modules/registry.js";
+import { list, listEntries } from "../modules/registry.js";
 import { PLATFORM_ACTIONS } from "./platform-actions.js";
 
 export interface ActionGate {
@@ -59,4 +59,24 @@ export function gatePasses(actionId: string, role: string, held: (capability: st
 export function actionsRunBy(role: string, held: ReadonlySet<string>): string[] {
   if (!gates || gates.size === 0) gates = build();
   return [...gates.keys()].filter((id) => gatePasses(id, role, (c) => held.has(c)));
+}
+
+let heldByRole: Map<string, Set<string>> | null = null;
+
+/** What a stock role holds without a grant, from the modules' own
+ *  declarations (`capabilities[].heldBy`): an operator holds what a module
+ *  says an operator does (#6672). Read once, like the action gates. */
+export function capabilitiesHeldBy(role: string): ReadonlySet<string> {
+  if (!heldByRole || heldByRole.size === 0) {
+    heldByRole = new Map();
+    for (const e of listEntries()) {
+      for (const c of e.manifest.capabilities ?? []) {
+        for (const r of c.heldBy ?? []) {
+          if (!heldByRole.has(r)) heldByRole.set(r, new Set());
+          heldByRole.get(r)!.add(c.id);
+        }
+      }
+    }
+  }
+  return heldByRole.get(role) ?? new Set();
 }

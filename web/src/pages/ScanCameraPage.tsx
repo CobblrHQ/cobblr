@@ -184,12 +184,13 @@ export function ScanCameraPage() {
    *  the one thing still allowed to obstruct the shutter. They dwell longer and
    *  wrap instead of truncating, because an error you cannot finish reading is
    *  barely better than no error at all. */
-  const showFilingNote = useCallback((text: string, tone: "ok" | "warn" = "ok") => {
-    setFilingNote({ text, tone });
+  const showFilingNote = useCallback((text: string, tone: "ok" | "warn" = "ok", action?: { label: string; onClick: () => void }) => {
+    setFilingNote({ text, tone, ...(action ? { action } : {}) });
     if (filingNoteTimerRef.current) window.clearTimeout(filingNoteTimerRef.current);
+    // A note with a way back stays long enough to reach it (#6554).
     filingNoteTimerRef.current = window.setTimeout(
       () => setFilingNote(null),
-      tone === "warn" ? 4500 : 2200,
+      action ? 8000 : tone === "warn" ? 4500 : 2200,
     );
   }, []);
   /** Whatever the API threw, in a sentence. */
@@ -440,7 +441,7 @@ export function ScanCameraPage() {
   // dark preview — not through the global toast, which renders at the bottom and
   // sat directly on top of the shutter (the exact obstruction the author already
   // worked around for the photo-saved note). Same top slot, tap-through, auto-hide.
-  const [filingNote, setFilingNote] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
+  const [filingNote, setFilingNote] = useState<{ text: string; tone: "ok" | "warn"; action?: { label: string; onClick: () => void } } | null>(null);
   // Reading a QR label pauses the camera (the preview freezes) while we ask the
   // server what it points at. THAT is the moment worth narrating — the old
   // always-on "scanning" chip said "scanning" when the reticle already showed it
@@ -2126,11 +2127,23 @@ export function ScanCameraPage() {
     // Your own records first, on their own (scanIngest.ts): a code you already
     // have is named before the photo is uploaded (the owner's tea sat on
     // "Looking up…" for the seconds the camera frame took to send).
+    // A code still in the inbox is that row (#6554): it shows at once, and
+    // the scan below lands on it (+1 for an arrival, the dedupe in POST /scan).
+    let inboxRowId: string | null = null;
+    let inboxRowQty = 0;
     void ingestBarcode({
       code: barcode,
-      known: (c) => api.scanKnown(activeSlug, c),
+      known: (c) => api.scanKnown(activeSlug, c, purpose),
       onKnown: (known) => {
         if (ingestKeyRef.current === key) setKnownCode({ code: barcode, known });
+      },
+      onInboxRow: (row) => {
+        inboxRowId = row.id;
+        inboxRowQty = Math.round(Number(row.quantity ?? 1)) || 1;
+        if (ingestKeyRef.current === key) {
+          resultItemRef.current = row;
+          setResultItem(row);
+        }
       },
       send: async () => {
       try {
@@ -2159,6 +2172,30 @@ export function ScanCameraPage() {
         });
         onSaved(it);
         void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+        // The same row, one more: said with its way back (#6554). A count
+        // scan settles its own total and adds nothing.
+        if (inboxRowId && it.id === inboxRowId && purpose === "arrival") {
+          const now = Math.round(Number(it.quantity ?? inboxRowQty + 1)) || inboxRowQty + 1;
+          const back = Math.max(1, now - 1);
+          // The scanner's own note, under the top chrome (never a toast over
+          // the shutter, lint:camera-no-toast), with its way back.
+          showFilingNote(`Already in your inbox: ${now} now`, "ok", {
+            label: "Undo",
+            onClick: () => {
+              void api
+                .updateScanItem(activeSlug, it.id, { quantity: back })
+                .then((restored) => {
+                  void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+                  if (resultItemRef.current?.id === it.id) {
+                    resultItemRef.current = restored;
+                    setResultItem(restored);
+                  }
+                  showFilingNote(`Back to ${back}`);
+                })
+                .catch(noteError);
+            },
+          });
+        }
         if (ingestKeyRef.current === key) {
           // Only while the sheet is still on THIS scan: a late-landing ingest
           // must not blank a drawer the user has since filled with a photo.
@@ -2286,6 +2323,19 @@ export function ScanCameraPage() {
             )}
             {/* A warning wraps; a confirmation is short enough to stay on one line. */}
             <span className={filingNote.tone === "warn" ? "" : "truncate"}>{filingNote.text}</span>
+            {filingNote.action && (
+              <button
+                type="button"
+                onClick={() => {
+                  const act = filingNote.action!;
+                  setFilingNote(null);
+                  act.onClick();
+                }}
+                className="pointer-events-auto -my-1 inline-flex min-h-11 shrink-0 items-center rounded-full bg-white/20 px-3 font-semibold hover:bg-white/30 dark:bg-white/20 dark:hover:bg-white/30"
+              >
+                {filingNote.action.label}
+              </button>
+            )}
           </div>
         </div>
       )}

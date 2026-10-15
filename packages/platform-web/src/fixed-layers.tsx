@@ -63,6 +63,20 @@ export const OverlayLayer = forwardRef<HTMLDivElement, LayerProps>(function Over
   );
 });
 
+/** The screen's top and bottom safe area in px, as the page resolves the
+ *  tokens (floating-chrome.css): 0 on a desk and in a browser tab. */
+function screenInsets(): { insetTop: number; insetBottom: number } {
+  const measure = (token: string) => {
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:fixed;visibility:hidden;pointer-events:none;left:0;top:0;width:0;height:var(${token},0px)`;
+    document.body.appendChild(probe);
+    const h = probe.getBoundingClientRect().height;
+    probe.remove();
+    return h;
+  };
+  return { insetTop: measure("--inset-top"), insetBottom: measure("--inset-bottom") };
+}
+
 /** The space every popover keeps from the screen's edges. */
 export const POPOVER_GUTTER = 16;
 const FLIP_GAP = 4;
@@ -75,10 +89,15 @@ const FLIP_GAP = 4;
  *  that fits above the trigger opens there instead. */
 export function clampToViewport(
   box: { left: number; top: number; width: number; height: number },
-  view: { width: number; height: number },
+  /** The screen, and the safe area its top and bottom keep (an iPhone's
+   *  status bar and home bar, floating-chrome.css --inset-*): a popover
+   *  stays clear of them as it does of the edges (#6551). */
+  view: { width: number; height: number; insetTop?: number; insetBottom?: number },
   gutter = POPOVER_GUTTER,
   flipAbove?: number,
 ): { dx: number; dy: number; maxWidth: number | null } {
+  const top = (view.insetTop ?? 0) + gutter;
+  const bottom = view.height - (view.insetBottom ?? 0) - gutter;
   const room = view.width - gutter * 2;
   const width = Math.min(box.width, room);
   const maxWidth = box.width > room ? room : null;
@@ -86,10 +105,10 @@ export function clampToViewport(
   if (box.left + width > view.width - gutter) dx = view.width - gutter - (box.left + width);
   if (box.left + dx < gutter) dx = gutter - box.left;
   let dy = 0;
-  const pastBottom = box.top + box.height > view.height - gutter;
-  if (pastBottom && flipAbove !== undefined && flipAbove - FLIP_GAP - box.height >= gutter) return { dx, dy: flipAbove - FLIP_GAP - box.height - box.top, maxWidth };
-  if (pastBottom) dy = view.height - gutter - (box.top + box.height);
-  if (box.top + dy < gutter) dy = gutter - box.top;
+  const pastBottom = box.top + box.height > bottom;
+  if (pastBottom && flipAbove !== undefined && flipAbove - FLIP_GAP - box.height >= top) return { dx, dy: flipAbove - FLIP_GAP - box.height - box.top, maxWidth };
+  if (pastBottom) dy = bottom - (box.top + box.height);
+  if (box.top + dy < top) dy = top - box.top;
   return { dx, dy, maxWidth };
 }
 
@@ -113,7 +132,7 @@ export const PopoverLayer = forwardRef<HTMLDivElement, PopoverLayerProps>(functi
     if (!el || typeof window === "undefined") return;
     const fit = () => {
       const r = el.getBoundingClientRect();
-      const view = { width: document.documentElement.clientWidth || window.innerWidth, height: window.innerHeight };
+      const view = { width: document.documentElement.clientWidth || window.innerWidth, height: window.innerHeight, ...screenInsets() };
       const asked = { left: r.left - applied.current.dx, top: r.top - applied.current.dy, width: r.width, height: r.height };
       const { dx, dy, maxWidth } = clampToViewport(asked, view, POPOVER_GUTTER, flipAbove);
       // Narrowing changes the size; the observer calls back once with the

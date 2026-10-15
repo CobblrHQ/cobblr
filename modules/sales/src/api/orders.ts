@@ -23,7 +23,10 @@ import { workOrdersFor } from "../work-orders.js";
 import { makeLine, makeIdsByWorkOrder } from "../make-line.js";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 
+import { documentsRouter } from "./documents.js";
+
 export const ordersRouter = Router({ mergeParams: true });
+ordersRouter.use("/:id/documents", documentsRouter);
 
 const Status = z.enum(["draft", "confirmed", "fulfilled", "shipped", "closed", "cancelled"]);
 
@@ -36,6 +39,8 @@ const OrderCreate = z.object({
   status: Status.optional(),
   paid: z.boolean().optional(),
   order_date: z.string().nullable().optional(),
+  /** When the customer wants it: an ISO date. */
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "a due date is YYYY-MM-DD").nullable().optional(),
   shipping_address: z.string().max(2_000).nullable().optional(),
   notes: z.string().max(8_000).nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -99,16 +104,18 @@ const ORDER_SORTS = {
   oldest: [["order_date", "asc"], ["created_at", "asc"]],
   customer: [["customer_name", "asc"], ["created_at", "desc"]],
   number: [["order_number", "desc"], ["created_at", "desc"]],
+  due: [["due_date", "asc"], ["created_at", "asc"]],
 } as const;
 const OrderList = z.object({
   q: z.string().trim().max(200).optional(),
   status: Status.optional(),
-  paid: z.boolean().optional(),
+  paid: z.enum(["true", "false"]).optional(),
+  customer_id: z.string().uuid().optional(),
   sort: z.enum(Object.keys(ORDER_SORTS) as [keyof typeof ORDER_SORTS, ...Array<keyof typeof ORDER_SORTS>]).optional(),
 });
 
 /** A page of orders and how many match: search over the customer, the order
- *  number and the notes, one status, and an order. */
+ *  number and the notes, one status, paid or not, one customer, and an order. */
 ordersRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -121,6 +128,8 @@ ordersRouter.get(
       q = q.where((eb) => eb.or([eb("customer_name", "ilike", like), eb("order_number", "ilike", like), eb("notes", "ilike", like)]));
     }
     if (f.data.status) q = q.where("status", "=", f.data.status);
+    if (f.data.paid) q = q.where("paid", "=", f.data.paid === "true");
+    if (f.data.customer_id) q = q.where("customer_id", "=", f.data.customer_id);
     for (const [col, dir] of ORDER_SORTS[f.data.sort ?? "newest"]) q = q.orderBy(sql`${sql.ref(col)} ${sql.raw(dir)} nulls last`);
     const rows = await q
       .orderBy("id")
@@ -128,7 +137,14 @@ ordersRouter.get(
       .limit(page.limit)
       .offset(page.offset)
       .execute();
-    res.json(pagedAnswer(rows, page));
+    // Each order's total, the same sum its own page shows, from one read of the page's lines.
+    const lines = rows.length ? await tenantDb(req).selectFrom("sales_order_items").select(["order_id", "qty", "unit_price"]).where("order_id", "in", rows.map((r) => r.id)).execute() : [];
+    const shop = await platform().money.currency(tenantContext(req).org.id);
+    const withTotals = rows.map((r) => {
+      const sum = orderTotal(lines.filter((l) => l.order_id === r.id), fieldCurrency(r.metadata, "total", shop));
+      return { ...r, total: sum.amount, unpriced_lines: sum.unpriced };
+    });
+    res.json(pagedAnswer(withTotals, page));
   }),
 );
 

@@ -14,7 +14,8 @@
 // See docs/design-decisions/bundle-uninstall-refcount.md.
 
 import { meta } from "../db/meta.js";
-import { canonicalModuleName } from "../modules/registry.js";
+import { canonicalModuleName, getEntry } from "../modules/registry.js";
+import { isDefaultModule } from "../modules/enable.js";
 
 /** `place` is a location an install created (resource_key = its id). */
 export type ClaimType = "module" | "instance" | "place";
@@ -27,21 +28,33 @@ export interface ResourceClaim {
 export const USER_SOURCE = "user";
 
 /** Record a claim. Idempotent — re-recording on a bundle UPGRADE is a no-op, so
- *  the unique (org, source, type, key) is never violated. */
+ *  the unique (org, source, type, key) is never violated. True only when a row
+ *  was written.
+ *
+ *  Never a claim on a module every workspace is born with: reconcileDefaultModules
+ *  deletes those at every boot, so a writer that recorded one made the boot
+ *  backfills put it back, and every boot rebuilt the ledger of hundreds of
+ *  workspaces (core #6707). */
 export async function recordClaim(
   orgId: string,
   source: string,
   resourceType: ClaimType,
   resourceKey: string,
-): Promise<void> {
-  if (resourceType === "module") resourceKey = canonicalModuleName(resourceKey);
-  await meta
+): Promise<boolean> {
+  if (resourceType === "module") {
+    resourceKey = canonicalModuleName(resourceKey);
+    const entry = getEntry(resourceKey);
+    if (entry && isDefaultModule(entry)) return false;
+  }
+  const row = await meta
     .insertInto("bundle_resource_claims")
     .values({ org_id: orgId, source, resource_type: resourceType, resource_key: resourceKey })
     .onConflict((oc) =>
       oc.columns(["org_id", "source", "resource_type", "resource_key"]).doNothing(),
     )
-    .execute();
+    .returning("id")
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 export async function recordClaims(

@@ -264,7 +264,7 @@ export function NewThingFunnelModal({
         reset();
         onClose();
       }}
-      title="New category"
+      title="New thing"
       size="md"
       inline={inline}
       chromeless={chromeless}

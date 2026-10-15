@@ -85,6 +85,7 @@ export interface EmailExtras {
   replyTo?: string;
   inReplyTo?: string;
   references?: string;
+  attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }>;
 }
 
 async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: string, x: EmailExtras = {}): Promise<string | null> {
@@ -109,6 +110,7 @@ async function sendSmtp(cfg: ValidConfig, subject: string, text: string, html?: 
       ...(x.replyTo ? { replyTo: x.replyTo } : {}),
       ...(x.inReplyTo ? { inReplyTo: x.inReplyTo } : {}),
       ...(x.references ? { references: x.references } : {}),
+      ...(x.attachments?.length ? { attachments: x.attachments.map(a => ({ ...a, content: Buffer.from(a.content) })) } : {}),
     });
     return typeof info?.messageId === "string" ? info.messageId : null;
   } finally {
@@ -135,13 +137,18 @@ async function sendMailgun(cfg: ValidConfig, subject: string, text: string, html
   if (x.replyTo) form.set("h:Reply-To", x.replyTo);
   if (x.inReplyTo) form.set("h:In-Reply-To", x.inReplyTo);
   if (x.references) form.set("h:References", x.references);
+  const multipart = x.attachments?.length ? new FormData() : null;
+  if (multipart) {
+    for (const [key, value] of form) multipart.append(key, value);
+    for (const a of x.attachments!) multipart.append("attachment", new Blob([new Uint8Array(a.content)], { type: a.contentType }), a.filename);
+  }
   const res = await fetch(`${base}/v3/${encodeURIComponent(cfg.mailgun_domain!)}/messages`, {
     method: "POST",
     headers: {
       authorization: `Basic ${Buffer.from(`api:${cfg.mailgun_api_key}`).toString("base64")}`,
-      "content-type": "application/x-www-form-urlencoded",
+      ...(multipart ? {} : { "content-type": "application/x-www-form-urlencoded" }),
     },
-    body: form.toString(),
+    body: multipart ?? form.toString(),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   await expectOk(res);
@@ -163,6 +170,7 @@ async function sendResend(cfg: ValidConfig, subject: string, text: string, html?
       ...(html ? { html } : {}),
       ...(x.replyTo ? { reply_to: x.replyTo } : {}),
       ...(Object.keys(headers).length ? { headers } : {}),
+      ...(x.attachments?.length ? { attachments: x.attachments.map(a => ({ filename: a.filename, content_type: a.contentType, content: Buffer.from(a.content).toString("base64") })) } : {}),
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -185,6 +193,7 @@ async function sendPostmark(cfg: ValidConfig, subject: string, text: string, htm
       ...(html ? { HtmlBody: html } : {}),
       ...(x.replyTo ? { ReplyTo: x.replyTo } : {}),
       ...(hdrs.length ? { Headers: hdrs } : {}),
+      ...(x.attachments?.length ? { Attachments: x.attachments.map(a => ({ Name: a.filename, ContentType: a.contentType, Content: Buffer.from(a.content).toString("base64") })) } : {}),
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -223,6 +232,14 @@ export function gmailRaw(m: { from: string; to: string; subject: string; text: s
     body = [`Content-Type: multipart/alternative; boundary="${b}"`, "", `--${b}`, part("text/plain", m.text), `--${b}`, part("text/html", m.html), `--${b}--`, ""].join("\r\n");
   } else {
     body = part("text/plain", m.text);
+  }
+  if (x.attachments?.length) {
+    const boundary = `cobblr-mixed-${crypto.randomUUID()}`;
+    const parts = x.attachments.map(a => {
+      const filename = oneLine(a.filename).replace(/["\\]/g, "_");
+      return [`--${boundary}`, `Content-Type: ${oneLine(a.contentType)}`, `Content-Disposition: attachment; filename="${filename}"`, "Content-Transfer-Encoding: base64", "", Buffer.from(a.content).toString("base64").replace(/.{76}/g, "$&\r\n")].join("\r\n");
+    });
+    body = [`Content-Type: multipart/mixed; boundary="${boundary}"`, "", `--${boundary}`, body, ...parts, `--${boundary}--`, ""].join("\r\n");
   }
   return Buffer.from(`${head.join("\r\n")}\r\n${body}`).toString("base64url");
 }

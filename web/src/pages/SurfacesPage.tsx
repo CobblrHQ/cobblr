@@ -89,7 +89,7 @@ export function SurfacesPage() {
               )}
               {s.expires_at && (
                 <span
-                  className="text-[10px] font-mono text-faint"
+                  className="text-[10px] tabular-nums text-faint"
                   title={new Date(s.expires_at).toLocaleString()}
                 >
                   expires {new Date(s.expires_at).toLocaleDateString()}
@@ -451,11 +451,11 @@ function SurfaceStatsModal({
             {s.first_viewed ? (
               <>
                 First view{" "}
-                <span className="font-mono">
+                <span className="tabular-nums">
                   {new Date(s.first_viewed).toLocaleString()}
                 </span>{" "}
                 · last{" "}
-                <span className="font-mono">
+                <span className="tabular-nums">
                   {s.last_viewed ? new Date(s.last_viewed).toLocaleString() : "—"}
                 </span>
               </>
@@ -471,7 +471,7 @@ function SurfaceStatsModal({
               <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 max-h-72 overflow-y-auto">
                 {s.recent.map((r, i) => (
                   <li key={i} className="px-3 py-1.5 text-xs flex items-baseline gap-3">
-                    <span className="font-mono text-muted shrink-0">
+                    <span className="tabular-nums text-muted shrink-0">
                       {new Date(r.viewed_at).toLocaleString()}
                     </span>
                     {r.referer && (

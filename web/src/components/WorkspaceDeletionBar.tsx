@@ -11,18 +11,12 @@ import { Link } from "react-router-dom";
 import { FloatingChrome, useToast } from "@cobblr/platform-web";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { api } from "../lib/api";
+import { workspaceStateKey, workspaceTrialQuery } from "../lib/workspace-trial";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { untilDate } from "./WorkspaceStateBar";
 
-export const workspaceStateKey = (slug: string) => ["workspace-state", slug] as const;
-
 export function useWorkspaceDeletion(slug: string) {
-  const q = useQuery({
-    queryKey: workspaceStateKey(slug),
-    queryFn: () => api.workspaceTrial(slug),
-    enabled: !!slug,
-    staleTime: 60_000,
-  });
+  const q = useQuery({ ...workspaceTrialQuery(slug), enabled: !!slug });
   const due = q.data?.deletion_due_at ? Date.parse(q.data.deletion_due_at) : null;
   return { dueAt: due, loading: q.isLoading };
 }

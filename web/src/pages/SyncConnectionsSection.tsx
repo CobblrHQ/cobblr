@@ -805,6 +805,29 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
   const confirm = useConfirm();
   const qc = useQueryClient();
 
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(conn.label);
+  const [connectionEnabled, setConnectionEnabled] = useState(conn.enabled);
+  const [baseUrl, setBaseUrl] = useState(conn.config.base_url);
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const definitions = useQuery({ queryKey: ["sync-connectors", activeSlug], queryFn: () => api.listSyncConnectors(activeSlug) });
+  const definition = definitions.data?.items.find((d) => d.id === conn.connector_id);
+  const save = useMutation({
+    mutationFn: () => api.updateSyncConnection(activeSlug, conn.id, {
+      label: name.trim(), enabled: connectionEnabled,
+      ...(baseUrl.trim() !== conn.config.base_url ? { base_url: baseUrl.trim() } : {}),
+      ...(Object.keys(credentials).length ? { credentials } : {}),
+    }),
+    onSuccess: () => {
+      setEditing(false);
+      setCredentials({});
+      onChange();
+      void qc.invalidateQueries({ queryKey: ["sync-connection", activeSlug, conn.id] });
+      toast.success("Connection updated");
+    },
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't update connection"),
+  });
+
   const detailQ = useQuery({
     queryKey: ["sync-connection", activeSlug, conn.id],
     queryFn: () => api.getSyncConnection(activeSlug, conn.id),
@@ -886,7 +909,8 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
           : "rounded-lg border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 space-y-2.5"
       }
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => { setName(conn.label); setConnectionEnabled(conn.enabled); setBaseUrl(conn.config.base_url); setCredentials({}); setEditing(true); }} className="text-sm text-accent hover:underline">Edit connection</button>
         {/* Nested under its source card → the source already shows the name, so
             lead with the base URL (what differs between connections). */}
         {!nested && <span className="text-sm font-medium text-content dark:text-mortar-100">{conn.label}</span>}
@@ -913,6 +937,27 @@ function SyncConnectionCard({ conn, onChange, nested }: { conn: SyncConnection; 
           Remove
         </button>
       </div>
+
+      {editing && (
+        <Modal open title="Edit connection" onClose={() => setEditing(false)}>
+          <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+            <label className="block">Connection name<input required value={name} onChange={(e) => setName(e.target.value)} className="input" /></label>
+            {!!definition?.config.base_url && <label className="block">Base URL<input type="url" required value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} className="input" /></label>}
+            <label className="flex items-center gap-2"><input type="checkbox" checked={connectionEnabled} onChange={(e) => setConnectionEnabled(e.target.checked)} />Keep this connection active</label>
+            {definition && Object.keys(definition.credentials).length > 0 && <p className="text-sm text-muted">Leave all credentials blank to keep them. To replace them, enter every credential.</p>}
+            {definition && Object.entries(definition.credentials).map(([key, field]) => (
+              <label key={key} className="block">{field.label}
+                <SecretInput secret={field.secret} value={credentials[key] ?? ""} autoComplete="off" placeholder="Leave blank to keep the saved value" className="input"
+                  onChange={(e) => setCredentials((old) => { const next = { ...old }; if (e.target.value) next[key] = e.target.value; else delete next[key]; return next; })} />
+              </label>
+            ))}
+            <div className="flex flex-wrap gap-3">
+              <button type="submit" disabled={save.isPending || !name.trim() || (Object.keys(credentials).length > 0 && Object.keys(definition?.credentials ?? {}).some((key) => !credentials[key]))} className="min-h-11 rounded bg-cobble-600 px-3 py-2 text-sm text-white hover:bg-cobble-700 disabled:opacity-50">Save connection</button>
+              <button type="button" onClick={() => setEditing(false)} className="min-h-11 rounded border border-line px-3 py-2 text-sm dark:border-slate-700">Cancel</button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* Per-entity-type sync rows */}
       <div className="space-y-1.5">

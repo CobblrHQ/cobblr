@@ -1,4 +1,5 @@
 import { startRequest } from "./platform/compute-ledger.js";
+import { appliedBudget, connectionRefusals } from "./db/connection-budget.js";
 import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
 import { deletedRecordsRouter } from "./routes/deleted-records.js";
@@ -87,7 +88,7 @@ import { diagnosticsRouter } from "./routes/diagnostics.js";
 import { dashboardRouter } from "./routes/dashboard.js";
 import { adminUsersRouter } from "./routes/admin-users.js";
 import { superAdminRouter } from "./routes/super-admin.js";
-import { feedbackRouter, feedbackInboundRouter } from "./routes/feedback.js";
+import { feedbackRouter, feedbackOrgRouter, feedbackInboundRouter } from "./routes/feedback.js";
 import { receiptInboundRouter, receiptAddressRouter } from "./routes/receipt-ingest.js";
 import { inboundEmailRouter, emailDeliveryRouter } from "./routes/inbound-email.js";
 import { EMAIL_DELIVERY_DOOR } from "./platform/email-delivery-door.js";
@@ -320,6 +321,10 @@ export function createApp(): AppHandles {
       outbound_ok: outbound ? outbound.every((o) => o.ok) : null,
       outbound,
       pools,
+      // What the server allows and this api sized itself to, and how many
+      // connections the server refused in the last ten minutes: a roll fails
+      // on any (connection-budget.ts).
+      db_connections: { ...(appliedBudget() ?? {}), refusals_10m: connectionRefusals() },
       migrations_pending: pending,
       // Pairs whose ledger a declared shared-database peer has taken past
       // this build, harmlessly (additive only). Information for the deploy
@@ -545,6 +550,7 @@ export function createApp(): AppHandles {
   v1.use("/super-admin", superAdminRouter);
   // User feedback about the platform (submit: any authed user; triage: super-admin).
   v1.use("/feedback", feedbackRouter);
+  v1.use("/orgs", feedbackOrgRouter);
   // Sandbox marketplace runtime install (super-admin only). Backs
   // the "Browse + Install" UI: fetch registry, verify, extract,
   // register without restart. See sandbox-install.ts +

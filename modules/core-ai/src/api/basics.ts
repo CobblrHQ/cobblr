@@ -1077,6 +1077,21 @@ async function countAnswer(
     if (r.total > 0 || q.entityKind) hits.push({ kind, r });
   }
   if (q.entityKind) return hits[0] ? phraseCountText(q, hits[0].kind, hits[0].r) : null;
+  // Nothing mentions the whole phrase: "delta printers" named the thing as
+  // well as the value, and the record carries only "delta" (#6562). A shorter
+  // needle answers only when exactly one kind mentions it, so a word that is
+  // common across kinds stays the model's to ask about.
+  if (hits.length === 0 && q.narrower?.length) {
+    for (const needle of q.narrower) {
+      const found: Array<{ kind: KindFields; r: CountResult }> = [];
+      for (const kind of kinds) {
+        const r = await run(kind.id, { q: needle });
+        if (r && r.total > 0) found.push({ kind, r });
+      }
+      if (found.length === 1) return phraseCountText({ ...q, needle }, found[0]!.kind, found[0]!.r);
+      if (found.length > 1) return null;
+    }
+  }
   // Nothing anywhere mentions the word and no kind was named: that is an
   // unknown noun ("how many sheep"), and an unprompted "none" is a guess. Stay
   // quiet, as live-answers always has; naming the kind gets a real zero.
@@ -1101,6 +1116,7 @@ async function countAnswer(
 // than guessing: a confident wrong number is worse than no number.
 // AI-REACH: exempt — reads on the caller's own behalf and writes nothing; the
 // assistant has the same reads as tools already
+// UI-SCREEN: /scan (the global Ask Cobb composer offers live answers while typing)
 basicsRouter.post(
   "/peek",
   asyncHandler(async (req, res) => {

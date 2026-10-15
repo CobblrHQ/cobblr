@@ -2656,6 +2656,178 @@ async function applyValidatedBundleUnlocked(
   };
 }
 
+
+/** Who a bundle door acts as: the person asking (a route) or the person an
+ *  action runs for. */
+export type BundleActor = { id: string; display_name: string | null; auth_method: "session" | "api_token" | "system"; api_token_id?: string | null };
+export function sessionActor(req: import("express").Request): BundleActor {
+  return { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null };
+}
+/** What a bundle door answers, the status and body the route sends as they
+ *  are; an action reads `body.error.message` when the status is 400 or over. */
+export type BundleDoorAnswer = { status: number; body: Record<string, unknown> };
+
+// Q5 (wires-and-bundles.md): `requires` is now an "install" not
+// a "check." If the bundle needs modules the workspace doesn't
+// have enabled, return 409 with `needs_enable` instead of
+// auto-enabling silently. Caller re-POSTs with `confirm:true`
+// to proceed.
+const ManifestBody = z.object({
+  /** The bundle, whole. Or, instead, its `id`: resolved from this
+   *  deployment's own catalog first, then the external registry when one
+   *  is configured; an id nothing here knows answers a coded 409 naming
+   *  the missing registry and this door (#2922). */
+  manifest: z.unknown().optional(),
+  id: z.string().min(1).max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
+  confirm: z.boolean().optional(),
+  /** Phase 2: which optional features to install. Omitted on a FIRST
+   *  install → the features' own default:true set. Omitted on an UPDATE
+   *  → whatever is already on, never the new version's defaults; see
+   *  platform/feature-defaults.ts. `[]` is an explicit "none of them". */
+  enabled_features: z.array(z.string()).optional(),
+  /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
+   *  "take theirs" on: drop the user override so the new bundle wins. */
+  take_theirs: z.array(z.object({ entity_kind: z.string(), name: z.string() })).optional(),
+  /** One answer per upgrade conflict (keep mine / take theirs / keep
+   *  both for a list of options). Absent for a conflict: keep mine. */
+  resolutions: z.array(ConflictResolutionSchema).max(500).optional(),
+  /** The word picked for each table that offers them (#3650), by
+   *  instance name: { yarn: "skein" }. Omitted: the stored choice on
+   *  an update, the bundle's default on a first install. */
+  noun_choices: z.record(z.string().max(40), z.string().min(1).max(60)).optional(),
+});
+
+/** Install a bundle, or update the installed one: the install route and
+ *  platform:install-bundle (#6528). */
+export async function installBundleDoor(orgId: string, actor: BundleActor, body: z.infer<typeof ManifestBody>): Promise<BundleDoorAnswer> {
+    const confirm = !!body.confirm;
+    let manifestIn: unknown = body.manifest;
+    if (manifestIn === undefined) {
+      if (!body.id) {
+        return { status: 400, body: { error: { code: "invalid_bundle", message: "Send the bundle as `manifest`, or its `id` to install from the catalog." } } };
+      }
+      manifestIn = await getFlagshipManifest(body.id);
+      if (manifestIn === null || manifestIn === undefined) {
+        const registry = externalRegistry();
+        if (!registry) {
+          return { status: 409, body: {
+            error: {
+              code: "registry_unavailable",
+              message: `This deployment has no bundle registry configured, so "${body.id}" cannot be installed by id here (its own catalog holds ${listFlagshipManifests("all").length} bundles and this is not one of them); send the manifest instead (\`manifest\` from bundles/<name>.json).`,
+              details: { id: body.id, door: "manifest", registry: false },
+            },
+          } };
+        } else {
+          return { status: 404, body: {
+            error: { code: "bundle_not_found", message: `No bundle "${body.id}" in this deployment's catalog or the registry at ${registry}.`, details: { id: body.id, registry } },
+          } };
+        }
+      }
+    }
+
+    // SINGLE SOURCE OF VALIDATION TRUTH — same helper the /validate
+    // endpoint + the authoring module use. autoEnable = confirm: when
+    // confirmed, modules that need enabling are reported in
+    // preview.modules_to_enable (not a needs_enable error) and enabled
+    // below. The HTTP error codes below preserve the prior contract the
+    // bundle-install UI depends on.
+    const v = await validateBundle(orgId, manifestIn, {
+      autoEnable: confirm,
+      enabledFeatures: body.enabled_features,
+    });
+    if (!v.valid) {
+      trackProductEvent({
+        orgId: orgId,
+        userId: actor.id,
+        event: "validation_rejected",
+        detail: { source: "bundles/install", error_codes: v.errors.map((e) => e.code) },
+      });
+      const unknownModule = v.errors.find((e) => e.code === "unknown_module");
+      if (unknownModule) {
+        return { status: 400, body: { error: { code: "unknown_module", message: unknownModule.message, details: unknownModule.detail } } };
+      }
+      const needsEnable = v.errors.filter((e) => e.code === "needs_enable");
+      if (needsEnable.length > 0) {
+        const mods = needsEnable.map((e) => (e.detail as { module: string }).module);
+        return { status: 409, body: {
+          error: {
+            code: "needs_enable",
+            message: `This bundle requires module(s) not enabled in your workspace: ${mods.join(", ")}. Re-POST with confirm:true to enable and install in one step.`,
+            details: { needs_enable: mods },
+          },
+        } };
+      }
+      const collisions = v.errors.filter((e) => e.code === "field_def_collision");
+      if (collisions.length > 0) {
+        return { status: 409, body: {
+          error: {
+            code: "field_def_collision",
+            message: collisions.map((e) => e.message).join(" "),
+            details: {
+              conflicts: collisions.flatMap(
+                (e) => (e.detail as { conflicts?: Array<{ entity_kind: string; field_name: string; owned_by: string }> }).conflicts ?? [],
+              ),
+            },
+          },
+        } };
+      }
+      const groupErrors = v.errors.filter((e) => e.code.includes("action_group"));
+      return { status: 400, body: { error: { code: "invalid_bundle", message: groupErrors.length ? groupErrors.map((e) => e.message).join(" ") : "Bundle manifest failed validation", details: { errors: v.errors } } } };
+    }
+    const result = await applyValidatedBundle(
+      orgId,
+      actor,
+      v,
+      { takeTheirs: body.take_theirs, resolutions: body.resolutions, nounChoices: body.noun_choices },
+    );
+    // DID IT ACTUALLY DO IT?
+    //
+    // The summary below is built from the MANIFEST - "this bundle provides an
+    // instance called tea" - so it reports what was asked for, and nothing
+    // compares that against what exists afterwards.
+    //
+    // The tenant-side work is best-effort by design (`install_status:
+    // "partial"` exists because an install can half-succeed), so a partial
+    // install answers 201 with a summary that reads exactly like a whole one.
+    // A workspace can hold a bundle listed as installed with no table to file
+    // into, and nothing says so.
+    //
+    // This reads the instances back and names the promised ones that are
+    // missing. Not a throw - a partial install is recoverable, not an error.
+    // The point is that it stops being invisible.
+    const promised = promisedInstances(v.fullManifest ?? v.manifest!, v.enabledFeatures ?? []);
+    let postcondition: ReturnType<typeof checkInstalled> = { missing: [], ok: true, message: "" };
+    if (promised.length > 0) {
+      const present = new Set<string>();
+      for (const p of promised) {
+        try {
+          if (await getInstance(orgId, p.instance_name)) present.add(p.instance_name);
+        } catch {
+          // Unreadable is not the same as absent, but for this report it has
+          // to count as "cannot prove it is there", which is the honest read.
+        }
+      }
+      postcondition = checkInstalled(promised, present);
+      if (!postcondition.ok) {
+        console.error(`[bundles] ${v.manifest!.id}: ${postcondition.message}`);
+      }
+    }
+
+    // Same summary the scan-side install returns, built once here so the
+    // two surfaces cannot drift on what an install is said to have done.
+    return { status: 201, body: {
+      ...result,
+      installed: bundleInstallSummary(v.manifest!, result.applied),
+      // Present ONLY when something promised is missing, so a healthy install
+      // says nothing extra and a broken one cannot be read as healthy.
+      ...(postcondition.ok ? {} : { incomplete: { missing: postcondition.missing, message: postcondition.message } }),
+      // What this version adds that nobody agreed to. NOT installed - handed
+      // back so the surface can ask instead of the update deciding.
+      features_to_offer: v.featuresToOffer ?? [],
+    } };
+}
+
+// AI-ACTION: platform:install-bundle
 bundlesRouter.post(
   "/install",
   requireAuth,
@@ -2682,171 +2854,14 @@ bundlesRouter.post(
         });
         return;
       }
-      // Q5 (wires-and-bundles.md): `requires` is now an "install" not
-      // a "check." If the bundle needs modules the workspace doesn't
-      // have enabled, return 409 with `needs_enable` instead of
-      // auto-enabling silently. Caller re-POSTs with `confirm:true`
-      // to proceed.
-      const ManifestBody = z.object({
-        /** The bundle, whole. Or, instead, its `id`: resolved from this
-         *  deployment's own catalog first, then the external registry when one
-         *  is configured; an id nothing here knows answers a coded 409 naming
-         *  the missing registry and this door (#2922). */
-        manifest: z.unknown().optional(),
-        id: z.string().min(1).max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-        confirm: z.boolean().optional(),
-        /** Phase 2: which optional features to install. Omitted on a FIRST
-         *  install → the features' own default:true set. Omitted on an UPDATE
-         *  → whatever is already on, never the new version's defaults; see
-         *  platform/feature-defaults.ts. `[]` is an explicit "none of them". */
-        enabled_features: z.array(z.string()).optional(),
-        /** Upgrade conflicts (preview.upgrade_conflicts) the user chose to
-         *  "take theirs" on: drop the user override so the new bundle wins. */
-        take_theirs: z.array(z.object({ entity_kind: z.string(), name: z.string() })).optional(),
-        /** One answer per upgrade conflict (keep mine / take theirs / keep
-         *  both for a list of options). Absent for a conflict: keep mine. */
-        resolutions: z.array(ConflictResolutionSchema).max(500).optional(),
-        /** The word picked for each table that offers them (#3650), by
-         *  instance name: { yarn: "skein" }. Omitted: the stored choice on
-         *  an update, the bundle's default on a first install. */
-        noun_choices: z.record(z.string().max(40), z.string().min(1).max(60)).optional(),
-      });
+      if (!(await requireCapability(req, res, "platform:install-bundle"))) return;
       const body = ManifestBody.safeParse(req.body);
       if (!body.success) {
         res.status(400).json({ error: { code: "invalid_bundle", message: "Bad request body", details: body.error.issues } });
         return;
       }
-      const confirm = !!body.data.confirm;
-      let manifestIn: unknown = body.data.manifest;
-      if (manifestIn === undefined) {
-        if (!body.data.id) {
-          res.status(400).json({ error: { code: "invalid_bundle", message: "Send the bundle as `manifest`, or its `id` to install from the catalog." } });
-          return;
-        }
-        manifestIn = await getFlagshipManifest(body.data.id);
-        if (manifestIn === null || manifestIn === undefined) {
-          const registry = externalRegistry();
-          if (!registry) {
-            res.status(409).json({
-              error: {
-                code: "registry_unavailable",
-                message: `This deployment has no bundle registry configured, so "${body.data.id}" cannot be installed by id here (its own catalog holds ${listFlagshipManifests("all").length} bundles and this is not one of them); send the manifest instead (\`manifest\` from bundles/<name>.json).`,
-                details: { id: body.data.id, door: "manifest", registry: false },
-              },
-            });
-          } else {
-            res.status(404).json({
-              error: { code: "bundle_not_found", message: `No bundle "${body.data.id}" in this deployment's catalog or the registry at ${registry}.`, details: { id: body.data.id, registry } },
-            });
-          }
-          return;
-        }
-      }
-
-      // SINGLE SOURCE OF VALIDATION TRUTH — same helper the /validate
-      // endpoint + the authoring module use. autoEnable = confirm: when
-      // confirmed, modules that need enabling are reported in
-      // preview.modules_to_enable (not a needs_enable error) and enabled
-      // below. The HTTP error codes below preserve the prior contract the
-      // bundle-install UI depends on.
-      const v = await validateBundle(req.tenant!.org.id, manifestIn, {
-        autoEnable: confirm,
-        enabledFeatures: body.data.enabled_features,
-      });
-      if (!v.valid) {
-        trackProductEvent({
-          orgId: req.tenant!.org.id,
-          userId: req.session?.id ?? null,
-          event: "validation_rejected",
-          detail: { source: "bundles/install", error_codes: v.errors.map((e) => e.code) },
-        });
-        const unknownModule = v.errors.find((e) => e.code === "unknown_module");
-        if (unknownModule) {
-          res.status(400).json({ error: { code: "unknown_module", message: unknownModule.message, details: unknownModule.detail } });
-          return;
-        }
-        const needsEnable = v.errors.filter((e) => e.code === "needs_enable");
-        if (needsEnable.length > 0) {
-          const mods = needsEnable.map((e) => (e.detail as { module: string }).module);
-          res.status(409).json({
-            error: {
-              code: "needs_enable",
-              message: `This bundle requires module(s) not enabled in your workspace: ${mods.join(", ")}. Re-POST with confirm:true to enable and install in one step.`,
-              details: { needs_enable: mods },
-            },
-          });
-          return;
-        }
-        const collisions = v.errors.filter((e) => e.code === "field_def_collision");
-        if (collisions.length > 0) {
-          res.status(409).json({
-            error: {
-              code: "field_def_collision",
-              message: collisions.map((e) => e.message).join(" "),
-              details: {
-                conflicts: collisions.flatMap(
-                  (e) => (e.detail as { conflicts?: Array<{ entity_kind: string; field_name: string; owned_by: string }> }).conflicts ?? [],
-                ),
-              },
-            },
-          });
-          return;
-        }
-        const groupErrors = v.errors.filter((e) => e.code.includes("action_group"));
-        res.status(400).json({ error: { code: "invalid_bundle", message: groupErrors.length ? groupErrors.map((e) => e.message).join(" ") : "Bundle manifest failed validation", details: { errors: v.errors } } });
-        return;
-      }
-      const result = await applyValidatedBundle(
-        req.tenant!.org.id,
-        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
-        v,
-        { takeTheirs: body.data.take_theirs, resolutions: body.data.resolutions, nounChoices: body.data.noun_choices },
-      );
-      // DID IT ACTUALLY DO IT?
-      //
-      // The summary below is built from the MANIFEST - "this bundle provides an
-      // instance called tea" - so it reports what was asked for, and nothing
-      // compares that against what exists afterwards.
-      //
-      // The tenant-side work is best-effort by design (`install_status:
-      // "partial"` exists because an install can half-succeed), so a partial
-      // install answers 201 with a summary that reads exactly like a whole one.
-      // A workspace can hold a bundle listed as installed with no table to file
-      // into, and nothing says so.
-      //
-      // This reads the instances back and names the promised ones that are
-      // missing. Not a throw - a partial install is recoverable, not an error.
-      // The point is that it stops being invisible.
-      const promised = promisedInstances(v.fullManifest ?? v.manifest!, v.enabledFeatures ?? []);
-      let postcondition: ReturnType<typeof checkInstalled> = { missing: [], ok: true, message: "" };
-      if (promised.length > 0) {
-        const present = new Set<string>();
-        for (const p of promised) {
-          try {
-            if (await getInstance(req.tenant!.org.id, p.instance_name)) present.add(p.instance_name);
-          } catch {
-            // Unreadable is not the same as absent, but for this report it has
-            // to count as "cannot prove it is there", which is the honest read.
-          }
-        }
-        postcondition = checkInstalled(promised, present);
-        if (!postcondition.ok) {
-          console.error(`[bundles] ${v.manifest!.id}: ${postcondition.message}`);
-        }
-      }
-
-      // Same summary the scan-side install returns, built once here so the
-      // two surfaces cannot drift on what an install is said to have done.
-      res.status(201).json({
-        ...result,
-        installed: bundleInstallSummary(v.manifest!, result.applied),
-        // Present ONLY when something promised is missing, so a healthy install
-        // says nothing extra and a broken one cannot be read as healthy.
-        ...(postcondition.ok ? {} : { incomplete: { missing: postcondition.missing, message: postcondition.message } }),
-        // What this version adds that nobody agreed to. NOT installed - handed
-        // back so the surface can ask instead of the update deciding.
-        features_to_offer: v.featuresToOffer ?? [],
-      });
+      const r = await installBundleDoor(req.tenant!.org.id, sessionActor(req), body.data);
+      res.status(r.status).json(r.body);
     } catch (err) {
       next(err);
     }
@@ -2972,99 +2987,104 @@ bundlesRouter.put(
   },
 );
 
+/** Turn a bundle's optional parts on or off: the bundle screen and
+ *  platform:set-bundle-features (#6528). */
+export async function changeBundleFeatures(orgId: string, actor: BundleActor, bundleId: string, enabledFeatures: string[]): Promise<BundleDoorAnswer> {
+  const bundle = await meta
+    .selectFrom("bundles")
+    .select(["id", "external_id", "name", "version", "manifest", "enabled_features"])
+    .where("id", "=", bundleId)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  if (!bundle) {
+    return { status: 404, body: { error: { code: "not_found", message: "bundle not found" } } };
+  }
+  const rawManifest = bundle.manifest;
+  const fullManifest = (typeof rawManifest === "string" ? JSON.parse(rawManifest) : rawManifest) as FeatureManifest;
+  const before = (bundle.enabled_features as string[] | null) ?? [];
+  const change = featureChange(fullManifest, before, enabledFeatures);
+  const ledgerBefore = await instanceLedger(orgId, change.involved);
+
+  // The install route's gate, unchanged: a set that no longer validates
+  // (a module gone, a field the workspace now owns) is answered with the
+  // errors, and nothing has moved yet.
+  const v = await validateBundle(orgId, fullManifest, { autoEnable: true, enabledFeatures: enabledFeatures });
+  if (!v.valid) {
+    return { status: 409, body: { error: { code: "invalid_bundle", message: v.errors.map((e) => e.message).join(" "), details: { errors: v.errors } } } };
+  }
+  const result = await applyValidatedBundle(
+    orgId,
+    actor,
+    v,
+    { logInstall: false },
+  );
+
+  // A table only the turned-off feature set up: gone when empty (nothing
+  // to lose, and an empty table left in the nav reads as a table the
+  // person did not ask for), kept when it holds anything at all.
+  const removedEmpty: string[] = [];
+  for (const r of change.released) {
+    const row = ledgerBefore.find((x) => x.instance_name === r.instance_name);
+    if (row && row.records === 0) {
+      await tearDownInstance(orgId, r.instance_name);
+      removedEmpty.push(r.instance_name);
+    }
+  }
+
+  const ledgerAfter = await instanceLedger(orgId, change.involved);
+  const diff = diffLedger(ledgerBefore, ledgerAfter);
+  const kept = diff.kept;
+  const gone = diff.gone.filter((n) => !removedEmpty.includes(n));
+  const broken = diff.re_created.length > 0 || diff.lost_records.length > 0 || gone.length > 0;
+  const summary = describeFeatureChange(change, diff, removedEmpty);
+  if (broken) {
+    console.error(`[bundles] ${bundle.external_id} feature change did not keep every table: ${summary}${gone.length ? `; GONE: ${gone.join(", ")}` : ""}`);
+  }
+  await activity.log({
+    orgId,
+    action: "bundle_features_changed",
+    ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
+    diff: {
+      name: bundle.name,
+      external_id: bundle.external_id,
+      version: bundle.version,
+      turned_on: change.turned_on,
+      turned_off: change.turned_off,
+      kept: kept.map((k) => ({ instance: k.instance_name, records: k.records })),
+      removed_empty: removedEmpty,
+      ...(broken ? { re_created: diff.re_created, lost_records: diff.lost_records, gone } : {}),
+      summary,
+    },
+  });
+  return { status: 200, body: {
+    ...result,
+    installed: bundleInstallSummary(v.manifest!, result.applied),
+    features: { enabled: v.enabledFeatures ?? [], turned_on: change.turned_on, turned_off: change.turned_off },
+    kept: kept.map((k) => ({ instance_name: k.instance_name, id: k.id, records: k.records })),
+    removed_empty: removedEmpty,
+    // Present ONLY when a table did not come through as it went in, so a
+    // healthy change says nothing extra and a broken one cannot be read
+    // as healthy (same shape as the install's postcondition).
+    ...(broken ? { incomplete: { re_created: diff.re_created, lost_records: diff.lost_records, gone, message: summary } } : {}),
+  } };
+}
+
+// AI-ACTION: platform:set-bundle-features
 bundlesRouter.patch(
   "/:id/features",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!(await requireCapability(req, res, "platform:set-bundle-features"))) return;
       const Body = z.object({ enabled_features: z.array(z.string()) });
       const body = Body.safeParse(req.body);
       if (!body.success) {
         res.status(400).json({ error: { code: "invalid_body", message: "enabled_features: string[] required", details: body.error.issues } });
         return;
       }
-      const orgId = req.tenant!.org.id;
-      const bundle = await meta
-        .selectFrom("bundles")
-        .select(["id", "external_id", "name", "version", "manifest", "enabled_features"])
-        .where("id", "=", req.params.id ?? "")
-        .where("org_id", "=", orgId)
-        .executeTakeFirst();
-      if (!bundle) {
-        res.status(404).json({ error: { code: "not_found", message: "bundle not found" } });
-        return;
-      }
-      const rawManifest = bundle.manifest;
-      const fullManifest = (typeof rawManifest === "string" ? JSON.parse(rawManifest) : rawManifest) as FeatureManifest;
-      const before = (bundle.enabled_features as string[] | null) ?? [];
-      const change = featureChange(fullManifest, before, body.data.enabled_features);
-      const ledgerBefore = await instanceLedger(orgId, change.involved);
-
-      // The install route's gate, unchanged: a set that no longer validates
-      // (a module gone, a field the workspace now owns) is answered with the
-      // errors, and nothing has moved yet.
-      const v = await validateBundle(orgId, fullManifest, { autoEnable: true, enabledFeatures: body.data.enabled_features });
-      if (!v.valid) {
-        res.status(409).json({ error: { code: "invalid_bundle", message: v.errors.map((e) => e.message).join(" "), details: { errors: v.errors } } });
-        return;
-      }
-      const result = await applyValidatedBundle(
-        orgId,
-        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
-        v,
-        { logInstall: false },
-      );
-
-      // A table only the turned-off feature set up: gone when empty (nothing
-      // to lose, and an empty table left in the nav reads as a table the
-      // person did not ask for), kept when it holds anything at all.
-      const removedEmpty: string[] = [];
-      for (const r of change.released) {
-        const row = ledgerBefore.find((x) => x.instance_name === r.instance_name);
-        if (row && row.records === 0) {
-          await tearDownInstance(orgId, r.instance_name);
-          removedEmpty.push(r.instance_name);
-        }
-      }
-
-      const ledgerAfter = await instanceLedger(orgId, change.involved);
-      const diff = diffLedger(ledgerBefore, ledgerAfter);
-      const kept = diff.kept;
-      const gone = diff.gone.filter((n) => !removedEmpty.includes(n));
-      const broken = diff.re_created.length > 0 || diff.lost_records.length > 0 || gone.length > 0;
-      const summary = describeFeatureChange(change, diff, removedEmpty);
-      if (broken) {
-        console.error(`[bundles] ${bundle.external_id} feature change did not keep every table: ${summary}${gone.length ? `; GONE: ${gone.join(", ")}` : ""}`);
-      }
-      await activity.log({
-        orgId,
-        action: "bundle_features_changed",
-        ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
-        diff: {
-          name: bundle.name,
-          external_id: bundle.external_id,
-          version: bundle.version,
-          turned_on: change.turned_on,
-          turned_off: change.turned_off,
-          kept: kept.map((k) => ({ instance: k.instance_name, records: k.records })),
-          removed_empty: removedEmpty,
-          ...(broken ? { re_created: diff.re_created, lost_records: diff.lost_records, gone } : {}),
-          summary,
-        },
-      });
-      res.json({
-        ...result,
-        installed: bundleInstallSummary(v.manifest!, result.applied),
-        features: { enabled: v.enabledFeatures ?? [], turned_on: change.turned_on, turned_off: change.turned_off },
-        kept: kept.map((k) => ({ instance_name: k.instance_name, id: k.id, records: k.records })),
-        removed_empty: removedEmpty,
-        // Present ONLY when a table did not come through as it went in, so a
-        // healthy change says nothing extra and a broken one cannot be read
-        // as healthy (same shape as the install's postcondition).
-        ...(broken ? { incomplete: { re_created: diff.re_created, lost_records: diff.lost_records, gone, message: summary } } : {}),
-      });
+      const r = await changeBundleFeatures(req.tenant!.org.id, sessionActor(req), req.params.id ?? "", body.data.enabled_features);
+      res.status(r.status).json(r.body);
     } catch (err) {
       next(err);
     }
@@ -3215,55 +3235,61 @@ bundlesRouter.get(
   },
 );
 
+/** Put a bundle back to a saved version: the bundle history screen and
+ *  platform:revert-bundle (#6528). */
+export async function revertBundleSnapshot(orgId: string, actor: BundleActor, snapshotId: string): Promise<BundleDoorAnswer> {
+  const snap = await meta
+    .selectFrom("bundle_snapshots")
+    .selectAll()
+    .where("id", "=", snapshotId)
+    .where("org_id", "=", orgId)
+    .executeTakeFirst();
+  if (!snap) {
+    return { status: 404, body: { error: { code: "not_found", message: "No such snapshot." } } };
+  }
+  const manifest = typeof snap.manifest === "string" ? JSON.parse(snap.manifest) : snap.manifest;
+  const v = await validateBundle(orgId, manifest, {
+    autoEnable: true,
+    enabledFeatures: snap.enabled_features,
+  });
+  if (!v.valid) {
+    return { status: 409, body: {
+      error: {
+        code: "revert_invalid",
+        message:
+          "This version no longer validates against the workspace (modules or kinds may have changed since). Nothing was changed.",
+        details: v.errors,
+      },
+    } };
+  }
+  // applyValidatedBundle replaces any currently-installed version — which
+  // itself snapshots as 'replaced', so a revert is also undoable.
+  const result = await applyValidatedBundle(
+    orgId,
+    actor,
+    v,
+  );
+  await activity.log({
+    orgId: orgId,
+    action: "bundle_reverted",
+    ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
+    diff: { name: snap.name, to_version: snap.version, snapshot_id: snap.id },
+  });
+  // Same summary the scan-side install returns, built once here so the
+  // two surfaces cannot drift on what an install is said to have done.
+  return { status: 201, body: { ...result, installed: bundleInstallSummary(v.manifest!, result.applied) } };
+}
+
+// AI-ACTION: platform:revert-bundle
 bundlesRouter.post(
   "/history/:snapshotId/revert",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
-      const snap = await meta
-        .selectFrom("bundle_snapshots")
-        .selectAll()
-        .where("id", "=", req.params.snapshotId!)
-        .where("org_id", "=", req.tenant!.org.id)
-        .executeTakeFirst();
-      if (!snap) {
-        res.status(404).json({ error: { code: "not_found", message: "No such snapshot." } });
-        return;
-      }
-      const manifest = typeof snap.manifest === "string" ? JSON.parse(snap.manifest) : snap.manifest;
-      const v = await validateBundle(req.tenant!.org.id, manifest, {
-        autoEnable: true,
-        enabledFeatures: snap.enabled_features,
-      });
-      if (!v.valid) {
-        res.status(409).json({
-          error: {
-            code: "revert_invalid",
-            message:
-              "This version no longer validates against the workspace (modules or kinds may have changed since). Nothing was changed.",
-            details: v.errors,
-          },
-        });
-        return;
-      }
-      // applyValidatedBundle replaces any currently-installed version — which
-      // itself snapshots as 'replaced', so a revert is also undoable.
-      const result = await applyValidatedBundle(
-        req.tenant!.org.id,
-        { id: req.session!.id, display_name: req.session!.display_name ?? null, auth_method: req.session!.auth_method, api_token_id: req.session!.api_token_id ?? null },
-        v,
-      );
-      await activity.log({
-        orgId: req.tenant!.org.id,
-        action: "bundle_reverted",
-        ref: { module: null, entityType: "bundle", entityId: result.bundle.id },
-        diff: { name: snap.name, to_version: snap.version, snapshot_id: snap.id },
-      });
-      // Same summary the scan-side install returns, built once here so the
-      // two surfaces cannot drift on what an install is said to have done.
-      res.status(201).json({ ...result, installed: bundleInstallSummary(v.manifest!, result.applied) });
+      if (!(await requireCapability(req, res, "platform:revert-bundle"))) return;
+      const r = await revertBundleSnapshot(req.tenant!.org.id, sessionActor(req), req.params.snapshotId!);
+      res.status(r.status).json(r.body);
     } catch (err) {
       next(err);
     }

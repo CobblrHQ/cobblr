@@ -290,6 +290,19 @@ export function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 
+/** The shop's name, never a mail app's picture marker (#6702). A plain-text
+ *  forward writes the store's logo as "[image: <its alt text>]" on the first
+ *  line, where a receipt prints its store name, and the order was filed as
+ *  bought from "[image: Example Filament Shop]". The alt text of a logo IS
+ *  the shop's name, so the marker gives up its words; a marker with none
+ *  names no one. */
+export function vendorName(v: unknown): string | null {
+  const s = str(v);
+  if (!s) return null;
+  const m = s.match(/^\[image:\s*([^\]]*)\]$/i);
+  return m ? str(m[1]) : s;
+}
+
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
@@ -408,7 +421,7 @@ export function buildReceipt(parts: {
   const total = num(parts.total);
   const lines_total = money(items.reduce((s, i) => s + lineNet(i), 0));
   return {
-    vendor: str(parts.vendor),
+    vendor: vendorName(parts.vendor),
     order_ref: cleanOrderRef(str(parts.order_ref)),
     date: isoDate(parts.date),
     currency: currency ? currency.toUpperCase().slice(0, 3) : null,

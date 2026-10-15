@@ -1,0 +1,18 @@
+{
+  "name": "@cobblr/repo-guards",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The writing and privacy rules every Cobblr repository keeps, from one source: the identity terms nothing may ship or say in a commit message, the prose rules for public writing, a runner and the git hooks that run them.",
+  "main": "src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./prose": "./src/prose.mjs",
+    "./scan": "./src/scan.mjs",
+    "./identity": "./identity/index.mjs"
+  },
+  "bin": {
+    "repo-guards": "bin/repo-guards.mjs"
+  },
+  "files": ["src", "identity", "bin", "hooks", "README.md"]
+}

@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.26.8",
+  version: "0.26.9",
   displayName: "Labels",
   description:
     "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",
@@ -114,4 +114,11 @@ export default defineModule({
   },
 
   subscribes: [],
+  lifecycle: {
+    onBoot: async () => {
+      // What its dashboard tile reads, in the one dashboard request (#6563).
+      const { registerLabelsDashboardReads } = await import("./dashboard-reads.js");
+      registerLabelsDashboardReads();
+    },
+  },
 });

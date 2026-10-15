@@ -11,6 +11,7 @@
 // Mary (visual drag-and-drop form designer).
 
 import { VERTICAL_DRAG } from "../lib/vertical-drag";
+import { kindOptionLabels } from "../lib/kind-option-labels";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -62,6 +63,9 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
     () => [...new Set((allDefs.data?.items ?? []).map((f) => f.entity_kind))].sort(),
     [allDefs.data],
   );
+  // The kinds in the person's words ("Part"), not their ids.
+  const kindNames = useQuery({ queryKey: ["form-builder-kind-names", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
+  const kindLabels = kindOptionLabels(kindNames.data?.items ?? []);
   useEffect(() => {
     if (!kind && kinds.length) setKind(kinds[0]!);
   }, [kinds, kind]);
@@ -178,7 +182,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
           >
             {kinds.map((k) => (
               <option key={k} value={k}>
-                {k}
+                {kindLabels.get(k) ?? k}
               </option>
             ))}
           </select>

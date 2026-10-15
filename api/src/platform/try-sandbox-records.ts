@@ -142,12 +142,17 @@ export async function seedSandboxRecords(
     }
   }
 
-  for (const r of requests) {
+  // One collection's records in their order (its list reads newest first, as
+  // written), the collections side by side: a household seed's bookshelf and
+  // grocery list no longer wait for each other before the visitor arrives (#6689).
+  const byInstance = new Map<string, typeof requests>();
+  for (const r of requests) byInstance.set(r.instance ?? "", [...(byInstance.get(r.instance ?? "") ?? []), r]);
+  const writeOne = async (r: (typeof requests)[number]): Promise<void> => {
     // Instance names are workspace data, but they land in a URL, so they are
     // pinned to the same shape the platform allows rather than trusted.
     if (!/^[a-z0-9][a-z0-9_-]{0,60}$/i.test(r.instance ?? "")) {
       failed++;
-      continue;
+      return;
     }
     try {
       const res = await apiFetch(`${base()}/api/v1/orgs/${encodeURIComponent(slug)}/instances/${encodeURIComponent(r.instance)}/items`, {
@@ -157,7 +162,7 @@ export async function seedSandboxRecords(
       });
       if (!res.ok) {
         failed++;
-        continue;
+        return;
       }
       created++;
       if (r.image_url) {
@@ -169,7 +174,10 @@ export async function seedSandboxRecords(
     } catch {
       failed++;
     }
-  }
+  };
+  await Promise.all([...byInstance.values()].map(async (list) => {
+    for (const r of list) await writeOne(r);
+  }));
 
   // Covers come AFTER the visitor does.
   //

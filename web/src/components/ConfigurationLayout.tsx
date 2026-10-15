@@ -32,6 +32,7 @@ import {
   columnFor,
   destinationMatches,
   sectionForPath,
+  configPageForPath,
   visibleDestinations,
   CONFIG_DESTINATIONS,
   destinationForPath,
@@ -112,7 +113,7 @@ export function ConfigSidebarBody() {
         className={({ isActive: on }) =>
           "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm font-medium transition mb-1 " +
           (on
-            ? "bg-accent/10 text-accent"
+            ? "bg-accent/10 text-cobble-800 dark:text-accent"
             : "text-content dark:text-mortar-100 hover:bg-surface dark:hover:bg-slate-800")
         }
       >
@@ -158,7 +159,7 @@ export function ConfigSidebarBody() {
                     className={
                       "flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition " +
                       (isActive(e.to)
-                        ? "bg-accent/10 text-accent font-medium"
+                        ? "bg-accent/10 text-cobble-800 dark:text-accent font-medium"
                         : "text-content/80 dark:text-mortar-200 hover:bg-surface dark:hover:bg-slate-800")
                     }
                   >
@@ -199,21 +200,19 @@ function useConfigColumn(): string {
 function ConfigCrumb() {
   const { pathname } = useLocation();
   const section = sectionForPath(pathname);
-  const here = CONFIG_DESTINATIONS.find(
-    (d) => pathname === d.to || pathname.startsWith(`${d.to}/`),
-  );
+  const here = configPageForPath(pathname);
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex items-center gap-1.5 text-xs text-faint dark:text-slate-500 mb-3"
+      className="flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 mb-3"
     >
-      <NavLink to="/configuration" className="inline-flex items-center gap-1 hover:text-accent">
+      <NavLink to="/configuration" className="inline-flex min-h-11 min-w-11 items-center gap-1 hover:text-accent md:min-h-0 md:min-w-0">
         <ChevronLeft size={13} /> Configuration
       </NavLink>
       {section && (
         <>
           <span aria-hidden>›</span>
-          <NavLink to={`/configuration/s/${section}`} className="hover:text-accent">
+          <NavLink to={`/configuration/s/${section}`} className="inline-flex min-h-11 min-w-11 items-center hover:text-accent md:min-h-0 md:min-w-0">
             {CONFIG_SECTIONS[section].label}
           </NavLink>
         </>
@@ -221,7 +220,7 @@ function ConfigCrumb() {
       {here && (
         <>
           <span aria-hidden>›</span>
-          <span className="text-content/70 dark:text-mortar-200 truncate">{here.label}</span>
+          <span className="text-content dark:text-mortar-200 truncate">{here.label}</span>
         </>
       )}
     </nav>
@@ -236,26 +235,31 @@ function MobileConfigJump() {
   const ctx = useConfigVisibility();
   const { panels } = useHostedPanels();
   const all = visibleDestinations(ctx);
+  const current = configPageForPath(location.pathname);
+  const currentAction = current && !destinationForPath(location.pathname) ? current : null;
+  const currentValue = all.find((d) => d.to === current?.to)?.to ?? currentAction?.to ?? "";
   return (
-    <div className="md:hidden mb-4 flex items-center gap-2">
+    <div data-testid="config-jump" className="md:hidden mb-4 flex items-center gap-2">
       <NavLink
         to="/configuration"
-        className="shrink-0 inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400 hover:text-accent"
+        className="shrink-0 inline-flex min-h-11 min-w-11 items-center gap-1 text-xs text-muted dark:text-slate-400 hover:text-accent"
       >
         <ChevronLeft size={13} /> all
       </NavLink>
       <select
         aria-label="Jump to a setting"
-        value={all.find((d) => location.pathname.startsWith(d.to))?.to ?? ""}
+        value={currentValue}
         onChange={(e) => e.target.value && navigate(e.target.value)}
-        className="input !py-1 text-xs flex-1 min-w-0"
+        className="input !min-h-11 !py-1 text-xs flex-1 min-w-0"
       >
         <option value="">Jump to…</option>
         {CONFIG_SECTION_ORDER.map((id) => {
           const items = all.filter((d) => d.section === id);
-          if (!items.length) return null;
+          const actionHere = currentAction?.section === id ? currentAction : null;
+          if (!items.length && !actionHere) return null;
           return (
             <optgroup key={id} label={CONFIG_SECTIONS[id].label}>
+              {actionHere && <option value={actionHere.to}>{actionHere.label}</option>}
               {items.map((d) => (
                 <option key={d.to} value={d.to}>
                   {d.label}

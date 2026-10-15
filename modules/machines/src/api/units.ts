@@ -28,7 +28,7 @@ export const isRefusal = (x: unknown): x is Refusal => !!x && typeof x === "obje
 /** What a new record for one of the N copies from its parent: what the machine
  *  IS. Never its usage counters (those are that record's own history). */
 const IDENTITY = ["short_name", "family", "type", "manufacturer", "state", "image_path", "location_id"] as const;
-const OWN_HISTORY = new Set(["print_count", "print_hours"]);
+const OWN_HISTORY = new Set(["print_count", "print_hours", "run_hours"]);
 
 export async function unitsCtxFor(orgId: string, userId: string | null, machineId: string): Promise<UnitsCtx | null> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;

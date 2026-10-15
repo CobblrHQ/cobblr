@@ -38,10 +38,10 @@ largeFormatRouter.post("/refresh",asyncHandler(async(req,res)=>{
  const b=Printer.safeParse(req.body);if(!b.success)return badBody(res,b.error);
  try{res.json(await refreshSupplies(tenantDb(req),tenantContext(req).org.id,b.data));}catch(error){refuse(res,error);}
 }));
-// AI-ACTION: digifab:large-format
+// AI-ACTION: digifab:station-run
 largeFormatRouter.post("/jobs/:id/outcome",asyncHandler(async(req,res)=>{
- // ADMIN-ONLY: planning and running a large-format job is the admin tier's on the page, at every door (#5170)
- if(!(await requireCapability(req, res, "digifab:large-format")))return;
+ // ADMIN-ONLY: the admin tier, or an operator: recording a print at its station (#6672)
+ if(!(await requireCapability(req, res, "digifab:station-run")))return;
  const b=PrintReport.extend({station_token:z.string().min(32).max(128)}).safeParse(req.body);if(!b.success)return badBody(res,b.error);
  const db=tenantDb(req),orgId=tenantContext(req).org.id;
  try{const saved=await db.selectFrom("digifab_large_prints").selectAll().where("job_id","=",req.params.id!).executeTakeFirst();if(!saved)throw new ReviewRequired("Choose a prepared print.");await requireCutterStation(db,saved.connection_id,saved.device_id,b.data.station_token);res.json(await recordLargePrint(db,orgId,saved.job_id,sessionUser(req)?.id??"",PrintReport.parse(b.data)));}catch(error){refuse(res,error);}

@@ -175,12 +175,23 @@ export async function signImpersonation(
     .sign(secretKey());
 }
 
+/** A token that verifies but is the wrong kind for where it was presented:
+ *  a refusal, answered 401 like any token that does not verify. A plain Error
+ *  here read as "the session could not be checked" and answered 503, so a
+ *  walk that sent a View-as token as a login saw the server as down (#5875). */
+export class TokenRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "TokenRefused";
+  }
+}
+
 export async function verifyImpersonation(token: string): Promise<ImpersonationClaims> {
   const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER, algorithms: [ALG] });
-  if (payload.typ !== "impersonation") throw new Error("Not an impersonation token");
+  if (payload.typ !== "impersonation") throw new TokenRefused("Not an impersonation token");
   const { sub, act, org, sid } = payload as Record<string, unknown>;
   if (typeof sub !== "string" || typeof act !== "string" || typeof org !== "string" || typeof sid !== "string") {
-    throw new Error("Invalid impersonation token claims");
+    throw new TokenRefused("Invalid impersonation token claims");
   }
   return { typ: "impersonation", sub, act, org, sid, iat: payload.iat as number, exp: payload.exp as number };
 }
@@ -190,12 +201,12 @@ export async function verifySession(token: string): Promise<SessionClaims> {
   // symmetric key type to reject RS256/none confusion.
   const { payload } = await jwtVerify(token, secretKey(), { issuer: ISSUER, algorithms: [ALG] });
   if (typeof payload.sub !== "string") {
-    throw new Error("Invalid token: missing sub");
+    throw new TokenRefused("Invalid token: missing sub");
   }
   // An impersonation token must NEVER authenticate as a full session — it's a
   // scoped grant carried in X-Impersonation, not a login. Reject it as Bearer.
   if (payload.typ === "impersonation") {
-    throw new Error("Impersonation token cannot be used as a session");
+    throw new TokenRefused("Impersonation token cannot be used as a session");
   }
   return {
     sub: payload.sub,

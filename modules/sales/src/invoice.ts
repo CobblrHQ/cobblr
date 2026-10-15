@@ -20,7 +20,7 @@ export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_pri
 }
 
 function invoice(order: InvoiceOrder, fallbackCurrency: string) {
-  const currency = fieldCurrency(order.metadata, "amount", fallbackCurrency);
+  const currency = fieldCurrency(order.metadata, "total", fallbackCurrency);
   const payment = order.paid === true ? "Paid" : "Not marked paid";
   const units = new Map(order.availability?.map((a) => [a.line_id, a.unit]));
   const lines = order.items.map((it) => {
@@ -64,4 +64,51 @@ export function invoiceCsv(order: InvoiceOrder, fallbackCurrency: string): strin
   const common = [d.reference, d.customer, d.date, d.payment];
   return toCsv(["Order reference", "Customer", "Order date", "Payment status", "Line", "Description", "Quantity", "Unit", "Unit price", "Line total", "Currency", "Order total"],
     d.lines.length ? d.lines.map((it, i) => [...common, i + 1, it.description, it.qty, it.unit, it.price, it.total, d.currency, d.total]) : [[...common, null, null, null, null, null, null, d.currency, d.total]]);
+}
+
+export interface DocumentOptions {
+  kind: "quote" | "invoice";
+  number: string;
+  shop_name: string;
+  date: string;
+  deadline: string | null;
+  tax_rate: number;
+  logo?: { mime: "image/png" | "image/jpeg"; base64: string } | null;
+  customer_address?: string | null;
+}
+export interface SalesDocument extends DocumentOptions {
+  reference: string;
+  customer: string;
+  currency: string;
+  lines: ReturnType<typeof invoice>["lines"];
+  subtotal: number;
+  tax: number;
+  total: number;
+}
+export interface DocumentPayment { paid: boolean; paid_on: string | null }
+
+export function salesDocument(order: InvoiceOrder, currency: string, options: DocumentOptions): SalesDocument {
+  const d = invoice(order, currency);
+  if (!d.lines.length) throw new Error("Add at least one line before preparing a document.");
+  if (d.total === null) throw new Error("Add every line's price before preparing a document.");
+  if (!Number.isFinite(options.tax_rate) || options.tax_rate < 0 || options.tax_rate > 100) throw new Error("Tax must be between 0 and 100 percent.");
+  const tax = roundMoneyAmount(d.total * options.tax_rate / 100, d.currency);
+  return { ...structuredClone(options), reference: d.reference, customer: d.customer, currency: d.currency, lines: d.lines, subtotal: d.total, tax, total: roundMoneyAmount(d.total + tax, d.currency) };
+}
+
+export function documentText(d: SalesDocument, payment: DocumentPayment = { paid: false, paid_on: null }): string {
+  const money = (n: number) => formatStoredMoney(n, "amount", { currency: d.currency, locale: "en" });
+  const lines = [d.shop_name, `${d.kind === "quote" ? "Quote" : "Invoice"} ${d.number}`, `Order: ${d.reference}`, `Customer: ${d.customer}`];
+  if (d.customer_address) lines.push(d.customer_address);
+  lines.push(`${d.kind === "quote" ? "Prepared" : "Issued"}: ${d.date}`);
+  if (d.deadline) lines.push(`${d.kind === "quote" ? "Valid until" : "Due"}: ${d.deadline}`);
+  lines.push("", ...d.lines.map(l => `${l.description} | ${l.qty}${l.unit ? ` ${l.unit}` : ""} x ${money(l.price!)} | ${money(l.total!)}`));
+  lines.push("", `Subtotal (${d.currency}): ${money(d.subtotal)}`);
+  if (d.tax_rate) lines.push(`Tax (${d.tax_rate}%): ${money(d.tax)}`);
+  lines.push(`Total (${d.currency}): ${money(d.total)}`);
+  if (d.kind === "invoice") {
+    lines.push(`Payment: ${payment.paid === true ? "Paid" : "Not marked paid"}`);
+    if (payment.paid === true) lines.push(`Payment date: ${payment.paid_on || "Not recorded"}`);
+  }
+  return lines.join("\n");
 }

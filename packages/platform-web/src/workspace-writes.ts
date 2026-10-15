@@ -27,8 +27,17 @@ export function subscribeWorkspaceWrite(listener: WorkspaceWriteListener): () =>
   };
 }
 
+/** A request sent as a POST that changes nothing: a stream's ticket. Told
+ *  as a write, opening the records stream on every load marked every count
+ *  and list in the shell stale, and each asked again a moment after it had
+ *  been answered (#6613). */
+export function changesNothing(path: string): boolean {
+  return /\/stream-ticket(\?|$)/.test(path);
+}
+
 /** A successful write to `path` (`/orgs/<slug>/…`, absolute `/api/v1/…` or a
- *  full URL). A path outside a workspace is not one. */
+ *  full URL). A path outside a workspace is not one, nor one that changes
+ *  nothing (changesNothing). */
 export function noteWorkspaceWrite(path: string, response?: Pick<Response, "headers">): void {
   let p = path;
   try {
@@ -38,7 +47,7 @@ export function noteWorkspaceWrite(path: string, response?: Pick<Response, "head
   }
   p = p.replace(/^\/api\/v1(?=\/)/, "");
   const m = /^\/orgs\/([^/?#]+)/.exec(p);
-  if (!m) return;
+  if (!m || changesNothing(p)) return;
   const slug = decodeURIComponent(m[1]!);
   listeners.forEach((l) => l(slug, p));
   const id = response?.headers?.get("x-cobblr-deleted-record");

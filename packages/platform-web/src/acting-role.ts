@@ -19,6 +19,8 @@
 import { guestMayAsk, type PortalShares } from "@cobblr/platform-contract/guest-reads";
 import { approvalDedupeKey, type BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
+import { primedRead } from "./primed-reads";
+import { sharedRead } from "./shared-reads";
 
 const roles = new Map<string, string>();
 const shared = new Map<string, PortalShares>();
@@ -82,9 +84,14 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
   if (refusedForGuest(method, path)) {
     return new Response(JSON.stringify({ error: { code: "guest_not_shared", message: GUEST_NOT_SHARED } }), { status: 403, headers: { "content-type": "application/json" } });
   }
+  // The dashboard's snapshot may already hold this read (primed-reads.ts).
+  if (path.startsWith("/orgs/")) {
+    const primed = await primedRead(method, path);
+    if (primed) return new Response(JSON.stringify(primed.body), { status: primed.status, headers: { "content-type": "application/json" } });
+  }
   let applied: string | null = null;
   for (;;) {
-    const res = await fetch(input, init);
+    const res = await send(input, init, method);
     if (res.status < 400 || res.status >= 500 || !path.startsWith("/orgs/")) return res;
     const sent = typeof init?.body === "string" ? parseBody(init.body) : undefined;
     const refused = refusedRequestFor(method, path, sent);
@@ -102,6 +109,17 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
     if ((await awaitBlockedAction({ blocked, refused, subject: null })) !== "applied") return res;
     applied = key;
   }
+}
+
+/** A GET already on its way, asked the same way, is answered by that one
+ *  request, and any other method drops what is on its way (shared-reads.ts,
+ *  #6613). A read that can be cut short, or is a Request of its own, goes
+ *  out as it was asked. */
+function send(input: string | URL | Request, init: RequestInit | undefined, method: string): Promise<Response> {
+  const own = input instanceof Request || !!init?.signal || init?.body != null;
+  if (own && method === "GET") return fetch(input, init);
+  const headers = [...new Headers(init?.headers).entries()].map(([k, v]) => `${k}=${v}`).join("&");
+  return sharedRead(method, `${headers} ${String(input)}`, () => fetch(input, init));
 }
 
 function parseBody(text: string): unknown {

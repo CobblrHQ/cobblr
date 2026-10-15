@@ -758,7 +758,9 @@ async function logSyncWrite(
       action,
       ref: { module: module ?? null, entityType: entityType ?? type.targetKind, entityId: id },
       diff,
-      via: { kind: "automation", label: `${type.sourceLabel || ref.connectorId} sync` },
+      // The source by its own name: the feed says "Homebox updated 47
+      // places" with the sync's icon (#6564).
+      via: { kind: "sync", label: type.sourceLabel || ref.connectorId },
     });
   } catch (err) {
     console.warn(`[sync] activity for ${type.targetKind}/${id} not written:`, (err as Error).message);

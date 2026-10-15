@@ -13,7 +13,7 @@ import { rehomeAssetsInstanceToRecords } from "../platform/rehome-instance.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "../platform/reconcile-scan-category.js";
 import { runAllTenantSweeps, runTenantSweep } from "../platform/tenant-sweeps.js";
 import { testSweepRound } from "./test-support-sweep-round.js";
-import { setSubscriberDelayForTests } from "../platform/events.js";
+import { on, setSubscriberDelayForTests } from "../platform/events.js";
 import { selfFetch } from "../platform/self-fetch.js";
 import { runWithActor } from "../lib/request-context.js";
 import { type ApplyPoint, mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
@@ -52,6 +52,33 @@ testSupportRouter.post("/test-support/checkout-org", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// Run a workspace's heal inside the arrival gap, before its lines are received.
+// This forces the overlap a contended runner otherwise hits only sometimes.
+const arrivalHeals = new Map<string, { ran: boolean; failed: boolean }>();
+on("purchases.order.arrived", "test-support", async (payload) => {
+  const orgId = (payload as { orgId: string }).orgId;
+  const pending = arrivalHeals.get(orgId);
+  if (!pending || pending.ran) return;
+  pending.ran = true;
+  pending.failed = true;
+  const result = await runTenantSweep("purchases.heal-unreceived-arrivals", { orgIds: [orgId] });
+  pending.failed = result.visited !== 1 || result.failed > 0 || !!result.skipped;
+});
+testSupportRouter.post("/test-support/heal-during-arrival", (req, res) => {
+  const orgId = req.body?.org_id;
+  if (typeof orgId !== "string") {
+    res.status(400).json({ error: "org_id required" });
+    return;
+  }
+  arrivalHeals.set(orgId, { ran: false, failed: false });
+  res.json({ ok: true });
+});
+testSupportRouter.delete("/test-support/heal-during-arrival/:orgId", (req, res) => {
+  const result = arrivalHeals.get(req.params.orgId!);
+  arrivalHeals.delete(req.params.orgId!);
+  res.json(result ?? { ran: false, failed: false });
 });
 
 // What the heal, reconcile and sweep passes caught (platform/pass-failures.ts),
@@ -209,13 +236,14 @@ testSupportRouter.post("/test-support/post-cardless-feedback", async (req, res, 
 // put to a person. Body: { org_id, order_id, arrived_at?, flagged? }.
 testSupportRouter.post("/test-support/legacy-order-arrival", async (req, res, next) => {
   try {
-    const { org_id, order_id, arrived_at, flagged } = (req.body ?? {}) as { org_id?: string; order_id?: string; arrived_at?: string; flagged?: boolean };
+    const { org_id, order_id, arrived_at, flagged, status } = (req.body ?? {}) as { org_id?: string; order_id?: string; arrived_at?: string; flagged?: boolean; status?: "ordered" | "arrived" };
     if (!org_id || !order_id) {
       res.status(400).json({ error: { code: "bad_request", message: "body needs { org_id, order_id, arrived_at? }" } });
       return;
     }
     const db = await getTenantDb(org_id);
-    await sql`update purchases_orders set status = 'arrived', arrived_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date where id = ${order_id}`.execute(db);
+    await sql`update purchases_orders set status = ${status === 'ordered' ? 'ordered' : 'arrived'}, arrived_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date, updated_at = to_timestamp(0) where id = ${order_id}`.execute(db);
+    await sql`update purchases_order_items set updated_at = to_timestamp(0) where order_id = ${order_id}`.execute(db);
     if (flagged) {
       await sql`update purchases_order_items set received_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date, receipt_unconfirmed = true where order_id = ${order_id} and part_id is not null`.execute(db);
     }

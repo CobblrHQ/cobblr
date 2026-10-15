@@ -5,6 +5,7 @@
 // bytes to the chosen printer/pool (the existing send+poll path).
 
 import { isLayoutFile } from "../laser-plans.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform, uploadOne } from "@cobblr/platform-contract";
@@ -134,7 +135,8 @@ const Send = z.object({
 libraryRouter.post(
   "/:id/send",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Sending a stored file to a machine runs it: the operator's, as a job's send is (#6785).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const parsed = Send.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -172,7 +174,7 @@ libraryRouter.post(
     // Direct send to a connection/device — fire it now, then hand to the poller.
     const { sendAndWatch } = await import("./jobs.js");
     const r = await sendAndWatch(db, orgId, job.id);
-    if (!r.ok) return void res.status(502).json({ error: { code: r.code, message: "send failed" }, job_id: job.id });
+    if (!r.ok) return void res.status(r.code === "send_failed" ? 502 : r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message }, job_id: job.id });
     res.status(201).json({ job_id: job.id, status: r.status });
   }),
 );

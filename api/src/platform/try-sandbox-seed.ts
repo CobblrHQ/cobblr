@@ -101,7 +101,9 @@ export async function seedSandbox(
     };
   }
 
+  const blueprintAt = performance.now();
   await applyBlueprint(orgId, { id: userId, display_name: "Guest", auth_method: "session" }, withCurrentBundles(bp.data));
+  const blueprintMs = Math.round(performance.now() - blueprintAt);
 
   // The shape is up; now put something in it. A blueprint carries no records by
   // design, so without this the sandbox is correct and empty - which is the one
@@ -109,8 +111,10 @@ export async function seedSandbox(
   let contents: SeedOutcome["contents"];
   if (slug) {
     try {
+      const recordsAt = performance.now();
       const outcome = await seedSandboxRecords(slug, await signSession(userId), trimmed, Date.now(), { orgId });
       contents = { created: outcome.created, failed: outcome.failed, images: outcome.images };
+      console.log(`[try-sandbox] seed ${trimmed}: blueprint ${blueprintMs}ms, records ${Math.round(performance.now() - recordsAt)}ms`);
     } catch (err) {
       // Never fatal: an empty-but-working sandbox beats no sandbox.
       console.error("[try-sandbox] contents failed:", (err as Error).message);

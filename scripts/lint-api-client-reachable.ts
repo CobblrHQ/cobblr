@@ -20,14 +20,7 @@ import { API_CLIENT as API, apiClientMethods, callerCorpus, isCalled } from "./l
 /** Unreachable on 2026-09-08. Each is a surface still owed or a method to
  *  delete; either way, wiring one REMOVES it from here. */
 const BASELINE = new Set([
-  "listMySignupInvites", "revokeMySignupInvite", "pairStart", "verifyEmail", "orgLocal",
-  "markConversationRead", "placementContainerOf",
-  "uninstallRenderer", "authoringContext",
-  "markNotificationRead", "markAllNotificationsRead", "mintAppToken",
-  "setDigifabDevicePosition", "patchDigifabChannel", "deleteInstance",
-  "updateNavHeading", "updateSyncConnection", "putawayConfirm", "setupPutawayBins",
-  "putawayUndo", "getPutawayCurrent", "backfillScanCatalogPhotos",
-  "peekAnswer", "invokeAi", "aiChat", "aiChatWrites",
+  "orgLocal", "placementContainerOf", "authoringContext", "markNotificationRead", "markAllNotificationsRead", "setDigifabDevicePosition", "updateNavHeading", "invokeAi", "aiChat", "aiChatWrites",
 ]);
 
 const methods = apiClientMethods();

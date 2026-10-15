@@ -290,7 +290,7 @@ function Picture({
   return (
     <figure className="min-w-0">
       {src ? (
-        <button type="button" onClick={onOpen} className="block w-full overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-black/90" title="View full size">
+        <button type="button" onClick={onOpen} className="block w-full overflow-hidden rounded-xl border border-line dark:border-slate-700 bg-black/90" title="View full size" aria-label={`View full size: ${caption}`}>
           <img src={src} alt={caption} className="h-40 w-full object-contain" onError={onBroken} />
         </button>
       ) : onPick ? (

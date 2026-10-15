@@ -13,6 +13,7 @@ import { readdirSync } from "node:fs";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
+import { migrateConcurrently } from "./migrate-concurrently.js";
 import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
@@ -214,7 +215,7 @@ export async function enableModuleForOrg(
     const result = await runMigrations({
       pool,
       directory: migrationsDir,
-      scope: `tenant ${orgId} / module ${moduleName}`,
+      scope: moduleMigrationScope(orgId, moduleName),
     });
     migrationsApplied = result.applied;
     lastMigration = result.latest;
@@ -686,6 +687,32 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
  *    stay opt-in — choosing what you *manage* is the one decision worth
  *    surfacing. Sorted so any module that depends on another runs after it.
  */
+/** The ledger scope a module's migrations run under in one workspace's
+ *  database; the enable and the concurrent pre-pass below must agree on it. */
+export function moduleMigrationScope(orgId: string, moduleName: string): string {
+  return `tenant ${orgId} / module ${moduleName}`;
+}
+
+/** Migrate `names` (and what they depend on) into a workspace's database at
+ *  once, ahead of the enables that follow in order: the default modules at
+ *  signup, a blueprint's modules when it is applied. Idempotent; a module
+ *  already migrated costs one ledger read. */
+export async function premigrateModules(orgId: string, names: readonly string[]): Promise<string[][]> {
+  const wanted = new Map<string, NonNullable<ReturnType<typeof getEntry>>>();
+  const add = (name: string): void => {
+    const entry = getEntry(name);
+    if (!entry || wanted.has(entry.manifest.name)) return;
+    wanted.set(entry.manifest.name, entry);
+    for (const d of entry.manifest.dependencies) add(d);
+  };
+  for (const n of names) add(n);
+  if (![...wanted.values()].some((e) => e.manifest.schema)) return [];
+  const pool = await getTenantPool(orgId);
+  return migrateConcurrently([...wanted.values()], (entry) =>
+    runMigrations({ pool, directory: resolve(entry.rootPath, entry.manifest.schema!.migrationsDir), scope: moduleMigrationScope(orgId, entry.manifest.name) }),
+  );
+}
+
 export async function enableDefaultModulesForOrg(
   orgId: string,
   // Who signed up. Not the actor: the platform turns these on, so the
@@ -729,15 +756,20 @@ export async function enableDefaultModulesForOrg(
     return out;
   };
 
+  await premigrateModules(orgId, foundationals.map((e) => e.manifest.name));
+  const took: Array<[string, number]> = [];
   for (const entry of sortByDeps(foundationals)) {
     try {
+      const at = performance.now();
       const result = await enableModuleForOrg(orgId, entry.manifest.name, {});
+      took.push([entry.manifest.name, Math.round(performance.now() - at)]);
       if (!result.alreadyEnabled) enabled.push(entry.manifest.name);
     } catch (err) {
       notePassFailure("enable.defaults", `${orgId}:${entry.manifest.name}`, err);
       console.error(`[enable] failed for ${entry.manifest.name} on org ${orgId}:`, err);
     }
   }
+  if (enabled.length) console.log(`[enable] defaults for ${orgId}, slowest: ${took.sort((a, b) => b[1] - a[1]).slice(0, 6).map(([n, ms]) => `${n} ${ms}ms`).join(", ")}`);
   return enabled;
 }
 

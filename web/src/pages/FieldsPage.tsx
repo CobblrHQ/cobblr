@@ -2,6 +2,7 @@
 // what bundles do, but exposed as a UI so users can sketch their
 // own without writing a bundle manifest.
 
+import { kindOptionLabels } from "../lib/kind-option-labels";
 import { useDeferredValue, useState, type FormEvent } from "react";
 import { FIELD_TYPE_VALUES, fieldTypeTakesUnit } from "@cobblr/platform-contract/field-vocabulary";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -78,6 +79,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
     queryFn: () => api.listEntityKinds(slug),
     enabled: !!slug,
   });
+  const kindLabels = kindOptionLabels(kinds.data?.items ?? []);
   const fields = useQuery({
     queryKey: ["field-defs", slug],
     queryFn: () => api.listFieldDefs(slug),
@@ -455,7 +457,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
               <option value=""> - pick one - </option>
               {kinds.data?.items.map((k) => (
                 <option key={k.id} value={k.id}>
-                  {k.display_name} ({k.id})
+                  {kindLabels.get(k.id) ?? k.display_name}
                 </option>
               ))}
             </select>

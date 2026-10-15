@@ -52,4 +52,7 @@ export { projectsRouter as primaryRouter };
 import { registerDependencyHandlers } from "./dep-handlers.js";
 registerDependencyHandlers();
 import { registerOrderHandlers } from "./order.js";
+import { registerCopyProjectAction } from "./copy-project-action.js";
+
+registerCopyProjectAction();
 registerOrderHandlers();

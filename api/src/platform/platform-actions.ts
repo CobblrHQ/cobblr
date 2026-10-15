@@ -340,7 +340,10 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     group: "organise",
     id: "platform:edit-field",
     min_role: "grantable",
-    label: "Change a field",
+    // The label is all an unfiltered list_actions shows, and "Change a field"
+    // read as rename-only: "make Purchase Date required" was answered "that
+    // is not supported" in 10 nightlies of 22 (#6562).
+    label: "Change a field: rename, require, hide or edit its choices",
     description:
       "Change a field that already exists on a kind of record: rename its label, hide it from forms and lists (or show it again), make it required, or change a dropdown's choices: add_choices and remove_choices take one or more by name ('remove Tea from the category choices' is remove_choices Tea; no need to know the rest of the list), choices replaces the whole list. Works on the workspace's own fields AND on the ones a module ships (a part's manufacturer, a machine's serial number), of which the label, whether it shows, and its choices are yours to set. Name the field the way it appears on the form. Runs on the workspace, not a record. What it CANNOT do is change a field's type or its storage name, because values already recorded are stored under both.",
     icon: "pencil",
@@ -456,7 +459,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       "rename the Buying heading to Purchasing",
     ],
     args_schema: {
-      entity_kind: { label: "Which kind of record (e.g. inventory:part)", type: "text", required: true },
+      entity_kind: { label: "Which kind of record (e.g. inventory:part); may be left out when renaming a heading only one kind has", type: "text" },
       section: { label: "The heading to put them under (e.g. Buying)", type: "text", required: true },
       fields: { label: "The fields, comma-separated, by their labels on the form", type: "text", oneOf: "what-to-change" },
       rename_to: { label: "To RENAME the heading instead: what to call it now", type: "text", oneOf: "what-to-change" },
@@ -1261,6 +1264,91 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: {
       bundle: { label: "The bundle", type: "text", required: true },
       delete_records: { label: "Delete its tables and their records too", type: "boolean" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /bundles (Install, on a bundle in the catalog)
+    group: "organise",
+    id: "platform:install-bundle",
+    min_role: "admin",
+    label: "Install a bundle",
+    description:
+      "Install a bundle from this deployment's catalog: Yarn, Groceries, Board Games and the like, a ready-made table with its fields, views and automations. Name it as the catalog does. It turns on any feature it needs. Its optional parts start as the bundle sets them unless you name the ones wanted. Only the catalog's bundles; a bundle file someone has is installed on the Bundles screen. Runs on the workspace, not a record.",
+    icon: "package-plus",
+    scope: "workspace",
+    invoke_handler: "platform.install-bundle",
+    user_invokable: true,
+    // It changes the workspace's shape (features turned on, tables, fields,
+    // automations): a person confirms the card. Removing it is
+    // platform:remove-bundle.
+    undoable: false,
+    examples: ["install the yarn bundle", "add groceries to my workspace", "set me up to track board games"],
+    args_schema: {
+      bundle: { label: "The bundle, by its catalog name", type: "text", required: true },
+      features: { label: "Its optional parts to include, by name, comma separated (default: the bundle's own choice)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /bundles (the optional parts of an installed bundle)
+    group: "organise",
+    id: "platform:set-bundle-features",
+    min_role: "admin",
+    label: "Turn a bundle's optional parts on or off",
+    description:
+      "Turn optional parts of an installed bundle on or off, by name: Embroidery for Sewing, and the like. A part turned off keeps any table that holds records; only an empty one goes. Runs on the workspace, not a record.",
+    icon: "toggle-right",
+    scope: "workspace",
+    invoke_handler: "platform.set-bundle-features",
+    user_invokable: true,
+    // A person confirms; the way back (the parts as they were) is offered after.
+    undoable: false,
+    examples: ["turn on embroidery for sewing", "I don't need the wishlist part of board games"],
+    args_schema: {
+      bundle: { label: "The installed bundle", type: "text", required: true },
+      turn_on: { label: "Parts to turn on, by name, comma separated", type: "text" },
+      turn_off: { label: "Parts to turn off, by name, comma separated", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /bundles (History, on an installed bundle)
+    group: "organise",
+    id: "platform:revert-bundle",
+    min_role: "admin",
+    label: "Put a bundle back to an earlier version",
+    description:
+      "Put an installed bundle back the way it was before its last change (an update, a part turned on or off), or to a saved version by its id. The card says which version and when it was saved. Records are kept; the version it replaces is saved, so this can be reverted too. Runs on the workspace, not a record.",
+    icon: "history",
+    scope: "workspace",
+    invoke_handler: "platform.revert-bundle",
+    user_invokable: true,
+    undoable: false,
+    examples: ["undo the yarn update", "put groceries back how it was yesterday"],
+    args_schema: {
+      bundle: { label: "The installed bundle", type: "text", required: true },
+      snapshot_id: { label: "A saved version's id (default: the one before its last change)", type: "text" },
+    },
+    version: "0.1.0",
+  },
+  {
+    // UI-SCREEN: /configuration/presentation (a list's settings: "Scans that fit no list land here")
+    group: "organise",
+    id: "platform:set-scan-fallback",
+    min_role: "admin",
+    label: "Choose where scans that fit no list land",
+    description:
+      "Make one list its feature's catch-all for scans: a scan that matches no list in particular lands there, to be told apart by its category. One per feature; naming a new one replaces the old. Runs on the workspace, not a record.",
+    icon: "inbox",
+    scope: "workspace",
+    invoke_handler: "platform.set-scan-fallback",
+    user_invokable: true,
+    // Undone by naming the list it was before (offered after).
+    undoable: false,
+    examples: ["scans that don't fit anywhere should go to Misc parts", "make Shop supplies the catch-all"],
+    args_schema: {
+      list: { label: "The list, by its name", type: "text", required: true },
     },
     version: "0.1.0",
   },

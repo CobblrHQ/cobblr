@@ -1,4 +1,4 @@
-import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -196,9 +196,11 @@ export function RecordsPage({
               </button>
             )}
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
-            <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
-              <Plus size={14} /> New {noun}
-            </button>
+            <NewItemMenu kind="records:record" instance={instance}>
+              <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
+                <Plus size={14} /> New {noun}
+              </button>
+            </NewItemMenu>
           </>
         }
       />

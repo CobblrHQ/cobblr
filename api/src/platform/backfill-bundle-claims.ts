@@ -20,26 +20,28 @@ import { meta } from "../db/meta.js";
 import { recordClaim, USER_SOURCE } from "./bundle-claims.js";
 import { noteHealShim } from "./heal-shim-log.js";
 
-export async function backfillBundleClaims(): Promise<number> {
+export async function backfillBundleClaims(orgId?: string): Promise<number> {
   // One-shot historical self-heal (installs predating the claims ledger). Honours
   // the same skip flag as the other historical boot passes: CI's org pool is baked
   // by current code (claims already present), so this only scans ~250 tenants to
   // find nothing — it was ~14s of the pooled boot. Prod/staging never set the flag.
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return 0;
-  // Every active org has org_modules rows; that's the set to consider.
-  const orgRows = await meta.selectFrom("org_modules").select("org_id").distinct().execute();
+  // Orgs with no ledger at all, in one query: an org that already has claims
+  // (backfilled, or a new install recorded them) is never re-derived, which
+  // would wrongly 'user'-claim modules. An org whose modules are all defaults
+  // legitimately has none and is looked at again, cheaply, finding nothing.
+  const orgRows = await meta
+    .selectFrom("org_modules as m")
+    .select("m.org_id")
+    .distinct()
+    .$if(orgId !== undefined, (q) => q.where("m.org_id", "=", orgId!))
+    .where((eb) => eb.not(eb.exists(
+      eb.selectFrom("bundle_resource_claims as c").select("c.id").whereRef("c.org_id", "=", "m.org_id"),
+    )))
+    .execute();
   let backfilled = 0;
   for (const { org_id } of orgRows) {
-    // Skip orgs that already have claims (already backfilled, or a new install
-    // recorded claims directly — re-deriving would wrongly 'user'-claim modules).
-    const has = await meta
-      .selectFrom("bundle_resource_claims")
-      .select("id")
-      .where("org_id", "=", org_id)
-      .limit(1)
-      .executeTakeFirst();
-    if (has) continue;
-
+    let wrote = false;
     // 1. Claims from each installed bundle's manifest (its provides_instances give
     //    both the instance it owns and the module that instance lives on).
     const bundles = await meta
@@ -53,9 +55,9 @@ export async function backfillBundleClaims(): Promise<number> {
         provides_instances?: Array<{ instance_name?: string; module?: string }>;
       } | null;
       for (const pi of m?.provides_instances ?? []) {
-        if (pi.instance_name) await recordClaim(org_id, b.external_id, "instance", pi.instance_name);
+        if (pi.instance_name) wrote = (await recordClaim(org_id, b.external_id, "instance", pi.instance_name)) || wrote;
         if (pi.module) {
-          await recordClaim(org_id, b.external_id, "module", pi.module);
+          wrote = (await recordClaim(org_id, b.external_id, "module", pi.module)) || wrote;
           bundleModules.add(pi.module);
         }
       }
@@ -70,14 +72,15 @@ export async function backfillBundleClaims(): Promise<number> {
       .execute();
     for (const { module_name } of enabled) {
       if (!bundleModules.has(module_name)) {
-        await recordClaim(org_id, USER_SOURCE, "module", module_name);
+        wrote = (await recordClaim(org_id, USER_SOURCE, "module", module_name)) || wrote;
       }
     }
-    backfilled++;
+    if (wrote) backfilled++;
   }
-  // Every org without a ledger gets one, so what it backfilled is what it
-  // found. (A throw above leaves nothing recorded, which is right: a pass
-  // that did not finish did not find zero.)
-  await noteHealShim("api/src/platform/backfill-bundle-claims.ts", backfilled);
+  // What it found is the orgs that gained a claim: one whose modules are all
+  // defaults has nothing to claim and is not unfinished work. (A throw above
+  // leaves nothing recorded, which is right: a pass that did not finish did
+  // not find zero.)
+  if (orgId === undefined) await noteHealShim("api/src/platform/backfill-bundle-claims.ts", backfilled);
   return backfilled;
 }

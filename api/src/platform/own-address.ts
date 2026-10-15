@@ -12,6 +12,7 @@
 import { claimedOwnAddressKind, namedAddress, ownAddressName, splitFromHeader, type OwnAddressKind } from "@cobblr/platform-contract/address-name";
 import { meta } from "../db/meta.js";
 import { verifyReceiptToken } from "./receipt-email.js";
+import { productName } from "./product-name.js";
 
 async function workspaceName(orgId: string): Promise<string | null> {
   const row = await meta.selectFrom("orgs").select("name").where("id", "=", orgId).executeTakeFirst();
@@ -33,5 +34,5 @@ export async function ownAddressFrom(from: string | undefined, lookup: (orgId: s
   const m = /^(receipts|orders)\+([^@]+)@/i.exec(address);
   const owner = m && m[1]!.toLowerCase() === kind ? verifyReceiptToken(m[2]!) : null;
   if (owner && name === ownAddressName(kind, await lookup(owner.orgId))) return from;
-  return namedAddress("Cobblr", address);
+  return namedAddress(productName(), address);
 }

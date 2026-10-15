@@ -162,6 +162,7 @@ export function registerMachinesWriter(): void {
     // due "every 200 print hours" (#3876). machines:record-usage writes them.
     counters: {
       defs: [
+        { key: "run_hours", label: "run hours" },
         { key: "print_hours", label: "print hours" },
         { key: "print_count", label: "prints" },
       ],
@@ -173,7 +174,7 @@ export function registerMachinesWriter(): void {
           const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
           return Number.isFinite(n) ? n : null;
         };
-        return { print_hours: num(m.print_hours), print_count: num(m.print_count) };
+        return { run_hours: num(m.run_hours) ?? 0, print_hours: num(m.print_hours), print_count: num(m.print_count) };
       },
     },
 

@@ -102,8 +102,17 @@ export function registerListActionHandlers(): void {
     // point at any kind — so lists never learns what inventory is. It's
     // what lets checking the item off close the loop back to stock (see the
     // food-cluster `item.checked → inventory:adjust-stock` wire).
+    // `auto`: a wire put it here, so the wire's reason can lapse (the count is
+    // back above its minimum) and take it off again; a line a person added
+    // stays until a person removes it.
     const metadata =
-      ctx.entity ? { source_ref: { kind: ctx.entity.kind, id: ctx.entity.id }, ...(args.restocks === true ? { restocks: true } : {}) } : {};
+      ctx.entity
+        ? {
+            source_ref: { kind: ctx.entity.kind, id: ctx.entity.id },
+            ...(args.restocks === true ? { restocks: true } : {}),
+            ...(ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? { auto: true } : {}),
+          }
+        : {};
     const row = await db
       .insertInto("lists_items")
       .values({ list_id: listId, title, qty: args.qty ?? null, note: args.note ?? null, metadata: sql`${JSON.stringify(metadata)}::jsonb` as never })
@@ -135,6 +144,27 @@ export function registerListActionHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
     const res = await platform().deletedRecords.capture(ctx.orgId, "lists:item", id, () => db.deleteFrom("lists_items").where("id", "=", id).where("checked", "=", false).executeTakeFirst());
     return { ok: true, removed: Number(res.numDeletedRows ?? 0n) };
+  });
+
+  // A typed line that names a record is pointed at it by that record's module.
+  // Only a line with nothing behind it and not yet ticked: a line made from a
+  // record, or one somebody already bought, is not rewritten.
+  platform().actions.registerHandler("lists.link-item", async (ctx) => {
+    const a = (ctx.args as { item_id?: unknown; kind?: unknown; id?: unknown } | null) ?? {};
+    const itemId = typeof a.item_id === "string" ? a.item_id : "";
+    const kind = typeof a.kind === "string" ? a.kind : "";
+    const id = typeof a.id === "string" ? a.id : "";
+    if (!itemId || !kind || !id) return { ok: false, error: "say which line and which record" };
+    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
+    const patch = JSON.stringify({ source_ref: { kind, id }, restocks: true });
+    const res = await db
+      .updateTable("lists_items")
+      .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${patch}::jsonb` as never, updated_at: new Date() })
+      .where("id", "=", itemId)
+      .where("checked", "=", false)
+      .where(sql<boolean>`coalesce(metadata->'source_ref'->>'id', '') = ''`)
+      .executeTakeFirst();
+    return { ok: true, linked: Number(res.numUpdatedRows ?? 0n) };
   });
 
   // Clearing the ticked items had no door: add-item was the module's only

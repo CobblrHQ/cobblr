@@ -23,6 +23,7 @@ import { usageStats } from "../platform/usage-stats.js";
 import { computeStats } from "../platform/compute-ledger.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { inviteExpiresAt } from "../auth/signup-gate.js";
+import { listScanEvalCases } from "./scan-eval-cases.js";
 import { scanResolversRouter } from "./super-admin-scan-resolvers.js";
 import { ImpersonationRefused, startImpersonation, describeSession } from "../platform/impersonation.js";
 import { log as activityLog } from "../platform/activity.js";
@@ -365,6 +366,7 @@ superAdminRouter.delete("/workspaces/:id", async (req, res, next) => {
 // Explicit + per-instance by design — classifying which instances SHOULD move
 // automatically is a separate decision from being able to move one safely.
 // Body: { org_slug, instance }.
+// UI-REACH: operator migration repair for a specifically reviewed instance, not a tenant operation; preserves the scriptable repair door.
 superAdminRouter.post("/rehome-instance", async (req, res, next) => {
   try {
     const { org_slug, instance } = (req.body ?? {}) as { org_slug?: string; instance?: string };
@@ -3382,6 +3384,7 @@ const ScanEvalBody = z.discriminatedUnion("surface", [
   }),
 ]);
 
+// UI-REACH: fixture-driven prompt scoring for the eval harness; no workspace write or interactive scan, which uses the scanner.
 superAdminRouter.post("/scan-eval", async (req, res, next) => {
   try {
     const parsed = ScanEvalBody.safeParse(req.body);
@@ -3494,39 +3497,16 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
 // golden case (core_scan_eval_cases, per-tenant). Aggregate them across
 // workspaces here (same cross-tenant raw-SQL pattern as /ai-activity), so the
 // e2e import script can pull + materialise them into e2e/fixtures/scan-eval/.
-interface ScanEvalCaseRow {
-  id: string;
-  inbox_item_id: string | null;
-  surface: string;
-  perceived_input: unknown;
-  scan_menu: unknown;
-  candidates: unknown;
-  expected: unknown;
-  note: string | null;
-  created_by_user_id: string | null;
-  created_at: Date;
-}
-
-// GET /super-admin/scan-eval-cases — every captured case across all workspaces.
+// GET /super-admin/scan-eval-cases — captured cases, optionally in one workspace.
 superAdminRouter.get("/scan-eval-cases", async (req, res, next) => {
   try {
-    const limit = Math.min(parseInt(String(req.query.limit ?? "500"), 10) || 500, 1000);
-    const orgs = await meta.selectFrom("orgs").select(["id", "name", "slug"]).execute();
-    const rows: Array<ScanEvalCaseRow & { org_id: string; org_name: string; org_slug: string }> = [];
-    for (const org of orgs) {
-      try {
-        const tdb = await getTenantDb(org.id);
-        const r = await sql<ScanEvalCaseRow>`
-          select id, inbox_item_id, surface, perceived_input, scan_menu, candidates,
-                 expected, note, created_by_user_id, created_at
-          from core_scan_eval_cases order by created_at desc limit ${limit}`.execute(tdb);
-        for (const row of r.rows) rows.push({ ...row, org_id: org.id, org_name: org.name, org_slug: org.slug });
-      } catch {
-        // Tenant DB without core_scan_eval_cases (module never enabled) — skip it.
-      }
+    const orgId = z.string().uuid().optional().safeParse(req.query.org_id);
+    if (!orgId.success) {
+      res.status(400).json({ error: { code: "invalid_query", message: "org_id must be a workspace UUID." } });
+      return;
     }
-    rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    res.json({ items: rows.slice(0, limit) });
+    const limit = Math.min(parseInt(String(req.query.limit ?? "500"), 10) || 500, 1000);
+    res.json({ items: await listScanEvalCases(limit, orgId.data) });
   } catch (err) {
     next(err);
   }
@@ -3572,6 +3552,7 @@ const AuthoringEvalBody = z.object({
   org: optionalField(z.string()),
 });
 
+// UI-REACH: fixture-driven compiler scoring for the eval harness; interactive authoring uses drafts and their validation gate.
 superAdminRouter.post("/authoring-eval", async (req, res, next) => {
   try {
     const parsed = AuthoringEvalBody.safeParse(req.body);

@@ -68,6 +68,7 @@ import { resolveRequirement, storageRequirementFor } from "../services/storage-r
 import { applyReceiptFacts, receiptPackAsks } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
+import { enrichmentPollDelays } from "../services/match-poll.js";
 import { RAN_OUT_KEY, ranOut, withdrawRanOut, type RanOutOutcome } from "../services/ran-out.js";
 import { withGroupImages as groupImagesFor } from "../services/group-image.js";
 import { applyAxisValue, clearAxisValue, readAxisValue, type AxisTarget } from "@cobblr/platform-contract/category-axis";
@@ -124,7 +125,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl } from "../services/enrich.js";
 import { classifiedCodeOf } from "@cobblr/platform-contract/scan-copy";
-import { intakeRow, knownByCode, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
+import { inboxRowByCode, intakeRow, knownByCode, pictureSearchAfterMatch, registerMatchRunners, rowShape, typedIdentifier, type InsertValues } from "../services/intake.js";
 import { committedImagePath, commitThumbPath, itemPhotos } from "../services/committed-image.js";
 import { clampEntityName } from "../services/item-name.js";
 import { addedPhotoIntent } from "../services/crosscheck-policy.js";
@@ -580,7 +581,12 @@ inboxRouter.get(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const code = typeof req.query.code === "string" ? req.query.code.trim().slice(0, 200) : "";
     if (!code) return void res.status(400).json({ error: { code: "bad_query", message: "Say which code (code=)." } });
-    res.json({ known: await knownByCode(tenantContext(req).org.id, code) });
+    const purpose = typeof req.query.purpose === "string" && ["arrival", "count", "move", "sort"].includes(req.query.purpose) ? req.query.purpose : "arrival";
+    // A row still in the inbox wins over a record (#6554): it is the newer
+    // intent, and the scan that follows lands on it. The record still says
+    // "You already have this" beside it.
+    const [known, row] = await Promise.all([knownByCode(tenantContext(req).org.id, code), inboxRowByCode(tenantDb(req) as never, code, purpose)]);
+    res.json({ known, inbox_row: row ? await served(req, row as never) : null });
   }),
 );
 
@@ -858,6 +864,24 @@ const NoteBody = z.object({
   target_location_id: optionalUuid(),
 });
 
+/** The workspace's place with this name (the note door's own match); null
+ *  when it has none; undefined when the places could not be read, which is
+ *  not the same as there being none. */
+async function placeNamed(orgId: string, said: string): Promise<string | null | undefined> {
+  try {
+    const locs = await platform().entities.list(orgId, "core-locations:location", { limit: 1000 });
+    const lite: LocationLite[] = locs.items.map((l) => ({
+      id: String(l.id),
+      name: l.title ?? String(l.fields.name ?? ""),
+      short_name: l.subtitle ?? (l.fields.short_name as string | null) ?? null,
+    }));
+    return extractLocation(`it in ${said}`, lite).locationId;
+  } catch (err) {
+    console.error("[core-scan] places could not be read for an agent's add:", (err as Error).message);
+    return undefined;
+  }
+}
+
 /** A typed thing into the inbox: the note door's whole shaping (a place
  *  phrase split off and resolved, a typed product code stamped as the row's
  *  barcode, the raw text kept as the description), shared with the
@@ -1079,10 +1103,26 @@ async function addThingFor(req: Request, token: string, body: z.infer<typeof Ass
       }
     }
     const early = (body.fields && Object.keys(body.fields).length) ? await givenValuesTable(ctx.org.id, menu, body.fields, body.roles) : null;
+    // A place the agent named is a place, never part of the name. It used to
+    // ride in the text ("Cordless drill in Garage") for the note door to split
+    // off, and where no Garage existed yet the split failed: the record was
+    // called "Cordless drill in Garage" and the place was lost without a word
+    // (the assistant audit on staging, #6686). Resolved here; a place that is
+    // not one of the workspace's stays the said place and is reported.
+    let locationId = body.location_id ?? null;
+    let placeNotFound: string | null = null;
+    let placeUnread = false;
+    if (body.place && !locationId) {
+      const found = await placeNamed(ctx.org.id, body.place);
+      if (found === undefined) placeUnread = true;
+      else if (found === null) placeNotFound = body.place;
+      else locationId = found;
+    }
     const admitted = await admitTypedNote(req, {
-      text: body.place && !body.location_id ? `${body.name} in ${body.place}` : body.name,
+      text: body.name,
       door: "assistant",
-      target_location_id: body.location_id ?? null,
+      target_location_id: locationId,
+      ...(placeNotFound || placeUnread ? { scan_area: body.place } : {}),
       metadata: {
         arrived_by: "assistant",
         ...(extra.metadata ?? {}),
@@ -1181,7 +1221,7 @@ async function addThingFor(req: Request, token: string, body: z.infer<typeof Ass
       } else {
         const canInstall = roleSatisfies((req as unknown as { tenant?: { role: string } }).tenant?.role as "owner", ["owner", "admin"]);
         const door = { baseUrl, slug: ctx.org.slug, authHeaders, canInstall, tables };
-        const outcome = await fileThroughConfirm(door, new BundleInstaller(door), withPersonName(fresh as never) as never, body.location_id ?? null);
+        const outcome = await fileThroughConfirm(door, new BundleInstaller(door), withPersonName(fresh as never) as never, locationId);
         if (outcome.ok) filed = { entity_id: outcome.entity_id, entity_kind: outcome.entity_kind };
         else notFiled = outcome.reason;
       }
@@ -1190,8 +1230,11 @@ async function addThingFor(req: Request, token: string, body: z.infer<typeof Ass
     const kept = placed ? { fields_kept: placed.kept, fields_refused: placed.refused } : { fields_kept: [], fields_refused: [] };
     return {
       ...found,
+      // What the agent said it had, echoed so it can say it back ("200 M3 screws").
+      quantity: (fresh as { quantity?: number | null }).quantity ?? null,
       ...kept,
       ...(goesToRefused ? { goes_to_refused: goesToRefused } : {}),
+      ...(placeNotFound ? { place_not_found: `no place called "${placeNotFound}" here; it is kept as the place they said. Ask whether to make it (create_record core-locations:location), or name a place that exists.` } : {}),
       filed,
       not_filed_because: notFiled,
       next: nextForTheAgent(found, filed, notFiled, !!body.file, kept.fields_refused, goesToRefused),
@@ -10741,12 +10784,14 @@ async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | null> {
 
 /** Intake auto-match: wait (detached) for enrichment to land — the barcode
  *  race may overrun its budget, and photo items identify via the wire —
- *  then match once. Polls the row up to ~2 min; gives up silently. */
+ *  then match once. Looks at once, then on enrichmentPollDelays, for about
+ *  2 min; gives up silently. */
 function autoMatchWhenEnriched(opts: Omit<MatchItemOpts, "force">): void {
   void (async () => {
     try {
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 3_000));
+      // At once, then close together, then the old 3 s pace (match-poll.ts).
+      for (const wait of enrichmentPollDelays()) {
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         const db = (await platform().tenants.getDb(opts.orgId)) as unknown as ReturnType<typeof tenantDb>;
         const row = await db
           .selectFrom("core_scan_inbox_items")

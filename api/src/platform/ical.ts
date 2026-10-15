@@ -5,6 +5,7 @@
 // Google Calendar).
 
 import type { CalendarEvent } from "@cobblr/platform-contract";
+import { productName } from "./product-name.js";
 
 /** Escape a TEXT value per RFC 5545 §3.3.11: backslash, semicolon, comma,
  *  and newlines. */
@@ -48,7 +49,7 @@ interface BuildOpts {
 }
 
 export function buildICS(events: CalendarEvent[], opts: BuildOpts = {}): string {
-  const name = opts.name ?? "Cobblr";
+  const name = opts.name ?? productName();
   const dtstamp = toUtcStamp(opts.nowMs != null ? new Date(opts.nowMs) : new Date());
   const lines: string[] = [
     "BEGIN:VCALENDAR",

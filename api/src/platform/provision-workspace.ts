@@ -40,13 +40,15 @@ export async function finishProvisioning(orgId: string, ownerId: string | null, 
     .executeTakeFirstOrThrow();
   if (org.db_credentials_encrypted) return;
   const { provisionTenantDb } = await import("../db/provision.js");
+  const startedAt = performance.now();
   const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(org.db_name, opts);
+  const databaseMs = Math.round(performance.now() - startedAt);
   await meta
     .updateTable("orgs")
     .set({ db_credentials_encrypted: credentialsEncrypted, updated_at: new Date() })
     .where("id", "=", orgId)
     .execute();
-  console.log(`[org-provision] ${org.db_name} for org ${orgId} (${migrationsApplied} migrations)`);
+  console.log(`[org-provision] ${org.db_name} for org ${orgId} (${migrationsApplied} migrations, ${databaseMs}ms)`);
   const activity = await import("./activity.js");
   try {
     await activity.log({
@@ -63,8 +65,9 @@ export async function finishProvisioning(orgId: string, ownerId: string | null, 
     // The always-on substrate plus the ambient capability modules; domain
     // modules stay off until the person opts in.
     const { enableDefaultModulesForOrg } = await import("../modules/enable.js");
+    const modulesAt = performance.now();
     const enabled = await enableDefaultModulesForOrg(orgId, ownerId ?? undefined);
-    if (enabled.length > 0) console.log(`[org-provision] enabled default modules for ${orgId}: ${enabled.join(", ")}`);
+    if (enabled.length > 0) console.log(`[org-provision] enabled default modules for ${orgId} in ${Math.round(performance.now() - modulesAt)}ms: ${enabled.join(", ")}`);
   } catch (err) {
     console.error("[org-provision] default-module enable failed:", err);
   }

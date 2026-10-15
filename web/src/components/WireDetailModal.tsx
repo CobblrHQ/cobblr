@@ -249,7 +249,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
                       >
                         {failed ? "failed" : "fired"}
                       </span>
-                      <span className="font-mono text-[10px] text-faint">
+                      <span className="tabular-nums text-[10px] text-faint">
                         {new Date(r.occurred_at).toLocaleString()}
                       </span>
                       {d.event && (

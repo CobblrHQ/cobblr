@@ -2,12 +2,15 @@
 // authenticated user can submit from any workspace; super-admins triage it via
 // /super-admin/feedback. Platform-level (cobblr_meta), cross-tenant.
 
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
+import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
+import { withTenant } from "../middleware/tenant.js";
 import { sql } from "kysely";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
 import { meta } from "../db/meta.js";
 import { postFeedbackCard } from "./feedback-card-post.js";
+import { reportingOrgId } from "../platform/feedback-org.js";
 import { feedbackReachability } from "../platform/feedback-reachability.js";
 import { reporterCardFields } from "../platform/feedback-card.js";
 import { pokeTriage } from "../platform/triage-trigger.js";
@@ -136,28 +139,29 @@ feedbackRouter.post("/", async (req, res, next) => {
       return;
     }
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
-    let orgId: string | null = null;
-    if (parsed.data.workspace_slug) {
-      const org = await meta
-        .selectFrom("orgs")
-        .select("id")
-        .where("slug", "=", parsed.data.workspace_slug)
-        .executeTakeFirst();
-      orgId = org?.id ?? null;
-    }
-    // Slug missing or STALE (e.g. a tab left open across a workspace rename, so
-    // the URL slug no longer matches any org). Don't let that drop the report or
-    // its screenshots — attribute to the authenticated user's own first
-    // workspace; the slug is just a best-effort breadcrumb (kept in context).
-    if (!orgId && userId) {
-      const m = await meta
-        .selectFrom("org_memberships")
-        .select("org_id")
-        .where("user_id", "=", userId)
-        .orderBy("joined_at", "asc")
-        .executeTakeFirst();
-      orgId = m?.org_id ?? null;
-    }
+    // The slug is a hint from the browser, so it counts only for a workspace
+    // the reporter belongs to. Missing or STALE (a tab left open across a
+    // rename) falls back to the reporter's own first workspace, so the report
+    // and its screenshots are not dropped.
+    const bySlug = parsed.data.workspace_slug
+      ? await meta
+          .selectFrom("orgs")
+          .leftJoin("org_memberships as m", (j) => j.onRef("m.org_id", "=", "orgs.id").on("m.user_id", "=", userId ?? ""))
+          .select(["orgs.id", "m.user_id as member"])
+          .where("orgs.slug", "=", parsed.data.workspace_slug)
+          .executeTakeFirst()
+      : undefined;
+    const firstOwn = userId
+      ? (
+          await meta
+            .selectFrom("org_memberships")
+            .select("org_id")
+            .where("user_id", "=", userId)
+            .orderBy("joined_at", "asc")
+            .executeTakeFirst()
+        )?.org_id ?? null
+      : null;
+    const orgId = reportingOrgId({ bySlug: bySlug ? { id: bySlug.id, isMember: !!bySlug.member } : null, firstOwn });
     // Attachments only make sense with a workspace (that's where the files live
     // + where org-scoped read resolves). Drop them only if the user has none.
     const attachments = orgId ? parsed.data.attachments : [];
@@ -253,25 +257,44 @@ feedbackRouter.post("/", async (req, res, next) => {
 // GET /feedback/mine — the signed-in user's OWN feedback items + their threads,
 // so feedback is a two-way conversation rather than fire-and-forget. Returns
 // user-facing fields only — NEVER the internal triage_* verdicts.
-feedbackRouter.get("/mine", async (req, res, next) => {
+const listMyFeedback: RequestHandler = async (req, res, next) => {
   try {
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     if (!userId) {
       res.status(401).json({ error: { code: "unauthenticated", message: "Sign in." } });
       return;
     }
-    const items = await meta
-      .selectFrom("feedback")
+    const parsed = z.object({
+      limit: z.coerce.number().int().min(1).max(100).default(50),
+      cursor: z.string().optional(),
+    }).safeParse(req.query);
+    const cursor = parsed.success ? decodeKeysetCursor(parsed.data.cursor) : null;
+    if (!parsed.success || (parsed.data.cursor && (!cursor || !z.string().uuid().safeParse(cursor.id).success))) {
+      res.status(400).json({ error: { code: "invalid_query", message: "Use the next cursor from your feedback list and a limit from 1 to 100." } });
+      return;
+    }
+    const { limit } = parsed.data;
+    let matching = meta.selectFrom("feedback").where("user_id", "=", userId);
+    if (req.tenant) matching = matching.where("org_id", "=", req.tenant.org.id);
+    let page = matching
       .select(["id", "type", "message", "status", "created_at", "updated_at", "followups", "attachments", "context"])
-      .where("user_id", "=", userId)
-      .orderBy("created_at", "desc")
-      .limit(50)
-      .execute();
-    res.json({ items });
+      .orderBy(sql`date_trunc('milliseconds', created_at)`, "desc")
+      .orderBy("id", "desc");
+    if (cursor) page = page.where(sql<boolean>`(date_trunc('milliseconds', created_at), id) < (${cursor.at}, ${cursor.id}::uuid)`);
+    const [rows, count] = await Promise.all([
+      page.limit(limit + 1).execute(),
+      matching.select(eb => eb.fn.countAll<string>().as("n")).executeTakeFirstOrThrow(),
+    ]);
+    const items = rows.slice(0, limit);
+    const last = items.at(-1);
+    res.json({ items, total: Number(count.n), next_cursor: rows.length > limit && last ? encodeKeysetCursor(last.created_at, last.id) : null });
   } catch (err) {
     next(err);
   }
-});
+};
+feedbackRouter.get("/mine", listMyFeedback);
+export const feedbackOrgRouter = Router();
+feedbackOrgRouter.get("/:slug/feedback/mine", requireAuth, withTenant, listMyFeedback);
 
 // POST /feedback/:id/reply — the reporter replies to their OWN item (answering a
 // clarifying question, adding detail). Appends to the thread (role:"user"),

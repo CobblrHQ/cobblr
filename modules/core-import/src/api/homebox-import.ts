@@ -88,6 +88,7 @@ function summarize(p: HomeboxParse) {
 }
 
 // AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// UI-SCREEN: /configuration/integrations (Homebox CSV import previews the chosen file)
 homeboxRouter.post("/homebox/preview", (req, res, next) => {
   void (async () => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
@@ -139,6 +140,7 @@ async function ensureLocations(slug: string, token: string, paths: string[][]): 
 }
 
 // AI-REACH: a one-shot importer of an uploaded export; the input is a file
+// UI-SCREEN: /configuration/integrations (Homebox CSV import confirms the preview)
 homeboxRouter.post("/homebox", (req, res, next) => {
   void (async () => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;

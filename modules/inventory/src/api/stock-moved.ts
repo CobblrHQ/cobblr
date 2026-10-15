@@ -73,6 +73,11 @@ export async function stockMoved(db: Kysely<InventoryDB>, orgId: string, m: Stoc
     const onHand = onHandCount(m.newQty, (await openUnitsFor(db, [m.partId])).get(m.partId) ?? []);
     low = isLowStock({ onHand, minQty: m.minQty });
   }
+  // Back above the minimum from at or below it: what said "running low" is no
+  // longer true, so a line a wire put on a shopping list for it can go.
+  if (m.delta > 0 && m.minQty != null && m.minQty > 0 && !low && isLowStock({ onHand: onHandCount(m.newQty - m.delta, []), minQty: m.minQty })) {
+    await platform().events.emit("inventory.stock.recovered", { orgId, partId: m.partId, newQty: m.newQty, minQty: m.minQty });
+  }
   if (m.delta >= 0 || m.announceLow === false) return { low };
   if (low) await platform().events.emit("inventory.stock.low", { orgId, partId: m.partId, newQty: m.newQty, minQty: m.minQty });
   // Taken off an open unit: its model may now be down to its minimum with no

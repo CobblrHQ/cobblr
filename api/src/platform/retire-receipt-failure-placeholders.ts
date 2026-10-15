@@ -28,9 +28,14 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { noteHealShim } from "./heal-shim-log.js";
 import { notePassFailure } from "./pass-failures.js";
+import { markSwept, sweepVersion, sweptClean } from "./boot-sweep-marks.js";
+
+const SHIM = "api/src/platform/retire-receipt-failure-placeholders.ts";
 
 export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: string } = {}): Promise<{ orgsTouched: number; rowsRetired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1" && !opts.onlyOrgId) return { orgsTouched: 0, rowsRetired: 0 };
+  const version = sweepVersion(retireReceiptFailurePlaceholders);
+  if (!opts.onlyOrgId && (await sweptClean(SHIM, version))) return { orgsTouched: 0, rowsRetired: 0 };
 
   let q = meta
     .selectFrom("org_modules")
@@ -98,6 +103,9 @@ export async function retireReceiptFailurePlaceholders(opts: { onlyOrgId?: strin
 
   // Every pending placeholder is retired, so what it retired is what it
   // found. A pass scoped to one workspace did not look at the others.
-  if (!opts.onlyOrgId) await noteHealShim("api/src/platform/retire-receipt-failure-placeholders.ts", rowsRetired, failed);
+  if (!opts.onlyOrgId) {
+    await noteHealShim(SHIM, rowsRetired, failed);
+    await markSwept(SHIM, version, failed);
+  }
   return { orgsTouched, rowsRetired };
 }

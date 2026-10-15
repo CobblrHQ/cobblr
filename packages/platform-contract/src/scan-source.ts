@@ -240,3 +240,40 @@ export function codeSourceNote(source: CodeSource | null | undefined, opts: { em
   if (source === "receipt") return opts.emailed ? "read from the email" : "read from the receipt";
   return null;
 }
+
+// ── which door ───────────────────────────────────────────────────────────
+
+/** The doors a row enters the inbox through (core-scan intake.ts intakeRow). */
+export type IntakeDoor = "scan" | "note" | "receipt" | "split" | "import" | "assistant";
+
+/** The suggested_metadata key intake stamps the door under. */
+export const INTAKE_DOOR_KEY = "intake_door";
+
+/** Whether a row through this door was typed into the dashboard's "What do
+ *  you want to do?" panel, the only rows that panel lists. Every door says,
+ *  so a new door has to pick a side. The note door is shared: the panel's
+ *  typed add and an assistant's add over MCP both use it, which the row's
+ *  added-by stamp tells apart (typedInThePanel). */
+export const TYPED_IN_THE_PANEL: Readonly<Record<IntakeDoor, boolean>> = {
+  note: true,
+  scan: false,
+  receipt: false,
+  split: false,
+  import: false,
+  assistant: false,
+};
+
+/** Was this row typed into the dashboard's panel by a person? Only those
+ *  belong in its "What you've added"; everything else (an assistant's add
+ *  over MCP, a share, an offer, an import) lives in the scan inbox alone.
+ *  The owner's eight printers, added by Claude over MCP, were listed in the
+ *  panel as typed there and held it open (#6565). A row from before the
+ *  door was stamped is read from what it does carry: who added it, and the
+ *  intake shape every door but import stamps. */
+export function typedInThePanel(row: { source_kind?: string | null; suggested_metadata?: unknown }): boolean {
+  if (row.source_kind !== "note") return false;
+  if (addedByOf(row.suggested_metadata)) return false;
+  const m = (row.suggested_metadata ?? {}) as { intake_door?: unknown; intake_shape?: unknown };
+  if (typeof m.intake_door === "string") return TYPED_IN_THE_PANEL[m.intake_door as IntakeDoor] === true;
+  return typeof m.intake_shape === "string" && m.intake_shape !== "import";
+}

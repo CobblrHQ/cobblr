@@ -205,9 +205,26 @@ export interface SandboxWorkspace {
   userId: string;
 }
 
-export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<SandboxWorkspace> {
+/** How long each step of a cold start took, in order, for the one log line
+ *  that says where a visitor's wait went (#6689). */
+export function phaseClock(now: () => number = () => performance.now()) {
+  let last = now();
+  const phases: Array<[string, number]> = [];
+  return {
+    mark(name: string): void {
+      const t = now();
+      phases.push([name, Math.round(t - last)]);
+      last = t;
+    },
+    phases: () => phases,
+    line: () => phases.map(([n, ms]) => `${n} ${ms}ms`).join(", "),
+  };
+}
+
+export async function provisionSandboxWorkspace(deps: ProvisionDeps, clock?: ReturnType<typeof phaseClock>): Promise<SandboxWorkspace> {
   const handle = randomBytes(6).toString("hex");
   const userId = await createSandboxUser(handle);
+  clock?.mark("guest");
   // Provisioned under a UNIQUE name so the slug is unguessable, then renamed to
   // the thing a person should see.
   //
@@ -217,6 +234,7 @@ export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<Sa
   // switcher and the browser tab show, so it is set back afterwards and nobody
   // sees the handle.
   const { orgId, slug } = await deps.provisionOrg(userId, `Sandbox ${handle}`);
+  clock?.mark("workspace");
   // NOT claimable yet: provisionOrgForUser stamps the tier's TTL (thirty days on trial) and that stamp
   // stays until the workspace is complete. NULL is what claiming looks for (claimPooledSandbox), so
   // nulling it here, before the seed had run, let a visitor arriving mid-seed be handed a half-stocked
@@ -233,6 +251,7 @@ export async function provisionSandboxWorkspace(deps: ProvisionDeps): Promise<Sa
   // module denylist still applies (it is enforced in enableModuleForOrg), so
   // this cannot hand out what the tier withholds.
   await deps.enableDefaults(orgId, userId);
+  clock?.mark("modules");
   return { orgId, slug, userId };
 }
 

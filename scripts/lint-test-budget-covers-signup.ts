@@ -210,9 +210,68 @@ function checkDeclaredReadBudgets(file: string, src: string): Violation[] {
   return out;
 }
 
+// Existing multi-workspace cases are outside this fix; their counts can only shrink.
+const REPEATED_SIGNUP_BASELINE: Record<string, number> = {
+  "api/tests/a-catalog-outage-is-never-a-cached-miss.test.ts": 1,
+  "api/tests/a-sign-in-address-changes-only-through-its-own-link.test.ts": 1,
+  "api/tests/a-workspace-set-to-be-deleted-works-until-its-day-and-can-be-kept.test.ts": 3,
+  "api/tests/an-invite-made-for-one-email-pairs-only-with-that-account.test.ts": 1,
+  "api/tests/new-surfaces.test.ts": 1,
+  "api/tests/sharing-from-a-lists-header-shares-exactly-that-collection.test.ts": 1,
+};
+
+function checkRepeatedSignups(file: string, src: string): Violation[] {
+  if (!SIGNS_UP.test(src)) return [];
+  const tree = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+  const helpers = new Map<string, ts.Node>();
+  for (const statement of tree.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) helpers.set(statement.name.text, statement.body);
+    if (ts.isVariableStatement(statement)) for (const d of statement.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.initializer && (ts.isArrowFunction(d.initializer) || ts.isFunctionExpression(d.initializer))) {
+        helpers.set(d.name.text, d.initializer.body);
+      }
+    }
+  }
+  const count = (node: ts.Node, seen = new Set<string>()): number => {
+    if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return 0;
+    if (ts.isForOfStatement(node)) {
+      let items = node.expression;
+      while (ts.isAsExpression(items) || ts.isParenthesizedExpression(items)) items = items.expression;
+      if (ts.isArrayLiteralExpression(items)) return count(items, seen) + items.elements.length * count(node.statement, seen);
+    }
+    let own = 0;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      const name = node.expression.text;
+      if (/^signup(?:FreshOrg|BlankOrg)$/.test(name)) own = 1;
+      else if (helpers.has(name) && !seen.has(name)) own = count(helpers.get(name)!, new Set([...seen, name]));
+    }
+    ts.forEachChild(node, (child) => { own += count(child, seen); });
+    return own;
+  };
+  const out: Violation[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && /^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) {
+      const body = node.arguments[1];
+      if (body && (ts.isArrowFunction(body) || ts.isFunctionExpression(body))) {
+        const signups = count(body.body);
+        const budget = node.arguments[2];
+        const expr = budget?.getText(tree) ?? "the default timeout";
+        if (signups > 1 && !coversWorkspaces(expr, signups)) out.push({
+          file,
+          line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1,
+          what: `${signups} workspace signups share ${expr}; helper calls and literal role loops also provision databases. Reuse test accounts provisioned in separate setup hooks, or budget every workspace explicitly`,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return out.slice(REPEATED_SIGNUP_BASELINE[file] ?? 0);
+}
+
 export function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
-  const out: Violation[] = [...checkRestores(file, lines), ...checkHealedSignup(file, src), ...checkDeclaredReadBudgets(file, src)];
+  const out: Violation[] = [...checkRestores(file, lines), ...checkHealedSignup(file, src), ...checkDeclaredReadBudgets(file, src), ...checkRepeatedSignups(file, src)];
   if (!/\bsignupFreshOrg\b/.test(src)) return out;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";

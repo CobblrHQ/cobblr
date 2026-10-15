@@ -40,8 +40,14 @@ function routePreload(): Plugin {
       handler(html, ctx) {
         const bundle = ctx.bundle;
         if (!bundle) return html;
+        // A section's chunk by the module it starts from, else by any chunk
+        // that holds that module: a module another chunk also imports has no
+        // facade of its own, and the dashboard's row was empty for it, so
+        // its code was fetched only once the shell had run, and the shell
+        // went blank while it came (#6635).
         const chunkOf = new Map<string, string>();
         for (const f of Object.values(bundle)) if (f.type === "chunk" && f.facadeModuleId) chunkOf.set(f.facadeModuleId, f.fileName);
+        for (const f of Object.values(bundle)) if (f.type === "chunk") for (const id of f.moduleIds) if (!chunkOf.has(id)) chunkOf.set(id, f.fileName);
         const entry = Object.values(bundle).find((f) => f.type === "chunk" && f.isEntry);
         const eager = new Set<string>();
         const walk = (name: string, into: Set<string>) => {
@@ -51,12 +57,14 @@ function routePreload(): Plugin {
           c.imports.forEach((i) => walk(i, into));
         };
         if (entry) walk(entry.fileName, eager);
+        const unfound: string[] = [];
         const filesFor = (specs: string[]) => {
           const out = new Set<string>();
           for (const spec of specs) {
             const file = toFile(spec);
             const chunk = file ? chunkOf.get(file) : undefined;
             if (chunk) walk(chunk, out);
+            else unfound.push(spec);
           }
           // Only what the shell does not already bring.
           return [...out].filter((f) => !eager.has(f)).map((f) => `/${f}`);
@@ -66,6 +74,9 @@ function routePreload(): Plugin {
         const ix = (list: string[]) => list.map((f) => (files.includes(f) ? files.indexOf(f) : files.push(f) - 1));
         const map: Array<[string, number[]]> = rows.map((r) => [r.prefix, ix(filesFor(r.specs))]);
         const instance = instanceSpec ? ix(filesFor([instanceSpec])) : [];
+        // A section whose code cannot be found is a page that loads late
+        // with nothing said: the build stops instead.
+        if (unfound.length) throw new Error(`route preload: no chunk holds ${unfound.join(", ")} (src/lib/route-prefetch.ts)`);
         // A FILE, never an inline <script>: the shell's policy is script-src 'self', and an inline
         // script is refused the day that is enforced. This one was inline (2026-10-05) and every page
         // load on try reported it (#3300); its content changes with every build, so neither a hash

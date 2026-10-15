@@ -1295,13 +1295,16 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           return toolOk({
             ...(explainRecords({ ...wide, q, items: every }, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
             matched_by: `every word of "${q}" (${words.join(", ")}); nothing held the words as one phrase`,
+            ...(every.length === 0 ? noneFound(wide, q) : {}),
             ...severalMatch(every, q),
             ...pageEnd("search_records", null),
           });
         }
       }
+      const none = found.length === 0 && offset === 0 ? noneFound(body, q) : {};
       return toolOk({
         ...(explainRecords(body, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
+        ...none,
         ...severalMatch(found, q),
         ...pageEnd("search_records", more ? { q, ...(kindList ? { k: kindList } : {}), o: offset + perKind } : null),
       });
@@ -1615,7 +1618,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_my_notification_delivery",
     description:
-      "Why a notification did or did not reach the person's phone or computer: their push devices with each one's last delivery or failure, what is worth a push (threshold), quiet hours and what they hold, and what this workspace's latest notifications were sent by. Test or remove a device with invoke_action: platform:test-push-device, platform:remove-push-device.",
+      "Explain push delivery: devices, failures, thresholds, quiet hours, recent deliveries. Devices: invoke_action platform:test-push-device or platform:remove-push-device.",
     mode: "read",
     paging: { by: "one-call", why: "one person's few devices and the last ten notifications, a fixed-size answer" },
     params: {},
@@ -1623,6 +1626,22 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const res = await api.request("GET", "/my-push");
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read your notification delivery"));
       return toolOk(res.body);
+    },
+  },
+  {
+    name: "list_my_feedback",
+    description: "Read your own workspace feedback and replies.",
+    mode: "read",
+    paging: { by: "cursor" },
+    params: { cursor: CURSOR_PARAM },
+    execute: async (api, args) => {
+      const cur = decodeCursor<{ after: string }>("list_my_feedback", args.cursor);
+      if (!cur.ok) return toolFail(cur.error);
+      const query = cur.state ? `?cursor=${encodeURIComponent(cur.state.after)}` : "";
+      const res = await api.request("GET", `/feedback/mine${query}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read your feedback"));
+      const next = typeof res.body.next_cursor === "string" ? { after: res.body.next_cursor } : null;
+      return toolOk({ items: res.body.items, total: res.body.total, ...pageEnd("list_my_feedback", next) });
     },
   },
   {
@@ -1692,7 +1711,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_notifications",
     description:
-      "Read this user's workspace notifications, newest first: job outcomes, stock alerts and review requests.",
+      "Read your workspace notifications, newest first.",
     mode: "read",
     paging: { by: "cursor" },
     params: {
@@ -2627,6 +2646,19 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
  *  A whole action still passes (structural typing), and the test beside
  *  this holds a `@ts-expect-error` on the flag that fails the typecheck the
  *  day it is added back. */
+/** A search that found nothing says what it looked through, so "nothing" is
+ *  an answer about the workspace and never a search that did not run: the
+ *  route's kinds_searched names only the kinds that found something, and on
+ *  a miss it was [] (the assistant audit, #6686). */
+export function noneFound(body: Record<string, unknown>, q: string): { none_found?: string } {
+  const asked = Array.isArray(body.kinds_asked) ? (body.kinds_asked as string[]) : null;
+  if (!asked) return {};
+  const failed = Array.isArray(body.kinds_failed) ? (body.kinds_failed as string[]) : [];
+  if (asked.length === 0 && failed.length === 0) return { none_found: "this workspace has nothing a search can look through yet: no list is turned on" };
+  const gap = failed.length ? `; ${failed.length} could not be searched, so this is not the whole workspace` : "";
+  return { none_found: `nothing in the ${asked.length} kind${asked.length === 1 ? "" : "s"} of record searched mentions "${q}"${gap}` };
+}
+
 export function offerableToAssistant(a: { id?: string; wire_only?: boolean; internal?: boolean }): boolean {
   // What only a person does is never offered, whatever its declaration says.
   if (a.id && HUMAN_ONLY_ACTIONS[a.id]) return false;

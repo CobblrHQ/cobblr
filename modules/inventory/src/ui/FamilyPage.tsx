@@ -19,7 +19,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
-import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
+import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, SearchInput, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { InventoryProvider, useInventory } from "./context";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
@@ -300,6 +300,29 @@ function AddForm({ data, initialType, onDone }: { data: FamilyPayload; initialTy
   );
 }
 
+/** Past this many types the page offers a find box: a bench of hundreds of
+ *  part numbers is never found by scrolling. */
+export const FAMILY_FIND_AT = 10;
+
+const naturally = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+/** Types in the order a person reads them: "R10" after "R2", never between
+ *  "R1" and "R2" as the database's text order puts it. */
+export function inNaturalOrder(types: FamilyType[]): FamilyType[] {
+  return [...types].sort((a, b) => naturally.compare(a.name, b.name));
+}
+
+const wordsOf = (md: Record<string, unknown>) => Object.values(md).filter((v) => typeof v === "string" || typeof v === "number").join(" ");
+
+/** Whether a type answers what was typed: every word somewhere in its name,
+ *  maker, details, or one of its things (a lot, a distributor number). */
+export function typeMatches(t: FamilyType, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const text = [t.name, t.manufacturer ?? "", wordsOf(t.metadata), ...t.children.flatMap((c) => [c.name, wordsOf(c.metadata), c.location_name ?? ""])].join(" ").toLowerCase();
+  return words.every((w) => text.includes(w));
+}
+
 const groupKey = (t: FamilyType, view: View): string => {
   if (view === "material") return (typeof t.metadata.material === "string" && t.metadata.material) || "No material set";
   if (view === "colour") {
@@ -383,6 +406,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
   const highlight = params.get("highlight");
   const [view, setView] = useState<View>("all");
   const [adding, setAdding] = useState<{ type: string | null } | null>(null);
+  const [find, setFind] = useState("");
   const q = useQuery({ queryKey: ["inventory-family"], queryFn: () => api.familyAll() });
   const locs = useQuery({ queryKey: ["inventory-locations"], queryFn: () => api.listLocations() });
   const places = useMemo(() => new Map((locs.data?.items ?? []).map((l) => [l.id, l.name])), [locs.data]);
@@ -390,7 +414,8 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
   if (!data) return <div className="text-sm text-muted p-4">{q.isError ? "Couldn't load this." : "Loading…"}</div>;
   const noun = data.child_noun ?? "item";
   const typeNoun = data.parent_noun ?? "type";
-  const shown = view === "low" ? data.types.filter((t) => t.low) : data.types;
+  const findable = data.types.length > FAMILY_FIND_AT;
+  const shown = inNaturalOrder(data.types).filter((t) => (view !== "low" || t.low) && (!findable || typeMatches(t, find)));
   const groups = new Map<string, FamilyType[]>();
   for (const t of shown) groups.set(groupKey(t, view), [...(groups.get(groupKey(t, view)) ?? []), t]);
   const chip = (v: View, label: string) => (
@@ -429,6 +454,9 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
         {!data.package_receiving && chip("colour", "By colour")}
         {chip("low", "Low")}
       </div>
+      {findable && (
+        <SearchInput value={find} onChange={setFind} size="lg" aria-label={`Find ${withArticle(typeNoun)}`} placeholder={`Find ${withArticle(typeNoun)}`} />
+      )}
       {data.package_receiving && <ReceivePackage data={data} />}
       {instance === "filament-types" && <FilamentCatalog />}
       {spoolmanOpen && <SpoolmanModal instance={data.child} onClose={() => setSpoolmanOpen(false)} onSynced={() => { void qc.invalidateQueries({ queryKey: ["inventory-family"] }); }} />}
@@ -446,7 +474,7 @@ export function FamilyPage({ childPath, tablePath }: { childPath: string; tableP
           ))}
         </div>
       ))}
-      {shown.length === 0 && <p className="text-sm text-muted">{view === "low" ? "Nothing is low." : `No ${pluralise(typeNoun)} yet. Add ${withArticle(noun)} and name its ${typeNoun}.`}</p>}
+      {shown.length === 0 && <p className="text-sm text-muted">{findable && find.trim() ? `No ${typeNoun} matches “${find.trim()}”.` : view === "low" ? "Nothing is low." : `No ${pluralise(typeNoun)} yet. Add ${withArticle(noun)} and name its ${typeNoun}.`}</p>}
       {data.unclaimed.length > 0 && view !== "low" && (
         <section className="rounded-xl border border-dashed border-line dark:border-slate-700 p-3 space-y-1" data-testid="family-unclaimed">
           <div className="text-xs text-muted">

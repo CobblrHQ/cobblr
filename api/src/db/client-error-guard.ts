@@ -1,4 +1,5 @@
 import { Client, Pool, types } from "pg";
+import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
 import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
 import { currentRequestScope, noteMetaStatement } from "../lib/request-context.js";
 
@@ -241,6 +242,19 @@ export function poolHolders(pool: Pool, now = Date.now()): string[] {
     });
 }
 
+/** Count every connection the server refused (53300), whichever pool asked:
+ *  /healthz reports it and a roll that drew one fails (connection-budget.ts). */
+function countRefusals(pool: Pool): void {
+  const connect = pool.connect.bind(pool) as (cb?: (err: Error | undefined, ...rest: unknown[]) => void) => unknown;
+  (pool as unknown as { connect: unknown }).connect = (cb?: (err: Error | undefined, ...rest: unknown[]) => void) => {
+    if (cb) return connect((err, ...rest) => { if (isConnectionRefusal(err)) noteConnectionRefused(); cb(err, ...rest); });
+    return (connect() as Promise<unknown>).catch((err: unknown) => {
+      if (isConnectionRefusal(err)) noteConnectionRefused();
+      throw err;
+    });
+  };
+}
+
 /** The one way to open a pool. `label` names it in the log line. */
 export function createPool(config: PoolConfig, label: string): Pool {
   const Base = (config.Client as ClientClass | undefined) ?? Client;
@@ -249,6 +263,7 @@ export function createPool(config: PoolConfig, label: string): Pool {
   // hidden property and a copy would arrive without it.
   const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, ...config, Client: bornGuarded(label, Base) });
   traceCheckouts(pool);
+  countRefusals(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
   // EventEmitter, throws if nobody listens there either. The client's own
   // listener already logged it; this one only keeps the pool's emit harmless.

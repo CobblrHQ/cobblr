@@ -53,6 +53,7 @@ import { meta } from "../db/meta.js";
 import type { ApprovalResume, ApprovalStatus } from "../db/schema.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import { grantCapability, grantableActions } from "./capability-grants.js";
+import { actionGateOf } from "./action-gates.js";
 import { capabilityModule } from "./grantable-scope.js";
 import { canonicalModuleName, getEntry } from "../modules/registry.js";
 import { getFlagshipManifest } from "../lib/flagship-bundles.js";
@@ -253,11 +254,16 @@ export async function describeCapabilityBlock(args: {
   role: string;
   actionId: string;
 }): Promise<BlockedAction> {
+  // An action given only as part of a wider permission (its grantedAs: digifab:send is given as "run
+  // machines") is asked for as that permission; asking for the action itself found nothing to give and
+  // told the person "You cannot do this here." (#6785).
+  const grantable = (await grantableActions(args.orgId)).some((a) => a.action_id === args.actionId);
+  const key = grantable ? args.actionId : (actionGateOf(args.actionId).grantedAs ?? args.actionId);
   return describeBlock({
     orgId: args.orgId,
     userId: args.userId,
     role: args.role,
-    remedies: [{ kind: "capability", key: args.actionId }],
+    remedies: [{ kind: "capability", key }],
   });
 }
 

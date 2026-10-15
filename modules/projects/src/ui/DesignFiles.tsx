@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Images, Trash2, Upload } from "lucide-react";
+import { FileText, Images, Loader2, Trash2, Upload } from "lucide-react";
 import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteImage, openAuthedFile, useConfirm, useFilePreviewRegistry, useToast, EntityPhoto, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
@@ -200,7 +200,8 @@ export function DesignFiles({ designId }: { designId: string }) {
           <button
             type="button"
             onClick={() => fileInput.current?.click()}
-            className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition"
+            disabled={upload.isPending}
+            className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-content dark:hover:text-mortar-100 transition disabled:opacity-50"
           >
             <Upload size={13} /> add
           </button>
@@ -217,7 +218,13 @@ export function DesignFiles({ designId }: { designId: string }) {
           }}
         />
       </div>
-      {items.length === 0 && !list.isLoading && (
+      {upload.isPending && upload.variables && (
+        <p className="mb-3 flex items-center gap-2 text-xs text-muted dark:text-slate-400" role="status" data-testid="design-file-uploading">
+          <Loader2 size={13} className="animate-spin shrink-0" aria-hidden />
+          <span className="truncate">Adding {upload.variables.name}…</span>
+        </p>
+      )}
+      {items.length === 0 && !list.isLoading && !upload.isPending && (
         <p className="text-xs text-faint dark:text-slate-500 italic">
           No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>

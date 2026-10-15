@@ -10,6 +10,7 @@ import {useHosted} from "../../lib/useHosted";
 import {HomeNetworkHint} from "../../components/HomeNetworkHint";
 import {BridgePicker} from "../../components/BridgePicker";
 import {EdgeBridgeSetup} from "../digifab/fleet";
+const printerKinds:Record<string,string>={"klipper-moonraker":"Klipper (Moonraker)",octoprint:"OctoPrint",prusalink:"PrusaLink","duet-rrf":"Duet (RepRapFirmware)",bambu:"Bambu Lab"};
 export function FoundDevices({slug,bridges}:{slug:string;bridges:EdgeBridge[]}){
  const hosted=useHosted();
  const [bridge,setBridge]=useState<string|null>(bridges[0]?.bridge||null);
@@ -37,6 +38,7 @@ export function FoundDevices({slug,bridges}:{slug:string;bridges:EdgeBridge[]}){
   <ul className="space-y-2">{items.map(device=><li key={device.id} className="rounded-lg border border-line p-3 space-y-2">
    <p className="font-medium text-sm">New device found: {device.name}</p>
    <p className="text-sm text-muted break-all">{device.address}</p>
+   {device.kind&&<p className="text-sm text-muted">{printerKinds[device.kind]||device.kind}{device.model?` · ${device.model}`:""}{device.serial?` · ${device.serial}`:""}</p>}
    {device.transport==="lan"&&<HomeNetworkHint address={device.address} hosted={hosted} throughBridge/>}
    {device.note&&<p className="text-sm text-muted">{device.note}</p>}
    {device.driver?<button type="button" className="rounded bg-accent text-white px-4 py-3 disabled:opacity-50 min-h-12" onClick={()=>setSelected(device)}>Name and add</button>:<Link className="rounded border border-line px-4 py-3 inline-flex items-center min-h-12" to="/configuration/print">Set up this machine</Link>}

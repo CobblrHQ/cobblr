@@ -1,13 +1,13 @@
 {
   "id": "klipper-moonraker",
   "name": "Klipper (Moonraker)",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/printer/info" },
   "listDevices": {
     "method": "GET",
-    "path": "/printer/objects/query?print_stats",
+    "path": "/printer/objects/query?print_stats&extruder&heater_bed&virtual_sdcard",
     "result": "single",
     "map": {
       "id": "='moonraker'",
@@ -22,7 +22,10 @@
           "paused": "paused",
           "error": "error"
         }
-      }
+      },
+      "temps": {"nozzle": {"actual": "$.result.status.extruder.temperature", "target": "$.result.status.extruder.target"}, "bed": {"actual": "$.result.status.heater_bed.temperature", "target": "$.result.status.heater_bed.target"}},
+      "progress": "$.result.status.virtual_sdcard.progress",
+      "progressScale": 1
     }
   },
   "upload": {

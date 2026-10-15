@@ -12,6 +12,7 @@ export const CreateOrder = z.object({
   order_number: text.optional(),
   status: z.enum(["draft", "confirmed"]).default("confirmed"),
   order_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(v))).optional(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(Date.parse(v))).optional(),
   shipping_address: z.string().max(4000).optional(),
   notes: z.string().max(10000).optional(),
   metadata: z.record(z.unknown()).optional(),
@@ -50,7 +51,7 @@ export async function createOrder(db: Kysely<SalesDB>, orgId: string, userId: st
       });
     }
     const order = await trx.insertInto("sales_orders").values({ instance: a.instance, customer_id: customerId, customer_name: customerName,
-      order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? null,
+      order_number: a.order_number || await nextOrderNumber(trx, a.instance), status: a.status, order_date: a.order_date ?? null, due_date: a.due_date ?? null,
       shipping_address: a.shipping_address ?? null, notes: a.notes ?? null, metadata: a.metadata ?? {},
       source_name: a.source?.name ?? null, source_ref: a.source?.ref ?? null, source_url: a.source?.url ?? null,
     } as never).returningAll().executeTakeFirstOrThrow();

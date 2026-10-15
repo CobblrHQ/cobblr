@@ -20,6 +20,7 @@ import {
   destinationMatches,
   visibleDestinations,
   type ConfigDestination,
+  type ConfigSectionMeta,
   sectionAction,
 } from "../lib/configuration-nav";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -184,7 +185,7 @@ export function SectionCard({
   /** This section's one primary DO. Rendered as a real link in the header,
    *  opposite the count — never in the leaf line below, which is a list of
    *  places you GO (rule 3 in configuration-nav.ts). */
-  action?: { label: string; to: string };
+  action?: ConfigSectionMeta["action"];
 }) {
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 hover:border-cobble-300 dark:hover:border-cobble-700 transition">

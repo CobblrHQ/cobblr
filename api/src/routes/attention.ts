@@ -16,11 +16,12 @@
 import { listTidySuggestions } from "../platform/tidy-suggestions.js";
 import type { TidyCandidate } from "@cobblr/platform-contract";
 import { Router } from "express";
+import { readAttentionCollection } from "./attention-reads.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { facesForKind } from "../platform/faces.js";
 import { listApplicable } from "../platform/actions.js";
-import { detailPathForEntity, resolveKind, titleForEntity } from "../platform/entities.js";
+import { detailPathForEntity, titleForEntity } from "../platform/entities.js";
 import { hasPrimaryRouter } from "../modules/mount.js";
 import { countdownWords, fieldDay, fieldDayUnreadable, viewQuery } from "@cobblr/platform-contract";
 import { dueState, todayFrom } from "../lib/due-day.js";
@@ -194,27 +195,9 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
     await Promise.all(
       domain.map(async (inst) => {
-        // The kind this instance's records are: the named instance's own, or
-        // for the default instance the module's primary kind (the registry has
-        // no `inventory:item`; its records are `inventory:part`). The chips
-        // open by it, and the field defs are read by it: asked for
-        // `inventory:item`, the defs came back empty and a dated part in the
-        // base table was never coming up, never overdue (#3279).
-        const recordKind = inst.is_default
-          ? (await resolveKind(req.tenant!.org.id, `${inst.instance_name}:item`).catch(() => ({ base: `${inst.instance_name}:item` }))).base
-          : `${inst.instance_name}:item`;
-        const [defs, items] = await Promise.all([
-          j<{ items: Array<{ name: string; type: string; display_label?: string; field_role?: string | null }> }>(
-            `/orgs/${slug}/field-defs?kind=${encodeURIComponent(recordKind)}&effective=1`,
-            token,
-          ),
-          j<{ items: Array<Record<string, unknown>> }>(
-            `/orgs/${slug}/instances/${encodeURIComponent(inst.instance_name)}/items?limit=${ITEM_CAP}`,
-            token,
-          ),
-        ]);
-        const rowsOf = items?.items ?? [];
-        if (rowsOf.length === 0) return;
+        const collectionRead = await readAttentionCollection(req.tenant!.org.id, slug, inst, ITEM_CAP, (path) => j(path, token));
+        if (!collectionRead) return;
+        const { recordKind, rowsOf, defs } = collectionRead;
         const route = inst.is_default ? `/${inst.module_name}` : `/instances/${inst.instance_name}`;
         const recordOf = (id: string, name: string) => ({ kind: recordKind, id, name });
 

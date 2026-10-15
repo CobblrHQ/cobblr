@@ -53,11 +53,15 @@ export interface Intake {
   folderId: string | null;
 }
 
+type IntakeTiming = Record<"store_ms" | "row_ms" | "uploaded_event_ms" | "activity_ms", number>;
+
 /** Store the bytes and insert the row; meter, emit and log it. On a failed
  *  insert the stored bytes are removed again. */
-export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId: string | null, f: Intake): Promise<{ row: { id: string; filename: string; mime_type: string; kind: string; width: number | null; height: number | null; created_at: Date; folder_id: string | null }; stored: StoredFile }> {
+export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId: string | null, f: Intake): Promise<{ row: { id: string; filename: string; mime_type: string; kind: string; width: number | null; height: number | null; created_at: Date; folder_id: string | null }; stored: StoredFile; timing: IntakeTiming }> {
   const fileId = randomUUID();
+  const started = performance.now();
   const stored = await storeUpload(orgId, fileId, f.source, f.mime || "application/octet-stream", f.fingerprint);
+  const storedAt = performance.now();
   try {
     const row = await db
       .insertInto("core_files_files")
@@ -80,7 +84,9 @@ export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId:
     // Usage-metering seam: the hosted overlay aggregates stored bytes for
     // plan limits / billing. No-op in open core.
     platform().metering.record({ orgId, kind: "files.bytes_stored", quantity: stored.size_bytes, meta: { fileId: row.id, kind: stored.kind } });
+    const insertedAt = performance.now();
     await platform().events.emit("core-files.file.uploaded", { orgId, fileId: row.id, kind: stored.kind, size_bytes: stored.size_bytes });
+    const emittedAt = performance.now();
     await platform().activity.log({
       orgId,
       userId,
@@ -88,7 +94,9 @@ export async function intakeFile(db: Kysely<CoreFilesDB>, orgId: string, userId:
       ref: { module: "core-files", entityType: "file", entityId: row.id },
       diff: { name: row.filename, kind: stored.kind },
     });
-    return { row, stored };
+    const timing = { store_ms: Math.round(storedAt - started), row_ms: Math.round(insertedAt - storedAt), uploaded_event_ms: Math.round(emittedAt - insertedAt), activity_ms: Math.round(performance.now() - emittedAt) };
+    console.info(`[files] intake timing: ${JSON.stringify({ ...timing, mime: stored.mime_type, bytes: stored.size_bytes })}`);
+    return { row, stored, timing };
   } catch (err) {
     await removeStoredFile(orgId, fileId).catch(() => {});
     throw err;

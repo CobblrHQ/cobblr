@@ -20,7 +20,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, KeyRound, Plus, Trash2, RefreshCw } from "lucide-react";
 import { ApiError, api, type ApiTokenListItem } from "../lib/api";
-import { Modal, useToast, useConfirm, SegmentedChoice } from "@cobblr/platform-web";
+import { Code, Modal, useToast, useConfirm, SegmentedChoice } from "@cobblr/platform-web";
 import { TOKEN_ACCESS, TOKEN_ACCESS_LABEL, TOKEN_ACCESS_MEANS, type TokenAccess } from "@cobblr/platform-contract/token-access";
 import { useAuth } from "../auth/AuthContext";
 import { grantLabel, initialGrant, isLegacyFullToken } from "../lib/token-grant";
@@ -195,8 +195,8 @@ export function TokenManager({
                   : make a replacement for one workspace, then revoke this one.
                 </div>
               )}
-              <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-0.5">
-                {t.token_prefix}… · created {new Date(t.created_at).toLocaleDateString()}
+              <div className="text-[11px] text-faint dark:text-slate-500 mt-0.5">
+                <Code>{t.token_prefix}…</Code> · created {new Date(t.created_at).toLocaleDateString()}
                 {t.expires_at && ` · expires ${new Date(t.expires_at).toLocaleDateString()}`}
                 {t.last_used_at
                   ? ` · last used ${new Date(t.last_used_at).toLocaleString()}`

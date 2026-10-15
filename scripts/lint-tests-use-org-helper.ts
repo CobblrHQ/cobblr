@@ -56,7 +56,6 @@ const GRANDFATHERED = new Set([
   "me-orgs-shape.test.ts",
   "sandbox-install-happy-path.test.ts",
   "scan-export.test.ts",
-  "scan-import.test.ts",
   "scan-session-theme.test.ts",
 ]);
 

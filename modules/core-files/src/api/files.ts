@@ -162,7 +162,8 @@ filesRouter.post(
       res.status(500).json({ error: { code: "store_failed", message: "Failed to store the file." } });
       return;
     }
-    const { row, stored } = taken;
+    const { row, stored, timing } = taken;
+    res.append("Server-Timing", Object.entries(timing).map(([name, ms]) => `${name};dur=${ms}`).join(", "));
     const fileId = row.id;
     // A person's own picture: taken with the camera, or chosen from the
     // device. Said by the page that sent it; anything else is "upload".
@@ -177,6 +178,7 @@ filesRouter.post(
       | { id: string; source_module: string; source_type: string; source_id: string; role: string | null }
       | null = null;
     let attachmentError: string | null = null;
+    const attachStarted = performance.now();
     if (attachModule && attachType && attachId) {
       try {
         const aRow = await db0
@@ -211,6 +213,9 @@ filesRouter.post(
       }
     }
 
+    const attachmentMs = Math.round(performance.now() - attachStarted);
+    res.append("Server-Timing", `attachment;dur=${attachmentMs}`);
+    console.info(`[files] upload attachment timing: ${JSON.stringify({ requested: Boolean(attachModule && attachType && attachId), attachment_ms: attachmentMs })}`);
     res.status(201).json({
       ...row,
       size_bytes: stored.size_bytes,

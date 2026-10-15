@@ -17,7 +17,7 @@ import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
-import { useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Code, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
 
 const PAGE = 50;
@@ -227,8 +227,8 @@ export function MeNotificationsPage() {
                       </div>
                     )}
                     <NotificationActionButtons n={n} />
-                    <div className={"text-[11px] text-faint dark:text-slate-500 mt-0.5" + (n.label ? "" : " font-mono")}>
-                      {n.label ?? n.event_type} · {new Date(n.created_at).toLocaleTimeString()}
+                    <div className="text-[11px] text-faint dark:text-slate-500 mt-0.5">
+                      {n.label ?? <Code>{n.event_type}</Code>} · {new Date(n.created_at).toLocaleTimeString()}
                     </div>
                   </div>
                   {/* Its own two controls; a press here is not a press on the row. */}

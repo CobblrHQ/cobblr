@@ -15,9 +15,10 @@
 //   LISTS    the files its listing patterns match
 // and itself.
 //
-// NEVER REUSED (the hidden inputs), the file runs every time: one that reads the clock without fake
-// timers, the network, the CI environment or the repository's own git history, or that imports a
-// file git does not track (a build output) or by a computed specifier.
+// NEVER REUSED (the hidden inputs), the file runs every time: one that reads the network, the CI
+// environment or the repository's own git history, or that imports a file git does not track (a build
+// output) or by a computed specifier its line does not name (`// imports: <spec>`). One that reads the
+// clock without fake timers is reused only the UTC day it passed.
 //
 // Fail open everywhere: no store, a dirty tree, an error computing a key, and the file runs.
 
@@ -30,15 +31,31 @@ import {
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
 
+/** Whether a test reads the clock without fake timers. Its pass is reused only the same UTC day (the day is
+ *  in its key): a test whose answer moves with the date re-proves itself daily, and the uncached runs (the
+ *  release's, the schedule's) run it every time. Until 2026-10-15 such a test was never reused: 114 files
+ *  ran on every full run. */
+export function readsClock(src) {
+  const s = stripComments(src);
+  return /\bDate\.now\(\)|new Date\(\)|performance\.now\(\)/.test(s) && !/useFakeTimers|setSystemTime/.test(s);
+}
+
 /** Why this test's verdict may never be reused, or null. Read from its own source. */
 export function hiddenInput(src) {
   const s = stripComments(src);
-  if (/\bDate\.now\(\)|new Date\(\)|performance\.now\(\)/.test(s) && !/useFakeTimers|setSystemTime/.test(s)) return "reads the clock";
   if (/\bfetch\(|node:https?["']|node:net["']|node:dgram|\bhttp\.request|new WebSocket\(/.test(s) && !/vi\.(stubGlobal|spyOn)\([^)]*fetch|globalThis\.fetch\s*=/.test(s)) return "reaches the network";
   if (/process\.env\.(GITHUB_|RUNNER_|CI\b)|process\.env\[["'](GITHUB_|RUNNER_|CI["'])/.test(s)) return "reads the CI environment";
   if (/\bgit\b[^\n]{0,80}(origin\/main|rev-parse|ls-files|merge-base|\blog\b|\bdiff\b)/.test(s) && !/mkdtemp|tmpdir\(/.test(s)) return "reads the repository's git history";
   return null;
 }
+
+/** Build outputs git does not track, by path prefix, and what each is built from. The nesting solver
+ *  (nesting/pkg/, built from the crate by scripts/build-nesting.sh, cached by scripts/ci/nesting-cache.sh
+ *  on its pins) is loaded by the nesting worker, which 117 unit tests reach: before this, none of them
+ *  could reuse a pass (2026-10-15). */
+export const BUILT_FROM = [
+  ["modules/digifab/nesting/pkg/", ["modules/digifab/nesting/", "scripts/build-nesting.sh", "scripts/ci/nesting-cache.sh"]],
+];
 
 /**
  * An index of the tracked tree, built once per run.
@@ -106,6 +123,12 @@ export function importClosure({ start, sources, packages, tree }) {
         continue;
       }
       if (!hits.length) {
+        // A build output whose sources are known: those sources, and how it is built, are its inputs.
+        const built = BUILT_FROM.find(([out]) => k.startsWith(out));
+        if (built) {
+          for (const src of built[1]) for (const p of src.endsWith("/") ? tree.filesUnder(src.replace(/\/$/, "")) : [src]) inputs.add(p);
+          continue;
+        }
         if (spec.startsWith(".")) return { files: inputs, hidden: `${f} imports ${spec}, which git does not track (a build output?)` };
         continue;
       }
@@ -119,6 +142,28 @@ export function importClosure({ start, sources, packages, tree }) {
   return { files: inputs, hidden: null };
 }
 
+/**
+ * PURE. A source's dynamic imports by a computed specifier: whether any is left unnamed, and the targets
+ * named for them. `import(existsSync(js) ? js : ts)` names its targets in a comment on its own line or the
+ * line above, `// imports: ./laser-layout.ts`, and is then those files (2026-10-15: the nesting worker's one
+ * such import kept 104 tests from ever reusing a pass). `(?` after `import (` is a regular expression's
+ * group (personal-document.ts reads Python's `from cadquery import (?:…)`), not an import: 27 tests.
+ */
+export function dynamicImports(src) {
+  const lines = String(src).split("\n");
+  const named = [];
+  let computed = false;
+  for (let i = 0; i < lines.length; i++) {
+    // The argument may start on the next line: `await import(\n  path\n)`.
+    const code = `${lines[i].replace(/\/\/.*$/, "")} ${/\bimport\s*\(\s*$/.test(lines[i].replace(/\/\/.*$/, "")) ? (lines[i + 1] ?? "").trim() : ""}`;
+    if (/^\s*(\*|\/\*)/.test(lines[i]) || !/\bimport\s*\(\s*[^"'\s)?]/.test(code)) continue;
+    const note = /\/\/\s*imports:\s*(.+)$/.exec(lines[i]) ?? /^\s*\/\/\s*imports:\s*(.+)$/.exec(lines[i - 1] ?? "");
+    if (!note) { computed = true; continue; }
+    for (const t of note[1].split(",").map((x) => x.trim()).filter(Boolean)) named.push(t);
+  }
+  return { computed, named };
+}
+
 /** A source's specifiers and whether it imports by a computed one, read once per run. */
 function parsedOf(sources, f) {
   let per = PARSED.get(sources);
@@ -126,7 +171,8 @@ function parsedOf(sources, f) {
   let hit = per.get(f);
   if (!hit) {
     const src = sources.get(f) ?? "";
-    per.set(f, (hit = { specs: parseSpecifiers(src), computed: /\bimport\s*\(\s*[^"'\s)]/.test(stripComments(src)) }));
+    const { computed, named } = dynamicImports(src);
+    per.set(f, (hit = { specs: [...parseSpecifiers(src), ...named], computed }));
   }
   return hit;
 }
@@ -136,10 +182,11 @@ export function unitTestInputs({ test, sources, packages, tree }) {
   const src = sources.get(test) ?? "";
   const hidden0 = hiddenInput(src);
   if (hidden0) return { inputs, hidden: hidden0 };
+  const clock = readsClock(src);
 
   // IMPORTS
   const closure = importClosure({ start: test, sources, packages, tree });
-  if (closure.hidden) return { inputs, hidden: closure.hidden };
+  if (closure.hidden) return { inputs, hidden: closure.hidden, clock };
   for (const p of closure.files) inputs.add(p);
 
   // NAMES (the test's own source, comments stripped, as namedBy reads it)
@@ -176,7 +223,7 @@ export function unitTestInputs({ test, sources, packages, tree }) {
       for (const p of tree.files) if (matchesGlob(p, m[1])) inputs.add(p);
     }
   }
-  return { inputs, hidden: null };
+  return { inputs, hidden: null, clock };
 }
 
 /**

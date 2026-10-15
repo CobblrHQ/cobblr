@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.5.2",
+  version: "0.5.3",
   displayName: "Machines",
   description:
     "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
@@ -118,7 +118,7 @@ export default defineModule({
         undoable: true,
         label: "Record machine usage",
         description:
-          "Add to a machine's lifetime usage counters (print_count, print_hours). Wire it to digifab.print.completed to accrue usage as prints finish: the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
+          "Add to a machine's lifetime usage counters (run_hours, print_count, print_hours). Digifab completion events supply the finished job's hours on its linked machine: the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
         appliesTo: { kinds: ["machines:machine"] },
         invokeHandler: "machines.record-usage",
         userInvokable: false,
@@ -214,5 +214,12 @@ export default defineModule({
         trigger_event: "digifab.print.reversed",
       },
     ],
+  },
+  lifecycle: {
+    onBoot: async () => {
+      // What it shows on the dashboard, read in its one request (#6563).
+      const { registerMachinesDashboardReads } = await import("./dashboard-reads.js");
+      registerMachinesDashboardReads();
+    },
   },
 });

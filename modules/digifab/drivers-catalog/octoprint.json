@@ -1,7 +1,7 @@
 {
   "id": "octoprint",
   "name": "OctoPrint",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -12,7 +12,8 @@
     "map": {
       "id": "='octoprint'",
       "name": "='OctoPrint'",
-      "state": "$.state.text"
+      "state": "$.state.text",
+      "temps": {"nozzle": {"actual": "$.temperature.tool0.actual", "target": "$.temperature.tool0.target"}, "bed": {"actual": "$.temperature.bed.actual", "target": "$.temperature.bed.target"}}
     }
   },
   "upload": {

@@ -11,7 +11,8 @@
 import { currentHistoryWrite, historyDiff, noteCreatedLog } from "./record-history.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
-import { sql } from "kysely";
+import { sql, type Kysely } from "kysely";
+import type { MetaDB } from "../db/schema.js";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
 import { currentActor, currentVia, runOutsideRequestScope, type Via } from "../lib/request-context.js";
@@ -59,7 +60,7 @@ export function observeActivity(fn: WriteObserver): void {
   writeObservers.push(fn);
 }
 
-export async function log(p: LogParams): Promise<void> {
+export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void> {
   // Auto-resolve actor from the current request's AsyncLocalStorage
   // context when caller didn't override.
   const actor = currentActor();
@@ -78,7 +79,7 @@ export async function log(p: LogParams): Promise<void> {
       ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff), ...((p.before as { id?: unknown })?.id === p.ref.entityId ? { version_before: p.before } : {}) }
       : p.diff;
 
-  await meta
+  await db
     .insertInto("activity_log")
     .values({
       org_id: p.orgId,

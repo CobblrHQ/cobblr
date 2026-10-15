@@ -1,4 +1,6 @@
 import { EntityPhoto } from "@cobblr/platform-web";
+import { RefreshCw } from "lucide-react";
+import { activitySyncSource } from "@cobblr/platform-contract/activity-summary";
 // One activity entry as a sentence: who, what they did, and the thing, named
 // and linked when it still exists ("Robin restocked BANANAS").
 //
@@ -91,6 +93,14 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
 export const ACTIVITY_FEED_LAYOUT = "grid grid-cols-[2rem_minmax(0,1fr)_max-content] items-start gap-2";
 
 export function ActivityThumbnail({ entry, labels }: { entry: ActivityEntry; labels: KindLabels }) {
+  // A sync's change shows the sync, not a letter tile of whatever it touched
+  // (#6564: a grey "W" beside "Homebox updated 47 locations").
+  const sync = activitySyncSource(entry);
+  if (sync) return (
+    <span role="img" aria-label={`${sync} sync`} title={`${sync} sync`} data-testid="activity-sync-icon" className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-subtle text-accent dark:bg-slate-800">
+      <RefreshCw size={16} aria-hidden />
+    </span>
+  );
   const title = entry.subject?.title ?? entry.entity_title ?? pickString((entry.diff ?? {}) as Record<string, unknown>, ["name", "title", "label"]) ?? labels.noun(activityKind(entry));
   return <EntityPhoto src={entry.subject?.thumbnail} alt={title} size={32} className="rounded-md bg-subtle text-muted" />;
 }

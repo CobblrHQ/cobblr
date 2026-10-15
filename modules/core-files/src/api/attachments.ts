@@ -27,6 +27,7 @@ const AttachmentCreate = z.object({
 attachmentsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    const started = performance.now();
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = AttachmentCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
@@ -60,6 +61,7 @@ attachmentsRouter.post(
         })
         .returningAll()
         .executeTakeFirstOrThrow();
+      const insertedAt = performance.now();
       await platform().events.emit("core-files.attachment.created", {
         orgId: ctx.org.id,
         attachmentId: row.id,
@@ -69,6 +71,9 @@ attachmentsRouter.post(
         source_id: row.source_id,
         role: row.role,
       });
+      const persistMs = Math.round(insertedAt - started), subscribersMs = Math.round(performance.now() - insertedAt);
+      res.append("Server-Timing", `persist;dur=${persistMs}, subscribers;dur=${subscribersMs}`);
+      console.info(`[files] attachment timing: ${JSON.stringify({ persist_ms: persistMs, subscribers_ms: subscribersMs, total_ms: Math.round(performance.now() - started) })}`);
       res.status(201).json(row);
     } catch (err) {
       // Unique violation = already attached with that role.

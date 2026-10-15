@@ -128,7 +128,7 @@ function ActivityRow({ entry, labels }: { entry: ActivityEntry; labels: KindLabe
         <ActivityThumbnail entry={entry} labels={labels} />
         <ActivitySentence entry={entry} labels={labels} />
         {/* The same "3 min ago" the dashboard says; the exact moment on hover. */}
-        <time dateTime={entry.occurred_at} title={new Date(entry.occurred_at).toLocaleString()} className="font-mono text-[10px] text-faint shrink-0">
+        <time dateTime={entry.occurred_at} title={new Date(entry.occurred_at).toLocaleString()} className="tabular-nums text-[10px] text-faint shrink-0">
           {relativeTime(entry.occurred_at)}
         </time>
       </div>

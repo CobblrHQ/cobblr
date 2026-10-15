@@ -16,7 +16,7 @@
 //   ui      ──GET  /status  ──►  (is a bridge connected for this workspace?)
 
 import { Router } from "express";
-import { platform } from "@cobblr/platform-contract";
+import { EdgeNotRegistered, platform } from "@cobblr/platform-contract";
 import type { Request } from "express";
 import { tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
@@ -54,9 +54,14 @@ edgeRelayRouter.get("/poll", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const ac = new AbortController();
   req.on("close", () => ac.abort());
-  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
-  if (item) res.json(item);
-  else res.status(204).end();
+  try {
+    const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
+    if (item) res.json(item);
+    else res.status(204).end();
+  } catch (error) {
+    if (error instanceof EdgeNotRegistered) res.status(409).json({ error: { code: error.code, message: error.message } });
+    else throw error;
+  }
 }));
 
 // POST /respond — the bridge returns a polled request's result.

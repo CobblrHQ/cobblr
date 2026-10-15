@@ -83,6 +83,7 @@ export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { useScanItemLink } from "./scanItemLink";
 import { sessionPlaceItems } from "../lib/scanSessionPlace";
+import type { SessionSays } from "../lib/sessionSays";
 import { useHandheld } from "../lib/useHandheld";
 import { } from "./ScanItemSheet";
 import { ScanInboxMenu } from "./ScanInboxMenu";
@@ -1817,7 +1818,7 @@ export function ScanPage() {
   useEffect(() => {
     if (!activeSlug || (unfiledCount === 0 && readyCount === 0)) return;
     const t = setTimeout(() => {
-      void api.organizePlan(activeSlug, { scope: "pending", warm: true }).catch(() => {});
+      void api.warmOrganizePlan(activeSlug).catch(() => {});
     }, 5_000);
     return () => clearTimeout(t);
   }, [activeSlug, unfiledCount, readyCount]);
@@ -3432,7 +3433,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         {(() => {
           // Each card, with the combine offer injected just above the first item
           // of any cluster it belongs to (so the offer sits with its items).
-          const card = (item: ScanInboxItem) => {
+          const card = (item: ScanInboxItem, says?: SessionSays) => {
             if (filedIds.has(item.id)) {
               if (filed.rows.length > 1) {
                 return item.id === filedAnchor ? (
@@ -3469,6 +3470,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   menu={menu}
                   sessionCategoryLabel={sessionCategoryByItem.get(item.id) ?? null}
                 sessionSource={sessionSourceByItem.get(item.id) ?? null}
+                  sessionSays={says ?? null}
                   hasLocations={hasLocations}
                   selected={selected.has(item.id)}
                   onToggleSelect={() => toggleSelected(item.id)}
@@ -3510,7 +3512,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             );
           }
           // Flat list when there's nothing to group by (scoped ?batch view).
-          if (!showSessionHeaders) return shownItems.map(card);
+          if (!showSessionHeaders) return shownItems.map((it) => card(it));
           // Otherwise a collapsible header per group: a real session shows its
           // time (· area); a day bucket shows the day. Both show a count.
           return sessionGroups.map((g, gi) => {
@@ -3519,7 +3521,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             if (g.items.length === 0 && g.shown.length > 0) {
               return (
                 <div key={g.key} className="space-y-2">
-                  {g.shown.map(card)}
+                  {g.shown.map((it) => card(it))}
                 </div>
               );
             }
@@ -3647,6 +3649,28 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // gating on sourceFileId — that is a capability check, not this
             // question.
             const isReceiptSession = g.isBatch && !!g.batchId && !!g.label?.startsWith("Receipt");
+            // What this session's own lines already say (#6095): the place its
+            // meta line names when the session will be added, and the shop its
+            // headline names. A row says them only when its own differ; four
+            // printers each repeating "Printer Room · where your other 3D
+            // Printers are" under a line that said it once was the owner's
+            // "repeats on every row".
+            const sessionSays: SessionSays = {
+              place:
+                busy === 0 && readyIds.length > 0
+                  ? sessionLocName
+                    ? filingLabel(sessionLocName)
+                    : (() => {
+                        const one = suggestedPlaces(placeItems);
+                        return one.length === 1 ? one[0]!.place : null;
+                      })()
+                  : null,
+              vendor: (() => {
+                const v = g.vendor ?? vendorOfItems(g.items);
+                return v && sessionName(g, isReceiptSession)?.includes(v) ? v : null;
+              })(),
+            };
+            const cardIn = (it: ScanInboxItem) => card(it, sessionSays);
             // A document that has not been read yet is named by its file.
             const source = sessionSourceOf(g);
             const unreadDocName =
@@ -4619,15 +4643,15 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     )}
                     {splitLayoutOf(g.shown, splitParents).map((e) =>
                       e.kind === "item" ? (
-                        card(e.item)
+                        cardIn(e.item)
                       ) : (
                         <SplitLineGroup
                           key={`split:${e.parentId}`}
                           parentId={e.parentId}
                           summary={e.summary}
-                          parentCard={e.parentItem ? card(e.parentItem) : null}
+                          parentCard={e.parentItem ? cardIn(e.parentItem) : null}
                           parts={e.parts}
-                          renderPart={card}
+                          renderPart={cardIn}
                           onAddAll={(ids) => confirmItemsToTheirCandidate(ids)}
                           routeOf={splitRouteOf}
                           menu={menu}

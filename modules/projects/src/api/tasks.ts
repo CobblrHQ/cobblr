@@ -306,7 +306,7 @@ tasksRouter.patch(
     // Closing a task (done or cancelled) is what frees the tasks waiting on it.
     const closed = (st: string | undefined) => st === "done" || st === "cancelled";
     if (closed(updated.status) && !closed(before?.status)) {
-      await releaseDependentsOf(ctx.org.id, db, updated.id);
+      await releaseDependentsOf(ctx.org.id, db, updated.id, session?.id ?? null);
     }
     // Done (not cancelled): a repeating task comes round again.
     if (updated.status === "done" && before?.status !== "done") {

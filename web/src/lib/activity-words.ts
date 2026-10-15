@@ -1,4 +1,4 @@
-import { ACTIVITY_VERBS, dedupeActivity } from "@cobblr/platform-contract/activity-summary";
+import { ACTIVITY_VERBS, activitySyncSource, dedupeActivity } from "@cobblr/platform-contract/activity-summary";
 import type { ActivityEntry, SaidChange } from "./api";
 // What a Recent-activity row says, in words a first-timer can read.
 //
@@ -47,6 +47,10 @@ export function actorWords(e: ActivityWordsEntry): string {
   // A friend's edit from a share space: they are not a member here, and the
   // row names them.
   if (e.via_kind === "share") return str(e.via_label) ?? "Someone you share with";
+  // An integration's sync, by the source's own name ("Homebox"), and a
+  // row from before the sync had its own kind ("Homebox sync") alike.
+  const sync = activitySyncSource(e);
+  if (sync) return sync;
   if (AUTOMATION_ACTIONS.has(e.action) || e.via_kind === "automation") return "Automation";
   return "Cobblr";
 }
@@ -64,9 +68,13 @@ export function viaWords(e: ActivityWordsEntry): string | null {
       return token ? `via MCP · ${token}` : "via MCP";
     case "assistant":
       return "via Cobb";
+    case "sync":
+      // The source is already the actor ("Homebox"): nothing to add.
+      return null;
     case "automation":
       // With nobody behind it, the actor already reads "Automation": the chip
-      // names which one.
+      // names which one. A sync's old rows name their source as the actor.
+      if (!e.actor && activitySyncSource(e)) return null;
       if (!e.actor) return label ? `“${label}”` : null;
       return label ? `via automation “${label}”` : "via automation";
     case "label":

@@ -118,10 +118,10 @@ function Row({ job }: { job: QueueJob }) {
       <td className="px-3 py-2 text-right font-mono text-muted">
         {job.attempts}/{job.max_attempts}
       </td>
-      <td className="px-3 py-2 font-mono text-muted dark:text-slate-400">
+      <td className="px-3 py-2 tabular-nums text-muted dark:text-slate-400">
         {new Date(job.run_at).toLocaleString()}
       </td>
-      <td className="px-3 py-2 font-mono text-muted dark:text-slate-400">
+      <td className="px-3 py-2 tabular-nums text-muted dark:text-slate-400">
         {new Date(job.created_at).toLocaleString()}
       </td>
       <td className="px-3 py-2 text-muted dark:text-slate-400 truncate max-w-[300px]" title={job.error ?? ""}>

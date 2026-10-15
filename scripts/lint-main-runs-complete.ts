@@ -17,7 +17,7 @@
 //
 // THE RULE. A workflow that runs on push to main or on a schedule and declares
 // `concurrency` must set `cancel-in-progress` to `false`, or to an expression
-// that is false on main (ci.yml's form). The bare string shorthand is refused
+// that is false on main, push or schedule (ci.yml's form, by github.ref_name). The bare string shorthand is refused
 // on those workflows, because its default is the wrong one for them.
 //
 //   cd <repo> && npx tsx scripts/lint-main-runs-complete.ts
@@ -57,7 +57,9 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     findings.push(`  ${f}: concurrency without cancel-in-progress ${why}; the default cancels the run in progress`);
     continue;
   }
-  const safe = cip === "false" || /github\.ref\s*!=\s*'refs\/heads\/main'/.test(cip);
+  // github.ref_name, not github.ref: a scheduled run's github.ref is the bare "main", so
+  // `github.ref != 'refs/heads/main'` was true on every schedule and let it be cancelled (2026-10-15).
+  const safe = cip === "false" || /github\.ref_name\s*!=\s*'main'/.test(cip);
   if (!safe) findings.push(`  ${f}: cancel-in-progress: ${cip} ${why}`);
 }
 
@@ -68,7 +70,7 @@ if (findings.length) {
     `\nA run that measures main, or runs on a schedule, has to finish: a cancelled run posts no\n` +
       `verdict, and the next one starts over. Write the block form and say so:\n` +
       `  concurrency:\n    group: <name>\n    cancel-in-progress: false\n` +
-      `(or ci.yml's conditional, \${{ github.ref != 'refs/heads/main' }}, when PR refs may cancel).\n`,
+      `(or ci.yml's conditional, \${{ github.ref_name != 'main' }}, when PR refs may cancel).\n`,
   );
   process.exit(1);
 }

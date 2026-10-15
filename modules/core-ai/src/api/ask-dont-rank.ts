@@ -74,7 +74,7 @@ export interface SearchHits {
   /** The words searched for, as the model typed them; "" for a listing with
    *  no filter, whose company is worked out from the person's words. */
   q: string;
-  hits: Array<{ id: string; label: string; text: string }>;
+  hits: Array<{ id: string; label: string; text: string; kind?: string }>;
 }
 
 /** What the turn's other reads said about one record. */
@@ -161,7 +161,7 @@ export function hitsFromSearch(name: string, args: Record<string, unknown>, resu
     const id = typeof rec.id === "string" ? rec.id : null;
     const label = labelOf(rec);
     if (!id || !label?.trim()) continue;
-    hits.push({ id, label, text: textOf(rec) });
+    hits.push({ id, label, text: textOf(rec), ...(typeof rec.kind === "string" ? { kind: rec.kind } : {}) });
   }
   return hits.length >= 2 ? { q, hits } : null;
 }
@@ -290,6 +290,9 @@ export function targetOf(call: ToolCall): string | null {
 /** The message to hand back, with the candidates, or null when the person's
  *  own words picked the record (or no search with company produced it).
  *  `facts` is what the turn's other reads said about each record, by id. */
+const UPLOAD_KIND = "core-files:file";
+const isUpload = (h: { kind?: string }): boolean => h.kind === UPLOAD_KIND;
+
 export function rankedNotAsked(
   userText: string,
   call: ToolCall,
@@ -299,9 +302,15 @@ export function rankedNotAsked(
   const target = targetOf(call);
   if (!target) return null;
   const key = target.toLowerCase();
-  const search = [...searches].reverse().find((s) => s.hits.some((h) => h.id.toLowerCase() === key));
-  if (!search) return null;
-  const chosen = search.hits.find((h) => h.id.toLowerCase() === key)!;
+  const found = [...searches].reverse().find((s) => s.hits.some((h) => h.id.toLowerCase() === key));
+  if (!found) return null;
+  const chosen = found.hits.find((h) => h.id.toLowerCase() === key)!;
+  // An uploaded file is a picture OF a thing, never the thing a write names:
+  // a photo called "…Smoked-Paprika….jpeg" is no rival to the Smoked paprika
+  // on the shelf, and counting it as one bounced every "print a label for the
+  // paprika" (the corpus nightly, 18 runs of 22, #6562). A write aimed at a
+  // file still has every other file for company.
+  const search = isUpload(chosen) ? found : { ...found, hits: found.hits.filter((h) => !isUpload(h)) };
   const company = companyOf(userText, search, chosen);
   if (!company || company.peers.length === 0) return null;
   const { ref, peers } = company;

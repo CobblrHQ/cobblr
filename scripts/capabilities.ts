@@ -73,6 +73,29 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "auth:role-refusal-words",
+    what: "a role gate's refusal is the sentence roleRefusal(allowed) builds: who may, in words",
+    why: "34 copies of requireRole each answered \"Requires one of: owner, admin\", a list of role ids a person cannot act on, which an operator pressing Send on the machines page read (#6785)",
+    owner: "packages/platform-contract/src/org-roles.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /requires one of: \$\{/i,
+    use: "message: roleRefusal(allowed) from @cobblr/platform-contract/org-roles",
+  },
+  {
+    kind: "owns",
+    id: "api:server-sent-events",
+    what: "a server-sent event stream opens through openSse, which a shutdown can end so its tab reconnects",
+    why: "streams opened by hand never ended, so every api stop waited out its drain, was killed, and cut every open tab at once (#6708)",
+    owner: "api/src/lib/event-stream.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /["']text\/event-stream["']/,
+    use: "const { send, stop } = openSse(res) from api/src/lib/event-stream.ts",
+    except: {
+      "modules/core-ai/src/api/chat.ts": "one reply streamed to its end, not a stream left open; it finishes on its own inside the drain",
+    },
+  },
+  {
+    kind: "owns",
     id: "inventory:stock-writes-refresh",
     what: "a stock write in inventory's screens goes through useStockWrites, which refreshes every read of the stock it changed",
     why: "Workshop stock kept the old remaining after Use some (#5811) and again after Stock arrived (#5895): each screen refreshed what its author remembered",

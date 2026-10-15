@@ -1,3 +1,5 @@
+import type { TestSession } from "./helpers.js";
+import { completeMockJob } from "./mock-job.js";
 import { eventually } from "./eventually.js";
 
 export interface MakePrintView {
@@ -23,4 +25,9 @@ export async function waitForRecordedPrint<T extends MakePrintView>(read: () => 
     throw new Error(`Make print result did not settle after ${timeoutMs}ms: ${JSON.stringify(last)}`);
   }
   return result;
+}
+
+export async function completeRecordedMockPrint<T extends MakePrintView>(session: TestSession, jobId: string, read: () => Promise<T>, timeoutMs: number): Promise<T> {
+  if (!await completeMockJob(session, jobId)) throw new Error(`Mock print ${jobId} did not complete`);
+  return waitForRecordedPrint(read, timeoutMs);
 }

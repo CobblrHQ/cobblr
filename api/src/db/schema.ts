@@ -1599,6 +1599,13 @@ export interface EdgeBlobsTable {
 /** What a one-shot heal shim found, the last time it ran on this deployment.
  *  `zero_since` is when it first found nothing and kept finding nothing, so a
  *  shim's `DONE WHEN:` is answerable without reading a boot log (#3453). */
+/** A per-workspace boot sweep's last clean run, at its code version (#6707). */
+export interface BootSweepMarksTable {
+  pass: string;
+  version: string;
+  swept_at: Date;
+}
+
 export interface HealShimRunsTable {
   shim: string;
   last_run_at: Date;
@@ -2000,6 +2007,7 @@ export interface MetaDB {
   account_email_sends: AccountEmailSendsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
   heal_shim_runs: HealShimRunsTable;
+  boot_sweep_marks: BootSweepMarksTable;
   notification_deferred: NotificationDeferredTable;
   push_vapid_keys: PushVapidKeysTable;
   push_subscriptions: PushSubscriptionsTable;
@@ -2402,6 +2410,9 @@ export interface AuthPairCodesTable {
   created_at: Generated<Date>;
   request_ip: string | null;
   request_ua: string | null;
+  /** The admin who minted it for this member (#6692); null for a person's own code. */
+  minted_by: ColumnType<string | null, string | null | undefined, string | null>;
+  revoked_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
 }
 
 /** core-queue v0.1: persistent background work. See

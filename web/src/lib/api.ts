@@ -16,7 +16,8 @@ import type { MoneyTotal } from "@cobblr/platform-contract/money";
 import type { ScopeDef, VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import type { AddressSuggestionsBody, FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
-import { noteWorkspaceWrite } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, primedRead, sharedRead } from "@cobblr/platform-web";
+import type { DashboardSnapshot } from "@cobblr/platform-contract/dashboard-reads";
 import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
 import type { AiChainAnswer } from "./ai-chain";
@@ -37,6 +38,7 @@ import type { TitleFormat } from "@cobblr/platform-contract/display-identity";
 import type { SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import type { ReceiptReadFailure } from "@cobblr/platform-contract/scan-session";
 import { getImpersonationToken } from "./impersonation";
+import { forgetDashboardCopies } from "../dashboard/device-copy";
 import { isPageLeaving } from "./page-leaving";
 import { GUEST_NOT_SHARED, refusedForGuest } from "./acting-role";
 import { counted } from "./in-flight";
@@ -73,7 +75,11 @@ export function setToken(token: string | null) {
   // signed in on this browser.
   if (!token && getShareViewToken()) return setShareViewToken(null);
   if (token) localStorage.setItem(TOKEN_KEY, token);
-  else localStorage.removeItem(TOKEN_KEY);
+  else {
+    localStorage.removeItem(TOKEN_KEY);
+    // What the dashboard kept on this device goes with the session (#6563).
+    forgetDashboardCopies();
+  }
 }
 
 /** Fetch a binary endpoint with auth → an object URL (for <img>). Caller must
@@ -451,11 +457,19 @@ async function sendRequest<T>(
 
   let res: Response;
   try {
-    res = await fetch(`/api/v1${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    // The dashboard's one snapshot may already hold this read; any other
+    // method drops what it held (primed-reads.ts, #6563). A read already on
+    // its way is answered by that one request (shared-reads.ts, #6613).
+    const primed = await primedRead(method, path);
+    res = primed
+      ? new Response(JSON.stringify(primed.body), { status: primed.status, headers: { "content-type": "application/json" } })
+      : await sharedRead(method, `${token ?? ""} ${impToken ?? ""} ${path}`, () =>
+          fetch(`/api/v1${path}`, {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+          }),
+        );
   } catch {
     // fetch only rejects on a network-level failure (offline, server
     // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
@@ -1674,7 +1688,7 @@ export const api = {
     attachments?: Array<{ file_id: string; name?: string; content_type?: string }>;
   }) => request<{ id: string; created_at: string }>("POST", "/feedback", body),
   // The signed-in user's OWN feedback + their two-way threads (/me/feedback).
-  listMyFeedback: () => request<{ items: MyFeedbackItem[] }>("GET", "/feedback/mine"),
+  listMyFeedback: (opts: { cursor?: string } = {}) => request<{ items: MyFeedbackItem[]; next_cursor: string | null; total: number }>("GET", `/feedback/mine${opts.cursor ? `?cursor=${encodeURIComponent(opts.cursor)}` : ""}`),
   // The reporter replies to their own item (answers a clarifying question).
   replyToFeedback: (id: string, text: string) =>
     request<{ ok: boolean; reopened: boolean }>("POST", `/feedback/${encodeURIComponent(id)}/reply`, { text }),
@@ -2191,6 +2205,13 @@ export const api = {
     });
   },
 
+  provisionDemo: (body: { email: string; name: string; expiresInDays: number; unlock: string[]; blueprint?: unknown }) =>
+    request<{ slug: string }>("POST", "/super-admin/demos", body),
+  sendAccountNotice: (body: { org_ids: string[]; user_ids: string[]; subject: string; message: string; link_url?: string }) =>
+    request<{ recipients: number; emailed: number }>("POST", "/super-admin/notices", body),
+  resolveFeedbackBatch: (body: { items: Array<{ id: string; public_summary: string }>; reply_message: string; notify_reporter: boolean }) =>
+    request<{ resolved: string[]; missing: string[]; notified_reporters: number }>("POST", "/super-admin/feedback/batch-resolve", body),
+
   // ── discussion ──────────────────────────────────────────────────────────
   discussionInbox: (slug: string, q?: string, page: { offset: number; limit: number } = { offset: 0, limit: 500 }) =>
     request<{ items: DiscussionInboxItem[]; total?: number | null; complete?: boolean }>(
@@ -2548,8 +2569,8 @@ export const api = {
   setActiveAiShare: (slug: string, credentialId: string | null) =>
     request<{ items: WorkspaceAiOffer[] }>("POST", `/orgs/${slug}/ai-shares/active`, { credential_id: credentialId }),
 
-  orgActivity: (slug: string, limit = 25) =>
-    request<{ items: ActivityEntry[] }>("GET", `/orgs/${slug}/activity?limit=${limit}`),
+  orgActivity: (slug: string, limit = 25, before?: number | null) =>
+    request<{ items: ActivityEntry[]; next_before?: number | null }>("GET", `/orgs/${slug}/activity?limit=${limit}${before != null ? `&before=${before}` : ""}`),
   // Cross-workspace activity feed: every action attributed to any
   // workspace the caller belongs to. Optional ?org= narrows to one.
   meActivity: (opts: { limit?: number; org?: string; cursor?: string } = {}) => {
@@ -3344,6 +3365,8 @@ export const api = {
     ),
   deleteMeNotificationChannel: (id: string) =>
     request<void>("DELETE", `/me/notification-channels/${id}`),
+  selfTestNotification: (orgId: string) =>
+    request<{ notificationId: string; deliveredVia: string[] }>("POST", "/me/notifications/self-test", { org_id: orgId }),
   testMeNotificationChannel: (body: { org_id: string; priority?: NotificationPriority }) =>
     request<{ notificationId: string; deliveredVia: string[] }>(
       "POST",
@@ -5199,8 +5222,8 @@ export const api = {
   /** What a decoded code already is in this workspace, from its own records
    *  only (#6436): asked the instant a code decodes, so a thing you have shows
    *  at once while the photo and the scan are still being sent. */
-  scanKnown: (slug: string, code: string) =>
-    request<{ known: ScanKnownCode | null }>("GET", `/orgs/${slug}/modules/core-scan/scan/known?code=${encodeURIComponent(code)}`),
+  scanKnown: (slug: string, code: string, purpose?: string) =>
+    request<{ known: ScanKnownCode | null; inbox_row?: ScanInboxItem | null }>("GET", `/orgs/${slug}/modules/core-scan/scan/known?code=${encodeURIComponent(code)}${purpose ? `&purpose=${encodeURIComponent(purpose)}` : ""}`),
   stationCount: (slug: string, address: string, body: { request_id: string; kind: string; entity_id: string; op: StationStockOp; value?: number }) =>
     request<StationMove & { replayed?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/stations/screens/${address}/count`, body),
   stationUndo: (slug: string, address: string, requestId: string) =>
@@ -5288,6 +5311,11 @@ export const api = {
       category?: string | null;
     },
   ) => request<ScanInboxItem>("PATCH", `/orgs/${slug}/modules/core-scan/inbox/${id}`, body),
+  /** Get the pending put-away plan ready before anyone asks for it, when
+   *  there is one to make: nothing identified yet answers 204, not a refusal
+   *  (#6702). */
+  warmOrganizePlan: (slug: string) =>
+    request<void>("POST", `/orgs/${slug}/modules/core-scan/organize/plan`, { scope: "pending", warm: true }),
   /** Guided Organize: propose a grouped put-away plan — for a selection of
    *  inbox items, or (scope:"unplaced") for committed entities with no home. */
   organizePlan: (
@@ -5301,9 +5329,6 @@ export const api = {
       refs?: string[];
       /** Ground truth typed by the human — folded into the AI plan call. */
       hint?: string;
-      /** Pre-compute the scope:"pending" plan (fingerprint-deduped server-side)
-       *  so opening the sheet reveals a ready plan. */
-      warm?: boolean;
       /** Bypass the draft cache (the explicit Re-plan button). */
       fresh?: boolean;
       /** Stop carrying the session hint forward. */
@@ -6654,6 +6679,12 @@ export const api = {
       `/orgs/${slug}/modules/core-templates/templates${qs}`,
     );
   },
+  /** The kinds a template can be made for in this workspace, named as a person says them. */
+  listTemplateKinds: (slug: string) =>
+    request<{ items: Array<{ id: string; display_name: string; display_name_plural: string | null }> }>(
+      "GET",
+      `/orgs/${slug}/modules/core-templates/templates/kinds`,
+    ),
   getTemplate: (slug: string, id: string) =>
     request<EntityTemplate>(
       "GET",
@@ -6770,6 +6801,10 @@ export const api = {
       `/orgs/${slug}/portal-config`,
       body,
     ),
+  /** Every dashboard section's reads in one answer (#6563). `today` and the
+   *  Up next window are the reader's; the server cannot tell them. */
+  getDashboardSnapshot: (slug: string, at: { today: string; from: string; to: string }) =>
+    request<DashboardSnapshot>("GET", `/orgs/${slug}/dashboard?${new URLSearchParams(at).toString()}`),
   getDashboardLayout: (slug: string) =>
     request<{ layout: DashboardLayout }>(
       "GET",
@@ -6875,6 +6910,15 @@ export const api = {
       temp_password: string;
       instructions: string;
     }>("POST", `/orgs/${slug}/admin/users`, body),
+  /** A QR that signs this member's phone in as them (#6692): single use, ten minutes. */
+  adminPhoneCode: (slug: string, user_id: string) =>
+    request<{ code: string; expires_at: string; claim_url: string; claim_options: { label: string; url: string }[]; for: string }>(
+      "POST",
+      `/orgs/${slug}/admin/users/pair-code`,
+      { user_id },
+    ),
+  adminCancelPhoneCode: (slug: string, user_id: string) =>
+    request<{ revoked: number }>("POST", `/orgs/${slug}/admin/users/pair-code/revoke`, { user_id }),
   adminRegenPassword: (slug: string, user_id: string) =>
     request<{ temp_password: string; instructions: string }>(
       "POST",

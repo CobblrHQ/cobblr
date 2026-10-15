@@ -52,6 +52,7 @@
   "purchases_order_pages": "The order's pages as the owner's intake read them: the owner's own paperwork.",
   "purchases_order_shipments": "Shipments the owner's tracking follows for an order: the owner's own tracking.",
   "purchases_returns": "Returns the owner made against an order: the owner's own dealings.",
+  "sales_order_documents": "The shop's numbered financial paperwork includes its customer's address. It stays with the shop when an order is shared; the owner distributes the PDF explicitly through download or email.",
   "sales_order_history": "The history of one of the owner's sales: their own dealings.",
   "sales_order_items": "A sale's lines are records of their own kind (sales:order_item), which a share cannot hold yet (#5911).",
   "tracking_measurements": "Measurements are records of their own kind (tracking:measurement), which a share cannot hold yet (#5911)."

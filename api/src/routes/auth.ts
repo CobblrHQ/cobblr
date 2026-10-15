@@ -30,6 +30,7 @@ import { captchaVerdict, captchaRefusal, captchaEnabled } from "../platform/capt
 import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
 import { confirmEmailChange, revertEmailChange } from "../platform/email-change.js";
 import { linkOrigin } from "../platform/link-origin.js";
+import { productName } from "../platform/product-name.js";
 
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
@@ -346,6 +347,8 @@ authRouter.get("/config", async (req, res) => {
   // it for a minute, which also spares the limit a page reload's worth.
   res.setHeader("Cache-Control", "public, max-age=60");
   return res.json({
+    // What this server calls itself in the words its people read (#6815).
+    product_name: productName(),
     signup_enabled: publicSignupEnabled(),
     self_serve_invites: selfServeInvitesEnabled(),
     // Which sender delivers auth email: "byo:smtp" (configured here), "overlay"
@@ -933,7 +936,7 @@ async function adoptOrProvisionIdentity(
   if (!profile.emailVerified) {
     return {
       status: 403,
-      error: { code: "email_unverified", message: "Confirm your email address on your Cobblr account first." },
+      error: { code: "email_unverified", message: `Confirm your email address on your ${productName()} account first.` },
     };
   }
 
@@ -1205,6 +1208,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
   }
 });
 
+// UI-REACH: token exchange for identity clients; browser sign-in uses /identity/callback.
 authRouter.post("/identity/exchange", async (req, res, next) => {
   try {
     if (!identityEnabled()) {
@@ -1278,6 +1282,7 @@ import {
 import { revokeSandboxLinksForUser } from "../platform/try-sandbox.js";
 import { inviteStatus, joinThroughInvite, REFUSAL } from "../platform/join-invite.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
+import { hashPairCode, mintPairCode, pairMintRefusal, PAIR_CODE_TTL_MS } from "../platform/pair-codes.js";
 import { vapidKeys } from "../platform/push-keys.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
@@ -1382,7 +1387,7 @@ authRouter.post("/magic/request", async (req, res, next) => {
       requestIp: req.ip ?? null,
       requestUa: req.get("user-agent") ?? null,
       ...(viaInvite
-        ? { subject: `Join "${viaInvite.org_name}" on Cobblr`, intro: `Open this to join "${viaInvite.org_name}":` }
+        ? { subject: `Join "${viaInvite.org_name}" on ${productName()}`, intro: `Open this to join "${viaInvite.org_name}":` }
         : {}),
       nextPath: parsed.data.next ?? null,
       inviteToken: viaInvite?.token ?? null,
@@ -1640,9 +1645,9 @@ authRouter.post("/password/forgot", async (req, res, next) => {
       const absLink = `${linkOrigin(req)}/reset/${plain}`;
       const emailed = await sendAuthEmail({
         to: email,
-        subject: "Reset your Cobblr password",
+        subject: `Reset your ${productName()} password`,
         text:
-          `Someone asked to reset your Cobblr password. Open this link to choose a new one:\n\n${absLink}\n\n` +
+          `Someone asked to reset your ${productName()} password. Open this link to choose a new one:\n\n${absLink}\n\n` +
           `This link expires in 1 hour. If you didn't request it, you can safely ignore this email — your password won't change.`,
         kind: "password_reset",
       });
@@ -1761,10 +1766,10 @@ export async function issueAndSendVerifyEmail(
   const absLink = `${linkOrigin(req)}/verify/${plain}`;
   const emailed = await sendAuthEmail({
     to: normalized,
-    subject: "Verify your Cobblr email",
+    subject: `Verify your ${productName()} email`,
     text:
-      `Confirm your email to finish setting up your Cobblr account:\n\n${absLink}\n\n` +
-      `This link expires in 24 hours. If you didn't create a Cobblr account, you can ignore this email.`,
+      `Confirm your email to finish setting up your ${productName()} account:\n\n${absLink}\n\n` +
+      `This link expires in 24 hours. If you didn't create a ${productName()} account, you can ignore this email.`,
     kind: "verify_email",
   });
   return { emailed, devToken: !emailed && process.env.NODE_ENV !== "production" ? plain : undefined };
@@ -1813,6 +1818,7 @@ for (const [path, act] of [
 // Public: consumes a verification token + marks the user's email verified.
 const VerifyEmail = z.object({ token: z.string().min(8).max(200) });
 
+// UI-SCREEN: /verify/:token (the emailed verification link consumes its token)
 authRouter.post("/verify-email", async (req, res, next) => {
   try {
     if (overLimit(verifyEmailLimiter, req)) {
@@ -1932,11 +1938,6 @@ authRouter.post("/discord/verify-dm", async (req, res, next) => {
 //     start (the minter) AND claim (a membership revoked in between drops the
 //     phone to its default workspace rather than a workspace it can't see).
 
-const PAIR_CODE_TTL_MS = 300 * 1000;
-
-function hashPairCode(plain: string): string {
-  return createHash("sha256").update(plain).digest("hex");
-}
 
 const pairStartLimiter = makeIpLimiter(60_000, 20); // 20 mints / min / IP
 const pairClaimLimiter = makeIpLimiter(60_000, 30); // 30 claims / min / IP
@@ -1950,7 +1951,7 @@ const identityExchangeLimiter = makeIpLimiter(60_000, 30); // 30 exchanges / min
 const loginLimiter = makeIpLimiter(60_000, 30);
 /** Password and email-link sign-in are off on this instance. */
 const PASSWORD_SIGN_IN_OFF = {
-  error: { code: "password_sign_in_off", message: "This Cobblr signs in through its own sign-in provider. Use the Sign in with button." },
+  error: { code: "password_sign_in_off", message: "This server signs in through its own sign-in provider. Use the Sign in with button." },
 } as const;
 const signupLimiter = makeIpLimiter(60_000, 15);
 const magicRequestLimiter = makeIpLimiter(60_000, 10);
@@ -1967,6 +1968,7 @@ const configLimiter = makeIpLimiter(60_000, 600);
 
 const PairStartBody = z.object({ org_slug: z.string().min(1).max(120) });
 
+// UI-SCREEN: /scan (Scan with your phone opens PairPhoneButton)
 authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
@@ -1974,14 +1976,11 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
       res.status(429).json({ error: { code: "rate_limited", message: "Too many pair codes — wait a moment." } });
       return;
     }
-    // Reaper (best-effort, fire-and-forget): keep the table bounded by dropping
-    // rows well past expiry. Cheap, runs only on a mint, never blocks the claim.
-    // DETACHED: housekeeping of expired codes; the next mint tries again
-    void meta
-      .deleteFrom("auth_pair_codes")
-      .where("expires_at", "<", new Date(Date.now() - 3_600_000))
-      .execute()
-      .catch((err) => console.error("[pair/start] reaper failed:", err));
+    const refusal = pairMintRefusal(req.session!);
+    if (refusal) {
+      res.status(403).json({ error: { code: "session_required", message: refusal } });
+      return;
+    }
     const parsed = PairStartBody.safeParse(req.body ?? {});
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "org_slug is required" } });
@@ -2000,56 +1999,7 @@ authRouter.post("/pair/start", requireAuth, async (req, res, next) => {
       res.status(403).json({ error: { code: "not_a_member", message: "You're not a member of that workspace." } });
       return;
     }
-    // 128-bit URL-safe code: ample entropy for a short-lived single-use code, compact
-    // enough to keep the QR low-density. Stored hashed — plaintext only goes
-    // out in this response (→ QR → phone).
-    const code = randomBytes(16).toString("base64url");
-    const expiresAt = new Date(Date.now() + PAIR_CODE_TTL_MS);
-    // check-then-insert: the key is a random pairing code minted here
-    await meta
-      .insertInto("auth_pair_codes")
-      .values({
-        user_id: userId,
-        org_slug: orgSlug,
-        code_hash: hashPairCode(code),
-        expires_at: expiresAt,
-        request_ip: (req.ip ?? null) as string | null,
-        request_ua: (req.get("user-agent") ?? null) as string | null,
-      })
-      .execute();
-    // The phone visits /pair?code=… . Offer a claim URL for every base this
-    // server is reachable at — the request origin (on Cobblr's Cloudflare-
-    // tunnel'd prod that IS the phone-reachable public URL, e.g.
-    // https://cobblr.example.com) plus an optional PUBLIC_BASE_URL for self-hosters who
-    // expose a separate LAN/Tailscale address. localhost bases are dropped when
-    // a real one exists (a phone can't resolve the desktop's localhost).
-    const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol;
-    // HOST-OK: the claim URL is shown on this same caller's screen, and a self-hoster's LAN address is the one the phone can reach.
-    const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host");
-    const reqBase = host ? `${proto}://${host}`.replace(/\/+$/, "") : null;
-    const pubBase = publicBaseUrl() || null;
-    const bases: string[] = [];
-    for (const b of [reqBase, pubBase]) {
-      if (b && !bases.some((x) => x.toLowerCase() === b.toLowerCase())) bases.push(b);
-    }
-    const isLocal = (b: string) => /\/\/(localhost|127\.0\.0\.1)/i.test(b);
-    const usable = bases.some((b) => !isLocal(b)) ? bases.filter((b) => !isLocal(b)) : bases;
-    const claimOptions = usable.map((b) => {
-      let label = b;
-      try {
-        label = new URL(b).host;
-      } catch {
-        /* non-URL base — keep verbatim */
-      }
-      return { label, url: `${b}/pair?code=${code}` };
-    });
-    if (claimOptions.length === 0) claimOptions.push({ label: "default", url: `/pair?code=${code}` });
-    res.json({
-      code,
-      expires_at: expiresAt.toISOString(),
-      claim_url: claimOptions[0]!.url,
-      claim_options: claimOptions,
-    });
+    res.json(await mintPairCode(req, { userId, orgSlug, ttlMs: PAIR_CODE_TTL_MS }));
   } catch (err) {
     next(err);
   }
@@ -2066,15 +2016,16 @@ authRouter.post("/pair/status", requireAuth, async (req, res, next) => {
     }
     const row = await meta
       .selectFrom("auth_pair_codes")
-      .select(["user_id", "claimed_at", "expires_at"])
+      .select(["user_id", "minted_by", "claimed_at", "expires_at", "revoked_at"])
       .where("code_hash", "=", hashPairCode(code))
       .executeTakeFirst();
-    // Only the minter may poll — don't leak another user's code lifecycle.
-    if (!row || row.user_id !== req.session!.id) {
+    // Only the minter may poll — don't leak another user's code lifecycle. An
+    // admin's code for a member (#6692) is the admin's to watch.
+    if (!row || (row.minted_by ?? row.user_id) !== req.session!.id) {
       res.status(404).json({ error: { code: "not_found", message: "Pair code not found" } });
       return;
     }
-    const state = row.claimed_at ? "claimed" : row.expires_at <= new Date() ? "expired" : "pending";
+    const state = row.claimed_at ? "claimed" : row.revoked_at || row.expires_at <= new Date() ? "expired" : "pending";
     res.json({ state });
   } catch (err) {
     next(err);
@@ -2104,8 +2055,9 @@ authRouter.post("/pair/claim", async (req, res, next) => {
       .set({ claimed_at: now })
       .where("code_hash", "=", hashPairCode(parsed.data.code))
       .where("claimed_at", "is", null)
+      .where("revoked_at", "is", null)
       .where("expires_at", ">", now)
-      .returning(["user_id", "org_slug"])
+      .returning(["user_id", "org_slug", "minted_by"])
       .executeTakeFirst();
     if (!claimed) {
       res.status(410).json({ error: { code: "pair_code_unusable", message: "Pair code expired or already claimed" } });
@@ -2114,7 +2066,7 @@ authRouter.post("/pair/claim", async (req, res, next) => {
     // The account must still be active.
     const user = await meta
       .selectFrom("users")
-      .select(["id", "active"])
+      .select(["id", "active", "must_reset_password"])
       .where("id", "=", claimed.user_id)
       .executeTakeFirst();
     if (!user || !user.active) {
@@ -2132,6 +2084,24 @@ authRouter.post("/pair/claim", async (req, res, next) => {
       .where("o.slug", "=", claimed.org_slug)
       .executeTakeFirst();
     const targetOrgSlug = stillMember ? claimed.org_slug : null;
+    // An admin's code signs someone in only into the workspace that admin
+    // runs: with the membership gone it is nobody's to use, so it fails closed.
+    if (claimed.minted_by && !stillMember) {
+      res.status(410).json({ error: { code: "pair_code_unusable", message: "This sign-in code is for a workspace you are no longer in." } });
+      return;
+    }
+    // An admin's code for an account they minted (#6692): the temp password
+    // they were shown dies here, so nobody but the person holding this phone
+    // can be them. The account has no password from now (the empty hash every
+    // passwordless account has); another code, or a reset link to its
+    // address, signs them in again.
+    if (claimed.minted_by && user.must_reset_password) {
+      await meta
+        .updateTable("users")
+        .set({ password_hash: "", must_reset_password: false })
+        .where("id", "=", user.id)
+        .execute();
+    }
     const out = await buildAuthResponse(claimed.user_id);
     // Audit the login (best-effort — never block the claim on logging).
     // DETACHED: the audit row of a sign-in; the sign-in itself is complete without it
@@ -2147,7 +2117,7 @@ authRouter.post("/pair/claim", async (req, res, next) => {
         userId: claimed.user_id,
         action: "login",
         ref: { module: null, entityType: "user", entityId: claimed.user_id },
-        diff: { method: "qr_pair" },
+        diff: { method: "qr_pair", ...(claimed.minted_by ? { minted_by: claimed.minted_by } : {}) },
       })
       .catch((err) => console.error("[pair/claim] activity log failed:", err));
     res.json({ ...out, target_org_slug: targetOrgSlug });

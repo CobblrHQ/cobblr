@@ -145,6 +145,11 @@ router.get("/search", (req, res, next) => {
     res.json({
       q,
       kinds_searched: candidateIds.filter((_, i) => perKind[i]!.length > 0),
+      // Every kind actually asked, found or not. kinds_searched names only the
+      // kinds that answered with something, so on a miss it was [] and an
+      // assistant could not tell "looked everywhere, nothing" from "looked
+      // nowhere" (the assistant audit, #6686).
+      kinds_asked: candidateIds.filter((id) => !kindsFailed.includes(id)),
       kinds_failed: kindsFailed,
       items: ranked,
       // A kind that filled its share may have more: ask again with

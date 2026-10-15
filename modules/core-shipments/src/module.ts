@@ -96,6 +96,7 @@ export default defineModule({
         // Workspace-scoped: it acts on a NUMBER, not on a record, and
         // core-shipments has no business naming whose record it came from.
         group: "more",
+        // UI-REACH: internal carrier query used by parcel refresh; people check the stored parcel on Purchases or Sales instead of supplying polling state.
         id: "core-shipments:track",
         runBy: "member",
         examples: ["where is my parcel", "track this number"],

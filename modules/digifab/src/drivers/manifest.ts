@@ -15,6 +15,8 @@
 import { z } from "zod";
 
 const Extract = z.string().min(1);
+/** One heater in a device read: the reading, and the setpoint when the manager reports one. */
+const Heater = z.object({ actual: Extract, target: Extract.optional() });
 const Method = z.enum(["GET", "POST", "PATCH", "PUT", "DELETE"]).default("GET");
 
 export const DriverManifest = z.object({
@@ -54,7 +56,16 @@ export const DriverManifest = z.object({
     /** `state` is an extract, or `{ from, map }` to translate the manager's
      *  word into one the fleet reads (Klipper's `print_stats.state`, Duet's
      *  one-letter status). An unmapped word passes through unchanged. */
-    map: z.object({ id: Extract, name: Extract, state: z.union([Extract, z.object({ from: Extract, map: z.record(z.string()) })]).optional(), enabled: Extract.optional() }),
+    map: z.object({
+      id: Extract, name: Extract, state: z.union([Extract, z.object({ from: Extract, map: z.record(z.string()) })]).optional(), enabled: Extract.optional(),
+      /** Live temperatures, °C: where the reading (and the setpoint) is in the same response. */
+      temps: z.object({ nozzle: Heater.optional(), bed: Heater.optional(), chamber: Heater.optional() }).optional(),
+      /** How far the current print is, read while the device prints or is paused; `progressScale` as for status. */
+      progress: Extract.optional(),
+      progressScale: z.union([z.literal(1), z.literal(100)]).optional(),
+      /** Seconds left on the current print, when the manager estimates it. */
+      remainingSec: Extract.optional(),
+    }),
   }),
   upload: z.object({
     method: Method,

@@ -16,6 +16,7 @@ import { tallyCadence, CADENCE_PRESETS } from "../lib/cadence";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { ViewEmptyState } from "../components/ViewEmptyState";
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronLeft, ChevronRight, FileDown, LayoutList, Pencil, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/month-grid";
@@ -356,6 +357,17 @@ export function SavedViewBody({
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
         </span>
         {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} grouped={!!data.groups} />}
+        {/* The empty view offers "Add your first"; once it holds a row that door
+            went with it, and the kind's create form was a tab away. A table view
+            is the kind's own list page, which has its New button already. */}
+        {items.length > 0 && listRoute && view.view_type !== "table" && (
+          <Link
+            to={`${listRoute}?new=1`}
+            className="inline-flex min-h-9 items-center gap-1 rounded-md bg-cobble-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-cobble-700"
+          >
+            <Plus size={14} /> Add {withArticle(noun)}
+          </Link>
+        )}
         {/* What the module that owns these records puts on its views (inventory's
             What's still here?); this page names no contributor. */}
         {items.length > 0 && <ViewToolbar slug={activeSlug} view={view} ids={items.map((r) => r.id)} />}

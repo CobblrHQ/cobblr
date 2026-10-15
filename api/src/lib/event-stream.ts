@@ -32,6 +32,9 @@ export async function verifyStreamTicket(audience: string, ticket: string): Prom
   }
 }
 
+/** Every stream this process has open, so a shutdown can end them. */
+const open = new Set<Response>();
+
 /** Open an SSE stream and return a typed `send`. Heartbeats every 25s so proxies
  *  don't reap the idle connection; the caller wires req.on("close"). */
 export function openSse(res: Response): { send: (event: string, data: unknown) => void; stop: () => void } {
@@ -44,8 +47,31 @@ export function openSse(res: Response): { send: (event: string, data: unknown) =
   res.write(": connected\n\n");
   // SINGLE-PROCESS-SAFE: a keepalive on one open response, not a background job.
   const hb = setInterval(() => res.write(": ping\n\n"), 25000);
+  open.add(res);
+  res.on("close", () => {
+    clearInterval(hb);
+    open.delete(res);
+  });
   return {
     send: (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`),
     stop: () => clearInterval(hb),
   };
+}
+
+/** End every open stream, telling each browser to reconnect in half a second.
+ *  A stream never ends on its own, so without this a shutdown's server.close()
+ *  waited out its whole drain on them and was killed, cutting every tab at
+ *  once (#6708). The browser's EventSource reconnects through the front to
+ *  whichever api is still serving. Returns how many it ended. */
+export function endOpenStreams(): number {
+  const n = open.size;
+  for (const res of open) {
+    try {
+      res.end("retry: 500\n\n");
+    } catch {
+      /* already gone */
+    }
+  }
+  open.clear();
+  return n;
 }

@@ -7,7 +7,7 @@
 // the empty state, or furniture flashes on reload.
 
 import { useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "./api";
 import { isSandboxSession } from "./sandbox-session";
 
@@ -15,7 +15,13 @@ import { isSandboxSession } from "./sandbox-session";
  *  Named instances are counted because most flagship bundles keep ALL their
  *  data in instances — without them a populated workspace read as empty and
  *  the first-run hero never went away. */
-export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>): Promise<number> {
+export async function probeWorkspaceItemCount(
+  slug: string,
+  enabled: Set<string>,
+  // The shell's own list of collections when there is a cache to share it
+  // from: asked raw, it was the second /instances of every load (#6635).
+  listInstances: () => Promise<{ items: Array<{ instance_name: string; is_default: boolean }> }> = () => api.listInstances(slug),
+): Promise<number> {
   // A module whose items route is missing (404) or not there for a default
   // instance (501) genuinely holds nothing to count. A workspace that cannot
   // be read at all (the session is dead, the workspace is gone, an expired
@@ -37,7 +43,7 @@ export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>
   if (enabled.has("purchases")) probes.push(wrap("/modules/purchases/orders?limit=1"));
   const [counts, instances] = await Promise.all([
     Promise.all(probes),
-    api.listInstances(slug).then((r) => r.items).catch(() => []),
+    listInstances().then((r) => r.items).catch(() => []),
   ]);
   // NAMED instances only: default instances are covered by the module probes
   // above, and the defaults of core-* capability modules have no items router
@@ -59,6 +65,7 @@ export async function probeWorkspaceItemCount(slug: string, enabled: Set<string>
  *  bought (review finding USE-07). A gate that decides where onboarding goes
  *  reads `userMade`; a gate about the data itself reads `hasContent`. */
 export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasContent: boolean; userMade: boolean } {
+  const qc = useQueryClient();
   const mods = useQuery({
     queryKey: ["org-modules", slug],
     queryFn: () => api.orgModules(slug),
@@ -71,7 +78,7 @@ export function useWorkspaceContentProbe(slug: string): { ready: boolean; hasCon
   );
   const probeQ = useQuery({
     queryKey: ["dash-content-probe", slug, Array.from(enabled).sort().join(",")],
-    queryFn: () => probeWorkspaceItemCount(slug, enabled),
+    queryFn: () => probeWorkspaceItemCount(slug, enabled, () => qc.fetchQuery({ queryKey: ["instances", slug], queryFn: () => api.listInstances(slug), staleTime: 30_000 })),
     enabled: !!slug && enabled.size > 0,
     staleTime: 60_000,
   });

@@ -35,6 +35,7 @@ import { meta } from "../db/meta.js";
 import { verifyPassword } from "../auth/password.js";
 import { sendAuthEmail } from "./hosted-seams.js";
 import { blockDisposableEnabled, isDisposableEmail } from "./disposable-emails.js";
+import { productName } from "./product-name.js";
 
 const CONFIRM_HOURS = 24;
 const REVERT_DAYS = 7;
@@ -163,9 +164,9 @@ export async function requestEmailChange(
     .execute();
   const emailed = await sendAuthEmail({
     to: newEmail,
-    subject: "Confirm your new Cobblr sign-in address",
+    subject: `Confirm your new ${productName()} sign-in address`,
     text:
-      `Someone asked for this to become the address of a Cobblr account. To confirm it:\n\n${origin}/email-change/${plain}\n\n` +
+      `Someone asked for this to become the address of a ${productName()} account. To confirm it:\n\n${origin}/email-change/${plain}\n\n` +
       `Nothing changes until you open the link, and it expires in ${CONFIRM_HOURS} hours. If this was not you, ignore this email.`,
     kind: "notification",
   });
@@ -244,9 +245,9 @@ export async function confirmEmailChange(
     .execute();
   const emailed = await sendAuthEmail({
     to: row.old_email,
-    subject: "Your Cobblr sign-in address was changed",
+    subject: `Your ${productName()} sign-in address was changed`,
     text:
-      `The Cobblr account that used this address now signs in with ${row.new_email}, and every device was signed out.\n\n` +
+      `The ${productName()} account that used this address now signs in with ${row.new_email}, and every device was signed out.\n\n` +
       `If that was you, there is nothing to do. If it was not, take the account back within ${REVERT_DAYS} days:\n\n` +
       `${origin}/email-change/revert/${revertPlain}\n\nYou will then choose a new password.`,
     kind: "notification",

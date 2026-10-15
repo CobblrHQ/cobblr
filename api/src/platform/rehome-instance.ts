@@ -5,7 +5,8 @@
 // "asset tracker") stops riding on assets: its rows move to records_records
 // (ids preserved, so links/labels keep resolving), its attachment + tag refs
 // are rewritten, and the instance registry re-points. Custom field defs and
-// saved views key on `<instance>:item` and follow the instance untouched.
+// saved views key on `<instance>:item` and follow the instance untouched; its
+// presentation row, keyed `<module>:<instance>`, is re-keyed to records.
 //
 // NOTHING is destroyed: any non-default domain value on a moved row
 // (a serial number, a warranty date, a manufacturer) is folded into the
@@ -21,6 +22,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { bumpWorkspaceShape } from "./workspace-shape.js";
 import { enableModuleForOrg } from "../modules/enable.js";
+import { rekeyInstanceLook } from "./heal-stray-instance-look-keys.js";
 
 export interface RehomeResult {
   moved: number;
@@ -144,6 +146,9 @@ export async function rehomeAssetsInstanceToRecords(
       .where("org_id", "=", orgId)
       .where("instance_name", "=", instanceName)
       .execute();
+    // The look (noun, nav group, scan keywords, icon) is keyed `<module>:<instance>`,
+    // so it follows the instance to its new module or the collection reads empty.
+    await rekeyInstanceLook(orgId, instanceName, "assets", "records");
     await bumpWorkspaceShape(orgId);
 
     return result;

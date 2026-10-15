@@ -8,6 +8,7 @@ import type { MachineDriver, CommandResult } from "./drivers/types.js";
 import { controlDirectLaser } from "./laser-controls.js";
 import { buildDriverById, pollJob } from "./jobs-core.js";
 import { parseCncProgram, validateCncMachineBounds } from "./cnc-program.js";
+import { mayControl, RUN_MACHINES_REFUSAL } from "./motion-gate.js";
 
 const CncControl=z.object({connection_id:z.string().uuid(),device_id:z.string().min(1).max(200),operation:z.enum(["stop","pause","resume","frame"]),file_id:z.string().max(1000).optional(),job_id:z.string().uuid().optional()});
 export async function controlCnc(db:Kysely<DigifabDB>,orgId:string,driver:MachineDriver,deviceId:string,operation:string,params:Record<string,unknown>,connectionId:string):Promise<CommandResult> {
@@ -41,6 +42,7 @@ export function registerMachineControlAction():void {
  platform().actions.registerHandler("digifab.machine-control",async ctx=>{
   if(!ctx.userId||!await platform().auth.userHasRole({orgId:ctx.orgId,userId:ctx.userId,minRole:"member"})) return {ok:false,error:"Sign in to this workspace to use its CNC controls."};
   const parsed=CncControl.safeParse(ctx.args);if(!parsed.success)return {ok:false,error:parsed.error.message};
+  if(!await mayControl({orgId:ctx.orgId,userId:ctx.userId,operation:parsed.data.operation}))return {ok:false,error:RUN_MACHINES_REFUSAL};
   const b=parsed.data,db=await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>,driver=await buildDriverById(db,ctx.orgId,b.connection_id);
   if(!driver)return {ok:false,error:"The CNC machine is not connected."};
   const control=driver.laserBackend?controlDirectLaser:controlCnc;

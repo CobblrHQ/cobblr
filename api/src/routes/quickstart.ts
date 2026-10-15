@@ -9,6 +9,7 @@
 // pending captures onto the now-real table. See
 // docs/design-decisions/capture-first-onboarding.md.
 
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -253,10 +254,13 @@ async function removedByWorkspace(orgId: string, externalId: string): Promise<bo
   return last?.reason === "uninstalled";
 }
 
+// The install half is platform:install-bundle; the filing half, the captures
+// waiting in the scan inbox, is the assistant's cobblr_file_inbox_items.
+// AI-ACTION: platform:install-bundle
 quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, next) => {
   try {
-    // Changes workspace composition (enables modules, adds fields) — owner/admin.
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Changes workspace composition (enables modules, adds fields): the install's own gate.
+    if (!(await requireCapability(req, res, "platform:install-bundle"))) return;
     const parsed = MaterializeBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });

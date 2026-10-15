@@ -14,6 +14,7 @@ import {
   type DeviceConnectionPatch,
 } from "@cobblr/platform-contract";
 import type { CoreDevicesDB } from "./db.js";
+import { releaseRemovedConnection } from "./release-connection.js";
 
 const PUBLIC_COLS = [
   // Selected so `has_credentials` can be computed, and STRIPPED again by
@@ -163,9 +164,12 @@ export const connectionStore: DeviceConnectionStore = {
     const r = await (await db(orgId))
       .deleteFrom("core_devices_connections")
       .where("id", "=", id)
-      .returning(["id", "type"])
+      .returning(["id", "type", "base_url", "credentials_enc"])
       .executeTakeFirst();
-    if (r) changed(orgId, String(r.id), String(r.type), "removed");
+    if (r) {
+      changed(orgId, String(r.id), String(r.type), "removed");
+      await releaseRemovedConnection(orgId, r);
+    }
     return !!r;
   },
 

@@ -242,13 +242,14 @@ export function CreateConnectionModal({
 // built-in drivers (mock/moonraker/prusalink/duet/bambu/lightburn).
 const BRIDGE_DRIVERS: { key: string; label: string; driver?: string; config?: Record<string, string>; fields: { key: string; label: string; placeholder?: string; optional?: boolean; secret?: boolean }[] }[] = [
   { key: "mock", label: "Mock (test: no hardware)", fields: [] },
-  { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
+  { key: "moonraker", label: "Klipper (Moonraker)", fields: [{ key: "port", label: "HTTP port", optional: true, placeholder: "7125" }, { key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "API key (only if locked down)", optional: true }] },
   { key: "snapmaker-u1", driver: "moonraker", config: { profile: "snapmaker-u1" }, label: "Snapmaker U1", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "apiKey", label: "Moonraker API key", optional: true }] },
   { key: "snapmaker", label: "Snapmaker (2.0, J1, Artisan)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   {key:"ipp",label:"Large-format printer (IPP / SNMP)",fields:[{key:"url",label:"Printer IPP URL",placeholder:"ipp://192.168.1.50:631/ipp/print"},{key:"community",label:"Read-only SNMP community",optional:true,secret:true}]},
   { key: "sdcp", label: "Resin printer (Elegoo / SDCP)", fields: [{ key: "host", label: "Printer LAN IPv4 address", placeholder: "192.168.1.50" }] },
-  { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
-  { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
+  { key: "octoprint", label: "OctoPrint", fields: [{ key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }, { key: "port", label: "HTTP port", optional: true, placeholder: "80" }, { key: "apiKey", label: "Application API key" }] },
+  { key: "prusalink", label: "Prusa (PrusaLink)", fields: [{ key: "port", label: "HTTP port", optional: true, placeholder: "80" }, { key: "host", label: "Printer IP / host", placeholder: "192.168.1.213" }, { key: "apiKey", label: "PrusaLink API key" }] },
+  { key: "duet", label: "Duet (RepRapFirmware)", fields: [{ key: "port", label: "HTTP port", optional: true, placeholder: "80" }, { key: "host", label: "Printer IP / host", placeholder: "192.168.1.50" }] },
   { key: "bambu", label: "Bambu Lab (LAN)", fields: [{ key: "host", label: "Printer IP" }, { key: "serial", label: "Serial" }, { key: "accessCode", label: "LAN access code" }] },
   {key:"cnc-usb",driver:"cnc",config:{firmware:"grbl",transport:"serial"},label:"CNC: GRBL over USB",fields:[{key:"path",label:"Serial port (COM or /dev path)"},{key:"baud",label:"Baud rate",optional:true,placeholder:"115200"},...cncEnvelopeFields]},
   {key:"cnc-grblhal",driver:"cnc",config:{firmware:"grblhal",transport:"tcp"},label:"CNC: grblHAL over network",fields:[{key:"host",label:"Controller host"},{key:"port",label:"TCP port",optional:true,placeholder:"23"},...cncEnvelopeFields]},

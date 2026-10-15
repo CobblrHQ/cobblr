@@ -34,9 +34,15 @@ export interface SalesOrdersTable {
   order_number: string | null;
   status: SalesOrderStatus;
   paid: Generated<boolean>;
+  paid_at: ColumnType<Date | null, undefined, undefined>;
   auto_closed_at: ColumnType<Date | null, Date | null | undefined, Date | null | undefined>;
   auto_close_undone: Generated<boolean>;
   order_date: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** When the customer wants it (0009). */
+  due_date: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  /** The due date the last reminder was about, and which it was ("soon" | "late"). */
+  due_reminded_for: ColumnType<string | null, string | null | undefined, string | null | undefined>;
+  due_reminded_state: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   fulfilled_at: ColumnType<Date | null, string | null | undefined, string | null | undefined>;
   carrier: string | null;
   tracking_number: string | null;
@@ -91,7 +97,20 @@ export interface SalesOrderHistoryTable {
   created_at: Generated<Date>;
 }
 
+export interface SalesOrderDocumentsTable {
+  id: Generated<string>;
+  order_id: string;
+  instance: string;
+  kind: "quote" | "invoice";
+  number: string;
+  revision: Generated<string>;
+  snapshot: ColumnType<import("./invoice.js").SalesDocument, string, string>;
+  created_at: Generated<Date>;
+}
+
 export interface SalesDB {
+  sales_order_documents: SalesOrderDocumentsTable;
+  sales_document_counters: { instance: string; kind: "quote" | "invoice"; last_number: number };
   sales_customers: SalesCustomersTable;
   sales_orders: SalesOrdersTable;
   sales_order_items: SalesOrderItemsTable;
@@ -110,7 +129,7 @@ export interface TenantContext {
 
 interface RequestWithTenant {
   tenant?: { org: { id: string; name: string; slug: string }; role: OrgRole; db: unknown };
-  session?: { id: string; email: string; display_name: string };
+  session?: { id: string; email: string; display_name: string; ai_door?: string | null };
 }
 
 export function tenantDb(req: Request): Kysely<SalesDB> {
@@ -125,7 +144,7 @@ export function tenantContext(req: Request): TenantContext {
   return { org: t.org, role: t.role };
 }
 
-export function sessionUser(req: Request): { id: string; email: string; display_name: string } | null {
+export function sessionUser(req: Request): { id: string; email: string; display_name: string; ai_door?: string | null } | null {
   return (req as unknown as RequestWithTenant).session ?? null;
 }
 

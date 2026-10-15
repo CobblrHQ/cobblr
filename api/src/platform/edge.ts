@@ -8,7 +8,7 @@
 //
 // TWO ways a channel comes to exist:
 //   · the HTTP long-poll relay below (registerChannel is called internally on
-//     the first relayTouch/relayPoll) — the generic /orgs/:slug/edge wire and
+//     registration via relayTouch) — the generic /orgs/:slug/edge wire and
 //     digifab's legacy /modules/digifab/edge alias are both thin shims over
 //     these primitives, so a bridge polling EITHER path lands on the SAME
 //     channel and every consumer reaches it;
@@ -26,7 +26,7 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
-import { EdgeOffline, EdgeTimeout, EdgeUnsupported } from "@cobblr/platform-contract";
+import { EdgeOffline, EdgeNotRegistered, EdgeTimeout, EdgeUnsupported } from "@cobblr/platform-contract";
 import type {
   EdgeAgentInfo,
   EdgeBridgeRecord,
@@ -135,7 +135,15 @@ async function sendOne(key: string, req: EdgeRequest): Promise<EdgeResponse> {
   // it is both faster and the only one that can serve it.
   const ch = channels.get(key);
   if (ch) return ch(req);
-  if (req.privacy === "personal") throw privateTransitUnavailable(key);
+  if (req.privacy === "personal") {
+    // A personal read goes only to a bridge that promises both: it will not
+    // follow a redirect off its machine, and it holds the read in memory only
+    // (edge-bridge relay-call.ts). And it never touches the relay table: it
+    // waits in this process for the bridge's poll (privateSend). An older
+    // bridge is still refused, in words (#5334).
+    if ((await bridgeIsFresh(key)) && (await bridgeHas(key, PRIVATE_FEATURES))) return privateSend(key, req);
+    throw privateTransitUnavailable(key);
+  }
 
   if (await bridgeIsFresh(key)) return relaySend(key, req);
   // The operator's diagnosis goes to the log; the person gets a sentence about
@@ -236,6 +244,79 @@ function pulledFrom(path: string, done: () => void): ReadableStream<Uint8Array> 
 
 /** How long one file hop may take by default. */
 const FILE_HOP_MS = 30 * 60_000;
+
+// ─────────────────────── Personal reads: in memory only ────────────────────
+// The relay table is the right home for a printer's status: any api process
+// can serve it, and a replaced container loses nothing. It is the wrong home
+// for someone's passport: every request and answer is a row, and a row is a
+// copy at rest. A personal read waits here instead, in the process that sent
+// it, and is handed to the bridge's next poll in this process. If the bridge
+// is polling another process (a deploy's overlap), the read times out and is
+// never stored: failing is the private outcome (#5334).
+const PRIVATE_FEATURES = ["no-redirects", "private-transit"] as const;
+interface PrivateJob {
+  id: string;
+  key: string;
+  req: EdgeRequest;
+  expires: number;
+  claimed: boolean;
+  settle: (r: EdgeResponse) => void;
+}
+const privateJobs = new Map<string, PrivateJob>();
+
+async function bridgeHas(key: string, features: readonly string[]): Promise<boolean> {
+  const row = await meta.selectFrom("edge_bridges").select(["features"]).where("channel_key", "=", key).executeTakeFirst();
+  const has = Array.isArray(row?.features) ? (row!.features as string[]) : [];
+  return features.every((f) => has.includes(f));
+}
+
+async function privateSend(key: string, req: EdgeRequest): Promise<EdgeResponse> {
+  const id = randomUUID();
+  const timeoutMs = req.timeoutMs ?? DEFAULT_REQ_TIMEOUT_MS;
+  const lane = edgeLaneOf(req);
+  const scope = req.scope ?? (req.source ? originOf(req.source.baseUrl) : undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await new Promise<EdgeResponse>((resolve, reject) => {
+      privateJobs.set(id, { id, key, req: { ...req, lane, ...(scope ? { scope } : {}) }, expires: Date.now() + timeoutMs, claimed: false, settle: resolve });
+      timer = setTimeout(async () => {
+        const w = await workspaceBridge(key).catch(() => null);
+        const who = w ? `Your bridge “${bridgeDisplayName(w)}”` : "Your edge bridge";
+        reject(new EdgeTimeout(key, `${who} did not take this personal document within ${Math.round(timeoutMs / 1000)} seconds, and it was not kept anywhere. Try again.`));
+      }, timeoutMs);
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+    privateJobs.delete(id);
+  }
+}
+
+/** The oldest personal read waiting for this bridge in this process, or null. */
+function claimPrivate(key: string, lanes: EdgeLane[] | null): EdgeRelayItem | null {
+  for (const job of privateJobs.values()) {
+    if (job.key !== key || job.claimed || job.expires <= Date.now()) continue;
+    const lane = edgeLaneOf(job.req);
+    if (lanes && lanes.length && !lanes.includes(lane)) continue;
+    job.claimed = true;
+    const left = job.expires - Date.now();
+    const req = job.req;
+    return {
+      id: job.id,
+      path: req.path,
+      method: EDGE_METHODS.includes(req.method as EdgeMethod) ? (req.method as EdgeMethod) : "GET",
+      body: req.body,
+      ...(req.source ? { source: req.source } : {}),
+      timeoutMs: Math.max(1_000, left - Math.min(5_000, Math.round(left * 0.1))),
+      lane,
+      ...(req.scope ? { scope: req.scope } : {}),
+      privacy: "personal",
+    };
+  }
+  return null;
+}
+
+/** Test seam: how many personal reads wait in this process. */
+export const privateJobsWaiting = (): number => privateJobs.size;
 
 function privateTransitUnavailable(key: string): EdgeUnsupported {
   return new EdgeUnsupported(key, "private-transit", "This bridge cannot safely read personal documents yet. Use a local model on this server.");
@@ -433,9 +514,8 @@ const DEFAULT_REQ_TIMEOUT_MS = 20_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-/** Record that a bridge is polling for this channel, right now, and, when it
- *  registers, what it says about itself. The name is taken ONCE, from the
- *  token it was installed with (the name typed on the setup screen), so a
+/** Register a bridge for this channel and record what it says about itself.
+ *  The name is taken ONCE, from the token it was installed with (the name typed on the setup screen), so a
  *  rename afterwards is never undone by the next registration. */
 export async function relayTouch(key: string, report?: BridgeReport): Promise<void> {
   const clip = (v: string | null | undefined) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 120) : null);
@@ -469,7 +549,7 @@ export async function relayTouch(key: string, report?: BridgeReport): Promise<vo
     .onConflict((oc) =>
       oc.column("channel_key").doUpdateSet({
         last_seen: new Date(),
-        // Keep what is known; a plain poll reports nothing and must not blank it.
+        // An older bridge may register without a report; keep what is known.
         name: sql`coalesce(edge_bridges.name, excluded.name)`,
         version: sql`coalesce(excluded.version, edge_bridges.version)`,
         hostname: sql`coalesce(excluded.hostname, edge_bridges.hostname)`,
@@ -616,19 +696,25 @@ async function claimNext(key: string, lanes: EdgeLane[] | null): Promise<EdgeRel
 }
 
 export async function relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null> {
-  await relayTouch(key);
+  const before = await meta.selectFrom("edge_bridges").select("last_seen").where("channel_key", "=", key).executeTakeFirst();
+  if (!before) throw new EdgeNotRegistered();
+  // Only registration creates presence. A read must not invent a bridge that
+  // discovery will then spend its relay deadline waiting for.
+  const renewed = await meta.updateTable("edge_bridges").set({ last_seen: new Date() }).where("channel_key", "=", key).executeTakeFirst();
+  if (!Number(renewed.numUpdatedRows)) throw new EdgeNotRegistered();
+  if (isReturn(new Date(before.last_seen))) cameOnline(key);
   const deadline = Date.now() + POLL_WAIT_MS;
   let checkedAt = Date.now();
   for (;;) {
-    const item = await claimNext(key, opts?.lanes ?? null);
+    const item = claimPrivate(key, opts?.lanes ?? null) ?? (await claimNext(key, opts?.lanes ?? null));
     if (item) return item;
     if (opts?.signal?.aborted || Date.now() >= deadline) return null;
     // A bridge disconnected while parked here ends its poll now, not at the 25 s deadline: its next
-    // poll meets its revoked key. Disconnecting deletes the row this poll's touch made.
+    // poll meets its revoked key. Disconnecting deletes the registered bridge's row.
     if (Date.now() - checkedAt >= 1_000) {
       checkedAt = Date.now();
       const still = await meta.selectFrom("edge_bridges").select("channel_key").where("channel_key", "=", key).executeTakeFirst();
-      if (!still) return null;
+      if (!still) throw new EdgeNotRegistered();
     }
     await sleep(CLAIM_POLL_MS);
     // Keep presence warm across a long park, or the reaper would call a bridge
@@ -653,6 +739,12 @@ export async function relayRespond(
   // catch that leaves the request hanging rather than failing. Not-a-uuid is
   // simply "no such job".
   if (!UUID_RE.test(r.id)) return false;
+  const priv = privateJobs.get(r.id);
+  if (priv) {
+    if (priv.key !== key || !priv.claimed) return false;
+    priv.settle({ status: r.status, body: r.body ?? null, ...(r.headers ? { headers: r.headers } : {}) });
+    return true;
+  }
   const res = await meta
     .updateTable("edge_relay_jobs")
     .set({ status: "done", done_at: new Date(), response: JSON.stringify({ status: r.status, body: r.body ?? null, ...(r.headers ? { headers: r.headers } : {}) }) })

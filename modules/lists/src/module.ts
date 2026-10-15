@@ -84,7 +84,8 @@ export default defineModule({
     // What a check-off carries. The item's record rides under its kind's own
     // id key (partId for a part), with sourceRef beside it.
     eventPayloads: {
-      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity", "restocks", "actorId"],
+      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity", "restocks", "actorId", "once", "reversible", "sourceKind", "sourceId"],
+      "lists.item.unchecked": ["listId", "itemId", "partId", "sourceRef", "actorId"],
     },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
@@ -96,6 +97,8 @@ export default defineModule({
       "lists.list.deleted",
       "lists.item.added",
       "lists.item.checked",
+      // A tick taken back: what the tick did to the line's record is undone.
+      "lists.item.unchecked",
       // Someone said "I'm getting this" (or took it back) on a shared list.
       "lists.item.claimed",
       "lists.item.removed",
@@ -168,6 +171,26 @@ export default defineModule({
           item_id: { label: "The item's id", type: "text" },
         },
       },
+      // ACTION-TEMPLATE: internal and never phrased; inventory's listener calls it and api/tests/a-shopping-line-typed-by-hand-restocks-the-item-it-names.test.ts proves it
+      {
+        // NO-PHRASING: a module linking a line to the record its title names
+        group: "buy",
+        id: "lists:link-item",
+        runBy: "member",
+        internal: true,
+        label: "Link a typed line to the record it names",
+        description:
+          "Internal: point an unticked line that has no record behind it at the record its title names, so ticking it restocks that record. A line that already has a record is left alone.",
+        icon: "link",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "lists.link-item",
+        argsSchema: {
+          item_id: { label: "The item's id", type: "text" },
+          kind: { label: "The record's kind", type: "text" },
+          id: { label: "The record's id", type: "text" },
+        },
+      },
     ],
   },
 
@@ -179,6 +202,8 @@ export default defineModule({
       startExpirySweeper();
       const { registerExpiryCalendarSource } = await import("./calendar-source.js");
       registerExpiryCalendarSource();
+      const { registerRecoveredStock } = await import("./recovered-stock.js");
+      registerRecoveredStock();
     },
     onShutdown: async () => {
       const { stopExpirySweeper } = await import("./expiry-sweeper.js");

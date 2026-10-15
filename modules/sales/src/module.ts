@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.36",
+  version: "0.1.40",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
@@ -66,7 +66,9 @@ export default defineModule({
           { name: "order_number", type: "text", role: "summary" },
           { name: "status", type: "text" },
           { name: "paid", type: "boolean" },
+          { name: "paid_at", type: "date" },
           { name: "order_date", type: "date" },
+          { name: "due_date", type: "date" },
           { name: "fulfilled_at", type: "date" },
           { name: "carrier", type: "text" },
           { name: "tracking_number", type: "text" },
@@ -80,7 +82,7 @@ export default defineModule({
         // ("blocked until sales order #12 ships"). Address / notes stay private.
         // A bundle's own fields ride in `metadata`, readable like a part's, so
         // a label or view naming one prints its value (#3591).
-        exposableFields: ["customer_name", "order_number", "status", "paid", "order_date", "fulfilled_at", "carrier", "tracking_number", "shipped_at", "metadata"],
+        exposableFields: ["customer_name", "order_number", "status", "paid", "order_date", "due_date", "fulfilled_at", "carrier", "tracking_number", "shipped_at", "metadata"],
         detailRoute: "/sales/{id}",
       },
       {
@@ -117,7 +119,10 @@ export default defineModule({
       // A sent parcel's delivered scan, when "Follow parcels I send" is on.
       "sales.order.delivered",
     ],
-    notifications: [{ eventType: "sales.order.closed", label: "Delivered orders closed", description: "A paid, fully fulfilled order closed after delivery, with Undo." }],
+    notifications: [
+      { eventType: "sales.order.closed", label: "Delivered orders closed", description: "A paid, fully fulfilled order closed after delivery, with Undo." },
+      { eventType: "sales.order.due", label: "Orders due", description: "An open order due tomorrow, or late, once for each due date." },
+    ],
     actions: [
       {
         // NO-PHRASING: offered by the notification and order sheet after an automatic close
@@ -267,12 +272,13 @@ export default defineModule({
       },
       {
         group: "more",
+        // UI-SCREEN: /sales (New order creates through the orders route rather than this import action)
         id: "sales:create-order",
         runBy: "member",
         examples: ["a new order came in", "record an order from the shop"],
         label: "Create order",
         description:
-          "Create a sales order programmatically (e.g. importing an order from a connected store). Optionally upserts the customer by email and adds line items. Args: { order_number?, status?, order_date?, notes?, metadata?, customer?: {name,email,phone,address}, items?: [{part_id?, description?, qty, unit_price?, metadata?}] }.",
+          "Create a sales order programmatically (e.g. importing an order from a connected store). Optionally upserts the customer by email and adds line items. Args: { order_number?, status?, order_date?, due_date?, notes?, metadata?, customer?: {name,email,phone,address}, items?: [{part_id?, description?, qty, unit_price?, metadata?}] }.",
         // Creates an order; it never operates on an existing one, so it is
         // not a button on an order (#3378).
         scope: "workspace",
@@ -285,10 +291,47 @@ export default defineModule({
           items: { label: "The line items to order", type: "json", required: true },
           status: { label: "Order status", type: "text" },
           order_date: { label: "The date of the order, ISO date", type: "text" },
+          due_date: { label: "When the customer wants it, ISO date", type: "text" },
           notes: { label: "Notes on the order (optional)", type: "text" },
           metadata: { label: "Any extra fields to store on the order", type: "json" },
         },
         userInvokable: false,
+      },
+      {
+        group: "more",
+        id: "sales:prepare-document",
+        runBy: "member",
+        examples: ["Make a quote for this order", "Issue an invoice for this order"],
+        label: "Prepare a quote or invoice",
+        description: "Create a quote or issue a numbered invoice from this order, with a saved copy of its lines and totals.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.prepare-document",
+        argsSchema: {
+          kind: { label: "quote or invoice", type: "text", required: true },
+          shop_name: { label: "Shop name", type: "text", required: true },
+          deadline: { label: "Due or valid-until date (YYYY-MM-DD)", type: "text" },
+          tax_rate: { label: "Tax percentage", type: "number" },
+          logo_file_id: { label: "Optional PNG or JPEG logo file", type: "text" },
+        },
+      },
+      {
+        group: "more",
+        id: "sales:send-document",
+        userInvokable: false,
+        undoable: false,
+        effect: "spends",
+        // ADMIN-ONLY: emailing a customer requires the owner; the handler checks the exact role.
+        runBy: "admin",
+        examples: ["Send this invoice to the customer", "Email the quote"],
+        label: "Email a quote or invoice",
+        description: "Email the saved quote or invoice PDF to this order's customer after the owner confirms the recipient and document.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.send-document",
+        argsSchema: {
+          kind: { label: "quote or invoice", type: "text", required: true },
+          version: { label: "Saved document revision", type: "text", required: true },
+          to: { label: "Customer email to confirm", type: "text", required: true },
+        },
       },
     ],
   },

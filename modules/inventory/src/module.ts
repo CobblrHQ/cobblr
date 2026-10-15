@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.17",
+  version: "0.21.20",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -202,6 +202,7 @@ export default defineModule({
       // What a one-tap mark MEANT, in a consumption ledger's vocabulary
       // (purchase / consume / discard). Same shape as core-scan.stock.observed.
       "inventory.stock.observed",
+      "inventory.stock.recovered",
       "inventory.stock.low",
       // The replace-clock came due (metadata.replace_every_days elapsed) — a
       // bundle wires this to the shopping list / a notification. Fired by the
@@ -756,6 +757,7 @@ export default defineModule({
         argsSchema: {
           unit: { label: "The unit delta is in (\"g\"); converted to the thing's own unit first", type: "text" },
           once: { label: "Apply once per source: a repeat for the same thing, source and direction changes nothing", type: "boolean" },
+          reversible: { label: "With once: the source can take it back, so a repeat is judged on what it has done net (a shopping line unticked, then ticked again)", type: "boolean" },
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
@@ -1029,10 +1031,10 @@ export default defineModule({
         id: "inventory:start-recount",
         // Recounting a collection is counting what is there: the member's own stock work.
         grantedAs: "inventory:count-stock",
-        examples: ["let's recount my filament", "rescan all my PETG from scratch", "recount the spices"],
+        examples: ["let's recount my filament", "rescan all my PETG from scratch", "recount everything tagged garage in Tools"],
         label: "Recount a collection",
         description:
-          "Start a recount of everything in a collection (or one category of it) across every place, or pick up the one already open over the same scope. Nothing on the records changes while it is open: each thing is scanned in (inventory:recount-scan) and the reconcile at the end is previewed first. Args: { scope: { collection: <collection name or label>, category_id? } }. Returns recount_id.",
+          "Start a recount of everything in a collection across every place, or of the part of it one category, one tag or one shared saved view takes in, or pick up the one already open over the same scope. Nothing on the records changes while it is open: each thing is scanned in (inventory:recount-scan) and the reconcile at the end is previewed first. Args: { scope: { collection: <collection name or label>, category_id? | tag? (a tag's name) | view_id? (a shared saved view of that collection) } }, at most one of the three. Returns recount_id.",
         scope: "workspace" as const,
         invokeHandler: "inventory.start-recount",
         userInvokable: true,
@@ -1261,6 +1263,9 @@ export default defineModule({
       // "4k7" answers a search for 4.7 kΩ (heal-measure-readings.ts).
       const { registerMeasureReadingsHeal } = await import("./heal-measure-readings.js");
       registerMeasureReadingsHeal();
+      // What its dashboard tiles read, in the one dashboard request (#6563).
+      const { registerInventoryDashboardReads } = await import("./dashboard-reads.js");
+      registerInventoryDashboardReads();
     },
     onShutdown: async () => {
       const { stopBurnRateSweeper } = await import("./burn-rate.js");

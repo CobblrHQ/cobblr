@@ -31,6 +31,7 @@ const router = Router({ mergeParams: true });
 
 // AI-REACH: action core-cadence:record-event — the same append, exposed as an
 // action so Ask Cobb / MCP / wires drive it without speaking this HTTP shape.
+// UI-REACH: low-level stock-event ingestion for receipts, quantity changes and wires; people record purchases or consumption through the record, never by editing the derived ledger.
 router.post("/events", async (req: Request, res: Response, next) => {
   try {
     // A read-only guest must not be able to rewrite the workspace's cadence:

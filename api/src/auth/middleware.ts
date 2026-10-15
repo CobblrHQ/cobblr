@@ -9,7 +9,7 @@ import { isMcpProxyCall } from "./mcp-proxy.js";
 import { isSelfCall } from "../platform/self-fetch.js";
 import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
-import { verifySession } from "./jwt.js";
+import { TokenRefused, verifySession } from "./jwt.js";
 import { errors as joseErrors } from "jose";
 import { resolveApiToken } from "./api-tokens.js";
 import { tokenAccessAllows, type TokenAccess } from "./token-access.js";
@@ -188,6 +188,7 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   // the person's own push devices and why a notification did or did not reach
   // them (get_my_notification_delivery, #5267)
   "/my-push",
+  "/feedback/mine",
   "/activity",
   "/notifications",
   // list_notifications reports the true unread total, not the page's
@@ -581,7 +582,7 @@ export async function requireAuth(
     // "timeout exceeded when trying to connect" and a starving api read as
     // every session expiring at once (#3033). That is a 503, counted as an
     // error and named in the log, never a logout.
-    if (err instanceof joseErrors.JOSEError) {
+    if (err instanceof joseErrors.JOSEError || err instanceof TokenRefused) {
       res.status(401).json({
         error: { code: "unauthenticated", message: err.message },
       });

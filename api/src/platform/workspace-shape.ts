@@ -20,6 +20,7 @@
 
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
+import { forgetPerRequest } from "../lib/request-context.js";
 
 export const WORKSPACE_SHAPE_HEADER = "X-Cobblr-Workspace-Shape";
 
@@ -29,6 +30,7 @@ const latest = new Map<string, number>();
  *  could not move costs a stale menu until the next reload, which is what
  *  happened before it existed, and must not fail the install that called it. */
 export async function bumpWorkspaceShape(orgId: string): Promise<void> {
+  forgetPerRequest((key) => key.startsWith(`entity-named-instances:${orgId}:`));
   try {
     const row = await meta
       .updateTable("orgs")

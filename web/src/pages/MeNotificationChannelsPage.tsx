@@ -26,6 +26,7 @@ import {
   type NotificationPriority,
 } from "../lib/api";
 import { discordConnectable } from "../lib/discord-connect";
+import { notificationKeys } from "../lib/notification-keys";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 const PRIORITIES: NotificationPriority[] = ["low", "normal", "high", "urgent"];
@@ -242,6 +243,17 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
       toast.error(e instanceof ApiError ? e.message : "Test failed."),
   });
 
+  const selfTest = useMutation({
+    mutationFn: () => api.selfTestNotification(orgId),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: notificationKeys.all() });
+      if (!r.notificationId) toast.info("Your notification settings did not allow this test.");
+      else if (!r.deliveredVia.length) toast.info("Test recorded, but no channel reported delivery. Check your notification settings.");
+      else toast.success(`Test delivered via ${r.deliveredVia.join(", ")}.`);
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't send the test notification."),
+  });
+
   const testOne = useMutation({
     mutationFn: (args: { id: string; priority: NotificationPriority }) =>
       api.testOneMeNotificationChannel(args.id, { priority: args.priority }),
@@ -276,6 +288,10 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
           both ends: the connect screen says success, and the bell keeps
           working. Say it here, where the fix is. */}
       <DiscordUnsubscribedCallout orgId={orgId} bindings={q.data?.items} />
+      <section className="space-y-2 rounded-lg border border-line p-3">
+        <p className="text-sm">Check delivery to your own account using this workspace's notification settings.</p>
+        <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50" disabled={selfTest.isPending} onClick={() => selfTest.mutate()}>Send me a test notification</button>
+      </section>
       <div className="flex items-center gap-2">
         <button
           onClick={() => setAddOpen(true)}

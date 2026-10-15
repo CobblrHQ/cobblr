@@ -32,7 +32,7 @@ import { notePassFailure } from "./pass-failures.js";
  *  enables, migrates and then writes the row; minutes, never hours. */
 const WINDOW = "10 minutes";
 
-export async function backfillInstallSideEffectClaims(): Promise<number> {
+export async function backfillInstallSideEffectClaims(orgId?: string): Promise<number> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return 0;
   const rows = await sql<{ org_id: string; external_id: string; module_name: string }>`
     select distinct b.org_id, b.external_id, a.entity_id as module_name
@@ -53,6 +53,7 @@ export async function backfillInstallSideEffectClaims(): Promise<number> {
         select 1 from jsonb_array_elements(coalesce(b.manifest::jsonb -> 'requires', '[]'::jsonb)) r
         where r ->> 'module' = a.entity_id
       )
+      ${orgId === undefined ? sql`` : sql`and b.org_id = ${orgId}`}
       and not exists (
         select 1 from bundle_resource_claims c
         where c.org_id = b.org_id and c.resource_type = 'module' and c.resource_key = a.entity_id
@@ -62,7 +63,9 @@ export async function backfillInstallSideEffectClaims(): Promise<number> {
   let failed = 0;
   for (const r of rows.rows) {
     try {
-      await recordClaim(r.org_id, r.external_id, "module", r.module_name);
+      // A module every workspace is born with is never claimed (recordClaim
+      // refuses it), so it is not work this pass left undone.
+      if (!(await recordClaim(r.org_id, r.external_id, "module", r.module_name))) continue;
       found++;
       console.log(`[heal] org ${r.org_id}: ${r.external_id} claims ${r.module_name} (switched on at install)`);
     } catch (err) {
@@ -71,6 +74,6 @@ export async function backfillInstallSideEffectClaims(): Promise<number> {
       console.error(`[heal] org ${r.org_id}: could not claim ${r.module_name} for ${r.external_id}:`, (err as Error).message);
     }
   }
-  await noteHealShim("api/src/platform/backfill-install-side-effect-claims.ts", found, failed);
+  if (orgId === undefined) await noteHealShim("api/src/platform/backfill-install-side-effect-claims.ts", found, failed);
   return found;
 }

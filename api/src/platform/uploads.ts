@@ -1,5 +1,5 @@
 import { trueType } from "@cobblr/platform-contract/sniff-type";
-import { PERSONAL_READER_PLACE, readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { PERSONAL_READER_PLACE, readSharedDocument } from "@cobblr/platform-contract/personal-documents";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 // The one upload door (platform().http.upload, @cobblr/platform-contract/upload).
 //
@@ -193,6 +193,7 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
     limits: { fileSize: routeCap ?? UPLOAD_CEILING_BYTES, files: 1 },
   }).single(field);
   return (req, res, next) => {
+    const started = performance.now();
     const rq = req as Req;
     const rs = res as Response;
     // Whatever happens next, the temporary file does not outlive the request.
@@ -201,6 +202,7 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
     });
     parse(rq, rs, ((err?: unknown) => {
       if (!err) {
+        const parsedAt = performance.now();
         const file = uploadedFile(rq);
         const orgId = rq.tenant?.org?.id;
         if (!file || opts.personalDocument || !orgId) return next();
@@ -215,7 +217,10 @@ export function uploadMiddleware(options: UploadOptions): UploadMiddleware {
             rs.status(409).json({ error: { code: "personal_document", message: `This document is too large to check privately here. Keep your copy and use a PDF or photo under 25 MB with ${PERSONAL_READER_PLACE}.` } });
             return;
           }
-          const read = await readPersonalDocument({ bytes: mime === "application/pdf" ? head.subarray(0, length) : await readFile(file.path), mime, assist: { orgId, userId: rq.session?.id }, ...(mime === "application/pdf" ? { path: file.path } : {}) });
+          const read = await readSharedDocument({ bytes: mime === "application/pdf" ? head.subarray(0, length) : await readFile(file.path), mime, assist: { orgId, userId: rq.session?.id }, ...(mime === "application/pdf" ? { path: file.path } : {}) }, { orgId, sha256: file.sha256 });
+          const multipartMs = Math.round(parsedAt - started), privacyMs = Math.round(performance.now() - parsedAt);
+          rs.append("Server-Timing", `multipart;dur=${multipartMs}, privacy;dur=${privacyMs}`);
+          console.info(`[uploads] intake timing: ${JSON.stringify({ multipart_ms: multipartMs, privacy_ms: privacyMs, mime, bytes: file.size })}`);
           if (read.privacy === "normal") return next();
           rs.setHeader("Cache-Control", "no-store");
           rs.status(409).json({ error: { code: "personal_document", message: `This is a personal document. It has not been saved to shared Files or sent to a cloud AI; read it with ${PERSONAL_READER_PLACE}.`, details: read } });

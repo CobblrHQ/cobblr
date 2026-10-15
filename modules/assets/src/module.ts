@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.6.3",
+  version: "0.6.4",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",
@@ -255,4 +255,11 @@ export default defineModule({
   },
 
   subscribes: [],
+  lifecycle: {
+    onBoot: async () => {
+      // What it shows on the dashboard, read in its one request (#6563).
+      const { registerAssetsDashboardReads } = await import("./dashboard-reads.js");
+      registerAssetsDashboardReads();
+    },
+  },
 });

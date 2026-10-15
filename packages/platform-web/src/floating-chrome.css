@@ -127,7 +127,9 @@ html[data-covering-open][data-overlay-owns-bottom]::after {
  * be scrolled on a phone). A caller's own max-h / overflow utility wins. */
 .fc-popover {
   position: fixed;
-  max-height: calc(100dvh - 32px);
+  /* Inside the safe area: on an iPhone the list once reached up under the
+   * Dynamic Island, with room it never had (#6551). */
+  max-height: calc(100dvh - 32px - var(--inset-top) - var(--inset-bottom));
   overflow-y: auto;
   overscroll-behavior: contain;
 }

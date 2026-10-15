@@ -212,6 +212,7 @@ appsRouter.get(
 // member, so it's bounded by their capabilities + field-read-scope; it
 // can never exceed them.
 // AI-REACH: holds or mints credentials; the assistant must never handle these
+// UI-REACH: sandbox handshake performed by the App Player, not a credential a person creates or copies.
 appsRouter.post(
   "/:slug/token",
   asyncHandler(async (req, res) => {
@@ -360,6 +361,7 @@ async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>)
 }
 
 // AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// UI-REACH: dry-run schema and reference validation for authoring clients; the app editor validates through create and update before saving.
 appsRouter.post(
   "/validate",
   asyncHandler(async (req, res) => {

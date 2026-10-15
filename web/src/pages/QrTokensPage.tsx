@@ -246,7 +246,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                       <Pill text={st} tone={st === "revoked" ? "ember" : "slate"} />
                     )}
                   </div>
-                  <div className="text-[11px] font-mono text-faint dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
+                  <div className="text-[11px] text-faint dark:text-slate-500 mt-1 flex flex-wrap gap-x-3">
                     <span>minted {new Date(t.created_at).toLocaleDateString()}</span>
                     {t.expires_at && (
                       <span>expires {new Date(t.expires_at).toLocaleDateString()}</span>

@@ -420,21 +420,22 @@ function MoreMenu({
         </PopoverLayer>,
         document.body,
       )}
-      {/* The one-time offer: a bar along the top, not a modal. A card over
-          the page covered what was under it (a metric's name, a tag's Edit)
-          until it was answered (#6499), so it takes its own room at the top,
-          as the new-version notice does, and the page starts below it. Both
-          answers write a layout to the account, so the dismissal is the
+      {/* The one-time offer: a bar, not a modal. A card over the page
+          covered what was under it (a metric's name, a tag's Edit) until it
+          was answered (#6499), so it takes its own room. At the foot, in the
+          bottom dock: it can only be decided once the nav has drawn and been
+          measured, after the page is up, and a bar arriving at the top then
+          pushed the whole page down under the reader on every load (#6635).
+          Both answers write a layout to the account, so the dismissal is the
           record and nothing new is stored. */}
       {offerSidebar && (
         <FloatingChrome
-          anchor="top"
-          reserveTop
+          anchor="bottom"
           yields={false}
           role="region"
           aria-label="Switch to the sidebar?"
           data-nav-graduation-offer
-          className="z-[59] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2 text-center shadow-sm"
+          className="z-[59] flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-t border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 px-4 py-2 text-center shadow-sm"
         >
           <span className="text-[13px] text-content dark:text-mortar-100">Your workspace outgrew the top bar. Switch to the sidebar?</span>
           {/* Both buttons write a permanent preference, so neither may promise

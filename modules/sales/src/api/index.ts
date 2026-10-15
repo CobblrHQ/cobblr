@@ -17,10 +17,12 @@ import { sessionUser, tenantContext } from "../db.js";
 import { searchStock } from "../stock-search.js";
 import { registerDeliveryCloseHeal } from "../close-delivered.js";
 import { registerFollowSweep } from "../follow-parcels.js";
+import { registerDueSweep } from "../due-reminders.js";
 
 registerSalesResolvers();
 registerSalesActionHandlers();
 registerFollowSweep();
+registerDueSweep();
 registerIntakeServices();
 registerIntakeSweep();
 registerDeliveryCloseHeal();
@@ -53,4 +55,10 @@ export { ordersRouter as primaryRouter };
 
 // Side-effect: the assistant's door to adding a line to an existing order.
 import { registerSalesLineHandlers } from "./line-handlers.js";
+import { registerPrepareDocumentAction } from "./prepare-document-action.js";
+import { registerSendDocumentAction } from "./send-document-action.js";
+
+registerSendDocumentAction();
+
+registerPrepareDocumentAction();
 registerSalesLineHandlers();

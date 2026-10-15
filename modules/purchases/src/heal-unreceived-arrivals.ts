@@ -43,6 +43,10 @@ import type { PurchasesDB } from "./db.js";
  *  gone through it. */
 export const MARK_ARRIVED_SHIPPED = "2026-08-13";
 
+// An arrival exposes its status before receive.ts stamps its lines. A heal
+// claiming that gap would suppress the stock write. Only touch rows settled
+// before this boot; a historical row edited now can wait for the next boot.
+const BEFORE_BOOT = new Date(performance.timeOrigin);
 
 export const UNCONFIRMED_NOTICE = "purchases.receipts.unconfirmed";
 
@@ -81,6 +85,8 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
        and o.status = 'arrived'
        and i.part_id is not null
        and i.received_at is null
+       and o.updated_at < ${BEFORE_BOOT}
+       and i.updated_at < ${BEFORE_BOOT}
     returning i.receipt_unconfirmed as flagged`.execute(db);
   const flagged = stamped.rows.filter((r) => r.flagged).length;
   if (flagged > 0) {

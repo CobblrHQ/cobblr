@@ -13,10 +13,10 @@ export function registerWireViewReader(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<CoreViewsDB>;
     const view = await db
       .selectFrom("core_views_views")
-      .select(["entity_kind", "config"])
+      .select(["entity_kind", "config", "name"])
       .where("id", "=", viewId)
       .where("owner_user_id", "is", null)
       .executeTakeFirst();
-    return view ? { entityKind: view.entity_kind, config: (view.config ?? {}) as Record<string, unknown> } : null;
+    return view ? { entityKind: view.entity_kind, config: (view.config ?? {}) as Record<string, unknown>, name: view.name } : null;
   });
 }

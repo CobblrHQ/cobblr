@@ -33,6 +33,9 @@
 import { meta } from "../db/meta.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { enableModuleForOrg } from "../modules/enable.js";
+import { markSwept, sweepVersion, sweptClean } from "./boot-sweep-marks.js";
+
+const SWEEP = "api/src/platform/migrate-location-to-placement.ts";
 
 export interface PlacementBackfillResult {
   orgsTouched: number;
@@ -249,6 +252,11 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") {
     return { orgsTouched: 0, rowsInserted: 0 };
   }
+  // ensurePlacementSyncForOrg gives every workspace its triggers as a located
+  // module is enabled, so once this has run clean at this version the only
+  // work left is what a change to the triggers or the backfill brings.
+  const version = sweepVersion(backfillOne, TRIGGER_FUNCTION_SQL, triggerSql);
+  if (await sweptClean(SWEEP, version)) return { orgsTouched: 0, rowsInserted: 0 };
   const orgs = await meta
     .selectFrom("org_modules")
     .select("org_id")
@@ -258,6 +266,7 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
 
   let orgsTouched = 0;
   let rowsInserted = 0;
+  let failed = 0;
   for (const o of orgs) {
     try {
       const r = await backfillOne(o.org_id);
@@ -265,6 +274,7 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
       rowsInserted += r.rowsInserted;
     } catch (err) {
       notePassFailure("backfillPlacements", o.org_id, err);
+      failed++;
       console.error(
         `[backfill-placements] org ${o.org_id} failed:`,
         (err as Error).message,
@@ -276,5 +286,6 @@ export async function backfillPlacements(): Promise<PlacementBackfillResult> {
       await evictTenantPool(o.org_id);
     }
   }
+  await markSwept(SWEEP, version, failed);
   return { orgsTouched, rowsInserted };
 }

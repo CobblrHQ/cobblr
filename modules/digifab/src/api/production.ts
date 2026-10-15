@@ -40,7 +40,9 @@ productionRouter.post("/", asyncHandler(async (req, res) => {
 // AI-ACTION: digifab:production-control, digifab:production-abort
 // UI-SCREEN: /station/production/:connectionId starts, answers and aborts through the digifab:production-control and digifab:production-abort actions
 productionRouter.post("/control", asyncHandler(async (req, res) => {
- if (!(await requireCapability(req, res, "digifab:production-control"))) return;
+ // Abort is every member's stop; starting an attempt or answering its prompt runs the station, the operator's (#6785).
+ const aborting = (req.body as { operation?: unknown } | undefined)?.operation === "abort";
+ if (aborting ? !(await requireCapability(req, res, "digifab:production-abort")) : !(await requireCapability(req, res, "digifab:production-control"))) return;
  const input = z.object({ operation: z.enum(["start", "answer", "abort"]), fields: z.unknown() }).strict().parse(req.body);
  try { res.json(await productionControl(tenantDb(req), tenantContext(req).org.id, input.operation, input.fields)); }
  catch (error) { res.status(409).json({ error: { message: error instanceof Error ? error.message : "The station could not finish this action." } }); }

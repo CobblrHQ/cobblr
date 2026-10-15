@@ -21,6 +21,7 @@ const Body = z.object({
 });
 
 // AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// UI-REACH: low-level capability invocation for API clients; people use the task-specific chat, scan and build flows.
 invokeRouter.post(
   "/",
   asyncHandler(async (req, res) => {

@@ -22,8 +22,9 @@
 // rather than re-deriving it from a name the identify may have changed.
 
 import type { Insertable, Kysely, Transaction } from "kysely";
+import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { ADDED_BY_KEY, addedByFromRequest, type AddedBy } from "@cobblr/platform-contract/scan-source";
+import { ADDED_BY_KEY, INTAKE_DOOR_KEY, addedByFromRequest, type AddedBy, type IntakeDoor } from "@cobblr/platform-contract/scan-source";
 import type { CoreScanDB, CoreScanInboxItemsTable } from "../db.js";
 import { mergeMeta } from "./metadata.js";
 import { classifyScanCode } from "./scan-router.js";
@@ -168,7 +169,9 @@ export function rowShape(row: ShapeRow, door?: IntakeDoor): RowShape {
  *  add-a-thing door). The row is shaped as a typed note is and runs the same
  *  plan; the door waits for it (`settle`) so its answer can say what the
  *  intake found. */
-export type IntakeDoor = "scan" | "note" | "receipt" | "split" | "import" | "assistant";
+// The door list lives in the contract, beside the rule that reads it
+// (typedInThePanel): a new door is added there and picks a side.
+export type { IntakeDoor };
 
 /** The match passes live in api/inbox.ts (the matchmaker's request-side
  *  half); it registers them at load so the plan can call them without an
@@ -260,8 +263,11 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
   // Who added it, when it was not the person's own hand: the session's
   // header says so once ("Added by Claude", scan-source.ts).
   const addedBy = shape === "import" ? null : addedByFromRequest((await Promise.resolve(platform().auth?.requestSource?.()).catch(() => null)) ?? null);
+  // Every row says which door it came through (#6565): the dashboard's panel
+  // lists only what was typed into it. An import keeps its metadata as it
+  // came, and gains only its door.
   const stamped: InsertValues =
-    shape === "import" ? v : { ...v, suggested_metadata: stampShape(v.suggested_metadata, shape, addedBy) as never };
+    shape === "import" ? { ...v, suggested_metadata: withDoor(v.suggested_metadata, opts.door) as never } : { ...v, suggested_metadata: stampShape(v.suggested_metadata, shape, addedBy, opts.door) as never };
   const values: InsertValues = held
     ? {
         ...stamped,
@@ -286,6 +292,22 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
       sourceKind: row.source_kind as string,
     });
   }
+  // A barcode or a link scanned is a line in the workspace's activity, as a
+  // photo already is (its stored file says "scanned"): a day of barcode
+  // scans left Recent activity empty (#6564). Named when shown, by the row's
+  // name then.
+  const activity = platform().activity;
+  if (activity && opts.door === "scan" && !row.image_file_id) {
+    await activity
+      .log({
+        orgId: opts.orgId,
+        userId: opts.userId ?? null,
+        action: "scan_received",
+        ref: { module: "core-scan", entityType: "inbox_item", entityId: row.id as string },
+        diff: { ...(row.barcode_text ? { barcode: row.barcode_text } : {}), ...(row.source_url ? { url: row.source_url } : {}) },
+      })
+      .catch((err: Error) => console.warn("[core-scan] activity for a scan not written:", err.message));
+  }
 
   const ctx: PassContext = { ...opts, row, shape, held: !!held };
   let inline: IntakeResult["inline"] = "none";
@@ -302,9 +324,15 @@ export async function intakeRow(opts: IntakeOpts): Promise<IntakeResult> {
   return { row, shape, plan, inline };
 }
 
-function stampShape(meta: unknown, shape: RowShape, addedBy: AddedBy | null): string {
+function stampShape(meta: unknown, shape: RowShape, addedBy: AddedBy | null, door: IntakeDoor): string {
   const base = typeof meta === "string" ? (JSON.parse(meta) as Record<string, unknown>) : ((meta as Record<string, unknown> | undefined) ?? {});
-  return JSON.stringify({ ...(addedBy ? { [ADDED_BY_KEY]: addedBy } : {}), ...base, intake_shape: shape });
+  return JSON.stringify({ ...(addedBy ? { [ADDED_BY_KEY]: addedBy } : {}), ...base, intake_shape: shape, [INTAKE_DOOR_KEY]: door });
+}
+
+function withDoor(meta: unknown, door: IntakeDoor): unknown {
+  if (meta === undefined || meta === null) return JSON.stringify({ [INTAKE_DOOR_KEY]: door });
+  const base = typeof meta === "string" ? (JSON.parse(meta) as Record<string, unknown>) : (meta as Record<string, unknown>);
+  return JSON.stringify({ ...base, [INTAKE_DOOR_KEY]: door });
 }
 
 interface PassContext extends IntakeOpts {
@@ -363,6 +391,22 @@ export async function knownByCode(orgId: string, code: string): Promise<{ title:
   const best = found.barcode_matches[0];
   if (!best) return null;
   return { title: best.title, kind: best.kind, id: best.id, instance: best.instance ?? null, qty: best.qty ?? null, unit: best.unit ?? null, image_path: best.image_path ?? null };
+}
+
+/** The unfiled inbox row for this code and purpose (#6554): a code scanned
+ *  again is that row, the newest one, answered from the inbox before any
+ *  upload or lookup. The same row a re-scan's dedupe bumps (inbox.ts
+ *  POST /scan), so the camera shows what the scan will land on. */
+export async function inboxRowByCode(db: Kysely<CoreScanDB>, code: string, purpose: string = "arrival") {
+  return db
+    .selectFrom("core_scan_inbox_items")
+    .selectAll()
+    .where("status", "=", "pending")
+    .where("barcode_text", "=", code)
+    .where(sql<string>`coalesce(suggested_metadata->>'scan_purpose', 'arrival')`, "=", purpose)
+    .orderBy("created_at", "desc")
+    .limit(1)
+    .executeTakeFirst();
 }
 
 /** The workspace's own record for this code, by its barcode or identifier

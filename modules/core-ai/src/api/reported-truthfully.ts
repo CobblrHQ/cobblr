@@ -71,3 +71,24 @@ export function misreportedWrites(text: string, appliedTools: readonly string[])
   }
   return null;
 }
+
+// It was told no, and said yes.
+//
+//   tool:   "paprika" matches 2 records ... Ask them which one before running
+//           labels:print; do not pick one for them.
+//   answer: "I've queued a label for Smoked paprika."
+//
+// Nothing was queued (the corpus nightly, #6562). The write was handed back
+// before it ran, and the sentence under it said it had happened. A turn whose
+// every write was handed back and that changed nothing has nothing it may
+// claim: the person reads "queued" and walks to the printer.
+const DONE = /\b(queued|printed|moved|renamed|updated|edited|changed|re-?filed|relocated|created|added|deleted|removed|cleared|labell?ed|logged|filed|placed|sent|marked|merged|installed|turned (?:on|off))\b/i;
+
+/** The message to hand back when a turn that changed nothing says it did. */
+export function claimedAfterHandBack(text: string): string | null {
+  if (!text.trim() || !claimsClass(text, DONE)) return null;
+  return (
+    "Nothing was changed this turn: the write you tried was handed back before it ran, with the reason in its result. " +
+    "Your answer says it happened. Say what the result asked for instead (usually a question for the person), and do not say anything was done."
+  );
+}

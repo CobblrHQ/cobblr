@@ -7,6 +7,7 @@ import { registerHandler } from "./actions.js";
 import { meta } from "../db/meta.js";
 import { buildPushPayload } from "./push-policy.js";
 import { pushToDevice, unreadCountFor } from "./push-delivery.js";
+import { productName } from "./product-name.js";
 
 const deviceIdOf = (ctx: ActionInvokeContext): string => String(((ctx.args ?? {}) as { device_id?: unknown }).device_id ?? "").trim();
 
@@ -32,11 +33,11 @@ export function registerPushDeviceHandlers(): void {
     const payload = buildPushPayload({
       notificationId: `test-${Date.now()}`,
       eventType: "test.notification",
-      message: `A test from Cobblr to ${device.label}. Notifications reach this device.`,
+      message: `A test from ${productName()} to ${device.label}. Notifications reach this device.`,
       // PAGE-LINK: a test push is about the device, not a record; it opens the page that lists it
       link_url: "/me/communication",
       priority: "high",
-      title: org?.name ?? "Cobblr",
+      title: org?.name ?? productName(),
       unread: await unreadCountFor(device.user_id),
     });
     const outcome = await pushToDevice(device, payload, "high");
@@ -49,6 +50,6 @@ export function registerPushDeviceHandlers(): void {
     const found = await ownDevice(ctx);
     if ("error" in found) return { ok: false, error: found.error };
     await meta.deleteFrom("push_subscriptions").where("id", "=", found.device.id).where("user_id", "=", found.device.user_id).execute();
-    return { ok: true, summary: `${found.device.label} no longer gets notifications from Cobblr.` };
+    return { ok: true, summary: `${found.device.label} no longer gets notifications from ${productName()}.` };
   });
 }

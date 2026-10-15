@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 import sharp from "sharp";
 import { platform, type FilesDriver, type WorkspaceFolder } from "@cobblr/platform-contract";
 import type { FileKind, FileVariants } from "../db.js";
-import { PERSONAL_READER_PLACE, PersonalDocumentRefused, readPersonalDocument } from "@cobblr/platform-contract/personal-documents";
+import { PERSONAL_READER_PLACE, PersonalDocumentRefused, readSharedDocument } from "@cobblr/platform-contract/personal-documents";
 import { sniffType } from "@cobblr/platform-contract/sniff-type";
 
 // Default storage root: <repo>/_files. Overridable per-deploy.
@@ -178,30 +178,20 @@ export interface StoredFile {
   mime_type: string;
 }
 
-/** Bytes a workspace has just had read as ordinary, so the same file
- *  stored again (a re-upload, a zip entry checked and then stored, a
- *  pattern attached twice) is not read again: a typed PDF's pictures cost
- *  seconds of OCR. Only an ordinary verdict is kept; a refusal is read
- *  again. Scoped to the workspace, or an upload's speed would tell one
- *  workspace what another had just stored. */
-const ordinaryRecently = new Map<string, number>();
-const ORDINARY_TTL_MS = 15 * 60_000;
-
 export async function assertSharedFileSource(source: FileSourceIn, claimedMime: string, orgId?: string, known?: Fingerprint): Promise<void> {
   const head = await headOf(source, 4096);
   const mime = sniffType(head) || claimedMime;
   if (!/^(?:image\/|application\/pdf|text\/)/.test(mime)) return;
-  const key = orgId ? `${orgId}:${mime}:${(known ?? (await fingerprintOf(source))).sha256}` : null;
-  const kept = key ? ordinaryRecently.get(key) : undefined;
-  if (key && kept !== undefined && Date.now() - kept < ORDINARY_TTL_MS) return;
+  const workspace = orgId ? { orgId, sha256: (known ?? (await fingerprintOf(source))).sha256 } : undefined;
   const size = source instanceof Uint8Array ? source.length : source.size;
   if (mime !== "application/pdf" && size > 25 * 1024 * 1024) throw new PersonalDocumentRefused(`This may be a personal document, so it was not saved to shared Files. Read it with ${PERSONAL_READER_PLACE}.`);
   const onDisk = !(source instanceof Uint8Array);
-  const read = await readPersonalDocument({ bytes: onDisk ? mime === "application/pdf" ? head : await readFile(source.path) : source, mime, ...(onDisk && mime === "application/pdf" ? { path: source.path } : {}) });
-  if (read.privacy === "personal") throw new PersonalDocumentRefused();
-  if (key) {
-    ordinaryRecently.set(key, Date.now());
-    if (ordinaryRecently.size > 500) ordinaryRecently.delete(ordinaryRecently.keys().next().value as string);
+  const started = performance.now();
+  try {
+    const read = await readSharedDocument({ bytes: onDisk ? mime === "application/pdf" ? head : await readFile(source.path) : source, mime, ...(onDisk && mime === "application/pdf" ? { path: source.path } : {}) }, workspace);
+    if (read.privacy === "personal") throw new PersonalDocumentRefused();
+  } finally {
+    console.info(`[files] shared upload privacy check: ${Math.round(performance.now() - started)} ms (${mime}, ${size} bytes)`);
   }
 }
 

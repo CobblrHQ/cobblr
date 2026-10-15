@@ -13,19 +13,30 @@
 // on the assistant's say-so). Pinned by human-only.test.ts; an id here is never
 // declared as an action an assistant is offered.
 
+/** What makes it a person's own step, where they do it, and the
+ *  take_user_to destination that opens that screen filled in, when there is
+ *  one. A refusal that promised a screen the assistant cannot open sent it
+ *  to promise one too (the assistant audit, #6686). */
+export interface HumanOnly {
+  does: string;
+  where: string;
+  escort?: string;
+}
+
 /** Action id → what it does that makes it a person's own step, and where. */
-export const HUMAN_ONLY_ACTIONS: Readonly<Record<string, { does: string; where: string }>> = {
-  "platform:invite-person": { does: "grants someone access to this workspace", where: "Configuration → People, Invite" },
+export const HUMAN_ONLY_ACTIONS: Readonly<Record<string, HumanOnly>> = {
+  "platform:invite-person": { does: "grants someone access to this workspace", where: "Configuration → People, Invite", escort: "members" },
   "platform:hand-off-things": { does: "hands everything one person owns to another", where: "Configuration → People, Hand off" },
   "platform:approve-request": { does: "decides what a person may do", where: "the request's card" },
   "platform:deny-request": { does: "decides what a person may do", where: "the request's card" },
+  "platform:sign-in-phone-for": { does: "signs a phone in as someone else", where: "Configuration → Permissions, Accounts: Sign in their phone" },
 };
 
 /** Why `actionId` with these `args` is a person's own step, or null. Some
  *  actions are human-only in one branch: sharing with someone already shared
  *  with is an assistant's to do; sharing with a new email address brings a new
  *  person into a shared workspace and is not. */
-export function humanOnly(actionId: string, args?: Record<string, unknown> | null): { does: string; where: string } | null {
+export function humanOnly(actionId: string, args?: Record<string, unknown> | null): HumanOnly | null {
   const fixed = HUMAN_ONLY_ACTIONS[actionId];
   if (fixed) return fixed;
   if (actionId === "platform:share-with" && typeof args?.with === "string" && args.with.includes("@")) {
@@ -38,7 +49,9 @@ export function humanOnly(actionId: string, args?: Record<string, unknown> | nul
  *  that the person does it, so the answer offers the screen instead. */
 export function humanOnlyRefusal(actionId: string, args?: Record<string, unknown> | null): string | null {
   const h = humanOnly(actionId, args);
-  return h
-    ? `That ${h.does}, so a person does it themselves: ${h.where}. Offer to open that screen for them (take_user_to), filled in; never run it.`
-    : null;
+  if (!h) return null;
+  const help = h.escort
+    ? `Offer to open it for them, filled in (take_user_to, destination ${h.escort}); never run it.`
+    : "Tell them where it is; there is no screen you can open for it, so do not offer one. Never run it.";
+  return `That ${h.does}, so a person does it themselves: ${h.where}. ${help}`;
 }

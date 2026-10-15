@@ -10,7 +10,7 @@
 
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { JustFiledNotice } from "./JustFiledNotice";
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { lazyShellHost } from "../lib/lazyShellHost";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { ModuleOffGate } from "./ModuleOffGate";
@@ -842,7 +842,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             {/* A page for a module that is off offers only turning it on. */}
             <ModuleOffGate>
               <AiNoticeGiven when={chatOpen && railTab === "cobb" && aiStatus?.reason === "not_entitled"} reason="not_entitled">
-                <Outlet />
+                {/* A page's code arriving waits here, in the page's own room:
+                    with no boundary of its own, a lazy page reached the one
+                    around the whole shell, and the header, the nav and every
+                    bar went blank under "loading…" on every first load
+                    (#6635). aria-busy: not settled (wait-settled.mjs). */}
+                <Suspense fallback={<div aria-busy="true" data-page-code-arriving className="min-h-[60vh]" />}>
+                  <Outlet />
+                </Suspense>
               </AiNoticeGiven>
             </ModuleOffGate>
           </ErrorBoundary>

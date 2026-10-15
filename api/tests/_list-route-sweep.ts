@@ -24,6 +24,7 @@
 // falls in exactly one group (sweepGroupOf), and every file checks that each
 // group still has its file, so a route cannot fall between them.
 import "./_stub-env.js";
+import { mapLimit } from "./map-limit.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -31,12 +32,14 @@ import { fetchKinds, resolveCreatePath, type KindRec, type WorkspaceApi } from "
 import { BASE, FRESH_ORG_BUDGET_MS, enableAllModulesForTests, isApiUp, org, personDay, signupFreshOrg, type TestSession } from "./helpers.js";
 import { worn } from "../../scripts/lib/load-factor.mjs";
 import { testSupport } from "./test-support.js";
+import { WAITING_READS, waitsInsteadOfAnswering } from "./_waiting-reads.js";
 
 const live = await isApiUp();
 const SEED = 12;
 const FEW = 2;
 const GROWTH = 3;
 const GREW_BY = 5;
+const SEED_AT_ONCE = 3;
 
 /** Routes whose meta cost may grow with their rows, each with why. Keep it
  *  short: an entry here is a per-row lookup someone chose to keep. */
@@ -166,9 +169,12 @@ export function sweepListRoutes(group: SweepGroup, opts: { mustMeasure: string[]
         // The small side has a FEW rows of every kind, never none: an empty list
         // skips the once-per-request loads (field defs, overrides), and 0 -> 12
         // then read those as growth with the rows.
+        // SEED_AT_ONCE creates at a time, not all fourteen: five sweep files seed together when the
+        // helper changes, and seventy creates at once took every client of the api's meta pool, timing
+        // out another file's sign-up (run 50248, 2026-10-15).
         const [made, madeFew] = await Promise.all([
-          Promise.all(Array.from({ length: SEED }, (_, n) => api.request("POST", `/${path}`, fieldsFor(k, n)))),
-          Promise.all(Array.from({ length: FEW }, (_, n) => few.request("POST", `/${path}`, fieldsFor(k, n)))),
+          mapLimit(Array.from({ length: SEED }, (_, n) => n), SEED_AT_ONCE, (n) => api.request("POST", `/${path}`, fieldsFor(k, n))),
+          mapLimit(Array.from({ length: FEW }, (_, n) => n), 1, (n) => few.request("POST", `/${path}`, fieldsFor(k, n))),
         ]);
         if (made.filter((m) => m.status < 300).length === SEED) seededKinds.push(k.id);
         if (k.id === "inventory:part") {
@@ -180,7 +186,7 @@ export function sweepListRoutes(group: SweepGroup, opts: { mustMeasure: string[]
       // the seed made, and it resolved each row's title and kind on its own, which
       // took the whole meta pool on staging's walker workspace (60 labels, #5875).
       const queue = (w: WorkspaceApi, ids: string[]) =>
-        Promise.all(ids.map((id) => w.request("POST", "/modules/labels/queue", { module_name: "inventory", entity_type: "part", entity_id: id, qr_payload: `${BASE}/q/${id}`, description: `bounded ${id.slice(0, 8)}` })));
+        mapLimit(ids, SEED_AT_ONCE, (id) => w.request("POST", "/modules/labels/queue", { module_name: "inventory", entity_type: "part", entity_id: id, qr_payload: `${BASE}/q/${id}`, description: `bounded ${id.slice(0, 8)}` }));
       queued = (await queue(api, partIds.seeded)).filter((r) => r.status < 300).length;
       await queue(few, partIds.empty);
       const listed = (await (await fetch(`${BASE}/api/v1/test/routes`)).json()) as { routes: string[] };
@@ -189,7 +195,7 @@ export function sweepListRoutes(group: SweepGroup, opts: { mustMeasure: string[]
         .map((r) => r.slice("GET /api/v1/orgs/:slug".length))
         .flatMap((r) => (/:(kind|entityKind)\b/.test(r) ? seededKinds.map((k) => r.replace(/:(kind|entityKind)\b/, encodeURIComponent(k))) : [r]))
         .filter((r) => !/:[A-Za-z_]+/.test(r));
-      routes = all.filter((r) => sweepGroupOf(r) === group);
+      routes = all.filter((r) => sweepGroupOf(r) === group && !waitsInsteadOfAnswering(r));
     }, worn(FRESH_ORG_BUDGET_MS * 6));
 
     it("seeds enough of the workspace to measure (the positive control)", () => {
@@ -204,18 +210,18 @@ export function sweepListRoutes(group: SweepGroup, opts: { mustMeasure: string[]
       const over: string[] = [];
       const measured: string[] = [];
       const unmeasured: string[] = [];
-      for (const route of routes) {
+      await mapLimit(routes, 4, async (route) => {
         // The two workspaces at once, each with its own cold caches, so neither
         // warms the other and background work cannot warm either measurement.
         const [small, big] = await Promise.all([read(empty, route), read(seeded, route)]);
         if (small.status !== 200 || big.status !== 200 || !small.probe || !big.probe || big.rows < small.rows + GREW_BY) {
           unmeasured.push(route);
-          continue;
+          return;
         }
         measured.push(route);
         const more = big.probe.total - small.probe.total;
         if (more > GROWTH && !(route in EXEMPT)) over.push(`${route}: ${small.rows} -> ${big.rows} rows, +${more} meta statements\n${grew(big.probe, small.probe)}`);
-      }
+      });
       console.log(`${group}: measured ${measured.length} list routes (${measured.join(", ")}); ${unmeasured.length} not measured (no rows the seed makes, or not a list):\n  ${unmeasured.join("\n  ")}`);
       for (const r of opts.mustMeasure) expect(measured, `${r}, which grows with the seed, is among the measured`).toContain(r);
       expect(measured.length, "enough lists measured for this to mean something").toBeGreaterThanOrEqual(opts.minMeasured);
@@ -224,6 +230,7 @@ export function sweepListRoutes(group: SweepGroup, opts: { mustMeasure: string[]
 
     it("every exemption still names a route the api serves", () => {
       for (const r of Object.keys(EXEMPT)) expect(all, `exempt route ${r} is gone: drop it`).toContain(r);
+      for (const r of Object.keys(WAITING_READS)) expect(all, `waiting read ${r} is gone: drop it from _waiting-reads.ts`).toContain(r);
     });
 
     it("every group a route falls in has its own test file, so no route goes unswept", () => {

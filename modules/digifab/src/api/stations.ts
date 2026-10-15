@@ -150,7 +150,8 @@ const Sheet = z.object({ part_id: z.string().uuid(), laser_sheet: LaserMaterialS
 const Confirm = z.object({ job_id: z.string().uuid(), sheet_id: z.string().uuid(), station_token: z.string().min(32).max(128) });
 // AI-REACH: exempt confirms the sheet physically loaded at a laser station, with that screen's credential.
 stationsRouter.post("/:connectionId/:deviceId/confirm", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  // The admin tier, or an operator: confirming the sheet loaded at the station (#6672).
+  if (!(await requireCapability(req, res, "digifab:operate"))) return;
   const body = Confirm.safeParse(req.body);
   if (!body.success) return badBody(res, body.error);
   const orgId = tenantContext(req).org.id;
@@ -169,7 +170,8 @@ stationsRouter.post("/:connectionId/:deviceId/confirm", asyncHandler(async (req,
 
 // AI-REACH: action inventory update, the station's material description is kept on the sheet record.
 stationsRouter.put("/sheets/material", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  // The admin tier, or an operator: saying what the sheet at the station is (#6672).
+  if (!(await requireCapability(req, res, "digifab:operate"))) return;
   const parsed = Sheet.safeParse(req.body);
   if (!parsed.success) return badBody(res, parsed.error);
   const orgId = tenantContext(req).org.id;

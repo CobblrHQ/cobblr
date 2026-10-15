@@ -126,7 +126,11 @@ export async function nameActivityRows(
     }
     const context = contexts.get(`${i.action}:${i.entity_id}`);
     const ref = about.get(i.id) ?? context?.record ?? (context?.scan?.kind && context.scan.recordId ? { kind: context.scan.kind, id: context.scan.recordId } : null);
-    const target = ref ? recordByRef.get(`${ref.kind}:${ref.id}`) : r;
+    // A scan is named by its inbox row until it is filed: the row's current
+    // name and picture, never the file it was uploaded as. The stored file
+    // used to win here, and the owner's sugar read "You scanned
+    // scan-096619189014.jpg" for a row long since named (#6564).
+    const target = ref ? recordByRef.get(`${ref.kind}:${ref.id}`) : context?.scan ? undefined : r;
     const targetKind = target ? collectionKindOf(target, target.kind) : context?.scan ? null : base;
     const thumbnail = context?.photoId
       ? `/api/v1/orgs/${slug}/modules/core-files/files/${context.photoId}/raw?variant=thumb`

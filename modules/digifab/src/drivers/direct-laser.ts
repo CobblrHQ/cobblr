@@ -9,6 +9,8 @@ const HEADER=";Cobblr:";
 export class DirectLaserDriver extends DeclarativeDriver {
  readonly laserBackend="gcode" as const;
  async jobReviewRequired():Promise<boolean>{return true;}
+ // A laser reached directly is a laser station like a bridged one: without this its station page had no kind and refused it.
+ async jobReviewKind():Promise<"laser">{return "laser";}
  private async text(path:string,vars:Record<string,string>={}):Promise<string>{
   const r=await this.req("GET",this.path(path,vars));
   if(!r.ok)throw new DriverSaid(r.status,"The laser controller did not answer. Check the connection and try again.");
@@ -37,7 +39,7 @@ export class DirectLaserDriver extends DeclarativeDriver {
   const m=this.manifest.status;if(!m)throw new Error("The direct laser needs a status endpoint.");
   const text=await this.text(m.path,{jobId:""});const state=/<(\w+)/.exec(text)?.[1]?.toLowerCase();
   const map:Record<string,string>={idle:"idle",run:"printing",hold:"paused",door:"paused",alarm:"error",home:"busy",jog:"busy",sleep:"offline",check:"busy"};
-  return [{id:this.manifest.id,name:this.manifest.name,state:map[state??""]??"unknown",enabled:true,raw:{laserBackend:this.laserBackend}}];
+  return [{id:this.manifest.id,name:this.manifest.name,state:map[state??""]??"unknown",enabled:true,station_kind:"laser",raw:{laserBackend:this.laserBackend}}];
  }
  private compiled(source:string,c:GcodeController):string {
   const plan=validateLaserPlan(JSON.parse(source));const code=emitGcode(plan,c);

@@ -1,10 +1,4 @@
 {
   "_why": "Kernel routes the assistant cannot reach. A WORKLIST, not an allowance: it may only shrink. Each is a capability a person has and Cobb does not, which is how he came to print a stage direction instead of grouping two nav sections. Give one an action (// AI-ACTION: <id>) or say why it should never have a door (// AI-REACH: <reason>), then delete its line. A NEW kernel route cannot be added here: it says which it is on the day it is written.",
-  "unreachable": {
-    "bundles.ts PATCH /:x/features": "needs an action to turn a bundle's optional parts on or off",
-    "bundles.ts POST /history/:x/revert": "needs an action that previews what a revert puts back before it runs",
-    "bundles.ts POST /install": "needs an action that installs a bundle from the catalog, shown as a card first",
-    "instances.ts POST /:x/scan-fallback": "needs an action to name the table a scan lands in when nothing else fits",
-    "quickstart.ts POST /materialize": "needs an action that builds the workspace from the quickstart answers, as a card"
-  }
+  "unreachable": {}
 }

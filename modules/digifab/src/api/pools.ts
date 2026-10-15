@@ -1,3 +1,4 @@
+import { poolGroupCondition } from "../pool-groups.js";
 // /api/v1/orgs/:slug/modules/digifab/pools — Cobblr-native printer pools.
 //
 // A pool is a set of devices (possibly across connections) you can queue jobs
@@ -17,7 +18,7 @@ poolsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
-    const pools = await db.selectFrom("digifab_pools").selectAll().orderBy("created_at", "asc").execute();
+    const pools = await db.selectFrom("digifab_pools").where(poolGroupCondition()).selectAll().orderBy("created_at", "asc").execute();
     const members = await db
       .selectFrom("digifab_pool_members")
       .select(["pool_id", "connection_id", "remote_device_id", "loaded_material"])

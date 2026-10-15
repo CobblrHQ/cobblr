@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.3.2",
+  version: "0.3.4",
   displayName: "Views",
   description:
     "Save the ways you like to see a list (filtered, sorted, as a board or a calendar) and come back to them.",
@@ -102,4 +102,11 @@ export default defineModule({
   },
 
   subscribes: [],
+  lifecycle: {
+    onBoot: async () => {
+      // What it shows on the dashboard, read in its one request (#6563).
+      const { registerViewsDashboardReads } = await import("./dashboard-reads.js");
+      registerViewsDashboardReads();
+    },
+  },
 });

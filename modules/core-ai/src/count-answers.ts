@@ -22,7 +22,15 @@ export interface KindFields extends KindWords {
 }
 
 export type CountQuestion =
-  | { kind: "count-text"; needle: string; entityKind: string | null }
+  | {
+      kind: "count-text";
+      needle: string;
+      entityKind: string | null;
+      /** Shorter needles to try, in order, when nothing mentions the whole
+       *  one: "delta printer" → "delta". People name the thing as well as the
+       *  value ("delta printers"), and the record carries only the value. */
+      narrower?: string[];
+    }
   | { kind: "most-of"; field: string; entityKinds: string[] };
 
 const norm = (s: string): string =>
@@ -85,6 +93,18 @@ export function countQuestionOf(message: string, kinds: KindFields[]): CountQues
   return null;
 }
 
+/** "delta printer" → ["delta"]; "red m3 screw" → ["red m3", "red"]: the words
+ *  before the last, shortest last, each long enough to mean something. */
+export function narrowerNeedles(needle: string): string[] {
+  const words = needle.split(" ").filter(Boolean);
+  const out: string[] = [];
+  for (let n = words.length - 1; n >= 1; n--) {
+    const w = words.slice(0, n).join(" ");
+    if (w.length >= 3 && !EMPTY_NOUN.test(w)) out.push(w);
+  }
+  return out;
+}
+
 function countText(phrase: string, kinds: KindFields[]): CountQuestion | null {
   const split = splitKind(phrase, kinds);
   if (!split) return null;
@@ -97,7 +117,8 @@ function countText(phrase: string, kinds: KindFields[]): CountQuestion | null {
   if (needle.length < 3) return null;
   // The kind's own noun is not a value in it: "how many machines" is a kind
   // count that live-answers already declined, not a text search for "machine".
-  return { kind: "count-text", needle, entityKind: split.entityKind };
+  const narrower = split.entityKind ? [] : narrowerNeedles(needle);
+  return { kind: "count-text", needle, entityKind: split.entityKind, ...(narrower.length ? { narrower } : {}) };
 }
 
 function mostOf(rawField: string, scope: string | undefined, kinds: KindFields[]): CountQuestion | null {

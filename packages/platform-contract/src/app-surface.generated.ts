@@ -421,7 +421,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "Templates",
-    "does": "Per-workspace entity templates. Stamp out new records pre-filled with defaults + tags.",
+    "does": "Saved starting points for new things: the values and tags that fill in when you make one.",
     "where": "/configuration/templates",
     "also": [
       "defaults",

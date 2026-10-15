@@ -9,6 +9,7 @@ import { registerStopAction } from "./stop-action.js";
 import { registerRevokeStationAction } from "./stations.js";
 import { cutterRouter } from "./cutter.js";
 import { registerCutterActions } from "../cutter-actions.js";
+import { registerStationRunAction } from "./station-run-action.js";
 import { resinRouter } from "./resin.js";
 import { registerResinPostprocessAction } from "../resin-postprocess.js";
 // digifab router. Mounted at
@@ -76,6 +77,7 @@ registerLaserActions();
 registerKilnActions();
 
 registerCutterActions();
+registerStationRunAction();
 registerLargeFormatActions();
 registerEmbroideryActions();
 registerSnapmakerDiscovery();

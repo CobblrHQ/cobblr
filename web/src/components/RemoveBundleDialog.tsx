@@ -1,7 +1,7 @@
 // The one Remove for an installed bundle (lib/bundle-remove.ts has why). It
 // says what goes, asks whether the bundle's records go too when there are
 // any (keeping them is the default), and offers Undo when they were kept.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { changeWorkspaceShape, Modal, SegmentedChoice, useToast } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -20,10 +20,14 @@ export function RemoveBundleDialog({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  // Once the removal starts, the preview stops asking: the removal refreshes every
+  // query, and this one would ask about the bundle it just took out and be refused.
+  const [removalStarted, setRemovalStarted] = useState(false);
+  useEffect(() => setRemovalStarted(false), [bundle?.id]);
   const preview = useQuery({
     queryKey: ["bundle-uninstall-preview", slug, bundle?.id],
     queryFn: () => api.bundleUninstallPreview(slug, bundle!.id),
-    enabled: !!bundle,
+    enabled: !!bundle && !removalStarted,
   });
   const plan = planRemove(preview.data ?? null);
   const [choice, setChoice] = useState<"keep" | "delete" | null>(null);
@@ -31,7 +35,15 @@ export function RemoveBundleDialog({
   const [failed, setFailed] = useState<string | null>(null);
 
   const remove = useMutation({
-    mutationFn: () => changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, bundle!.id, { deleteData })),
+    mutationFn: async () => {
+      setRemovalStarted(true);
+      try {
+        return await changeWorkspaceShape(qc, slug, () => api.uninstallBundle(slug, bundle!.id, { deleteData }));
+      } catch (e) {
+        setRemovalStarted(false);
+        throw e;
+      }
+    },
     onSuccess: (r) => {
       const put = r?.removed?.length ? ` Put back ${r.removed.map((x) => x.name).join(", ")}.` : "";
       const kept = r?.kept_words?.length ? ` ${r.kept_words.join(" ")}` : "";

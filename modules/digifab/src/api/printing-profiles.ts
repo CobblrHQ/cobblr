@@ -1,3 +1,4 @@
+import { poolGroupCondition } from "../pool-groups.js";
 // /api/v1/orgs/:slug/modules/digifab/printing-profiles — a machine's Printing
 // profile (Services §14.3), and the digifab.pick-printer action that reads it.
 //
@@ -128,12 +129,22 @@ printingProfilesRouter.put(
   }),
 );
 
-/** Grams left on a spool record, from its quantity and unit; null when the
- *  record does not say. */
-function gramsLeft(snap: Record<string, unknown>): number | null {
-  const q = num(snap.qty);
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function gramsLeft(fields: Record<string, unknown>): number | null {
+  const stock = record(fields.stock);
+  if (stock.shape === "spool") {
+    const remaining = num(stock.remaining);
+    if (remaining === null || remaining < 0) return null;
+    if (stock.unit === "g") return remaining;
+    return null;
+  }
+  if (stock.shape && stock.shape !== "count") return null;
+  const q = num(fields.qty);
   if (q === null) return null;
-  const unit = String(snap.unit ?? "").trim().toLowerCase();
+  const unit = String(fields.unit ?? "").trim().toLowerCase();
   if (unit === "g" || unit === "gram" || unit === "grams") return q;
   if (unit === "kg") return q * 1000;
   return null;
@@ -143,15 +154,16 @@ export async function loadedSpoolsForMachine(orgId: string, machineId: string): 
   const loaded: LoadedSpool[] = [];
   const contents = await loadedOn(orgId, machineId);
   for (const c of contents) {
-    const snap = await platform().entities.snapshot(orgId, c.kind, c.partId).catch(() => null);
-    if (!snap) continue;
+    const spool = await platform().entities.lookup(orgId, c.kind, c.partId);
+    if (!spool) continue;
+    const snap = spool.fields;
     const types = await platform()
       .pairings.findBySources({ orgId, sourceKind: c.kind, sourceIds: [c.partId], targetKind: c.kind, relationshipKind: "instance-of" })
       .catch(() => []);
-    const type = types[0]?.targetId ? await platform().entities.snapshot(orgId, c.kind, types[0].targetId) : null;
-    const md = { ...((type?.metadata ?? {}) as Record<string, unknown>), ...((snap.metadata ?? {}) as Record<string, unknown>) };
+    const type = types[0]?.targetId ? (await platform().entities.lookup(orgId, c.kind, types[0].targetId))?.fields : null;
+    const md = { ...type, ...record(type?.metadata), ...snap, ...record(snap.metadata) };
     loaded.push({
-      spool: { kind: c.kind, id: c.partId, name: typeof snap.name === "string" ? snap.name : null },
+      spool: { kind: c.kind, id: c.partId, name: spool.title },
       slot: c.slot!.trim(),
       material: typeof md.material === "string" ? md.material : null,
       color: typeof md.color === "string" ? md.color : null,
@@ -186,7 +198,7 @@ export async function gatherCandidates(orgId: string, db: Kysely<DigifabDB>): Pr
   const attention = new Set(
     (await db.selectFrom("digifab_device_attention").select(["connection_id", "remote_device_id"]).execute()).map((a) => `${a.connection_id}:${a.remote_device_id}`),
   );
-  const pools = await db.selectFrom("digifab_pools").select(["id"]).orderBy("created_at", "asc").execute();
+  const pools = await db.selectFrom("digifab_pools").where(poolGroupCondition()).select(["id"]).orderBy("created_at", "asc").execute();
   const members = await db.selectFrom("digifab_pool_members").select(["pool_id", "connection_id", "remote_device_id"]).orderBy("created_at", "asc").execute();
   const poolOrder = new Map<string, number>();
   let n = 0;

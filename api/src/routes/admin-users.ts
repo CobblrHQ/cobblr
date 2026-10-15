@@ -29,6 +29,8 @@ import { hashPassword } from "../auth/password.js";
 import * as activity from "../platform/activity.js";
 import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { canActOnRole } from "../auth/capability.js";
+import { makeIpLimiter, rateLimited } from "../platform/ip-limiter.js";
+import { MEMBER_PAIR_CODE_TTL_MS, mintPairCode, pairMintRefusal, revokeMemberPairCodes } from "../platform/pair-codes.js";
 
 export const adminUsersRouter = Router({ mergeParams: true });
 
@@ -247,3 +249,130 @@ adminUsersRouter.post(
     }
   },
 );
+
+// ── Sign a member's phone in (#6692) ────────────────────────────────────
+//
+// A worker who was added here and has never typed a password scans a QR the
+// admin shows and is signed in on their phone, as themselves, with their own
+// role: the pair code of /auth/pair/start, minted by the admin for one named
+// member. Bounded so it can never become a way into someone else's account:
+// only a member whose ONLY workspace is this one (an admin here must not be
+// able to sign in as someone who also belongs elsewhere), never someone who
+// outranks the admin, never the admin themselves (their own phone pairs from
+// their own menu), and only by a person signed in themselves (never a token,
+// so no assistant or MCP client can mint one: HUMAN_ONLY_ACTIONS names it).
+// Single use, ten minutes, the last code voided by a new one or by Revoke.
+
+const MemberPairBody = z.object({ user_id: z.string().uuid() });
+const memberPairLimiter = makeIpLimiter(60_000, 20);
+
+async function memberPairTarget(
+  req: import("express").Request,
+  res: import("express").Response,
+): Promise<{ userId: string; displayName: string } | null> {
+  const refusal = pairMintRefusal(req.session!);
+  if (refusal) {
+    res.status(403).json({ error: { code: "session_required", message: refusal } });
+    return null;
+  }
+  const parsed = MemberPairBody.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: { code: "invalid_body", message: "Say whose phone: user_id." } });
+    return null;
+  }
+  const userId = parsed.data.user_id;
+  if (userId === req.session!.id) {
+    res.status(400).json({ error: { code: "own_phone", message: "To sign in your own phone, use Pair phone from your own menu." } });
+    return null;
+  }
+  const member = await meta
+    .selectFrom("org_memberships as m")
+    .innerJoin("users as u", "u.id", "m.user_id")
+    .select(["m.role", "u.active", "u.display_name", "u.email"])
+    .where("m.org_id", "=", req.tenant!.org.id)
+    .where("m.user_id", "=", userId)
+    .executeTakeFirst();
+  if (!member || !member.active) {
+    res.status(404).json({ error: { code: "not_member", message: "That person isn't a member of this workspace." } });
+    return null;
+  }
+  if (!canActOnRole(req.tenant!.role, member.role)) {
+    res.status(403).json({ error: { code: "forbidden", message: "You can't sign in someone who outranks you." } });
+    return null;
+  }
+  const elsewhere = await meta
+    .selectFrom("org_memberships")
+    .select("org_id")
+    .where("user_id", "=", userId)
+    .where("org_id", "!=", req.tenant!.org.id)
+    .executeTakeFirst();
+  if (elsewhere) {
+    res.status(403).json({
+      error: {
+        code: "member_elsewhere",
+        message: "This person also belongs to another workspace, so only they can sign their phone in: from Pair phone in their own menu.",
+      },
+    });
+    return null;
+  }
+  return { userId, displayName: member.display_name || member.email };
+}
+
+// POST /orgs/:slug/admin/users/pair-code — a QR that signs this member's phone in.
+// UI-SCREEN: /configuration/permissions (Accounts: Sign in their phone)
+adminUsersRouter.post("/:slug/admin/users/pair-code", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!memberPairLimiter(req.ip ?? "unknown")) {
+      rateLimited(res);
+      return;
+    }
+    // role-gate: exact — signing someone in is membership governance, like minting their account.
+    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
+      return;
+    }
+    const target = await memberPairTarget(req, res);
+    if (!target) return;
+    const minted = await mintPairCode(req, {
+      userId: target.userId,
+      orgSlug: req.tenant!.org.slug,
+      mintedBy: req.session!.id,
+      ttlMs: MEMBER_PAIR_CODE_TTL_MS,
+    });
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "phone_sign_in_code_minted",
+      ref: { module: null, entityType: "user", entityId: target.userId },
+      diff: { for: target.displayName, expires_at: minted.expires_at },
+    });
+    res.status(201).json({ ...minted, for: target.displayName });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/:slug/admin/users/pair-code/revoke — void this member's live codes.
+// UI-SCREEN: /configuration/permissions (Accounts: Sign in their phone, Cancel the code)
+adminUsersRouter.post("/:slug/admin/users/pair-code/revoke", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // role-gate: exact — signing someone in is membership governance, like minting their account.
+    if (req.tenant!.role !== "owner" && req.tenant!.role !== "admin") {
+      res.status(403).json({ error: { code: "forbidden", message: "Admins only." } });
+      return;
+    }
+    const target = await memberPairTarget(req, res);
+    if (!target) return;
+    const revoked = await revokeMemberPairCodes(target.userId, req.tenant!.org.slug);
+    await activity.log({
+      orgId: req.tenant!.org.id,
+      userId: req.session!.id,
+      action: "phone_sign_in_code_revoked",
+      ref: { module: null, entityType: "user", entityId: target.userId },
+      diff: { for: target.displayName, revoked },
+    });
+    res.json({ revoked });
+  } catch (err) {
+    next(err);
+  }
+});

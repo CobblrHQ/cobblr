@@ -2,7 +2,7 @@
 
 import type { Request, Response, NextFunction } from "express";
 import type { z } from "zod";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 import type { OrgRoleName as OrgRole } from "@cobblr/platform-contract/org-roles";
 
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
@@ -27,7 +27,7 @@ export function requireRole(
   const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
   if (!role || !roleSatisfies(role as "owner", allowed)) {
     res.status(403).json({
-      error: { code: "forbidden", message: `Requires one of: ${allowed.join(", ")}` },
+      error: { code: "forbidden", message: roleRefusal(allowed) },
     });
     return false;
   }

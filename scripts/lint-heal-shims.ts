@@ -19,6 +19,12 @@
 // file that still carries `DONE WHEN:`, so a rename cannot leave a deployment
 // reporting a shim nobody can find.
 //
+// Third: a shim that opens a tenant pool per workspace gates itself on
+// `sweptClean` (api/src/platform/boot-sweep-marks.ts), or says why it cannot
+// with `// SWEEPS EVERY BOOT: <why>`. Three such passes swept every workspace
+// on every boot after their work was done: about four minutes of each staging
+// boot before the api could listen (#6707).
+//
 // Run: npx tsx scripts/lint-heal-shims.ts
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -95,6 +101,19 @@ for (const f of [...files, ...moduleFiles]) {
     `${rel}: states DONE WHEN but never records whether it is true — call noteHealShim("${rel}", <found>, <failed>) after each whole pass (platform().health.noteHealShim from a module), so /healthz answers it on every deployment; or say "// NOT RECORDED: <why>" if the condition is not a count of what the pass finds`,
   );
 }
+const OPENS_TENANT = /\bgetTenant(?:Db|Pool)\(/;
+for (const f of files) {
+  const rel = relative(ROOT, f);
+  if (rel.endsWith(".test.ts")) continue;
+  const src = readFileSync(f, "utf8");
+  if (!headerStates(src) && !src.includes("PERMANENT RECONCILE")) continue;
+  if (!OPENS_TENANT.test(src)) continue;
+  if (/\bsweptClean\(/.test(src) || /^\/\/ SWEEPS EVERY BOOT: \S/m.test(src)) continue;
+  failures.push(
+    `${rel}: a heal shim that opens every workspace's database on every boot — gate it with sweptClean()/markSwept() from api/src/platform/boot-sweep-marks.ts, so a pass that has run clean stops costing the boot (#6707); or say "// SWEEPS EVERY BOOT: <why>"`,
+  );
+}
+
 for (const [key, by] of recordedKeys) {
   let states = false;
   try {
@@ -110,4 +129,4 @@ if (failures.length) {
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log(`[lint:heal-shims] OK — every heal shim states DONE WHEN / PERMANENT RECONCILE, and every DONE WHEN is recorded (${recordedKeys.size})`);
+console.log(`[lint:heal-shims] OK — every heal shim states DONE WHEN / PERMANENT RECONCILE, and every DONE WHEN is recorded (${recordedKeys.size}), and every per-workspace shim is gated`);

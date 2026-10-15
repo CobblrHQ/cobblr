@@ -58,6 +58,12 @@ export async function managerName(orgId: string, connectionId: string | null): P
   return c?.label?.trim() || "the printer's manager";
 }
 
+export function completedRunHours(elapsedSec: number | null, sentAt: Date | null, now = new Date()): number {
+  if (elapsedSec != null && Number.isFinite(elapsedSec) && elapsedSec >= 0) return elapsedSec / 3600;
+  // Managers without a runtime report use time since dispatch, never queue time.
+  return sentAt ? Math.max(0, (now.getTime() - sentAt.getTime()) / 3_600_000) || 0 : 0;
+}
+
 export const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 
 /** Is a job in this status physically holding its target printer?
@@ -525,7 +531,8 @@ export async function pollJob(
   }
 
   const terminal = TERMINAL.has(status);
-  const fields = { progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
+  const linkedMachineId = status === "completed" ? await machineOfJob(db, job) : job.linked_machine_id;
+  const fields = { ...(status === "completed" ? { linked_machine_id: linkedMachineId } : {}), progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
   if (terminal) {
     // Status flip + bed-clear row, one transaction — see markJobTerminal. A
     // concurrent poll that already ended the job wins; this one emits nothing,
@@ -606,7 +613,8 @@ export async function pollJob(
           orgId,
           jobId,
           connectionId: job.connection_id,
-          linkedMachineId: job.linked_machine_id,
+          linkedMachineId,
+          ...(status === "completed" ? { hours: completedRunHours(elapsedSec, job.sent_at) } : {}),
           linkedTaskId: job.linked_task_id,
           ...material,
         },

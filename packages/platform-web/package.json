@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-web",
-  "version": "0.12.33",
+  "version": "0.12.36",
   "private": true,
   "type": "module",
   "sideEffects": [
@@ -30,16 +30,21 @@
     "@cfworker/json-schema": "4.1.1",
     "@cobblr/platform-contract": "workspace:*",
     "@cobblr/thermal-print": "workspace:*",
-    "qrcode": "^1.5.4"
+    "@types/qrcode": "^1.5.5",
+    "qrcode": "^1.5.4",
+    "react-markdown": "^9.1.0"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "lucide-react": "^0.469.0",
     "react": "^19",
+    "react-dom": "^19",
     "react-router-dom": "^7"
   },
   "devDependencies": {
     "@tanstack/react-query": "^5.62.7",
-    "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.2",
     "react": "^19.0.0",
     "react-router-dom": "^7.1.1",

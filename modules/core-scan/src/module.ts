@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.77.4",
+  version: "0.77.9",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -30,6 +30,9 @@ export default defineModule({
   // for its own queue workers.
   lifecycle: {
     onBoot: async () => {
+      // What it shows on the dashboard, read in its one request (#6563).
+      const { registerScanDashboardReads } = await import("./dashboard-reads.js");
+      registerScanDashboardReads();
       const { registerScanTidyFinders } = await import("./services/tidy-finders.js");
       registerScanTidyFinders();
       const { registerRetryLookupWorker } = await import("./services/retry-worker.js");

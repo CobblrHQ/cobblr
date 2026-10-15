@@ -404,10 +404,31 @@ listsRouter.patch(
         // amount is a wire's fixed arg (adjust-stock's delta, record-event's
         // qty_delta) takes a stated quantity over it; see those handlers.
         ...(parsed.data.checked && parsed.data.quantity !== undefined ? { quantity: parsed.data.quantity } : {}),
+        // Whatever a tick does to the record it counts once per line: a
+        // mis-tap and a second tick is still one purchase (the wires' adjust
+        // and record steps read these to refuse the repeat).
+        ...(sourceKey ? { once: true, reversible: true, sourceKind: "lists:item", sourceId: row.id } : {}),
         // The line was put there to buy again: the record's own module adds
         // it back to stock (#6062), and who checked it is who restocked.
         ...(sourceKey && meta.restocks === true ? { restocks: true, actorId: sessionUser(req)?.id ?? null } : {}),
       });
+    }
+    if (parsed.data.checked === false && before?.checked) {
+      // Taking a tick back says the line was not bought after all: the record
+      // it restocked and the purchase it filed go back with it. A separate
+      // event, because a wire hung on "checked" must never fire on an untick.
+      const ref = ((row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {}).source_ref;
+      const refBaseKind = ref?.kind && ref.id ? await platform().entities.baseKindOf(ctx.org.id, ref.kind) : null;
+      if (refBaseKind && ref?.id) {
+        await platform().events.emit("lists.item.unchecked", {
+          orgId: ctx.org.id,
+          listId: row.list_id,
+          itemId: row.id,
+          [sourceIdKey(refBaseKind)]: ref.id,
+          sourceRef: ref,
+          actorId: sessionUser(req)?.id ?? null,
+        });
+      }
     }
     if (parsed.data.claimed !== undefined) {
       void platform().events.emit("lists.item.claimed", {

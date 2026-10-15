@@ -33,6 +33,9 @@ export function callerCorpus(): string {
   return corpus;
 }
 
+// `api` and its method may sit on two lines (a chained call formatted as
+// api\n  .organizePlan(...)): the plan sheet's call read as no call at all
+// once the one-line warm callers moved off it (#6702).
 /** `api.name`, or `name` handed on as a value (`queryFn: name,`). */
 export const isCalled = (name: string, corpus: string): boolean =>
-  new RegExp(`\\bapi\\.${name}\\b`).test(corpus) || new RegExp(`\\b${name}\\b\\s*[,)}]`).test(corpus);
+  new RegExp(`\\bapi\\s*\\??\\.\\s*${name}\\b`).test(corpus) || new RegExp(`\\b${name}\\b\\s*[,)}]`).test(corpus);

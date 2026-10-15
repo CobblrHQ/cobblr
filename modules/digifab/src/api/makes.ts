@@ -313,7 +313,8 @@ makesRouter.post(
 makesRouter.post(
   "/:id/print/start",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // The admin tier, or an operator: a person's press that starts a machine (#6672).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const body = z.object({ confirm_hash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(req.body);
     if (!body.success) return badBody(res, body.error);
     const r = await startPrint(tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash);
@@ -342,9 +343,9 @@ makesRouter.get("/print-batches", asyncHandler(async (req, res) => {
 }));
 
 // AI-ACTION: digifab:start-next-print
-// GATE: starts a physical printer, so it stays owner or admin and is not grantable; the action says runBy admin, so the API and Cobb give the same answer
+// GATE: starts a physical printer: the admin tier, or an operator through digifab:operate (#6672); the action says the same, so the API and Cobb give one answer
 makesRouter.post("/:id/print/next", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  if (!(await requireCapability(req, res, "digifab:start-next-print"))) return;
   const body = z.object({ bed_clear: z.literal(true), confirm_hash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).safeParse(req.body);
   if (!body.success) return badBody(res, body.error);
   const r = await startBatchPrint(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash, true);

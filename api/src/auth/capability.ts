@@ -19,7 +19,7 @@
 import type { Request, Response } from "express";
 import { platform } from "@cobblr/platform-contract";
 import type { OrgRole } from "../db/schema.js";
-import { roleSatisfies, ORG_ROLE_RANK, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { roleSatisfies, ORG_ROLE_RANK, type OrgRoleName, roleRefusal } from "@cobblr/platform-contract/org-roles";
 
 // The ranking moved to @cobblr/platform-contract/org-roles, because every
 // module had written its own copy and all 34 of them got it wrong in the same
@@ -34,7 +34,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
   const role = req.tenant?.role;
   if (!roleSatisfies(role, allowed)) {
     res.status(403).json({
-      error: { code: "forbidden", message: `This action requires one of: ${allowed.join(", ")}.` },
+      error: { code: "forbidden", message: roleRefusal(allowed) },
     });
     return false;
   }

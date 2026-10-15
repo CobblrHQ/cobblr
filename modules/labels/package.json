@@ -12,6 +12,10 @@
     "./ui": {
       "types": "./src/ui/index.tsx",
       "import": "./src/ui/index.tsx"
+    },
+    "./ui/dashboard-widget": {
+      "types": "./src/ui/DashboardWidget.tsx",
+      "import": "./src/ui/DashboardWidget.tsx"
     }
   },
   "scripts": {

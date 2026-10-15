@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "digifab",
-  version: "0.37.2",
+  version: "0.39.0",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -46,6 +46,8 @@ export default defineModule({
       // heal-detectors-to-connections.ts for the retirement condition).
       const { registerDetectorsToConnectionsHeal } = await import("./heal-detectors-to-connections.js");
       registerDetectorsToConnectionsHeal();
+      const { registerLaserRunPoolsHeal } = await import("./heal-laser-run-pools.js");
+      registerLaserRunPoolsHeal();
       const { registerAssignWorker } = await import("./assign-worker.js");
       registerAssignWorker();
       // Keeps jobs moving across a restart: revives dead poll/assign chains and
@@ -177,11 +179,22 @@ export default defineModule({
     ],
   },
 
+  // Running the machines without setting them up (#6672): the operator role
+  // holds it, an admin can grant it to a member, and every run door asks it.
+  capabilities: [
+    {
+      id: "digifab:operate",
+      label: "Run machines",
+      description: "Start and send jobs, resume them, start a machine's file, confirm the stock loaded at a station and record how a job came out. Setting up machines, connections and stations stays with admins; stopping and pausing are every member's.",
+      heldBy: ["operator"],
+    },
+  ],
+
   exposes: {
     // What the print events carry for the stock wires: partId, delta and
     // reason only when the job named a material.
     eventPayloads: {
-      "digifab.print.completed": ["jobId", "connectionId", "linkedMachineId", "linkedTaskId", "partId", "delta", "reason", "sourceKind", "sourceId"],
+      "digifab.print.completed": ["jobId", "connectionId", "linkedMachineId", "linkedTaskId", "hours", "partId", "delta", "reason", "sourceKind", "sourceId"],
       "digifab.print.reversed": ["jobId", "linkedMachineId", "prints", "partId", "delta", "reason"],
       "digifab.print.consumed": ["jobId", "partId", "delta", "unit", "once", "slot", "reason", "sourceKind", "sourceId"],
     },
@@ -267,8 +280,10 @@ export default defineModule({
       {
         // UI-SCREEN: /station/production/:connectionId
         id: "digifab:production-control", label: "Run a production test", scope: "workspace", group: "more", userInvokable: false, effect: "physical", undoable: false,
-        runBy: "member",
-        description: "Start a prepared production attempt with fields id, confirmed:true and the scanned jig_id, or answer its current operator prompt with id, step_id, value and optional photo. Uses the exact saved plan and approved bridge. All controlled supplies must be owner-enabled. Abort is the separate production-abort stop action.",
+        // ADMIN-ONLY: starting an attempt powers the board on its jig and answering a prompt moves it on, so it runs the station: the admin tier, or an operator (#6785); aborting stays every member's (digifab:production-abort)
+        runBy: "admin",
+        grantedAs: "digifab:operate",
+        description: "Start a prepared production attempt with fields id, confirmed:true and the scanned jig_id, or answer its current operator prompt with id, step_id, value and optional photo. Requires an admin or an operator. Uses the exact saved plan and approved bridge. All controlled supplies must be owner-enabled. Abort is the separate production-abort stop action, which any member may use.",
         invokeHandler: "digifab.production-control", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["start", "answer"].map(value => ({ value, label: value })) }, fields: { label: "Run or answer fields", type: "json", required: true } },
       },
       {
@@ -410,7 +425,7 @@ export default defineModule({
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:laser-control", label: "Control a direct laser", scope: "workspace", group: "more", userInvokable: false,
         runBy: "member",
-        description: "Stop, pause or resume a direct laser, or frame its reviewed file with the cutting laser off. Workspace members may stop a laser. This action cannot start a new cutting job.",
+        description: "Stop, pause or resume a direct laser, or frame its reviewed file with the cutting laser off. Any member may stop or pause a laser; resuming and framing need an admin or an operator. This action cannot start a new cutting job.",
         invokeHandler: "digifab.laser-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
@@ -438,7 +453,7 @@ export default defineModule({
         id: "digifab:machine-control", label: "Control a machine", scope: "workspace", group: "more", userInvokable: false,
         // A member at the station may stop, pause, resume or frame: the page's own control route POST /fleet/:connectionId/:deviceId/control admits members (fleet.ts)
         runBy: "member",
-        description: "Stop, pause or resume a machine that uses station review, or frame its reviewed queued program with the spindle or cutting laser off. Workspace members may use these controls. This action cannot start a new job.",
+        description: "Stop, pause or resume a machine that uses station review, or frame its reviewed queued program with the spindle or cutting laser off. Any member may stop or pause; resuming and framing need an admin or an operator. This action cannot start a new job.",
         invokeHandler: "digifab.machine-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
@@ -451,9 +466,10 @@ export default defineModule({
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:machine-outcome", label: "Record a CNC outcome", group: "more", scope: "workspace", userInvokable: false,
-        // ADMIN-ONLY: recording an outcome consumes stock and bit hours; the page's route POST /fleet/:connectionId/:deviceId/ready gates on this action's own id, owner or admin (fleet.ts)
+        // ADMIN-ONLY: recording an outcome consumes stock and bit hours; the page's route POST /fleet/:connectionId/:deviceId/ready gates on this action's own id: the admin tier, or an operator (#6672)
         runBy: "admin",
-        description: "Record a finished CNC job as good or scrap, consuming its sheet region or block and actual bit hours once. Requires an owner or admin and a confirmed idle machine. If a bridge restart lost native runtime, provide actual tool_seconds for every reviewed tool, including zero for unused tools and never less than runtime already observed.",
+        grantedAs: "digifab:operate",
+        description: "Record a finished CNC job as good or scrap, consuming its sheet region or block and actual bit hours once. Requires an admin or an operator, and a confirmed idle machine. If a bridge restart lost native runtime, provide actual tool_seconds for every reviewed tool, including zero for unused tools and never less than runtime already observed.",
         invokeHandler: "digifab.machine-outcome", effect: "writes", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
@@ -461,6 +477,21 @@ export default defineModule({
           job_id: { label: "Finished job", type: "text", required: true },
           outcome: { label: "Outcome", type: "text", required: true, choices: ["good", "scrapped"].map(value => ({ value, label: value })) },
           tool_seconds: { label: "Confirmed actual seconds by tool number", type: "json" },
+        },
+      },
+      {
+        // UI-SCREEN: /station/machine/:connectionId/:deviceId
+        id: "digifab:station-run", label: "Record a station job's run", group: "more", scope: "workspace", userInvokable: false,
+        // ADMIN-ONLY: running a prepared job at its station consumes stock; the page's outcome routes (cutter.ts, large-format.ts) and the embroidery run's start, interrupt and outcome gate on this action's own id: the admin tier, or an operator (#6672)
+        runBy: "admin",
+        grantedAs: "digifab:operate",
+        description: "At a machine's authorized station, record how a prepared job came out, or start and interrupt an embroidery run. Operations: cutter_outcome and large_format_outcome (id is the job; fields as the cutter or print report, with station_token), embroidery_start, embroidery_interrupt and embroidery_outcome (id is the embroidery job; fields as for digifab:embroidery-job). Requires an admin or an operator. Never plans, prepares or sets up a machine: those stay with digifab:cutter-batch, digifab:large-format and digifab:embroidery-job.",
+        examples: ["the vinyl cut came out good, record it", "start the embroidery run on the hoop that's loaded"],
+        invokeHandler: "digifab.station-run", effect: "writes", undoable: false,
+        argsSchema: {
+          operation: { label: "Operation", type: "text", required: true, choices: ["cutter_outcome", "large_format_outcome", "embroidery_start", "embroidery_interrupt", "embroidery_outcome"].map(value => ({ value, label: value.replaceAll("_", " ") })) },
+          id: { label: "Job id", type: "text", required: true },
+          fields: { label: "Report fields", type: "json" },
         },
       },
       {
@@ -491,7 +522,7 @@ export default defineModule({
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:cutter-control", runBy: "member", label: "Control a cutter", group: "more", scope: "workspace", userInvokable: false,
-        description: "Stop, pause or resume cutter streaming. Members may stop a cutter without a station credential. Frame requires its reviewed queued job, loaded roll and authorized station token. Confirm idle requires that token and physical idle and blade-up confirmation. Never starts a new cut. Use the machine's physical Stop in an emergency.",
+        description: "Stop, pause or resume cutter streaming. Any member may stop or pause a cutter without a station credential; resuming, framing and confirming idle need an admin or an operator. Frame requires its reviewed queued job, loaded roll and authorized station token. Confirm idle requires that token and physical idle and blade-up confirmation. Never starts a new cut. Use the machine's physical Stop in an emergency.",
         invokeHandler: "digifab.cutter-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id:{label:"Connection",type:"text",required:true},device_id:{label:"Device",type:"text",required:true},operation:{label:"Control",type:"text",required:true,choices:["stop","pause","resume","frame","confirm-idle"].map(value=>({value,label:value}))},
@@ -502,7 +533,7 @@ export default defineModule({
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         id: "digifab:resin-control", label: "Control a resin printer", scope: "workspace", group: "more", userInvokable: false,
         runBy: "member",
-        description: "Stop, pause or resume a resin printer. Stop also prevents an uploading job from starting. Workspace members may use these controls; starting a print requires its authorized station and reviewed file.",
+        description: "Stop, pause or resume a resin printer. Stop also prevents an uploading job from starting. Any member may stop or pause; resuming needs an admin or an operator; starting a print requires its authorized station and reviewed file.",
         invokeHandler: "digifab.resin-control", effect: "physical", undoable: false,
         argsSchema: {
           connection_id: { label: "Connection", type: "text", required: true },
@@ -550,8 +581,9 @@ export default defineModule({
         // every door, not only the page's dialog (Services §9, §14.3).
         group: "more",
         id: "digifab:send",
-        // ADMIN-ONLY: sends a file to a printer; POST /jobs/:id/send is owner or admin (jobs.ts)
+        // ADMIN-ONLY: sends a file to a printer; POST /jobs/:id/send gates on this action's own id: the admin tier, or an operator (#6672)
         runBy: "admin",
+        grantedAs: "digifab:operate",
         label: "Send a job to its machine",
         description:
           "Sends a queued job's file to its machine and starts watching it. This physically starts the machine, so it always asks a person first.",
@@ -645,8 +677,9 @@ export default defineModule({
         userInvokable: false,
         group: "more",
         id: "digifab:start-next-print", label: "Bed is clear, start the next one", effect: "physical",
-        // ADMIN-ONLY: starts a physical printer; its page route POST /makes/:id/print/next gates on this action, owner or admin (makes.ts)
+        // ADMIN-ONLY: starts a physical printer; its page route POST /makes/:id/print/next gates on this action: the admin tier, or an operator (#6672)
         runBy: "admin",
+        grantedAs: "digifab:operate",
         scope: "workspace", appliesTo: { kinds: ["digifab:make"] }, invokeHandler: "digifab.start-next-print",
         description: "Starts the next print in an approved Make batch after the person clears the bed. Always asks for a physical confirmation. Changed printer, files, spools, material or quantity require full batch review and approval again.",
         argsSchema: { make_id: { label: "Make", type: "text" } },

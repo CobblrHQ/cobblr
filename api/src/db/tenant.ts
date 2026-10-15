@@ -129,7 +129,15 @@ export async function withTenantDeleting<T>(orgId: string, fn: () => Promise<T>)
 // reopen lazily on next access). Default 50 (≈250 conns) is safe under the CI
 // box's max_connections=400 and never triggers on a small prod (few active orgs);
 // tune via COBBLR_MAX_TENANT_POOLS where max_connections differs.
-const MAX_TENANT_POOLS = Math.max(4, Number(process.env.COBBLR_MAX_TENANT_POOLS) || 50);
+export const CONFIGURED_TENANT_POOLS = Math.max(4, Number(process.env.COBBLR_MAX_TENANT_POOLS) || 50);
+export const TENANT_POOL_MAX = Number(process.env.COBBLR_TENANT_POOL_MAX) || 5;
+let MAX_TENANT_POOLS = CONFIGURED_TENANT_POOLS;
+
+/** Lower the cap to what the server can hold (connection-budget.ts, at boot). */
+export function setTenantPoolCap(n: number): void {
+  MAX_TENANT_POOLS = Math.max(2, Math.min(CONFIGURED_TENANT_POOLS, Math.floor(n)));
+  enforceTenantPoolCap();
+}
 
 /** When the pool cache is over the cap, release the least-recently-used pools.
  *  Uses the same idle-guarded release as the background sweep, so a pool with a
@@ -189,7 +197,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     // Postgres max_connections ceiling — a burst can transiently outrun the LRU
     // pool-cap eviction, so bounding per-pool conns is the durable lever. Default
     // 5 (prod); CI sets COBBLR_TENANT_POOL_MAX=3.
-    max: Number(process.env.COBBLR_TENANT_POOL_MAX) || 5,
+    max: TENANT_POOL_MAX,
   }, `tenant-pool ${orgId}`);
   // The Kysely handed to callers talks to the pool through this shim rather than
   // holding the Pool directly. If the pool it was built on has been ended (an

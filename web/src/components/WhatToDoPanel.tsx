@@ -41,6 +41,7 @@ import { useMaterializeCapture } from "../lib/useMaterializeCapture";
 import { openSheetImport } from "../lib/sheet-import";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
+import { typedInThePanel } from "@cobblr/platform-contract/scan-source";
 
 import { rowPictures, leadYours } from "../lib/rowPictures";
 
@@ -561,11 +562,14 @@ export function WhatToDoPanel({
   // Provenance split (the author): TYPED captures are part of the funnel conversation
   // and stay in col 3; SCANNED ones (barcode/photo/url/receipt) are a batch
   // stream and get their own queue section BELOW the whole panel.
-  const typed = items.filter((i) => i.source_kind === "note");
-  // Collapse only when there's content AND no TYPED capture pending — scans
-  // live below the panel, so they don't force it open.
-  const hasPending = typed.length > 0;
-  const showToggle = startCollapsed && !hasPending;
+  // Only what was typed into THIS panel (typedInThePanel): an assistant's add
+  // over MCP, a share, an offer and an import share the note shape but live
+  // in the scan inbox alone. The owner's eight printers from Claude were
+  // listed here as typed and held the panel open (#6565).
+  const typed = items.filter((i) => typedInThePanel(i));
+  // An established workspace's panel always folds. With typed things still
+  // waiting, the folded bar says so, so nothing is hidden by surprise.
+  const showToggle = startCollapsed;
   const showBody = showToggle ? open : true;
 
   // One column, one action (2026-09 product review: the first screen offered
@@ -689,6 +693,18 @@ export function WhatToDoPanel({
           </button>
         )}
       </div>
+      {/* Folded with things typed here still waiting: said, so nothing waits
+          unseen behind the fold (#6565). */}
+      {!showBody && typed.length > 0 && (
+        <button
+          type="button"
+          data-testid="what-to-do-waiting"
+          onClick={() => setOpenPersist(true)}
+          className="inline-flex min-h-11 items-center gap-1 text-sm text-accent hover:underline"
+        >
+          {typed.length} added · waiting to file <ChevronDown size={13} aria-hidden />
+        </button>
+      )}
 
       {/* OUTSIDE the collapsible body on purpose. This used to sit inside `showBody`,
           so on any workspace with content the panel starts collapsed and the AI notice

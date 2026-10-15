@@ -262,7 +262,7 @@ function WireFiringsPanel({ slug }: { slug: string }) {
                 <span className={"text-[10px] uppercase " + (failed ? "text-ember-500" : "text-moss-600")}>
                   {failed ? "failed" : "fired"}
                 </span>
-                <span className="font-mono text-[10px] text-faint">{new Date(it.occurred_at).toLocaleString()}</span>
+                <span className="tabular-nums text-[10px] text-faint">{new Date(it.occurred_at).toLocaleString()}</span>
                 <span className="font-mono text-[10px] text-accent">{d.event ?? "?"}</span>
                 <span className="text-faint">→</span>
                 <span className="font-mono text-[10px] text-accent">{d.action ?? "?"}</span>

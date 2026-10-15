@@ -144,11 +144,14 @@ embroideryRouter.get(
 );
 // AI-ACTION: digifab:embroidery-job
 // UI-SCREEN: /digifab/embroidery
+// GATE: one route for two actions by operation: setting up and preparing gate on digifab:embroidery-job, a prepared run's start, interrupt and outcome on digifab:station-run (#6672)
 embroideryRouter.post(
   "/actions",
   asyncHandler(async (req, res) => {
-    // ADMIN-ONLY: starting, stopping and setting up a machine stays with the admin tier, at every door (#5170)
-    if (!(await requireCapability(req, res, "digifab:embroidery-job"))) return;
+    // ADMIN-ONLY: setting up a machine and preparing a run stay with the admin tier, at every door (#5170);
+    // starting, interrupting and recording a prepared run is an operator's too (digifab:station-run, #6672)
+    const atStation = ["start", "interrupt", "outcome"].includes(String(req.body?.operation));
+    if (!(await requireCapability(req, res, atStation ? "digifab:station-run" : "digifab:embroidery-job"))) return;
     try {
       res.json(
         await embroideryMutation(

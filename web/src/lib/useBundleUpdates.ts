@@ -10,6 +10,7 @@ import { isDowngradeOrSame } from "./bundleUpdateTier";
 import { api, type PlatformBundleManifest } from "./api";
 import { useBundleCatalog } from "./useBundleCatalog";
 import { sandboxExpiry } from "./sandbox-session";
+import { workspaceTrialQuery } from "./workspace-trial";
 
 const SOURCES_KEY = "cobblr.registry.sources";
 
@@ -52,12 +53,7 @@ export interface BundleUpdate {
  *  private window) never flashes one. */
 export function useBundleUpdates(slug: string): BundleUpdate[] {
   const hintedSandbox = sandboxExpiry() != null;
-  const kind = useQuery({
-    queryKey: ["workspace-trial", slug],
-    queryFn: () => api.workspaceTrial(slug),
-    enabled: !!slug && !hintedSandbox,
-    staleTime: 5 * 60_000,
-  });
+  const kind = useQuery({ ...workspaceTrialQuery(slug), enabled: !!slug && !hintedSandbox });
   const installed = useQuery({
     queryKey: ["bundles", slug],
     queryFn: () => api.listBundles(slug),

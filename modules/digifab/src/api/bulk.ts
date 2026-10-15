@@ -15,6 +15,7 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { buildDriverById } from "../jobs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
+import { detectControllerFirmware, detectPrinterFirmware } from "../firmware-detect.js";
 import { ensureDeclarativeDrivers, createPool, addPoolMember } from "./farm-build.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
@@ -138,43 +139,28 @@ const DetectBody = z.object({
   api_key: optionalText(500),
 });
 
-/** The endpoints we probe, in priority order. */
-const DETECT_PROBES = [
-  { path: "/printer/info", tag: "moonraker" as const },
-  { path: "/api/version", tag: "version" as const },
-  { path: "/machine/status", tag: "duet" as const },
-];
-
-/** Pure: given WHICH well-known endpoint answered 200 and its JSON body, what
- *  firmware is this? null = inconclusive (try the next probe). Exported so the
- *  mapping is unit-tested directly — the network/SSRF path can't reach a
- *  loopback test server (the guard blocks loopback/ULA by design). */
-export function classifyFirmware(tag: "moonraker" | "version" | "duet", json: unknown): { type: string; detail: string } | null {
-  if (tag === "moonraker") {
-    return json && typeof json === "object" && "result" in json
-      ? { type: "klipper-moonraker", detail: "Moonraker /printer/info responded" }
-      : null;
-  }
-  if (tag === "version") {
-    const blob = JSON.stringify(json ?? {}).toLowerCase();
-    if (blob.includes("prusa")) return { type: "prusalink", detail: "/api/version looks like PrusaLink" };
-    if (blob.includes("octoprint")) return { type: "octoprint", detail: "/api/version reports OctoPrint" };
-    if (json && typeof json === "object" && ("api" in json || "server" in json)) {
-      return { type: "octoprint", detail: "/api/version (OctoPrint-shaped)" };
-    }
-    return null;
-  }
-  // duet — any JSON object back from /machine/status (RRF3)
-  return json && typeof json === "object" ? { type: "duet-rrf", detail: "Duet /machine/status responded" } : null;
-}
 
 async function probeJson(url: string, headers: Record<string, string>): Promise<unknown | undefined> {
   if (!/^https?:\/\//i.test(url)) return undefined;
   try {
     await assertSafeMachineUrl(url);
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(4000) });
+    const res = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
     if (!res.ok) return undefined;
     return await res.json().catch(() => null);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A controller's plain-text reply ($I, $$), capped; undefined when it did not answer 200 or the address
+ *  is not one a machine may have. */
+async function probeText(url: string, headers: Record<string, string>): Promise<string | undefined> {
+  if (!/^https?:\/\//i.test(url)) return undefined;
+  try {
+    await assertSafeMachineUrl(url);
+    const res = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
+    if (!res.ok) return undefined;
+    return (await res.text()).slice(0, 64 * 1024);
   } catch {
     return undefined;
   }
@@ -190,12 +176,8 @@ bulkRouter.post(
     const baseRaw = parsed.data.url.trim().replace(/\/+$/, "");
     const h: Record<string, string> = parsed.data.api_key ? { "X-Api-Key": parsed.data.api_key } : {};
 
-    for (const { path, tag } of DETECT_PROBES) {
-      const json = await probeJson(`${baseRaw}${path}`, h);
-      if (json === undefined) continue; // unreachable / non-200 / blocked
-      const hit = classifyFirmware(tag, json);
-      if (hit) return void res.json(hit);
-    }
+    const hit = await detectPrinterFirmware(baseRaw, url => probeJson(url, h)) ?? await detectControllerFirmware(baseRaw, url => probeText(url, h));
+    if (hit) return void res.json(hit);
     res.json({ type: null, detail: "no known firmware answered. Pick the type manually" });
   }),
 );

@@ -19,6 +19,7 @@ import { meta } from "../db/meta.js";
 import { signSession } from "../auth/jwt.js";
 import { dispatch } from "./notifications.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { productName } from "./product-name.js";
 
 export const CONFIRM_HELD_CHANGE_ACTION = "platform:confirm-held-change";
 export const KEEP_HELD_CHANGE_ACTION = "platform:keep-held-change";
@@ -105,7 +106,7 @@ export async function holdForAPerson(req: Request, res: Response): Promise<void>
   res.status(202).json({
     held: true,
     change_id: row.id,
-    message: `Waiting for you: deleting ${summary} needs your yes in Cobblr. The card is in your notifications.`,
+    message: `Waiting for you: deleting ${summary} needs your yes in ${productName()}. The card is in your notifications.`,
   });
 }
 

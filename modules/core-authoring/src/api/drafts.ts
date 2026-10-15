@@ -215,6 +215,7 @@ draftsRouter.get(
 // docs/architecture/templates-first-authoring.md.
 const MatchBody = z.object({ intent: z.string().min(1).max(4000) });
 // AI-REACH: a step of the design-a-workspace flow, which the assistant enters through the build move (chat.ts) and the user drives from the Build page
+// UI-REACH: hosted scoring for authoring clients; Build offers ready-made bundles through its local matcher without a model call.
 draftsRouter.post(
   "/match-template",
   asyncHandler(async (req, res) => {
@@ -229,6 +230,7 @@ draftsRouter.post(
 // ── POST /context — preview the assembled context (+ warnings) ──
 const ContextBody = z.object({ selected_kinds: z.array(z.string()).optional() });
 // AI-REACH: a step of the design-a-workspace flow (see /build)
+// UI-REACH: read-only context inspection for external authoring clients; Build assembles this context inside compile and build.
 draftsRouter.post(
   "/context",
   asyncHandler(async (req, res) => {

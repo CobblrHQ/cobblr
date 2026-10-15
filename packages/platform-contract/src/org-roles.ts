@@ -34,7 +34,7 @@
  * super-admin could not create one), and the user manual listed four roles while
  * the app offered five. Adding a role meant finding all 49; nobody did, twice.
  */
-export const ORG_ROLES = ["owner", "admin", "editor", "member", "guest"] as const;
+export const ORG_ROLES = ["owner", "admin", "editor", "operator", "member", "guest"] as const;
 
 /** The roles a person can hold in a workspace. Derived, never retyped. */
 export type OrgRoleName = (typeof ORG_ROLES)[number];
@@ -45,7 +45,7 @@ export type OrgRoleName = (typeof ORG_ROLES)[number];
  * Owner is missing on purpose: ownership is transferred to an existing member,
  * not handed to a stranger through a link.
  */
-export const INVITABLE_ORG_ROLES = ["admin", "editor", "member", "guest"] as const;
+export const INVITABLE_ORG_ROLES = ["admin", "editor", "operator", "member", "guest"] as const;
 export type InvitableOrgRole = (typeof INVITABLE_ORG_ROLES)[number];
 
 /**
@@ -60,6 +60,8 @@ export const ORG_ROLE_BLURB: Record<OrgRoleName, string> = {
   admin: "Manages people and settings. Can change non-owner roles and mint invites.",
   editor:
     "Trusted with the contents, not the membership. Builds, configures and edits everything, but cannot manage who is in the workspace.",
+  operator:
+    "Runs the machines. Everything a member does, plus starting, sending, pausing, resuming, stopping and framing jobs, confirming stock at a station and recording how a job came out; cannot set up machines, connections or stations.",
   member:
     "Does the day-to-day work. Sees the whole workspace, scans and files, and adds records where its modules allow; no say over people or settings, and cannot install or configure.",
   guest: "Along for the ride. Reads what the workspace shares.",
@@ -78,6 +80,10 @@ export const ORG_ROLE_BLURB: Record<OrgRoleName, string> = {
 export const ORG_ROLE_RANK: Record<OrgRoleName, number> = {
   guest: 0,
   member: 1,
+  // A member who runs the machines: the same rank, so every member gate is
+  // theirs and no admin gate is; what they add is the capabilities modules
+  // declare `heldBy: ["operator"]` (#6672).
+  operator: 1,
   editor: 2,
   admin: 2,
   owner: 3,
@@ -99,6 +105,21 @@ export function roleSatisfies(role: string | null | undefined, allowed: readonly
     ...allowed.map((r) => ORG_ROLE_RANK[r as OrgRoleName] ?? Number.POSITIVE_INFINITY),
   );
   return have >= need;
+}
+
+/**
+ * What a person refused by a role gate reads: who may, in words. The 34
+ * copies of `requireRole` each said "Requires one of: owner, admin", a list
+ * of role ids a person cannot act on and a sentence no other refusal in the
+ * app sounds like (#6785). Rank-based, like the gate: the floor of `allowed`
+ * says who passes.
+ */
+export function roleRefusal(allowed: readonly string[]): string {
+  const floor = Math.min(...allowed.map((r) => ORG_ROLE_RANK[r as OrgRoleName] ?? Number.POSITIVE_INFINITY));
+  if (floor >= ORG_ROLE_RANK.owner) return "Only the workspace's owner can do this.";
+  if (floor >= ORG_ROLE_RANK.admin) return "Only an owner, an admin or an editor of this workspace can do this.";
+  if (floor >= ORG_ROLE_RANK.member) return "Only people who belong to this workspace can change this; a guest can look but not change.";
+  return "You cannot do this here.";
 }
 
 /**

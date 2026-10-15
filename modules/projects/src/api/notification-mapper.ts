@@ -13,6 +13,8 @@ interface TaskUnblockedPayload {
   orgId: string;
   taskId: string;
   via?: { kind: string; id: string };
+  /** The task is someone's, and they were told it is their turn (or freed it themselves). */
+  assigneeTold?: boolean;
 }
 
 /** One unblocked task, held back to be said together with the rest of its burst. */
@@ -115,6 +117,8 @@ export function registerProjectsNotificationMappers(): void {
     async (raw: unknown) => {
       const p = raw as TaskUnblockedPayload;
       if (!p?.orgId || !p?.taskId) return;
+      // Given to someone: theirs to start, and they heard it from tellTurn.
+      if (p.assigneeTold) return;
       try {
         const task = await platform().entities.lookup(
           p.orgId,

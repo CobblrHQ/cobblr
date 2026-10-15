@@ -54,6 +54,8 @@ type SavedViewLite = {
   view_type: string;
   pinned?: boolean;
   is_default?: boolean;
+  /** Null for a view the whole workspace sees. */
+  owner_user_id?: string | null;
   config?: { group_by?: string; visible_fields?: string[] } & Record<string, unknown>;
 };
 
@@ -692,6 +694,8 @@ export function PartsListPage() {
             </button>
             <RecountButton
               categoryId={categoryId || null}
+              // A shared view is a recount's scope: a private one is one person's lens, and a recount is the workspace's.
+              viewId={activeView && activeView.owner_user_id == null ? activeView.id : null}
               className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
             />
             <button
@@ -750,6 +754,8 @@ export function PartsListPage() {
         </button>
         <RecountButton
           categoryId={categoryId || null}
+          // A shared view is a recount's scope: a private one is one person's lens, and a recount is the workspace's.
+          viewId={activeView && activeView.owner_user_id == null ? activeView.id : null}
           className="rounded-md border border-line dark:border-slate-700 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800/70 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5 disabled:opacity-50"
         />
         {connectorImport && (

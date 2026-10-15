@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.35",
+  version: "0.3.39",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -108,6 +108,7 @@ export default defineModule({
     notifications: [
       { eventType: "projects.task.unblocked", label: "A task became unblocked", description: "A task whose blockers are all done." },
       { eventType: "projects.task.assigned", label: "A task was given to you", description: "Someone assigned you a task." },
+      { eventType: "projects.task.your-turn", label: "It's your turn on a task", description: "A task given to you can start: what it waited on is done." },
     ],
     events: [
       "projects.project.created",
@@ -139,6 +140,7 @@ export default defineModule({
       },
       {
         group: "plan",
+        // UI-SCREEN: /projects (the task sheet offers Stop waiting on this for each dependency)
         id: "projects:unblock",
         runBy: "member",
         examples: ["it is not waiting on that any more", "remove that dependency"],
@@ -231,6 +233,17 @@ export default defineModule({
         // Wire-only — fired by an upstream completion event, not a button.
         userInvokable: false,
       },
+      {
+        group: "plan",
+        id: "projects:copy-project",
+        runBy: "member",
+        examples: ["do this job again for the next order", "copy this project with its steps", "start another one like this"],
+        label: "Do it again from this project",
+        description: "Start a new project with this one's tasks: their titles, details, checklists (unticked), machines and who has each, in the same order, each waiting on what it waited on before. Notes, photos, progress and parts used stay with the original. Pass a new name.",
+        appliesTo: { kinds: ["projects:project"] },
+        invokeHandler: "projects.copy-project",
+        argsSchema: { name: { label: "Name of the new project", type: "text", required: true } },
+      },
     ],
   },
 
@@ -277,6 +290,9 @@ export default defineModule({
       // kept (see heal-pattern-text.ts for the retirement condition).
       const { registerPatternTextHeal } = await import("./api/heal-pattern-text.js");
       registerPatternTextHeal();
+      // What its dashboard tile reads, in the one dashboard request (#6563).
+      const { registerProjectsDashboardReads } = await import("./dashboard-reads.js");
+      registerProjectsDashboardReads();
     },
   },
 });

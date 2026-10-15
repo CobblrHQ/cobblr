@@ -9,16 +9,21 @@
 // records changes while it is open: the reconcile at the end is previewed
 // and applied in one step, with one Undo, the way "What's still here?" is.
 import { sql, type Kysely } from "kysely";
-import { ActionRefusal, placeLine, platform } from "@cobblr/platform-contract";
+import { ActionRefusal, placeLine, platform, viewQuery } from "@cobblr/platform-contract";
+import { readSavedView } from "@cobblr/platform-contract/saved-view-reader";
 import { countOf } from "@cobblr/platform-contract/plural";
 import type { InventoryDB } from "./db.js";
 import { matchScan, type RecountItem, type RecountMatch, type RecountScanInput } from "./recount-match.js";
 import { familiesOf, type Family } from "./api/families.js";
 
-/** A collection, or one category of it, wherever its things are. */
+/** A collection, or the part of it one category, one tag or one shared saved
+ *  view takes in, wherever its things are (#6302: "from any collection,
+ *  category, tag or saved view"). */
 export interface RecountScope {
   collection: string;
   category_id?: string | null;
+  tag?: string | null;
+  view_id?: string | null;
 }
 
 const PART = "inventory:part";
@@ -66,12 +71,45 @@ async function collectionOf(orgId: string, raw: unknown): Promise<{ instance: st
 export async function parseRecountScope(orgId: string, raw: unknown): Promise<{ scope: RecountScope; label: string }> {
   const s = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const { instance, label } = await collectionOf(orgId, s.collection);
-  const category = typeof s.category_id === "string" && s.category_id ? s.category_id : null;
+  const said = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const category = said(s.category_id);
+  const tag = said(s.tag);
+  const viewId = said(s.view_id);
+  if ([category, tag, viewId].filter(Boolean).length > 1) throw new ActionRefusal("Recount one category, one tag or one saved view at a time.");
+  if (tag) return { scope: { collection: instance, tag }, label: `${label} · tagged ${tag}` };
+  if (viewId) {
+    // A recount is the workspace's: several people scan into it, so only a
+    // view everyone can see is a scope (the shared reader answers no other).
+    const view = await readSavedView(orgId, viewId);
+    if (!view) throw new ActionRefusal("That saved view can't be recounted: it is gone, or it is a private view. Share it with the workspace first.");
+    if (view.entityKind !== kindOf(instance)) throw new ActionRefusal(`That saved view shows something other than ${label}.`);
+    return { scope: { collection: instance, view_id: viewId }, label: `${label} · ${view.name ?? "saved view"}` };
+  }
   if (!category) return { scope: { collection: instance }, label };
   const t = await db(orgId);
   const row = await t.selectFrom("inventory_categories").select(["name"]).where("id", "=", category).executeTakeFirst();
   if (!row) throw new ActionRefusal("That category no longer exists.");
   return { scope: { collection: instance, category_id: category }, label: `${label} · ${row.name}` };
+}
+
+/** The records a tag or a saved view takes in, by the collection's own list
+ *  (the same answer its page shows for that tag or view), or null when the
+ *  scope is the whole collection or a category. */
+async function idsInScope(orgId: string, scope: RecountScope): Promise<string[] | null> {
+  const kind = kindOf(scope.collection);
+  if (scope.tag) {
+    const all = await platform().entities.listAll(orgId, kind, { filter: { _tag: scope.tag } }, undefined, { cap: MAX_EXPECTED + 1 });
+    return all.items.map((r) => r.id);
+  }
+  if (scope.view_id) {
+    const view = await readSavedView(orgId, scope.view_id);
+    // A view deleted or made private after the recount began: nothing is
+    // expected rather than everything, so nothing is marked gone by mistake.
+    if (!view) return [];
+    const all = await platform().entities.listAll(orgId, kind, viewQuery(view.config, await platform().accounts.dayFor(null)), undefined, { cap: MAX_EXPECTED + 1 });
+    return all.items.map((r) => r.id);
+  }
+  return null;
 }
 
 /** Everything the recount expects to see: every record still listed in the
@@ -84,6 +122,11 @@ export async function expectedOf(orgId: string, scope: RecountScope): Promise<Re
     .where("archived", "=", false)
     .where("instance", "=", scope.collection);
   if (scope.category_id) q = q.where("category_id", "=", scope.category_id);
+  const only = await idsInScope(orgId, scope);
+  if (only) {
+    if (!only.length) return [];
+    q = q.where("id", "in", only);
+  }
   const rows = await q.orderBy("created_at").orderBy("id").limit(MAX_EXPECTED + 1).execute();
   if (rows.length > MAX_EXPECTED) throw new ActionRefusal(`That is more than ${MAX_EXPECTED} records. Recount one category at a time.`);
   const places = new Map<string, string>();
@@ -166,6 +209,9 @@ export async function openRecounts(orgId: string): Promise<Array<{ id: string; l
 export async function startRecount(orgId: string, userId: string | null, rawScope: unknown): Promise<{ id: string; label: string; expected: number; resumed: boolean }> {
   const { scope, label } = await parseRecountScope(orgId, rawScope);
   const expected = await expectedOf(orgId, scope);
+  // A tag nothing here carries is a typo or the wrong collection, not a
+  // recount of nothing: every thing scanned would read as new.
+  if (scope.tag && !expected.length) throw new ActionRefusal(`Nothing in ${label.split(" · ")[0]} carries the tag "${scope.tag}".`);
   const t = await db(orgId);
   const open = await t
     .selectFrom("inventory_recounts")

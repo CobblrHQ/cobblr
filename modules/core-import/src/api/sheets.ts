@@ -235,6 +235,7 @@ export async function planUpload(input: z.infer<typeof PlanBody>, ctx: PlanCtx):
 }
 
 // AI-REACH: exempt reads a file a person uploads in the import sheet; an assistant holds no file to send
+// UI-REACH: legacy read-only spreadsheet analysis for import clients; the import screen uses /sheets/plan to preview destinations and changes together.
 sheetsRouter.post("/sheets/understand", (req, res, next) => {
   void (async () => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;

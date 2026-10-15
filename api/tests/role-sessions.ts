@@ -13,6 +13,11 @@ import { BASE, http, org, type TestSession } from "./helpers.js";
 export type OtherRole = InvitableOrgRole;
 /** Every role that writes: all but the read-only guest. */
 export const WRITING_ROLES = ORG_ROLES.filter((r): r is Exclude<OrgRoleName, "guest"> => r !== "guest");
+/** The writing roles besides the owner who signed up: the sessions a test of
+ *  WRITING_ROLES makes. A list typed out beside it lost the operator (#6672). */
+/** Every role besides the owner who signed up, guest included. */
+export const INVITED_ROLES = ORG_ROLES.filter((r): r is Exclude<OrgRoleName, "owner"> => r !== "owner");
+export const INVITED_WRITING_ROLES = WRITING_ROLES.filter((r): r is Exclude<OrgRoleName, "guest" | "owner"> => r !== "owner");
 
 /** A person with `role` in the owner's workspace, signed in. */
 export async function sessionAs(owner: TestSession, role: OtherRole): Promise<TestSession> {

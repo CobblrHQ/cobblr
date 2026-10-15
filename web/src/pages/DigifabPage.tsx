@@ -23,6 +23,14 @@ import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, 
 import { useReprint } from "../features/digifab/useReprint";
 import { dayLabel } from "@cobblr/platform-contract/day";
 
+/** What a Start confirm says: that it starts a machine, and how to stop it. It said a print "can't be stopped
+ *  from here" beside a job that offers Pause and Cancel (#6785). */
+export function startPrintWarning(machine: string | null, count: number): string {
+  const what = count === 1 ? "the print" : "the prints";
+  const where = machine ? `This uploads the file and queues it on "${machine}".` : "This uploads each file and queues it on its machine.";
+  return `${where} On a live farm it physically starts ${what}. To stop ${count === 1 ? "it" : "one"}, pause or cancel the job here, or stop it at the printer.`;
+}
+
 export function DigifabPage({
   setupOnly = false,
   embedded = false,
@@ -1427,7 +1435,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
       title: "Start this print?",
       message: isMock
         ? `Mock connection "${conn?.label}": no hardware is touched. Uploads + places the job through the mock driver.`
-        : `This uploads the file and queues it on "${conn?.label ?? "the farm"}". On a live farm it physically starts the print. It can't be stopped from here.`,
+        : startPrintWarning(conn?.label ?? "the farm", 1),
       confirmLabel: isMock ? "Send (mock)" : "Start print",
       destructive: !isMock,
     });
@@ -1468,7 +1476,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
     if (!bulkSendable.length) return;
     const ok = await confirm({
       title: `Start ${bulkSendable.length} print${bulkSendable.length === 1 ? "" : "s"}?`,
-      message: "Uploads + queues each on its farm. On a live farm this physically starts the prints; they can't be stopped from here.",
+      message: startPrintWarning(null, bulkSendable.length),
       confirmLabel: `Start ${bulkSendable.length}`,
       destructive: true,
     });

@@ -201,6 +201,7 @@ export function WebPhotoSearch({
   brand,
   onSaved,
   startOpen = false,
+  onOpenChange,
 }: {
   kind: string;
   id: string;
@@ -209,6 +210,8 @@ export function WebPhotoSearch({
   /** The record changed: refetch what shows it. */
   onSaved: () => void;
   startOpen?: boolean;
+  /** The search opened or closed: a column sized to the photo makes room. */
+  onOpenChange?: (open: boolean) => void;
 }) {
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
@@ -236,7 +239,10 @@ export function WebPhotoSearch({
     <div>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          setOpen(!open);
+          onOpenChange?.(!open);
+        }}
         aria-expanded={open}
         className="inline-flex min-h-9 items-center text-xs font-medium text-accent hover:underline"
       >
@@ -306,13 +312,16 @@ export function RecordPhoto({
   useEffect(() => markShownBeside(id), [id]);
   const s = suggestions ? answers.suggestion : null;
   const suggestedSrc = !src && s?.status === "suggested" ? s.image_path : null;
+  const [searching, setSearching] = useState(false);
   return (
     // On a phone the column is the photo's own width: the answers and the web
     // search wrap under the thumbnail rather than widening the column, which
-    // left a header's title 93 px and five lines (#6150).
+    // left a header's title 93 px and five lines (#6150). While the web
+    // search is open it takes the whole row: in 96 px its field sat on its
+    // Use button (#6644), and the title waits below until it closes.
     <div
       data-testid="record-photo"
-      className="space-y-2 max-sm:w-[var(--record-photo-w)] max-sm:shrink-0"
+      className={"space-y-2 " + (searching ? "max-sm:basis-full max-sm:w-full" : "max-sm:w-[var(--record-photo-w)] max-sm:shrink-0")}
       style={{ "--record-photo-w": `${size}px` } as CSSProperties}
     >
       <EntityImageEdit
@@ -327,7 +336,7 @@ export function RecordPhoto({
         autoBusy={autoBusy}
       />
       {suggestions && !src && <SuggestionAnswer answers={answers} />}
-      <WebPhotoSearch kind={kind} id={id} instance={instance} brand={brand} onSaved={onSaved} />
+      <WebPhotoSearch kind={kind} id={id} instance={instance} brand={brand} onSaved={onSaved} onOpenChange={setSearching} />
     </div>
   );
 }

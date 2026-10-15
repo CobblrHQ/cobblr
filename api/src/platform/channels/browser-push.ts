@@ -10,11 +10,12 @@ import { meta } from "../../db/meta.js";
 import { buildPushPayload } from "../push-policy.js";
 import { pushDevicesFor, pushToDevices, unreadCountFor } from "../push-delivery.js";
 import type { Channel, ChannelEvent } from "./types.js";
+import { productName } from "../product-name.js";
 
 async function workspaceName(orgId: string): Promise<string> {
-  if (!orgId) return "Cobblr";
+  if (!orgId) return productName();
   const row = await meta.selectFrom("orgs").select("name").where("id", "=", orgId).executeTakeFirst();
-  return row?.name ?? "Cobblr";
+  return row?.name ?? productName();
 }
 
 export const browserPushChannel: Channel = {

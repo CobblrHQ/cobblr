@@ -21,7 +21,7 @@ import { z } from "zod";
 import { SERVICE_EFFECTS, type PlatformServices } from "@cobblr/platform-contract/services";
 export type { PlatformServices } from "@cobblr/platform-contract/services";
 import type { DateFieldDirection } from "@cobblr/platform-contract/date-field-direction";
-import { ORG_ROLES, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
+import { ORG_ROLES, roleHoldsEveryCapability, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { centsFromAmount } from "@cobblr/platform-contract/money";
 import { isFloatingModel } from "@cobblr/platform-contract/ai-models";
 import { isJunkCategory } from "@cobblr/platform-contract/category-reconcile";
@@ -1133,6 +1133,11 @@ export const ModuleCapability = z.object({
   // What holding it lets a person do, shown in the permissions matrix under
   // the label, where an admin decides whether to grant it.
   description: z.string().min(1),
+  // The stock roles that hold it without a grant, the way a member holds
+  // taking stock: `operator` is a member who runs the machines, and holds
+  // what a module says an operator does (#6672). The admin tier holds every
+  // capability anyway; a guest never holds one by role.
+  heldBy: z.array(z.enum(ORG_ROLES).refine((r) => r !== "guest" && !roleHoldsEveryCapability(r), "Only a role below the admin tier, and never a guest, holds a capability by role.")).optional(),
 });
 export type ModuleCapability = z.infer<typeof ModuleCapability>;
 
@@ -2256,7 +2261,7 @@ export interface ActivityLogParams {
  *  label the words the activity shows ("via floor plan"). */
 /** `share`: a friend's edit, made in a share space and applied here (its
  *  label is their name). */
-export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface" | "share";
+export type ActivityViaKind = "mcp" | "assistant" | "automation" | "label" | "surface" | "share" | "sync";
 
 export class RecordRestoreRefused extends Error {
   status: number;
@@ -5125,6 +5130,14 @@ export class EdgeOffline extends Error {
   }
 }
 
+export class EdgeNotRegistered extends Error {
+  readonly code = "edge_not_registered";
+  constructor() {
+    super("This bridge is not registered. Register first.");
+    this.name = "EdgeNotRegistered";
+  }
+}
+
 /** The bridge cannot do what the call needs (it has not reported the feature,
  *  usually because it has not updated itself yet). `feature` names it; a
  *  caller with an older way to do the same thing falls back to it. */
@@ -5238,6 +5251,9 @@ export interface EdgeRelayItem {
   lane: EdgeLane;
   scope?: string;
   blob?: EdgeBlobRef;
+  /** "personal": a personal-document read, handed only to a bridge that says
+   *  no-redirects and private-transit, and never written to the relay table. */
+  privacy?: "personal";
 }
 
 /** A connected relay agent, as reported by the pane of glass. */
@@ -5327,7 +5343,8 @@ export interface PlatformEdge {
    *  workspace has no such bridge. */
   disconnectBridge(orgId: string, bridge: string | null): Promise<{ alsoCut: string[] } | null>;
   /** Long-poll for the next queued request; resolves null on keep-alive
-   *  timeout or when the poller hangs up (pass an abort signal). */
+   *  timeout or when the poller hangs up (pass an abort signal). Throws
+   *  EdgeNotRegistered when registration is missing or removed. */
   relayPoll(key: string, opts?: { signal?: AbortSignal; lanes?: EdgeLane[] | null }): Promise<EdgeRelayItem | null>;
   /** Deliver a polled request's result. Returns false if the id is unknown
    *  (already timed out). */
@@ -5596,6 +5613,10 @@ export interface PlatformQueue {
 export interface PlatformAuth {
   /** Checks workspace membership against the same ranked roles as REST guards. */
   userHasRole(args: { orgId: string; userId: string; minRole: import("./org-roles.js").OrgRoleName }): Promise<boolean>;
+  /** May this person run `actionId` here: their role in the workspace, then
+   *  userHasCapability, the question the action's route asks. For a handler's
+   *  own check, so its door and its page agree (#6672). */
+  userMayRun(args: { orgId: string; userId: string; actionId: string }): Promise<boolean>;
   userHasCapability(args: {
     orgId: string;
     userId: string;
@@ -7212,12 +7233,14 @@ export interface PlatformOutboundEmail {
       text: string;
       /** The member who pressed send. */
       sentBy: string;
+      attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }>;
+      category?: "sales_document";
       replyTo?: string;
       source?: { kind: string; id: string };
     },
   ): Promise<
     | { ok: true; logId: string; messageId: string | null; status: "sent" | "skipped" }
-    | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed"; message: string }
+    | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed" | "rate_limited"; message: string }
   >;
   /** An AUTOMATION's message to someone on the workspace's People list who
    *  is not a member (#6070): only through this workspace's own sender, only

@@ -157,12 +157,12 @@ export async function personalDocumentText(input: DocumentInput, incomplete: () 
       const pages = Number([...info.stdout.matchAll(/^Pages:\s+(\d+)\s*$/gm)].at(-1)?.[1]);
       if (!pages || pages > 50) { incomplete(); return layer; }
       const text = [layer];
-      // A page with a text layer is read by that layer; OCR adds only the
-      // words inside its pictures, so those pictures are read and not the
-      // whole page again (a 12-page pattern took minutes to upload). A page
-      // with no text layer is rendered and read whole. The reader, which
-      // shows a local model each page, still renders every page.
-      const pictures = onPage ? null : await picturesByPage(input.path).catch(() => null);
+      // Ordinary typed documents sample the first two pages' pictures so a
+      // long illustrated pattern does not OCR every step's photo. Text and
+      // metadata above still cover the whole file; pages without text below
+      // are always rendered and read. Explicit personal reads stay complete.
+      const picturePages = !input.vault && !input.assist && !onPage && seen.layer && classifyPersonalText(layer) === "normal" ? 2 : undefined;
+      const pictures = onPage ? null : await picturesByPage(input.path, picturePages).catch(() => null);
       const pending: Buffer[] = [];
       for (let page = 1; page <= pages; page++) {
         if (pictures) {
@@ -190,12 +190,12 @@ export async function personalDocumentText(input: DocumentInput, incomplete: () 
   if (/^text\//.test(input.mime)) return new TextDecoder().decode(input.bytes);
   return "";
 }
-/** Every picture embedded in a PDF, by page: JPEGs as they are stored,
+/** Pictures embedded in a PDF, by page: JPEGs as they are stored,
  *  anything else as PNG. */
-async function picturesByPage(path: string): Promise<Map<number, Buffer[]>> {
+async function picturesByPage(path: string, lastPage?: number): Promise<Map<number, Buffer[]>> {
   const dir = await mkdtemp(join(tmpdir(), "personal-document-pictures-"));
   try {
-    await run("pdfimages", ["-png", "-j", "-p", path, join(dir, "img")], { timeout: 60_000, maxBuffer: 64 * 1024 });
+    await run("pdfimages", ["-png", "-j", "-p", ...(lastPage ? ["-f", "1", "-l", String(lastPage)] : []), path, join(dir, "img")], { timeout: 60_000, maxBuffer: 64 * 1024 });
     const out = new Map<number, Buffer[]>();
     for (const name of (await readdir(dir)).sort()) {
       const page = Number(/^img-(\d+)-\d+\.(?:png|jpg)$/.exec(name)?.[1]);

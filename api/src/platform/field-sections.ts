@@ -62,6 +62,15 @@ function resolveNames(
  *  `renameTo`, the heading a person named is renamed instead — same sentence
  *  shape ("that heading, this word"), so it belongs with this rather than as a
  *  third thing to find. */
+/** The kinds whose form has a heading by this name (case aside): "rename the
+ *  Buying heading" names no kind, and when only one kind has a Buying heading
+ *  there is nothing to ask (#6562). */
+export async function kindsWithHeading(orgId: string, sectionName: string): Promise<string[]> {
+  const rows = await meta.selectFrom("field_sections").select(["entity_kind", "name"]).where("org_id", "=", orgId).execute();
+  const want = sectionName.trim().toLowerCase();
+  return [...new Set(rows.filter((r) => r.name.trim().toLowerCase() === want).map((r) => r.entity_kind))];
+}
+
 export async function groupFields(
   orgId: string,
   entityKind: string,

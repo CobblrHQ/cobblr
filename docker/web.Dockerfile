@@ -96,6 +96,12 @@ FROM nginx:1.27-alpine AS runtime
 
 COPY --from=builder /app/web/dist /usr/share/nginx/html
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# A graceful quit waits for every proxied event stream, which never ends on its
+# own, so each stop ran out docker's 10 s and was killed, cutting every tab at
+# once (#6708). Cap it; the tabs reconnect. Main context, so not in conf.d; the
+# grep fails the build if the base image's file changes shape.
+RUN sed -i '/^worker_processes/a worker_shutdown_timeout 5s;' /etc/nginx/nginx.conf \
+ && grep -q '^worker_shutdown_timeout 5s;' /etc/nginx/nginx.conf
 
 EXPOSE 8080
 

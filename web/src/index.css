@@ -343,6 +343,23 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   input, select, textarea {
     font-size: max(16px, 1em) !important;
   }
+
+  /* Compact field utilities must not shrink a finger's target. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]),
+  select,
+  textarea,
+  .input,
+  [role="combobox"] {
+    min-height: 44px !important;
+  }
+
+  /* The label takes the tap; the checkbox keeps its compact glyph. */
+  label:has(input[type="checkbox"]),
+  label:has(input[type="radio"]) {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+  }
 }
 
 /* Full-sidebar mode: ephemeral toasts land in the sidebar's empty middle —

@@ -859,6 +859,7 @@ catalogsRouter.get(
 // Manual sync trigger. For CSV catalogs (no puller_id), no-op + 400.
 // For pullable catalogs (v0.3), kicks off a core-queue job.
 // AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
+// UI-REACH: reserved puller protocol currently returns 501; people refresh catalogs through CSV import until pullers have a runtime.
 catalogsRouter.post(
   "/:id/sync",
   asyncHandler(async (req, res) => {

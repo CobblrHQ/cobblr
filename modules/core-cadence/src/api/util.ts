@@ -1,6 +1,6 @@
 import type { Request, Response } from "express";
 import { tenantContext, type OrgRole } from "../db.js";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 
 /** Gate a mutating route on the caller's org role. Sends a 403 and returns
  *  false when the role isn't allowed; the handler bails on false. Mirrors the
@@ -16,7 +16,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
   // org-roles.ts for the whole story.
   if (!roleSatisfies(ctx.role, allowed)) {
     res.status(403).json({
-      error: { code: "forbidden", message: `This action requires one of: ${allowed.join(", ")}.` },
+      error: { code: "forbidden", message: roleRefusal(allowed) },
     });
     return false;
   }

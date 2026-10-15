@@ -161,7 +161,7 @@ function ActivityRow({ entry: e }: { entry: CrossOrgActivityEntry }) {
           `${activityVerb(e.action)} something`
         )}
       </span>
-      <span className="font-mono text-[10px] text-faint shrink-0 ml-auto">
+      <span className="tabular-nums text-[10px] text-faint shrink-0 ml-auto">
         {new Date(e.occurred_at).toLocaleTimeString()}
       </span>
     </li>

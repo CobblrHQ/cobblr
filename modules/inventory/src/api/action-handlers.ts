@@ -135,6 +135,11 @@ interface AdjustStockPayload {
    *  second delivery for the same thing, source and direction changes
    *  nothing. */
   once?: boolean;
+  /** The source can take what it did back (a shopping line unticked), so a
+   *  `once` repeat is judged on what it has done net: one that follows its own
+   *  reversal is a fresh application, where a print's refund is never made
+   *  twice. */
+  reversible?: boolean;
   /** The delta sets the count to what is actually there (a recount): the
    *  ledger line is a correction, never consumption or a purchase. */
   correction?: boolean;
@@ -155,7 +160,21 @@ async function refuseOneOfMeasured(orgId: string, partId: string): Promise<void>
 }
 
 /** Has this source already moved this thing in this direction? */
-async function alreadyApplied(orgId: string, partId: string, sourceKind: string, sourceId: string, delta: number): Promise<boolean> {
+/** What this source has already done to the count, net. */
+export async function appliedBySource(orgId: string, partId: string, sourceKind: string, sourceId: string): Promise<number> {
+  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+  const row = await db
+    .selectFrom("inventory_consumption")
+    .select(sql<string>`coalesce(sum(delta::numeric), 0)`.as("net"))
+    .where("part_id", "=", partId)
+    .where("source_kind", "=", sourceKind)
+    .where("source_id", "=", sourceId)
+    .executeTakeFirst();
+  return Number(row?.net ?? 0);
+}
+
+async function alreadyApplied(orgId: string, partId: string, sourceKind: string, sourceId: string, delta: number, reversible: boolean): Promise<boolean> {
+  if (reversible) return Math.sign(await appliedBySource(orgId, partId, sourceKind, sourceId)) === Math.sign(delta);
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
   const row = await db
     .selectFrom("inventory_consumption")
@@ -695,7 +714,7 @@ export function registerInventoryActionHandlers(): void {
       const delta = inUnit.delta;
       const sourceKind = args.sourceKind ?? ev.sourceKind;
       const sourceId = args.sourceId ?? ev.sourceId;
-      if ((args.once ?? ev.once) === true && sourceKind && sourceId && (await alreadyApplied(ctx.orgId, partId, sourceKind, sourceId, delta))) {
+      if ((args.once ?? ev.once) === true && sourceKind && sourceId && (await alreadyApplied(ctx.orgId, partId, sourceKind, sourceId, delta, (args.reversible ?? ev.reversible) === true))) {
         return { ok: true, skipped: true, reason: "already applied for this source" };
       }
       // Stock arriving goes through the lots, so a restock (the wire says

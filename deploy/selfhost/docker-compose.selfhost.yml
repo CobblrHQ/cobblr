@@ -36,6 +36,8 @@ services:
     environment:
       NODE_ENV: production
       COBBLR_ENV: ${COBBLR_ENV:-self-hosted}
+      # What the server calls itself in emails, push titles and refusals (#6815); unset is Cobblr.
+      COBBLR_PRODUCT_NAME: ${COBBLR_PRODUCT_NAME:-}
       # Keep each order's lines' tracking current from the store's own order
       # page (a Shopify "View order" link in the order email). A self-hosted
       # instance reads from its own address, so it is on here; false keeps the

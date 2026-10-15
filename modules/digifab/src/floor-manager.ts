@@ -1,3 +1,4 @@
+import { poolGroupCondition } from "./pool-groups.js";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
 import { platform, SYSTEM_VIEWER, readJsonArg, type EntityViewer } from "@cobblr/platform-contract";
@@ -64,7 +65,7 @@ export async function floorSnapshot(db: Kysely<DigifabDB>, orgId: string, viewer
   db.selectFrom("digifab_material_dispatches").selectAll().where("status", "not in", ["dispatched", "cancelled"]).orderBy("created_at", "asc").execute(),
   db.selectFrom("digifab_laser_profiles").select(["profile", "connection_id", "remote_device_id"]).execute(),
   db.selectFrom("digifab_library").select(["id", "name", "kind"]).where("kind", "in", ["svg", "dxf"]).orderBy("name", "asc").execute(),
-  db.selectFrom("digifab_pools").select(["id", "name"]).execute(), db.selectFrom("digifab_pool_members").select(["pool_id", "connection_id", "remote_device_id"]).execute(),
+  db.selectFrom("digifab_pools").where(poolGroupCondition()).select(["id", "name"]).execute(), db.selectFrom("digifab_pool_members").select(["pool_id", "connection_id", "remote_device_id"]).execute(),
  ]);
  const planIds = batches.flatMap(b => b.plan_ids);
  return {

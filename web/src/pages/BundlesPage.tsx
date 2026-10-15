@@ -8,6 +8,7 @@ import { ChevronRight, Copy, Download, Library, Package, Plus, Share2, Trash2, X
 import { Link, useSearchParams } from "react-router-dom";
 import { BundleSection, BundleTile, splitCatalog } from "../components/BundleBrowse";
 import { ApiError, api, type PlatformBundle, type PlatformBundleManifest, type RegistryDriverEntry, type RegistryModuleEntry, type RegistryRendererEntry } from "../lib/api";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { type FeaturedBundle } from "../lib/featured-bundles";
@@ -38,7 +39,7 @@ type SelectedBundle =
 
 export function BundlesPage() {
   usePageTitle("Bundles");
-  const { activeSlug: slug } = useActiveOrg();
+  const { activeSlug: slug, activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const [selected, setSelected] = useState<SelectedBundle>(null);
@@ -205,6 +206,18 @@ export function BundlesPage() {
     },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : (e as Error).message),
   });
+  const uninstallRenderer = useMutation({
+    mutationFn: (name: string) => api.uninstallRenderer(slug, name),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["installed-renderers", slug] });
+      toast.success("Preview uninstalled. Your files are kept.");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't uninstall the preview."),
+  });
+  async function onUninstallRenderer(name: string) {
+    const ok = await confirm({ title: `Uninstall ${name}?`, message: "This workspace will stop using this preview. Your files will be kept.", confirmLabel: "Uninstall preview", destructive: true });
+    if (ok) uninstallRenderer.mutate(name);
+  }
   async function onInstallRenderer(r: RegistryRendererEntry) {
     if (r.trust !== "official") {
       const ok = await confirm({
@@ -263,7 +276,7 @@ export function BundlesPage() {
       <ConfigHeaderActions>
         <Link
           to="/bundles/compose"
-          className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+          className="min-h-11 text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1 md:min-h-0"
           title="Pick which wires + field defs go into a bundle, no JSON authoring required"
         >
           <Package size={12} /> compose
@@ -271,7 +284,7 @@ export function BundlesPage() {
         <button
           type="button"
           onClick={() => setExportOpen(true)}
-          className="text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1"
+          className="min-h-11 text-[10px] uppercase tracking-widest text-muted hover:text-accent transition flex items-center gap-1 md:min-h-0"
           title="Export the whole workspace's customisations as one bundle (no per-item picker)"
         >
           <Download size={12} /> publish mine
@@ -524,6 +537,15 @@ export function BundlesPage() {
           File-preview renderers for extra formats - they run fully sandboxed (no network, no data
           access), so a new file type previews without touching anything else.
         </p>
+        {!!installedRenderers.data?.items.length && <section className="mb-3 space-y-2" aria-label="Installed file previews">
+          <h3 className="text-sm font-semibold">Installed file previews</h3>
+          <ul className="space-y-2">
+            {installedRenderers.data.items.map((r) => <li key={r.name} className="flex flex-wrap items-center gap-3 rounded-lg border border-line p-3">
+              <span className="min-w-0 flex-1 break-words text-sm">{r.name} <span className="text-muted">.{r.exts.join(" .")}</span></span>
+              {activeOrg && roleSatisfies(activeOrg.role, ["owner", "admin"]) && <button type="button" aria-label={`Uninstall ${r.name}`} title={`Uninstall ${r.name}`} className="min-h-11 rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50" disabled={uninstallRenderer.isPending} onClick={() => void onUninstallRenderer(r.name)}>Uninstall</button>}
+            </li>)}
+          </ul>
+        </section>}
         {(registry.data?.renderers.length ?? 0) === 0 ? (
           <div className="text-xs text-faint dark:text-slate-500 italic">No renderers in the registry yet.</div>
         ) : (

@@ -10,10 +10,10 @@ import {
   ApiError, api,
   type OrgMembership, type WorkspaceInvite, type WorkspaceMember, type WorkspacePerson,
 } from "../lib/api";
-import { Modal, SegmentedChoice, useToast, useConfirm } from "@cobblr/platform-web";
+import { Modal, SegmentedChoice, printJoinSheet, useToast, useConfirm, Code } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePrefill } from "../lib/prefill";
-import { printJoinSheet } from "../lib/joinSheet";
+import { MySignupInvites } from "./MySignupInvites";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -96,6 +96,14 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   const [pacePeriod, setPacePeriod] = useState<"day" | "week" | "month" | "year">("day");
   const { activeOrg } = useActiveOrg();
   const workspaceName = activeOrg?.slug === slug && activeOrg.name ? activeOrg.name : displaySlug(slug);
+  // The wall sheet names the role it joins as and its pace, in words (#6738).
+  const sheetFor = (inv: WorkspaceInvite) => ({
+    url: `${window.location.origin}/invite/${inv.token}`,
+    workspace: workspaceName,
+    role: inv.role,
+    pace: inv.pace_limit && inv.pace_period ? { limit: inv.pace_limit, period: inv.pace_period } : null,
+    then: "Then scan the label on anything you take, and press −1.",
+  });
   useEffect(() => {
     if (!open || focus !== "invite") return;
     // After the lists paint, or the scroll lands on a shorter page than the
@@ -121,7 +129,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
     mutationFn: (id: string) => api.rotateJoinLink(slug, id),
     onSuccess: async (inv) => {
       void qc.invalidateQueries({ queryKey: ["invites", slug] });
-      const ok = await printJoinSheet({ url: `${window.location.origin}/invite/${inv.token}`, workspace: workspaceName });
+      const ok = await printJoinSheet(sheetFor(inv));
       toast.success(
         ok
           ? "New code made; the old QR no longer works. Print the new one and swap it on the wall."
@@ -181,6 +189,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   const createSignupInvite = useMutation({
     mutationFn: () => api.mintMySignupInvite({ email: inviteEmail.trim() || undefined, ...(seedFromHere ? { from_workspace: slug } : {}) }),
     onSuccess: (inv) => {
+      void qc.invalidateQueries({ queryKey: ["my-signup-invites"] });
       const sentTo = inviteEmail.trim();
       setInviteEmail("");
       const url = `${window.location.origin}/join/${inv.token}`;
@@ -293,6 +302,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   return (
     <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg" inline={inline} chromeless={chromeless}>
       <div className="space-y-5">
+        <MySignupInvites enabled={open} />
         {/* Members list */}
         <div>
           <div className="text-[10px] uppercase tracking-widest text-accent mb-2">
@@ -408,8 +418,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                           {inv.joined!.length > 4 ? ` and ${inv.joined!.length - 4} more` : ""}
                         </div>
                       )}
-                      <div className="text-[10px] font-mono text-faint dark:text-slate-500 mt-0.5">
-                        token: …{inv.token.slice(-8)}{" "}
+                      <div className="text-[10px] text-faint dark:text-slate-500 mt-0.5">
+                        token: <Code>…{inv.token.slice(-8)}</Code>{" "}
                         {inv.expires_at && (
                           <>
                             · expires {new Date(inv.expires_at).toLocaleDateString()}
@@ -443,7 +453,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                     {inv.reusable && (
                       <button
                         onClick={async () => {
-                          const ok = await printJoinSheet({ url: `${window.location.origin}/invite/${inv.token}`, workspace: workspaceName });
+                          const ok = await printJoinSheet(sheetFor(inv));
                           if (!ok) toast.error("Your browser blocked the print window. Allow pop-ups for this site and press Print QR again.");
                         }}
                         className="text-faint hover:text-accent transition inline-flex items-center gap-1 min-h-8"

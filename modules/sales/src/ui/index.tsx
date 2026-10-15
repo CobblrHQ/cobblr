@@ -9,11 +9,13 @@ import { useEffect, useState } from "react";
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShoppingCart, Plus, Trash2, X, Users, PackageCheck, Truck, Copy, ExternalLink, Hammer, Settings } from "lucide-react";
 import {
-  SalesApi, SalesApiError,
+  SalesApi, SalesApiError, orderWriteKey,
   type SalesOrder, type SalesOrderStatus, type CustomerSummary, type PartOption, type FulfilDoor, type HistoryRow, type OrderSort, type Paged,
 } from "./api.js";
+import { OrderDocuments } from "./documents.js";
 import { IntakeSettings } from "./intake.js";
-import { invoiceCsv, invoiceHtml, orderTotal } from "../invoice.js";
+import { dayHere } from "@cobblr/platform-contract/day";
+import { invoiceCsv, orderTotal } from "../invoice.js";
 import { Link } from "react-router-dom";
 import { fieldCurrency, formatStoredMoney, linesTotalWords, parseMoneyAmount } from "@cobblr/platform-contract/money";
 import { PickToLight, useUnits } from "@cobblr/platform-web";
@@ -312,26 +314,13 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
   const toast = useToast();
   const currency = useMoneyCurrency();
   const [exporting, setExporting] = useState(false);
-  const exportOrder = async (kind: "pdf" | "csv") => {
-    const target = kind === "pdf" ? window.open("", "_blank") : null;
-    if (kind === "pdf" && !target) { toast.error("Allow pop-ups to open the invoice, then try again."); return; }
+  const exportOrder = async () => {
     setExporting(true);
     try {
       const order = await api.getOrder(orderId);
-      if (target) {
-        target.opener = null;
-        target.document.write(invoiceHtml(order, currency));
-        target.document.close();
-        await target.document.fonts.ready;
-        target.focus();
-        target.print();
-      } else {
-        downloadBlob(new Blob([invoiceCsv(order, currency)], { type: "text/csv;charset=utf-8" }), `invoice-${order.id}.csv`);
-      }
-    } catch (e) {
-      target?.close();
-      toast.error(e instanceof Error ? e.message : String(e));
-    } finally { setExporting(false); }
+      downloadBlob(new Blob([invoiceCsv(order, currency)], { type: "text/csv;charset=utf-8" }), `invoice-${order.id}.csv`);
+    } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); }
+    finally { setExporting(false); }
   };
   const detail = useQuery({ queryKey: ["sales-order", orderId], queryFn: () => api.getOrder(orderId) });
 
@@ -341,21 +330,25 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
     void qc.invalidateQueries({ queryKey: ["sales-order-history", orderId] });
   };
   const update = useMutation({
+    mutationKey: orderWriteKey(orderId),
     mutationFn: (patch: Partial<SalesOrder>) => api.updateOrder(orderId, patch),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
   const addItem = useMutation({
+    mutationKey: orderWriteKey(orderId),
     mutationFn: (b: { part_id: string | null; description: string | null; qty: number; unit_price: number | null }) => api.addItem(orderId, { ...b, metadata: { currency: fieldCurrency(detail.data?.metadata, "total", currency) } }),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
   const removeItem = useMutation({
+    mutationKey: orderWriteKey(orderId),
     mutationFn: (itemId: string) => api.removeItem(orderId, itemId),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
   });
   const updateItem = useMutation({
+    mutationKey: orderWriteKey(orderId),
     mutationFn: (m: { itemId: string; body: { qty?: number; unit_price?: number | null } }) => api.updateItem(orderId, m.itemId, m.body),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof SalesApiError ? e.message : String(e)),
@@ -478,6 +471,10 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                   node: <OrderDateField value={d.order_date ? d.order_date.slice(0, 10) : ""} onSave={(order_date) => update.mutate({ order_date })} />,
                 },
                 {
+                  need: fieldNeed("due_date", { control: "date", label: "Wanted by" }),
+                  node: <OrderDateField label="Wanted by" value={d.due_date ? d.due_date.slice(0, 10) : ""} onSave={(due_date) => update.mutate({ due_date })} />,
+                },
+                {
                   need: { key: "shipping_address", minPx: 200, full: true },
                   node: <ShipToField value={d.shipping_address ?? ""} onSave={(shipping_address) => update.mutate({ shipping_address })} />,
                 },
@@ -502,10 +499,11 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               <button type="button" disabled={reopen.isPending} onClick={() => reopen.mutate()} className="px-3 py-1.5 rounded border border-line dark:border-slate-600">Undo</button>
             </div>}
             {d.delivered_at && d.status === "shipped" && !d.paid && <p className="text-sm text-muted">Delivered. Mark Paid when payment is received.</p>}
+            {d.paid && <p className="text-xs text-muted">Payment date: {d.paid_at ? dayHere(new Date(d.paid_at)) : "Not recorded"}</p>}
+            <OrderDocuments api={api} orderId={orderId} disabled={update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} />
             <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder("pdf")}>Invoice PDF</button>
-              <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder("csv")}>Export CSV</button>
-              <p className="w-full text-xs text-muted">Choose Save as PDF in the print dialog. Export CSV for your accounting tool.</p>
+              <button type="button" className={headerButton()} disabled={exporting || update.isPending || addItem.isPending || updateItem.isPending || removeItem.isPending} onClick={() => void exportOrder()}>Export CSV</button>
+              <p className="w-full text-xs text-muted">Export CSV for your accounting tool.</p>
             </div>
 
             <PickToLight key={orderId} lines={d.items.flatMap(it => it.part_id ? [{ id: it.id, label: `${it.description || "Part"} (${it.qty})`, ref: { kind: "inventory:part", id: it.part_id } }] : [])} />
@@ -775,11 +773,11 @@ function NumberCell({ label, value, min, allowEmpty, onSave }: { label: string; 
   );
 }
 
-function OrderDateField({ value, onSave }: { value: string; onSave: (v: string | null) => void }) {
+function OrderDateField({ value, onSave, label = "Order date" }: { value: string; onSave: (v: string | null) => void; label?: string }) {
   const f = useFieldDraft(value);
   return (
     <label className="block">
-      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">Order date</span>
+      <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{label}</span>
       <input
         type="date"
         value={f.draft}

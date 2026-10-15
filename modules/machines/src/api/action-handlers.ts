@@ -53,12 +53,14 @@ export function registerMachinesActionHandlers(): void {
     const updated = await db
       .updateTable("machines_machines")
       .set({
-        // Increment two numeric keys inside the metadata jsonb in one shot.
-        metadata: sql`jsonb_set(
+        // Keep the counters in one atomic update so concurrent finishes add up.
+        metadata: sql`jsonb_set(jsonb_set(
           jsonb_set(coalesce(metadata, '{}'::jsonb), '{print_count}',
             to_jsonb(coalesce((metadata->>'print_count')::numeric, 0) + ${prints})),
           '{print_hours}',
-            to_jsonb(coalesce((metadata->>'print_hours')::numeric, 0) + ${hours}))` as never,
+            to_jsonb(coalesce((metadata->>'print_hours')::numeric, 0) + ${hours})),
+          '{run_hours}',
+            to_jsonb(coalesce((metadata->>'run_hours')::numeric, 0) + ${hours}))` as never,
         updated_at: new Date(),
       })
       .where("id", "=", machineId)

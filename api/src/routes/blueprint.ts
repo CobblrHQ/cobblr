@@ -27,7 +27,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as activity from "../platform/activity.js";
-import { enableModuleForOrg } from "../modules/enable.js";
+import { enableModuleForOrg, premigrateModules } from "../modules/enable.js";
 import { listInstances, getInstance, createInstance } from "../platform/instances.js";
 import { validateBundle, applyValidatedBundle } from "./bundles.js";
 
@@ -396,6 +396,8 @@ export async function applyBlueprint(
       (r) => r.module_name,
     ),
   );
+  // Their migrations at once first (#6689); the enables below then find nothing to apply.
+  await premigrateModules(orgId, m.modules.map((mod) => mod.name)).catch((err: unknown) => console.error("[blueprint] premigrate failed (the enables report it):", (err as Error).message));
   for (const mod of m.modules) {
     if (enabled.has(mod.name)) continue;
     try {

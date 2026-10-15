@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.98",
+  "version": "0.5.99",
   "private": true,
   "type": "module",
   "sideEffects": [
@@ -21,11 +21,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "kysely": "^0.27.5",
+    "@types/node": "^22.10.5",
     "re2js": "2.8.6",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

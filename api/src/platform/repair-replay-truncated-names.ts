@@ -53,9 +53,14 @@ import { getTenantDb, evictTenantPool } from "../db/tenant.js";
 import { TRUNCATED_BY_FALLBACK_SQL } from "./replay-truncation-predicate.js";
 import { noteHealShim } from "./heal-shim-log.js";
 import { notePassFailure } from "./pass-failures.js";
+import { markSwept, sweepVersion, sweptClean } from "./boot-sweep-marks.js";
+
+const SHIM = "api/src/platform/repair-replay-truncated-names.ts";
 
 export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: number; rowsRepaired: number }> {
   if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return { orgsTouched: 0, rowsRepaired: 0 };
+  const version = sweepVersion(repairReplayTruncatedNames, TRUNCATED_BY_FALLBACK_SQL);
+  if (await sweptClean(SHIM, version)) return { orgsTouched: 0, rowsRepaired: 0 };
 
   const orgs = await meta
     .selectFrom("org_modules")
@@ -107,6 +112,7 @@ export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: numbe
 
   // The update takes every damaged row it can identify, so what it repaired
   // is what it found.
-  await noteHealShim("api/src/platform/repair-replay-truncated-names.ts", rowsRepaired, failed);
+  await noteHealShim(SHIM, rowsRepaired, failed);
+  await markSwept(SHIM, version, failed);
   return { orgsTouched, rowsRepaired };
 }

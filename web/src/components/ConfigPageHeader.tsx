@@ -27,7 +27,7 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation } from "react-router-dom";
-import { CONFIG_DESTINATIONS } from "../lib/configuration-nav";
+import { configPageForPath } from "../lib/configuration-nav";
 
 interface HeaderSlot {
   actions: ReactNode;
@@ -54,13 +54,11 @@ export function ConfigHeaderActions({ children }: { children: ReactNode }) {
 }
 
 /** The header itself. Reads the current route's registry entry; renders nothing
- *  for a route that is not a settings destination (the hub, a section page). */
+ *  for a route with no destination or action page (the hub, a section page). */
 export function ConfigPageHeader() {
   const { pathname } = useLocation();
   const ctx = useContext(Ctx);
-  const here = CONFIG_DESTINATIONS.find(
-    (d) => pathname === d.to || pathname.startsWith(`${d.to}/`),
-  );
+  const here = configPageForPath(pathname);
   if (!here) return null;
   const Icon = here.icon;
   return (

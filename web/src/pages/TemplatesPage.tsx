@@ -21,19 +21,9 @@ import {
   type EntityTemplate,
 } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { kindOptionLabels } from "../lib/kind-option-labels";
+import { defaultsFields, readDefault, writeDefault, type DefaultsField } from "../lib/template-defaults";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
-
-// Kinds the templates module can instantiate. Mirrors the server-side
-// KIND_CREATE_ENDPOINTS map in modules/core-templates/src/api/templates.ts.
-const SUPPORTED_KINDS = [
-  { id: "inventory:part", label: "Inventory part" },
-  { id: "machines:machine", label: "Machine" },
-  { id: "assets:asset", label: "Asset" },
-  { id: "projects:project", label: "Project" },
-  { id: "projects:task", label: "Task" },
-  { id: "purchases:order", label: "Purchase order" },
-  { id: "core-locations:location", label: "Location" },
-];
 
 export function TemplatesPage() {
   usePageTitle("Templates");
@@ -61,11 +51,17 @@ export function TemplatesPage() {
 
   const items = list.data?.items ?? [];
 
-  // Group by target_kind for a tidier display.
-  const grouped = SUPPORTED_KINDS.map((k) => ({
-    kind: k,
-    items: items.filter((t) => t.target_kind === k.id),
-  })).filter((g) => g.items.length > 0);
+  // The kinds a template can be made for come from the workspace (its own
+  // collections included), never a list kept here.
+  const kinds = useQuery({ queryKey: ["template-kinds", activeSlug], queryFn: () => api.listTemplateKinds(activeSlug), enabled: !!activeSlug });
+  const labels = kindOptionLabels(kinds.data?.items ?? []);
+  const kindLabel = (id: string) => labels.get(id) ?? id.split(":").pop() ?? id;
+  // Group by target_kind for a tidier display, in the order the workspace lists its kinds.
+  const known = (kinds.data?.items ?? []).map((k) => k.id);
+  const inOrder = [...known, ...[...new Set(items.map((t) => t.target_kind))].filter((id) => !known.includes(id))];
+  const grouped = inOrder
+    .map((id) => ({ kind: { id, label: kindLabel(id) }, items: items.filter((t) => t.target_kind === id) }))
+    .filter((g) => g.items.length > 0);
 
   return (
     <div className="space-y-5">
@@ -82,13 +78,11 @@ export function TemplatesPage() {
       </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Save a set of default field values + tags against an entity
-        kind. When you "create from template," those defaults get
-        merged into the new entity's body before it's POSTed to the
-        kind's create endpoint. Use cases: household-appliance defaults
-        (insured=true, lifetime_warranty=false), "new Voron printer"
-        starting state (family=Voron, state=building), "Lego set
-        acquired" (tags=[lego, new-arrival]).
+        Save the values and tags you start a kind of thing with. Make
+        something from a template and they are already filled in, ready
+        to change. For example: a household appliance that is insured
+        with a lifetime warranty, a new Voron printer that starts as
+        "building", a Lego set tagged "new arrival".
       </p>
 
       {list.isLoading && (
@@ -98,7 +92,7 @@ export function TemplatesPage() {
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <CopyPlus size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
-            No templates yet. Click "New template" to define one.
+            No templates yet. Make one with New template.
           </div>
         </div>
       )}
@@ -209,27 +203,35 @@ function TemplateFormModal({
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
-  const [targetKind, setTargetKind] = useState<string>(
-    template?.target_kind ?? SUPPORTED_KINDS[0]!.id,
-  );
+  const kindList = useQuery({ queryKey: ["template-kinds", activeSlug], queryFn: () => api.listTemplateKinds(activeSlug), enabled: !!activeSlug });
+  const offered = kindList.data?.items ?? [];
+  const [pickedKind, setTargetKind] = useState<string>(template?.target_kind ?? "");
+  const targetKind = pickedKind || offered[0]?.id || "";
+  // A template keeps its own kind visible even if the workspace no longer offers it.
+  const options = template && !offered.some((k) => k.id === template.target_kind) ? [...offered, { id: template.target_kind, display_name: template.target_kind.split(":").pop() ?? template.target_kind, display_name_plural: null }] : offered;
+  const optionLabels = kindOptionLabels(options);
   const [name, setName] = useState(template?.name ?? "");
   const [description, setDescription] = useState(template?.description ?? "");
-  const [defaultsText, setDefaultsText] = useState(
-    JSON.stringify(template?.defaults ?? {}, null, 2),
-  );
+  const [defaults, setDefaults] = useState<Record<string, unknown>>(template?.defaults ?? {});
+  // What is typed in the Advanced JSON box until it is valid; null means "show the fields' own".
+  const [jsonDraft, setJsonDraft] = useState<string | null>(null);
   const [defaultsErr, setDefaultsErr] = useState<string | null>(null);
+  // The fields a starting value can be given for: the kind's own, plus the person's custom fields of
+  // the kind or of one of its collections (a Bookshelf has its own).
+  const entityKinds = useQuery({ queryKey: ["entity-kinds", activeSlug], queryFn: () => api.listEntityKinds(activeSlug), enabled: !!activeSlug });
+  const baseKind = entityKinds.data?.items.find((k) => k.id === targetKind);
+  // registry-filter-ok: a module's collections are exactly its instance kinds; every kind is still offered in the Kind of thing list above
+  const collections = (entityKinds.data?.items ?? []).filter((k) => k.instance_name && baseKind && k.module_name === baseKind.module_name);
+  const [collection, setCollection] = useState("");
+  const fieldsOfKind = collections.some((k) => k.id === collection) ? collection : targetKind;
+  const customDefs = useQuery({ queryKey: ["template-field-defs", activeSlug, fieldsOfKind], queryFn: () => api.listFieldDefs(activeSlug, fieldsOfKind), enabled: !!activeSlug && !!fieldsOfKind });
+  const fields = defaultsFields(baseKind?.fields ?? [], customDefs.data?.items ?? []);
   const [tagsText, setTagsText] = useState(
     (template?.default_tags ?? []).join(", "),
   );
 
   const save = useMutation({
     mutationFn: () => {
-      let defaults: Record<string, unknown>;
-      try {
-        defaults = JSON.parse(defaultsText || "{}");
-      } catch {
-        throw new ApiError(400, "invalid_json", "Defaults isn't valid JSON.");
-      }
       const default_tags = tagsText
         .split(",")
         .map((s) => s.trim())
@@ -254,24 +256,29 @@ function TemplateFormModal({
       toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
-  // Validate defaults JSON as the user types so the save button
-  // disables on invalid input.
-  function onDefaultsChange(v: string) {
-    setDefaultsText(v);
+  // The Advanced box: valid JSON takes over the values, and the save button waits while it is not.
+  function onJsonChange(v: string) {
+    setJsonDraft(v);
     if (!v.trim()) {
+      setDefaults({});
       setDefaultsErr(null);
       return;
     }
     try {
       const parsed = JSON.parse(v);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        setDefaultsErr("Must be a JSON object (e.g. {})");
-      } else {
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) setDefaultsErr("Must be a JSON object (e.g. {})");
+      else {
+        setDefaults(parsed as Record<string, unknown>);
         setDefaultsErr(null);
       }
     } catch (e) {
       setDefaultsErr((e as Error).message);
     }
+  }
+  function onFieldChange(f: DefaultsField, raw: unknown) {
+    setDefaults((d) => writeDefault(d, f, raw));
+    setJsonDraft(null);
+    setDefaultsErr(null);
   }
 
   return (
@@ -290,15 +297,15 @@ function TemplateFormModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-muted mb-1">Target kind</div>
+          <div className="text-xs text-muted mb-1">Kind of thing</div>
           <select
             value={targetKind}
             onChange={(e) => setTargetKind(e.target.value)}
             className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           >
-            {SUPPORTED_KINDS.map((k) => (
+            {options.map((k) => (
               <option key={k.id} value={k.id}>
-                {k.label} ({k.id})
+                {optionLabels.get(k.id) ?? k.display_name}
               </option>
             ))}
           </select>
@@ -316,7 +323,7 @@ function TemplateFormModal({
           />
         </label>
         <label className="block">
-          <div className="text-xs text-muted mb-1">Description (optional)</div>
+          <div className="text-xs text-muted mb-1">What it is for (optional)</div>
           <input
             type="text"
             value={description}
@@ -325,21 +332,42 @@ function TemplateFormModal({
             className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
           />
         </label>
-        <label className="block">
-          <div className="text-xs text-muted mb-1">
-            Default field values (JSON object)
-          </div>
-          <textarea
-            value={defaultsText}
-            onChange={(e) => onDefaultsChange(e.target.value)}
-            rows={6}
-            className="w-full px-2 py-1.5 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
-            placeholder='{"insured": true, "lifetime_warranty": false}'
-          />
-          {defaultsErr && (
-            <div className="text-xs text-ember-500 mt-1">{defaultsErr}</div>
-          )}
-        </label>
+        {collections.length > 0 && (
+          <label className="block">
+            <div className="text-xs text-muted mb-1">Fields of</div>
+            <select
+              value={fieldsOfKind === targetKind ? "" : fieldsOfKind}
+              onChange={(e) => setCollection(e.target.value)}
+              className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+            >
+              <option value="">{baseKind?.display_name ?? "This kind"} (any collection)</option>
+              {collections.map((k) => (
+                <option key={k.id} value={k.id}>{k.display_name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <fieldset className="space-y-2" data-testid="template-values">
+          <legend className="text-xs text-muted mb-1">Values to fill in</legend>
+          {fields.length === 0 && <p className="text-sm text-muted">This kind has no fields to give a starting value.</p>}
+          {fields.map((f) => (
+            <DefaultInput key={`${f.where}:${f.key}`} field={f} value={readDefault(defaults, f)} onChange={(v) => onFieldChange(f, v)} />
+          ))}
+        </fieldset>
+        <details>
+          <summary className="cursor-pointer text-xs text-muted">Advanced: edit as JSON</summary>
+          <label className="block mt-2">
+            <span className="sr-only">Values as JSON</span>
+            <textarea
+              value={jsonDraft ?? JSON.stringify(defaults, null, 2)}
+              onChange={(e) => onJsonChange(e.target.value)}
+              rows={6}
+              className="w-full px-2 py-1.5 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+              placeholder='{"notes": "Borrowed from the library"}'
+            />
+            {defaultsErr && <div className="text-xs text-ember-500 mt-1">{defaultsErr}</div>}
+          </label>
+        </details>
         <label className="block">
           <div className="text-xs text-muted mb-1">
             Default tags (comma-separated)
@@ -362,7 +390,7 @@ function TemplateFormModal({
           </button>
           <button
             type="submit"
-            disabled={save.isPending || !!defaultsErr || !name.trim()}
+            disabled={save.isPending || !!defaultsErr || !name.trim() || !targetKind}
             className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
           >
             {save.isPending ? "saving…" : template ? "Save" : "Create"}
@@ -370,5 +398,53 @@ function TemplateFormModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+const inputClass = "w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900";
+
+function DefaultInput({ field, value, onChange }: { field: DefaultsField; value: unknown; onChange: (v: unknown) => void }) {
+  // What is being typed in a number box, kept as text only here; the value handed up is a number.
+  const [draft, setDraft] = useState<string | null>(null);
+  if (field.input === "boolean") {
+    return (
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked)} />
+        {field.label}
+      </label>
+    );
+  }
+  return (
+    <label className="block">
+      <div className="text-xs text-muted mb-1">{field.label}</div>
+      {field.input === "choice" ? (
+        <select className={inputClass} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value)}>
+          <option value="">No starting value</option>
+          {field.choices!.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </select>
+      ) : field.input === "number" ? (
+        <input
+          className={inputClass}
+          type="number"
+          step="any"
+          value={draft ?? (typeof value === "number" ? String(value) : "")}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            const n = e.currentTarget.valueAsNumber;
+            onChange(Number.isNaN(n) ? "" : n);
+          }}
+          onBlur={() => setDraft(null)}
+        />
+      ) : (
+        <input
+          className={inputClass}
+          type={field.input === "date" ? "date" : "text"}
+          value={value === undefined || value === null ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </label>
   );
 }

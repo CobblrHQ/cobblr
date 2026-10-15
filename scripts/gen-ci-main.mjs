@@ -99,6 +99,12 @@ export const FAST = {
   lane: FAST_LANE,
   branches: "['fast/**']",
   group: "ci-fast-${{ github.ref }}",
+  // A newer push of fast/<pr> (the lane re-merged it onto a newer main) supersedes the older run: only
+  // the newest merge of a pull request is worth the reserved runner's one slot (2026-10-15: four runs of
+  // one pull request queued there, one after another).
+  cancel: true,
+  // A run goes on only while its pull request is open and still at the head it merged (fast-lane.mjs live).
+  transform: (body) => liveGated(body),
   header: [
     "# The same CI as ci.yml, for a push to fast/<pr>: main plus one critical pull",
     "# request (scripts/ci/fast-lane.mjs), on labels only the reserved fast runner",
@@ -114,8 +120,8 @@ export const FAST = {
     "  # the fast runner's one slot it waited 28 min behind the NEXT critical run's tests (2026-10-13).",
     "  fast-lane-report:",
     "    runs-on: fast-dispatch",
-    "    needs: [typecheck, test]",
-    "    if: always()",
+    "    needs: [live, typecheck, test]",
+    "    if: always() && needs.live.outputs.go == 'true'",
     "    timeout-minutes: 10",
     "    steps:",
     "      - uses: https://github.com/actions/checkout@v4",
@@ -273,6 +279,64 @@ export const RECHECK = {
   tail: [],
 };
 
+/**
+ * The fast lane's jobs wait on a `live` job, on the dispatcher's small slot, that asks whether the pull
+ * request is still open and still at the head this run merged (scripts/ci/fast-lane.mjs live). A run
+ * queued before its pull request closed or moved on then stands down in seconds instead of holding the
+ * reserved runner (2026-10-15: #6587, closed, held it for over an hour while the owner asked why the
+ * fast lane was not running).
+ */
+function liveGated(body) {
+  const out = [];
+  let inJob = null;
+  for (const line of trimEnd(body)) {
+    const job = /^  ([a-z][a-z0-9-]*):\s*$/.exec(line);
+    if (job) inJob = job[1];
+    if (line === "jobs:") {
+      out.push(line, ...LIVE_JOB);
+      continue;
+    }
+    // Every job of ci.yml waits on the live job and runs only when it says go. ci.yml's own `if:`
+    // (a pull request's ci:ready gate) never applies to a push to fast/<pr>, so it is replaced.
+    if (inJob && /^    runs-on: /.test(line)) {
+      out.push(line, "    needs: [live]");
+      continue;
+    }
+    out.push(line);
+  }
+  return dropReadyGate(out);
+}
+const LIVE_JOB = [
+  "  # Is this run still worth the reserved runner? Only while its pull request is open and at this head.",
+  "  live:",
+  "    runs-on: fast-dispatch",
+  "    timeout-minutes: 5",
+  "    outputs:",
+  "      go: ${{ steps.live.outputs.go }}",
+  "    steps:",
+  "      - uses: https://github.com/actions/checkout@v4",
+  "        with:",
+  "          fetch-depth: 2",
+  "      - id: live",
+  "        env:",
+  "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+  "        run: node scripts/ci/fast-lane.mjs live",
+  "",
+];
+/** ci.yml's `if: >-` ready gate, three lines, becomes the live job's answer. */
+function dropReadyGate(lines) {
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === "    if: >-" && /github\.event_name != 'pull_request' \|\|/.test(lines[i + 1] ?? "")) {
+      out.push("    if: needs.live.outputs.go == 'true'");
+      i += 3;
+      continue;
+    }
+    out.push(lines[i]);
+  }
+  return out;
+}
+
 /** ci-main.yml's (or, with FAST, ci-fast.yml's) text, from ci.yml's. Throws when ci.yml no longer has the shape this relies on. */
 export function generate(ci, kind = MAIN) {
   const LANE = kind.lane;
@@ -320,7 +384,7 @@ export function generate(ci, kind = MAIN) {
     "",
     "concurrency:",
     `  group: ${kind.group}`,
-    "  cancel-in-progress: false",
+    `  cancel-in-progress: ${kind.cancel ? "true" : "false"}`,
     "",
     ...(kind.transform ? kind.transform(body) : kind.tail.length ? trimEnd(body) : body),
     ...kind.tail,

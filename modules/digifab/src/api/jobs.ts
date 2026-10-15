@@ -186,7 +186,8 @@ jobsRouter.get(
 jobsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Running the job is the operator's, never only the admin tier's: the page takes this step to start a job (#6785).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const parsed = JobCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     if (await isLayoutFile(tenantDb(req), parsed.data.file_id)) return void res.status(409).json({ error: { code: "layout_copy", message: "Use this layout's queued sheet job. Make a new plan to cut another batch." } });
@@ -280,9 +281,10 @@ jobsRouter.patch(
 );
 
 // UI-REACH: the job review sheet loads the project before an owner approves Start.
-// AI-REACH: exempt owner-only preparation for the interactive Start review; physical sends use digifab:send.
+// AI-REACH: exempt the interactive Start review before a send; physical sends use digifab:send.
 jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
-  if (!requireRole(req, res, "owner", "admin")) return;
+  // Send's review on the page, so whoever may send may review (#6785).
+  if (!(await requireCapability(req, res, "digifab:operate"))) return;
   const db = tenantDb(req);
   const orgId = tenantContext(req).org.id;
   const job = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
@@ -329,11 +331,13 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
 // ── SEND — uploads + places the job on the farm. Starts a real print. ──
 // The whole upload/place/persist body lives in sendJob (shared with the
 // assignment worker); this route is auth + result-mapping + the poll hand-off.
+// AI-ACTION: digifab:send
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
 jobsRouter.post(
   "/:id/send",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // The admin tier, or an operator: the action's own gate, at every door (#6672).
+    if (!(await requireCapability(req, res, "digifab:send"))) return;
     const ctx = tenantContext(req);
     const body = z.object({ approval: JobApprovalSchema.optional() }).safeParse(req.body ?? {});
     if (!body.success) return void badBody(res, body.error);
@@ -398,7 +402,8 @@ const AssignBody = z.object({ device_id: z.string().min(1).max(200) });
 jobsRouter.post(
   "/:id/assign",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Running the job is the operator's, never only the admin tier's: the page takes this step to start a job (#6785).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const parsed = AssignBody.safeParse(req.body);
     if (!parsed.success) return void badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -436,7 +441,8 @@ jobsRouter.post(
 jobsRouter.post(
   "/:id/retry",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Running the job is the operator's, never only the admin tier's: the page takes this step to start a job (#6785).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
     const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run", "make_ordinal"]).where("id", "=", req.params.id!).executeTakeFirst();
@@ -508,7 +514,8 @@ const REPRINT_AGAIN_MS = 10_000;
 jobsRouter.post(
   "/:id/reprint",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // Running the job is the operator's, never only the admin tier's: the page takes this step to start a job (#6785).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
     const src = await db.selectFrom("digifab_jobs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
@@ -717,8 +724,8 @@ export async function controlJobById(db: ReturnType<typeof tenantDb>, orgId: str
 }
 async function controlJob(req: import("express").Request, res: import("express").Response, action: "pause" | "resume", gate = true) {
   // Pause is the assistant's Stop: its route gates on digifab:stop (#5170);
-  // resume is the page's alone and keeps its own bar.
-  if (gate && !requireRole(req, res, "owner", "admin")) return;
+  // resume is the page's alone: the admin tier, or an operator (#6672).
+  if (gate && !(await requireCapability(req, res, "digifab:operate"))) return;
   const out = await controlJobById(tenantDb(req), tenantContext(req).org.id, req.params.id!, action);
   res.status(out.status).json(out.body);
 }

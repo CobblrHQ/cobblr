@@ -314,13 +314,14 @@ instancesRouter.post(
 // Designate this instance as its module's scan catch-all — where a scan that
 // matches no table IN PARTICULAR lands, to then be told apart by its category.
 // Exclusive per module; setting a new one clears the old.
+// AI-ACTION: platform:set-scan-fallback
 instancesRouter.post(
   "/:instanceName/scan-fallback",
   requireAuth,
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireOwnerOrAdmin(req, res)) return;
+      if (!(await requireCapability(req, res, "platform:set-scan-fallback"))) return;
       const instanceName = req.params.instanceName;
       if (!instanceName) {
         res.status(400).json({ error: { code: "missing_id", message: "instance name required" } });

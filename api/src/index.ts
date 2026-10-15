@@ -49,7 +49,9 @@ import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-present
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
+import { applyConnectionBudget } from "./db/apply-connection-budget.js";
 import { currentActor, currentVia, perRequest } from "./lib/request-context.js";
+import { endOpenStreams } from "./lib/event-stream.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
 import { runExclusive } from "./platform/exclusive.js";
@@ -142,6 +144,7 @@ import * as egressImpl from "./platform/egress.js";
 import { syncManifestRegistries } from "./platform/registry-sync.js";
 import { registerPlatformActionHandlers } from "./platform/platform-action-handlers.js";
 import { registerLoanCalendar } from "./platform/custody.js";
+import { registerCoreDashboardReads } from "./platform/dashboard-core-reads.js";
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
@@ -152,7 +155,7 @@ import { backfillDefaultBindings } from "./platform/seed-bindings.js";
 import { healWireBooleanArgs } from "./platform/heal-wire-boolean-args.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
-import { actionGateOf, gatePasses } from "./platform/action-gates.js";
+import { actionGateOf, gatePasses, capabilitiesHeldBy } from "./platform/action-gates.js";
 import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-field-aggregates.js";
 import { reconcileIntegrationNav } from "./platform/integration-nav.js";
 import { reconcileBundleApps } from "./platform/reconcile-bundle-apps.js";
@@ -179,6 +182,7 @@ import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
 import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { registerShareChildren, shareChildrenFor } from "./platform/share-children.js";
 import { healCopiedCollectionLooksAtBoot } from "./platform/heal-copied-collection-looks.js";
+import { healStrayInstanceLookKeysAtBoot } from "./platform/heal-stray-instance-look-keys.js";
 import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
 import { voidReadOnlyShareSuggestionsAtBoot } from "./platform/heal-void-share-suggestions.js";
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
@@ -419,6 +423,7 @@ async function boot() {
     return r;
   };
   await pingMeta();
+  await T("applyConnectionBudget", applyConnectionBudget());
   const platformDir = resolve(__dirname, "..", "migrations", "platform");
   const result = await runMigrations({
     pool: metaPool,
@@ -926,6 +931,13 @@ async function boot() {
         const { roleSatisfies } = await import("@cobblr/platform-contract/org-roles");
         return roleSatisfies(membership?.role, [minRole]);
       },
+      // A handler's own check, the question its route asks (#6672): the
+      // person's role in the workspace, then userHasCapability below.
+      userMayRun: async ({ orgId, userId, actionId }) => {
+        const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", orgId).where("user_id", "=", userId).executeTakeFirst();
+        if (!membership) return false;
+        return platformSeams().auth.userHasCapability({ orgId, userId, role: membership.role, actionId });
+      },
       // Capability check walks three sources in order:
       //   1. Stock role: the admin tier (by rank, so editor too) always passes.
       //   2. Direct per-user grant (workspace_capability_grants).
@@ -939,6 +951,9 @@ async function boot() {
         if (gatePasses(actionId, role, () => false)) return true;
         // A grant counts for the action itself or for the capability it shares.
         const ids = [actionId, ...(actionGateOf(actionId).grantedAs ? [actionGateOf(actionId).grantedAs!] : [])];
+        // What the stock role holds by a module's declaration (an operator runs the machines, #6672).
+        const byRole = capabilitiesHeldBy(role);
+        if (ids.some((id) => byRole.has(id))) return true;
         // Direct grant.
         const grant = await meta
           .selectFrom("workspace_capability_grants")
@@ -1916,6 +1931,8 @@ async function boot() {
   // listed without its handler.
   registerPlatformActionHandlers();
   registerLoanCalendar();
+  // The dashboard's own sections, read in its one request (#6563).
+  registerCoreDashboardReads();
   // The HTTP MCP face (POST /api/v1/hooks/mcp). Registered after the module
   // loader so its tool list reflects every loaded module's kinds and actions.
   registerHostedMcp();
@@ -2108,6 +2125,7 @@ async function boot() {
   const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
   await T("reconcileShareSpaces", reconcileShareSpaces());
   await T("healCopiedCollectionLooks", healCopiedCollectionLooksAtBoot());
+  await T("healStrayInstanceLookKeys", healStrayInstanceLookKeysAtBoot());
   await T("voidReadOnlyShareSuggestions", voidReadOnlyShareSuggestionsAtBoot());
   if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
     console.log(
@@ -2298,6 +2316,8 @@ async function boot() {
     // itself is per-hook timeout-bounded so it can't hang the
     // outer 10s budget below.
     void runOnShutdown();
+    const streams = endOpenStreams();
+    if (streams) console.log(`[cobblr-api] ended ${streams} open stream(s); their tabs reconnect`);
     server.close(() => {
       console.log("[cobblr-api] server closed");
       metaPool.end().finally(() => process.exit(0));

@@ -1,4 +1,3 @@
-import { activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activity-summary";
 // Dashboard — landing page once authed. Shows what's actually IN
 // this workspace, not what could be in any workspace. Three bands:
 //
@@ -19,15 +18,11 @@ import { activityActor, ACTIVITY_VERBS } from "@cobblr/platform-contract/activit
 // 30s so navigating away + back doesn't refire everything.
 
 import { DASHBOARD_SECTION_IDS, DASHBOARD_SECTION_TITLE, type DashboardSectionId } from "@cobblr/platform-contract/dashboard-sections";
-import { SubjectLink } from "../components/SubjectLink";
 import { getShareViewToken } from "../lib/share-view";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { BringInBackup } from "../components/BringInBackup";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { activityKind } from "../lib/activityKind";
-import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, recentActivityRows } from "../lib/activity-words";
-import { useKindLabels } from "../lib/useKindLabels";
-import { ActivitySentence, ActivityThumbnail, ACTIVITY_FEED_LAYOUT, pickString, type KindLabels } from "../components/ActivitySentence";
+import { RecentActivity } from "../components/RecentActivity";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpCircle, CheckCircle2, ChevronDown, Compass, Eye, EyeOff, GripVertical, LayoutList, Maximize2, Minimize2, Pin, Sliders, X } from "lucide-react";
@@ -53,7 +48,7 @@ import { useSetupCards, dismissSetup } from "../lib/setupCards";
 import { bucketEvents, dayKey, relativeDay, upNextWindow } from "../lib/up-next";
 import { EntityThumb, changeWorkspaceShape,
   usePageTitle, useToast,
-  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, relativeTime, LOCATION_GROUP_KEY, EntityPhoto } from "@cobblr/platform-web";
+  useDashboardWidgets, TileCollapseContext, type DashboardWidgetSpec, LOCATION_GROUP_KEY, EntityPhoto } from "@cobblr/platform-web";
 // Side-effect: registers the host's built-in "at a glance" widgets (machines /
 // assets / purchases) through the public registerDashboardWidget seam. The
 // TileGrid renders whatever's registered for an enabled module — no per-module
@@ -61,12 +56,15 @@ import { EntityThumb, changeWorkspaceShape,
 import "../dashboard/builtinWidgets";
 import { foldedNames, useInstanceFamilies } from "../lib/instance-families";
 import { expandInstanceWidgets } from "../dashboard/expandInstanceWidgets";
+import { DashboardSnapshotGate, startPageCode } from "../dashboard/snapshot";
+import { loadModuleTiles } from "../dashboard/moduleTiles";
+import { lazyWithPreload } from "../lib/lazy-preload";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 // The "what do you want to do?" panel loads beside the dashboard rather than
 // with it: on an established workspace it is a collapsed bar below the data,
 // and on a blank one its place is held at its height until it arrives (#4945).
-const WhatToDoPanel = lazy(() => import("../components/WhatToDoPanel").then((m) => ({ default: m.WhatToDoPanel })));
+const WhatToDoPanel = lazyWithPreload(() => import("../components/WhatToDoPanel").then((m) => ({ default: m.WhatToDoPanel })));
 import { BundleDetailModal } from "../components/BundleDetailModalLazy";
 // Loaded with the dashboard only when it is drawn (#4945).
 import { PendingAiShareCallout } from "../components/PendingAiShareCallout";
@@ -78,7 +76,6 @@ import {
   getToken,
   ApiError,
   isFocused,
-  type ActivityEntry,
   type DashboardLayout,
   type OrgModuleListItem,
   type SavedView,
@@ -88,7 +85,7 @@ import { useWorkspaceContentProbe, useSettledOnce } from "../lib/workspaceConten
 import { ParcelsInFlight } from "../components/ParcelsInFlight";
 // The photo picker behind this tile is the scan intake; it loads after the
 // first paint, holding its grid cell meanwhile (#5971).
-const AddPhotosTile = lazy(() => import("../components/AddPhotosTile").then((m) => ({ default: m.AddPhotosTile })));
+const AddPhotosTile = lazyWithPreload(() => import("../components/AddPhotosTile").then((m) => ({ default: m.AddPhotosTile })));
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
@@ -132,7 +129,7 @@ export function QuickLinks({ slug }: { slug: string }) {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {hasScan && (
-          <Suspense fallback={<div aria-hidden className="rounded-xl border border-line dark:border-slate-700 px-4 py-3 text-sm">&nbsp;</div>}>
+          <Suspense fallback={<div aria-hidden aria-busy="true" className="rounded-xl border border-line dark:border-slate-700 px-4 py-3 text-sm">&nbsp;</div>}>
             <AddPhotosTile slug={slug} />
           </Suspense>
         )}
@@ -151,8 +148,27 @@ export function QuickLinks({ slug }: { slug: string }) {
   );
 }
 
+/** The page's code that loads beside it, started with the page's own chunk
+ *  and in before the page is shown, so nothing arrives after it (#6563). */
+const dashboardCode = startPageCode(() =>
+  Promise.all([WhatToDoPanel.preload(), AddPhotosTile.preload(), loadModuleTiles()]),
+);
+
 export function Dashboard() {
   usePageTitle("Dashboard");
+  const { user } = useAuth();
+  const { activeOrg, activeSlug } = useActiveOrg();
+  if (!activeOrg || !activeSlug) return null;
+  // One request for the whole page, drawn at once from this device's last
+  // copy (dashboard/snapshot.tsx). Keyed by workspace: switching starts over.
+  return (
+    <DashboardSnapshotGate key={activeSlug} slug={activeSlug} userId={user?.id ?? null} code={dashboardCode} className="space-y-6">
+      <DashboardBody />
+    </DashboardSnapshotGate>
+  );
+}
+
+function DashboardBody() {
   const { user } = useAuth();
   const { activeOrg, activeSlug } = useActiveOrg();
 
@@ -178,7 +194,7 @@ export function Dashboard() {
   if (!activeOrg || !activeSlug) return null;
 
   return (
-    <div className="space-y-6">
+    <>
       {/* The page's name for a screen reader's heading list; the workspace is
           already named in the header, so it is not drawn twice. */}
       <h1 className="sr-only">{activeOrg.name}</h1>
@@ -247,7 +263,7 @@ export function Dashboard() {
         enabled={enabled}
         role={activeOrg.role}
       />
-    </div>
+    </>
   );
 }
 
@@ -294,7 +310,7 @@ function PutAwayCard({ slug, offeredElsewhere }: { slug: string; offeredElsewher
   useEffect(() => {
     if (unfiled === 0 && ready === 0) return;
     const t = setTimeout(() => {
-      void api.organizePlan(slug, { scope: "pending", warm: true }).catch(() => {});
+      void api.warmOrganizePlan(slug).catch(() => {});
     }, 5_000);
     return () => clearTimeout(t);
   }, [slug, unfiled, ready]);
@@ -960,7 +976,7 @@ function GettingStartedPanel({
   // exists: new-user-flow.md F4.)
   if (collapsedOnly)
     return established ? (
-      <Suspense fallback={null}>
+      <Suspense fallback={<div aria-busy="true" />}>
         <WhatToDoPanel slug={slug} startCollapsed />
       </Suspense>
     ) : null;
@@ -1436,7 +1452,7 @@ function ArrangeableBody({
       // The "what do you want to do" + waiting-to-file capture queue, now a
       // first-class section above recent activity (was demoted below everything).
       return <GettingStartedPanel slug={slug} collapsedOnly />;
-    return <RecentActivity slug={slug} editing={editing} />;
+    return <RecentActivity slug={slug} editing={editing} heading={<SectionTitle>recent activity</SectionTitle>} />;
   };
 
   return (
@@ -2097,146 +2113,6 @@ function PinnedView({
   );
 }
 
-// ──────────────────────── recent activity ───────────────────────────
-
-// Provisioning/plumbing entity-types that mean nothing to a user ("tenant
-// provisioned", "module enabled ×23", "joined user", workspace created). Hidden
-// from the dashboard summary so a fresh workspace doesn't lead with an audit
-// log of things it did to itself. The full /activity page still shows everything.
-function RecentActivity({ slug, editing = false }: { slug: string; editing?: boolean }) {
-  const [visibleCount, setVisibleCount] = useState(5);
-  const { ready, hasContent } = useWorkspaceContentProbe(slug);
-  const labels = useKindLabels(slug);
-  const q = useQuery({
-    queryKey: ["dash-activity", slug],
-    queryFn: () => api.orgActivity(slug, 50),
-    staleTime: 30_000,
-  });
-  // A row with no words a member can read (an automation row that carries
-  // only ids, an action that found nothing to do) is not shown here; the
-  // full /activity log keeps it (#3299).
-  const items = recentActivityRows(q.data?.items ?? []);
-  const groups = groupActivity(items);
-  // A workspace with no content has no activity by definition: hide the whole
-  // section rather than open the first dashboard with "no activity yet"
-  // (new-user-flow.md F3). Arrange mode still shows it so it stays orderable.
-  if (!editing && items.length === 0 && (!ready || !hasContent)) return null;
-  return (
-    <section>
-      {!editing && <SectionTitle>recent activity</SectionTitle>}
-      {q.isLoading && <div className="text-xs text-faint">loading…</div>}
-      {!q.isLoading && items.length === 0 && (
-        <div className="text-xs text-faint italic">no activity yet</div>
-      )}
-      {groups.length > 0 && (
-        <ul className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 divide-y divide-line dark:divide-slate-800" data-testid="activity-feed">
-          {groups.slice(0, visibleCount).map((g) => {
-            const first = g.items[0];
-            if (!first) return null;
-            return g.items.length === 1 ? (
-              <ActivityRow key={first.id} entry={first} labels={labels} />
-            ) : (
-              <ActivityGroupRow key={first.id} group={g} labels={labels} />
-            );
-          })}
-          {visibleCount < groups.length && (
-            <li>
-              <button type="button" className="w-full px-3 py-2 text-sm text-accent hover:bg-subtle dark:hover:bg-slate-800/40" onClick={() => setVisibleCount(count => count + 5)}>
-                Show more
-              </button>
-            </li>
-          )}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-interface ActivityGroup {
-  signature: string;
-  items: ActivityEntry[];
-}
-
-/** Roll up consecutive entries that share actor + action + entity_type.
- *  An 8-pairings burst from a single seed run becomes one line that
- *  expands on click. Non-adjacent identical entries STAY separate —
- *  if something else happened in between, the burst was already
- *  interrupted and rolling those up would distort the timeline. */
-function groupActivity(items: ActivityEntry[]): ActivityGroup[] {
-  const out: ActivityGroup[] = [];
-  for (const e of items) {
-    const sig = `${e.user_id ?? actorWords(e)}|${e.template ?? e.action}|${e.subject?.kind ?? e.entity_kind ?? e.entity_type ?? ""}${AUTOMATION_ACTIONS.has(e.action) ? `|${e.id}` : ""}`;
-    const last = out[out.length - 1];
-    if (last && last.signature === sig && Math.abs(Date.parse(last.items[0]!.occurred_at) - Date.parse(e.occurred_at)) <= 120_000) {
-      last.items.push(e);
-    } else {
-      out.push({ signature: sig, items: [e] });
-    }
-  }
-  return out;
-}
-
-
-function ActivityRow({ entry: e, labels }: { entry: ActivityEntry; labels: KindLabels }) {
-  return (
-    <li className={`px-3 py-2 text-sm ${ACTIVITY_FEED_LAYOUT}`} data-testid="activity-row">
-      <ActivityThumbnail entry={e} labels={labels} />
-      <ActivitySentence entry={e} labels={labels} />
-      <time dateTime={e.occurred_at} className="font-mono text-[10px] text-faint whitespace-nowrap" data-testid="activity-time">
-        {relativeTime(e.occurred_at)}
-      </time>
-    </li>
-  );
-}
-
-/** Consolidated row for a burst of N identical-signature entries.
- *  Shows one summary line + a `×N` chip that always expands to reveal
- *  each underlying entry — so a "deleted ×3" can be opened to see the
- *  three specific things. Each child row falls back to its entity_type
- *  + timestamp when its diff carries no title, so the burst is always
- *  inspectable even without per-item names. */
-function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: KindLabels }) {
-  // Guaranteed non-empty: ActivityGroup is only constructed inside
-  // groupActivity which always pushes at least one item before the
-  // group is recorded; and the caller only renders this for groups
-  // with length > 1.
-  const first = group.items[0]!;
-  const ids = group.items.map(e => e.subject?.title ?? activityIdentity(e));
-  const distinct = [...new Set(ids.filter(Boolean))];
-  const actor = activityActor(first, first.summary?.startsWith("You ") ? first.user_id ?? undefined : undefined);
-  const noun = first.action.startsWith("bundle_") ? "collections" : first.template === "file_created:scan" && !first.subject?.kind ? "items" : labels.plural(first.subject?.kind ?? activityKind(first));
-  const same = group.items.every(e => e.summary === first.summary && e.subject?.id === first.subject?.id);
-  const summary = same ? `${first.summary ?? `${actor} ${activityVerb(first.action)} ${ids[0]}`} ×${group.items.reduce((n, e) => n + (e.repeats ?? 1), 0)}`
-    : first.action === "bundle_installed" && !first.user_id ? `Set up for you: ${distinct.join(", ")}`
-    : `${actor} ${first.verb ?? ACTIVITY_VERBS[first.action] ?? "changed"} ${group.items.length} ${noun}${distinct.length ? `: ${distinct.slice(0, 2).join(", ")}${distinct.length > 2 ? ", …" : ""}` : ""}`;
-  const rowContent = (
-    <div className={`text-sm w-full min-w-0 ${ACTIVITY_FEED_LAYOUT}`} data-testid="activity-row">
-      <ActivityThumbnail entry={first} labels={labels} />
-      <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
-        <SubjectLink href={first.subject?.href ?? "/activity"} className="hover:underline" testId="activity-item-link">{summary}</SubjectLink>
-      </span>
-      <span className="flex items-start gap-2">
-        <span aria-hidden="true" data-testid="activity-caret" className="text-faint dark:text-slate-600 text-[10px] shrink-0 group-open:rotate-90 transition-transform">▸</span>
-        <time dateTime={first.occurred_at} className="font-mono text-[10px] text-faint whitespace-nowrap" data-testid="activity-time">{relativeTime(first.occurred_at)}</time>
-      </span>
-    </div>
-  );
-  return (
-    <li>
-      <details className="group">
-        <summary className="list-none cursor-pointer px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition">
-          {rowContent}
-        </summary>
-        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
-          {group.items.map((e) => (
-            <ActivityRow key={e.id} entry={e} labels={labels} />
-          ))}
-        </ul>
-      </details>
-    </li>
-  );
-}
-
 // ──────────────────────── tiny helpers ──────────────────────────────
 
 function SectionTitle({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -2248,26 +2124,6 @@ function SectionTitle({ children, className }: { children: React.ReactNode; clas
 }
 
 
-
-
-/** The "what" cell. A wire's row is the action's own sentence for what it did
- *  (activity-words.ts); an id is never printed. Everything else uses its
- *  create-time title, then the live record's, then the changed fields. */
-
-/** A stable plain-text identity for burst summarization — the string form of
- *  what activityTitle() renders. A wire's identity is its action's label, so
- *  one wire firing six times collapses; everything else falls back to its
- *  create-time title. Empty when neither exists (never counts as "same"). */
-function activityIdentity(e: ActivityEntry): string {
-  const diff = (e.diff ?? {}) as Record<string, unknown>;
-  if (AUTOMATION_ACTIONS.has(e.action)) {
-    // One wire firing six times is one thing done six times: its label is
-    // the identity, so the burst collapses; the ids stay internal.
-    const w = automationWords(e);
-    return w.hidden ? "" : (w.label ?? w.said);
-  }
-  return pickString(diff, ["name", "title", "label"]) ?? "";
-}
 
 
 // Re-export for any callers still importing module item helpers from

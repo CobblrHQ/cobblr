@@ -333,19 +333,20 @@ export function RecountPage() {
 }
 
 /** "Recount all…" on a collection's page: starts a recount of it (of the
- *  category the list is narrowed to, when it is), or picks up the open one. */
-export function RecountButton({ categoryId, className }: { categoryId?: string | null; className: string }) {
+ *  shared saved view, or the category, the list is narrowed to, when it is),
+ *  or picks up the open one. */
+export function RecountButton({ categoryId, viewId, className }: { categoryId?: string | null; viewId?: string | null; className: string }) {
   const { instance, basePath } = useInventory();
   const navigate = useNavigate();
   const toast = useToast();
-  // PRESS-ARGS: the collection this page shows and the category it is narrowed to are the whole scope.
+  // PRESS-ARGS: the collection this page shows and the shared view or category it is narrowed to are the whole scope.
   const runAction = useRunAction();
   const [busy, setBusy] = useState(false);
   const start = async () => {
     setBusy(true);
     try {
       const res = await runAction(
-        { actionId: "inventory:start-recount", args: { scope: { collection: instance ?? "inventory", ...(categoryId ? { category_id: categoryId } : {}) } } },
+        { actionId: "inventory:start-recount", args: { scope: { collection: instance ?? "inventory", ...(viewId ? { view_id: viewId } : categoryId ? { category_id: categoryId } : {}) } } },
       );
       const id = (res.result as { data?: { recount_id?: string } } | null)?.data?.recount_id;
       if (id) navigate(`${basePath}/recounts/${id}`);
@@ -357,7 +358,7 @@ export function RecountButton({ categoryId, className }: { categoryId?: string |
   };
   return (
     <button type="button" disabled={busy} onClick={() => void start()} className={className} data-testid="recount-start">
-      <ScanLine size={14} /> {busy ? "Starting…" : categoryId ? "Recount this category…" : "Recount all…"}
+      <ScanLine size={14} /> {busy ? "Starting…" : viewId ? "Recount this view…" : categoryId ? "Recount this category…" : "Recount all…"}
     </button>
   );
 }

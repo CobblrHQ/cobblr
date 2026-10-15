@@ -485,6 +485,7 @@ discussionRouter.post(
 
 // POST /read — mark this record's conversation as read up to now.
 // AI-REACH: exempt — "I have read this" is a claim only the reader can make.
+// UI-SCREEN: /discussions
 discussionRouter.post(
   "/read",
   asyncHandler(async (req, res) => {

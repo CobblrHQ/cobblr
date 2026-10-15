@@ -14,6 +14,7 @@ import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
 import { FloatingChrome } from "@cobblr/platform-web";
 import { isSandboxSession } from "../lib/sandbox-session";
+import { healthzAtLoad, readHealthz } from "../lib/healthz";
 
 const POLL_MS = 3 * 60_000;
 
@@ -32,8 +33,8 @@ export function NewVersionNudge() {
     let stop = false;
     async function check() {
       try {
-        const res = await fetch("/api/v1/healthz", { cache: "no-store" });
-        const j = (await res.json()) as { build_sha?: string | null };
+        // The first look is the load's own read, shared with the env badge.
+        const j = first === null ? await healthzAtLoad() : await readHealthz();
         const sha = j.build_sha ?? null;
         if (!sha || stop) return;
         if (first === null) first = sha;

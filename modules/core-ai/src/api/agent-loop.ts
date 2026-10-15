@@ -19,6 +19,7 @@
 // "✓ done — Undo" cards. Read results are clamped so a big list can't blow the
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
+import { claimedAfterHandBack } from "./reported-truthfully.js";
 import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
@@ -277,6 +278,15 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
       // reply is handled below, not passed through as a blank bubble.
       const spoken = stripStageDirections(scrubIds(r.content, seenNames));
       if (spoken.trim()) {
+        if (!nudgedForReport && applied.length === 0 && handedBack) {
+          const claimed = claimedAfterHandBack(r.content);
+          if (claimed) {
+            nudgedForReport = true;
+            transcript.push({ role: "assistant", content: r.content });
+            transcript.push({ role: "user", content: claimed });
+            continue;
+          }
+        }
         if (!nudgedForReport && applied.length > 0 && deps.reportCheck) {
           const wrong = deps.reportCheck(lastUserSaid, r.content, applied.map((a) => a.call.name));
           if (wrong) {

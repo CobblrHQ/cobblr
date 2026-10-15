@@ -258,7 +258,7 @@ export function InviteAcceptPage() {
         <strong>{p.org_name}</strong> as <strong>{p.role}</strong>.
       </p>
       {p.expires_at && (
-        <p className="text-[10px] font-mono text-faint dark:text-slate-500 mt-2">
+        <p className="text-[10px] text-faint dark:text-slate-500 mt-2">
           Expires {new Date(p.expires_at).toLocaleString()}
         </p>
       )}

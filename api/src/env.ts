@@ -14,6 +14,10 @@ const Schema = z.object({
   // is "production" on BOTH staging and prod. Compose passes ${COBBLR_ENV:-},
   // i.e. an empty string when unset — callers must treat "" as unset (use ||).
   COBBLR_ENV: z.string().optional(),
+  // The product this server is, in the words its people read: emails, push
+  // titles, refusals: a second product's own name on its server (#6815). Unset or
+  // empty is Cobblr; platform/product-name.ts reads it.
+  COBBLR_PRODUCT_NAME: z.string().optional(),
   // Name of another deployment that SHARES this database and deliberately
   // tracks a newer build (the canary channel). Set only on the stack that is
   // pinned BEHIND one; it turns the downgrade detector's alarm into an expected
@@ -221,6 +225,7 @@ const Schema = z.object({
    *  emails. A hosted workspace must not be a way to mail strangers. */
   INVITES_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   HAND_OFFS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
+  SALES_DOCUMENT_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   TEST_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(5)),
   /** How often expired sandboxes are swept. Minutes, unlike the trial reaper's
    *  6h: an hour-long sandbox that lingers for six is not an hour-long one. */

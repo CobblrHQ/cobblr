@@ -1,3 +1,4 @@
+import { DemoWorkspaceControl, AccountNoticeControl, BatchFeedbackControl } from "./OperatorWriteControls";
 // The platform-operator console content — the routed sections of the SEPARATE
 // operator interface at /admin/:section. The shell (components/AdminLayout.tsx)
 // owns the operator chrome, the section nav, and the is_platform_admin gate;
@@ -22,7 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
+import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -280,6 +281,7 @@ function WorkspacesTab() {
     );
   return (
     <div className="space-y-3">
+      <div className="flex flex-wrap gap-2"><DemoWorkspaceControl /><AccountNoticeControl workspaces={q.data?.items ?? []} /></div>
       <div className="flex items-center gap-2">
         <SearchInput value={search} onChange={setSearch} placeholder="Search name, slug, or owner…" aria-label="Search workspaces" wrapperClassName="w-full max-w-sm" />
         <select
@@ -1698,8 +1700,8 @@ function BarcodeReviewSection() {
         return (
           <div key={c.id} className="rounded-lg border border-line dark:border-slate-700 p-3 flex items-start gap-3 text-sm">
             <div className="min-w-0 flex-1 space-y-1">
-              <div className="font-mono text-[11px] text-muted">
-                {c.upc} · {c.field} · {new Date(c.created_at).toLocaleString()}
+              <div className="text-[11px] text-muted">
+                <Code>{c.upc}</Code> · <Code>{c.field}</Code> · {new Date(c.created_at).toLocaleString()}
                 {c.source_context ? ` · ${c.source_context}` : ""}
               </div>
               <div className="text-faint line-through truncate">{cur ?? (c.current.provider_found ? "—" : "(providers found nothing)")}</div>
@@ -2201,6 +2203,7 @@ function FeedbackTab() {
   const items = q.data?.items ?? [];
   return (
     <div className="space-y-4">
+      <BatchFeedbackControl items={items.filter((item) => item.status !== "resolved" && item.status !== "wontfix")} onResolved={() => { void qc.invalidateQueries({ queryKey: ["sa-feedback"] }); }} />
       <div className="flex items-center gap-1 text-xs font-mono flex-wrap">
         {FEEDBACK_FILTERS.map((s) => (
           <button

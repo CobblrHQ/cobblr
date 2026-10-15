@@ -310,6 +310,14 @@ organizeRouter.post(
     // All-ready is a fine plan ("this is all set — you gonna do it?"): only
     // 422 when there's truly nothing to show.
     const hasReady = rows.some((r) => alreadyFiled.includes(r.id) && r.target_location_id);
+    // A warm asks for a plan to be ready IF there is one to make (#6702): with
+    // nothing identified yet there is nothing to warm, and that is an answer,
+    // not a refusal. The scan page fires it whenever items sit unfiled, so a
+    // 422 here was a refused request on every inbox of unidentified rows.
+    if (plannable.length === 0 && !hasReady && body.warm) {
+      res.status(204).end();
+      return;
+    }
     if (plannable.length === 0 && !hasReady) {
       // The pile is real (it counts toward the "unfiled" banner + the toggle),
       // it's just entirely UNIDENTIFIED — so the Sorting-plan lens has nothing
@@ -895,6 +903,7 @@ const WalkStateBody = z.object({
 });
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// UI-REACH: compatibility write for tabs from before put-away sessions; current progress is recorded by the session controls, not this retired checklist.
 organizeRouter.post(
   "/organize/walk-state",
   asyncHandler(async (req, res) => {

@@ -19,7 +19,7 @@
 // instance checks but still need identity. Run: npx tsx scripts/lint-bundle-quality.ts
 import fs from "node:fs";
 import path from "node:path";
-import { HOME_PINNED_VIEW_CAP } from "../web/src/lib/dashboard-pinned.ts";
+import { HOME_PINNED_VIEW_CAP } from "../packages/platform-contract/src/dashboard-pinned.ts";
 
 const dir = path.join(process.cwd(), "bundles");
 /** Field names that ARE identifiers by any reading. `serial` alone is included

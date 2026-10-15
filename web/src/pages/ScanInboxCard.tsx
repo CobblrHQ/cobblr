@@ -1,3 +1,4 @@
+import { sessionSaidPlace, sessionSaidVendor, type SessionSays } from "../lib/sessionSays";
 import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
 // The scan inbox's DESKTOP card, and the pieces only it renders: the
@@ -406,6 +407,7 @@ export function InboxCard({
   pageTarget,
   menu,
   sessionCategoryLabel,
+  sessionSays,
   sessionSource,
   hasLocations,
   selected,
@@ -427,6 +429,9 @@ export function InboxCard({
   /** The label this item's SESSION agreed on, so sibling cards cannot show one
    *  category two ways. Null when the session settled on nothing. */
   sessionCategoryLabel?: string | null;
+  /** What the row's session already says (its place, its shop): the phone
+   *  row says them only when its own differ (#6095). */
+  sessionSays?: SessionSays | null;
   /** Where this item's SESSION came from (platform-contract scan-source):
    *  who added it, said once in the header, and whether it was emailed, so a
    *  code off it reads "from the email". */
@@ -2406,12 +2411,13 @@ export function InboxCard({
     const brand = item.suggested_manufacturer?.trim() || creatorOf(item);
     if (brand) segs.push(brand);
     const shop = (item.suggested_metadata as { receipt_vendor?: string } | null)?.receipt_vendor;
-    if (!item.suggested_manufacturer && shop?.trim()) segs.push(leadWords("from", shop));
+    if (!item.suggested_manufacturer && shop?.trim() && !sessionSaidVendor(sessionSays, shop)) segs.push(leadWords("from", shop));
     if (item.suggested_sku) segs.push(item.suggested_sku);
     const filedInto = item.target_location_id ? (cardLocs.data?.items ?? []).find((l) => l.id === item.target_location_id) : null;
-    if (filedInto) segs.push(`📍 ${filingLabel(filedInto)}`);
-    else if (item.scan_area) segs.push(`📍 ${item.scan_area}`);
-    else if (suggested) segs.push(`📍 ${suggested.place} · ${suggested.why}`);
+    if (filedInto) {
+      if (!sessionSaidPlace(sessionSays, filingLabel(filedInto))) segs.push(`📍 ${filingLabel(filedInto)}`);
+    } else if (item.scan_area) segs.push(`📍 ${item.scan_area}`);
+    else if (suggested && !sessionSaidPlace(sessionSays, suggested.place)) segs.push(`📍 ${suggested.place} · ${suggested.why}`);
     const ps = (item.suggested_metadata as { pack_size?: number } | null)?.pack_size;
     if (ps) segs.push(`${ps}-pack`);
     if (boxState) segs.push(boxState === "empty-box" ? "📦 empty box" : "📦 in box");

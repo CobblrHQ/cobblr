@@ -1,0 +1,10 @@
+{
+  "lint": "lint:registry-token-only-where-it-writes",
+  "run": "node scripts/lint-registry-token-only-where-it-writes.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 562,
+  "recorded": "2026-10-15",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

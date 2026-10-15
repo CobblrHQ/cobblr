@@ -257,7 +257,7 @@ syncRouter.patch(
     if (parsed.data.label !== undefined) set.label = parsed.data.label;
     if (parsed.data.enabled !== undefined) set.enabled = parsed.data.enabled;
     if (parsed.data.base_url !== undefined) {
-      set.config = sql`${JSON.stringify({ base_url: parsed.data.base_url })}::jsonb`;
+      set.config = sql`coalesce(config, '{}'::jsonb) || ${JSON.stringify({ base_url: parsed.data.base_url })}::jsonb`;
     }
     if (parsed.data.credentials !== undefined) {
       set.credentials_enc = await platform().integrations.encryptCredentials(ctx.org.id, parsed.data.credentials);

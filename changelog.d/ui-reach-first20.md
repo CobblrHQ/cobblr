@@ -2,6 +2,7 @@
 type: feature
 date: 2026-10-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-15
 ---
 You can reorganise lists, choose where unmatched scans land, add several items together, recheck scan matches and undo a past inbox import from the app.
 

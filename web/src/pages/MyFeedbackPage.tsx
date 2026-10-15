@@ -3,10 +3,11 @@
 // fire-and-forget. Reads /feedback/mine; replies via /feedback/:id/reply. The
 // notification we send on a reply deep-links here.
 
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePageTitle, MutationError } from "@cobblr/platform-web";
 import { api, type MyFeedbackItem } from "../lib/api";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { QueryError } from "../components/QueryError";
 
 const TYPE_EMOJI: Record<string, string> = { bug: "🐛", confusing: "😕", idea: "💡", other: "•" };
@@ -22,12 +23,28 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function MyFeedbackPage() {
   usePageTitle("Your feedback");
-  const q = useQuery({ queryKey: ["my-feedback"], queryFn: () => api.listMyFeedback() });
-  const items = q.data?.items ?? [];
+  const q = useInfiniteQuery({
+    queryKey: ["my-feedback"],
+    queryFn: ({ pageParam }) => api.listMyFeedback({ cursor: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: last => last.next_cursor ?? undefined,
+  });
+  const items = q.data?.pages.flatMap(page => page.items) ?? [];
+  const total = q.data?.pages[0]?.total ?? 0;
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinel.current;
+    if (!el || !q.hasNextPage || q.isFetchingNextPage || q.isFetchNextPageError) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) void q.fetchNextPage();
+    }, { rootMargin: "400px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [q.hasNextPage, q.isFetchingNextPage, q.isFetchNextPageError, q.fetchNextPage]);
   return (
     <div className="space-y-4">
       {q.isLoading && <div className="text-sm text-faint">loading…</div>}
-      {q.isError && (
+      {q.isError && !q.isFetchNextPageError && (
         <QueryError what="your feedback" onRetry={() => q.refetch()} />
       )}
       {!q.isLoading && !q.isError && items.length === 0 && (
@@ -37,11 +54,19 @@ export function MyFeedbackPage() {
         </div>
       )}
 
+      {total > 0 && <p className="text-sm text-muted" role="status">{items.length} of {countOf(total, "report")}</p>}
       <ul className="space-y-3">
         {items.map((it) => (
           <FeedbackThread key={it.id} item={it} />
         ))}
       </ul>
+      <div ref={sentinel} />
+      {q.isFetchNextPageError && <QueryError what="older feedback" onRetry={() => q.fetchNextPage()} />}
+      {q.hasNextPage && (
+        <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50" disabled={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()}>
+          {q.isFetchingNextPage ? "Loading…" : "Load more reports"}
+        </button>
+      )}
     </div>
   );
 }
@@ -69,7 +94,7 @@ function FeedbackThread({ item }: { item: MyFeedbackItem }) {
           {STATUS_LABEL[item.status] ?? item.status}
         </span>
         <span className="flex-1" />
-        <span className="text-[10px] font-mono text-faint">{new Date(item.created_at).toLocaleDateString()}</span>
+        <span className="text-[10px] tabular-nums text-faint">{new Date(item.created_at).toLocaleDateString()}</span>
       </div>
 
       <Bubble role="user" from="You" text={item.message} at={item.created_at} />
@@ -115,7 +140,7 @@ function Bubble({ role, from, text, at }: { role: "user" | "team"; from: string;
           {from}
         </div>
         <div className="whitespace-pre-wrap break-words">{text}</div>
-        <div className={"text-[9px] font-mono mt-1 " + (team ? "text-faint" : "text-white/60")}>
+        <div className={"text-[9px] tabular-nums mt-1 " + (team ? "text-faint" : "text-white/60")}>
           {new Date(at).toLocaleString()}
         </div>
       </div>

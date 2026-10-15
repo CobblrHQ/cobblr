@@ -8,6 +8,8 @@ import type {
   CommandResult,
   ConnectionResult,
   ControlDef,
+  DeviceJob,
+  DeviceTemps,
   ManagerConfig,
   MachineDriver,
   JobState,
@@ -136,13 +138,51 @@ export class DeclarativeDriver implements MachineDriver {
     const m = this.manifest.listDevices;
     const data = await this.json(m.method, this.path(m.path));
     const rows: unknown[] = m.result === "single" ? [data] : ((m.arrayPath ? this.deref(data, m.arrayPath) : data) as unknown[]) ?? [];
-    return (Array.isArray(rows) ? rows : []).map((d) => ({
-      id: this.extract(m.map.id, d),
-      name: this.extract(m.map.name, d) || "device",
-      enabled: m.map.enabled ? this.extract(m.map.enabled, d) !== "false" : true,
-      state: this.deviceState(m.map.state, d),
-      tags: [],
-    }));
+    return (Array.isArray(rows) ? rows : []).map((d) => {
+      const state = this.deviceState(m.map.state, d);
+      return {
+        id: this.extract(m.map.id, d),
+        name: this.extract(m.map.name, d) || "device",
+        enabled: m.map.enabled ? this.extract(m.map.enabled, d) !== "false" : true,
+        state,
+        tags: [],
+        temps: this.deviceTemps(m.map.temps, d),
+        // A finished print's last fraction stays on many managers; only a print under way has progress.
+        // Managers spell the state their own way (PrusaLink's PRINTING), so the word is compared without case.
+        job: /^(printing|paused)$/i.test(state ?? "") ? this.deviceJob(m.map, d) : null,
+      };
+    });
+  }
+
+  /** A number the response carries at `expr`, or null when it is absent or not a number. */
+  private number(expr: string | undefined, d: unknown): number | null {
+    if (!expr) return null;
+    const raw = this.extract(expr, d);
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  private deviceTemps(spec: DriverManifest["listDevices"]["map"]["temps"], d: unknown): DeviceTemps | null {
+    if (!spec) return null;
+    const out: DeviceTemps = {};
+    for (const key of ["nozzle", "bed", "chamber"] as const) {
+      const h = spec[key];
+      const actual = this.number(h?.actual, d);
+      if (h && actual !== null) {
+        const target = this.number(h.target, d);
+        out[key] = target === null ? { actual } : { actual, target };
+      }
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  private deviceJob(map: DriverManifest["listDevices"]["map"], d: unknown): DeviceJob | null {
+    const p = this.number(map.progress, d);
+    const left = this.number(map.remainingSec, d);
+    if (p === null && left === null) return null;
+    const fraction = p === null ? undefined : (map.progressScale ?? (p > 1 ? 100 : 1)) === 100 ? p / 100 : p;
+    return { ...(fraction === undefined ? {} : { fractionPrinted: Math.max(0, Math.min(1, fraction)) }), ...(left === null ? {} : { timeLeftSec: left }) };
   }
 
   private deviceState(spec: DriverManifest["listDevices"]["map"]["state"], d: unknown): string | null {

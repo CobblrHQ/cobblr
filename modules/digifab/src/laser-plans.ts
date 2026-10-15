@@ -1,6 +1,6 @@
 import { recordedOutline, validateAdjustedLayout, type LayoutAdjustments } from "./layout-adjustments.js";
 import polygonClipping from "polygon-clipping";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { sql, type Kysely } from "kysely";
@@ -145,9 +145,10 @@ async function acceptLockedLaserPlan(db: Kysely<DigifabDB>, orgId: string, id: s
    answer = await db.transaction().execute(async trx => {
     const claim = await trx.selectFrom("digifab_laser_plans").select("run_id").where("id", "=", id).forUpdate().executeTakeFirstOrThrow();
     if (claim.run_id) throw new LaserPlanRefusal("This plan was already queued.");
-    const pool = await trx.insertInto("digifab_pools").values({ name: plan.name.slice(0, 120) }).returning("id").executeTakeFirstOrThrow();
+    const runId = randomUUID();
+    const pool = await trx.insertInto("digifab_pools").values({ name: plan.name.slice(0, 120), config: { run_id: runId } }).returning("id").executeTakeFirstOrThrow();
     await trx.insertInto("digifab_pool_members").values({ pool_id: pool.id, connection_id: saved.connection_id, remote_device_id: saved.remote_device_id }).execute();
-    const run = await trx.insertInto("digifab_production_runs").values({ name: plan.name, pool_id: pool.id, file_id: source.file_id, file_ref: plan.name, target_qty: plan.quantity, laser_plan_id: id, material_part_id: null, material_grams: null, linked_build_id: null }).returning("id").executeTakeFirstOrThrow();
+    const run = await trx.insertInto("digifab_production_runs").values({ id: runId, name: plan.name, pool_id: pool.id, file_id: source.file_id, file_ref: plan.name, target_qty: plan.quantity, laser_plan_id: id, material_part_id: null, material_grams: null, linked_build_id: null }).returning("id").executeTakeFirstOrThrow();
     const jobs: string[] = [];
     for (const f of files) {
      const displayName = `${plan.name} · Sheet ${files.indexOf(f) + 1}`;

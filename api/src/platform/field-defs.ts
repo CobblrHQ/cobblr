@@ -452,11 +452,20 @@ async function createFieldDefNow(
       return {
         ok: false,
         code: "duplicate_name",
-        message: `"${input.name}" already exists on ${entityKind}.`,
+        message: await duplicateFieldMessage(orgId, entityKind, input.display_label, scopeTraits.length > 0),
       };
     }
     throw err;
   }
+}
+
+/** The refusal for a field that is already there, in the words the person
+ *  used: the label they typed and the kind as they know it, never the key or
+ *  the kind id (#6680). */
+async function duplicateFieldMessage(orgId: string, entityKind: string, label: string, scoped: boolean): Promise<string> {
+  const kind = scoped ? undefined : (await listKindsForOrg(orgId)).find((k) => k.id === entityKind);
+  const where = kind?.display_name ?? (scoped ? "that group of things" : "this kind of record");
+  return `A field called "${label}" already exists on ${where}.`;
 }
 
 // ─────────────────────────── change one, remove one ─────────────────────────

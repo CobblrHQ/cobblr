@@ -1,4 +1,6 @@
+import { poolGroupCondition } from "../pool-groups.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { isStopControl, RUN_MACHINES } from "../motion-gate.js";
 import { plainDriverError } from "../job-truth.js";
 import { runBench } from "../bench.js";
 import { settleResinPrint } from "../resin-prints.js";
@@ -20,6 +22,7 @@ import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
 import { z } from "zod";
+import { frameFromAddress } from "../camera-frame.js";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
@@ -258,6 +261,7 @@ fleetRouter.get(
     const poolRows = await db
       .selectFrom("digifab_pool_members as m")
       .innerJoin("digifab_pools as p", "p.id", "m.pool_id")
+      .where(poolGroupCondition("p.config"))
       .select(["m.connection_id", "m.remote_device_id", "p.id as pool_id", "p.name as pool_name"])
       .execute();
 
@@ -370,10 +374,11 @@ fleetRouter.get(
               // answers "why isn't it printing yet". Display-only.
               stage: live?.stage ?? d.stage ?? null,
               // Real-time print progress straight from the printer (Bambu cloud
-              // MQTT), for a print Cobblr didn't start so there's no active_job.
+              // MQTT, or the device read of any driver that reports its job),
+              // also for a print Cobblr didn't start so there's no active_job.
               live: live
                 ? { progress: live.progress, remaining_min: live.remaining_min, layer_num: live.layer_num, total_layers: live.total_layers }
-                : d.raw?.resin === true && d.job ? { progress: d.job.fractionPrinted != null ? d.job.fractionPrinted * 100 : null, remaining_min: d.job.timeLeftSec != null ? Math.ceil(d.job.timeLeftSec / 60) : null, layer_num: d.job.currentLayer ?? null, total_layers: null } : null,
+                : d.job ? { progress: d.job.fractionPrinted != null ? d.job.fractionPrinted * 100 : null, remaining_min: d.job.timeLeftSec != null ? Math.ceil(d.job.timeLeftSec / 60) : null, layer_num: d.job.currentLayer ?? null, total_layers: null } : null,
               // An external detector owns this printer's detection + camera.
               managed_by_detector: managedByDetector,
               // Camera fields are suppressed for a detector-owned printer so
@@ -596,6 +601,7 @@ fleetRouter.post(
 // ⑦ Pin (or unpin) a device to a floor-grid cell — the fleet arrange mode.
 const PositionBody = z.object({ x: z.number().int().min(0).max(63).nullable(), y: z.number().int().min(0).max(255).nullable() });
 // AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// UI-REACH: legacy cell-grid coordinates for older fleet clients; Arrange saves the complete free-form floor through PUT /fleet/layout.
 fleetRouter.put(
   "/:connectionId/:deviceId/position",
   asyncHandler(async (req, res) => {
@@ -841,6 +847,8 @@ fleetRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = ControlBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "control id required" } });
+    // A stop or a pause is every member's; anything else runs the machine, the operator's (#6785).
+    if (!isStopControl(parsed.data.id) && !(await requireCapability(req, res, RUN_MACHINES))) return;
     const orgId = tenantContext(req).org.id;
     // Prefer the LAN driver when this printer has LAN configured (more reliable
     // than cloud, and the only path that works if cloud rejects the command) — but
@@ -870,7 +878,6 @@ fleetRouter.post(
       if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
       return void res.json(result);
     }
-    if (!requireRole(req, res, "owner", "admin")) return;
     if (!driver?.runControl) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't be controlled here" } });
     const r = await runControlWithCloudFallback({
       primary: driver,
@@ -893,7 +900,8 @@ const PrintBody = z.object({ name: z.string().min(1).max(300) });
 fleetRouter.post(
   "/:connectionId/:deviceId/print",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    // The admin tier, or an operator: starting a file already on the machine (#6672).
+    if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const parsed = PrintBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "file name required" } });
     const driver = await fileDriverFor(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!);
@@ -953,15 +961,27 @@ fleetRouter.delete(
   }),
 );
 
-// GET …/camera — one JPEG frame from the printer's LAN camera, over the bridge
-// (Bambu A1/P1 chamber camera). A refreshing still; the modal polls it. LAN-only.
+// GET …/camera — one JPEG frame from the printer's LAN camera: over the bridge
+// (Bambu A1/P1 chamber camera), or, for any other device, fetched by the server
+// from the camera address saved for it (a snapshot URL or an MJPEG stream), so a
+// page served over https can show a camera that speaks only http on the LAN.
+// A refreshing still; the page polls it.
 fleetRouter.get(
   "/:connectionId/:deviceId/camera",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const orgId = tenantContext(req).org.id;
     const driver = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!) ?? await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
-    if (!driver?.getCameraFrame) return void res.status(501).json({ error: { code: "no_camera", message: "no LAN camera for this printer" } });
+    if (!driver?.getCameraFrame) {
+      const setting = await tenantDb(req).selectFrom("digifab_device_settings").select("camera_url")
+        .where("connection_id", "=", req.params.connectionId!).where("remote_device_id", "=", req.params.deviceId!).executeTakeFirst();
+      if (!setting?.camera_url) return void res.status(501).json({ error: { code: "no_camera", message: "no camera address saved for this machine" } });
+      const frame = await frameFromAddress(setting.camera_url);
+      if (!frame) return void res.status(502).json({ error: { code: "camera_failed", message: "the camera did not answer with a picture. Check its address is a snapshot or MJPEG stream URL." } });
+      // DETACHED: caching the frame for the next open; the frame is served without it
+      if (frame.type === "image/jpeg") void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, frame.bytes).catch(() => {});
+      return void res.set("Content-Type", frame.type).set("Cache-Control", "no-store").send(frame.bytes);
+    }
     const jpeg = await driver.getCameraFrame();
     if (!jpeg || jpeg.length === 0) return void res.status(502).json({ error: { code: "camera_failed", message: "couldn't grab a camera frame" } });
     // Cache the frame so the next modal-open can show it INSTANTLY (via /snapshot)

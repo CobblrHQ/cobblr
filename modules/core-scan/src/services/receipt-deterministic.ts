@@ -10,7 +10,7 @@
 //
 // Both go through one rows→items mapper so CSV and PDF behave identically.
 
-import { buildReceipt, forwardedSender, isMailTitle, isoDate, num, str, type ParsedReceipt } from "./receipt-shared.js";
+import { buildReceipt, forwardedSender, isMailTitle, isoDate, num, str, vendorName, type ParsedReceipt } from "./receipt-shared.js";
 
 const SYMBOL_CURRENCY: Record<string, string> = { "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY" };
 
@@ -22,7 +22,8 @@ export function enrichReceiptMeta(receipt: ParsedReceipt, text: string): ParsedR
   // An email's title ("Order #1001 confirmed") heads its text and is never
   // the shop; the line under it is where the shop prints its name.
   const head = lines.slice(0, 4).find((l) => !isMailTitle(l));
-  const firstLine = head && head.length <= 60 ? head : null;
+  // A logo heads a plain-text email as "[image: <the shop>]": its words (#6702).
+  const firstLine = head && head.length <= 60 ? vendorName(head) : null;
   const dateMatch = text.match(/\b(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{2,4})\b/);
   // On its own line, and a real amount: a CSV's header says "Total" and the
   // row under it began "3,0.25", which this read as a total of 30.25 on a

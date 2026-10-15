@@ -1,7 +1,7 @@
 {
   "id": "prusalink",
   "name": "PrusaLink",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -12,7 +12,11 @@
     "map": {
       "id": "='prusalink'",
       "name": "='PrusaLink'",
-      "state": "$.printer.state"
+      "state": "$.printer.state",
+      "temps": {"nozzle": {"actual": "$.printer.temp_nozzle", "target": "$.printer.target_nozzle"}, "bed": {"actual": "$.printer.temp_bed", "target": "$.printer.target_bed"}},
+      "progress": "$.job.progress",
+      "progressScale": 100,
+      "remainingSec": "$.job.time_remaining"
     }
   },
   "upload": {

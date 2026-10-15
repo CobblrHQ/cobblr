@@ -3,7 +3,9 @@
 
 import type { IntakeSetting } from "../intake.js";
 import type { LineAvailability } from "../availability.js";
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, uploadJson } from "@cobblr/platform-web";
+
+export const orderWriteKey = (id: string) => ["sales-order-write", id] as const;
 
 export type SalesOrderStatus = "draft" | "confirmed" | "fulfilled" | "shipped" | "closed" | "cancelled";
 
@@ -28,9 +30,12 @@ export interface SalesOrder {
   order_number: string | null;
   status: SalesOrderStatus;
   paid: boolean;
+  paid_at?: string | null;
   auto_closed_at?: string | null;
   auto_close_undone?: boolean;
   order_date: string | null;
+  /** When the customer wants it. */
+  due_date?: string | null;
   fulfilled_at: string | null;
   carrier: string | null;
   tracking_number: string | null;
@@ -227,6 +232,19 @@ export class SalesApi {
     return out;
   }
 
+  documents(id: string) { return this.req<DocumentList>("GET", `/orders/${id}/documents`); }
+  prepareDocument(id: string, input: import("../documents.js").PrepareDocumentInput) { return this.req<{ document: DocumentRow; reused: boolean }>("POST", `/orders/${id}/documents`, input); }
+  sendDocument(id: string, kind: "quote" | "invoice", version: string, to: string) { return this.req<{ ok: true; to: string; status: "sent" | "skipped" }>("POST", `/orders/${id}/documents/send`, { kind, version, to }); }
+  async documentPdf(id: string, kind: "quote" | "invoice") {
+    const res = await workspaceFetch(`/api/v1/orgs/${this.slug}/modules/sales/orders/${id}/documents/${kind}/pdf`, { headers: this.headers() });
+    if (!res.ok) { await this.parse(res); throw new Error("The PDF could not be downloaded."); }
+    return res.blob();
+  }
+  uploadLogo(file: File) {
+    const form = new FormData(); form.append("file", file);
+    return uploadJson<{ id: string }>(`/api/v1/orgs/${this.slug}/modules/core-files/files`, form, { token: this.getToken(), file });
+  }
+
   // orders
   /** One page of orders and how many match. */
   listOrders(f: { q?: string; status?: SalesOrderStatus | ""; sort?: OrderSort; offset?: number; limit?: number } = {}) {
@@ -298,4 +316,18 @@ export class SalesApi {
     const data = await this.parse<{ items: Array<{ id: string; kind: string; title: string; subtitle?: string; collection: string; unit?: string | null }> }>(res);
     return data.items.map((i) => ({ id: i.id, kind: i.kind, title: i.title, subtitle: i.subtitle, collection: i.collection, unit: i.unit ?? null }));
   }
+}
+
+export interface DocumentRow {
+  id: string;
+  kind: "quote" | "invoice";
+  number: string;
+  revision: string;
+  snapshot: import("../invoice.js").SalesDocument;
+  created_at: string;
+}
+export interface DocumentList {
+  items: DocumentRow[];
+  shop_name: string;
+  email: { to: string | null; from: string | null; available: boolean; reason: string | null };
 }

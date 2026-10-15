@@ -8,10 +8,12 @@
 
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ClipboardCopy, Plus, RefreshCw } from "lucide-react";
+import { ClipboardCopy, Plus, RefreshCw, Smartphone } from "lucide-react";
 import { useToast, usePageTitle, Modal } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useAuth } from "../auth/AuthContext";
+import { SignInTheirPhone } from "../components/SignInTheirPhone";
 import { ORG_ROLES, ORG_ROLE_BLURB, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
 // From the vocabulary. This union used to be typed out and had lost "editor",
@@ -35,6 +37,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [nameInput, setNameInput] = useState("");
   const [roleInput, setRoleInput] = useState<Role>("member");
   const [tempPassword, setTempPassword] = useState<TempPasswordResult | null>(null);
+  const [phoneFor, setPhoneFor] = useState<{ id: string; name: string } | null>(null);
+  const { user } = useAuth();
 
   const members = useQuery({
     queryKey: ["permissions-matrix", activeSlug],
@@ -142,7 +146,17 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
                 <td className="px-3 py-2 text-xs text-muted">
                   {m.grants.length === 0 ? "—" : `${m.grants.length} grant${m.grants.length === 1 ? "" : "s"}`}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-2 text-right space-x-3">
+                  {m.id !== user?.id && (
+                    <button
+                      type="button"
+                      onClick={() => setPhoneFor({ id: m.id, name: m.display_name || m.email })}
+                      className="text-[10px] uppercase tracking-widest text-faint hover:text-accent transition inline-flex items-center gap-1"
+                      title="Show a QR that signs this person's phone in as them"
+                    >
+                      <Smartphone size={11} /> Sign in their phone
+                    </button>
+                  )}
                   <button
                     type="button"
                     disabled={regen.isPending}
@@ -158,6 +172,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           </tbody>
         </table>
       </div>
+
+      {phoneFor && <SignInTheirPhone slug={activeSlug} member={phoneFor} onClose={() => setPhoneFor(null)} />}
 
       <Modal open={open} onClose={() => setOpen(false)} title="New user" size="sm">
         <form onSubmit={submit} className="space-y-3">
@@ -234,7 +250,8 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
           <div className="space-y-3">
             <div className="text-xs text-muted dark:text-mortar-200">
               The user will be forced to reset this on first login. We don't
-              store the plaintext - close this dialog and it's gone.
+              store the plaintext - close this dialog and it's gone. Or skip
+              the password: Sign in their phone shows a QR they scan.
             </div>
             {(tempPassword.display_name || tempPassword.email) && (
               <div className="text-[11px] font-mono text-faint">

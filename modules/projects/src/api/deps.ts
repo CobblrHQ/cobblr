@@ -9,6 +9,7 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { ProjectsDB } from "../db.js";
+import { assigneeOf, tellTurn } from "./assignee.js";
 
 const CLOSED = ["done", "cancelled"] as const;
 
@@ -46,33 +47,44 @@ export async function dependenciesOf(db: Kysely<ProjectsDB>, taskId: string) {
 
 /** After blockers changed, announce every task among `taskIds` that no longer
  *  has an open one. Once per task, not once per dependency: a task waiting on
- *  two things is not unblocked by the first. */
+ *  two things is not unblocked by the first. A freed task given to someone is
+ *  theirs to start, so they are told it is their turn, and the event says so:
+ *  the workspace-wide "unblocked" notice is for work nobody has yet. */
 export async function announceUnblocked(
   orgId: string,
   db: Kysely<ProjectsDB>,
   taskIds: readonly string[],
   via: { kind: string; id: string },
+  byUserId: string | null = null,
 ): Promise<string[]> {
   if (taskIds.length === 0) return [];
   const rows = await db
     .selectFrom("projects_tasks as t")
-    .select(["t.id", openBlockerCount("t.id").as("open")])
+    .leftJoin("projects_projects as p", "p.id", "t.project_id")
+    .select(["t.id", "t.title", "t.metadata", "p.name as project_name", openBlockerCount("t.id").as("open")])
     .where("t.id", "in", [...new Set(taskIds)])
     .where("t.status", "not in", [...CLOSED])
     .execute();
-  const freed = rows.filter((r) => Number(r.open) === 0).map((r) => r.id);
-  for (const taskId of freed) platform().events.emit("projects.task.unblocked", { orgId, taskId, via });
-  return freed;
+  const freed = rows.filter((r) => Number(r.open) === 0);
+  const blocker = freed.length && via.kind === "projects:task"
+    ? (await db.selectFrom("projects_tasks").select("title").where("id", "=", via.id).executeTakeFirst())?.title ?? null
+    : null;
+  for (const task of freed) {
+    const person = assigneeOf(task.metadata);
+    const turn = person ? await tellTurn(orgId, task, person, blocker, byUserId) : "nobody";
+    platform().events.emit("projects.task.unblocked", { orgId, taskId: task.id, via, ...(turn === "told" || turn === "own" ? { assigneeTold: true } : {}) });
+  }
+  return freed.map((r) => r.id);
 }
 
 /** A task was completed or cancelled: the tasks that waited on it may be free. */
-export async function releaseDependentsOf(orgId: string, db: Kysely<ProjectsDB>, blockerId: string): Promise<string[]> {
+export async function releaseDependentsOf(orgId: string, db: Kysely<ProjectsDB>, blockerId: string, byUserId: string | null = null): Promise<string[]> {
   const waiting = await db
     .selectFrom("projects_task_dependencies")
     .select("task_id")
     .where("depends_on_task_id", "=", blockerId)
     .execute();
-  return announceUnblocked(orgId, db, waiting.map((w) => w.task_id), { kind: "projects:task", id: blockerId });
+  return announceUnblocked(orgId, db, waiting.map((w) => w.task_id), { kind: "projects:task", id: blockerId }, byUserId);
 }
 
 /** Why a new "task waits on task" dependency cannot be recorded, or null when

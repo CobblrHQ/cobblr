@@ -62,10 +62,11 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
         running.delete(child);
         resolve({ name: job.name, code: 1, ms: Date.now() - started, out: out + String(err) });
       });
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         running.delete(child);
         if (child.stoppedBy) resolve({ name: job.name, code: 130, ms: Date.now() - started, out: `${out}\n(stopped: ${child.stoppedBy} failed first)` });
-        else resolve({ name: job.name, code: code ?? 1, ms: Date.now() - started, out });
+        // A kernel kill with no shell between (sh exec'd the command): 137, as a shell would report it.
+        else resolve({ name: job.name, code: code ?? (signal === "SIGKILL" ? 137 : 1), ms: Date.now() - started, out });
       });
     });
 
@@ -99,5 +100,28 @@ export async function runParallel(jobs, { concurrency = defaultConcurrency(), fa
   };
 
   await Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+  // KILLED FOR MEMORY, run again alone, once (2026-10-16): the job's memory limit killed a tsgo run beside
+  // another (runs 50559, 50673) and main went red on no broken code. Here, so every caller has it: the
+  // workspace typecheck (typecheck-tsgo.mjs) called this directly and missed a retry kept in run-parallel.mjs.
+  // A second kill alone is a real failure.
+  if (concurrency > 1 && !stoppedBy) {
+    const killed = results.filter(killedByTheKernel);
+    if (killed.length) {
+      console.error(`parallel: ${killed.map((k) => k.name).join(", ")} killed by the kernel (the job's memory limit) with ${Math.min(concurrency, jobs.length)} at a time: running ${killed.length > 1 ? "them" : "it"} again, one at a time`);
+      for (const k of killed) {
+        const job = jobs.find((j) => j.name === k.name);
+        if (!job) continue;
+        const again = await runOne(job);
+        results[results.indexOf(k)] = again;
+        onDone?.(again);
+      }
+    }
+  }
   return results;
+}
+
+/** Whether a job was killed by the kernel (the job's memory limit, as a rule): its shell reports
+ *  "Killed" and exits 137. Pure. */
+export function killedByTheKernel(result) {
+  return result.code === 137 || /(^|\n)\s*Killed\s*$/m.test(String(result.out ?? ""));
 }

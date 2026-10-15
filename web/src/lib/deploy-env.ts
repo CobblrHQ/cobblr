@@ -5,6 +5,7 @@
 // confuses staging with prod. Prod's cue is the ABSENCE of a badge.
 
 import { useQuery } from "@tanstack/react-query";
+import { healthzAtLoad } from "./healthz";
 
 export interface EnvBadge {
   label: string;
@@ -88,9 +89,8 @@ export function useDeployEnv(): { env: string; badge: EnvBadge | null; testDoors
     queryKey: ["deploy-env"],
     queryFn: async (): Promise<{ env: string; testDoors: boolean }> => {
       try {
-        const res = await fetch("/api/v1/healthz");
-        if (!res.ok) return { env: "production", testDoors: false };
-        const j = (await res.json()) as { deploy_env?: string; test_doors?: boolean };
+        const j = await healthzAtLoad();
+        if (!j.ok) return { env: "production", testDoors: false };
         // The api decides (platform/test-doors.ts): a test surface says so,
         // production never does, and a page that guessed from the label could
         // open a door on the wrong deployment.

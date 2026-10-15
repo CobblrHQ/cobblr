@@ -1,3 +1,14 @@
+export function titlePatternPdf(): Buffer {
+  return textPdf([
+    "Baby Turtles | EN-053 | Crochet pattern",
+    "Materials",
+    "Yarn: 60 m of worsted weight acrylic yarn.",
+    "Hook: 3.5 mm crochet hook.",
+    "Notions: 4 safety eyes, size 6 mm.",
+    "Baby Turtles | EN-053 | Crochet pattern",
+  ]);
+}
+
 export function ordinaryPdf(label = "Pattern", sizeBytes = 0): Buffer {
   return textPdf(`Knitting pattern: ${label}`, sizeBytes);
 }

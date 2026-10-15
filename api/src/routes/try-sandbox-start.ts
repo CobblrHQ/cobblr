@@ -6,7 +6,7 @@
 // and a sandbox made one way would stop looking like one made the other.
 import { env } from "../env.js";
 import { enableDefaultModulesForOrg } from "../modules/enable.js";
-import { handOverSandbox, provisionSandboxWorkspace, sandboxCapacity, type SandboxResult } from "../platform/try-sandbox.js";
+import { handOverSandbox, phaseClock, provisionSandboxWorkspace, sandboxCapacity, type SandboxResult } from "../platform/try-sandbox.js";
 import { takeFromPool } from "../platform/try-sandbox-pool.js";
 import { seedSandbox } from "../platform/try-sandbox-seed.js";
 import { provisionOrgForUser } from "./auth.js";
@@ -34,13 +34,14 @@ export async function startSandbox(opts: { quiet?: boolean; waitForCovers?: bool
     console.log(`[try-sandbox] handed over ${pooled.slug} from the pool`);
     return { ok: true, sandbox: pooled, live: cap.live, max: cap.max };
   }
+  const clock = phaseClock();
   const ws = await provisionSandboxWorkspace({
     provisionOrg: async (userId, name) => {
       const r = await provisionOrgForUser(userId, name);
       return { orgId: r.orgId, slug: r.slug };
     },
     enableDefaults: (orgId, userId) => enableDefaultModulesForOrg(orgId, userId),
-  });
+  }, clock);
   // An empty workspace is a poor first impression - the lesson the demo
   // taught. Best-effort: a seed that fails leaves a usable empty sandbox
   // rather than no sandbox. Seeded BEFORE the hand-over, as the pool
@@ -65,5 +66,10 @@ export async function startSandbox(opts: { quiet?: boolean; waitForCovers?: bool
   } catch (err) {
     console.error("[try-sandbox] seed failed (continuing empty):", (err as Error).message);
   }
-  return { ok: true, sandbox: await handOverSandbox(ws, Date.now(), { quiet: opts.quiet }), live: cap.live, max: cap.max };
+  clock.mark("seed");
+  const sandbox = await handOverSandbox(ws, Date.now(), { quiet: opts.quiet });
+  clock.mark("hand-over");
+  // Where a visitor's wait went, one line per cold start (#6689).
+  console.log(`[try-sandbox] cold start ${ws.slug}: ${clock.line()}`);
+  return { ok: true, sandbox, live: cap.live, max: cap.max };
 }

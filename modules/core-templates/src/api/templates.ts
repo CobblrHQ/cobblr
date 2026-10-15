@@ -7,7 +7,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, type EntityKindRecord } from "@cobblr/platform-contract";
 import { bearer, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
@@ -35,9 +35,9 @@ const Instantiate = z.object({
 });
 
 // Map (entity_kind) → (module, create endpoint path). Templates need
-// to know where to POST when instantiating. Built from the set of
-// kinds Cobblr's first-party modules currently expose; new kinds
-// can be added here without schema changes.
+// to know where to POST when instantiating. The kinds first-party modules
+// have always taken; any other primary kind with a create endpoint is found
+// in the registry by createPathOf below.
 const KIND_CREATE_ENDPOINTS: Record<string, string> = {
   "inventory:part": "inventory/parts",
   "machines:machine": "machines/machines",
@@ -47,6 +47,31 @@ const KIND_CREATE_ENDPOINTS: Record<string, string> = {
   "purchases:order": "purchases/orders",
   "core-locations:location": "core-locations/locations",
 };
+
+/** Where a template for this kind makes a record: the fixed paths first, then any
+ *  primary kind the registry says can be created (its module-relative create
+ *  endpoint), so a module's kind needs no edit here to take templates (#6755). */
+function createPathOf(kindId: string, kind: EntityKindRecord | null): string | null {
+  const fixed = KIND_CREATE_ENDPOINTS[kindId];
+  if (fixed) return fixed;
+  const create = kind?.endpoints?.create;
+  if (!kind || !kind.is_primary || kind.instance_name || !create || create.includes("{")) return null;
+  return `${kind.module_name}/${create.replace(/^\/+/, "")}`;
+}
+
+// The kinds a template can be made for in this workspace, in the words a person
+// uses: the one answer the editor and instantiate share.
+templatesRouter.get(
+  "/kinds",
+  asyncHandler(async (req, res) => {
+    const kinds = await platform().entities.listKindsForOrg(tenantContext(req).org.id);
+    res.json({
+      items: kinds
+        .filter((k) => createPathOf(k.id, k))
+        .map((k) => ({ id: k.id, display_name: k.display_name, display_name_plural: k.display_name_plural })),
+    });
+  }),
+);
 
 templatesRouter.get(
   "/",
@@ -216,12 +241,13 @@ templatesRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "template not found" } });
       return;
     }
-    const createPath = KIND_CREATE_ENDPOINTS[tmpl.target_kind];
+    const targetKind = await platform().entities.getKind(tmpl.target_kind);
+    const createPath = createPathOf(tmpl.target_kind, targetKind);
     if (!createPath) {
       res.status(400).json({
         error: {
           code: "unknown_target_kind",
-          message: `No create endpoint registered for ${tmpl.target_kind}. Add to KIND_CREATE_ENDPOINTS.`,
+          message: "That kind of thing cannot be made from a template.",
         },
       });
       return;
@@ -246,10 +272,7 @@ templatesRouter.post(
     const [sourceModule, sourceType] = tmpl.target_kind.split(":");
     const instance = parsed.data.instance;
     if (instance) {
-      const [instances, targetKind] = await Promise.all([
-        platform().instances.list(ctx.org.id),
-        platform().entities.getKind(tmpl.target_kind),
-      ]);
+      const instances = await platform().instances.list(ctx.org.id);
       if (!targetKind?.is_primary || !instances.some((i) => i.instance_name === instance && i.module_name === sourceModule)) {
         res.status(400).json({ error: { code: "wrong_instance", message: "This collection does not accept this template." } });
         return;

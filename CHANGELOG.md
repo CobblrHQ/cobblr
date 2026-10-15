@@ -2,6 +2,47 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-15
+
+### Features
+- A model on your own computer, reached through an updated edge bridge, can now read personal documents. The read never follows a redirect off that computer and is never written to Cobblr's database or the bridge's disk; an older bridge is still refused.
+- Machines now track run hours from completed jobs, so service can come due after a set number of hours.
+- Find Klipper, OctoPrint, PrusaLink, Duet and Bambu printers on your network and add them with their address and connection type already filled in.
+- A recount can cover a shared saved view (Recount this view…) or everything carrying a tag, and expects only those things, so nothing outside them is marked gone.
+- Sales orders gained quotes and numbered invoice PDFs with shop branding, tax, payment dates and email sending by the workspace owner.
+- A laser on the network (FluidNC, grblHAL or GRBL in laser mode) is recognised from its address, and a laser connected directly now opens its station page with its sheets instead of showing it unavailable.
+- Templates work for your own collections: a Bookshelf, or any collection built on Records, can have templates and offers New from template, the Kind of thing list is the one your workspace has, and the starting values are filled in as fields, not typed as JSON.
+- Added controls to delete lists, revoke signup invites, test notification delivery and uninstall file previews.
+- Added editing for saved sync connections and print notification channels, plus demo creation, account notices and selected feedback resolution in the operator console.
+
+### Improvements
+- A printer's camera shows on its page from its snapshot or stream address, fetched by the server, so a camera on the shop network is seen from anywhere the shop's site opens.
+- A project can be started again from another, with its tasks in order and who has each
+- A workspace can give the people who run its machines the operator role: they start, send and resume jobs, confirm the stock at a station and record outcomes, without setting machines up
+- An order keeps the date the customer wants it, the order list sorts by it, and each order in the list shows what it comes to
+- An order due tomorrow or late tells the shop once, and the work that makes an order is linked to it
+- The order list can show one customer's orders, and only the paid or unpaid ones
+- An admin can sign a worker's phone in by showing a QR, with no password to hand over
+- Printers connected by address (Klipper, PrusaLink, OctoPrint, Duet) now show their nozzle and bed temperatures and how far a print has got, live, instead of only every half minute.
+- A server can name its product, so a second product's emails and notifications say its own name
+- The wall QR sheet says what it lets someone do. Print QR beside a join link now prints one Letter page that names the workspace, the role a person joins as and what that role can do, and the pace, and says to treat the code and link like a password: anyone who has it can join with those permissions. If it gets out, revoke it or make a new code on the Members page.
+- The dashboard's "What do you want to do?" panel lists only what you typed into it, and always folds. Things an assistant added over MCP, a share, an offer or an import wait in the scan inbox, and a folded panel says when things you typed are still waiting.
+- When a task waiting on another is freed, the person it is given to hears it is their turn, and the rest of the crew is not pinged
+
+### Fixes
+- The Groceries board (What's on hand) and the other card views now keep an "Add an item" button once they hold something. Before, the button only showed while the board was empty, so adding by hand meant finding the Table tab.
+- A collection of more than ten part types, such as Component Parts or filament types, now has a Find box and lists names in number order, so R10 comes after R2.
+- Quotes, invoices and everything dated for a person use their own day, learned from their browser's time zone
+- A shopping line you type that names one of your items, "milk" when you keep Milk, now restocks it when you tick it, and the line says so before you do. A title that names nothing, or two things, stays plain words.
+- Orders marked arrived no longer miss their stock update when a background receipt check runs at the same time.
+- The Going off list now has Used up and Threw out on every row, so an expired or expiring lot can be dealt with where it is listed instead of by opening each item. Each tap takes one off and offers Undo.
+- Emails and workspace screens now use the product name configured by the server.
+- Recent activity names a scan by what it became and a sync by its source, says a burst once, shows barcode scans, and keeps times out of the code font
+- The assistant prints a label for the thing you named even when a photo of it is in the workspace, and never says a change was made after it was refused. "Do I have any delta printers?" is counted without asking a model, "rename the Buying heading" needs no kind of record named when only one has that heading, and a red nightly answer-quality bench now files an issue the same day.
+- An assistant adding a thing to a place that does not exist yet no longer names the thing after the place ("Cordless drill in Garage"); it is told there is no such place, and its answer repeats how many it added. A search that finds nothing now says how much of the workspace it looked through, and an assistant asked to do something only a person may do offers to open the screen only where it can.
+- Ticking a shopping line, unticking it and ticking it again no longer adds the stock twice. Unticking takes the restock and the purchase back, so a slip of the finger leaves the shelf as it was.
+- A task given to you, and your turn on one, now reach a phone left at the default notification level
+
 ## 2026-10-14
 
 ### Features

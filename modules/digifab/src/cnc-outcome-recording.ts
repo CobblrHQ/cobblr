@@ -59,7 +59,7 @@ export async function recordCncOutcome(db: Kysely<DigifabDB>, orgId: string, con
 
 export function registerCncOutcomeAction(): void {
   platform().actions.registerHandler("digifab.machine-outcome", async ctx => {
-    if (!ctx.userId || !await platform().auth.userHasRole({ orgId: ctx.orgId, userId: ctx.userId, minRole: "admin" })) return { ok: false, error: "An owner or admin records this machine's outcome." };
+    if (!ctx.userId || !await platform().auth.userMayRun({ orgId: ctx.orgId, userId: ctx.userId, actionId: "digifab:machine-outcome" })) return { ok: false, error: "An admin or an operator records this machine's outcome." };
     const args = ctx.args ?? {};
     const parsed = OutcomeAction.safeParse({ ...args, tool_seconds: readJsonArg(args, "tool_seconds") ?? args.tool_seconds });
     if (!parsed.success) return { ok: false, error: parsed.error.message };

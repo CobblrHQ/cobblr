@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { tenantContext, type OrgRole } from "../db.js";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 
 export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
@@ -28,7 +28,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
   // org-roles.ts for the whole story.
   if (!roleSatisfies(ctx.role, allowed)) {
     res.status(403).json({
-      error: { code: "forbidden", message: `This action requires one of: ${allowed.join(", ")}.` },
+      error: { code: "forbidden", message: roleRefusal(allowed) },
     });
     return false;
   }

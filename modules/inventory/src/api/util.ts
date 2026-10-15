@@ -4,7 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser, type OrgRole } from "../db.js";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 
 /** Wrap an async handler so thrown rejections route to next(err)
  *  instead of becoming an unhandled rejection. */
@@ -48,7 +48,7 @@ export function requireRole(req: Request, res: Response, ...allowed: OrgRole[]):
     res.status(403).json({
       error: {
         code: "forbidden",
-        message: `This action requires one of: ${allowed.join(", ")}.`,
+        message: roleRefusal(allowed),
       },
     });
     return false;

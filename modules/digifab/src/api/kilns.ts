@@ -39,6 +39,7 @@ kilnsRouter.post("/firings/:id/finish", asyncHandler(async (req, res) => {
 }));
 // AI-REACH: exempt physical kiln Start/Stop needs the authorized screen's credential, never an assistant or a wire.
 kilnsRouter.post("/firings/:id/control", asyncHandler(async (req, res) => {
- if (!requireRole(req, res, "owner", "admin")) return;
+ // The admin tier, or an operator: starting and stopping a firing at its screen (#6672).
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
  try { res.json(await controlFiring(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.id), ControlSchema.parse(req.body))); } catch(e) { refuse(res, e); }
 }));

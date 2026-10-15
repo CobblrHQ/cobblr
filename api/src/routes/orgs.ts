@@ -259,6 +259,7 @@ orgsRouter.post(
 // "archive" instead.
 // AI-REACH: deleting the whole workspace, every record in it, and its database.
 // The one thing in here that no undo reaches, so it stays a person's own click.
+// UI-REACH: legacy immediate teardown for API clients; Settings requests deletion with a backup and grace period instead.
 orgsRouter.delete("/:slug", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (req.tenant!.role !== "owner") {
@@ -733,6 +734,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
 // (caller-supplied for now — a server-side registry fetch is the follow-up).
 const ProvisionAppBody = z.object({ app: z.string().min(1), manifest: z.unknown() });
 // AI-REACH: provisioning a new app workspace: account-level, same as creating one.
+// UI-REACH: manifest-based provisioning for managed-app clients; people create an app workspace through signup or the workspace picker, which resolve the manifest server-side.
 orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
   try {
     const parsed = ProvisionAppBody.safeParse(req.body);
@@ -1011,6 +1013,7 @@ orgsRouter.get(
 
 // AI-REACH: read-state the app keeps as you use it. Nobody asks for it in words,
 // and marking someone's notifications read on their behalf is not a favour.
+// UI-REACH: compatibility door for workspace clients; the bell and account inbox mark the same row through /me/notifications.
 orgsRouter.post(
   "/:slug/notifications/:id/read",
   requireAuth,
@@ -1032,6 +1035,7 @@ orgsRouter.post(
 );
 
 // AI-REACH: read-state, as above.
+// UI-REACH: compatibility door for workspace clients; the account inbox owns read controls across workspaces through /me/notifications.
 orgsRouter.post(
   "/:slug/notifications/read-all",
   requireAuth,

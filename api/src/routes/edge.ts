@@ -21,7 +21,7 @@ import {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { EdgeNotRegistered, platform } from "@cobblr/platform-contract";
 import {
   DriverFetchError,
   declareDriver,
@@ -81,13 +81,18 @@ edgeRouter.post("/register", async (req, res, next) => {
   }
 });
 
-edgeRouter.get("/poll", async (req, res) => {
+edgeRouter.get("/poll", async (req, res, next) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const ac = new AbortController();
   req.on("close", () => ac.abort());
-  const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
-  if (item) res.json(item);
-  else res.status(204).end();
+  try {
+    const item = await platform().edge.relayPoll(channelKeyOf(req), { signal: ac.signal, lanes: parsePollLanes(req.query.lanes) });
+    if (item) res.json(item);
+    else res.status(204).end();
+  } catch (error) {
+    if (error instanceof EdgeNotRegistered) res.status(409).json({ error: { code: error.code, message: error.message } });
+    else next(error);
+  }
 });
 
 edgeRouter.post("/respond", async (req, res, next) => {
@@ -157,7 +162,7 @@ edgeRouter.get("/status", async (req, res) => {
 edgeRouter.get("/discovery", async (req,res,next)=>{
  if(!requireRole(req,res,"owner","admin","member"))return;
  try{
-  const result=await platform().edge.send(channelKeyOf(req),{method:"GET",path:"/discover",timeoutMs:5000});
+  const result=await platform().edge.send(channelKeyOf(req),{method:"GET",path:"/discover",timeoutMs:10000});
   if(result.status>=400){res.status(502).json({error:{code:"bridge_discovery",message:"This bridge could not scan for devices. Update it and check that it is online."}});return;}
   const parsed=BridgeDiscovery.safeParse(result.body);
   if(!parsed.success){res.status(502).json({error:{code:"bridge_discovery",message:"The bridge returned an invalid discovery report. Update it before adding devices."}});return;}

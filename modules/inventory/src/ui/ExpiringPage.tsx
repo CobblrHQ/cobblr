@@ -6,9 +6,10 @@
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MapPin } from "lucide-react";
 import { countdownWords, type Day } from "@cobblr/platform-contract/day";
+import { useRunWithUndo } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 const WINDOWS = [7, 30, 90] as const;
@@ -21,6 +22,14 @@ export function ExpiringPage() {
   const { api, instance } = useInventory();
   const [within, setWithin] = useState<number>(30);
   const q = useQuery({ queryKey: ["inventory-expiring", instance ?? "inventory", within], queryFn: () => api.stockExpiring(within) });
+  const run = useRunWithUndo();
+  const qc = useQueryClient();
+  // One at a time, as the record's own buttons do: each takes one off the
+  // oldest lot, and the row's count says what is left.
+  const settle = (l: { part_id: string; kind: string; name: string }, actionId: string, done: string) =>
+    run({ actionId, entityKind: l.kind, entityId: l.part_id }, done)
+      .catch(() => undefined)
+      .finally(() => void qc.invalidateQueries({ queryKey: ["inventory-expiring"] }));
   const places = q.data?.places ?? [];
   const today = (q.data?.today ?? "") as Day;
   return (
@@ -73,6 +82,24 @@ export function ExpiringPage() {
                 {l.lot && <span className="font-mono text-[11px] text-muted">lot {l.lot}</span>}
                 <span className={"font-mono text-[11px] " + (l.days < 0 ? "text-ember-600 dark:text-ember-400" : l.days <= 7 ? "text-amber-700 dark:text-amber-400" : "text-muted dark:text-slate-400")}>
                   {l.days < 0 ? `${-l.days}d past its date` : today ? countdownWords(l.expires_on as Day, today) : l.expires_on}
+                </span>
+                <span className="ml-auto flex gap-1.5">
+                  <button
+                    type="button"
+                    aria-label={`Used up ${l.name}`}
+                    onClick={() => void settle(l, "inventory:use-up", `Used up ${l.name}.`)}
+                    className="min-h-9 rounded-md border border-line dark:border-slate-600 px-2.5 text-xs text-content dark:text-mortar-100 hover:border-accent"
+                  >
+                    Used up
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Threw out ${l.name}`}
+                    onClick={() => void settle(l, "inventory:mark-spoiled", `Threw out ${l.name}.`)}
+                    className="min-h-9 rounded-md border border-line dark:border-slate-600 px-2.5 text-xs text-content dark:text-mortar-100 hover:border-accent"
+                  >
+                    Threw out
+                  </button>
                 </span>
               </li>
             ))}

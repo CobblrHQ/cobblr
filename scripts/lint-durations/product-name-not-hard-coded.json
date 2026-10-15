@@ -1,0 +1,10 @@
+{
+  "lint": "lint:product-name-not-hard-coded",
+  "run": "node scripts/lint-product-name-not-hard-coded.ts",
+  "rows": [
+    "new-app"
+  ],
+  "ms": 628,
+  "recorded": "2026-10-16",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.18.0",
+  version: "0.18.1",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -31,6 +31,9 @@ export default defineModule({
     // Past arrivals whose stock may never have been added: stamped, and the
     // recent ones put to a person (heal-unreceived-arrivals.ts).
     onBoot: async () => {
+      // What it shows on the dashboard, read in its one request (#6563).
+      const { registerPurchasesDashboardReads } = await import("./dashboard-reads.js");
+      registerPurchasesDashboardReads();
       const { registerUnreceivedArrivalsHeal } = await import("./heal-unreceived-arrivals.js");
       registerUnreceivedArrivalsHeal();
     },

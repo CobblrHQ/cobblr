@@ -19,8 +19,20 @@
 export class Gate {
   private active = 0;
   private readonly waiting: Array<() => void> = [];
-  constructor(private readonly limit: number) {
+  constructor(private limit: number) {
     if (!Number.isFinite(limit) || limit < 1) throw new Error(`Gate: limit must be >= 1, got ${limit}`);
+  }
+  /** The configured ceiling, before the server's budget lowered it. */
+  get ceiling(): number {
+    return this.limit;
+  }
+  /** Change the limit; a raised one lets waiters through at once. */
+  setLimit(n: number): void {
+    if (!Number.isFinite(n) || n < 1) return;
+    this.limit = Math.floor(n);
+    // A woken waiter counts itself in later (acquire's await), so wake exactly
+    // the free slots now rather than looping on `active`.
+    for (let free = this.limit - this.active; free > 0 && this.waiting.length; free--) this.waiting.shift()!();
   }
   /** How many are through right now. */
   get held(): number {

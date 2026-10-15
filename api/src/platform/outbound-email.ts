@@ -20,6 +20,7 @@
 import { meta } from "../db/meta.js";
 import { checkEmailConfig, sendEmailVia, type EmailConfig, type EmailProvider } from "./email-send.js";
 import { decryptCredentials, encryptCredentials } from "./integrations.js";
+import { productName } from "./product-name.js";
 
 /** Config keys that are secrets: accepted on write, never returned. */
 const SECRET_KEYS = ["smtp_pass", "mailgun_api_key", "resend_api_key", "postmark_token", "gmail_refresh_token"] as const;
@@ -152,13 +153,15 @@ export interface OutboundSend {
    *  its own. */
   sentBy: string;
   replyTo?: string;
+  attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }>;
+  category?: "sales_document";
   /** What the mail is about, for the log and for the record's own history. */
   source?: { kind: string; id: string };
 }
 
 export type OutboundSendResult =
   | { ok: true; logId: string; messageId: string | null; status: "sent" | "skipped" }
-  | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed"; message: string };
+  | { ok: false; logId: string | null; reason: "not_configured" | "no_sender" | "bad_address" | "failed" | "rate_limited"; message: string };
 
 const ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -189,8 +192,13 @@ export async function sendFromWorkspace(orgId: string, m: OutboundSend): Promise
   if (!cfg) return { ok: false, logId: null, reason: "not_configured", message: "This workspace has no outbound email set up." };
   const check = checkEmailConfig({ ...cfg, to: m.to.trim() }, true);
   if (!check.ok) return { ok: false, logId: null, reason: "not_configured", message: `Outbound email is set up incompletely (${check.reason}).` };
+  if (m.category === "sales_document") {
+    const { reserveDocumentSend } = await import("./send-limits.js");
+    const limited = await reserveDocumentSend(orgId, m.sentBy, new Date(), m.source);
+    if (limited) return { ok: false, logId: null, reason: "rate_limited", message: limited };
+  }
   try {
-    const out = await sendEmailVia(check.config, m.subject, m.text, undefined, m.replyTo ? { replyTo: m.replyTo } : undefined);
+    const out = await sendEmailVia(check.config, m.subject, m.text, undefined, { replyTo: m.replyTo, attachments: m.attachments });
     if (out.skipped) {
       const logId = await log(orgId, m, "skipped", null, "an address that cannot receive mail");
       return { ok: true, logId, messageId: null, status: "skipped" };
@@ -222,7 +230,7 @@ export async function sendOutboundTest(orgId: string, orgName: string, userId: s
   if (limited) return { ok: false as const, status: 429, code: "rate_limited", message: limited };
   const r = await sendFromWorkspace(orgId, {
     to: me.email,
-    subject: subject?.trim().slice(0, 200) || "Test from Cobblr",
+    subject: subject?.trim().slice(0, 200) || `Test from ${productName()}`,
     text: `This is a test of ${orgName}'s outbound email. If you can read it, emails to your customers will arrive the same way.`,
     sentBy: userId,
   });

@@ -28,8 +28,10 @@
 // pieces above it. It yields while any overlay is open, the way every piece of
 // chrome does by default; it once sat over the camera's shutter (#3012).
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { FloatingChrome, lazyOverlay } from "@cobblr/platform-web";
 import { api } from "../lib/api";
+import { workspaceStateKey, workspaceTrialQuery } from "../lib/workspace-trial";
 import { useAuth } from "../auth/AuthContext";
 import { sandboxExpiry, clearSandboxExpiry, markSandboxEnded } from "../lib/sandbox-session";
 const SandboxSaveModal = lazyOverlay(() => import("./SandboxSaveModal").then((m) => ({ default: m.SandboxSaveModal })));
@@ -87,11 +89,12 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
   const [modal, setModal] = useState<null | "save" | "password">(null);
   const [resend, setResend] = useState<null | "sending" | "sent" | "failed">(null);
   const { refreshMe } = useAuth();
+  const qc = useQueryClient();
 
   const load = useCallback(async () => {
     if (!slug) return;
     try {
-      const t = await api.workspaceTrial(slug);
+      const t = await qc.fetchQuery(workspaceTrialQuery(slug));
       // The hint was written for a sandbox; a workspace the server says is
       // not one any more (kept from another tab, say) must not end on it.
       if (t.kind !== "sandbox") clearSandboxExpiry();
@@ -110,7 +113,7 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
       // turned into the ending; a deleted one answers 404, and the hint it
       // left behind says when it ended.
     }
-  }, [slug]);
+  }, [slug, qc]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -169,6 +172,7 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
         // shell re-reads the user and the workspace so "Guest" and "Sandbox"
         // go from the header at the same moment as from this strip.
         clearSandboxExpiry();
+        void qc.invalidateQueries({ queryKey: workspaceStateKey(slug) });
         setState({
           kind: "trial",
           expiresAt: Date.parse(kept.expires_at),

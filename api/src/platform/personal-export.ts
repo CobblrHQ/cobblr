@@ -19,6 +19,7 @@ import { ZipArchive } from "archiver";
 import { meta } from "../db/meta.js";
 import { log as logActivity } from "./activity.js";
 import { sendAuthEmail } from "./hosted-seams.js";
+import { productName } from "./product-name.js";
 
 export const PERSONAL_EXPORT_DAYS = 7;
 const ONE_PER_MS = 24 * 3_600_000;
@@ -89,7 +90,7 @@ export async function personalExportFiles(userId: string): Promise<Record<string
   const owned = memberships.filter((m) => m.role === "owner");
   const json = (v: unknown) => JSON.stringify(v, null, 2);
   const readme =
-    `Your Cobblr data, for ${user.email}, made ${new Date().toISOString()}.\n\n` +
+    `Your ${productName()} data, for ${user.email}, made ${new Date().toISOString()}.\n\n` +
     `account.json        your profile and preferences\n` +
     `workspaces.json     the ${memberships.length} workspace(s) you belong to, and your role in each\n` +
     `tokens.json         your API tokens: name, scopes and dates (never the token itself)\n` +
@@ -163,9 +164,9 @@ async function buildPersonalExport(id: string, userId: string, origin: string): 
     if (user) {
       await sendAuthEmail({
         to: user.email,
-        subject: "Your Cobblr data is ready",
+        subject: `Your ${productName()} data is ready`,
         text:
-          `The copy of your Cobblr data you asked for is ready. Sign in and download it from your account:\n\n` +
+          `The copy of your ${productName()} data you asked for is ready. Sign in and download it from your account:\n\n` +
           `${origin}/me/identity\n\nIt is kept for ${PERSONAL_EXPORT_DAYS} days. If you did not ask for it, change your password.`,
         kind: "notification",
       });

@@ -3,6 +3,7 @@ type: feature
 scope: scan
 date: 2026-10-14
 docs_target: docs/USER_GUIDE.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-15
 ---
 
 A pack split into parts of one kind shows each part as a short row under a parent that says the table and shared values once, and the parent's picture loads on a phone

@@ -63,6 +63,7 @@ import { getTenantDb } from "../db/tenant.js";
 import { validateAgainst } from "./service-schema.js";
 import { serviceJobIdentity, stableJson } from "./service-job-identity.js";
 import { isPersonalDocumentRefused } from "@cobblr/platform-contract/personal-documents";
+import { productName } from "./product-name.js";
 
 // ── Storage ─────────────────────────────────────────────────────────────
 
@@ -1041,7 +1042,7 @@ export async function handOn(orgId: string, jobId: string, why: string): Promise
   const reason =
     effect === "none"
       ? `${label} ${why}, and there was no one else to hand it to.`
-      : `${label} ${why}. It may still be going there; Cobblr stopped waiting for it.`;
+      : `${label} ${why}. It may still be going there; ${productName()} stopped waiting for it.`;
   await finish(orgId, row, "failed", { error: failure("stalled", reason), message: reason, stalled_at: row.stalled_at ?? new Date() });
   return "failed";
 }

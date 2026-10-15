@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Send, Bell, X, Copy } from "lucide-react";
-import { Modal, useToast, NumberField } from "@cobblr/platform-web";
+import { Modal, useToast, NumberField, SecretInput } from "@cobblr/platform-web";
 import { api, ApiError, type DigifabChannel, type DigifabRule, type DigifabCadence, type DigifabStep } from "../lib/api";
 
 const lbl = "text-[10px] uppercase tracking-widest text-faint";
@@ -105,12 +105,16 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
   const qc = useQueryClient();
   const toast = useToast();
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<DigifabChannel | null>(null);
+  const [enabled, setEnabled] = useState(true);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const inval = () => void qc.invalidateQueries({ queryKey: ["digifab-channels", slug] });
   const create = useMutation({
-    mutationFn: () => api.createDigifabChannel(slug, { label: label.trim(), webhook_url: url.trim() }),
-    onSuccess: () => { toast.success("Channel added"); setLabel(""); setUrl(""); setAdding(false); inval(); },
+    mutationFn: () => editing
+      ? api.patchDigifabChannel(slug, editing.id, { label: label.trim(), enabled, ...(url.trim() ? { webhook_url: url.trim() } : {}) })
+      : api.createDigifabChannel(slug, { label: label.trim(), webhook_url: url.trim() }),
+    onSuccess: () => { toast.success(editing ? "Channel updated" : "Channel added"); setEditing(null); setLabel(""); setUrl(""); setAdding(false); inval(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add channel"),
   });
   const del = useMutation({
@@ -128,13 +132,15 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
     <div>
       <div className="flex items-center justify-between mb-1.5">
         <div className={lbl}>Discord channels <span className="normal-case text-faint/70"> - defined once, used by any rule</span></div>
-        {!adding && <button type="button" onClick={() => setAdding(true)} className="flex items-center gap-1 text-xs text-accent hover:underline"><Plus size={12} /> Add channel</button>}
+        {!adding && <button type="button" onClick={() => { setEditing(null); setLabel(""); setUrl(""); setEnabled(true); setAdding(true); }} className="flex items-center gap-1 text-xs text-accent hover:underline"><Plus size={12} /> Add channel</button>}
       </div>
       {channels.length > 0 && (
         <ul className="divide-y divide-line dark:divide-slate-800 border border-line dark:border-slate-700 rounded mb-2">
           {channels.map((c) => (
-            <li key={c.id} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+            <li key={c.id} className="flex flex-wrap items-center gap-2 px-3 py-1.5 text-sm">
               <span className="text-content dark:text-mortar-100 flex-1 truncate">{c.label}</span>
+              <button type="button" aria-label={`Edit ${c.label}`} onClick={() => { setEditing(c); setLabel(c.label); setUrl(""); setEnabled(c.enabled); setAdding(true); }} className="text-accent hover:underline">Edit</button>
+              {!c.enabled && <span className="text-muted">Paused</span>}
               <button aria-label="Send a test message" type="button" onClick={() => test.mutate(c.id)} disabled={test.isPending} title="Send a test message" className="text-faint hover:text-accent"><Send size={13} /></button>
               <button aria-label="Remove" type="button" onClick={() => del.mutate(c.id)} disabled={del.isPending} title="Remove" className="text-faint hover:text-ember-500"><Trash2 size={13} /></button>
             </li>
@@ -143,11 +149,12 @@ function ChannelsSection({ slug, channels }: { slug: string; channels: DigifabCh
       )}
       {adding && (
         <div className="border border-line dark:border-slate-700 rounded p-2 space-y-1.5">
-          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name - e.g. #prints" className={field} />
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="Discord webhook URL - https://discord.com/api/webhooks/…" className={field} />
+          <label className="block text-sm">Channel name<input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Name, such as #prints" className={field} /></label>
+          {(!editing || editing.kind === "discord") && <label className="block text-sm">Discord webhook URL<SecretInput secret what="webhook address" autoComplete="off" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={editing ? "Leave blank to keep the saved address" : "https://discord.com/api/webhooks/…"} className={field} /></label>}
+          {editing && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />Send print updates</label>}
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => create.mutate()} disabled={create.isPending || !label.trim() || !url.trim()} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{create.isPending ? "…" : "Save"}</button>
-            <button type="button" onClick={() => setAdding(false)} className="text-xs text-faint hover:text-content">Cancel</button>
+            <button type="button" onClick={() => create.mutate()} disabled={create.isPending || !label.trim() || (!editing && !url.trim())} className="px-2.5 py-1 text-xs rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{create.isPending ? "Saving…" : "Save channel"}</button>
+            <button type="button" onClick={() => { setAdding(false); setEditing(null); setUrl(""); }} className="text-xs text-faint hover:text-content">Cancel</button>
             <span className="text-[11px] text-faint">Discord → channel → Edit → Integrations → Webhooks → New.</span>
           </div>
         </div>

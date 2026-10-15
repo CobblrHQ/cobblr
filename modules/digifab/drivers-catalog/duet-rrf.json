@@ -1,7 +1,7 @@
 {
   "id": "duet-rrf",
   "name": "Duet (RepRapFirmware)",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "routing": false,
   "test": { "method": "GET", "path": "/rr_status?type=1" },
   "listDevices": {
@@ -28,7 +28,10 @@
           "F": "busy",
           "C": "busy"
         }
-      }
+      },
+      "temps": {"nozzle": {"actual": "$.temps.current.1", "target": "$.temps.tools.active.0.0"}, "bed": {"actual": "$.temps.bed.current", "target": "$.temps.bed.active"}},
+      "progress": "$.fractionPrinted",
+      "progressScale": 1
     }
   },
   "upload": {

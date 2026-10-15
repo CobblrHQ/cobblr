@@ -47,7 +47,7 @@ platform().instances.registerItemCounter("machines", async (orgId, instance) => 
   return r.rows[0]?.c ?? 0;
 });
 
-const router = Router({ mergeParams: true });
+const router: Router = Router({ mergeParams: true });
 router.use("/machines", machinesRouter);
 
 export default router;

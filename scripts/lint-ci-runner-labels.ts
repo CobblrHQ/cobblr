@@ -62,6 +62,7 @@ const KNOWN = new Set([
   "fast-test",
   "fast-dispatch",
   "pr-check",
+  "android-kvm",
 ]);
 
 // THE b550 IS TEST-ONLY (2026-10-07, server-setup #190: a bad DRAM spot). A job there may compute, but nothing

@@ -4,6 +4,7 @@ import { pollJob, buildDriverById } from "./jobs-core.js";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import type { MachineDriver, CommandResult } from "./drivers/types.js";
+import { mayControl, RUN_MACHINES_REFUSAL } from "./motion-gate.js";
 export async function controlResinPrinter(db: Kysely<DigifabDB>, orgId: string, driver: MachineDriver, deviceId: string, operation: string, connectionId: string): Promise<CommandResult> {
   if (driver.printProcess !== "resin" || !driver.runControl || !["stop", "pause", "resume"].includes(operation)) return { ok: false, detail: "Choose Stop, Pause or Resume on a connected resin printer." };
   const stopping = operation === "stop" ? await db.updateTable("digifab_jobs")
@@ -27,6 +28,7 @@ export function registerResinControlAction(): void {
     if (!ctx.userId || !await platform().auth.userHasRole({ orgId: ctx.orgId, userId: ctx.userId, minRole: "member" })) return { ok: false, error: "Sign in to this workspace to control its resin printers." };
     const parsed = ResinControl.safeParse(ctx.args);
     if (!parsed.success) return { ok: false, error: parsed.error.message };
+    if (!await mayControl({ orgId: ctx.orgId, userId: ctx.userId, operation: parsed.data.operation })) return { ok: false, error: RUN_MACHINES_REFUSAL };
     const b = parsed.data, db = await platform().tenants.getDb(ctx.orgId) as Kysely<DigifabDB>;
     const driver = await buildDriverById(db, ctx.orgId, b.connection_id);
     if (!driver) return { ok: false, error: "The resin printer is not connected." };
