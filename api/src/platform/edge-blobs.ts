@@ -20,6 +20,7 @@
 // not share that directory cannot hand a transfer between them; a bridge that
 // lands on the other one is told the file is gone and the call fails in words.
 
+import { productName } from "./product-name.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, mkdirSync, statSync, unlinkSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -142,13 +143,13 @@ export async function serveBlob(key: string, id: string, req: IncomingMessage, r
     .where("channel_key", "=", key)
     .where("expires_at", ">", new Date())
     .executeTakeFirst();
-  if (!row) return end(res, 404, "Cobblr is not holding a file by that id for this bridge (it may have expired).");
+  if (!row) return end(res, 404, `${productName()} is not holding a file by that id for this bridge (it may have expired).`);
   const method = (req.method ?? "GET").toUpperCase();
 
   if (row.direction === "down") {
-    if (method !== "GET" && method !== "HEAD") return end(res, 405, "This file is Cobblr's to send, not the bridge's.", { allow: "GET, HEAD" });
+    if (method !== "GET" && method !== "HEAD") return end(res, 405, `This file is ${productName()}'s to send, not the bridge's.`, { allow: "GET, HEAD" });
     const size = sizeOf(row.path);
-    if (size !== Number(row.size)) return end(res, 410, "The file Cobblr offered is no longer there.");
+    if (size !== Number(row.size)) return end(res, 410, `The file ${productName()} offered is no longer there.`);
     const m = /^bytes=(\d+)-$/.exec(String(req.headers.range ?? ""));
     const start = m ? Number(m[1]) : 0;
     if (start > size) return end(res, 416, undefined, { "content-range": `bytes */${size}` });
@@ -170,18 +171,18 @@ export async function serveBlob(key: string, id: string, req: IncomingMessage, r
     return end(res, 200, undefined, { "x-received": String(received), "x-complete": row.complete ? "1" : "0" });
   }
   if (method !== "PUT") return end(res, 405, "This file is the bridge's to deliver.", { allow: "HEAD, PUT" });
-  if (row.complete) return end(res, 409, "Cobblr already holds this file whole.", { "x-received": String(received) });
+  if (row.complete) return end(res, 409, `${productName()} already holds this file whole.`, { "x-received": String(received) });
   const cr = /^bytes (?:(\d+)-(\d+)|\*)\/(\d+)$/.exec(String(req.headers["content-range"] ?? ""));
   const sha = String(req.headers["x-sha256"] ?? "").toLowerCase();
   if (!cr || !/^[0-9a-f]{64}$/.test(sha)) return end(res, 400, "A delivered file needs Content-Range and x-sha256.");
   const start = cr[1] !== undefined ? Number(cr[1]) : 0;
   const total = Number(cr[3]);
-  if (start !== received) return end(res, 409, `Cobblr holds ${received} bytes of this file; send from there.`, { "x-received": String(received) });
+  if (start !== received) return end(res, 409, `${productName()} holds ${received} bytes of this file; send from there.`, { "x-received": String(received) });
   try {
     await pipeline(req, createWriteStream(row.path, { flags: start > 0 ? "a" : "w" }));
   } catch {
     // The link dropped part way; what landed stays for the resume.
-    return end(res, 400, "The delivery broke off; send the rest from where Cobblr's HEAD says.");
+    return end(res, 400, `The delivery broke off; send the rest from where ${productName()}'s HEAD says.`);
   }
   const now = sizeOf(row.path);
   await meta.updateTable("edge_blobs").set({ received: now }).where("id", "=", id).execute();
@@ -189,7 +190,7 @@ export async function serveBlob(key: string, id: string, req: IncomingMessage, r
   if (now > total || (await sha256OfFile(row.path)) !== sha) {
     drop(row.path);
     await meta.updateTable("edge_blobs").set({ received: 0 }).where("id", "=", id).execute();
-    return end(res, 422, "The file arrived different from what the bridge sent (its sha256 does not match), so Cobblr refused it.");
+    return end(res, 422, `The file arrived different from what the bridge sent (its sha256 does not match), so ${productName()} refused it.`);
   }
   await meta.updateTable("edge_blobs").set({ complete: true, sha256: sha, size: now }).where("id", "=", id).execute();
   return end(res, 200, undefined, { "x-received": String(now) });

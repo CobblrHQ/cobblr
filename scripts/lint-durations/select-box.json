@@ -1,0 +1,10 @@
+{
+  "lint": "lint:select-box",
+  "run": "node scripts/lint-select-box.ts",
+  "rows": [
+    "shared-web-primitive"
+  ],
+  "ms": 642,
+  "recorded": "2026-10-16",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

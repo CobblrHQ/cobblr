@@ -6,6 +6,7 @@
 // short title and one line, from a fixed list of fields (PUSH_PAYLOAD_FIELDS),
 // and a notification marked private (a personal document, a secret field,
 // #5243) carries a generic line and the link, never its words.
+import { productName } from "./product-name.js";
 import type { NotificationPriority } from "../db/schema.js";
 import type { PushUrgency } from "./web-push.js";
 import { localMinuteOfDay } from "./delivery-windows.js";
@@ -68,7 +69,7 @@ export type PushPayload = { [K in (typeof PUSH_PAYLOAD_FIELDS)[number]]: K exten
 
 /** The line a private notification shows instead of its own words. */
 export function privatePushLine(eventType: string): string {
-  return /document|vault/i.test(eventType) ? "A document needs your review" : "Something needs your attention in Cobblr";
+  return /document|vault/i.test(eventType) ? "A document needs your review" : `Something needs your attention in ${productName()}`;
 }
 
 const BODY_MAX = 180;
@@ -105,7 +106,7 @@ export function buildPushPayload(src: PushSource): PushPayload {
   const digest = (src.digestCount ?? 1) > 1;
   return {
     id: src.notificationId,
-    title: src.title || "Cobblr",
+    title: src.title || productName(),
     body: src.private ? privatePushLine(src.eventType) : digest ? oneLine(`${countOf(src.digestCount ?? 0, "update")} while you were away`) : oneLine(src.message),
     url: digest ? "/" : inAppLink(src.link_url),
     // Collapses a repeat of the same notification into one on the device.

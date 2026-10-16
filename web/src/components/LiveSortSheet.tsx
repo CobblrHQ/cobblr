@@ -1,3 +1,5 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // Live Sort — the bench-station rig (docs/product/put-away.md §3.2, §4).
 //
@@ -150,7 +152,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       const payload = classifyScanPayload(code, scanOrigins);
       // A link to a page here or to Cobblr itself is not an item to sort.
       if (payload.kind === "own-route" || payload.kind === "own-link" || payload.kind === "empty") {
-        toast.info("That code is a Cobblr link, not an item. Scan the item's barcode.");
+        toast.info(`That code is ${withArticle(productName())} link, not an item. Scan the item's barcode.`);
         return;
       }
       const qrToken = payload.kind === "cobblr-qr" ? payload.token : null;
@@ -411,7 +413,7 @@ export function LiveSortSheet({ slug, onClose }: { slug: string; onClose: () => 
       {binsOpen && (
         <div className="border-b border-line dark:border-slate-800 px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
           <span className="text-muted">
-            Grab a marker and number your containers. Cobblr creates matching{" "}
+            Grab a marker and number your containers. {productName()} creates matching{" "}
             <span className="text-content font-medium">Bin N</span> locations; the first item of a
             new family <span className="text-content font-medium">names its bin</span> as you sort.
           </span>

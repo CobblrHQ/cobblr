@@ -11,6 +11,7 @@
 // code path. Absent app = the probe fails and this renders nothing, which is the
 // common case and must stay silent.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { LightBurnPairing } from "./LightBurnPairing";
@@ -168,7 +169,7 @@ export function DesktopAppCard() {
     return (
       <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex items-center gap-2 text-muted">
         <Laptop size={15} className="shrink-0" />
-        <span>Using the Cobblr desktop app on this computer?</span>
+        <span>Using the {productName()} desktop app on this computer?</span>
         <button
           type="button"
           onClick={() => { allowLocalAccess("desktop-app-check"); setLook(true); }}
@@ -208,7 +209,7 @@ export function DesktopAppCard() {
     <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm space-y-2">
       <div className="flex items-center gap-3">
         <Laptop size={15} className="text-accent shrink-0" />
-        <span className="font-medium text-content dark:text-mortar-100">Cobblr desktop app</span>
+        <span className="font-medium text-content dark:text-mortar-100">{productName()} desktop app</span>
         <span className="text-[10px] uppercase tracking-wider text-muted dark:text-slate-400 border border-line dark:border-slate-700 rounded-full px-2 py-0.5">
           this computer
         </span>

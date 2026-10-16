@@ -1,7 +1,7 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
+import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -797,6 +797,7 @@ export function PartsListPage() {
         <NewItemMenu kind="inventory:part" instance={instance}>
           <button
             onClick={() => setAdding(true)}
+            data-testid="new-part"
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
           >
             <Plus size={14} /> New {itemNoun}
@@ -1240,13 +1241,7 @@ function PartsTable({
         <thead>
           <tr className="bg-mortar-100 dark:bg-slate-800 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             <th className="w-8 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={allChecked}
-                onChange={(e) => onSelectAll(e.target.checked)}
-                className="accent-cobble-600"
-                aria-label="Select all"
-              />
+              <SelectBox checked={allChecked} onChange={(checked) => onSelectAll(checked)} label="Select all" />
             </th>
             <Th>#ID</Th>
             <Th>Name</Th>
@@ -1270,13 +1265,7 @@ function PartsTable({
               className="group/row border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
             >
               <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(p.id)}
-                  onChange={(e) => onToggle(p.id, e.target.checked)}
-                  className="accent-cobble-600"
-                  aria-label={`Select ${p.name}`}
-                />
+                <SelectBox checked={selected.has(p.id)} onChange={(checked) => onToggle(p.id, checked)} label={`Select ${p.name}`} />
               </td>
               <td className="px-3 py-2 font-mono text-[11px] text-faint dark:text-slate-500 whitespace-nowrap">
                 {p.asset_id != null ? `#${assetIdFmt(p.asset_id)}` : "—"}
@@ -1528,14 +1517,7 @@ function PartsTable({
             className="group/row rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
           >
             <div className="flex items-start gap-3">
-              <input
-                type="checkbox"
-                checked={selected.has(p.id)}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => onToggle(p.id, e.target.checked)}
-                className="accent-cobble-600 mt-1 shrink-0"
-                aria-label={`Select ${p.name}`}
-              />
+              <SelectBox checked={selected.has(p.id)} onChange={(checked) => onToggle(p.id, checked)} label={`Select ${p.name}`} className="mt-1 shrink-0" />
               <EntityThumb
                 src={p.image_path}
                 suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}

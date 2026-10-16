@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { DirectLaserControls } from "../features/digifab/DirectLaserControls";
 import { laserLayerLabel } from "../lib/laser-layer-label";
@@ -55,7 +56,7 @@ export function FloorManagerPage({ screen = false }: { screen?: boolean }) {
    const station = laser ? `/station/machine/${c.connection_id}/${encodeURIComponent(d.id)}` : d.linked_machine_id ? `/station/printer/${d.linked_machine_id}` : null;
    return <article key={`${c.connection_id}:${d.id}`} className={panel} data-testid="floor-machine"><h2 className="text-2xl font-semibold uppercase tracking-wide break-words">{fabricationMachineName(c, d)}</h2>{(() => { const line = fabricationBridgeLine(fabricationMachineName(c, d), fabricationBridgeName(c, bridges.data?.bridges ?? [])); return line ? <p className="text-muted break-words">{line}</p> : null; })()}<p className="text-muted">{laser ? "Laser" : "Printer"} · {laser ? laserState(d.state) : d.state}{!d.enabled ? " · Disabled" : ""}</p>{c.error && <p role="alert" className="break-words">Connection unavailable: {c.error}</p>}{c.stale && <p className="text-muted">Last known state. Refreshing the connection.</p>}
     <p className="font-semibold text-xl">{d.needs_attention ? laser ? "Take pieces out" : "Clear the bed" : queue.length && laser && !current ? "Waiting for sheet approval" : d.stage || ""}</p>
-    <p className="break-words">Current: {jobDisplayName(current) || (d.klass === "printing" ? "Running outside Cobblr" : "None")}</p>{(current || d.live) && <p>{current?.progress != null ? `${Math.round(current.progress * 100)}% · ` : ""}{eta != null ? `About ${countOf(Math.ceil(eta), "minute")} left` : "ETA unavailable"}</p>}
+    <p className="break-words">Current: {jobDisplayName(current) || (d.klass === "printing" ? `Running outside ${productName()}` : "None")}</p>{(current || d.live) && <p>{current?.progress != null ? `${Math.round(current.progress * 100)}% · ` : ""}{eta != null ? `About ${countOf(Math.ceil(eta), "minute")} left` : "ETA unavailable"}</p>}
     <p className="break-words">Next: {jobDisplayName(queue[0]) || "None assigned"}</p>{!!queue.length && <ol className="space-y-2" aria-label={`Queue for ${d.name}`}>{queue.map(j => <li key={j.id} className="break-words">{jobDisplayName(j)}{j.blocked && <p>{j.blocked}</p>}</li>)}</ol>}
     {d.laser_backend && <DirectLaserControls slug={slug} connectionId={c.connection_id} deviceId={d.id} status={current?.status} state={d.state} onAccepted={() => void floor.refetch()} />}
     {station && <Link className={button} to={station}>Open {laser ? "laser" : "printer"} station</Link>}

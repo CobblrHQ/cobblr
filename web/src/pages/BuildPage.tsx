@@ -7,6 +7,7 @@
 // loop proven on someone else's compute. See
 // docs/modules/ai-bundle-builder.md.
 
+import { productName } from "@cobblr/platform-web";
 import { useMemo, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { AiOffNotice, useAiStatus } from "../components/AiStatusNotice";
@@ -468,7 +469,7 @@ export function BuildPage() {
           {mode === "app-custom" ? (
             <>
               Describe a <strong>custom app</strong>  - the AI writes a small self-contained HTML/JS page that runs in a
-              sandbox and reads/writes your workspace only through Cobblr's mediated bridge (so it can never exceed what
+              sandbox and reads/writes your workspace only through {productName()}'s mediated bridge (so it can never exceed what
               you can do). For when the structured blocks aren't enough. We validate it before it goes live.
             </>
           ) : mode === "app" ? (
@@ -650,7 +651,7 @@ export function BuildPage() {
                 <span className="text-faint dark:text-slate-500">Nothing here to change yet.</span>
               ) : (
                 <span className="text-faint dark:text-slate-500">
-                  Nothing in this workspace obviously matches, so Cobblr will look at everything. Naming what it
+                  Nothing in this workspace obviously matches, so {productName()} will look at everything. Naming what it
                   touches makes the result better.
                 </span>
               )}

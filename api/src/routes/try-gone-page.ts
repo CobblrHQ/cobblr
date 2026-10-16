@@ -2,6 +2,8 @@
 // ran out, the link was replaced when they added an email, or it was never
 // ours. Its own file, like the arrival page, so it renders in a test without
 // booting the router.
+import { productName } from "../platform/product-name.js";
+import { escHtml } from "../platform/esc-html.js";
 import { brandHeaderCss, brandHeaderHtml } from "../lib/brand-header.js";
 
 export function goneHtml(reason: "expired" | "unknown" | "revoked"): string {
@@ -13,7 +15,7 @@ export function goneHtml(reason: "expired" | "unknown" | "revoked"): string {
         : "We do not recognise that link. It may have expired and been cleaned up.";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" /><title>Cobblr - sandbox ended</title>
+<meta name="robots" content="noindex" /><title>${escHtml(productName())} - sandbox ended</title>
 <style>
  body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:#F6F2EA;color:#2b3038;
       font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}

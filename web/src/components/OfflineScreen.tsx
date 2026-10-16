@@ -2,6 +2,7 @@
 // the session yet (#4226): its own screen, not the browser's "no internet"
 // page, and not the sign-in page (you are still signed in). It tries again by
 // itself the moment the device is back online.
+import { productName } from "@cobblr/platform-web";
 import { useEffect } from "react";
 import { WifiOff } from "lucide-react";
 import { CobblestoneMark } from "../CobblestoneMark";
@@ -25,7 +26,7 @@ export function OfflineScreen() {
           <WifiOff size={20} aria-hidden /> You're offline
         </h1>
         <p className="text-sm text-muted">
-          Cobblr needs a connection to open this for the first time on this device. It will open by itself when you're back online; the pages you have opened
+          {productName()} needs a connection to open this for the first time on this device. It will open by itself when you're back online; the pages you have opened
           before stay readable offline after that.
         </p>
         <button

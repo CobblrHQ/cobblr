@@ -2,6 +2,7 @@
 // Shows schema, lets the user upload a CSV, browse entries with
 // fuzzy search.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EntityAttachments } from "../components/EntityAttachments";
@@ -121,7 +122,7 @@ export function CatalogDetailPage() {
           <span className="text-sm text-muted dark:text-slate-400">
             {catalog.source === "hosted" ? (
               <span
-                title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
+                title={`Served from ${productName()}'s shared reference catalog - ready to match against, nothing to import.`}
                 className="text-[11px] uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
               >
                 Hosted
@@ -181,7 +182,7 @@ export function CatalogDetailPage() {
           {entriesQ.data?.pages[0]?.browsable === false ? (
             // Hosted but not browsable here (the ~5M-row set bill-of-materials).
             <>
-              Served from Cobblr's shared reference catalog. This one powers
+              Served from {productName()}'s shared reference catalog. This one powers
               Disassemble behind the scenes and isn't browsed directly - match
               against it from your items and the details come along.
             </>

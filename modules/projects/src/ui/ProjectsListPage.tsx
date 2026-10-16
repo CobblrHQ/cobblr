@@ -1,4 +1,4 @@
-import { RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, RecordFormModal, NewItemMenu, SnippetText, workspaceFetch, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // Projects index. Status-grouped list + search + new-project form.
 
 import { useDeferredValue, useMemo, useState, type FormEvent } from "react";
@@ -334,13 +334,7 @@ export function ProjectsListPage() {
                     className="flex items-center px-3 cursor-pointer"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(p.id)}
-                      onChange={(e) => toggleRow(p.id, e.target.checked)}
-                      className="accent-cobble-600"
-                      aria-label={`Select ${p.name}`}
-                    />
+                    <SelectBox checked={selected.has(p.id)} onChange={(checked) => toggleRow(p.id, checked)} label={`Select ${p.name}`} />
                   </label>
                   <Link
                     to={`${basePath}/${p.id}`}

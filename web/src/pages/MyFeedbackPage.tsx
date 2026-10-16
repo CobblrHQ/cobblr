@@ -3,6 +3,7 @@
 // fire-and-forget. Reads /feedback/mine; replies via /feedback/:id/reply. The
 // notification we send on a reply deep-links here.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { usePageTitle, MutationError } from "@cobblr/platform-web";
@@ -99,7 +100,7 @@ function FeedbackThread({ item }: { item: MyFeedbackItem }) {
 
       <Bubble role="user" from="You" text={item.message} at={item.created_at} />
       {item.followups.map((f, i) => (
-        <Bubble key={i} role={f.role ?? "user"} from={f.role === "team" ? "Cobblr" : "You"} text={f.text} at={f.at} />
+        <Bubble key={i} role={f.role ?? "user"} from={f.role === "team" ? productName() : "You"} text={f.text} at={f.at} />
       ))}
 
       <div className="flex gap-2 pt-1">

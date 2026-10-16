@@ -5,6 +5,7 @@
 // under /share-links: an invite is read and claimed with its code, and once
 // paired every change arrives signed with the link's key.
 
+import { productName } from "../platform/product-name.js";
 import { cloudUrl, inviteLinks, inviteDestinations } from "../platform/cloud.js";
 import { hasAuthEmailSender } from "../platform/hosted-seams.js";
 import { inviteToShare } from "../platform/share-invite.js";
@@ -98,7 +99,7 @@ shareLinksOrgRouter.post("/:slug/share-links", requireAuth, withTenant, async (r
       const made = await createShareInvite({orgId: req.tenant!.org.id, userId: req.session!.id, here: hereUrl(publicOrigin(req)), label: "", purpose: "own"});
       const links = inviteLinks(hereUrl(publicOrigin(req)), made.token);
       const link = body.data.where === undefined ? [...links].sort((a,b) => Number(b.origin === cloudUrl()) - Number(a.origin === cloudUrl()))[0] : links[body.data.where];
-      if (!link) throw new ShareInviteError(400, "Choose one of this Cobblr's configured destinations.");
+      if (!link) throw new ShareInviteError(400, `Choose one of this ${productName()}'s configured destinations.`);
       res.status(201).json({id: made.linkId, invite_url: link.url, expires_at: made.expiresAt, links});
       return;
     }
@@ -269,7 +270,7 @@ shareLinksRouter.post("/share-links/:id/own-send", async (req: Request, res: Res
   } catch (err) {
     if (err instanceof ShareApplyError) return bad(res, err.status, err.code, err.message);
     if (err instanceof SendError) return bad(res, 409, "send_refused", err.message);
-    if (err instanceof z.ZodError) return bad(res, 409, "needs_update", "The Cobblrs cannot read this connected send. Update them, or use a send file.");
+    if (err instanceof z.ZodError) return bad(res, 409, "needs_update", `The ${productName()} servers cannot read this connected send. Update them, or use a send file.`);
     next(err);
   }
 });

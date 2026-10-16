@@ -211,7 +211,9 @@ const SeedBody = z.object({
   dry_run: z.boolean().optional(),
 });
 
-// AI-REACH: seeds a floor plan from a description; it is the AI describe button on the plan editor, already an AI capability with its own preview
+// AI-REACH: exempt — a model call of its own that drafts a plan from text;
+// the assistant writes the same places itself through create_records, and a
+// model calling a model would spend the workspace's AI credit twice
 floorplanRouter.post(
   "/:id/floorplan/seed",
   asyncHandler(async (req, res) => {

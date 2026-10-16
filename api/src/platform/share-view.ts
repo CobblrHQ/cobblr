@@ -13,6 +13,7 @@
 // friend's Sharing page shows when it was last used. Owner-only: the owner's
 // side of a share is his whole workspace, so there is no reverse.
 
+import { productName } from "./product-name.js";
 import { meta } from "../db/meta.js";
 import { signShareView } from "../auth/jwt.js";
 import { getShareLink, signedPeerPost, type ShareLinkRow } from "./share-sync.js";
@@ -45,7 +46,7 @@ export async function requestShareView(ownerLinkId: string, viewerName: string |
   }
   const res = await signedPeerPost(link, `/api/v1/share-links/${link.peer_link_id}/view`, { viewer: viewerName });
   const said = (await res.json().catch(() => null)) as { token?: string; slug?: string; expires_at?: string; error?: { message?: string } } | null;
-  if (!res.ok || !said?.token || !said.slug) throw new Error(said?.error?.message ?? `${link.peer_name ?? "Their"} Cobblr would not open a view (${res.status}).`);
+  if (!res.ok || !said?.token || !said.slug) throw new Error(said?.error?.message ?? `${link.peer_name ?? "Their"} ${productName()} would not open a view (${res.status}).`);
   return { url: `${link.peer_url}/view-as#t=${encodeURIComponent(said.token)}&w=${encodeURIComponent(said.slug)}`, expires_at: said.expires_at ?? "" };
 }
 

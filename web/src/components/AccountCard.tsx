@@ -13,6 +13,7 @@
 //
 // Used by the sign-in page (plain entry, /signup, /carry) and /start/<app>, so
 // the form, its words and what rides along (the app, the source) are one thing.
+import { productName } from "@cobblr/platform-web";
 import { PasswordInput } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
@@ -116,7 +117,7 @@ export function AccountCard({
   }
 
   const creating = mode === "signup";
-  const title = heading === undefined ? (creating ? "Create your Cobblr account" : "Sign in to Cobblr") : heading;
+  const title = heading === undefined ? (creating ? `Create your ${productName()} account` : `Sign in to ${productName()}`) : heading;
   return (
     <>
       <form
@@ -168,14 +169,14 @@ export function AccountCard({
           <p className="text-[11px] text-faint dark:text-slate-500" data-testid="account-terms">
             Creating an account agrees to the{" "}
             <a href={termsHref} target="_blank" rel="noreferrer" className="underline hover:text-accent">
-              Cobblr account terms
+              {productName()} account terms
             </a>
             .
           </p>
         )}
         {creating && hosted && (
           <p className="text-[11px] text-faint dark:text-slate-500" data-testid="hosted-sharing-note">
-            Hosted Cobblr shares product corrections to improve identifications for everyone.{" "}
+            Hosted {productName()} shares product corrections to improve identifications for everyone.{" "}
             <a href="https://cobblr.xyz/privacy/#barcode-network" target="_blank" rel="noreferrer" className="underline hover:text-accent">
               Details
             </a>

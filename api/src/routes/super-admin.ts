@@ -1,3 +1,4 @@
+import { productName } from "../platform/product-name.js";
 import { DESIGN_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // Super-admin surface — cross-workspace dashboards for the person
 // hosting Cobblr. Gated by SUPERADMIN_EMAILS env var (see
@@ -1075,14 +1076,14 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
       const expiry = row.expires_at ? `This invite expires ${new Date(row.expires_at).toUTCString()}.` : "";
       emailed = await sendAuthEmail({
         to: row.invited_email,
-        subject: "You're invited to Cobblr",
+        subject: `You're invited to ${productName()}`,
         text:
-          `You've been invited to create your Cobblr workspace.\n\n` +
+          `You've been invited to create your ${productName()} workspace.\n\n` +
           `Open this link to get started:\n${link}` +
           (expiry ? `\n\n${expiry}` : "") +
           `\n\nIf you weren't expecting this, you can ignore this email.`,
         html: cobblrEmailHtml({
-          greeting: "You've been invited to create your Cobblr workspace.",
+          greeting: `You've been invited to create your ${productName()} workspace.`,
           bodyParas: ["Open the link below to get started.", ...(expiry ? [expiry] : [])],
           ctaUrl: link,
           ctaLabel: "Create your workspace",
@@ -1216,12 +1217,12 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
     // Nothing was sent on signup before, so somebody who pressed "Just keep me
     // posted" got silence and no way to know it had worked.
     if (hasAuthEmailSender()) {
-      const cloudLine = "When a spot opens on hosted Cobblr, an invite comes back to you from a person.";
+      const cloudLine = `When a spot opens on hosted ${productName()}, an invite comes back to you from a person.`;
       const selfLine = "Self-hosting is open right now, so there is nothing to wait for.";
       // DETACHED: a confirmation email; the signup is saved without it
       void sendAuthEmail({
         to: email,
-        subject: "You're on the Cobblr list",
+        subject: `You're on the ${productName()} list`,
         text:
           `Thanks for signing up.\n\n` +
           `${kind === "cloud" ? cloudLine : selfLine}\n\n` +
@@ -1357,15 +1358,15 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
       const expiry = `This invite expires ${new Date(invite.expires_at!).toUTCString()}.`;
       emailed = await sendAuthEmail({
         to: entry.email,
-        subject: "You're off the Cobblr waitlist 🎉",
+        subject: `You're off the ${productName()} waitlist 🎉`,
         text:
           `Good news, a spot opened up.\n\n` +
-          `Open this link to create your Cobblr workspace:\n${link}` +
+          `Open this link to create your ${productName()} workspace:\n${link}` +
           `\n\n${expiry}` +
           `\n\nIf you weren't expecting this, you can ignore this email.`,
         html: cobblrEmailHtml({
           greeting: "Good news, a spot opened up.",
-          bodyParas: ["Your Cobblr workspace is ready to create.", expiry],
+          bodyParas: [`Your ${productName()} workspace is ready to create.`, expiry],
           ctaUrl: link,
           ctaLabel: "Create your workspace",
           footerNote: "If you weren't expecting this, you can ignore this email.",
@@ -2376,7 +2377,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
     // Record our reply on the item itself so it shows in the reporter's in-app
     // thread (/me/feedback) — the notification channels are just the ping.
     if (parsed.data.notify_reporter && parsed.data.reply_message?.trim()) {
-      const teamEntry = { at: new Date().toISOString(), from: "Cobblr", text: parsed.data.reply_message.trim(), role: "team" as const };
+      const teamEntry = { at: new Date().toISOString(), from: productName(), text: parsed.data.reply_message.trim(), role: "team" as const };
       await meta
         .updateTable("feedback")
         .set({ followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([teamEntry])}::jsonb` })
@@ -2664,7 +2665,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
       if (notify_reporter) {
         const teamText = (fixNoteById.get(row.id) || reply_message || "").trim();
         if (teamText) {
-          const teamEntry = { at: new Date().toISOString(), from: "Cobblr", text: teamText, role: "team" as const };
+          const teamEntry = { at: new Date().toISOString(), from: productName(), text: teamText, role: "team" as const };
           await meta
             .updateTable("feedback")
             .set({ followups: sql`coalesce(followups, '[]'::jsonb) || ${JSON.stringify([teamEntry])}::jsonb` })
@@ -2766,13 +2767,13 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
             })
             .join("");
           email = {
-            subject: plural ? "Your Cobblr requests are live" : "Your Cobblr request is live",
+            subject: plural ? `Your ${productName()} requests are live` : `Your ${productName()} request is live`,
             text:
               `${hi}\n\n` +
               (intro ? `${intro}\n\n` : "") +
               `${blocks}\n\n` +
-              `Thanks for helping make Cobblr better.\nThe Cobblr team`,
-            html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p></div></body></html>`,
+              `Thanks for helping make ${productName()} better.\nThe ${productName()} team`,
+            html: `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;"><div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px;"><p style="margin:0 0 16px;">${escHtml(hi)}</p>${intro ? `<p style="margin:0 0 16px;">${escHtml(intro).replace(/\n/g, "<br>")}</p>` : ""}${htmlBlocks}<p style="margin:14px 0 0;"><a href="${escHtml(absoluteAppUrl("/me/feedback"))}" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p><p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The ${escHtml(productName())} team</p></div></body></html>`,
             replyTo: replyAddr ?? undefined,
           };
         }

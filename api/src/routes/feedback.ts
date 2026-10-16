@@ -2,6 +2,7 @@
 // authenticated user can submit from any workspace; super-admins triage it via
 // /super-admin/feedback. Platform-level (cobblr_meta), cross-tenant.
 
+import { productName } from "../platform/product-name.js";
 import { Router, type RequestHandler } from "express";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { withTenant } from "../middleware/tenant.js";
@@ -219,9 +220,9 @@ feedbackRouter.post("/", async (req, res, next) => {
         // an expired or broken webhook, which until now failed silently.
         if (!posted.delivered && !posted.skipped) {
           await notifyOperators({
-            subject: `[Cobblr] New ${parsed.data.type} feedback`,
+            subject: `[${productName()}] New ${parsed.data.type} feedback`,
             text: [
-              `Somebody submitted feedback on this Cobblr instance.`,
+              `Somebody submitted feedback on this ${productName()} instance.`,
               ``,
               `Type: ${parsed.data.type}`,
               route ? `Where: ${route}` : `Where: not recorded`,

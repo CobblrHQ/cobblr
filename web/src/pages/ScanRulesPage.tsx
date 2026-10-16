@@ -8,6 +8,7 @@
 //
 // See docs/design-decisions/external-qr-resolver.md.
 
+import { productName } from "@cobblr/platform-web";
 import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -590,7 +591,7 @@ function RuleModal({
             </Field>
           </Section>
         ) : (
-          <Section title="Resolve - find the Cobblr entity">
+          <Section title={`Resolve - find the ${productName()} entity`}>
             <Field label="Target kind">
               <input value={d.resolve.target_kind ?? ""} onChange={(e) => set({ resolve: { ...d.resolve, target_kind: e.target.value } })} placeholder="inventory:part" className="input font-mono text-sm" />
             </Field>

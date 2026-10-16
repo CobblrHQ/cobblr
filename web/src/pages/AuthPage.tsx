@@ -1,6 +1,7 @@
 // Combined signup / login screen. Toggle at the bottom flips mode —
 // keeps the splash → auth → dashboard journey one screen.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { authEntryAt } from "../lib/deep-path";
 import { rememberSource, rememberedSource } from "../lib/identity-door";
@@ -177,7 +178,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
           <CobblestoneMark size={64} />
           <div>
             <h1 className="font-display text-3xl font-extrabold text-content dark:text-mortar-100 tracking-tight">
-              Cobblr
+              {productName()}
             </h1>
             {/* Env indicator on the sign-in screen too, so testers pick the
                 right instance before logging in. Prod = no chip. */}
@@ -206,7 +207,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
                 carrying
                   ? "Make a free account, or sign in to one you have. What you added in the sandbox moves into it, photos too."
                   : wantsSignup
-                    ? "One free account. It signs you in to Cobblr everywhere."
+                    ? `One free account. It signs you in to ${productName()} everywhere.`
                     : null
               }
               source={source}
@@ -447,7 +448,7 @@ export function IdentityCallbackPage() {
           setError("You are signed in, but there is no workspace for you here yet.");
           setDetail("Ask whoever runs this instance for an invite, or try a different one.");
         } else if (code === "email_unverified") {
-          setError("Confirm your email address on your Cobblr account first.");
+          setError(`Confirm your email address on your ${productName()} account first.`);
           setDetail("Open the link we sent you, then come back and try again.");
         } else if (code === "account_disabled") {
           setError("This account is disabled on this instance.");

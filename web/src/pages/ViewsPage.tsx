@@ -23,7 +23,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -563,7 +563,7 @@ function GroupedTableRenderer({ view, data, slug, selection }: { view: SavedView
         {leaf && <>
           <div className="hidden sm:block"><TableRenderer slug={slug} kind={view.entity_kind} items={rows} columns={columns} selection={selection} layout="table" /></div>
           <div className="divide-y divide-line sm:hidden">{rows.map((r) => <div key={r.id} className="min-w-0 py-2">
-            <div className="flex items-start gap-2"><input type="checkbox" className="mt-1" checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} aria-label={`Select ${r.title}`} /><RecordLink row={r} className="min-w-0 break-words font-medium">{r.title}</RecordLink></div>
+            <div className="flex items-start gap-2"><SelectBox checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} label={`Select ${r.title}`} className="mt-1" boxClassName="" /><RecordLink row={r} className="min-w-0 break-words font-medium">{r.title}</RecordLink></div>
             {columns.includes("subtitle") && r.subtitle && <p className="ml-6 break-words text-xs text-muted">{r.subtitle}</p>}
             <dl className="ml-6 space-y-1 text-xs">{columns.filter((c) => c !== "title" && c !== "subtitle").map((c) => <div key={c} className="flex min-w-0 flex-wrap gap-x-2"><dt className="text-muted">{fields.find((f) => f.name === c)?.label ?? humanize(c)}</dt><dd className="min-w-0 break-words">{c === "qty" && stock.on ? stock.stepper(r) ?? formatCell(c, r, fields.find((f) => f.name === c)?.money) : formatCell(c, r, fields.find((f) => f.name === c)?.money)}</dd></div>)}</dl>
           </div>)}</div>
@@ -1569,12 +1569,7 @@ export function TableRenderer({
     <RecordCard as="tr" key={`${r.kind}:${r.id}`} row={r} className="border-b border-line dark:border-slate-800 last:border-b-0 hover:bg-subtle/40 dark:hover:bg-slate-800/40">
       {selection && (
         <td className="px-2 py-1.5 align-top w-8">
-          <input
-            type="checkbox"
-            checked={selection.selected.has(r.id)}
-            onChange={() => selection.toggle(r.id)}
-            aria-label={`Select ${r.title}`}
-          />
+          <SelectBox checked={selection.selected.has(r.id)} onChange={() => selection.toggle(r.id)} label={`Select ${r.title}`} boxClassName="" />
         </td>
       )}
       {cols.map((c) => (

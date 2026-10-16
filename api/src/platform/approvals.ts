@@ -105,7 +105,13 @@ export function mayDecide(role: string | null | undefined): boolean {
   return role === "owner" || role === "admin";
 }
 
-async function approversOf(orgId: string, exceptUserId?: string): Promise<{ id: string; name: string }[]> {
+/** Whether this role may answer a request asking for these remedies: owners
+ *  and admins, narrowed by any kind that names its own deciders. */
+export function mayDecideFor(role: string | null | undefined, remedies: readonly { kind: ApprovalRemedy["kind"] }[]): boolean {
+  return mayDecide(role) && remedies.every((r) => KINDS[r.kind]?.decidedBy?.(role) ?? true);
+}
+
+async function approversOf(orgId: string, exceptUserId?: string, remedies: readonly { kind: ApprovalRemedy["kind"] }[] = []): Promise<{ id: string; name: string }[]> {
   const rows = await meta
     .selectFrom("org_memberships as m")
     .innerJoin("users as u", "u.id", "m.user_id")
@@ -113,7 +119,7 @@ async function approversOf(orgId: string, exceptUserId?: string): Promise<{ id: 
     .where("m.org_id", "=", orgId)
     .execute();
   return rows
-    .filter((r) => mayDecide(r.role) && r.id !== exceptUserId)
+    .filter((r) => mayDecideFor(r.role, remedies) && r.id !== exceptUserId)
     .map((r) => ({ id: r.id, name: r.name }));
 }
 
@@ -146,6 +152,12 @@ interface RemedyKind {
   holds(orgId: string, requesterId: string, requesterRole: string, key: string): Promise<boolean>;
   /** Apply the yes, as the approver. Throws with a person-readable message. */
   apply(args: { orgId: string; requesterId: string; key: string; approver: Approver }): Promise<string>;
+  /** Who may answer, when it is narrower than owners and admins: whose AI pays
+   *  for the workspace's calls is the owner's to decide (#6911). */
+  decidedBy?(role: string | null | undefined): boolean;
+  /** What a no does beyond closing the request: a declined AI share is taken
+   *  off the workspace, as declining it on the AI page always did. */
+  onDeny?(args: { orgId: string; requesterId: string; key: string; approver: Approver }): Promise<void>;
 }
 
 interface Approver {
@@ -204,6 +216,35 @@ const KINDS: Record<ApprovalRemedy["kind"], RemedyKind> = {
       return "installed";
     },
   },
+  // A member offering their own AI connection to power this workspace (#6911).
+  // It used to run its own flow (a bell row pointing at the AI page, its own
+  // approve and decline routes); as a kind here it is one tap in the bell and
+  // the DM. The owner decides: it is somebody's own account paying for the calls.
+  "ai-share": {
+    async label(orgId, key) {
+      const { listWorkspaceAiOffers } = await import("./user-credentials.js");
+      const offer = (await listWorkspaceAiOffers(orgId)).find((o) => o.credential_id === key);
+      return offer ? `their AI connection to power this workspace's AI` : null;
+    },
+    async holds(orgId, _requesterId, _role, key) {
+      const { listWorkspaceAiOffers } = await import("./user-credentials.js");
+      return (await listWorkspaceAiOffers(orgId)).some((o) => o.credential_id === key && o.status === "approved");
+    },
+    async apply({ orgId, key, approver }) {
+      const { approveWorkspaceAiOffer, listWorkspaceAiOffers } = await import("./user-credentials.js");
+      if (!(await listWorkspaceAiOffers(orgId)).some((o) => o.credential_id === key)) {
+        throw new Error("They stopped offering it, so there is nothing to approve.");
+      }
+      if (!(await approveWorkspaceAiOffer(approver.id, orgId, key))) throw new Error("Only the workspace owner can approve shared AI.");
+      return "approved";
+    },
+    // role-gate: exact — whose account pays for the workspace's AI is the owner's decision alone.
+    decidedBy: (role) => role === "owner",
+    async onDeny({ orgId, key, approver }) {
+      const { rejectWorkspaceAiOffer } = await import("./user-credentials.js");
+      await rejectWorkspaceAiOffer(approver.id, orgId, key);
+    },
+  },
   // An app the deployment has and this workspace has not turned on: a scan
   // routed to Assets in a workspace without it (#3610). The same enable the
   // Modules screen runs, as the approver.
@@ -237,7 +278,7 @@ async function describeRemedies(
     const label = await kind.label(orgId, r.key);
     // No identifier in the sentence: the person cannot act on one, and the
     // matrix is where an admin would look for what can be given.
-    if (!label) return { ok: false, reason: r.kind === "install" ? "That bundle is not in this deployment's catalog." : r.kind === "module" ? "That app is not available in this deployment." : "This needs a permission no admin can grant here." };
+    if (!label) return { ok: false, reason: r.kind === "install" ? "That bundle is not in this deployment's catalog." : r.kind === "module" ? "That app is not available in this deployment." : r.kind === "ai-share" ? "That AI connection is not offered to this workspace." : "This needs a permission no admin can grant here." };
     out.push({ kind: r.kind, key: r.key, label });
   }
   return { ok: true, remedies: out };
@@ -290,7 +331,7 @@ export async function describeBlock(args: {
   remedies: readonly { kind: ApprovalRemedy["kind"]; key: string }[];
   doing?: string;
 }): Promise<BlockedAction> {
-  const approvers = await approversOf(args.orgId, args.userId);
+  const approvers = await approversOf(args.orgId, args.userId, args.remedies);
   const named = await describeRemedies(args.orgId, args.remedies);
   if (!named.ok) {
     return {
@@ -441,7 +482,7 @@ export async function createApprovalRequest(args: {
 }
 
 async function notifyApprovers(row: ApprovalRequestRow): Promise<void> {
-  const approvers = await approversOf(row.org_id, row.requester_id);
+  const approvers = await approversOf(row.org_id, row.requester_id, row.remedies);
   const who = await displayName(row.requester_id);
   const asks = row.remedies.map((r) => r.label).join(" and ");
   const message = `${who} asked for ${asks}, to ${lowerFirst(row.subject)}.`;
@@ -520,8 +561,9 @@ export async function decideApprovalRequest(args: {
   const row = await getRequest(args.requestId);
   if (!row) return { ok: false, status: 404, code: "not_found", message: "No such request." };
   const role = await memberRole(row.org_id, args.deciderId);
-  if (!mayDecide(role)) {
-    return { ok: false, status: 403, code: "not_approver", message: "Only a workspace owner or admin can answer this." };
+  if (!mayDecideFor(role, row.remedies)) {
+    const ownersOnly = row.remedies.some((r) => KINDS[r.kind]?.decidedBy);
+    return { ok: false, status: 403, code: "not_approver", message: ownersOnly ? "Only the workspace owner can answer this." : "Only a workspace owner or admin can answer this." };
   }
   if (row.status !== "pending" || row.expires_at.getTime() <= Date.now()) {
     if (row.status === "pending") await markExpired(row.id);
@@ -539,6 +581,13 @@ export async function decideApprovalRequest(args: {
       decision_note: args.note?.slice(0, 500) ?? null,
     });
     if (!updated) return { ok: false, status: 409, code: "not_pending", message: "Somebody answered this first." };
+    for (const remedy of row.remedies) {
+      try {
+        await KINDS[remedy.kind]?.onDeny?.({ orgId: row.org_id, requesterId: row.requester_id, key: remedy.key, approver });
+      } catch (err) {
+        console.error(`[approvals] could not carry out a no for ${remedy.kind}:`, (err as Error).message);
+      }
+    }
     await settleApproverCards(updated);
     await notifyRequester(updated, approver, "denied");
     await activity.log({
@@ -791,6 +840,9 @@ export interface ApprovalRequestView {
   expires_at: string;
   has_resume: boolean;
   route: string | null;
+  /** Whether the viewer may answer THIS request: an AI share is the owner's
+   *  alone, so an admin sees it and is not offered buttons that refuse. */
+  can_decide: boolean;
   /** For a yes (approved, resuming, completed): whether it still holds for the
    *  requester at the moment of this read, and what was taken back if not.
    *  Null for anything that was never a yes. Filled by viewRequest only; the
@@ -850,6 +902,7 @@ export async function listApprovalRequests(args: {
     expires_at: r.expires_at.toISOString(),
     has_resume: !!r.resume,
     route: r.route,
+    can_decide: mayDecideFor(args.viewerRole, r.remedies as ApprovalRemedy[]),
   }));
 }
 

@@ -1,3 +1,5 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
@@ -192,7 +194,7 @@ export function DigifabPage({
               <Printer size={26} className="mx-auto text-faint mb-3" />
               <p className="text-sm text-content dark:text-mortar-100 font-medium mb-1">No machines connected yet</p>
               <p className="text-sm text-muted dark:text-slate-400 mb-4">
-                Point Cobblr at the software that runs your machines - FDM Monster, OctoPrint, Bambu, a LAN bridge.
+                Point {productName()} at the software that runs your machines - FDM Monster, OctoPrint, Bambu, a LAN bridge.
               </p>
               <button onClick={() => pickTab("setup")} className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition">
                 <Plus size={15} /> Open Setup
@@ -225,7 +227,7 @@ export function DigifabPage({
         <button
           onClick={() => setImportOpen(true)}
           className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition"
-          title="Migrate an FDM Monster farm into Cobblr"
+          title={`Migrate an FDM Monster farm into ${productName()}`}
         >
           <Boxes size={14} /> Import farm
         </button>
@@ -255,7 +257,7 @@ export function DigifabPage({
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
         <div className="text-sm text-muted dark:text-slate-400 italic">
-          No connections yet. Add one to point Cobblr at your machine manager.
+          No connections yet. Add one to point {productName()} at your machine manager.
         </div>
       )}
 
@@ -576,7 +578,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
   return (
     <Modal open onClose={onClose} title="Drivers" size="lg">
       <p className="text-sm text-muted dark:text-slate-400 mb-3">
-        A driver connects digifab to the software that runs a machine. Built-ins ship with Cobblr;
+        A driver connects digifab to the software that runs a machine. Built-ins ship with {productName()};
         install a common one in a click from the catalog below, or paste a custom manifest - no
         deploy. Installed drivers appear in the <span className="font-medium">Add connection</span> dropdown.
       </p>
@@ -888,7 +890,7 @@ function FailureDetectionPanel({ slug }: { slug: string }) {
                   {c.backend === "detector" && (
                     <div className="pl-1">
                       <p className="text-faint mb-1.5 leading-relaxed">
-                        Score prints with a detection service you run anywhere - <b>Obico ML API</b>, <b>PrintGuard</b>, or any HTTP model on your LAN. Cobblr talks to it over the network (or via your edge bridge from the cloud).
+                        Score prints with a detection service you run anywhere - <b>Obico ML API</b>, <b>PrintGuard</b>, or any HTTP model on your LAN. {productName()} talks to it over the network (or via your edge bridge from the cloud).
                       </p>
                       <ExternalDetectorConfig slug={slug} cfg={c} save={(patch) => save.mutate(patch)} />
                     </div>
@@ -960,7 +962,7 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
 
   const input = "input !py-1 !text-xs w-full";
   return (
-    <Modal open onClose={onClose} title="External detectors" subtitle="Point Cobblr at a self-hosted detection service" size="lg">
+    <Modal open onClose={onClose} title="External detectors" subtitle={`Point ${productName()} at a self-hosted detection service`} size="lg">
       <div className="space-y-4 text-xs">
         {detectors.length > 0 && (
           <div className="space-y-2">
@@ -1127,7 +1129,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
           {isWatcher && (
             <label className="flex items-start gap-1.5 text-[10px]">
               <input type="checkbox" checked={owns} onChange={(e) => setOwns(e.target.checked)} className="mt-0.5" />
-              <span>The detector <b>owns</b> these printers - show their live print state here, and don't also poll them in Cobblr <span className="text-faint">(avoids double-load on the printer)</span>.</span>
+              <span>The detector <b>owns</b> these printers - show their live print state here, and don't also poll them in {productName()} <span className="text-faint">(avoids double-load on the printer)</span>.</span>
             </label>
           )}
           {isWatcher && owns && (printers.data?.printers.length ?? 0) > 0 && (
@@ -1169,7 +1171,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
   const needsDevice = !!mappings.find((m) => m.from === selectedConn?.type)?.perDevice;
   const mirror = useMutation({
     mutationFn: () => api.mirrorDigifabDetectorPrinter(slug, detId, { connection_id: connId, device_id: needsDevice ? deviceId : undefined, watch: true, disable_source: needsDevice ? false : disableSource }),
-    onSuccess: (r) => { toast.success((r.monitor ? "Added + watching" : "Printer added") + (r.source_disabled ? " · Cobblr poll stopped ✓" : " ✓")); setConnId(""); setDeviceId(""); onDone(); },
+    onSuccess: (r) => { toast.success((r.monitor ? "Added + watching" : "Printer added") + (r.source_disabled ? ` · ${productName()} poll stopped ✓` : " ✓")); setConnId(""); setDeviceId(""); onDone(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't add"),
   });
 
@@ -1196,7 +1198,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               <div className="flex items-center gap-1.5">
                 <span className={detLbl}>From a machine</span>
                 <select aria-label="From a machine" value={connId} onChange={(e) => { setConnId(e.target.value); setDeviceId(""); }} className="input !py-1 text-xs flex-1">
-                  <option value=""> - a Cobblr machine to mirror - </option>
+                  <option value=""> - {withArticle(productName())} machine to mirror - </option>
                   {mappable.map((c) => <option key={c.connection_id} value={c.connection_id}>{c.label} ({c.type})</option>)}
                 </select>
                 {!needsDevice && <button type="button" disabled={!connId || mirror.isPending} onClick={() => mirror.mutate()} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-2 py-1">Add</button>}
@@ -1204,7 +1206,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
               {connId && !needsDevice && (
                 <label className="flex items-center gap-1.5 text-[10px] text-faint pl-1">
                   <input type="checkbox" checked={disableSource} onChange={(e) => setDisableSource(e.target.checked)} />
-                  Stop polling it in Cobblr after adding (the detector owns it)
+                  Stop polling it in {productName()} after adding (the detector owns it)
                 </label>
               )}
               {needsDevice && (
@@ -1447,7 +1449,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
       message:
         j.status === "queued" || j.status === "awaiting-assignment"
           ? "Removes it from the queue before it starts."
-          : "Marks it cancelled and stops Cobblr tracking it. On a live farm the printer may keep running, so stop it at the machine.",
+          : `Marks it cancelled and stops ${productName()} tracking it. On a live farm the printer may keep running, so stop it at the machine.`,
       confirmLabel: "Cancel print",
       destructive: true,
     });
@@ -1616,7 +1618,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                     {jb.status === "printing" ? "Running" : jb.status}
                   </span>
                   {jb.external && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title="Started at the machine, outside Cobblr">
+                    <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title={`Started at the machine, outside ${productName()}`}>
                       on machine
                     </span>
                   )}
@@ -1839,7 +1841,7 @@ function JobDetailModal({
             {canCancel(j) && (
               <button
                 onClick={async () => {
-                  if (!(await confirm({ title: "Cancel this print?", message: "Cobblr asks the printer to stop. It shows as cancelled once the printer confirms; if the printer can't be stopped from here, you'll be told to stop it at the machine.", confirmLabel: "Cancel print", destructive: true }))) return;
+                  if (!(await confirm({ title: "Cancel this print?", message: `${productName()} asks the printer to stop. It shows as cancelled once the printer confirms; if the printer can't be stopped from here, you'll be told to stop it at the machine.`, confirmLabel: "Cancel print", destructive: true }))) return;
                   api.cancelDigifabJob(activeSlug, jobId).then((r) => { const o = cancelOutcome(r); toast[o.tone](o.text); refresh(); }).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
                 }}
                 className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-ember-500 hover:text-ember-500 px-3 py-1.5 text-sm"
@@ -2234,7 +2236,7 @@ function NewJobModal({
                   options={poolList.map((p) => ({ value: p.id, label: p.name, hint: `${p.members.length} machine${p.members.length === 1 ? "" : "s"}` }))}
                   placeholder=" - pick a pool - "
                 />
-                <span className="text-[11px] text-faint">Queues unassigned - Cobblr drips it onto the next free machine in the pool.</span>
+                <span className="text-[11px] text-faint">Queues unassigned - {productName()} drips it onto the next free machine in the pool.</span>
               </label>
             ),
           } : null,
@@ -2340,7 +2342,7 @@ function NewJobModal({
                     {" "} - auto-filled from the slicer, edit if needed.
                   </span>
                 ) : (
-                  <span className="text-[11px] text-faint">Pick a file above and Cobblr reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
+                  <span className="text-[11px] text-faint">Pick a file above and {productName()} reads the filament + grams from its slicer metadata. When the print completes, the grams are deducted from that spool's stock.</span>
                 )}
               </label>
             ),
@@ -2843,7 +2845,7 @@ function PoolsSection({ slug }: { slug: string }) {
 
       {poolList.length === 0 ? (
         <div className="text-[13px] text-muted dark:text-slate-400 italic">
-          No pools. A pool is a set of machines you queue jobs onto - Cobblr drips each job onto the next free one. Great for running many printers as one farm.
+          No pools. A pool is a set of machines you queue jobs onto - {productName()} drips each job onto the next free one. Great for running many printers as one farm.
         </div>
       ) : (
         <div className="space-y-2">
@@ -2943,7 +2945,7 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
         className="space-y-3"
       >
         <p className="text-[13px] text-muted dark:text-slate-400">
-          Point Cobblr at your FDM Monster and bring its printers in.
+          Point {productName()} at your FDM Monster and bring its printers in.
         </p>
         <label className="block">
           <span className={lbl}>FDM Monster URL</span>
@@ -2964,12 +2966,12 @@ function FdmmImportModal({ slug, onClose, onDone }: { slug: string; onClose: () 
               {
                 value: "direct",
                 label: "Connect to each printer directly",
-                hint: "Recreate every printer as its own Cobblr connection (OctoPrint, Klipper, … matched per printer) and pool them. Drops FDM Monster from the path.",
+                hint: `Recreate every printer as its own ${productName()} connection (OctoPrint, Klipper, … matched per printer) and pool them. Drops FDM Monster from the path.`,
               },
               {
                 value: "mirror",
                 label: "Keep FDM Monster, mirror its printers",
-                hint: "Add one FDM Monster connection and a Cobblr pool over its printers. FDM Monster still does the comms.",
+                hint: `Add one FDM Monster connection and ${withArticle(productName())} pool over its printers. FDM Monster still does the comms.`,
               },
             ]}
           />
@@ -3112,7 +3114,7 @@ function BulkAddModal({ slug, onClose, onDone }: { slug: string; onClose: () => 
         className="space-y-3"
       >
         <p className="text-[13px] text-muted dark:text-slate-400">
-          Paste a list of printer URLs - Cobblr makes one direct connection per line and (optionally) groups them into a pool.
+          Paste a list of printer URLs - {productName()} makes one direct connection per line and (optionally) groups them into a pool.
           For migrating an existing FDM Monster farm, use <b>Import farm</b> instead.
         </p>
         <div className="grid grid-cols-2 gap-2">

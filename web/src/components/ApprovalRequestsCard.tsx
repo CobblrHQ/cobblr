@@ -26,7 +26,9 @@ export function ApprovalRequestsCard({ slug }: { slug: string }) {
     mutationFn: (args: { id: string; decision: "approve" | "deny" }) =>
       api.decideApprovalRequest(slug, args.id, args.decision, notes[args.id]?.trim() || null),
     onSuccess: (r) => {
-      toast.success(r.request.status === "approved" ? "Approved. They have been told." : "Declined. They have been told.");
+      // A yes with nothing left to finish ends "completed" (an AI share, a
+      // grant asked for on its own), and it is still a yes.
+      toast.success(r.request.status === "denied" ? "Declined. They have been told." : "Approved. They have been told.");
       void qc.invalidateQueries({ queryKey: ["approval-requests", slug] });
       void qc.invalidateQueries({ queryKey: ["permissions-matrix", slug] });
     },
@@ -96,6 +98,9 @@ function RequestRow({
         <span className="text-[11px] text-faint dark:text-slate-500">{relativeTime(r.created_at)}</span>
       </div>
       {r.note && <blockquote className="text-xs text-muted dark:text-slate-400 border-l-2 border-line dark:border-slate-700 pl-2">{r.note}</blockquote>}
+      {r.can_decide === false ? (
+        <p className="text-xs text-muted dark:text-slate-400">Only the workspace owner can answer this one.</p>
+      ) : (
       <div className="flex flex-wrap items-center gap-2">
         <input
           type="text"
@@ -112,6 +117,7 @@ function RequestRow({
           <X size={12} /> Deny
         </button>
       </div>
+      )}
     </li>
   );
 }

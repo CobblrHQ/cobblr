@@ -11,6 +11,7 @@
 // Each section ships its own modal — no inline forms, per the
 // modals-not-pages convention.
 
+import { productName } from "@cobblr/platform-web";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -38,6 +39,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SyncConnectionsSection } from "./SyncConnectionsSection";
 import { MigrateInSection } from "../components/MigrateInSection";
 import { FEED_SCROLL } from "../lib/feed";
+import { IntegrationCallRow } from "../components/IntegrationCallRow";
 import { SettingsSection } from "../components/SettingsSection";
 
 export function IntegrationsPage() {
@@ -72,6 +74,20 @@ export function IntegrationsPage() {
     queryKey: ["integrations-calls", activeSlug],
     queryFn: () => api.listIntegrationCalls(activeSlug, 25),
     enabled: !!activeSlug,
+  });
+
+  const qc = useQueryClient();
+  const toast = useToast();
+  const resendM = useMutation({
+    mutationFn: (callId: string) => api.resendIntegrationCall(activeSlug, callId),
+    onSuccess: (r) => {
+      toast.success(r.queued ? "Not through yet, it will try again." : "Sent again.");
+      void qc.invalidateQueries({ queryKey: ["integrations-calls", activeSlug] });
+    },
+    onError: (e) => {
+      toast.error(e instanceof ApiError ? e.message : String(e));
+      void qc.invalidateQueries({ queryKey: ["integrations-calls", activeSlug] });
+    },
   });
 
   const cataloguesByDefId = useMemo(() => {
@@ -165,25 +181,7 @@ export function IntegrationsPage() {
             <div className="text-sm text-muted">No calls yet.</div>
           )}
           {callsQ.data?.items.map((c) => (
-            <div key={c.id} className="flex gap-3 items-center">
-              <span
-                className={c.ok ? "text-emerald-600" : "text-red-600"}
-              >
-                {c.ok ? "ok" : "err"}
-              </span>
-              <span className="text-muted">{c.direction}</span>
-              <span className="font-medium">{c.connector_id}</span>
-              <span className="text-muted">{c.action_or_event}</span>
-              <span className="text-faint">
-                {c.status ?? "—"} · {c.ms ?? "—"}ms
-              </span>
-              <span className="text-faint">
-                {new Date(c.occurred_at).toLocaleString()}
-              </span>
-              {c.error && (
-                <span className="text-red-500 truncate">{c.error}</span>
-              )}
-            </div>
+            <IntegrationCallRow key={c.id} call={c} sending={resendM.isPending && resendM.variables === c.id} onSendAgain={(id) => resendM.mutate(id)} />
           ))}
         </div>
       </section>
@@ -251,7 +249,7 @@ function EmailInSection() {
     >
       <div className="space-y-4">
         <div>
-          <div className="text-sm font-medium mb-1">A mailbox Cobblr reads</div>
+          <div className="text-sm font-medium mb-1">A mailbox {productName()} reads</div>
           {mailboxes.length > 0 ? (
             <ul className="text-sm text-muted space-y-1 mb-2">
               {mailboxes.map((b) => (
@@ -276,7 +274,7 @@ function EmailInSection() {
               <Link to="/me/connections/new" className="text-accent hover:underline">
                 Connections
               </Link>{" "}
-              and your orders, parcels and returns track themselves: Cobblr reads mail from stores and carriers only, read-only, and
+              and your orders, parcels and returns track themselves: {productName()} reads mail from stores and carriers only, read-only, and
               keeps no message body. Nothing to forward.
             </p>
           )}
@@ -329,7 +327,7 @@ function EmailInSection() {
         <div className="border-t dark:border-slate-800 pt-3">
           <div className="text-sm font-medium mb-1">Reply by email</div>
           <p className="text-sm text-muted">
-            When Cobblr emails you (a feedback update, a notification), just hit reply - 
+            When {productName()} emails you (a feedback update, a notification), just hit reply -
             your message threads back onto the item automatically. Nothing to set up.
           </p>
         </div>
@@ -752,7 +750,7 @@ function ConnectorInvokeModal({
       }),
     onSuccess: (r) => {
       setResult(r);
-      toast.success(`Invoked in ${r.ms}ms.`);
+      toast.success(r.queued ? (r.because === "pace" ? "Waiting its turn, it will send shortly." : "The first try failed, it will try again.") : `Invoked in ${r.ms}ms.`);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });

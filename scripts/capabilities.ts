@@ -316,6 +316,18 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "layout:room-under-header",
+    what: "the height a viewport-sticky column has under the app header: .fill-under-header in web/src/index.css, which leaves out the header, a --sticky-gap above and below, the home bar (--inset-bottom) and the bottom dock (--bottom-chrome-height)",
+    why:
+      "the Configuration sidebar wrote its own max-h-[calc(100dvh-var(--app-header-bottom)-2rem)], which knew the header and not the home bar or the dock, " +
+      "so on an iPhone on its side its last row (Email) sat over the 21 px home bar (#6800)",
+    owner: "web/src/index.css",
+    scope: ["web/src/**/*.tsx", "web/src/**/*.ts", "packages/platform-web/src/**/*.tsx", "packages/platform-web/src/**/*.ts", "modules/*/src/ui/**/*.tsx"],
+    detect: /100dvh\s*-\s*var\(--app-header-bottom/,
+    use: "the fill-under-header class (with sticky-under-header and a [--sticky-gap:…] for a breath), never a calc of 100dvh under the header of your own",
+  },
+  {
+    kind: "owns",
     id: "stock:one-stepper",
     what: "the control that changes how much of a thing there is: StockStepper in packages/platform-web/src/StockStepper.tsx, which steps a counted thing by one and has a measured one (kg, m, L) typed as what was used",
     why:

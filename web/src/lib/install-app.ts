@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web/product-name";
 // Putting Cobblr on a phone's home screen: which door this browser has, the
 // browser's own install prompt when it offers one, and a "not now" that is
 // remembered.
@@ -172,7 +173,7 @@ export interface InstallWalk {
   aside?: string;
 }
 
-const HOME: InstallWalkStep = { title: "Open Cobblr from your home screen", body: "It opens full screen, like any app, and signs you straight in.", art: "home-screen" };
+const HOME: InstallWalkStep = { get title() { return `Open ${productName()} from your home screen`; }, body: "It opens full screen, like any app, and signs you straight in.", art: "home-screen" };
 
 /** The taps for this browser, or null where there is nothing to walk (an
  *  installed app, a desktop, a browser that raises its own prompt). */

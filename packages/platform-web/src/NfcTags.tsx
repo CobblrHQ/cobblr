@@ -1,3 +1,4 @@
+import { productName } from "./product-name";
 import { useEffect, useRef, useState } from "react";
 import { createNfcReader, isWebNfcAvailable, nfcFailure, nfcLabelMessage } from "./nfc";
 
@@ -37,7 +38,7 @@ export function NfcTags({ targets }: { targets: readonly NfcTarget[] }) {
         <p className="text-sm">Use Android Chrome to write tags; any phone can read them.</p>
         <p className="text-sm text-muted">Paste it into any NFC writer app (for example NFC Tools) to write the tag.</p>
       </>}
-      <p className="text-sm text-muted">On iPhone, sign in to Cobblr in Safari once and tags open straight to the record.</p>
+      <p className="text-sm text-muted">On iPhone, sign in to {productName()} in Safari once and tags open straight to the record.</p>
       {target ? <>
         <p className="text-sm" role="status">Tag {index + 1} of {targets.length}</p>
         <p className="font-semibold break-words">{target.title}</p>

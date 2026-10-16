@@ -2,6 +2,7 @@
 // create their OWN account + workspace while public signup is disabled. The
 // token authorises the signup past the gate (validated server-side too).
 
+import { productName } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -59,7 +60,7 @@ export function JoinPage() {
     <div className="min-h-full flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center gap-3 mb-6 text-center">
-          <span className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">Cobblr</span>
+          <span className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">{productName()}</span>
           <p className="text-sm text-muted dark:text-slate-400">You've been invited to create a workspace.</p>
         </div>
 

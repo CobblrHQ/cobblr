@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import type { AiProviderDef, UserConnection } from "./api";
 
 export interface ConnectionRemovalPlan {
@@ -14,7 +15,7 @@ export function connectionRemovalPlan(
 ): ConnectionRemovalPlan {
   const impact = provider?.disconnect ?? {
     stops: "Anything using this connection stops until you add it again.",
-    keeps: "Data already stored in Cobblr stays where it is.",
+    keeps: `Data already stored in ${productName()} stays where it is.`,
   };
   return {
     title: `Remove ${connection.label || provider?.label || connection.provider_id}?`,

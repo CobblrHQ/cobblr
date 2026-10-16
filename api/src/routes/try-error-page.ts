@@ -2,6 +2,8 @@
 // The challenge page sends the browser straight to the API, so whatever the API
 // answers IS the page: a JSON body there reads as broken software (#4848). Its
 // own file, like the arrival and gone pages, so it renders in a test.
+import { escHtml } from "../platform/esc-html.js";
+import { productName } from "../platform/product-name.js";
 import type { Request, Response } from "express";
 import { brandHeaderCss, brandHeaderHtml } from "../lib/brand-header.js";
 
@@ -18,7 +20,7 @@ export const TRY_ERROR_WORDS: Record<TryErrorKind, { title: string; line: string
     line: "That's on our side, not yours. Try again in a minute.",
   },
   sandbox_busy: {
-    title: "A lot of people are trying Cobblr right now.",
+    title: `A lot of people are trying ${productName()} right now.`,
     line: "Try again in a few minutes.",
   },
   unavailable: {
@@ -31,7 +33,7 @@ export function tryErrorHtml(kind: TryErrorKind): string {
   const w = TRY_ERROR_WORDS[kind];
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" /><title>Cobblr - try again</title>
+<meta name="robots" content="noindex" /><title>${escHtml(productName())} - try again</title>
 <style>
  body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:#F6F2EA;color:#2b3038;
       font:16px/1.55 Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -44,7 +46,7 @@ export function tryErrorHtml(kind: TryErrorKind): string {
  a.ghost{background:transparent;color:#3D4451;margin-left:.5rem}
  ${brandHeaderCss()}
 </style></head><body>${brandHeaderHtml()}<main><div class="card">
-<h1>${w.title}</h1><p>${w.line}</p>
+<h1>${escHtml(w.title)}</h1><p>${escHtml(w.line)}</p>
 <a href="/api/v1/try">Try again</a><a class="ghost" href="/?mode=signup">Make an account</a>
 </div></main></body></html>`;
 }

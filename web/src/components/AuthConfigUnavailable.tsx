@@ -6,6 +6,7 @@
 // say "Couldn't reach Cobblr. Check your connection" beside an instant Try
 // again (#3622). The connection was fine, and every press was refused again.
 // A wait is now a wait, with the time it takes, and Try again counts down.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import type { RequestFailure } from "../lib/request-failure";
 import { waitWords } from "../lib/request-wait";
@@ -20,19 +21,19 @@ function copyFor(failure: RequestFailure, left: number | null): { headline: stri
         headline: "Too many attempts from this network",
         detail:
           left && left > 0
-            ? `Cobblr is fine, it is asking this network to slow down. Try again in ${waitWords(left)}.`
-            : "Cobblr is fine, it is asking this network to slow down. Wait a little, then try again.",
+            ? `${productName()} is fine, it is asking this network to slow down. Try again in ${waitWords(left)}.`
+            : `${productName()} is fine, it is asking this network to slow down. Wait a little, then try again.`,
       };
     case "server":
       return {
-        headline: "Cobblr is having trouble right now",
+        headline: `${productName()} is having trouble right now`,
         detail: "It answered, but could not say how signing in works here. Try again in a moment.",
       };
     case "refused":
-      return { headline: "Cobblr turned the request down", detail: failure.message };
+      return { headline: `${productName()} turned the request down`, detail: failure.message };
     case "unreachable":
       return {
-        headline: "Couldn't reach Cobblr",
+        headline: `Couldn't reach ${productName()}`,
         detail: "Nothing came back, so check your connection, then try again.",
       };
   }

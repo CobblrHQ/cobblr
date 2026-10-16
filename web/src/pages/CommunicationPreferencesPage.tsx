@@ -7,6 +7,7 @@
 // a real test DM the bot sends (button confirm or website fallback), so we never
 // rely on a DM channel blind.
 
+import { productName } from "@cobblr/platform-web";
 import { PushNotificationsCard } from "../components/PushNotificationsCard";
 import { useEffect, useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
@@ -335,7 +336,7 @@ function DiscordCard(props: {
         // Says what happened and what it costs. "Reconnect" alone would read as
         // something the person broke, and the honest answer is that Cobblr moved.
         <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-900 dark:text-amber-200">
-          Cobblr moved to a new Discord app. Your account is still linked, but the
+          {productName()} moved to a new Discord app. Your account is still linked, but the
           new one has to send you a test DM before it can reach you - until then
           these notifications wait in the bell. Press Reconnect Discord below;
           it takes a few seconds.

@@ -23,6 +23,7 @@
 // process, such as an open socket; send() prefers it and falls back to the
 // shared relay.
 
+import { productName } from "./product-name.js";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -204,7 +205,7 @@ export async function fetchViaEdge(key: string, init: EdgeFetchInit): Promise<Re
     const got = await blobReceived(key, blob.id);
     if (!got || said.id !== blob.id || said.sha256?.toLowerCase() !== got.sha256) {
       await blobRelease(blob.id).catch(() => {});
-      return toResponse({ status: 502, body: { error: { code: "edge_blob", message: "The file the bridge reported is not the file Cobblr received, so it was not used." } } });
+      return toResponse({ status: 502, body: { error: { code: "edge_blob", message: `The file the bridge reported is not the file ${productName()} received, so it was not used.` } } });
     }
     const headers = new Headers(res.headers ?? {});
     headers.set("content-length", String(got.size));
@@ -430,10 +431,10 @@ export async function offlineReason(key: string): Promise<string> {
     o = await bridgeOwner(key);
   } catch {
     // Could not ask. Saying whose bridge it is would be a guess.
-    return "Your edge bridge did not answer, and Cobblr could not check why just now. Try again in a minute.";
+    return `Your edge bridge did not answer, and ${productName()} could not check why just now. Try again in a minute.`;
   }
   if (o.kind === "person") {
-    return "Your personal edge bridge is not connected. Check that the Cobblr edge bridge on your computer is running and signed in as you, then try again.";
+    return `Your personal edge bridge is not connected. Check that the ${productName()} edge bridge on your computer is running and signed in as you, then try again.`;
   }
   if (o.kind === "gone") {
     return "There is no bridge to send to: the workspace or person it belonged to no longer exists.";

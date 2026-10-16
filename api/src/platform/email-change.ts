@@ -30,6 +30,7 @@
 // With no email sender configured, non-production answers carry the link's
 // token so the flow can be exercised (the way verify and reset do).
 
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { verifyPassword } from "../auth/password.js";
@@ -120,7 +121,7 @@ export async function requestEmailChange(
     .where("id", "=", userId)
     .executeTakeFirstOrThrow();
   if (user.identity_id && user.password_hash.length === 0) {
-    return refuse("change_at_identity", 409, "This account signs in through your Cobblr account, so its address changes there.");
+    return refuse("change_at_identity", 409, `This account signs in through your ${productName()} account, so its address changes there.`);
   }
   if (user.password_hash.length === 0) {
     // No password to re-check (a magic-link account): a sign-in this recent
@@ -166,7 +167,7 @@ export async function requestEmailChange(
     to: newEmail,
     subject: `Confirm your new ${productName()} sign-in address`,
     text:
-      `Someone asked for this to become the address of a ${productName()} account. To confirm it:\n\n${origin}/email-change/${plain}\n\n` +
+      `Someone asked for this to become the address of ${withArticle(productName())} account. To confirm it:\n\n${origin}/email-change/${plain}\n\n` +
       `Nothing changes until you open the link, and it expires in ${CONFIRM_HOURS} hours. If this was not you, ignore this email.`,
     kind: "notification",
   });

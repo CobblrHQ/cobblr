@@ -5,6 +5,8 @@
 // With an email the invite is bound to it and, when this Cobblr has mail,
 // emailed there; the link shows either way, with Copy and (on a phone) the
 // system share sheet, in case the email lands in spam.
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Share } from "lucide-react";
@@ -81,10 +83,10 @@ export function InviteForm({ slug, onDone, collection }: { slug: string; onDone:
         </label>
         {destinations.length > 1 && (
           <div className="space-y-1" data-testid="share-invite-where">
-            <span className="text-sm font-medium text-content">Where is their Cobblr?</span>
+            <span className="text-sm font-medium text-content">Where is their {productName()}?</span>
             <SegmentedChoice
               stack
-              label="Where is their Cobblr?"
+              label={`Where is their ${productName()}?`}
               value={String(where)}
               onChange={(v) => setPicked(Number(v))}
               options={destinations.map((d, i) => ({ value: String(i), label: d.label, hint: d.note, testId: "share-invite-where-option" }))}
@@ -124,7 +126,7 @@ function InviteMadeResult({ made }: { made: ShareInviteMade }) {
           <button
             type="button"
             data-testid="share-invite-sheet"
-            onClick={() => void navigator.share({ title: "A Cobblr invite", url }).catch(() => undefined)}
+            onClick={() => void navigator.share({ title: `${withArticle(productName()).replace(/^a/, "A")} invite`, url }).catch(() => undefined)}
             className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-line px-3 text-sm text-muted hover:text-accent dark:border-slate-600"
           >
             <Share size={14} aria-hidden />

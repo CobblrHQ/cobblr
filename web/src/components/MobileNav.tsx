@@ -12,6 +12,7 @@
 // descendants, so an in-header panel would be clipped. Same trick
 // the ModuleNav popover uses.
 
+import { productName } from "@cobblr/platform-web";
 import { type MouseEvent, type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavPointer } from "../lib/navPointer";
 import { createPortal } from "react-dom";
@@ -196,21 +197,26 @@ export function MobileNav() {
         data-tour="menu"
         className="md:hidden relative text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
       >
+        {/* The dots ride the icon, not the button: on a phone the button is a
+            44 px box and its corner sits away from the icon, up by the status
+            bar (#6876). */}
+        <span className="relative inline-flex">
         {open ? <X size={20} /> : <Menu size={20} />}
         {/* Attention signal, visible without opening the menu. Unread
             notifications (red) take precedence over the bundle-updates dot —
             they're more time-sensitive, and there's only room for one dot. */}
         {!open && pointer.label && unreadCount === 0 && (
-          <span data-testid="nav-pointer-dot" className="absolute top-0.5 right-0.5 h-2.5 w-2.5 rounded-full bg-cobble-600 ring-2 ring-surface dark:ring-slate-900 animate-pulse" />
+          <span data-testid="nav-pointer-dot" className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-cobble-600 ring-2 ring-surface dark:ring-slate-900 animate-pulse" />
         )}
         {!open && !(pointer.label && unreadCount === 0) &&
           (unreadCount > 0 ? (
-            <span className="absolute top-0.5 right-0.5 h-2 w-2 rounded-full bg-ember-500 ring-2 ring-surface dark:ring-slate-900" />
+            <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-ember-500 ring-2 ring-surface dark:ring-slate-900" />
           ) : (
-            <span className="absolute top-0.5 right-0.5">
+            <span className="absolute -top-1 -right-1">
               <UpdateBadge slug={activeSlug} variant="dot" />
             </span>
           ))}
+        </span>
       </button>
 
       {open &&
@@ -235,15 +241,15 @@ export function MobileNav() {
                   full-bleed shell (the native app, or standalone home-screen
                   mode); env() is 0 in a normal browser tab. */}
               {/* Geometry copied from the app header's own row, so opening the
-                  menu does not nudge the brand: `px-5 pt-1 pb-2`, the mark at
+                  menu does not nudge the brand: `px-5 pt-1 pb-3`, the mark at
                   26px, `gap-2` after it. Those are the header's values (see
                   AppLayout's nav row) and they have to stay in step - the mark
                   sits at the same x and the row is the same height, so the
                   wordmark and the close button land exactly where the bar's
-                  contents were. The uneven pt-1/pb-2 is deliberate there and is
+                  contents were. The uneven pt-1/pb-3 is deliberate there and is
                   kept here for the same reason: the row rides high in the bar. */}
               <div
-                className="shrink-0 flex items-center justify-between px-5 pt-1 pb-2 border-b border-line dark:border-slate-800"
+                className="shrink-0 flex items-center justify-between px-5 pt-1 pb-3 border-b border-line dark:border-slate-800"
                 style={{ paddingTop: "calc(0.25rem + var(--safe-top))" }}
               >
                 {/* The mark carries over from the bar. The bar drops the
@@ -253,7 +259,7 @@ export function MobileNav() {
                 <span className="flex items-center gap-2 min-w-0">
                   <CobblestoneMark size={26} />
                   <span className="font-display font-extrabold text-content dark:text-mortar-100">
-                    Cobblr
+                    {productName()}
                   </span>
                 </span>
                 <span className="flex items-center gap-1">
@@ -282,6 +288,7 @@ export function MobileNav() {
                   there means "put this away". This panel covers the whole
                   screen, so there is no backdrop to reach for. */}
               <div
+                data-testid="menu-scroll"
                 className="flex-1 overflow-y-auto"
                 onClick={dismissOnEmptySpace(() => setOpen(false))}
               >

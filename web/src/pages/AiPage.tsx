@@ -21,6 +21,7 @@
 //     the sections revamp, leaving a workspace with two approved AIs no way to
 //     switch. They live here now, next to everything else about AI.
 
+import { productName } from "@cobblr/platform-web";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { useEffect, useMemo, useState } from "react";
 import { CredentialFields } from "../components/CredentialFields";
@@ -204,7 +205,7 @@ export function AiPage() {
                     // Nothing to pin to yet: an inline hint, not a dead-end modal.
                     <span
                       className="p-1.5 text-faint"
-                      title="Runs on whatever AI is available (your Cobblr plan, if your subscription includes it). Add your own provider below to pin this job to a specific provider or model."
+                      title={`Runs on whatever AI is available (your ${productName()} plan, if your subscription includes it). Add your own provider below to pin this job to a specific provider or model.`}
                     >
                       <Info className="h-4 w-4" />
                     </span>
@@ -812,7 +813,7 @@ export function CapabilityDefaultModal({
             <>
               <div className="text-sm text-muted">
                 {planProvided
-                  ? "This job runs on your Cobblr plan's AI (automatic). To pin it to a specific provider or model, add your own key first."
+                  ? `This job runs on your ${productName()} plan's AI (automatic). To pin it to a specific provider or model, add your own key first.`
                   : "No enabled provider supports this capability yet. Add a provider first."}
               </div>
               <button
@@ -980,7 +981,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
   // "Nothing connected yet" below stops being a contradiction.
   const sourceNote =
     status.source === "managed"
-      ? " It's provided by your Cobblr plan - add your own key below only if you want a specific provider or to track spend."
+      ? ` It's provided by your ${productName()} plan - add your own key below only if you want a specific provider or to track spend.`
       : status.source === "personal"
         ? " It's running on your own personal connection."
         : status.source === "workspace"
@@ -1002,7 +1003,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
   // choice, not a dead end.
   const enableHint =
     status.reason === "workspace_disabled" && status.source === "managed"
-      ? "AI is available from your Cobblr plan - turn the switch below on to use it across this workspace."
+      ? `AI is available from your ${productName()} plan - turn the switch below on to use it across this workspace.`
       : status.reason === "workspace_disabled" && status.source === "workspace"
         ? "A provider is connected for this workspace - turn the switch below on to use it."
         : null;
@@ -1056,7 +1057,7 @@ function AiAvailabilityBanner({ onAdd }: { onAdd?: () => void }) {
           <span className="min-w-0">
             <span className="text-sm text-content dark:text-mortar-100">Use AI in this workspace</span>
             <span className="block text-xs text-faint dark:text-slate-400">
-              On, this workspace uses whatever AI is available - your Cobblr plan's, or a key you add below. Off, Cobblr
+              On, this workspace uses whatever AI is available - your {productName()} plan's, or a key you add below. Off, {productName()}
               runs in basic mode here and makes no AI calls on the workspace's behalf. Either way, a member who connects
               their OWN personal key can still use it here.
             </span>
@@ -1170,7 +1171,7 @@ function ConnectionsSection({
         <p className="text-sm text-faint">
           {planProvided ? (
             <>
-              AI here is provided by your Cobblr plan - nothing to connect. Add a key this workspace owns to use a
+              AI here is provided by your {productName()} plan - nothing to connect. Add a key this workspace owns to use a
               specific provider or track spend, or set up a personal connection at{" "}
               <Link to="/me/connections" className="text-accent hover:underline">
                 your account
@@ -1564,7 +1565,7 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
   const saveSuggest = useMutation({
     mutationFn: (autoApply: boolean) => api.setPhotoSuggestConfig(slug, autoApply),
     onSuccess: (r) => {
-      toast.success(r.auto_apply ? "New records get the photo Cobblr finds" : "New records are offered a photo to accept");
+      toast.success(r.auto_apply ? `New records get the photo ${productName()} finds` : "New records are offered a photo to accept");
       void qc.invalidateQueries({ queryKey: ["photo-suggest-config", slug] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
@@ -1594,7 +1595,7 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
             yourself, and never pays twice for the same item.
           </span>
           <span className="block text-xs text-faint dark:text-slate-400 mt-1">
-            This is WHETHER Cobblr picks photos on its own. Which AI does the picking is the
+            This is WHETHER {productName()} picks photos on its own. Which AI does the picking is the
             "Pick the best product photo" row under "What each job uses" below - that one is
             routing, and it applies to the ✨ Pick best button too.
           </span>
@@ -1610,7 +1611,7 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
         />
         <span className="min-w-0">
           <span className="text-sm text-content dark:text-mortar-100">
-            Put the photo Cobblr finds on new records
+            Put the photo {productName()} finds on new records
           </span>
           <span className="block text-xs text-faint dark:text-slate-400">
             Off by default. A record made without a photo, however it was made, is looked up on the web

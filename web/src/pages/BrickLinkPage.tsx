@@ -3,6 +3,7 @@
 // owns saved and shopping lists; Purchases owns imported orders and lines.
 // BrickLink only parses its formats and performs the catalog-backed comparison.
 
+import { productName } from "@cobblr/platform-web";
 import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, Diff, FileText, ShoppingCart, Upload } from "lucide-react";
@@ -336,7 +337,7 @@ export function BrickLinkPage() {
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           BrickLink
         </h1>
-        <span className="page-subtitle">Bring your BrickLink wanted lists and orders into Cobblr, and see which parts you already have.</span>
+        <span className="page-subtitle">Bring your BrickLink wanted lists and orders into {productName()}, and see which parts you already have.</span>
       </div>
 
       <div className="flex gap-1 border-b border-line dark:border-slate-700">

@@ -3,6 +3,7 @@
 // things go, import as one run, and undo it. Backend: core-import's /sheets
 // routes; the plan the server makes is the only source of what happens.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -295,7 +296,7 @@ function PickStep(props: {
         </button>
       </div>
       <p className="text-xs text-muted dark:text-slate-400">
-        A Google Sheet needs its sharing set to anyone with the link can view. Cobblr reads the sheet, shows you where everything would go, and changes nothing until you press Import.
+        A Google Sheet needs its sharing set to anyone with the link can view. {productName()} reads the sheet, shows you where everything would go, and changes nothing until you press Import.
       </p>
     </>
   );

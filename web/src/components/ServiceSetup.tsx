@@ -14,6 +14,7 @@
 //    check with it, so a wrong key reads as a wrong key and not as a service
 //    that is down.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type ServicePreview } from "../lib/api";
@@ -96,7 +97,7 @@ export function ServiceSetup({
       {wantCapability && (
         <p className="text-sm text-content dark:text-mortar-200" data-testid="service-wanted">
           Connecting a service that does <span className="font-mono text-xs">{wantCapability}</span>
-          {jobWords(wantCapability) ? ` (${jobWords(wantCapability)})` : ""}. You install the service yourself; Cobblr reads
+          {jobWords(wantCapability) ? ` (${jobWords(wantCapability)})` : ""}. You install the service yourself; {productName()} reads
           what it does from the service.
         </p>
       )}

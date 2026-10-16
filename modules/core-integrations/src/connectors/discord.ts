@@ -1,6 +1,7 @@
 // discord — Discord channel webhook connector. Same shape as slack:
 // paste the webhook URL, post messages to it.
 
+import { sendFetch } from "../outbound-send.js";
 import { registerOutboundConnector } from "../services.js";
 
 export function register(): void {
@@ -37,15 +38,11 @@ export function register(): void {
       const body: Record<string, unknown> = { content };
       const username = ctx.credentials.username;
       if (typeof username === "string" && username) body.username = username;
-      const res = await fetch(url, {
+      const res = await sendFetch("discord", url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(`discord: ${res.status} ${t.slice(0, 200)}`);
-      }
       return { status: res.status };
     },
     testConnection: async (credentials) => {

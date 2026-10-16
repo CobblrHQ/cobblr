@@ -11,6 +11,7 @@
 // Two ways here: (1) scan the QR — ?code= is read + claimed automatically;
 // (2) open /pair and paste the code (fallback when the QR won't scan).
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { CheckCircle2, Smartphone } from "lucide-react";
 import { api, ApiError, setToken, type AuthResponse, type OrgMembership } from "../lib/api";
@@ -118,7 +119,7 @@ export function PairPage() {
                 </div>
               )}
               <p className="text-sm text-muted dark:text-slate-400">
-                On your computer, open Cobblr and tap <em>Pair phone</em> on the
+                On your computer, open {productName()} and tap <em>Pair phone</em> on the
                 Scan card, then scan the QR with your camera. Or paste the code
                 below.
               </p>

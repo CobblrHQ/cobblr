@@ -19,6 +19,7 @@
 // a ready-made tracker → "set it up & drop me in"; a blank slate → "add a
 // blank one" / "name a new category". Build-it-yourself is a CTA, not a lane.
 
+import { productName } from "@cobblr/platform-web";
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -773,7 +774,7 @@ export function WhatToDoPanel({
                 ? (kindIsMulti
                     ? `Name a category${kindVocab ? ` (like ${kindVocab.categoryEg})` : ""}, then add things inside it.`
                     : `Turn on ${selectedModuleObj.displayName} and add your first one.`)
-                : "Type what you've got - Cobblr finds or builds the right home and files it."}
+                : `Type what you've got - ${productName()} finds or builds the right home and files it.`}
           </p>
 
           {/* Mode D — a recipe. Featureless: install + drop straight in. With
@@ -980,7 +981,7 @@ export function WhatToDoPanel({
             <div className="text-xs text-faint dark:text-slate-500 py-2">Loading…</div>
           ) : skins.length === 0 && setups.length === 0 && blankMatches.length === 0 ? (
             <p className="text-xs text-faint dark:text-slate-500 py-1">
-              Nothing here matches “{browseQ.trim()}”. Type it into the box above instead - Cobblr will build the right home for it.
+              Nothing here matches “{browseQ.trim()}”. Type it into the box above instead - {productName()} will build the right home for it.
             </p>
           ) : (
             <>

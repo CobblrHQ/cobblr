@@ -88,6 +88,9 @@ function resolveSlug(req: Request): string | null {
   return null;
 }
 
+/** What a person hears about a workspace whose database was never made. */
+export const UNPROVISIONED_MESSAGE = "This workspace is not set up yet. Finish setting it up from its page.";
+
 export async function withTenant(
   req: Request,
   res: Response,
@@ -181,18 +184,18 @@ export async function withTenant(
     return;
   }
   if (!row.db_credentials_encrypted) {
-    // A signup returns 201 even when tenant provisioning failed (the org row is
-    // kept so an operator can re-provision) — so this 503 means "that org's
-    // CREATE DATABASE / migrations never landed", not "still warming up". Name
-    // the org here so a bare 503 in a log (e.g. the CI flake, issue #765) points
-    // straight at the unprovisioned workspace instead of being a mystery.
+    // A workspace whose database was never made: signup no longer answers 201
+    // for one (provisionWholeOrRemove), so this is one left by older code or a
+    // process that died mid-signup. The app shows "not set up yet" with a
+    // button to finish it (POST /orgs/:slug/finish-setup), and the boot heal
+    // finishes it too. Named in the log so a bare 503 points straight at it.
     console.warn(
-      `[tenant] 503 tenant_unprovisioned: org ${row.org_id} (${slug}) has NULL db_credentials_encrypted — provisioning failed at signup`,
+      `[tenant] 503 tenant_unprovisioned: org ${row.org_id} (${slug}) has NULL db_credentials_encrypted`,
     );
     res.status(503).json({
       error: {
         code: "tenant_unprovisioned",
-        message: "Org's tenant DB hasn't been provisioned yet",
+        message: UNPROVISIONED_MESSAGE,
       },
     });
     return;
@@ -327,7 +330,7 @@ async function resolveImpersonatedTenant(
     return;
   }
   if (!row.db_credentials_encrypted) {
-    res.status(503).json({ error: { code: "tenant_unprovisioned", message: "Org's tenant DB hasn't been provisioned yet" } });
+    res.status(503).json({ error: { code: "tenant_unprovisioned", message: UNPROVISIONED_MESSAGE } });
     return;
   }
   // Read-only enforcement, server-side, before any handler: a mutating method

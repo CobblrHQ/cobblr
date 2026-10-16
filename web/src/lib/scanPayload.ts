@@ -8,6 +8,8 @@
 // #2850). Two doors, two rules, is how that happens. This is the one rule;
 // the capability row scan:payload-classifier keeps the doors from growing
 // their own again.
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { qrTokenFromUrl } from "@cobblr/platform-contract/qr-token";
 import { isOwnCobblrLink, ownAppPath } from "@cobblr/platform-contract/own-hosts";
 
@@ -70,8 +72,8 @@ export type TypedVerdict =
 
 /** What the field takes, as its label; the placeholder is the short form,
  *  since 41 characters clip mid-word at phone width in the mono face. */
-export const TYPED_FIELD_HINT = "Barcode number, or paste a Cobblr QR link";
-export const TYPED_FIELD_PLACEHOLDER = "Barcode, or a Cobblr QR link";
+export const TYPED_FIELD_HINT = `Barcode number, or paste ${withArticle(productName())} QR link`;
+export const TYPED_FIELD_PLACEHOLDER = `Barcode, or ${withArticle(productName())} QR link`;
 
 export function typedVerdict(raw: string, ownOrigins?: readonly string[]): TypedVerdict {
   const p = classifyScanPayload(raw, ownOrigins);
@@ -85,9 +87,9 @@ export function typedVerdict(raw: string, ownOrigins?: readonly string[]): Typed
       return { action: "lookup", code: p.code };
     case "link":
     case "own-link":
-      return { action: "refuse", sentence: "That is a web link, not a code. Type a barcode number, or paste a Cobblr QR link." };
+      return { action: "refuse", sentence: `That is a web link, not a code. Type a barcode number, or paste ${withArticle(productName())} QR link.` };
     case "words":
-      return { action: "refuse", sentence: "That is not a barcode. Type the number under the bars, or paste a Cobblr QR link." };
+      return { action: "refuse", sentence: `That is not a barcode. Type the number under the bars, or paste ${withArticle(productName())} QR link.` };
     case "empty":
       return { action: "nothing" };
   }

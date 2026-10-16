@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import {randomUUID} from "node:crypto";
 import {mkdir,readFile,writeFile,rename,unlink} from "node:fs/promises";
 import {join,resolve} from "node:path";
@@ -38,7 +39,7 @@ export async function setServerBridge(p:{orgId:string;slug:string;userId:string;
   const relay=new URL(`/api/v1/orgs/${encodeURIComponent(p.slug)}/edge`,origin).href;
   await trx.updateTable("api_tokens").set({revoked_at:new Date()}).where("source","=",source).where("org_id","=",p.orgId).where("revoked_at","is",null).execute();
   // check-then-insert: the workspace row lock serializes enrollment, and each token has a fresh random identity.
-  const token=await trx.insertInto("api_tokens").values({user_id:p.userId,name:bridgeTokenName("Cobblr Server"),token_hash:hash,token_prefix:tokenPrefix,expires_at:null,scopes:["devices:edge"],source,meta:{bridge},org_id:p.orgId,access:"full"}).returning("id").executeTakeFirstOrThrow();
+  const token=await trx.insertInto("api_tokens").values({user_id:p.userId,name:bridgeTokenName(`${productName()} Server`),token_hash:hash,token_prefix:tokenPrefix,expires_at:null,scopes:["devices:edge"],source,meta:{bridge},org_id:p.orgId,access:"full"}).returning("id").executeTakeFirstOrThrow();
   const config=ServerBridgeConfig.parse({orgId:p.orgId,tokenId:token.id,relay,token:plaintext,bridge});
   await mkdir(resolve(process.env.COBBLR_SERVER_BRIDGE_DIR!),{recursive:true,mode:0o700});
   const temp=`${target}.${randomUUID()}.tmp`;

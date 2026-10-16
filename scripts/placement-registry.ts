@@ -282,6 +282,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "More than one api version runs against a tenant database at a time, so a migration lands under the PREVIOUSLY deployed api.",
     lints: ["lint:migration-additive", "lint:jsonb-array-writes"],
     notes: [
+      'START WITH `pnpm run new migration platform|<module> "<what it changes, and why>"`: it takes the next ordinal against this tree and origin/main, writes the header the lints ask for and the recovery block, bumps a module\'s version, and refuses to apply until the change is written.',
       "Additive is invisible to the old reader; a drop/rename/retype breaks it. A genuine contraction says `-- PHASE: contract` + `-- SAFE WHEN: <what you checked>`.",
       "A jsonb ARRAY column: type its WRITE as `string` (`ColumnType<unknown[], string, string>`) so passing a JS array is a compile error, not a runtime one.",
     ],
@@ -359,6 +360,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "The same file runs on macOS (bash 3.2, BSD sed) and on the Linux CI box; a construct that is fine on one aborts on the other, after part of the work has already printed as done.",
     lints: ["lint:bash-portable", "lint:portable-sed", "lint:sigpipe", "lint:deploy-state-in-flow", "lint:shell-lib-git-cwd", "lint:tsbuildinfo-not-shared", "lint:nightly-cut-clock", "lint:empty-array-under-set-u", "lint:scripts-typecheck", "lint:fetch-retry", "lint:porcelain-parse", "lint:alert-lib-sync", "lint:lint-durations", "lint:no-pattern-kill", "lint:forgejo-api-base", "lint:git-pathspec-glob", "lint:workstation-tmp-per-run"],
     notes: [
+      'START WITH `pnpm run new script <name> "<what it does>"` (a node command, its pure part in scripts/lib/ and a red test of it) or `--sh` (a portable bash script reading git from its own repo); both fail until written and pass the script lints as written.',
       "Prose (commit messages, PR bodies) goes through a FILE, never a quoted shell string.",
       "Linux-only scripts opt out with `# gnu-sed: <reason>`; that one line covers both sed and bash rules.",
       "merge-pr.sh and new-worktree.sh must PRINT where the channels are (lib/deploy-state.sh): everyone here works from a stale idea of what the nightly is, and a detour to check it is one nobody takes mid-task.",
@@ -518,6 +520,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "featured-bundles.ts is the ONE source; bundles/*.json is GENERATED from it. Editing the json directly is the drift this pair already suffered once, and lint:bundles-synced now catches it.",
     lints: ["lint:bundles-synced", "lint:bundle-schema", "lint:bundle-content", "lint:bundle-quality", "lint:bundle-id-noun", "lint:bundle-keyword-collisions", "lint:versions", "lint:platform-owned-roles", "lint:bundle-fields-on-own-kinds", "lint:identifier-fields-declared", "lint:view-group-by-bare"],
     notes: [
+      'START WITH `pnpm run new bundle <slug> --name "<Name>" --module <module> --noun "<one thing>" --glyph "<emoji>" --description "…" --field "<Label>[:type][:sum]" … --keyword "<scan word>" …`: it writes the entry in featured-bundles.ts, regenerates its json, records it in the versions lock and runs the bundle lints.',
       "Author the entry in web/src/lib/featured-bundles.ts, then run `npx tsx scripts/sync-bundles.ts` to regenerate bundles/<slug>.json. Never hand-edit the json.",
       "Then `npx tsx scripts/lint-bundle-content.ts --write` to record it in bundles/bundle-versions.lock.json, or lint:bundle-content fails on a new bundle.",
       "Build on the module whose OWN description fits the thing (assets = owned one by one, inventory = countable stock, machines = machines you operate). Add only the fields that module does not already carry natively.",

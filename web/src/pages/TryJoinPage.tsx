@@ -1,6 +1,7 @@
 // /try/join/:token — the link a kept trial's address receives when another
 // sandbox asks to be kept with it. Opening it is the yes: the sandbox becomes
 // another workspace of that account, and the link signs the address in.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { setToken } from "../lib/api";
@@ -33,7 +34,7 @@ export function TryJoinPage() {
         // replace(): the one-time link must not sit in history.
         window.location.replace(`/w/${body.slug}`);
       } catch {
-        setError("We could not reach Cobblr.");
+        setError(`We could not reach ${productName()}.`);
       }
     })();
   }, [token]);

@@ -78,6 +78,10 @@
  * for a centred pill). */
 .fc-corner {
   bottom: calc(var(--inset-bottom) + var(--bottom-chrome-height, 0px) + var(--fc-lift, 1rem) + var(--fc-stack, 0px));
+  /* Every corner piece sits at the right: on a phone on its side the
+   * Dynamic Island or the notch can be there, and a rounded corner always is
+   * (#6782). 0 upright and on a desk. */
+  margin-right: var(--inset-right);
 }
 /* An overlay ends above the toasts (--overlay-bottom, bottom-dock.ts
  * overlayBottomReserve): they stay up over a modal and used to sit on its

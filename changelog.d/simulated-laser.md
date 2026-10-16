@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-15
 docs_target: docs/USER_GUIDE.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-16
 ---
 
 A laser on the network (FluidNC, grblHAL or GRBL in laser mode) is recognised from its address, and a laser connected directly now opens its station page with its sheets instead of showing it unavailable.

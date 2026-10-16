@@ -467,6 +467,10 @@ export async function resolveAccountPrefs(
 
 export interface NotifyAccountParams {
   userId: string;
+  /** Only these channels, still each as the person set it. An AI-share offer
+   *  is in the bell as an approval card with Approve and Deny (#6911); its
+   *  email still goes, and a second bell row for the same offer would not. */
+  only?: PrefChannel[];
   /** Org the in_app row is filed under (the user's filed-from / first workspace).
    *  Channel ENABLEMENT comes from account prefs, not this org's subscriptions. */
   representativeOrgId: string;
@@ -531,7 +535,10 @@ export function answerChannel(
 export async function notifyAccount(
   args: NotifyAccountParams,
 ): Promise<{ notificationId: string | null; deliveredVia: PrefChannel[]; outcomes: DeliveryOutcomes }> {
-  const prefs = await resolveAccountPrefs(args.userId, args.notificationType);
+  const resolved = await resolveAccountPrefs(args.userId, args.notificationType);
+  const prefs = args.only
+    ? (Object.fromEntries(Object.entries(resolved).map(([k, v]) => [k, v && args.only!.includes(k as PrefChannel)])) as typeof resolved)
+    : resolved;
   const deliveredVia: PrefChannel[] = [];
   // Every channel says why, not just whether — a bare false cannot tell an
   // operator "they opted out" from "our sender is down". See delivery-outcome.ts.

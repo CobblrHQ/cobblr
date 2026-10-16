@@ -3,6 +3,7 @@
 // (a self-hosted inventory app to start), holds an encrypted credential + a base URL, exposes a
 // live webhook URL, and lets you toggle + reconcile each entity type.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -571,7 +572,7 @@ function InstallSourceModal({
         <p className="text-[11px] text-muted dark:text-slate-400">
           {editing
             ? "The whole source manifest (container + its sections). Re-installing updates it in place; connections pick up the change. To just add another thing to sync, use Add section instead."
-            : "Paste a sync-source manifest (JSON): the container that declares how to read an external API and map it into Cobblr entities. Install once, then add sections + connections. Nothing source-specific is baked into Cobblr."}
+            : `Paste a sync-source manifest (JSON): the container that declares how to read an external API and map it into ${productName()} entities. Install once, then add sections + connections. Nothing source-specific is baked into ${productName()}.`}
         </p>
         <JsonField
           value={manifest}
@@ -1250,7 +1251,7 @@ function AddSyncConnectionModal({
           })}
         {/* Transport: direct (cloud fetches the URL) vs edge (a local bridge does). */}
         <div>
-          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">How does Cobblr reach it?</span>
+          <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">How does {productName()} reach it?</span>
           <div className="flex gap-2">
             {(["direct", "edge"] as const).map((t) => (
               <button
@@ -1274,7 +1275,7 @@ function AddSyncConnectionModal({
           <p className="mt-1 text-[11px] text-muted dark:text-slate-400">
             {transport === "direct"
               ? "The cloud fetches the URL itself. On the hosted service this only works for public URLs. A LAN address won't be reachable."
-              : "A local edge bridge on your network fetches the URL and relays it up: the way to connect a LAN source (like a self-hosted inventory system) to hosted Cobblr."}
+              : `A local edge bridge on your network fetches the URL and relays it up: the way to connect a LAN source (like a self-hosted inventory system) to hosted ${productName()}.`}
           </p>
           {transport === "edge" && (
             <div className="mt-2">

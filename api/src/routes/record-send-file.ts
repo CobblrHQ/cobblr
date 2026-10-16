@@ -1,3 +1,4 @@
+import { productName } from "../platform/product-name.js";
 import { Router, type Request } from "express";
 import { readFile } from "node:fs/promises";
 import { z } from "zod";
@@ -27,7 +28,7 @@ export async function sendFileInput(orgId: string, body: {packet?: unknown; rece
     if (got.bytes.byteLength > SEND_FILE_MAX_BYTES) throw new SendError("This send file is over 64 MB. Send fewer items together.");
     text = Buffer.from(got.bytes).toString("utf8");
   }
-  if (text !== undefined) {try {return JSON.parse(text);} catch {throw new SendError("This file cannot be read. Download it again from the sending Cobblr.");}}
+  if (text !== undefined) {try {return JSON.parse(text);} catch {throw new SendError(`This file cannot be read. Download it again from the sending ${productName()}.`);}}
   return body.packet ?? body.receipt;
 }
 export function parseSendFile(input: unknown) {try {return readSendFile(input);} catch (e) {throw new SendError((e as Error).message);}}

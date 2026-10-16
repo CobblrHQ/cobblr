@@ -2,6 +2,7 @@
 // read what is set up, save a provider, remove it, send a test to yourself,
 // and read the log of every send. See platform/outbound-email.ts.
 
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../auth/middleware.js";
@@ -231,7 +232,7 @@ outboundEmailRouter.post("/sms/test", requireAuth, withTenant, async (req, res, 
     if (!body.success) return void res.status(400).json({ error: { code: "invalid_body", message: "Which number should the test go to?" } });
     const r = await sendTextFromWorkspace(req.tenant!.org.id, {
       to: body.data.to,
-      text: `A test from ${req.tenant!.org.name} on Cobblr. If you can read it, its automations can text people the same way.`,
+      text: `A test from ${req.tenant!.org.name} on ${productName()}. If you can read it, its automations can text people the same way.`,
     });
     if (!r.ok) return void res.status(r.reason === "failed" ? 502 : r.reason === "not_configured" ? 409 : 400).json({ error: { code: r.reason, message: r.message } });
     res.json({ ok: true, status: r.status });

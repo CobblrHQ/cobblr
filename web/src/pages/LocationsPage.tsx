@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
+import { SelectBox, fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 // /locations — the workspace-wide tree of physical places.
 // core-locations is foundational, so this page always exists when an
 // org is loaded. The tree below is rendered as boxed nested list
@@ -780,14 +780,7 @@ function LocationCard({
         >
           <GripVertical size={15} />
         </button>
-        <input
-          type="checkbox"
-          checked={selected.has(node.id)}
-          onChange={() => onToggleSelect(node.id)}
-          className="accent-cobble-600 shrink-0"
-          aria-label={`Select ${node.name}`}
-          title="Select for bulk actions"
-        />
+        <SelectBox checked={selected.has(node.id)} onChange={() => onToggleSelect(node.id)} label={`Select ${node.name}`} title="Select for bulk actions" />
         {/* The fold control. A leaf keeps the slot so names line up, but has
             nothing to open, so it draws nothing clickable. */}
         {hasChildren ? (
@@ -1052,14 +1045,7 @@ function ZoneCard({
           >
             <GripVertical size={12} />
           </button>
-          <input
-            type="checkbox"
-            checked={selected.has(node.id)}
-            onChange={() => onToggleSelect(node.id)}
-            className="accent-cobble-600"
-            aria-label={`Select ${node.name}`}
-            title="Select for bulk actions"
-          />
+          <SelectBox checked={selected.has(node.id)} onChange={() => onToggleSelect(node.id)} label={`Select ${node.name}`} title="Select for bulk actions" />
           {node.image_path ? <EntityThumb src={node.image_path} alt={node.name} size={18} /> : <AreaIcon size={12} className="text-accent shrink-0" />}
           <Link
             to={`/locations/${node.id}`}
@@ -1228,17 +1214,20 @@ function RunCard({
     <div className="rounded-xl border border-dashed border-line dark:border-slate-700 overflow-hidden">
       <div className="px-3 sm:px-4 py-2 bg-subtle/70 dark:bg-slate-800/40 flex items-center gap-1.5 sm:gap-2">
         <span className="hidden sm:block w-[15px] shrink-0 -ml-1.5" aria-hidden />
-        <input
-          type="checkbox"
-          checked={allSelected}
-          ref={(el) => {
-            if (el) el.indeterminate = someSelected;
-          }}
-          onChange={toggleAll}
-          className="accent-cobble-600 shrink-0"
-          aria-label={`Select all ${count} ${noun}`}
-          title={`Select all ${count} ${noun}`}
-        />
+        {/* In a label: a finger's room around it (touch-targets.css). */}
+        <label className="inline-flex shrink-0 items-center cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = someSelected;
+            }}
+            onChange={toggleAll}
+            className="accent-cobble-600 shrink-0"
+            aria-label={`Select all ${count} ${noun}`}
+            title={`Select all ${count} ${noun}`}
+          />
+        </label>
         <button
           title={open ? `Collapse ${label}` : `Expand ${label}`}
           type="button"

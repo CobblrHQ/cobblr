@@ -2,6 +2,8 @@
 // Phase 4 stops short of a hosted registry; bundles are local
 // JSON the user pastes / uploads.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Library, Package, Plus, Share2, Trash2, X } from "lucide-react";
@@ -179,7 +181,7 @@ export function BundlesPage() {
       const ok = await confirm({
         title: `Install ${m.name}?`,
         message:
-          `Cobblr hasn't reviewed this module${m.source !== "official" ? ` (source: ${m.source})` : ""}. ` +
+          `${productName()} hasn't reviewed this module${m.source !== "official" ? ` (source: ${m.source})` : ""}. ` +
           `It runs in a sandbox and can't exceed your workspace's permissions, but only install code from sources you trust.`,
         confirmLabel: "Install anyway",
         destructive: true,
@@ -223,7 +225,7 @@ export function BundlesPage() {
       const ok = await confirm({
         title: `Install ${r.name}?`,
         message:
-          `Cobblr hasn't reviewed this renderer${r.source !== "official" ? ` (source: ${r.source})` : ""}. ` +
+          `${productName()} hasn't reviewed this renderer${r.source !== "official" ? ` (source: ${r.source})` : ""}. ` +
           `It runs fully sandboxed (no network, no access to your data). It only ever sees the file you preview. Install anyway?`,
         confirmLabel: "Install anyway",
         destructive: true,
@@ -298,7 +300,7 @@ export function BundlesPage() {
         open={sourcesOpen}
         onClose={() => setSourcesOpen(false)}
         title="Bundle sources"
-        subtitle="Cobblr merges the official index with any third-party repos you add. Each is a URL to an index.json (HACS-style). Bundles from added repos show a “3rd-party” badge; only the official index is signature-verified."
+        subtitle={`${productName()} merges the official index with any third-party repos you add. Each is a URL to an index.json (HACS-style). Bundles from added repos show a “3rd-party” badge; only the official index is signature-verified.`}
       >
         <ul className="space-y-1.5 mb-4">
           <li className="flex items-center gap-2 text-sm text-muted dark:text-slate-300">
@@ -503,9 +505,9 @@ export function BundlesPage() {
                     {m.name}
                     <span className="text-[10px] font-mono text-faint">v{m.version}</span>
                     {m.trust === "official" ? (
-                      <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
+                      <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title={`Signed by ${withArticle(productName())}-vouched key`}>verified</span>
                     ) : (
-                      <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${m.source})`}>unverified</span>
+                      <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`${productName()} hasn't reviewed this (from ${m.source})`}>unverified</span>
                     )}
                   </div>
                   {(m.blurb || m.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{m.blurb || m.description}</div>}
@@ -560,9 +562,9 @@ export function BundlesPage() {
                       {r.name}
                       <span className="text-[10px] font-mono text-faint">.{r.exts.join(" .")}</span>
                       {r.trust === "official" ? (
-                        <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title="Signed by a Cobblr-vouched key">verified</span>
+                        <span className="text-[10px] uppercase tracking-widest text-moss-600 bg-moss-50 dark:bg-moss-950/30 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5" title={`Signed by ${withArticle(productName())}-vouched key`}>verified</span>
                       ) : (
-                        <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`Cobblr hasn't reviewed this (from ${r.source})`}>unverified</span>
+                        <span className="text-[10px] uppercase tracking-widest text-faint border border-line dark:border-slate-700 rounded px-1.5 py-0.5" title={`${productName()} hasn't reviewed this (from ${r.source})`}>unverified</span>
                       )}
                     </div>
                     {(r.blurb || r.description) && <div className="text-xs text-content dark:text-mortar-200 mt-1.5">{r.blurb || r.description}</div>}

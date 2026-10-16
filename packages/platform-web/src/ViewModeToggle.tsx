@@ -39,7 +39,7 @@ export function ViewModeToggle({
 }) {
   return (
     <div
-      className="h-9 inline-flex items-stretch rounded-md border border-line dark:border-slate-700 overflow-hidden shrink-0"
+      className="h-9 [@media(pointer:coarse)]:h-[46px] inline-flex items-stretch rounded-md border border-line dark:border-slate-700 overflow-hidden shrink-0"
       role="group"
       aria-label="View mode"
     >

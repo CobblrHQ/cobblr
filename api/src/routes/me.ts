@@ -1,6 +1,7 @@
 // /api/v1/me — current session profile + org memberships. Mirrors
 // the shape /auth/login returns so the web can reuse the same hook.
 
+import { productName } from "../platform/product-name.js";
 import { childTerms } from "../auth/token-lineage.js";
 import { OPERATOR_ONLY_ACTIONS, IMPORT_ROW } from "../platform/activity.js";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
@@ -238,6 +239,10 @@ const MeUpdate = z.object({
    *  offered again. A timestamp is not accepted from the client: when it
    *  happened is the server's to say. */
   tour_seen: z.boolean().optional(),
+  /** Where the person is: the IANA zone their own browser reports, so "today"
+   *  is their day on everything the engine dates for them. A client sends it
+   *  when its browser's zone differs from the one on the account; null forgets it. */
+  time_zone: z.string().min(1).max(64).refine((z) => { try { new Intl.DateTimeFormat("en-GB", { timeZone: z }); return true; } catch { return false; } }, "Not a time zone").nullable().optional(),
   // Per-user nav layout (desktop only — a phone keeps its own menu whatever
   // this says). null clears back to the device default. Strict so a stray key
   // can't be smuggled into the blob and read back out as trusted state.
@@ -275,6 +280,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         }),
         ...(parsed.data.theme_pref !== undefined && { theme_pref: parsed.data.theme_pref }),
         ...(parsed.data.title_pref !== undefined && { title_pref: parsed.data.title_pref }),
+        ...(parsed.data.time_zone !== undefined && { time_zone: parsed.data.time_zone }),
         ...(parsed.data.tour_seen !== undefined && {
           tour_seen_at: parsed.data.tour_seen ? new Date() : null,
         }),
@@ -286,8 +292,9 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "title_pref", "tour_seen_at"])
+      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "title_pref", "tour_seen_at", "time_zone"])
       .executeTakeFirstOrThrow();
+    if (parsed.data.time_zone !== undefined) forgetTimeZone(req.session!.id);
     res.json({ user: updated });
   } catch (err) {
     next(err);
@@ -562,7 +569,7 @@ meRouter.delete("/me", requireAuth, async (req, res, next) => {
         error: {
           code: "delete_at_identity",
           message:
-            "This account is managed by your Cobblr account, so it is deleted there and removed here too. If you cannot find that option yet, ask whoever runs this instance to remove your account.",
+            `This account is managed by your ${productName()} account, so it is deleted there and removed here too. If you cannot find that option yet, ask whoever runs this instance to remove your account.`,
           details: { portal: browserBase() },
         },
       });
@@ -2240,14 +2247,14 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
     // Off by default in prod — keeps the alpha from growing uncontrollably.
     if (!selfServeInvitesEnabled()) {
       res.status(403).json({
-        error: { code: "not_enabled", message: "Inviting new people to Cobblr is turned off right now." },
+        error: { code: "not_enabled", message: `Inviting new people to ${productName()} is turned off right now.` },
       });
       return;
     }
     const userId = req.session!.id;
     if (!(await ownsAnyWorkspace(userId))) {
       res.status(403).json({
-        error: { code: "forbidden", message: "Only workspace owners can invite new people to Cobblr." },
+        error: { code: "forbidden", message: `Only workspace owners can invite new people to ${productName()}.` },
       });
       return;
     }
@@ -2321,9 +2328,9 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
         : "";
       emailed = await sendAuthEmail({
         to: row.invited_email,
-        subject: "You're invited to Cobblr",
+        subject: `You're invited to ${productName()}`,
         text:
-          `You've been invited to create your own Cobblr workspace.\n\n` +
+          `You've been invited to create your own ${productName()} workspace.\n\n` +
           `Open this link to get started:\n${link}` +
           expiryLine +
           `\n\nIf you weren't expecting this, you can ignore this email.`,
@@ -2431,8 +2438,8 @@ async function fireDiscordTestDm(discordUserId: string, displayName: string | nu
   const hi = displayName ? `Hi ${displayName}! ` : "Hi! ";
   const res = await sendDiscordDm({
     discord_user_id: discordUserId,
-    text: `${hi}This is Cobblr confirming we can reach you here. Tap the button below to turn on Discord notifications.`,
-    summary: "Cobblr can reach you here. Tap to turn on Discord notifications.",
+    text: `${hi}This is ${productName()} confirming we can reach you here. Tap the button below to turn on Discord notifications.`,
+    summary: `${productName()} can reach you here. Tap to turn on Discord notifications.`,
     verify_token: token,
   });
   return { deliverable: res.deliverable };

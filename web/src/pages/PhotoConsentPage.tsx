@@ -7,6 +7,7 @@
 // date, stops any new photo being kept at once, and unlinks the photos already
 // kept: they stay as anonymous examples but no longer lead to you.
 
+import { productName } from "@cobblr/platform-web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
@@ -25,7 +26,7 @@ export function PhotoConsentPage() {
       qc.setQueryData(["photo-consent"], r);
       toast.success(
         r.keep
-          ? "Cobblr may keep photos of the things you file."
+          ? `${productName()} may keep photos of the things you file.`
           : r.unlinked
             ? "No new photos are kept, and the ones already kept no longer lead to you."
             : "No photos of yours are kept.",
@@ -39,7 +40,7 @@ export function PhotoConsentPage() {
   if (!c?.available) {
     return (
       <p data-testid="photo-consent-unavailable" className="text-sm text-muted dark:text-slate-400">
-        Cobblr does not keep photos of the things you file here. Nothing to set.
+        {productName()} does not keep photos of the things you file here. Nothing to set.
       </p>
     );
   }
@@ -70,7 +71,7 @@ export function PhotoConsentPage() {
         <span className="min-w-0">
           <span className="text-sm text-content dark:text-mortar-100">Keep photos of things I file to improve identification</span>
           <span className="block text-xs text-faint dark:text-slate-400">
-            When you file an item, Cobblr may keep its photo as a private example, so the same product can be recognised for
+            When you file an item, {productName()} may keep its photo as a private example, so the same product can be recognised for
             the next person. It is never shown to anyone. Receipts, documents and photos with people in them are never kept.
           </span>
         </span>

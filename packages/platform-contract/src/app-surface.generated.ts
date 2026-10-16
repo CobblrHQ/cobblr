@@ -395,7 +395,7 @@ export const GENERATED_SURFACE: Capability[] = [
   },
   {
     "feature": "Sharing",
-    "does": "Share part of this workspace with someone, on this Cobblr or another one. They get a workspace of their own for it, and things can be handed over between you.",
+    "does": "Share part of this workspace with someone, on this server or another one. They get a workspace of their own for it, and things can be handed over between you.",
     "where": "/configuration/sharing",
     "also": [
       "share",

@@ -1,33 +1,18 @@
 #!/usr/bin/env tsx
-// A string a person reads from the api names the product through productName(), never the literal Cobblr, because one engine runs more than one product.
-//
-// THE BUG THIS PREVENTS. A second product's server mailed its owner 'Reset your Cobblr password' (#6815, 2026-10-15).
-//
-// THE RULE. A string literal ("...", '...' or `...`) on a code line in
-// api/src/platform or api/src/routes that holds the word Cobblr counts. A file
-// may carry no more of them than scripts/product-name-baseline.json records
-// for it, and a file it does not list carries none. The baseline only shrinks:
-// `--update` lowers each file's count to what it now holds and drops files
-// that reached zero; it never raises one or adds a file. A string that must
-// say Cobblr whatever the server is (the identity service's own account, a
-// managed app called "Cobblr for Yarn", the "Cobblr Receipts" address name)
-// says why on its line or the line above: // PRODUCT-NAME: <why>.
-//
-// THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Comments are not read: the
-// files are full of prose about Cobblr the engine, which no person receives.
-// Identifiers and env names (COBBLR_*, @cobblr/...) never match, the word is
-// case-sensitive. The 194 strings that held it when this was written are the
-// baseline, mostly federation and edge-bridge words between two Cobblr servers.
-//
-//   npx tsx scripts/lint-product-name-not-hard-coded.ts   (pnpm lint product-name-not-hard-coded)
+// Person-facing engine words use the server's configured product name.
+// The ratchet covers server strings and browser strings, including template
+// continuations and JSX text. Fixed protocol identifiers, upstream project
+// names and named apps explain themselves with PRODUCT-NAME beside the literal.
+// --update only shrinks scripts/product-name-baseline.json.
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import ts from "typescript";
 import { join } from "node:path";
 import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
 import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
-const ROOTS = ["api/src/platform", "api/src/routes"];
+const ROOTS = ["api/src/platform", "api/src/routes", "api/src/lib", "web/src", "packages/platform-web/src"];
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {
@@ -47,8 +32,9 @@ function* walk(dir: string): Generator<string> {
     if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
     const p = join(dir, name);
     if (statSync(p).isDirectory()) yield* walk(p);
-    // An embedded payload (a base64 build) holds no code to judge and is megabytes.
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && !isEmbeddedPayload(p)) yield p;
+    // Embedded builds hold no code to judge. The featured bundle catalog holds
+    // upstream authors and published app content, rather than engine chrome.
+    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name) && !isEmbeddedPayload(p) && p !== "web/src/lib/featured-bundles.ts") yield p;
   }
 }
 
@@ -56,22 +42,30 @@ const BASELINE_PATH = "scripts/product-name-baseline.json";
 const baseline: Record<string, number> = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
 
 /** Every literal naming the product on a code line, less those that say why. */
-function literals(src: string): number[] {
+function literals(src: string, file: string): number[] {
+  if (!/\bCobblrs?\b/.test(src)) return [];
   const out: number[] = [];
   const lines = src.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    const t = line.trimStart();
-    if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) continue;
-    if (/PRODUCT-NAME: \S/.test(line) || /PRODUCT-NAME: \S/.test(lines[i - 1] ?? "")) continue;
-    if (/(["'`])(?:(?!\1)[^\\]|\\.)*\bCobblr\b(?:(?!\1)[^\\]|\\.)*\1/.test(line)) out.push(i + 1);
-  }
+  const ast = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node) => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node) || ts.isJsxText(node)) {
+      const raw = node.getText(ast);
+      const match = /\bCobblrs?\b/.exec(raw);
+      if (match) {
+        const line = ast.getLineAndCharacterOfPosition(node.getStart(ast) + match.index).line;
+        const startLine = ast.getLineAndCharacterOfPosition(node.getStart(ast)).line;
+        if (![lines[startLine - 1], ...lines.slice(startLine, line + 1)].some((l) => /PRODUCT-NAME: \S/.test(l ?? ""))) out.push(line + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
   return out;
 }
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
-  const found = literals(src);
+  const found = literals(src, file);
   const allowed = baseline[file] ?? 0;
   if (found.length <= allowed) return [];
   return found.map((line) => ({ file, line, what: `names the product as the literal Cobblr (${found.length} in this file, ${allowed} allowed)` }));
@@ -79,7 +73,7 @@ function check(file: string, src: string): Violation[] {
 
 const counts: Record<string, number> = {};
 if (process.argv.includes("--update")) {
-  for (const root of ROOTS) for (const file of walk(root)) counts[file] = literals(readFileSync(file, "utf8")).length;
+  for (const root of ROOTS) for (const file of walk(root)) counts[file] = literals(readFileSync(file, "utf8"), file).length;
   const next: Record<string, number> = {};
   for (const [file, was] of Object.entries(baseline).sort()) { const now = Math.min(was, counts[file] ?? 0); if (now > 0) next[file] = now; }
   writeFileSync(BASELINE_PATH, JSON.stringify(next, null, 2) + "\n");
@@ -94,7 +88,7 @@ for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) 
 if (violations.length) {
   console.error(`lint:product-name-not-hard-coded - ${violations.length} violation(s):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);
-  console.error("Name the product with `${productName()}` from api/src/platform/product-name.ts, or say why it is always Cobblr: // PRODUCT-NAME: <why>");
+  console.error("Name the product with `${productName()}` (server helper or platform-web, configured from /auth/config), or say why it is always Cobblr: // PRODUCT-NAME: <why>");
   process.exit(1);
 }
 console.log(`lint:product-name-not-hard-coded OK`);

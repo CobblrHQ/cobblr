@@ -9,6 +9,7 @@
 // when it was fetched, and the earliest of those is "as of" here, so a kept
 // copy is never taken for live. Back online, everything is fetched again at
 // once rather than waiting for each query's own timer.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -73,7 +74,7 @@ export function ConnectivityBanner() {
           {asOf !== null ? <>Showing what you had as of {asOfWords(asOf)}. Changes wait until you're back.</> : <>Changes wait until you're back.</>}
         </span>
       ) : (
-        <span>Can't reach Cobblr - reconnecting…</span>
+        <span>Can't reach {productName()} - reconnecting…</span>
       )}
       <button
         type="button"

@@ -5,6 +5,7 @@
 // choose how (live connect vs CSV) in a second step. That keeps any one app
 // from dominating the section and scales as more sources arrive.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Download, ArrowRight, Zap, FileUp, type LucideIcon } from "lucide-react";
 import { Modal } from "@cobblr/platform-web";
@@ -29,7 +30,7 @@ const SOURCES: Source[] = [
   {
     id: "homebox",
     name: "Homebox",
-    blurb: "Bring your Homebox inventory into Cobblr.",
+    blurb: `Bring your Homebox inventory into ${productName()}.`,
     methods: [
       {
         id: "live",
@@ -48,7 +49,7 @@ const SOURCES: Source[] = [
   {
     id: "partdb",
     name: "Part-DB",
-    blurb: "Bring your Part-DB components into Cobblr.",
+    blurb: `Bring your Part-DB components into ${productName()}.`,
     methods: [
       {
         id: "live",

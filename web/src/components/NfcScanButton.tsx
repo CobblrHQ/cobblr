@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { createNfcReader, isWebNfcAvailable, nfcFailure, nfcUrl } from "@cobblr/platform-web";
 import { typedVerdict } from "../lib/scanPayload";
@@ -31,7 +32,7 @@ export function NfcScanButton({ onCobblrQr, onOpenPath, ownOrigins }: {
         const verdict = url ? typedVerdict(url, ownOrigins) : null;
         if (verdict?.action === "route-qr") { stop(); onCobblrQr(verdict.token); }
         else if (verdict?.action === "open") { stop(); onOpenPath(verdict.path); }
-        else setError("This tag has no Cobblr label link. Try another tag.");
+        else setError(`This tag has no ${productName()} label link. Try another tag.`);
       };
       await reader.scan({ signal: controller.signal });
     } catch (e) {

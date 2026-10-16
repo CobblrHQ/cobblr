@@ -11,6 +11,8 @@
 // code to approve from a signed-in phone, then keeps a token that reaches only
 // this station. Kiosk display by default (no app frame, the screen kept
 // awake); `?kiosk=0` shows a frame for setting it up from a computer.
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -182,7 +184,7 @@ export function StationHome() {
     <Shell kiosk={false}>
       <Centered
         title="Open a station"
-        body="A station is a page for a tablet and a barcode scanner. Make one in Cobblr under Configuration → Devices → Stations, then open its address on this tablet."
+        body={`A station is a page for a tablet and a barcode scanner. Make one in ${productName()} under Configuration → Devices → Stations, then open its address on this tablet.`}
       />
     </Shell>
   );
@@ -849,7 +851,7 @@ function Ready({ label, last, onUndo, camera, children }: { label: string; last:
     <div className={`flex flex-col items-center text-center ${camera ? "gap-4 py-4" : "gap-6 py-16"}`} data-testid="station-ready">
       <div className="text-5xl font-semibold max-sm:text-4xl">Ready to scan</div>
       <p className="max-w-md text-lg text-muted">
-        {camera ? `Hold a barcode or a Cobblr label up to the camera, or use a scanner. ${label} shows what it is.` : `Scan a barcode or a Cobblr label with the scanner. ${label} shows what it is.`}
+        {camera ? `Hold a barcode or ${withArticle(productName())} label up to the camera, or use a scanner. ${label} shows what it is.` : `Scan a barcode or ${withArticle(productName())} label with the scanner. ${label} shows what it is.`}
       </p>
       {last && <UndoBar last={last} onUndo={onUndo} />}
       {children}

@@ -80,6 +80,23 @@ export interface ViewToolbarCtx {
 
 export type ViewToolbarComponent = ComponentType<{ ctx: ViewToolbarCtx }>;
 
+/** Context for `surface: "tag-toolbar"`: a control over one group of a tag's
+ *  page, the records of one kind that carry the tag, on every tag page whose
+ *  group the contributing module owns (#6819). */
+export interface TagToolbarCtx {
+  slug: string;
+  /** The group's record kind, e.g. "inventory:part" or "spices:item". */
+  kind: string;
+  /** The named collection the kind is, or null for a module's own kind. */
+  collection: string | null;
+  /** The records in the group that carry the tag. */
+  ids: string[];
+  /** The tag's name, as a person reads it and as an action takes it. */
+  tagName: string;
+}
+
+export type TagToolbarComponent = ComponentType<{ ctx: TagToolbarCtx }>;
+
 /** A panel that belongs on EVERY entity detail view, whatever the kind. */
 export const UNIVERSAL = "*";
 
@@ -115,6 +132,12 @@ export function registerDetailPanel(id: string, component: DetailPanelComponent)
 /** Map a declared view-toolbar id to its component (the same id space as
  *  panels, so lint:panel-registry reads both). */
 export function registerViewToolbar(id: string, component: ViewToolbarComponent): void {
+  REGISTRY.set(id, component as unknown as DetailPanelComponent);
+  notify();
+}
+
+/** Map a declared tag-toolbar id to its component (the same id space). */
+export function registerTagToolbar(id: string, component: TagToolbarComponent): void {
   REGISTRY.set(id, component as unknown as DetailPanelComponent);
   notify();
 }
@@ -250,10 +273,8 @@ export function ContributedDetailPanels({
   );
 }
 
-/** Render what enabled modules put in a saved view's header: the toolbar
- *  controls declared for the module that owns the view's records. The view
- *  names no contributor; `module` is the owner of its kind. */
-export function ContributedViewToolbar({ module, ctx }: { module: string | null | undefined; ctx: ViewToolbarCtx }) {
+/** The controls enabled modules declare on `surface` for `module`, registered here. */
+function useContributedControls(surface: "view-toolbar" | "tag-toolbar", module: string | null | undefined) {
   const { api, orgSlug } = usePlatformWeb();
   const registered = useRegisteredIds();
   const q = useQuery({
@@ -262,12 +283,40 @@ export function ContributedViewToolbar({ module, ctx }: { module: string | null 
     enabled: !!api.listContributedPanels && !!module,
     staleTime: 5 * 60_000,
   });
-  const controls = (q.data ?? []).filter((p) => p.surface === "view-toolbar" && p.target === module && registered.includes(p.id));
+  return (q.data ?? []).filter((p) => p.surface === surface && p.target === module && registered.includes(p.id));
+}
+
+/** Render what enabled modules put in a saved view's header: the toolbar
+ *  controls declared for the module that owns the view's records. The view
+ *  names no contributor; `module` is the owner of its kind. */
+export function ContributedViewToolbar({ module, ctx }: { module: string | null | undefined; ctx: ViewToolbarCtx }) {
+  const controls = useContributedControls("view-toolbar", module);
   if (!controls.length || !ctx.ids.length) return null;
   return (
     <>
       {controls.map((p) => {
         const C = REGISTRY.get(p.id) as unknown as ViewToolbarComponent | undefined;
+        if (!C) return null;
+        return (
+          <Suspense key={p.id} fallback={null}>
+            <C ctx={ctx} />
+          </Suspense>
+        );
+      })}
+    </>
+  );
+}
+
+/** Render what enabled modules put over one group of a tag's page: the
+ *  controls declared for the module that owns the group's records (a recount
+ *  of the tagged things, #6819). The tag page names no contributor. */
+export function ContributedTagToolbar({ module, ctx }: { module: string | null | undefined; ctx: TagToolbarCtx }) {
+  const controls = useContributedControls("tag-toolbar", module);
+  if (!controls.length || !ctx.ids.length) return null;
+  return (
+    <>
+      {controls.map((p) => {
+        const C = REGISTRY.get(p.id) as unknown as TagToolbarComponent | undefined;
         if (!C) return null;
         return (
           <Suspense key={p.id} fallback={null}>

@@ -7,6 +7,7 @@
 // Per-user config in notification_subscriptions.config:
 //   { webhook_url: "https://hooks.slack.com/services/<workspace>/<channel>/<token>" }
 
+import { productName } from "../product-name.js";
 import { postJson } from "./http-helpers.js";
 import { absoluteAppUrl } from "../public-url.js";
 import type { Channel, ChannelEvent } from "./types.js";
@@ -50,7 +51,7 @@ export const slackChannel: Channel = {
           elements: [
             {
               type: "button",
-              text: { type: "plain_text", text: "Open in Cobblr" },
+              text: { type: "plain_text", text: `Open in ${productName()}` },
               url: absoluteAppUrl(event.link_url),
             },
           ],

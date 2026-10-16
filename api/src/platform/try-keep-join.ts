@@ -9,6 +9,8 @@
 //
 // At most KEPT_TRIALS_PER_ADDRESS workspaces per address: past it, the answer
 // says so and points at moving one to a real account.
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "./product-name.js";
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
@@ -90,9 +92,9 @@ export async function requestKeepJoin(o: {
   const thisOne = await workspaceLine(o.orgId, "this sandbox");
   const sent = await sendAuthEmail({
     to: o.email,
-    subject: "Keep another Cobblr sandbox",
+    subject: `Keep another ${productName()} sandbox`,
     text:
-      `Someone asked to keep a Cobblr sandbox (${thisOne}) with this address, which already keeps ` +
+      `Someone asked to keep ${withArticle(productName())} sandbox (${thisOne}) with this address, which already keeps ` +
       `${kept.length === 1 ? "a trial" : `${kept.length} trials`} here:\n\n${lines.join("\n")}\n\n` +
       `To add it beside ${kept.length === 1 ? "that one" : "them"} as another workspace, for ${env.TRY_SANDBOX_TRIAL_DAYS} days of its own:\n\n` +
       `${o.absBase}/try/join/${plain}\n\n` +

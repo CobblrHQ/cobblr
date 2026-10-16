@@ -20,6 +20,7 @@
 // "no longer active" card per the module spec — we never echo what
 // the token used to point at.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { QrCode, ScanLine } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
@@ -101,7 +102,7 @@ export function QrResolvePage() {
             const visit = opened.current !== token;
             opened.current = token;
             const r = await fetch(`/api/v1/public/label?t=${encodeURIComponent(token)}`, {
-              headers: { "X-Cobblr-Visit": visit ? "1" : "0" },
+              headers: { /* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Visit": visit ? "1" : "0" },
             });
             if (r.ok && !cancelled) {
               setVisitor({ view: (await r.json()) as PublicLabel, name: who.name });
@@ -189,7 +190,7 @@ export function QrResolvePage() {
       <>
         <QrCode size={28} className="mx-auto text-faint" />
         <div className="text-sm font-medium text-content dark:text-mortar-100" data-testid="label-elsewhere">
-          This belongs to someone else&apos;s Cobblr
+          This belongs to someone else&apos;s {productName()}
         </div>
         <p className="text-xs text-muted dark:text-slate-400">They have not made it public. You&apos;re signed in as {visitor.name}.</p>
         <a href="/" className="inline-flex items-center justify-center rounded-md bg-cobble-600 px-4 py-2 text-sm font-medium text-white hover:bg-cobble-700">

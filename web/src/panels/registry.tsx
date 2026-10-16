@@ -17,7 +17,7 @@
 // invisible, not a crash).
 
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
-import { ContributedDetailPanels, registerViewToolbar, hasDetailPanel } from "@cobblr/platform-web";
+import { ContributedDetailPanels, ContributedTagToolbar, registerViewToolbar, registerTagToolbar, hasDetailPanel } from "@cobblr/platform-web";
 // Detail panels register in their own small module, imported at boot by
 // main.tsx; re-imported here so a page that names this file still has them.
 import "./detail-panels";
@@ -30,6 +30,11 @@ const PAGE_TABS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ModuleP
 registerViewToolbar(
   "inventory:stocktake-view",
   lazy(() => import("../features/inventory/stocktakeView").then((m) => ({ default: m.StocktakeViewControl }))),
+);
+
+registerTagToolbar(
+  "inventory:recount-tag",
+  lazy(() => import("../features/inventory/recountTag").then((m) => ({ default: m.RecountTagControl }))),
 );
 
 // Sections on a kernel Configuration page (surface "configuration-section"):
@@ -62,7 +67,7 @@ export function ContributedConfigSections({ target, panels, ctx }: { target: str
     </>
   );
 }
-export { hasDetailPanel, ContributedDetailPanels };
+export { hasDetailPanel, ContributedDetailPanels, ContributedTagToolbar };
 
 const spinner = (
   <div className="text-xs text-faint italic py-4" aria-busy="true">

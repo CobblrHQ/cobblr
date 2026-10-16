@@ -6,6 +6,7 @@
 // share used to look for a native writer only, and a shared Pattern
 // (projects:project, which declares endpoints but registers no writer) was
 // accepted into a share space that could never hold it (#5911).
+import { productName } from "./product-name.js";
 import { platform, type EntityWriter } from "@cobblr/platform-contract";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { meta } from "../db/meta.js";
@@ -93,5 +94,5 @@ export async function shareRefusal(orgId: string, kinds: Iterable<string>): Prom
   if (!cannot.length) return null;
   const names = await listKindsForOrg(orgId);
   const word = (k: string) => names.find((n) => n.id === k)?.display_name_plural ?? k;
-  return `${cannot.map(word).join(", ")} cannot be shared yet: this Cobblr has no way to keep a copy of them in someone else's workspace.`;
+  return `${cannot.map(word).join(", ")} cannot be shared yet: this ${productName()} has no way to keep a copy of them in someone else's workspace.`;
 }

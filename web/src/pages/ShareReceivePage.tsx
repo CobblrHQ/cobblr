@@ -9,6 +9,7 @@
 //
 // A share that arrives as a plain link (?title=&text=&url=, no worker, or an
 // app that shares by GET) is read from the address instead.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
@@ -117,7 +118,7 @@ export function ShareReceivePage() {
       ) : (
         <>
           <p className="text-sm text-content">There was nothing to add here.</p>
-          <p className="mt-2 text-sm text-muted">Share a product from a shopping app to Cobblr, or paste its title and link into the inbox.</p>
+          <p className="mt-2 text-sm text-muted">Share a product from a shopping app to {productName()}, or paste its title and link into the inbox.</p>
           <button type="button" onClick={() => navigate("/scan")} className="mt-4 rounded bg-cobble-600 hover:bg-cobble-700 px-3 py-1.5 text-sm text-white">
             Open the inbox
           </button>

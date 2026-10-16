@@ -3,6 +3,7 @@
 // workspace and whether the assistant may only look or also make changes;
 // the server has already checked the request (client, redirect, PKCE,
 // resource) before anything is shown, and hands back where to go next.
+import { productName } from "@cobblr/platform-web";
 import { useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -68,10 +69,10 @@ export function OAuthConsentPage() {
     <div className="min-h-screen grid place-items-center p-4">
       <div className={CARD}>
         <div>
-          <h1 className="text-lg font-semibold text-content dark:text-mortar-100">Connect to Cobblr</h1>
+          <h1 className="text-lg font-semibold text-content dark:text-mortar-100">Connect to {productName()}</h1>
           <p className="text-sm text-muted dark:text-slate-400 mt-1">
             <strong className="text-content dark:text-mortar-100">{name}</strong> (it calls itself that; it is sending you back to{" "}
-            <span className="font-mono">{d.redirect_host}</span>) wants to use Cobblr as you.
+            <span className="font-mono">{d.redirect_host}</span>) wants to use {productName()} as you.
           </p>
         </div>
 

@@ -1,3 +1,5 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import type { ScanPurpose } from "@cobblr/platform-contract/scan-triage";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan/camera — full-screen immersive scanner, production-grade.
@@ -2510,7 +2512,7 @@ export function ScanCameraPage() {
             <div className="mt-4 text-center text-white/85 text-sm px-8 [text-shadow:0_1px_2px_rgba(0,0,0,0.7)]" data-testid="camera-instructions">
               {supported === false
                 ? "Hold a barcode steady, snap a photo, or type the barcode number below."
-                : "Point at a barcode or a Cobblr QR label, or hit the shutter to photograph it."}
+                : `Point at a barcode or ${withArticle(productName())} QR label, or hit the shutter to photograph it.`}
             </div>
           )}
         </div>
@@ -3128,7 +3130,7 @@ function ZoomChip({ range, level, onPick }: { range: { min: number; max: number 
     return (
       <span
         className="rounded-full bg-black/40 px-2.5 py-1.5 text-[11px] font-medium text-white/60"
-        title="This browser doesn't let Cobblr zoom the camera. Move the phone closer or further away instead."
+        title={`This browser doesn't let ${productName()} zoom the camera. Move the phone closer or further away instead.`}
         aria-label="Zoom isn't available in this browser"
         data-testid="zoom-unavailable"
       >

@@ -124,6 +124,7 @@ export {
 export { Markdown, MarkdownText, stripMarkdown } from "./Markdown";
 export { MarkdownEditor } from "./MarkdownEditor";
 export { QrCode } from "./QrCode";
+export { SelectBox } from "./SelectBox";
 // The wall QR sheet, shared with every app on the engine so its warning cannot drift (#6738).
 export { printJoinSheet, joinSheetText, joinSheetHtml, joinSheetRole, type JoinSheetOptions, type JoinSheetRole, type JoinSheetPace, type JoinSheetText } from "./join-sheet";
 export { DocThumb, docThumbFor } from "./DocThumb";
@@ -198,8 +199,12 @@ export {
   type DetailPanelComponent,
   ContributedViewToolbar,
   registerViewToolbar,
+  ContributedTagToolbar,
+  registerTagToolbar,
   type ViewToolbarCtx,
   type ViewToolbarComponent,
+  type TagToolbarCtx,
+  type TagToolbarComponent,
 } from "./panels";
 export { Modal } from "./Modal";
 export { RecordFormModal } from "./RecordFormModal";
@@ -388,3 +393,4 @@ export { GUEST_NOT_SHARED, makesBackgroundWrites, mayRead, refusedForGuest, reme
 export { PRIMED_FOR_MS, clearPrimedReads, holdPrimedReads, primeReads, primedRead, resetPrimedReads } from "./primed-reads";
 export { resetSharedReads, sharedRead } from "./shared-reads";
 export { StatusRow, type StatusRowProps } from "./StatusRow";
+export { configureProductName, productName } from "./product-name";

@@ -9,6 +9,7 @@
 //
 // Spec: docs/design-decisions/discussion-and-the-side-rail.md
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -558,7 +559,7 @@ export function DiscussionTab() {
               </Link>{" "}
               and someone mentioning you here reaches you straight away, with a
               reply box on the message. Without it, you find out next time you
-              open Cobblr.
+              open {productName()}.
             </p>
             <button
               title="Dismiss"

@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { LaserDrawing } from "./LaserDrawing";
 import { laserLayerLabel } from "../../lib/laser-layer-label";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -19,7 +20,7 @@ function ProfileEditor({ record, onSave, busy }: { record: LaserProfileRecord; o
   <label className="block">Operation<select className={control} value={p.operation} onChange={e => set({ ...p, operation: e.target.value as typeof p.operation })}>{["cut", "score", "engrave"].map(v => <option key={v}>{v}</option>)}</select></label>
   <div className="grid sm:grid-cols-2 gap-3">{([{ key: "thickness_mm", name: "Thickness (mm)", min: 0.01, max: 1000 }, { key: "speed", name: "Speed (mm/s)", min: 0.01, max: 10000 }, { key: "min_power", name: "Minimum power (%)", min: 0, max: 100 }, { key: "max_power", name: "Maximum power (%)", min: 0, max: 100 }, { key: "passes", name: "Passes", min: 1, max: 100 }, { key: "focus_offset", name: "Focus offset (mm)", min: -100, max: 100 }] as const).map(f => <label key={f.key} className="block">{f.name}<NumberField required min={f.min} max={f.max} className={control} value={p[f.key]} onChange={(n) => set({ ...p, [f.key]: n })} /></label>)}</div>
   <label className="min-h-11 flex items-center gap-3"><input type="checkbox" checked={p.air_assist} onChange={e => set({ ...p, air_assist: e.target.checked })} />Air assist</label>
-  <p className="text-sm text-muted">Source: {record.source.library || "Cobblr material profile"}{record.source.edited_at ? " · Edited in Cobblr" : ""}</p>
+  <p className="text-sm text-muted">Source: {record.source.library || `${productName()} material profile`}{record.source.edited_at ? ` · Edited in ${productName()}` : ""}</p>
   {record.id === "new" && <label className="flex min-h-11 items-center gap-3"><input type="checkbox" required />I tested these settings on this machine</label>}
   <button type="submit" disabled={busy} className={button}>Save profile</button>
  </form>;

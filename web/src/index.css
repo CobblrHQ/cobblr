@@ -142,9 +142,15 @@
      * `[--sticky-gap:1rem]`, never with a top-* of its own. */
     top: calc(var(--app-header-bottom, 0px) + var(--sticky-gap, 0px));
   }
-  /* The room a viewport-sticky column has under the header. */
+  /* The room a viewport-sticky column has under the header: above the home
+   * bar and the bottom dock too, and a --sticky-gap's breath above and below
+   * it. Without them a phone on its side ran the Configuration sidebar's last
+   * row ("Email") over the 21 px home bar (#6800). */
   .fill-under-header {
-    max-height: calc(100dvh - var(--app-header-bottom, 0px));
+    max-height: calc(
+      100dvh - var(--app-header-bottom, 0px) - 2 * var(--sticky-gap, 0px) - var(--inset-bottom) -
+        var(--bottom-chrome-height, 0px)
+    );
   }
   .sticky-in-scroller {
     position: sticky;
@@ -359,6 +365,53 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
     display: flex;
     align-items: center;
     min-height: 44px;
+  }
+
+  /* Every button and link is a finger's 44 by 44 in its OWN box (#6782):
+     never an invisible reach past it, which lies over the next control
+     (docs/design-decisions/floating-chrome.md). A link inside a sentence is
+     an inline box, which min-height and min-width do not touch: it reads as
+     text, and WCAG 2.5.8 exempts it. A row's own spacing stays the owner's;
+     where a control grew, the row lets it overlap its padding (below). */
+  /* !important, as #6791's fields: a min-h-9 on a button is a desk's size,
+     and on a phone it may not win. */
+  :where(button, a[href], [role="button"], summary) {
+    min-height: 44px !important;
+    min-width: 44px !important;
+  }
+  /* A checkbox's label is the box a finger presses: as wide as it is tall. */
+  :where(label:has(> input[type="checkbox"]:only-child)) {
+    min-width: 44px !important;
+    justify-content: center;
+  }
+  /* The app header (data-toolbar="bar") is one 44 px toolbar (AppLayout), tuned so the workspace name
+     keeps its room beside six icons. Its controls take their 44 px of height
+     out of the bar's own padding (mostly below), so the bar keeps its height, and keep their
+     tuned width, 28 px at least: six icons at 36 or 44 px left the name one
+     letter on a 393 px phone (#6782). The bar is 44 px on a phone (pt-1
+     pb-3), so the boxes end inside it and leave with it when it hides. Plain selectors: preflight's button { margin: 0 }
+     outranks a :where(). Marked, never every <header>: a card's header is
+     not the bar. */
+  [data-toolbar="bar"] button,
+  [data-toolbar="bar"] a[href],
+  [data-toolbar="bar"] [role="button"],
+  [data-toolbar="bar"] summary {
+    /* 16 px of extra height, taken mostly below: the row rides high in the
+       bar (pt-1) and a box reaching up would sit under the status bar. */
+    margin-top: -4px;
+    margin-bottom: -12px;
+    min-width: 28px !important;
+  }
+  /* Any other row the owner tuned to the pixel (the scan inbox's header,
+     whose counts have ~163 px on a phone) says so with data-toolbar="row": its
+     controls take their 44 px of height out of the row's padding and keep
+     their tuned width (28 px at least), so the row neither grows nor cuts its words. */
+  [data-toolbar="row"] button,
+  [data-toolbar="row"] a[href],
+  [data-toolbar="row"] [role="button"],
+  [data-toolbar="row"] summary {
+    margin-block: -8px;
+    min-width: 28px !important;
   }
 }
 

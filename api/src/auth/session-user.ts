@@ -36,6 +36,8 @@ export const SESSION_USER_COLUMNS = [
   "title_pref",
   "tour_seen_at",
   "tips",
+  // Where the person is, so a client can tell the engine when its browser says otherwise.
+  "time_zone",
 ] as const;
 
 /** The row, with email_verified_at already folded into the boolean the client

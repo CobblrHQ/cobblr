@@ -19,6 +19,7 @@
 // serviceConnectionById, never the tables, so the order a page shows is the
 // order a job walks.
 
+import { productName } from "./product-name.js";
 import { createHash } from "node:crypto";
 import { EdgeOffline, EdgeTimeout, platform, type AiConnectionTest, type ConnectionProviderDef, type PreparedConnection } from "@cobblr/platform-contract";
 import { SERVICE_KIND } from "@cobblr/platform-contract/connection-capability";
@@ -305,7 +306,7 @@ export const SERVICE_PROVIDER: ConnectionProviderDef = {
   id: SERVICE_KIND,
   kind: SERVICE_KIND,
   label: "A service",
-  blurb: "Something that does work for you, installed by you: a slicer, a design service. Cobblr reads what it offers from the service itself.",
+  blurb: `Something that does work for you, installed by you: a slicer, a design service. ${productName()} reads what it offers from the service itself.`,
   credentials: {
     base_url: { label: "Where it is", secret: false },
     transit: { label: "How to reach it", secret: false },

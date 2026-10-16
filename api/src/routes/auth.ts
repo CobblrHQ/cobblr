@@ -1,3 +1,4 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { currencyFromLocale } from "@cobblr/platform-contract/money";
 // /api/v1/auth — signup, login. Minimal for Phase 0:
 //
@@ -196,6 +197,8 @@ interface AuthResponseUser {
   title_pref?: string | null;
   nav_pref: unknown;
   tour_seen_at: Date | string | null;
+  /** The IANA zone the person's browser last reported, or null (users.time_zone). */
+  time_zone: string | null;
   /** Tips shown and dismissed (see users.tips). */
   tips: { shown?: Record<string, string>; dismissed?: Record<string, string> };
   /** Community Discord invite (see discordInviteUrl) or null; signed-in chrome only. */
@@ -403,7 +406,7 @@ authRouter.get("/config", async (req, res) => {
           // Whose account it is. Configurable because nothing else in this feature is
           // Cobblr-specific: point IDENTITY_URL at your own service and the button
           // should say your name, not ours.
-          name: (process.env.IDENTITY_NAME ?? "").trim() || "Cobblr",
+          name: (process.env.IDENTITY_NAME ?? "").trim() || /* PRODUCT-NAME: The separately operated identity service has its own account name. */ "Cobblr",
           // Will arriving from the identity service CREATE an account here?
           //
           // Published because a portal listing this surface has to answer "can
@@ -1769,7 +1772,7 @@ export async function issueAndSendVerifyEmail(
     subject: `Verify your ${productName()} email`,
     text:
       `Confirm your email to finish setting up your ${productName()} account:\n\n${absLink}\n\n` +
-      `This link expires in 24 hours. If you didn't create a ${productName()} account, you can ignore this email.`,
+      `This link expires in 24 hours. If you didn't create ${withArticle(productName())} account, you can ignore this email.`,
     kind: "verify_email",
   });
   return { emailed, devToken: !emailed && process.env.NODE_ENV !== "production" ? plain : undefined };

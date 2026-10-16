@@ -11,6 +11,7 @@
 // source (Part-DB) needed the same flow with different strings and one extra
 // step, so the flow moved here and each source became a descriptor.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState, type ReactNode } from "react";
 import { Loader2, CheckCircle2, AlertTriangle, ArrowRight, Link2, Camera, Info } from "lucide-react";
 import { Modal, useToast, SecretInput, AddressInput } from "@cobblr/platform-web";
@@ -234,7 +235,7 @@ export function LiveImportModal({ source, open, onClose }: { source: LiveImportS
               <span>
                 My {source.name} is on my local network
                 <span className="block text-[11px] text-faint">
-                  Tick this if the address above isn't reachable from the internet - Cobblr will fetch it through an
+                  Tick this if the address above isn't reachable from the internet - {productName()} will fetch it through an
                   edge bridge on your network.
                 </span>
               </span>

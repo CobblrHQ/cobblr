@@ -1,6 +1,7 @@
 // /configuration/catalogs — list of imported reference datasets +
 // "+ New catalog" affordance. Clicking a row opens the detail page.
 
+import { productName } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -83,7 +84,7 @@ export function CatalogsPage() {
                 title: "Delete catalog?",
                 message:
                   c.source === "hosted"
-                    ? `${c.name} will be removed from this workspace (its data stays in Cobblr's shared catalog). Existing matches from your entities to it will become dangling.`
+                    ? `${c.name} will be removed from this workspace (its data stays in ${productName()}'s shared catalog). Existing matches from your entities to it will become dangling.`
                     : `${c.name} and all ${countOf(c.entry_count, "entry")} will be removed. Existing matches from your entities to entries in this catalog will become dangling.`,
                 confirmLabel: "Delete",
                 destructive: true,
@@ -138,7 +139,7 @@ function CatalogCard({
           // entries" reads as broken. Say "Hosted" instead: it's ready to match
           // against, nothing to import.
           <span
-            title="Served from Cobblr's shared reference catalog - ready to match against, nothing to import."
+            title={`Served from ${productName()}'s shared reference catalog - ready to match against, nothing to import.`}
             className="text-[10px] uppercase tracking-widest text-accent dark:text-cobble-400 rounded bg-accent/10 dark:bg-cobble-400/10 px-1.5 py-0.5"
           >
             Hosted

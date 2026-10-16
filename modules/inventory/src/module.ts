@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.20",
+  version: "0.21.21",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -1176,6 +1176,8 @@ export default defineModule({
       // On every saved view of this module's records (a Groceries "What's on
       // hand"): a stocktake of exactly the records the view shows.
       { id: "inventory:stocktake-view", surface: "view-toolbar" as const, target: "inventory", title: "What's still here?" },
+      // Recount the things of one collection that carry a tag, over that group of the tag's page (#6819).
+      { id: "inventory:recount-tag", surface: "tag-toolbar" as const, target: "inventory", title: "Recount these" },
     ],
     wires: [
       {

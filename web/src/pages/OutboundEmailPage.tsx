@@ -6,6 +6,7 @@
 // workspace's own Twilio account, for automations that text someone outside
 // the workspace (#6070), and the switch and limits for those automations.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -265,7 +266,7 @@ function TextMessagesSection({ slug }: { slug: string }) {
         </h2>
       </div>
       <p className="text-xs text-muted dark:text-slate-400">
-        Your own Twilio account, for automations that text someone outside the workspace. Cobblr never texts anyone itself.
+        Your own Twilio account, for automations that text someone outside the workspace. {productName()} never texts anyone itself.
       </p>
       <FieldPack
         items={[
@@ -347,7 +348,7 @@ function AutomationEmailSection({ slug, configured }: { slug: string; configured
         <span>
           Allow automations to email or text people outside this workspace
           <span className="block text-xs text-muted dark:text-slate-400">
-            Someone on your People list who is not a member, when a wire says so (the coffee ran out: ask them to buy more). Only through your own sender above (email, or texts through your Twilio account), never Cobblr's own. Each message says who set it up and has a link that stops it.
+            Someone on your People list who is not a member, when a wire says so (the coffee ran out: ask them to buy more). Only through your own sender above (email, or texts through your Twilio account), never {productName()}'s own. Each message says who set it up and has a link that stops it.
           </span>
         </span>
       </label>

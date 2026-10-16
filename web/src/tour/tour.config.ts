@@ -9,6 +9,7 @@
 // To add a step: mark an element in the UI with `data-tour="my-thing"`, then add
 // `{ kind: "spotlight", target: '[data-tour="my-thing"]', title, body }` here.
 
+import { productName } from "@cobblr/platform-web";
 import { NAV_LAYOUTS, setNavLayout, type NavLayout } from "../lib/nav-mode";
 
 /** What a step says on a PHONE instead, where the desktop's words do not
@@ -53,7 +54,7 @@ export type TourStep =
 export const DASHBOARD_TOUR: TourStep[] = [
   {
     kind: "chooseLayout",
-    title: "Welcome to Cobblr",
+    title: `Welcome to ${productName()}`,
     body: "First, how do you want to get around? Try each; you can change it any time under Your account, Appearance.",
     // A phone has one way around and is not asked to choose one (#3231): its
     // welcome says where things are and offers the look.
@@ -87,9 +88,9 @@ export const DASHBOARD_TOUR: TourStep[] = [
     kind: "spotlight",
     target: '[data-tour="do-box"]',
     title: "Start here",
-    body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start. Press ⌘K any time to jump anywhere.",
+    body: `Type what you've got and ${productName()} finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start. Press ⌘K any time to jump anywhere.`,
     phone: {
-      body: "Type what you've got and Cobblr finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start.",
+      body: `Type what you've got and ${productName()} finds or builds the right home for it - the fastest way to fill a new workspace. Or scan it. A few ready-made setups sit under the box; everything else is behind More ways to start.`,
     },
   },
   {
@@ -117,7 +118,7 @@ export const DASHBOARD_TOUR: TourStep[] = [
   },
   {
     kind: "installApp",
-    title: "Put Cobblr on your home screen",
+    title: `Put ${productName()} on your home screen`,
   },
   {
     kind: "done",

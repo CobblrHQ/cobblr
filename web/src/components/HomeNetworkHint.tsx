@@ -6,6 +6,7 @@
 // the connection failed with a raw "fetch failed" (#3904). The rule is the
 // contract's (`needsBridge`), the same one the hosted egress guard applies.
 
+import { productName } from "@cobblr/platform-web";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -51,11 +52,11 @@ export function HomeNetworkHint({
       <Router size={12} className="mt-0.5 shrink-0" />
       {throughBridge && !noBridgeYet ? (
         <span>
-          <span className="font-mono">{where}</span> is on your home network, so Cobblr reaches it through your bridge.
+          <span className="font-mono">{where}</span> is on your home network, so {productName()} reaches it through your bridge.
         </span>
       ) : (
         <span>
-          <span className="font-mono">{where}</span> is on your home network, so Cobblr can't reach it by itself. A small
+          <span className="font-mono">{where}</span> is on your home network, so {productName()} can't reach it by itself. A small
           bridge on that network carries it.{" "}
           <Link to="/configuration/devices" className="underline hover:text-accent">
             Set up a bridge

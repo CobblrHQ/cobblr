@@ -7,6 +7,8 @@
 // Without one, or without mail, the owner gets the link to send themselves.
 // Either way the link comes back, in case the email lands in spam.
 
+import { productName } from "./product-name.js";
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { pluralise } from "@cobblr/platform-contract";
 import { kindWordsFrom } from "@cobblr/platform-contract/kind-label";
 import { meta } from "../db/meta.js";
@@ -48,7 +50,7 @@ export async function inviteToShare(
   let mail: InviteMail | null = null;
   if (email) {
     const org = await meta.selectFrom("orgs").select("name").where("id", "=", p.orgId).executeTakeFirst();
-    mail = await emailShareInvite({ orgId: p.orgId, linkId: made.linkId, to: email, url, workspaceName: org?.name ?? "A Cobblr workspace", what: await describeInviteScope(p.orgId, p.collection) }, deps);
+    mail = await emailShareInvite({ orgId: p.orgId, linkId: made.linkId, to: email, url, workspaceName: org?.name ?? `${withArticle(productName()).replace(/^a/, "A")} workspace`, what: await describeInviteScope(p.orgId, p.collection) }, deps);
   }
   return { linkId: made.linkId, url, links, expiresAt: made.expiresAt, email, mail };
 }

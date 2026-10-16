@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 // The Cobblr cloud, and where a share or a transfer can go (#4737).
 //
 // One setting names the cloud for the whole product: COBBLR_CLOUD_URL. Every
@@ -68,7 +69,7 @@ function parseDestinations(raw: string): Array<{ label: string; origin: string }
 /** Where an invite from this Cobblr can be opened, in the order offered; the
  *  first is the default. */
 export function inviteDestinations(here: string): InviteDestination[] {
-  const self = { label: here ? new URL(here).host : "This Cobblr", origin: origin(here), note: null };
+  const self = { label: here ? new URL(here).host : `This ${productName()}`, origin: origin(here), note: null };
   const raw = (process.env.COBBLR_SHARE_INVITE_DESTINATIONS || "").trim();
   if (raw === "self") return [self];
   if (raw) return parseDestinations(raw).map((d) => ({ ...d, note: null }));
@@ -80,7 +81,7 @@ export function inviteDestinations(here: string): InviteDestination[] {
     {
       label: new URL(cloud).host,
       origin: cloud,
-      note: trusted ? null : "The Cobblr cloud does not take invites from other Cobblrs yet, so this link will not work there.",
+      note: trusted ? null : `The ${productName()} cloud does not take invites from other ${productName()} servers yet, so this link will not work there.`,
     },
   ];
 }
@@ -99,7 +100,7 @@ export function destinationsProblem(here: string): string | null {
   const ok = new Set([origin(here), ...trustedPeers()]);
   const bad = parsed.filter((d) => !ok.has(d.origin));
   return bad.length
-    ? `COBBLR_SHARE_INVITE_DESTINATIONS names ${bad.map((d) => d.origin).join(", ")}, which is neither this Cobblr (PUBLIC_BASE_URL) nor in COBBLR_SHARE_TRUSTED_PEERS, so an invite opened there could never pair. Add it to COBBLR_SHARE_TRUSTED_PEERS or take it out.`
+    ? `COBBLR_SHARE_INVITE_DESTINATIONS names ${bad.map((d) => d.origin).join(", ")}, which is neither this ${productName()} (PUBLIC_BASE_URL) nor in COBBLR_SHARE_TRUSTED_PEERS, so an invite opened there could never pair. Add it to COBBLR_SHARE_TRUSTED_PEERS or take it out.`
     : null;
 }
 

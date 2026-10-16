@@ -1,0 +1,10 @@
+{
+  "lint": "lint:deferred-has-a-probe",
+  "run": "node scripts/lint-deferred-has-a-probe.ts",
+  "rows": [
+    "user-doc"
+  ],
+  "ms": 2088,
+  "recorded": "2026-10-17",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

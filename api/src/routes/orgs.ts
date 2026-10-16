@@ -63,6 +63,58 @@ orgsRouter.put("/:slug/currency", requireAuth, withTenant, async (req, res, next
   } catch (err) { next(err); }
 });
 
+// ──────────────────────── a workspace left half made ─────────────────
+
+/** How long a workspace may be mid-provisioning before a person may finish it
+ *  themselves: signup holds its answer until the database is made, so one this
+ *  young is still being made by the request that created it. */
+export const FINISH_SETUP_AFTER_MS = 2 * 60_000;
+
+// POST /orgs/:slug/finish-setup — finish a workspace whose database was never
+// made (#5146). Not behind withTenant: that answers 503 tenant_unprovisioned to
+// everything here, which is the state this door exists to leave. Any member
+// (never a guest) may press it; it is idempotent, and a workspace already whole answers so.
+// AI-REACH: exempt - a workspace with no database answers 503 to every assistant call; finishing it is the person's own button on the screen that says it is not set up yet.
+orgsRouter.post("/:slug/finish-setup", requireAuth, async (req, res, next) => {
+  try {
+    const org = await meta
+      .selectFrom("org_memberships as m")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select(["o.id as id", "o.created_at as created_at", "o.db_credentials_encrypted as credentials", "m.role as role"])
+      .where("o.slug", "=", req.params.slug!)
+      .where("m.user_id", "=", req.session!.id)
+      .executeTakeFirst();
+    if (!org) {
+      res.status(404).json({ error: { code: "not_found", message: "No workspace by that name is yours." } });
+      return;
+    }
+    // A guest reads what the workspace shares and changes nothing; setting it up is a member's.
+    if (!roleSatisfies(org.role, ["member"])) {
+      res.status(403).json({ error: { code: "forbidden", message: "A member of this workspace finishes setting it up." } });
+      return;
+    }
+    if (org.credentials) {
+      res.json({ finished: true, already: true });
+      return;
+    }
+    if (Date.now() - new Date(org.created_at).getTime() < FINISH_SETUP_AFTER_MS) {
+      res.status(409).json({ error: { code: "still_being_made", message: "This workspace is still being set up. Try again in a minute." } });
+      return;
+    }
+    const { finishProvisioning } = await import("../platform/provision-workspace.js");
+    try {
+      await finishProvisioning(org.id, req.session!.id, { resetFirst: true });
+    } catch (err) {
+      console.error(`[finish-setup] ${org.id} failed:`, (err as Error).message);
+      res.status(503).json({ error: { code: "setup_failed", message: "Setting this workspace up did not finish this time. Nothing was lost; try again in a few minutes." } });
+      return;
+    }
+    res.json({ finished: true, already: false });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ──────────────────────── multi-org listing + create ────────────────
 
 // GET /orgs — list all orgs the current user belongs to. Lets the

@@ -3,6 +3,7 @@
 // page: turn it on for this device (a tap, so iOS lets the browser ask), the
 // devices that get pushes and how each last fared, what is worth a push, and
 // quiet hours.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { BellRing, Moon, Smartphone } from "lucide-react";
@@ -50,7 +51,7 @@ export function PushNotificationsCard() {
         <div className="space-y-1">
           <div className="font-medium text-content dark:text-mortar-100">Notifications on your phone and computer</div>
           <p className="text-sm text-muted dark:text-slate-400">
-            Cobblr can buzz this device for what needs you, even when the app is closed. Each phone and computer is turned on by itself.
+            {productName()} can buzz this device for what needs you, even when the app is closed. Each phone and computer is turned on by itself.
           </p>
         </div>
       </div>
@@ -61,7 +62,7 @@ export function PushNotificationsCard() {
       ) : readiness.kind === "install-first" ? (
         <div className="rounded-md border border-line dark:border-slate-700 bg-subtle dark:bg-slate-800/50 p-3 text-sm space-y-2" data-testid="push-install-first">
           <p className="text-content dark:text-mortar-200">
-            Add Cobblr to your Home Screen first (Share, then Add to Home Screen), then open it from there and turn notifications on here.
+            Add {productName()} to your Home Screen first (Share, then Add to Home Screen), then open it from there and turn notifications on here.
           </p>
           <p className="text-xs text-muted dark:text-slate-400">An iPhone or iPad only lets an app on the Home Screen send notifications.</p>
           <button type="button" className={quiet} onClick={() => setWalking(true)}>
@@ -70,11 +71,11 @@ export function PushNotificationsCard() {
         </div>
       ) : readiness.kind === "unsupported" ? (
         <p className="text-sm text-muted dark:text-slate-400" data-testid="push-unsupported">
-          This browser can't show notifications from Cobblr. Open Cobblr in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad.
+          This browser can't show notifications from {productName()}. Open {productName()} in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad.
         </p>
       ) : readiness.kind === "denied" ? (
         <div className="text-sm space-y-1" data-testid="push-denied">
-          <p className="text-content dark:text-mortar-200">This device said no to notifications from Cobblr, so only its own settings can let them in again.</p>
+          <p className="text-content dark:text-mortar-200">This device said no to notifications from {productName()}, so only its own settings can let them in again.</p>
           <p className="text-muted dark:text-slate-400">{readiness.howToAllow}</p>
         </div>
       ) : here ? (
@@ -123,7 +124,7 @@ export function PushNotificationsCard() {
                 className={quiet}
                 disabled={remove.isPending}
                 onClick={async () => {
-                  if (await confirm({ title: `Stop notifications on ${d.label}?`, message: "It stops buzzing for Cobblr. Turn it on there again whenever you like.", confirmLabel: "Remove", destructive: true })) remove.mutate(d.id);
+                  if (await confirm({ title: `Stop notifications on ${d.label}?`, message: `It stops buzzing for ${productName()}. Turn it on there again whenever you like.`, confirmLabel: "Remove", destructive: true })) remove.mutate(d.id);
                 }}
               >
                 Remove

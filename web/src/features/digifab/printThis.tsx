@@ -7,6 +7,7 @@
 // preview, the printer, the spool and its slot, the grams and the time, and
 // the sentence that says pressing Start moves a real machine.
 
+import { productName } from "@cobblr/platform-web";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -57,7 +58,7 @@ export function PrintThisDialog({ fileId, makeId, what, initialQuantity = 1, onC
           if (material.trim()) start.mutate();
         }}
       >
-        <p className="text-sm text-muted">Cobblr picks the printer the part fits that has this material loaded, slices it for that printer, and waits for you to start it. Nothing prints until you press Start.</p>
+        <p className="text-sm text-muted">{productName()} picks the printer the part fits that has this material loaded, slices it for that printer, and waits for you to start it. Nothing prints until you press Start.</p>
         <label className="block text-sm">
           <span className="text-muted">Material</span>
           <input

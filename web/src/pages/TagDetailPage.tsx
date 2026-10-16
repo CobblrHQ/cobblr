@@ -18,7 +18,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { EditTagModal } from "../components/EditTagModal";
 import { EntityAttachments } from "../components/EntityAttachments";
-import { ContributedDetailPanels } from "../panels/registry";
+import { ContributedDetailPanels, ContributedTagToolbar } from "../panels/registry";
 
 export function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -52,13 +52,14 @@ export function TagDetailPage() {
   // What carries the tag, grouped by what it is, most first.
   const groups = useMemo(() => {
     const names = new Map((kinds.data?.items ?? []).map((k) => [k.id, k.display_name_plural ?? k.display_name]));
+    const owners = new Map((kinds.data?.items ?? []).map((k) => [k.id, { module: k.module_name, collection: k.instance_name ?? null }]));
     const by = new Map<string, TagAttachment[]>();
     for (const a of attached.data?.items ?? []) {
       const kind = `${a.source_module}:${a.source_type}`;
       by.set(kind, [...(by.get(kind) ?? []), a]);
     }
     return [...by.entries()]
-      .map(([kind, items]) => ({ kind, label: names.get(kind) ?? kind, items }))
+      .map(([kind, items]) => ({ kind, label: names.get(kind) ?? kind, owner: owners.get(kind) ?? null, items }))
       .sort((x, y) => y.items.length - x.items.length || x.label.localeCompare(y.label));
   }, [attached.data, kinds.data]);
 
@@ -201,8 +202,15 @@ export function TagDetailPage() {
         )}
         {groups.map((g) => (
           <div key={g.kind} className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 space-y-2">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted dark:text-slate-400">
-              {g.label} · {g.items.length}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted dark:text-slate-400">
+                {g.label} · {g.items.length}
+              </div>
+              {/* What the module owning these records offers over them (a recount); this page names none. */}
+              <ContributedTagToolbar
+                module={g.owner?.module}
+                ctx={{ slug: activeSlug, kind: g.kind, collection: g.owner?.collection ?? null, ids: g.items.map((a) => a.source_id), tagName: tag.name }}
+              />
             </div>
             <ul className="flex flex-wrap gap-2">
               {g.items.map((a) => (

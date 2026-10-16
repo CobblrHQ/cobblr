@@ -14,6 +14,7 @@
 // platform code; if a second module ever wants a similar
 // no-slug-no-auth URL pattern we generalize this into a primitive.
 
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import type { Kysely } from "kysely";
 import { createHmac, timingSafeEqual } from "node:crypto";
@@ -224,10 +225,10 @@ publicRouter.get("/label", (req, res, next) => {
     const qr = t ? await resolveQrToken(t) : null;
     const view = qr?.ok && qr.mode === "navigate" ? await labelPublicRecord(qr.org_id!, qr.entity_kind!, qr.entity_id!, t) : null;
     if (!view) {
-      res.status(404).json({ error: { code: "not_public", message: "This belongs to someone else's Cobblr." } });
+      res.status(404).json({ error: { code: "not_public", message: `This belongs to someone else's ${productName()}.` } });
       return;
     }
-    if (req.get("X-Cobblr-Visit") === "1") {
+    if (req.get(/* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Visit") === "1") {
       await countLabelScan(qr!.org_id!, view.pageId, view.ownerId).catch((err) => console.error("[public] label scan count failed:", (err as Error).message));
     }
     res.json({ page: view.page, record: view.record });
@@ -559,7 +560,7 @@ publicRouter.get("/:token", (req, res, next) => {
 
     // Only an explicit page opening is a visit. Public screens also refresh
     // this data on timers and focus changes without another visitor arriving.
-    if (req.get("X-Cobblr-Visit") === "1") {
+    if (req.get(/* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Visit") === "1") {
       void platform().events.emit("core-public-surfaces.surface.viewed", {
         orgId: tok.orgId,
         surfaceId: surface.id,
@@ -667,7 +668,7 @@ publicRouter.get("/scan-export/:token/files/:id/raw", (req, res, next) => {
 publicRouter.get("/external-stop/:token", async (req, res, next) => {
   try {
     const claim = readStopToken(req.params.token ?? "");
-    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: "This link is not one Cobblr made, or it was changed." } });
+    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: `This link is not one ${productName()} made, or it was changed.` } });
     const org = await meta.selectFrom("orgs").select("name").where("id", "=", claim.o).executeTakeFirst();
     const stopped = await meta
       .selectFrom("external_message_stops")
@@ -687,7 +688,7 @@ publicRouter.get("/external-stop/:token", async (req, res, next) => {
 publicRouter.post("/external-stop/:token", async (req, res, next) => {
   try {
     const claim = readStopToken(req.params.token ?? "");
-    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: "This link is not one Cobblr made, or it was changed." } });
+    if (!claim) return void res.status(404).json({ error: { code: "not_found", message: `This link is not one ${productName()} made, or it was changed.` } });
     await stopMessages(claim);
     res.json({ stopped: true });
   } catch (err) {
@@ -704,7 +705,7 @@ publicRouter.get("/external-reply/:token", async (req, res, next) => {
     const r = await readReply(req.params.token ?? "");
     if (!r.ok) {
       const status = r.why === "expired" ? 410 : 404;
-      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : "This link is not one Cobblr made, or it was changed." } });
+      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : `This link is not one ${productName()} made, or it was changed.` } });
     }
     res.json({ workspace: r.workspace, item: r.item, answered: r.answered });
   } catch (err) {
@@ -722,7 +723,7 @@ publicRouter.post("/external-reply/:token", async (req, res, next) => {
     const r = await answerReply(req.params.token ?? "", body.data.answer);
     if (!r.ok) {
       const status = r.why === "expired" ? 410 : 404;
-      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : "This link is not one Cobblr made, or it was changed." } });
+      return void res.status(status).json({ error: { code: r.why, message: r.why === "expired" ? "This link has expired." : `This link is not one ${productName()} made, or it was changed.` } });
     }
     res.json({ answered: r.answered, listed: r.listed });
   } catch (err) {

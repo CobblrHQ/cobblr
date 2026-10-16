@@ -13,6 +13,7 @@
 // Rendered only on non-touch (desktop) devices; phones already have the direct
 // camera, so the button stands down there.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { Smartphone } from "lucide-react";
 import { Modal } from "@cobblr/platform-web";
@@ -213,7 +214,7 @@ function PairPhoneModal({ onClose }: { onClose: () => void }) {
               <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/15 p-3 space-y-2" data-testid="pair-trust-certificate">
                 <div className="text-xs font-semibold text-content dark:text-mortar-100">1 · Trust this box, once per phone</div>
                 <p className="text-[11px] text-muted dark:text-slate-400">
-                  This Cobblr signs its own certificate, so your phone has to trust it before the camera will open. Scan this, then:
+                  This {productName()} signs its own certificate, so your phone has to trust it before the camera will open. Scan this, then:
                   iPhone: install the profile, then Settings, General, About, Certificate Trust Settings, and turn it on. Android: install it as a CA certificate.
                 </p>
                 <div className="bg-white dark:bg-white rounded-md p-2 grid place-items-center">

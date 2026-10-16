@@ -13,6 +13,8 @@
 // AS the app rather than as a plain workspace; neither, a plain sentence and
 // the waitlist, and nothing to fill in.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { PasswordInput } from "@cobblr/platform-web";
 import { useState, type FormEvent } from "react";
 import { authorizeHref, rememberedSource } from "../lib/identity-door";
@@ -58,7 +60,7 @@ export function StartAppPage() {
   if (!meta) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 text-center">
-        <div className="text-sm text-muted">That app isn’t available. <a href="/" className="text-accent hover:underline">Go to Cobblr →</a></div>
+        <div className="text-sm text-muted">That app isn’t available. <a href="/" className="text-accent hover:underline">Go to {productName()} →</a></div>
       </div>
     );
   }
@@ -110,7 +112,7 @@ export function StartAppPage() {
       href={identityHref}
       className="block w-full text-center rounded-md border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800 text-sm font-medium px-3 py-2.5 transition"
     >
-      Continue with your {cfg?.identity?.name ?? "Cobblr"} account
+      Continue with your {cfg?.identity?.name ?? productName()} account
     </a>
   );
 
@@ -141,7 +143,7 @@ export function StartAppPage() {
               <>
                 {identityDoor}
                 <p className="text-center text-[11px] text-faint dark:text-slate-500">
-                  Signing up here directly is invite-only while it's early. A Cobblr account gets you in, and sets up {appName} for you.
+                  Signing up here directly is invite-only while it's early. {withArticle(productName()).replace(/^a/, "A")} account gets you in, and sets up {appName} for you.
                 </p>
               </>
             ) : (

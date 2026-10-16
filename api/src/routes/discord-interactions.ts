@@ -18,6 +18,7 @@
 //
 // See docs/design-decisions/discord-workspace-app.md.
 
+import { productName } from "../platform/product-name.js";
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { requireScope } from "../auth/capability.js";
@@ -259,7 +260,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
       res.json(
         settle(
           outcome.reason === "failed"
-            ? "That did not go through. Open it in Cobblr to finish."
+            ? `That did not go through. Open it in ${productName()} to finish.`
             : "This button is no longer valid.",
         ),
       );
@@ -281,6 +282,6 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     console.error("[discord-interactions]", (err as Error).message);
     // The press was real and we failed it. Say so rather than pretending, and
     // leave the message's link as the way through.
-    res.json(settle("Something went wrong. Open Cobblr to finish this."));
+    res.json(settle(`Something went wrong. Open ${productName()} to finish this.`));
   }
 }

@@ -59,6 +59,8 @@ import { pendingShareInvite } from "./lib/share-invite-pending";
 const BringPage = lazy(() => import("./pages/BringPage").then((m) => ({ default: m.BringPage })));
 const EndingPreview = lazy(() => import("./pages/EndingPreview").then((m) => ({ default: m.EndingPreview })));
 import { useSandboxEnded } from "./lib/sandbox-session";
+import { useWorkspaceUnfinished } from "./lib/workspace-unfinished";
+import { WorkspaceUnfinished } from "./pages/WorkspaceUnfinished";
 const StartAppPage = lazy(() => import("./pages/StartAppPage").then((m) => ({ default: m.StartAppPage })));
 const FeedbackWidget = lazyShellHost(() => import("./components/FeedbackWidget").then((m) => ({ default: m.FeedbackWidget })));
 const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
@@ -282,6 +284,20 @@ function NavPrefSync() {
   return null;
 }
 
+/** And where the person is: their browser's time zone, so a quote, an invoice
+ *  or a due date made for them is dated on their day, not on a day that has
+ *  arrived everywhere. Same rule: only an account that loaded, and only a
+ *  response that carried the field, says anything. */
+function TimeZoneSync() {
+  const { user } = useAuth();
+  const known = user && "time_zone" in user ? (user.time_zone ?? null) : undefined;
+  useEffect(() => {
+    if (known === undefined) return;
+    api.syncTimeZone(known).catch(() => undefined);
+  }, [known]);
+  return null;
+}
+
 export function App() {
   return (
     <ErrorBoundary scope="app">
@@ -291,6 +307,7 @@ export function App() {
       <AuthProvider>
         <ThemeSync />
       <NavPrefSync />
+      <TimeZoneSync />
         <ToastProvider>
           <ConfirmProvider>
             <DeletedRecordUndo />
@@ -616,6 +633,9 @@ function WorkspaceAppRedirect() {
 function ActiveOrgScopedRoutes() {
   const { activeSlug, activeOrg } = useActiveOrg();
   const location = useLocation();
+  // A workspace whose database was never made says so, with the button to
+  // finish it, instead of drawing an empty dashboard (#5146).
+  const unfinished = useWorkspaceUnfinished(activeSlug);
 
   // Shell routing: a guest lands in the portal (what the workspace shares);
   // everyone else gets the workspace, and the gates decide what they may do
@@ -678,6 +698,7 @@ function ActiveOrgScopedRoutes() {
   const labelsRowInSidebar = useNavHasRow(activeSlug, "labels") && navMode === "side" && desktopWidth && !appMode;
   const shouldRedirectToAppHome = !!appMode && !inManagedAppSurface(location.pathname);
 
+  if (unfinished) return <WorkspaceUnfinished slug={activeSlug} name={activeOrg?.name} />;
   return (
     <WorkspacePlatformWeb orgSlug={activeSlug} role={role ?? null} appMode={!!appMode}>
       <Suspense fallback={<RouteFallback />}>

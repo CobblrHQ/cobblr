@@ -11,6 +11,7 @@
 // Off unless asked for: `?diag=1` on the camera URL. It never renders, times,
 // or enumerates anything for a normal user.
 
+import { productName } from "@cobblr/platform-web";
 import { numericOverride } from "./barcodeScanner";
 
 const DIAG_KEY = "cobblr.scan-diag";
@@ -291,7 +292,7 @@ export async function collectCameraFacts(track: MediaStreamTrack | null): Promis
  *  travel back. */
 export function factsToText(f: CameraFacts, s: DecodeStats): string {
   return [
-    "── Cobblr scan diagnostics ──",
+    `── ${productName()} scan diagnostics ──`,
     `engine       : ${f.engine}`,
     `native fmts  : ${f.nativeFormats ? f.nativeFormats.join(", ") : "n/a"}`,
     `lenses (${f.lenses.length})  : ${f.lenses.join(" | ")}`,

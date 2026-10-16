@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-web",
-  "version": "0.12.36",
+  "version": "0.12.39",
   "private": true,
   "type": "module",
   "sideEffects": [
@@ -21,6 +21,10 @@
     "./blocked-action": {
       "types": "./src/blocked-action.ts",
       "import": "./src/blocked-action.ts"
+    },
+    "./product-name": {
+      "types": "./src/product-name.ts",
+      "import": "./src/product-name.ts"
     }
   },
   "scripts": {

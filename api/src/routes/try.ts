@@ -14,6 +14,7 @@
 // The visitor's journey is one click: the homepage button hits GET /try, the
 // server provisions and redirects to /t/<token>, the SPA there calls redeem,
 // stores the JWT and lands them on /w/<slug>. They type nothing.
+import { productName } from "../platform/product-name.js";
 import { cloudSignupUrl, cloudUrl } from "../platform/cloud.js";
 import { linkOrigin } from "../platform/link-origin.js";
 import { Router, type NextFunction, type Request, type Response } from "express";
@@ -143,7 +144,7 @@ tryRouter.get(
       const started = await startSandbox();
       if (!started.ok) {
         console.warn(`[try-sandbox] at capacity: ${started.live}/${started.max} live`);
-        tryFailure(req, res, 503, "sandbox_busy", "A lot of people are trying Cobblr right now. Try again in a few minutes.");
+        tryFailure(req, res, 503, "sandbox_busy", `A lot of people are trying ${productName()} right now. Try again in a few minutes.`);
         return;
       }
       const { sandbox, live: liveBefore, max: cap } = started;
@@ -264,7 +265,7 @@ tryRouter.post(
           res.status(409).json({
             error: {
               code: "keep_limit",
-              message: `That address already keeps ${KEPT_TRIALS_PER_ADDRESS} trials here, the most one address can. Move one to a real Cobblr account to make room, or use another address.`,
+              message: `That address already keeps ${KEPT_TRIALS_PER_ADDRESS} trials here, the most one address can. Move one to a real ${productName()} account to make room, or use another address.`,
               details: { kept: join.kept },
             },
           });
@@ -337,7 +338,7 @@ tryRouter.post(
 /** Sends the sign-in link again, to the address keep bound. */
 function keepLinkCopy() {
   return {
-    subject: "Your Cobblr workspace is saved",
+    subject: `Your ${productName()} workspace is saved`,
     intro:
       "Your sandbox is now a real workspace, with everything you put in it. " +
       "This link signs you in:",

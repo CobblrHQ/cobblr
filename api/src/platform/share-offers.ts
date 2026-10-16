@@ -13,6 +13,7 @@
 // Every change between the sides names the giver's offer id; each side keeps
 // its own row and decides for itself what a change may do to its things.
 
+import { productName } from "./product-name.js";
 import { titleVariantsOf } from "@cobblr/platform-contract/display-identity";
 import { randomUUID } from "node:crypto";
 import { sql } from "kysely";
@@ -432,7 +433,7 @@ export async function listOffers(orgId: string, userId?: string): Promise<OfferV
     direction: r.target_org_id === orgId ? "in" : r.direction,
     title: r.title,
     status: r.status as OfferState,
-    peer_name: r.target_org_id ? String((r.transfer as { target_name?: string; source_name?: string })[r.target_org_id === orgId ? "source_name" : "target_name"] ?? "your workspace") : (r.transfer as {transport?: string;target_name?: string} | null)?.transport === "file-export" ? (r.transfer as {target_name?: string}).target_name ?? "another Cobblr" : r.peer_name,
+    peer_name: r.target_org_id ? String((r.transfer as { target_name?: string; source_name?: string })[r.target_org_id === orgId ? "source_name" : "target_name"] ?? "your workspace") : (r.transfer as {transport?: string;target_name?: string} | null)?.transport === "file-export" ? (r.transfer as {target_name?: string}).target_name ?? `another ${productName()}` : r.peer_name,
     ...(r.target_org_id ? { can_undo: r.target_org_id !== orgId && r.created_by === userId && ["complete", "undoing"].includes((r.transfer as { state?: string }).state ?? ""), send_mode: (r.transfer as { mode: "copy" | "move" }).mode } : {}),
     created_at: r.created_at,
     taken_at: r.taken_at,

@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { platform, type DefinedField } from "@cobblr/platform-contract";
@@ -59,7 +60,7 @@ async function prepareExport(orgId: string, userId: string, p: ExportSendFileReq
   const resolved = await resolveKind(orgId, p.entity_kind);
   const collection: SendFile["collection"] = {kind: p.entity_kind, base_kind: resolved.base, module: shape.module_name, instance: resolved.instance ?? null, name: shape.display_name, plural: shape.display_name_plural || shape.display_name, fields: defs.map(portableField)};
   const instance = hereUrl(origin);
-  if (!instance) throw new SendError("This Cobblr needs its address before it can make a send file.");
+  if (!instance) throw new SendError(`This ${productName()} needs its address before it can make a send file.`);
   const entries = [];
   for (const id of p.ids) {
     if (p.mode === "move") await refuseUnsentDependents(orgId, p.entity_kind, id, userId);

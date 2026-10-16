@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { localFetch, allowLocalAccess } from "@cobblr/platform-web";
 export interface DesktopBridgeStatus { desktop: boolean; version: string }
 export interface LightBurnChecks { api: { ready: boolean; fix: string }; paired: { ready: boolean; fix: string }; udp: { ready: boolean; fix: string } }
@@ -9,7 +10,7 @@ export async function desktopBridgeAction(action: "status" | "pair" | "connect",
     try { return await native(action === "status" ? "desktop_bridge_status" : action === "pair" ? "pair_lightburn" : "connect_desktop", code ? { code } : {}) as Awaited<ReturnType<typeof desktopBridgeAction>>; }
     catch (error) {
       if (!/not found|unknown command|not allowed|does not exist/i.test(String(error))) throw new Error(String(error));
-      throw new Error("Update Cobblr Desktop to use LightBurn pairing, then try again. Check its App settings for updates."); }
+      throw new Error(`Update ${productName()} Desktop to use LightBurn pairing, then try again. Check its App settings for updates.`); }
   }
   if (action !== "status") allowLocalAccess(`desktop-bridge-${action}`);
   const response = await localFetch(`http://127.0.0.1:8077${action === "status" ? "/" : action === "pair" ? "/desktop/pair-lightburn" : "/desktop/connect"}`, {
@@ -19,6 +20,6 @@ export async function desktopBridgeAction(action: "status" | "pair" | "connect",
     signal: AbortSignal.timeout(action === "pair" ? 45_000 : 20_000),
   });
   const result = await response.json() as { error?: string; desktop?: boolean; version?: string; readiness?: LightBurnChecks; ok?: boolean };
-  if (!response.ok) throw new Error(result.error || "Open or update Cobblr Desktop on this computer, then try again.");
+  if (!response.ok) throw new Error(result.error || `Open or update ${productName()} Desktop on this computer, then try again.`);
   return result;
 }

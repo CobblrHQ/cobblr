@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -64,7 +65,7 @@ export function PlaceLights({ slug, place, hasBins }: { slug: string; place: Loc
         {wled ? <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{numeric("Segment", segment, setSegment, 0, 255)}{numeric("Starting LED", start, setStart)}{numeric("LEDs per bin", count, setCount, 1, 1024)}</div> : <label className="flex flex-col gap-1 text-xs">Light entity<input placeholder={esphome ? "light-bin" : "light.bin_a1"} value={entity} onChange={e => setEntity(e.target.value)} className="w-full rounded border border-line bg-surface p-2 text-sm" /></label>}
         {esphome && <>
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={pixels} onChange={e => setPixels(e.target.checked)} />Use a per-LED effect</label>
-          <p className="text-xs text-muted">Choose the entity listed in Devices. Per-LED mappings need the matching Cobblr effect installed in ESPHome.</p>
+          <p className="text-xs text-muted">Choose the entity listed in Devices. Per-LED mappings need the matching {productName()} effect installed in ESPHome.</p>
           {pixels && <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{numeric("Segment", segment, setSegment, 0, 255)}{numeric("Starting LED", start, setStart)}{numeric("LEDs per bin", count, setCount, 1, 1024)}</div>}
         </>}
         <div className="flex flex-wrap gap-2">

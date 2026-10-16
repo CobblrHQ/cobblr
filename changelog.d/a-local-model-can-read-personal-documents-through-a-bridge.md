@@ -3,6 +3,7 @@ type: feature
 scope: ai
 date: 2026-10-15
 docs_target: docs/USER_GUIDE.md#Reading a personal document
+docs_published: 2026-10-16
 ---
 A model on your own computer, reached through an updated edge bridge, can now read personal documents. The read never follows a redirect off that computer and is never written to Cobblr's database or the bridge's disk; an older bridge is still refused.
 

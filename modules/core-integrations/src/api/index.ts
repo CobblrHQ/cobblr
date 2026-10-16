@@ -19,6 +19,7 @@ import { register as registerDiscord } from "../connectors/discord.js";
 import { register as registerInboundWebhook } from "../connectors/inbound-webhook.js";
 import { registerSyncInboundHandler } from "../sync/inbound.js";
 import { registerSyncWorker } from "../sync/worker.js";
+import { registerSendWorker } from "../send-worker.js";
 import { buildSyncConnector } from "../sync/declarative.js";
 import { RAVELRY_MANIFEST } from "../sync/sources/ravelry.js";
 import { HOMEBOX_MANIFEST } from "../sync/sources/homebox.js";
@@ -44,6 +45,7 @@ function registerBuiltins(): void {
   // The inbound handler (live push) + the reconcile worker are global.
   registerSyncInboundHandler();
   registerSyncWorker();
+  registerSendWorker();
 }
 
 registerBuiltins();

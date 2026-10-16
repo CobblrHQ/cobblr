@@ -43,6 +43,8 @@
 // next edit to it silently closes the door again. `startPolicy(nonce)` is what
 // the route sends, and `startHtml(siteKey, nonce)` stamps the same nonce onto
 // the script tag -- one value, two places, from one call.
+import { productName } from "../platform/product-name.js";
+import { escHtml } from "../platform/esc-html.js";
 import { randomBytes } from "node:crypto";
 import { brandHeaderCss, brandHeaderHtml } from "../lib/brand-header.js";
 
@@ -115,7 +117,7 @@ export function startHtml(siteKey: string, nonce = "", intent: StartIntent = NO_
     : "It lasts an hour, and you do not need an account.";
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="robots" content="noindex" /><title>Cobblr - starting your sandbox</title>
+<meta name="robots" content="noindex" /><title>${escHtml(productName())} - starting your sandbox</title>
 <script src="${TURNSTILE}/turnstile/v0/api.js" async defer></script>
 <style>
  body{margin:0;min-height:100vh;display:flex;flex-direction:column;background:#F6F2EA;color:#2b3038;
@@ -150,7 +152,7 @@ export function startHtml(siteKey: string, nonce = "", intent: StartIntent = NO_
     from the same tokens index.css uses (canvas #1E293B, content #F4EFE5,
     muted #B4BAC2, line #475569 since #3232). Without it a visitor with a dark
     phone met a light page with a dark Cloudflare widget pasted into it, on the
-    first Cobblr screen anybody at a stand sees (#3435). */
+    first screen anybody at a stand sees (#3435). */
  @media (prefers-color-scheme:dark){
   body{background:#1E293B;color:#F4EFE5}
   h1{color:#F4EFE5}

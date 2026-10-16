@@ -10,6 +10,7 @@
 // stores per message only the id, when, the sender, the subject and the
 // decision. No body leaves memory.
 
+import { productName } from "../product-name.js";
 import { meta } from "../../db/meta.js";
 import { runExclusive } from "../exclusive.js";
 import { notePassFailure } from "../pass-failures.js";
@@ -45,7 +46,7 @@ export async function runCheckRound(checkId: string, deps: CheckRoundDeps = {}):
     access = await (deps.refresh ?? refreshGoogleAccess)(grant.refresh_token);
   } catch (err) {
     notePassFailure("mail-source.check", checkId, err);
-    return fail("failed", "Gmail would not let Cobblr in. Reconnect Gmail, then check again.");
+    return fail("failed", `Gmail would not let ${productName()} in. Reconnect Gmail, then check again.`);
   }
   const source = (deps.sourceFor ?? ((t: string) => new GmailSource({ accessToken: t, attachments: false })))(access);
   const verdicts = new Map(
@@ -59,7 +60,7 @@ export async function runCheckRound(checkId: string, deps: CheckRoundDeps = {}):
       page = await checkPage({ source, query: check.query, pageToken: token, remembered: (d) => verdicts.get(d) ?? null, ...(deps.now ? { now: deps.now } : {}) });
     } catch (err) {
       notePassFailure("mail-source.check", checkId, err);
-      if (err instanceof MailSourceGrantError) return fail("failed", "Gmail would not let Cobblr in. Reconnect Gmail, then check again.");
+      if (err instanceof MailSourceGrantError) return fail("failed", `Gmail would not let ${productName()} in. Reconnect Gmail, then check again.`);
       // A quota answer or a network blip: keep the page token and let the next round try.
       await meta.updateTable("mailbox_checks").set({ last_error: (err as Error).message.slice(0, 300), updated_at: new Date() }).where("id", "=", checkId).execute();
       return { status: "running", added };

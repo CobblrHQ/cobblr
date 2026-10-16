@@ -295,9 +295,11 @@ function ModalOverlay({ overLive, onBackdrop, onEscape, panel, labelledBy, child
       // publishes its reserved edges (pinned left sidebar, docked right panel)
       // as --modal-inset-left/right on <html>, and the overlay pads by them —
       // "the active window is the part without the sidebar" (the author).
-      // Defaults to 0, so shells without chrome are unaffected.
+      // Defaults to 0, so shells without chrome are unaffected. A phone on its
+      // side keeps the card out of the Dynamic Island and the corners too
+      // (--inset-left/right, 0 upright and on a desk; #6782).
       className={
-        "fc-overlay z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto md:pl-[calc(1rem+var(--modal-inset-left,0px))] xl:pr-[calc(1rem+var(--modal-inset-right,0px))] " +
+        "fc-overlay z-50 bg-slate-900/50 backdrop-blur-sm flex items-start justify-center overflow-y-auto pl-[var(--inset-left)] pr-[var(--inset-right)] sm:pl-[max(1rem,var(--inset-left))] sm:pr-[max(1rem,var(--inset-right))] md:pl-[max(var(--inset-left),calc(1rem+var(--modal-inset-left,0px)))] xl:pr-[max(var(--inset-right),calc(1rem+var(--modal-inset-right,0px)))] " +
         modalOverlayPadding(overLive)
       }
       onClick={onBackdrop}

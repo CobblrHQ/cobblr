@@ -13,6 +13,7 @@
 //
 // PERMANENT RECONCILE — not a one-shot shim: every future major bump can hold.
 
+import { productName } from "./product-name.js";
 import { createClient } from "../db/client-error-guard.js";
 import { env } from "../env.js";
 import { notifyOperators } from "./operator-alert.js";
@@ -89,9 +90,9 @@ async function checkAndAlert(): Promise<void> {
       `cause is resolved. See docs/operations/PRODUCTION_DEPLOY.md (major Postgres upgrades).`,
   );
   await notifyOperators({
-    subject: `[Cobblr] Database major upgrade is held back (Postgres ${hold.oldMajor} -> ${hold.targetMajor})`,
+    subject: `[${productName()}] Database major upgrade is held back (Postgres ${hold.oldMajor} -> ${hold.targetMajor})`,
     text: [
-      `This Cobblr instance's database image wants to upgrade PostgreSQL ${hold.oldMajor} -> ${hold.targetMajor},`,
+      `This ${productName()} instance's database image wants to upgrade PostgreSQL ${hold.oldMajor} -> ${hold.targetMajor},`,
       `but the upgrade could not proceed safely, so it is still serving PostgreSQL ${hold.oldMajor}`,
       `from the untouched existing cluster. Nothing is broken and no data was modified.`,
       ``,

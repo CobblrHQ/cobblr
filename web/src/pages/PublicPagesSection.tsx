@@ -6,6 +6,7 @@
 // visits, and can be revoked or given a new address. Private until a link
 // exists; nothing on a page is a workspace id.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Globe, Plus } from "lucide-react";
@@ -423,7 +424,7 @@ function PageSettingsForm({ slug, page, onCancel, onSave }: { slug: string; page
       </label>
       <label className="flex items-center gap-2 text-sm text-content">
         <input type="checkbox" checked={footer} onChange={(e) => setFooter(e.target.checked)} className="accent-cobble-500" />
-        Show &quot;Made with Cobblr&quot;
+        Show &quot;Made with {productName()}&quot;
       </label>
       <label className="block space-y-1">
         <span className="text-sm font-medium text-content">Memorable address</span>

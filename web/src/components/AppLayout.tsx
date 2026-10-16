@@ -8,6 +8,7 @@
 // specialisations (3D Printers, Laser Cutters, etc.) into a hover
 // popover under the parent rather than as broken top-level links.
 
+import { productName } from "@cobblr/platform-web";
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { JustFiledNotice } from "./JustFiledNotice";
 import { Fragment, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
@@ -447,7 +448,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             length) can crowd "Cobblr" down to "Co..." — reported 2026-07-29. */}
         <Link to="/" title="Home" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
-          <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">Cobblr</span>
+          <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">{productName()}</span>
         </Link>
         <span className="flex-1" />
         <span className="shrink-0">{sidebarControls}</span>
@@ -597,6 +598,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           the stylesheet). */}
       <FloatingChrome
         as="header"
+        data-toolbar="bar"
         anchor="top"
         inPlace
         yields={false}
@@ -615,13 +617,14 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       >
         {/* Header chrome spans the FULL window (no max-width cap) so the module
             nav gets the whole row; page content below stays centred at max-w-6xl. */}
-        {/* py-2 on a phone, py-3 from md up.
+        {/* pt-1 pb-3 on a phone, py-3 from md up.
             On a phone this row IS the whole navigation bar, and every point it
-            spends comes out of the list underneath it. 8px around a ~28px row
-            lands on ~44px — the height iOS uses for a toolbar — and still leaves
-            the wordmark clear of the status bar.
+            spends comes out of the list underneath it. 16px around a ~28px row
+            is 44px, the height iOS uses for a toolbar, and each control's own
+            44px box (index.css, #6782) ends inside the bar, so it leaves with
+            the bar when the bar hides; the wordmark stays clear of the status bar.
 
-            Deliberately UNEVEN on a phone (pt-1 pb-2): the row rides high in
+            Deliberately UNEVEN on a phone (pt-1 pb-3): the row rides high in
             the bar so it sits as close to the top of the screen as it can, which
             is the whole point of the bar there. Evening it out is the obvious
             tidy-up and would undo this.
@@ -632,7 +635,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             native app iOS insets the WEBVIEW and env() is 0. Different routes,
             same final position, so this padding is the only knob and turning it
             moves all three together. */}
-        <div className="desktop-topnav-pad px-5 pt-1 pb-2 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* A phone on its side has the Dynamic Island or the notch at one side
+            and rounded corners at both: the row keeps clear of them (#6782). */}
+        <div className="desktop-topnav-pad pl-[max(1.25rem,var(--inset-left))] pr-[max(1.25rem,var(--inset-right))] pt-1 pb-3 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -656,7 +661,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           >
             <CobblestoneMark size={26} dot={envDot} />
             <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100">
-              Cobblr
+              {productName()}
             </span>
             {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
                 here ("for Yarn") instead of a separate label that repeats it. */}
@@ -719,7 +724,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               its platform affordances (dashboard, Configuration gear) in
               app mode. */}
           {navMode === "top" ? (
-            <nav data-tour="nav" className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-0">
+            <nav data-tour="nav" className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-min">
+              {/* min-w-min: never narrower than the row's own minimum (Home, more, the apps door), so the workspace name truncates instead (#6782). */}
               {/* The tour's welcome step asks the layout question itself, so
                   the fold offer stays quiet while the tour is open: a fresh
                   account at a narrow window got both at once. */}
@@ -821,7 +827,8 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             </aside>
           </FloatingChrome>
         )}
-      <main id={MAIN_ID} tabIndex={-1} className={`focus:outline-none flex-1 min-w-0 transition-[padding] duration-200 ${chatOpen ? "xl:pr-[456px]" : ""}`}>
+      {/* The side insets of a phone on its side are the page's too (#6782). */}
+      <main id={MAIN_ID} tabIndex={-1} className={`focus:outline-none flex-1 min-w-0 transition-[padding] duration-200 pl-[var(--inset-left)] pr-[var(--inset-right)] ${chatOpen ? "xl:pr-[456px]" : ""}`}>
         {/* pb clears the mobile bottom action bar; md+ has no bar. */}
         {/* `page-shell` carries the max-width in CSS so a page can widen it
             with usePageWidth("wide") — see index.css. A wide TABLE is

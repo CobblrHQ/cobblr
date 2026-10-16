@@ -3,6 +3,7 @@
 // in the From), with a per-workspace limit. Kept apart from the invite itself
 // so its rules are tested without a database; the defaults load theirs lazily.
 
+import { productName } from "./product-name.js";
 import type { AuthEmailMessage } from "@cobblr/platform-contract";
 import { cobblrEmailHtml } from "./email-html.js";
 
@@ -46,14 +47,14 @@ export async function emailShareInvite(
   const rules = `It works once, for a week, and only for ${p.to}.`;
   const ok = await deps.send({
     to: p.to,
-    subject: `${p.workspaceName} shared ${p.what} with you on Cobblr`,
+    subject: `${p.workspaceName} shared ${p.what} with you on ${productName()}`,
     text:
-      `${p.workspaceName} is sharing ${p.what} with you on Cobblr.\n\n` +
+      `${p.workspaceName} is sharing ${p.what} with you on ${productName()}.\n\n` +
       `Open this link to accept:\n${p.url}\n\n${rules}` +
       `\n\nIf you weren't expecting this, you can ignore this email.`,
     html: cobblrEmailHtml({
-      greeting: `${p.workspaceName} is sharing ${p.what} with you on Cobblr.`,
-      bodyParas: ["Open the link to see it in your own Cobblr. With no account there yet, you sign up first and come back to it.", rules],
+      greeting: `${p.workspaceName} is sharing ${p.what} with you on ${productName()}.`,
+      bodyParas: [`Open the link to see it in your own ${productName()}. With no account there yet, you sign up first and come back to it.`, rules],
       ctaUrl: p.url,
       ctaLabel: "Accept the invite",
       footerNote: "If you weren't expecting this, you can ignore this email.",

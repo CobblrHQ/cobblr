@@ -9,7 +9,8 @@
 // Every bottom-pinned bar is this one (capabilities: layout:sticky-bottom-bar).
 // On the page it also pins above the toasts (--overlay-bottom, the room they
 // take at the foot, bottom-dock.ts), so an Undo toast never sits on Delete
-// (#5801); in a sheet the overlay already ends above them.
+// (#5801); in a sheet the overlay already ends above them, and the bar sits on
+// the sheet's edge, not a padding above it (#6782).
 
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -31,6 +32,14 @@ export function StickyBottomBar({ children, className = "", testId = "sticky-bot
     const scroller = scrollerOf(el);
     const onPage = scroller === document.scrollingElement || scroller === document.documentElement;
     if (onPage) el.style.bottom = "var(--overlay-bottom, 0px)";
+    // In a sheet: a sticky box stops at its scroller's padding, so bottom-0
+    // pinned the bar a padding above the sheet's edge and the record scrolled
+    // past in the strip below it (#6782, the record sheet on every phone).
+    // The bar sits on the edge itself.
+    else {
+      const pad = parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
+      if (pad > 0) el.style.bottom = `-${pad}px`;
+    }
     const before = scroller.style.scrollPaddingBottom;
     const reserve = () => {
       const bar = Math.ceil(el.getBoundingClientRect().height) + 8;

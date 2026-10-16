@@ -5,6 +5,7 @@
 // the relay resolves to the owner's bridge at request time, enforcing the grant's
 // scope + revoked/expiry status live.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useParams, Link, useLocation } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
@@ -44,7 +45,7 @@ export function JoinMachinesPage() {
         <div className={card + " text-center space-y-3"}>
           <Share2 className="mx-auto text-accent" size={28} />
           <h1 className="text-lg font-semibold text-content dark:text-mortar-100">You've been invited to some machines</h1>
-          <p className="text-sm text-muted dark:text-slate-400">Log in to your Cobblr account to add them to one of your workspaces.</p>
+          <p className="text-sm text-muted dark:text-slate-400">Log in to your {productName()} account to add them to one of your workspaces.</p>
           <Link to={`/?next=${encodeURIComponent(loc.pathname)}`} className="inline-block rounded bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-4 py-2">Log in</Link>
         </div>
       </div>

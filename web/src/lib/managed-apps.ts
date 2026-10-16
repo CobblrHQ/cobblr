@@ -33,7 +33,7 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
   yarn: {
     id: "yarn",
     bundleId: "cobblr.flagship.yarn",
-    label: "Cobblr for Yarn",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Yarn",
     navSuffix: "for Yarn",
     headline: "Your yarn stash, sorted.",
     // {{noun}} is the bundle's own word for what the stash counts in, so the
@@ -55,7 +55,7 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
   home: {
     id: "home",
     bundleId: "cobblr.flagship.home-inventory",
-    label: "Cobblr for Home",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Home",
     navSuffix: "for Home",
     headline: "Everything you own, room by room.",
     blurb: "Point your phone at a thing: it gets a name, a photo and a room. Print a label for the box. Find anything again.",
@@ -76,7 +76,7 @@ export const MANAGED_APPS: Record<string, ManagedAppMeta> = {
   groceries: {
     id: "groceries",
     bundleId: "cobblr.flagship.groceries",
-    label: "Cobblr for Groceries",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Groceries",
     navSuffix: "for Groceries",
     headline: "What is in the fridge, without opening it.",
     blurb: "Photograph the receipt and the whole trip is in. Every item gets a use-by date on its own. A board shows what you have, and the morning something expires, you hear about it.",

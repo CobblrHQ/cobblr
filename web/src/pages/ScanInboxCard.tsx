@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { sessionSaidPlace, sessionSaidVendor, type SessionSays } from "../lib/sessionSays";
 import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
@@ -1270,7 +1271,7 @@ export function InboxCard({
   /** A picture chosen once that could not be stored: said, never drawn. */
   const unsaved = catalogUnsaved(item);
   const unsavedNote = unsaved ? (
-    <span data-testid="catalog-unsaved" title={`The site would not give Cobblr that picture to keep (${unsaved.url}). Pick another from the web results.`} className="px-1 text-center text-[10px] leading-tight text-amber-700 dark:text-amber-400">
+    <span data-testid="catalog-unsaved" title={`The site would not give ${productName()} that picture to keep (${unsaved.url}). Pick another from the web results.`} className="px-1 text-center text-[10px] leading-tight text-amber-700 dark:text-amber-400">
       {COULDNT_SAVE_WORDS}
     </span>
   ) : null;
@@ -2903,7 +2904,7 @@ export function InboxCard({
             onBroken={() => markBroken(catalogImg ? catalogUrl : yoursRawUrl)}
           />
           {onToggleSelect && (
-            <div
+            <label
               className="absolute top-1 left-1 rounded bg-white/85 dark:bg-slate-900/75 p-0.5 shadow-sm"
               onClick={(e) => e.stopPropagation()}
             >
@@ -2914,7 +2915,7 @@ export function InboxCard({
                 aria-label="Select for bulk action"
                 className="h-4 w-4 accent-cobble-600 cursor-pointer block"
               />
-            </div>
+            </label>
           )}
         </div>
         <div className="flex-1 min-w-0 p-3">
@@ -4634,7 +4635,7 @@ export function HintBox({
             type="button"
             disabled={busy}
             onClick={() => fire({ noAi: true })}
-            title="Free and instant: re-applies Cobblr's latest processing (routing, fields, pack size) to what the AI already found. It keeps the identification as-is - use Re-run AI for a fresh look."
+            title={`Free and instant: re-applies ${productName()}'s latest processing (routing, fields, pack size) to what the AI already found. It keeps the identification as-is - use Re-run AI for a fresh look.`}
             className="rounded border border-line dark:border-slate-600 px-2 py-0.5 text-xs text-muted dark:text-slate-300 hover:bg-mortar-50 dark:hover:bg-slate-800 disabled:opacity-50 shrink-0 inline-flex items-center gap-1"
           >
             <RefreshCw size={11} className={busyKind === "replay" ? "animate-spin" : ""} /> Replay

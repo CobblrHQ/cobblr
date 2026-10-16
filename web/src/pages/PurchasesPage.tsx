@@ -1,4 +1,4 @@
-import { entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -460,15 +460,7 @@ export function PurchasesPage() {
           <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             <tr>
               <th className="w-8 px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={(e) =>
-                    setSelected(e.target.checked ? new Set(filtered.map((r) => r.id)) : new Set())
-                  }
-                  className="accent-cobble-600"
-                  aria-label="Select all"
-                />
+                <SelectBox checked={allChecked} onChange={(checked) => setSelected(checked ? new Set(filtered.map((r) => r.id)) : new Set())} label="Select all" />
               </th>
               <SortTh label="Vendor" sortKey="vendor" sort={sort} onSort={toggleSort} />
               <th className="text-left px-3 py-2">Order #</th>
@@ -491,13 +483,7 @@ export function PurchasesPage() {
                   className="px-3 py-2 w-8"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <input
-                    type="checkbox"
-                    checked={selected.has(o.id)}
-                    onChange={(e) => toggleRow(o.id, e.target.checked)}
-                    className="accent-cobble-600"
-                    aria-label={`Select ${o.vendor || o.order_number}`}
-                  />
+                  <SelectBox checked={selected.has(o.id)} onChange={(checked) => toggleRow(o.id, checked)} label={`Select ${o.vendor || o.order_number}`} />
                 </td>
                 <td className="px-3 py-2 max-w-[220px]">
                   <VendorChip name={o.vendor} />

@@ -6,6 +6,7 @@
 // service can be wired up via this until a dedicated connector exists.
 
 import { registerOutboundConnector } from "../services.js";
+import { sendFetch } from "../outbound-send.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
 
 export function register(): void {
@@ -16,6 +17,7 @@ export function register(): void {
       url: { label: "Target URL", secret: false },
       bearer_token: { label: "Bearer token (optional)", secret: true },
       hmac_secret: { label: "HMAC signing secret (optional)", secret: true },
+      max_per_second: { label: "Most sends per second (optional)", secret: false },
     }),
     actions: [
       {
@@ -49,16 +51,7 @@ export function register(): void {
         headers["x-cobblr-signature"] = `sha256=${sig}`;
       }
       await assertSafeOutboundUrl(url);
-      const res = await fetch(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`webhook: ${res.status} ${res.statusText} ${text.slice(0, 200)}`);
-      }
+      const res = await sendFetch("webhook", url, { method: "POST", headers, body });
       return { status: res.status };
     },
     testConnection: async (credentials) => {

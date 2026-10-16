@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sameSendSnapshot } from "@cobblr/platform-contract/share-offer";
@@ -20,7 +21,7 @@ async function confirmation(orgId: string, userId: string, input: unknown, phase
   await requireSendToken();
   const source = await sendMembership(orgId,userId);
   const parsed = SendReceiptSchema.safeParse(input);
-  if (!parsed.success) throw new SendError("This confirmation file cannot be read. Download it again from the receiving Cobblr.");
+  if (!parsed.success) throw new SendError(`This confirmation file cannot be read. Download it again from the receiving ${productName()}.`);
   const receipt = parsed.data;
   const rows = await fileExportRows(orgId,userId,receipt.file_id);
   if (!rows.length) throw new SendError("This confirmation does not belong to a send file you made here.");
@@ -94,7 +95,7 @@ export async function confirmSendFile(orgId: string, userId: string, input: unkn
           await save(row.id,t);
           if (t.source_deleted) await writer.delete(orgId,origin.id);
           else {
-            const moved = await markGone(orgId,userId,origin.kind,[origin.id],{how: "given-away",to: receipt.target.name,note: "Sent to another Cobblr"});
+            const moved = await markGone(orgId,userId,origin.kind,[origin.id],{how: "given-away",to: receipt.target.name,note: `Sent to another ${productName()}`});
             if (!moved.ok) throw new SendError(moved.error);
           }
         }

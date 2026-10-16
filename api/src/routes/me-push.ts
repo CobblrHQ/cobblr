@@ -4,6 +4,7 @@
 // AI-REACH: exempt for the writes below — a person's own devices and when they
 // may be interrupted; the assistant reads them (GET /me/push) to answer "why
 // didn't I get a notification?" and leaves the choices to the person.
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { z } from "zod";
 import { decodeBase64urlExact } from "@cobblr/platform-contract/base64url-exact";
@@ -157,11 +158,11 @@ mePushRouter.post("/me/push/devices/:id/test", requireAuth, async (req, res, nex
     const payload = buildPushPayload({
       notificationId: `test-${Date.now()}`,
       eventType: "test.notification",
-      message: `A test from Cobblr to ${device.label}. Notifications reach this device.`,
+      message: `A test from ${productName()} to ${device.label}. Notifications reach this device.`,
       // PAGE-LINK: a test push is about the device, not a record; it opens the page that lists it
       link_url: "/me/communication",
       priority: "high",
-      title: "Cobblr",
+      title: productName(),
       unread: await unreadCountFor(userId),
     });
     // The outcome is the answer, whichever it is: "failed" with its reason is

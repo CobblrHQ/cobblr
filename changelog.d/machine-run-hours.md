@@ -4,6 +4,7 @@ scope: machines
 date: 2026-10-15
 docs_target: docs/USER_GUIDE.md#3.30 Machines
 ui: none (the existing service schedule form reads machine counters)
+docs_published: 2026-10-16
 ---
 Machines now track run hours from completed jobs, so service can come due after a set number of hours.
 

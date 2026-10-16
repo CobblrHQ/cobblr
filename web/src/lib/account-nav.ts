@@ -14,6 +14,7 @@
 // decision every new page gets to make again, and re-making it is how the drift
 // happened the first time.
 
+import { productName } from "@cobblr/platform-web";
 import type { LucideIcon } from "lucide-react";
 import { CONNECT_DISCORD_PATH } from "./discord-connect";
 import { Bell, Camera, History, LayoutList, MessageSquare, Monitor, Moon, Plug, Printer, UserCog } from "lucide-react";
@@ -155,13 +156,13 @@ export const ACCOUNT_DESTINATIONS: AccountDestination[] = [
   { label: "Identity & password", description: "Your display name, the address you sign in with, and your password.", to: "/me/identity", section: "you", icon: UserCog },
   { label: "Appearance", description: "Light or dark, and your desktop layout - for your account and for this device.", to: "/me/appearance", section: "you", icon: Moon },
   { label: "Menu & surfaces", description: "Choose what your menu shows: hide what you do not use, add what you do.", to: "/me/app-settings", platformOnly: true, section: "you", icon: LayoutList },
-  { label: "Photos of things you file", description: "Whether Cobblr keeps them to improve identification. You can change your mind at any time.", to: "/me/photos", onlyWhen: "photo-consent", section: "you", icon: Camera },
+  { label: "Photos of things you file", description: `Whether ${productName()} keeps them to improve identification. You can change your mind at any time.`, to: "/me/photos", onlyWhen: "photo-consent", section: "you", icon: Camera },
   // First in Notifications: the page the bell's foot and the Settings tab call
   // Notification settings (#5565), and the name still says Discord, because the
   // Discord connection lives on it and nothing else pointed there (2026-09-29).
   { label: "Notification settings (phone, Discord, email)", description: "Choose what reaches you where and when: a notification on your phone or computer, in the app, by email, and a Discord message where this server offers it.", to: "/me/communication", section: "notifications", icon: Bell, keywords: ["notification settings", "settings", "turn on notifications", "push", "phone", "iphone", "android", "home screen", "notifications on my phone", "quiet hours", "discord", "dm", "direct message", "reminders", "notifications", "alerts", "digest", "going off", "expiring", "communication preferences", "delivery", "email"] },
   { label: "Notification channels", description: "Per-workspace Discord, Slack, email, SMS and webhook routes.", to: "/me/notification-channels", platformOnly: true, section: "notifications", icon: Bell, keywords: ["slack", "webhook", "sms", "discord channel", "routing"] },
-  { label: "Your notifications", description: "Everything Cobblr has sent you.", to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell, keywords: ["inbox", "bell", "notifications"] },
+  { label: "Your notifications", description: `Everything ${productName()} has sent you.`, to: "/me/notifications", platformOnly: true, section: "notifications", icon: Bell, keywords: ["inbox", "bell", "notifications"] },
   { label: "Connections", description: "Your own AI keys and edge bridge, shared with the workspaces you choose.", to: "/me/connections", platformOnly: true, section: "connections", icon: Plug, keywords: ["personal connections", "byo", "credentials", "relay", "ai keys"] },
   // NOT platformOnly: a locked home app prints labels from the camera, and this
   // is the only door inside its surface where a Bluetooth printer can be paired

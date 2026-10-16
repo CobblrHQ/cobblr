@@ -6,6 +6,7 @@
 // the two things a mailbox has that a key does not: a way in that is a
 // redirect, and a sync state to show.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -46,7 +47,7 @@ export function OAuthConnectPanel({
           <Mail size={15} className="text-accent" /> Connect {provider.label}
         </div>
         <p className="text-muted text-[13px]">
-          Cobblr asks Google for read-only access and then reads mail from stores and carriers only ({PLATFORM_SENDERS}, plus any you add).
+          {productName()} asks Google for read-only access and then reads mail from stores and carriers only ({PLATFORM_SENDERS}, plus any you add).
           Nothing is labelled, moved or sent, and no message body is kept. The last 7 days are read first, then new mail as it arrives.
         </p>
       </div>

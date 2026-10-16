@@ -5,6 +5,7 @@
 // the process when the environment is incomplete. The decisions worth testing
 // are all here, and they are testable with nothing running.
 
+import { productName } from "../product-name.js";
 import type { NotificationAction } from "../../db/schema.js";
 
 /** Discord's own cap. A longer label is silently rejected for the whole
@@ -163,7 +164,7 @@ export function componentsV2For(
     if (hidden > 0) {
       const more = `and ${hidden} more`;
       const to = overflowUrl ?? linkUrl;
-      inner.push(textDisplay(to ? `[${more}, in Cobblr](${to})` : more));
+      inner.push(textDisplay(to ? `[${more}, in ${productName()}](${to})` : more));
     }
     if (card.context) inner.push(textDisplay(`-# ${card.context.slice(0, 200)}`));
     return [{ type: 17, accent_color: ACCENT, components: inner }];
@@ -206,7 +207,7 @@ export function componentsV2For(
 
 /** Discord's push preview truncates long before this; one line reads best. */
 const SUMMARY_MAX = 150;
-const SUMMARY_FLOOR = "You have a new notification in Cobblr";
+const SUMMARY_FLOOR = `You have a new notification in ${productName()}`;
 
 /** The first non-empty candidate as ONE plain line: markdown headings, link
  *  syntax and bold marks stripped, whitespace collapsed, capped with an

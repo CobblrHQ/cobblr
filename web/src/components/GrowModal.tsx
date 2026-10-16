@@ -5,6 +5,7 @@
 // the platform plan). See business-models/docs/18-managed-vertical-apps.md
 // (the ingress funnel: graduation = add alongside, not convert-in-place).
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { ArrowRight, Check, Plus } from "lucide-react";
 import { Modal, useToast } from "@cobblr/platform-web";
@@ -46,10 +47,10 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   return (
     <>
-      <Modal open={open && !createOpen} onClose={onClose} title="Do more with Cobblr" size="sm">
+      <Modal open={open && !createOpen} onClose={onClose} title={`Do more with ${productName()}`} size="sm">
         <div className="space-y-4">
           <p className="text-sm text-muted dark:text-slate-400">
-            This app is one corner of Cobblr. When you're ready to run a whole
+            This app is one corner of {productName()}. When you're ready to run a whole
             business - customers, orders, purchasing, and more - start a full
             workspace. Your app stays exactly as it is.
           </p>
@@ -89,7 +90,7 @@ export function GrowModal({ open, onClose }: { open: boolean; onClose: () => voi
             onClick={() => setCreateOpen(true)}
             className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium bg-cobble-600 hover:bg-cobble-700 text-white transition"
           >
-            <Plus size={15} /> Start a full Cobblr workspace
+            <Plus size={15} /> Start a full {productName()} workspace
           </button>
           <p className="text-[11px] text-faint dark:text-slate-500 text-center">
             A fresh, separate workspace on the full platform. Your app stays exactly as it is.

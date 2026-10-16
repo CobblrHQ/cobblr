@@ -3,6 +3,7 @@
 // "Just add it". The row fired its event into nothing until this listened
 // (#4199). It stays open after an add, so a second thing is one more line,
 // and says where the first one went.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Modal, NewFromTemplateButton } from "@cobblr/platform-web";
@@ -30,7 +31,7 @@ export function QuickAddSheet({ slug }: { slug: string }) {
   return (
     <Modal open={open} onClose={() => setOpen(false)} title="Add a thing" size="sm">
       <p className="text-xs text-muted dark:text-slate-400 mb-3">
-        Type what you&rsquo;ve got. Cobblr finds or builds the right home and files it.
+        Type what you&rsquo;ve got. {productName()} finds or builds the right home and files it.
       </p>
       <FreeformAdd slug={slug} placeholder="e.g. a box of screws, a cordless drill" add={add} autoFocus onAdded={(t) => setAdded((a) => [...a, t])} />
       <NewFromTemplateButton onOpen={() => setOpen(false)} />
@@ -40,7 +41,7 @@ export function QuickAddSheet({ slug }: { slug: string }) {
           <Link to="/scan" onClick={() => setOpen(false)} className="text-accent hover:underline">
             scan inbox
           </Link>{" "}
-          while Cobblr finds {added.length === 1 ? "its" : "their"} home.
+          while {productName()} finds {added.length === 1 ? "its" : "their"} home.
         </p>
       )}
     </Modal>

@@ -5,6 +5,7 @@
 // the App Player. Members only ever see apps + fields their
 // capabilities allow — the server enforces it; this page is authoring.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink } from "lucide-react";
@@ -284,7 +285,7 @@ export function AppsConfigPage() {
               <ThemeEditor
                 theme={editing.theme}
                 onChange={setTheme}
-                helpText="Restyles the app's content for members. Unset = Cobblr default. Save, then open to preview."
+                helpText={`Restyles the app's content for members. Unset = ${productName()} default. Save, then open to preview.`}
               />
 
               {editing.pages.map((page, pi) => (

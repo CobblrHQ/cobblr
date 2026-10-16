@@ -12,6 +12,7 @@
 // route (POST /scan/receipt) through an internal call with a minted session
 // token — so all the parse/tier/fan-out logic stays in core-scan, uncoupled.
 
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -191,12 +192,12 @@ export async function ingestReceiptEmail(
       userId,
       representativeOrgId: orgId,
       notificationType: "core-scan.email.forwarding_verification",
-      message: "Your mail provider wants you to confirm forwarding to Cobblr. Its confirmation email is in your own inbox now — open it and click the link.",
+      message: `Your mail provider wants you to confirm forwarding to ${productName()}. Its confirmation email is in your own inbox now — open it and click the link.`,
       link_url: `/w/${slug}/configuration/integrations`,
       email: {
-        subject: `Action needed: confirm forwarding to Cobblr${subject ? ` (${subject.slice(0, 80)})` : ""}`,
+        subject: `Action needed: confirm forwarding to ${productName()}${subject ? ` (${subject.slice(0, 80)})` : ""}`,
         text:
-          "Your mail provider sent this to your Cobblr receipt address to confirm it may forward mail there. " +
+          `Your mail provider sent this to your ${productName()} receipt address to confirm it may forward mail there. ` +
           "Click the confirmation link or use the code below, and the forwarding rule turns on.\n\n" +
           "----- forwarded verbatim -----\n" +
           bodyText.slice(0, 6000),
@@ -730,7 +731,7 @@ receiptAddressRouter.post("/:slug/receipt-address/email-me", requireAuth, withTe
     }
     const receipts = mintReceiptAddress(userId, orgId);
     if (!receipts) {
-      res.status(409).json({ error: { code: "not_configured", message: "This Cobblr has no email address set up for receipts." } });
+      res.status(409).json({ error: { code: "not_configured", message: `This ${productName()} has no email address set up for receipts.` } });
       return;
     }
     const which = parsed.data.which;
@@ -742,11 +743,11 @@ receiptAddressRouter.post("/:slug/receipt-address/email-me", requireAuth, withTe
       return;
     }
     const text = which === "orders"
-      ? `This is your ${name} address: ${address}\n\nForward the emails your customers send with an order here, and each becomes a draft order for you to check. Save this sender as a contact, and typing "Cobblr" in your To field finds it.`
-      : `This is your ${name} address: ${address}\n\nForward receipts and order emails here, and their lines become items in Cobblr. Save this sender as a contact, and typing "Cobblr" in your To field finds it.`;
+      ? `This is your ${name} address: ${address}\n\nForward the emails your customers send with an order here, and each becomes a draft order for you to check. Save this sender as a contact, and typing "${productName()}" in your To field finds it.`
+      : `This is your ${name} address: ${address}\n\nForward receipts and order emails here, and their lines become items in ${productName()}. Save this sender as a contact, and typing "${productName()}" in your To field finds it.`;
     const sent = await sendAuthEmail({ to: user.email, subject: `Your ${name} address`, text, kind: "notification", from: namedAddress(name, address) });
     if (!sent) {
-      res.status(503).json({ error: { code: "not_sent", message: "This Cobblr could not send email just now. Copy the address instead." } });
+      res.status(503).json({ error: { code: "not_sent", message: `This ${productName()} could not send email just now. Copy the address instead.` } });
       return;
     }
     res.json({ sent: true, to: user.email, name });

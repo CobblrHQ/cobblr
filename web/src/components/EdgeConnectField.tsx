@@ -13,6 +13,7 @@
 // a token + show the run command + watch for the bridge to dial in), and
 // BridgePicker (choose among connected bridges).
 
+import { productName } from "@cobblr/platform-web";
 import { useQuery } from "@tanstack/react-query";
 import { SegmentedChoice } from "@cobblr/platform-web";
 import { api } from "../lib/api";
@@ -82,7 +83,7 @@ export function EdgeConnectField({
     <div className="space-y-2">
       {/* Mode chooser — how Cobblr reaches the manager. */}
       <SegmentedChoice
-        label="How Cobblr reaches the print manager"
+        label={`How ${productName()} reaches the print manager`}
         value={value.mode}
         onChange={(mode) => (mode === "direct" ? setDirect(value.mode === "direct" ? value.base_url : "") : setEdge(value.bridge))}
         options={[
@@ -118,7 +119,7 @@ export function EdgeConnectField({
           <span className={lbl}>Bridge</span>
           <BridgePicker slug={slug} value={value.bridge} onChange={(b) => setEdge(b)} />
           <div className="text-[11px] text-faint mt-1">
-            Cobblr hands the print job to this bridge; the bridge speaks to your printer on the LAN.
+            {productName()} hands the print job to this bridge; the bridge speaks to your printer on the LAN.
           </div>
         </div>
       ) : (

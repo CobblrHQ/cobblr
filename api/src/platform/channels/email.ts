@@ -8,6 +8,7 @@
 // message + a link if any) — no HTML, which keeps every provider's payload
 // trivial and dodges email-client rendering quirks.
 
+import { productName } from "../product-name.js";
 import { checkEmailConfig, sendEmailVia, type EmailConfig, type ValidConfig } from "../email-send.js";
 import { absoluteAppUrl } from "../public-url.js";
 import type { Channel, ChannelEvent } from "./types.js";
@@ -36,7 +37,7 @@ export const emailChannel: Channel = {
       event.link_url ? `Link: ${absoluteAppUrl(event.link_url)}` : null,
       "",
       `Priority: ${event.priority}`,
-      `Sent by Cobblr.`,
+      `Sent by ${productName()}.`,
     ]
       .filter((line) => line !== null)
       .join("\n");

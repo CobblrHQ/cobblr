@@ -17,7 +17,7 @@ export async function captureHttpDelete(req: Request, res: Response, next: NextF
       res.once("close", () => { if (!answer) reject(new RefusedDelete()); });
       next();
     }));
-    if (captured.deletionId) res.setHeader("X-Cobblr-Deleted-Record", captured.deletionId);
+    if (captured.deletionId) res.setHeader(/* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Deleted-Record", captured.deletionId);
     res.end = end;
     if (answer) Reflect.apply(end, res, answer);
   } catch (err) {

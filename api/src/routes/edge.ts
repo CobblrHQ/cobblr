@@ -17,6 +17,7 @@
 // wire-compatible alias over the same platform().edge primitives, so bridges
 // in the field keep polling + self-updating without a reinstall.
 
+import { productName } from "../platform/product-name.js";
 import {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
 import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
@@ -451,7 +452,7 @@ edgePairRouter.get("/install-mac.sh", (req, res) => {
 // AI-REACH: exempt — a PowerShell installer run on the bridge computer.
 edgePairRouter.get("/install-windows.ps1", (req, res) => {
   const origin = publicOrigin(req);
-  if (!origin) return void res.status(400).type("text/plain").send("throw 'Invalid Cobblr address'\n");
+  if (!origin) return void res.status(400).type("text/plain").send("throw 'Invalid server address'\n");
   res.setHeader("cache-control", "no-store");
   res.type("text/plain").send(WINDOWS_INSTALL_SCRIPT.split("@@COBBLR_URL@@").join(origin));
 });
@@ -468,7 +469,7 @@ edgePairRouter.post("/pair", async (req, res, next) => {
           code: r.reason === "unknown" ? "pairing_code_unusable" : "pairing_not_allowed",
           message:
             r.reason === "unknown"
-              ? "That code is wrong, expired or already used. Make a new one in Cobblr under Configuration → Devices."
+              ? `That code is wrong, expired or already used. Make a new one in ${productName()} under Configuration → Devices.`
               : "Whoever made this code can no longer add bridges to that workspace. Ask an owner or admin for a new one.",
         },
       });

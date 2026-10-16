@@ -3,6 +3,7 @@
 // bridge is kernel infrastructure (the wire lives at /orgs/:slug/edge); what
 // USES it (machine managers, local AI, …) is a
 // separate, data-driven concern — nothing module-specific belongs here.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -30,7 +31,7 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
   return (
     <div className="space-y-3">
       <p className="text-[13px] text-muted dark:text-slate-400">
-        A hosted Cobblr can't reach devices on your network directly. Run one tiny <strong>bridge</strong> on any
+        A hosted {productName()} can't reach devices on your network directly. Run one tiny <strong>bridge</strong> on any
         always-on box at your site (Pi, NAS, mini-PC) - it dials out and holds a tunnel open, so there's no
         port-forwarding and no inbound firewall hole. Install it once; everything that needs your site attaches to it.
       </p>
@@ -42,13 +43,13 @@ export function EdgeBridgeInstall({ slug, bridgeId }: { slug: string; bridgeId?:
           className="w-full px-2 py-1.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
         />
         <span className="block mt-1 text-[11px] text-faint">
-          What you'll see it called everywhere in Cobblr, like "Workshop bridge". You can rename it later.
+          What you'll see it called everywhere in {productName()}, like "Workshop bridge". You can rename it later.
         </span>
       </label>
       <BridgeInstallMethod slug={slug} label={label} bridgeId={bid} onStarted={(id) => { setInstalledId(id); setStarted(true); }} />
       {started && (
         <div>
-          <span className={lbl}>3 · Cobblr is watching for it</span>
+          <span className={lbl}>3 · {productName()} is watching for it</span>
           <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
             <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
             {connected ? (

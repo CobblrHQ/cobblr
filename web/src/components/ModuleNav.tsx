@@ -89,6 +89,10 @@ export function ModuleNav({ quiet = false }: {
   // screen (a phone, where it is display:none), and a zero-width "fold" is
   // not a fold: it offered the sidebar on a phone on the first rig run.
   const [rowWidth, setRowWidth] = useState(0);
+  // The narrowest the row may get: its fixed entries and the "more" chip,
+  // measured. Below it the workspace name beside it truncates instead, where
+  // before a phone on its side cut "Home" in half and hid the apps door (#6782).
+  const [minRow, setMinRow] = useState(0);
   const topsKey = rowEligible.map((t) => t.name).join("|") + "::" + pinned.map((t) => t.name).join("|");
 
   useLayoutEffect(() => {
@@ -120,13 +124,37 @@ export function ModuleNav({ quiet = false }: {
       };
       let n = fitWithin(avail);
       // "more ▾" shows when row items overflow OR anything is pinned to it.
-      if (n < rowEligible.length || pinned.length > 0) n = fitWithin(avail - MORE_W);
+      const folds = n < rowEligible.length || pinned.length > 0;
+      if (folds) n = fitWithin(avail - MORE_W);
       setVisibleCount(n);
+      // What never folds, as drawn: Home, the apps door, and the "more" chip
+      // once it shows (MORE_W only until it has been drawn).
+      let fixed = 0;
+      let moreDrawn = false;
+      for (const c of Array.from(el.children) as HTMLElement[]) {
+        if (c.matches("[data-top]")) continue;
+        if (!c.matches("[data-navfixed]")) moreDrawn = true;
+        fixed += c.getBoundingClientRect().width + 2;
+      }
+      setMinRow(Math.ceil(fixed + (folds && !moreDrawn ? MORE_W : 0)));
     };
     recompute();
     const ro = new ResizeObserver(recompute);
     ro.observe(el);
-    return () => ro.disconnect();
+    // A fixed entry arriving or changing width after the first measure (the
+    // apps door mounts once its count is in) changes the row's minimum: the
+    // row itself does not resize for it, so watch the entries too (#6782).
+    const watchFixed = () => el.querySelectorAll<HTMLElement>("[data-navfixed]").forEach((n) => ro.observe(n));
+    watchFixed();
+    const mo = new MutationObserver(() => {
+      watchFixed();
+      recompute();
+    });
+    mo.observe(el, { childList: true, subtree: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
     // topsKey (not `tops`, a fresh array each render) keeps this stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topsKey, badgesKey]);
@@ -159,7 +187,10 @@ export function ModuleNav({ quiet = false }: {
     <>
       <div
         ref={rowRef}
-        className="flex items-center gap-0.5 flex-1 min-w-0 overflow-hidden"
+        // Clipped sideways only, so a link's finger room above and below is
+        // not cut (touch-targets.css, #6782).
+        className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-clip"
+        style={{ minWidth: minRow }}
       >
         {!appMode && (
           <NavLink

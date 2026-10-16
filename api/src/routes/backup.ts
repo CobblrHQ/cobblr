@@ -1,3 +1,5 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "../platform/product-name.js";
 import { captureBackupSecrets, rebindBackupSecrets } from "../platform/secret-backup.js";
 // Backup — a full point-in-time copy of a workspace: the Blueprint (its
 // setup) + every tenant-DB row + every uploaded file. Restoring a backup
@@ -587,7 +589,7 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
     }
     const source = parsedUrl ? acceptedSource(parsedUrl.origin) : null;
     if (!parsedUrl || !source || !/^\/api\/v1\/try\/take\/[A-Za-z0-9_-]{16,200}$/.test(parsedUrl.pathname)) {
-      res.status(400).json({ error: { code: "not_a_backup_link", message: "That is not a link to a Cobblr sandbox's file. Paste the link from the email, or upload the file instead." } });
+      res.status(400).json({ error: { code: "not_a_backup_link", message: `That is not a link to ${withArticle(productName())} sandbox's file. Paste the link from the email, or upload the file instead.` } });
       return;
     }
     const got = await fetch(`${source}${parsedUrl.pathname}`, { redirect: "error" }).catch(() => null);

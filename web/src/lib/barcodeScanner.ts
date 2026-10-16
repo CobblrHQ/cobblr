@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 // Shared camera + decode tuning for the live barcode scanner.
 //
 // A scanner design that earned the "fast on an
@@ -163,8 +164,8 @@ export function noCameraReason(ctx: { isSecureContext?: boolean; mediaDevices?: 
   const md = ctx.mediaDevices as { getUserMedia?: unknown } | undefined;
   if (md && typeof md.getUserMedia === "function") return null;
   return ctx.isSecureContext === false
-    ? "This address is not secure (http), so the browser offers no camera here. Open Cobblr at its https address, or scan an image file instead."
-    : "This browser offers no camera here. Scan an image file instead, or open Cobblr in a browser that has one.";
+    ? `This address is not secure (http), so the browser offers no camera here. Open ${productName()} at its https address, or scan an image file instead.`
+    : `This browser offers no camera here. Scan an image file instead, or open ${productName()} in a browser that has one.`;
 }
 
 /** What the camera is asked for first: the back lens unless the front is

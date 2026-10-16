@@ -9,5 +9,5 @@
 // env.ts still declares COBBLR_PRODUCT_NAME, so the server's schema lists it.
 
 export function productName(): string {
-  return (process.env.COBBLR_PRODUCT_NAME || "").trim() || "Cobblr";
+  return (process.env.COBBLR_PRODUCT_NAME || "").trim() || /* PRODUCT-NAME: The engine default when this server has no product name configured. */ "Cobblr";
 }

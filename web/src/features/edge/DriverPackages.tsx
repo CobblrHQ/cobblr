@@ -5,6 +5,7 @@
 // half-apply. The copy says so, because "added" that hasn't taken effect yet is
 // the thing a user would otherwise read as broken.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, PackagePlus } from "lucide-react";
@@ -182,7 +183,7 @@ export function DriverPackages({ slug, hasBridge }: { slug: string; hasBridge: b
           {/* The hash is not paperwork: it is what pins the version, so a source
               that changes under you is refused rather than installed. */}
           <div className="text-[10px] text-faint">
-            The hash pins this exact build. If the source changes without the version changing, Cobblr
+            The hash pins this exact build. If the source changes without the version changing, {productName()}
             refuses it instead of installing it.
           </div>
           <div className="flex items-center gap-2">

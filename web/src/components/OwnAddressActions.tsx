@@ -5,6 +5,7 @@
 // <workspace>" in their address book. Once sent, the card says where it went
 // and what to do if it landed in Spam, with Resend right there.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { downloadBlob, useToast } from "@cobblr/platform-web";
 import { ownAddressSentWords, ownAddressVCard } from "@cobblr/platform-contract/address-name";
@@ -52,7 +53,7 @@ export function OwnAddressActions({
         <button
           type="button"
           onClick={() => {
-            downloadBlob(new Blob([ownAddressVCard({ name, address, workspace })], { type: "text/vcard" }), `${name.replace(/[^\w ()'-]+/g, "").trim() || "Cobblr"}.vcf`);
+            downloadBlob(new Blob([ownAddressVCard({ name, address, workspace })], { type: "text/vcard" }), `${name.replace(/[^\w ()'-]+/g, "").trim() || productName()}.vcf`);
           }}
           className="text-accent hover:underline"
         >

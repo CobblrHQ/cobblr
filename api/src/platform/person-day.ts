@@ -1,12 +1,11 @@
 // The day it is where a person is, for code that has their id and nothing else.
 //
 // The rule is the platform's (`@cobblr/platform-contract/day`); this is the
-// one thing the api can add to it: WHERE a person is. The only place anybody
-// has told us is the IANA zone on their notification delivery window, set from
-// their communication preferences, so that is what this reads. Somebody who
-// has never opened that page has told us nothing, and the answer is then the
-// day that has arrived everywhere: late for somebody rather than early for
-// anybody (#3351).
+// one thing the api can add to it: WHERE a person is. First the zone their own
+// browser reported (users.time_zone, sent by the app they use); then the IANA
+// zone on a notification delivery window, from their communication
+// preferences. Somebody who has told us neither gets the day that has arrived
+// everywhere: late for somebody rather than early for anybody (#3351).
 //
 // Cached for a minute per person: a filing door asks once per record, and a
 // zone does not change between two of them. A miss is one small meta read.
@@ -22,6 +21,8 @@ const zones = ttlCache<string | null>(TTL_MS);
 export async function timeZoneOf(userId: string, _now: Date = new Date()): Promise<string | null> {
   return zones.get(userId, async () => {
     try {
+      const own = await meta.selectFrom("users").select("time_zone").where("id", "=", userId).executeTakeFirst();
+      if (own?.time_zone) return own.time_zone;
       const row = await meta
         .selectFrom("notification_delivery_windows")
         .select("timezone")

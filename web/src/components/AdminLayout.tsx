@@ -11,6 +11,7 @@
 // The section content area (the Outlet) renders in the normal theme so the
 // tables stay readable. See docs/modules/member-portal-and-permissions.md.
 
+import { productName } from "@cobblr/platform-web";
 import { MAIN_ID, RouteAnnouncer, SkipToContent } from "./a11y/shell-landmarks";
 import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
@@ -93,7 +94,7 @@ export function AdminLayout() {
       <main id={MAIN_ID} className="min-h-screen flex items-center justify-center bg-canvas dark:bg-slate-950 px-4" data-testid="admin-not-for-you">
         <div className="max-w-sm text-center space-y-3">
           <ShieldCheck size={28} className="mx-auto text-faint" aria-hidden />
-          <h1 className="text-lg font-semibold text-content dark:text-mortar-100">This page is for the people who run this Cobblr</h1>
+          <h1 className="text-lg font-semibold text-content dark:text-mortar-100">This page is for the people who run this {productName()}</h1>
           <p className="text-sm text-muted">Your account does not run it, so there is nothing here for you.</p>
           <a href="/" className="inline-flex min-h-10 items-center rounded bg-cobble-600 px-4 text-sm font-medium text-white hover:bg-cobble-700">
             Go to your workspace
@@ -117,7 +118,7 @@ export function AdminLayout() {
         <div className="px-4 py-3 border-b border-line dark:border-slate-800">
           <div className="flex items-center gap-2 min-w-0">
             <ShieldCheck size={18} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
-            <span className="font-display font-extrabold tracking-tight truncate">Cobblr</span>
+            <span className="font-display font-extrabold tracking-tight truncate">{productName()}</span>
           </div>
           <div className="mt-1.5 flex items-center gap-2">
             <span className="inline-flex items-center rounded-full border border-cobble-500/40 bg-cobble-500/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-cobble-700 dark:border-cobble-400/40 dark:bg-cobble-400/10 dark:text-cobble-300">
@@ -183,7 +184,7 @@ export function AdminLayout() {
         <header style={{ paddingTop: "var(--inset-top)" }} className="md:hidden sticky-under-header z-30 bg-surface dark:bg-slate-900 border-b-2 border-cobble-500 dark:border-b dark:border-slate-700">
           <div className="px-4 py-2.5 flex items-center gap-2 min-w-0">
             <ShieldCheck size={16} className="text-cobble-600 dark:text-cobble-300 shrink-0" />
-            <span className="font-display font-extrabold tracking-tight text-sm">Cobblr</span>
+            <span className="font-display font-extrabold tracking-tight text-sm">{productName()}</span>
             <span className="text-[10px] uppercase tracking-widest text-cobble-700 dark:text-cobble-300">
               super-admin
             </span>

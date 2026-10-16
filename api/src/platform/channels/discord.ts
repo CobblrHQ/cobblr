@@ -11,6 +11,7 @@
 // No auth keys — the webhook URL itself is the secret. Per-user config lives in
 // notification_subscriptions.config: { webhook_url: "https://discord.com/api/webhooks/<id>/<token>" }.
 
+import { productName } from "../product-name.js";
 import { postJson } from "./http-helpers.js";
 import { grabJpegFrame } from "./image-grab.js";
 import type { Channel, ChannelEvent } from "./types.js";
@@ -40,7 +41,7 @@ function readConfig(payload: unknown): DiscordConfig | null {
 
 function linkLine(event: ChannelEvent, extra?: DiscordPayload["links"]): string | null {
   const links: string[] = [];
-  if (event.link_url) links.push(`[Open in Cobblr](${event.link_url})`);
+  if (event.link_url) links.push(`[Open in ${productName()}](${event.link_url})`);
   if (Array.isArray(extra)) {
     for (const l of extra) {
       if (l && typeof l.url === "string" && /^https?:\/\//.test(l.url)) links.push(`[${(l.label ?? "Link").slice(0, 40)}](${l.url})`);

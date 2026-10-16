@@ -3,6 +3,7 @@
 // navigate + observe (also let Claude see your clicks). Even when on, Claude can
 // only drive a window AFTER you tap "use this window" in that tab.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -41,7 +42,7 @@ export function DriveSettingsPage() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-content dark:text-mortar-200">
-        Let Claude (from Claude Code / Desktop on your machine, via MCP) drive the Cobblr tab you have open in{" "}
+        Let Claude (from Claude Code / Desktop on your machine, via MCP) drive the {productName()} tab you have open in{" "}
         <strong>this workspace</strong>  - opening pages and views as a shared, collaborative session. It's{" "}
         <strong>off by default</strong>, and even when on, Claude only drives a window after you explicitly pick it.
       </p>
@@ -99,7 +100,7 @@ function ConnectFromClaude({ slug }: { slug: string }) {
   });
   const snippet = token
     ? [
-        "# Claude Code (with the Cobblr MCP server from the repo / your self-host):",
+        `# Claude Code (with the ${productName()} MCP server from the repo / your self-host):`,
         `claude mcp add cobblr \\`,
         `  --env COBBLR_API_TOKEN=${token} \\`,
         `  --env COBBLR_BASE_URL=${window.location.origin}/api/v1 \\`,
@@ -128,7 +129,7 @@ function ConnectFromClaude({ slug }: { slug: string }) {
           minted: (
             <>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-faint">Point the Cobblr MCP server at this workspace:</span>
+                <span className="text-xs text-faint">Point the {productName()} MCP server at this workspace:</span>
                 <button
                   type="button"
                   onClick={() => { void navigator.clipboard?.writeText(snippet); toast.success("Copied"); }}

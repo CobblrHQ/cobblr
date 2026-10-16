@@ -3,6 +3,7 @@
 // an open one. Built here rather than inline in the super-admin route, so what
 // is sent is one function a render test can call for every case.
 
+import { productName } from "./product-name.js";
 import { cobblrEmailHtml, emailLinesText, type EmailLine } from "./email-html.js";
 
 /** The invitation's heading in each email (#4318, the approved wording). */
@@ -50,8 +51,8 @@ export function feedbackEmail(o: FeedbackEmailInput): FeedbackEmail {
     // fixed" record.
     const report = o.report.slice(0, 600);
     return {
-      subject: "Your Cobblr request is live",
-      text: `${o.greeting}\n\nYou reported:\n${bq(report)}\n\n${o.body}\n\n${discordText}Still off? ${replyHere}\n\nThanks for helping make Cobblr better.\nThe Cobblr team`,
+      subject: `Your ${productName()} request is live`,
+      text: `${o.greeting}\n\nYou reported:\n${bq(report)}\n\n${o.body}\n\n${discordText}Still off? ${replyHere}\n\nThanks for helping make ${productName()} better.\nThe ${productName()} team`,
       html: cobblrEmailHtml({
         greeting: o.greeting,
         quoteLabel: "You reported:",
@@ -68,8 +69,8 @@ export function feedbackEmail(o: FeedbackEmailInput): FeedbackEmail {
   }
   const report = o.report.slice(0, 500);
   return {
-    subject: "We replied to your Cobblr feedback",
-    text: `${o.greeting}\n\n${o.body}\n\n${discordText}${replyHere}\n\nYou'd sent us:\n  "${report}"\n\nThe Cobblr team`,
+    subject: `We replied to your ${productName()} feedback`,
+    text: `${o.greeting}\n\n${o.body}\n\n${discordText}${replyHere}\n\nYou'd sent us:\n  "${report}"\n\nThe ${productName()} team`,
     html: cobblrEmailHtml({
       greeting: o.greeting,
       quoteLabel: "You reported:",

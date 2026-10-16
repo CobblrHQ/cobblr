@@ -16,6 +16,7 @@
 // refuses a bare `fixed` outside this package, so an author reaching for one
 // has to say which of these it is.
 
+import { useLockPageScroll } from "./scrollLock";
 import { forwardRef, useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties, type ForwardedRef, type HTMLAttributes, type ReactNode } from "react";
 import { OverlayFlag } from "./overlay-open";
 import { useLayerStack } from "./layer-stack";
@@ -55,6 +56,10 @@ export const OverlayLayer = forwardRef<HTMLDivElement, LayerProps>(function Over
   useLayerStack(own);
   const modal = rest["aria-modal"] === true || rest["aria-modal"] === "true";
   useDialogFocus(modal, own);
+  // A modal cover holds the page still: a swipe on a list that fits, or one at
+  // its end, went through to the page behind it (the phone menu on an iPhone
+  // SE scrolled the page 254 px, #6782). Counted, so a modal inside nests.
+  useLockPageScroll(modal);
   return (
     <div ref={setRef} className={"fc-overlay " + className} {...rest}>
       <OverlayFlag />

@@ -12,6 +12,7 @@
 // (needs_reconnect, one card, then silence until reconnected) and a source
 // that has failed for a day (one card; the next round still tries).
 
+import { productName } from "../product-name.js";
 import { platform } from "@cobblr/platform-contract";
 import { archiveInboundEnvelope, inboundSourceSeen, recordInboundOutcome } from "../inbound-archive.js";
 import { ingestReceiptEmail } from "../../routes/receipt-ingest.js";
@@ -135,7 +136,7 @@ async function stopped(opts: SyncCredentialOpts, state: Awaited<ReturnType<typeo
         eventType: "platform.mail_source.stopped",
         message: grantDied
           ? "Gmail stopped: reconnect to keep your orders tracking themselves."
-          : `Gmail has not answered since ${failingSince.toISOString().slice(0, 16).replace("T", " ")}. Cobblr keeps trying.`,
+          : `Gmail has not answered since ${failingSince.toISOString().slice(0, 16).replace("T", " ")}. ${productName()} keeps trying.`,
         // PAGE-LINK: a mailbox connection has no record of its own; the card lives on /me/connections
         link_url: "/me/connections",
         card: {

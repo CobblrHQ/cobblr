@@ -3,6 +3,7 @@
 // gallery or a table. A record opens in place by the page's own ref; nothing
 // on the page is a workspace id.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { EntityThumb, EntityTile, TILE_GRID } from "@cobblr/platform-web";
@@ -186,7 +187,7 @@ export function PublicRecordCard({ record, frame, skinFrom }: { record: PublicRe
       </div>
       {footer !== false && (
         <p className="text-center text-xs text-faint" data-testid="public-footer">
-          Made with Cobblr
+          Made with {productName()}
         </p>
       )}
     </div>
@@ -213,7 +214,7 @@ function PublicSkin({ from, footer }: { from: string; footer?: boolean }) {
       ) : (
         <p className="text-sm text-muted">{q.error ? (q.error as Error).message : "Loading…"}</p>
       )}
-      {footer !== false && <p className="text-center text-xs text-faint">Made with Cobblr</p>}
+      {footer !== false && <p className="text-center text-xs text-faint">Made with {productName()}</p>}
     </div>
   );
 }

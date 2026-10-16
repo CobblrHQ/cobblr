@@ -2,6 +2,7 @@
 // branding (display name, logo path) + pinned-view list shown in the
 // member portal at /portal/:slug.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -182,7 +183,7 @@ export function PortalConfigPage() {
               <strong>{inheritApp.name}</strong> app's theme. Set one below to override it.
             </>
           ) : (
-            <>The launcher uses Cobblr's default look. Set a theme below to brand it.</>
+            <>The launcher uses {productName()}'s default look. Set a theme below to brand it.</>
           )}
         </p>
         {themeTokens ? (
@@ -211,7 +212,7 @@ export function PortalConfigPage() {
         <p className="text-[11px] text-faint dark:text-slate-500">
           Brands <strong>this</strong> admin dashboard (the shell you're in now): the whole thing
           recolors - page, header bar, every card / table / label - plus your workspace logo beside
-          the Cobblr mark, which always stays. Buttons and form inputs stay neutral so actions stay
+          the {productName()} mark, which always stays. Buttons and form inputs stay neutral so actions stay
           legible on any palette. Save, then reload the dashboard.
         </p>
         {adminTheme ? (

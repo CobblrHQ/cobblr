@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import { createHash, randomUUID } from "node:crypto";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -60,7 +61,7 @@ async function callPeer<T>(link: ShareLinkRow, body: unknown): Promise<T> {
     const res = await signedPeerPost(link, `/api/v1/share-links/${link.peer_link_id}/own-send`, body);
     if (!res.ok) {
       const said = await res.json().catch(() => null) as {error?: {message?: string}} | null;
-      throw new SendError(res.status === 404 ? "The other Cobblr needs updating for connected sends. Use a send file instead." : said?.error?.message || "The other Cobblr did not complete this send. The source stays here until confirmation.");
+      throw new SendError(res.status === 404 ? `The other ${productName()} needs updating for connected sends. Use a send file instead.` : said?.error?.message || `The other ${productName()} did not complete this send. The source stays here until confirmation.`);
     }
     return await res.json() as T;
   } catch (e) {if (e instanceof ShareDeliveryError) throw new SendError(`${e.message}. The source stays here until the import is confirmed. Retry this same send to recover its answer.`);throw e;}

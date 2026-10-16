@@ -3,6 +3,7 @@
 // job; we never live-drive the device (coordinate-not-control). Direct on the
 // LAN for self-hosted; the same connection rides the edge-bridge from cloud.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
@@ -103,7 +104,8 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
   const printTest = useMutation({
     mutationFn: (id: string) =>
       api.printToPrinter(activeSlug, id, {
-        document_base64: toBase64("Cobblr: core-print test page\n"),
+        document_base64: toBase64(`${productName()}: core-print test page
+`),
         content_type: "text/plain",
         filename: "cobblr-test.txt",
         job_name: "cobblr-test",
@@ -158,7 +160,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
       </div>
 
       <p className="text-sm text-muted dark:text-slate-400 max-w-2xl">
-        Connect a printer to print labels and documents. Cobblr works with{" "}
+        Connect a printer to print labels and documents. {productName()} works with{" "}
         <b>Bluetooth label printers</b> (printed straight from this browser, no server or app),{" "}
         <b>network printers</b> on a CUPS/IPP manager, and printers reached through an{" "}
         <b>on-site edge bridge</b>. It hands the manager a job and tracks it; it never drives the device.
@@ -192,7 +194,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
               <span className="font-medium text-content dark:text-mortar-100">Network printer</span>
             </div>
             <p className="text-xs text-muted dark:text-slate-400">
-              A printer on a CUPS/IPP manager on your network, or through an on-site edge bridge on a hosted Cobblr. Cobblr sends it whole print jobs.
+              A printer on a CUPS/IPP manager on your network, or through an on-site edge bridge on a hosted {productName()}. {productName()} sends it whole print jobs.
             </p>
           </button>
         </div>
@@ -493,7 +495,7 @@ function PrinterModal({
       setBrFound(null);
       toast.error(
         `This browser could not reach ${base}: ${e instanceof Error ? e.message : "no response"}. ` +
-          `Cobblr's server may still reach it fine.`,
+          `${productName()}'s server may still reach it fine.`,
       );
     } finally {
       setBrFinding(false);

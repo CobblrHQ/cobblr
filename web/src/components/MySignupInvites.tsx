@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useConfirm, useToast } from "@cobblr/platform-web";
 import { useAuth } from "../auth/AuthContext";
@@ -20,7 +21,7 @@ export function MySignupInvites({ enabled }: { enabled: boolean }) {
   });
   return <section className="space-y-2" aria-label="My signup invites">
     <h3 className="text-sm font-semibold">My invites to start a workspace</h3>
-    <p className="text-sm text-muted">These invite someone to start their own Cobblr. Revoking one stops its link from being used.</p>
+    <p className="text-sm text-muted">These invite someone to start their own {productName()}. Revoking one stops its link from being used.</p>
     {invites.isError && <p role="alert" className="text-sm text-ember-600 dark:text-ember-400">Couldn't load your signup invites.</p>}
     {invites.isLoading && <p className="text-sm text-muted">Loading invites…</p>}
     {invites.data?.items.length === 0 && <p className="text-sm text-muted">You have no signup invites.</p>}

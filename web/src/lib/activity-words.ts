@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { ACTIVITY_VERBS, activitySyncSource, dedupeActivity } from "@cobblr/platform-contract/activity-summary";
 import type { ActivityEntry, SaidChange } from "./api";
 // What a Recent-activity row says, in words a first-timer can read.
@@ -52,7 +53,7 @@ export function actorWords(e: ActivityWordsEntry): string {
   const sync = activitySyncSource(e);
   if (sync) return sync;
   if (AUTOMATION_ACTIONS.has(e.action) || e.via_kind === "automation") return "Automation";
-  return "Cobblr";
+  return productName();
 }
 
 /** HOW the row's actor acted, as the chip beside the name, or null for a
@@ -230,7 +231,7 @@ export const FEED_VERBS: Readonly<Record<string, string>> = {
   // (documentWords).
   library_item_linked: "linked",
   library_item_unlinked: "unlinked",
-  library_item_copied: "copied into Cobblr",
+  library_item_copied: `copied into ${productName()}`,
 };
 
 /** The verb a feed row puts between who and what: one map for every feed

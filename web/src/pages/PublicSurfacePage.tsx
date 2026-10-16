@@ -15,6 +15,7 @@
 // Defaults to tile rendering since the public consumer is typically
 // looking AT things; list is available via the ?view=list query.
 
+import { productName } from "@cobblr/platform-web";
 import { MAIN_ID, SkipToContent } from "../components/a11y/shell-landmarks";
 import { useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -113,7 +114,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
       const visit = opened.current !== token;
       opened.current = token;
       const res = await fetch(`/api/v1/public/${token}`, {
-        headers: { "X-Cobblr-Visit": visit ? "1" : "0" },
+        headers: { /* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Visit": visit ? "1" : "0" },
       });
       // 404-is: a-state: a shared link can be revoked, and the visitor sees that it is gone
       if (res.status === 404) throw new Error("not_found");
@@ -169,7 +170,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
             </a>
           </p>
         )}
-        {data.page.footer !== false && <p className="mt-6 text-center text-xs text-faint">Made with Cobblr</p>}
+        {data.page.footer !== false && <p className="mt-6 text-center text-xs text-faint">Made with {productName()}</p>}
       </PublicShell>
       </PublicBrand>
     );
@@ -279,7 +280,7 @@ function PublicShell({
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <CobblestoneMark size={26} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100">
-            Cobblr
+            {productName()}
           </span>
           {title && (
             <>

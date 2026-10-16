@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { laserLayerLabel } from "../../lib/laser-layer-label";
 import { useState, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -76,7 +77,7 @@ export function LightBurnReview({ review, library, starting, onStart, onClose, o
           {(!Array.isArray(review.materialLibrary.entries) || review.materialLibrary.entries.length === 0) && <p className="text-muted py-2">No material library entries were reported.</p>}
         </details>}
       </>}
-      <p className="text-sm">{review.transport === "compiled" ? "These settings were compiled by Cobblr. Frame the bounds, check the material and keep the machine supervised. Use Stop laser at the station or the stop at the machine." : "This physically starts the laser. Check the material and keep the machine supervised. Stop it in LightBurn or at the machine."}</p>
+      <p className="text-sm">{review.transport === "compiled" ? `These settings were compiled by ${productName()}. Frame the bounds, check the material and keep the machine supervised. Use Stop laser at the station or the stop at the machine.` : "This physically starts the laser. Check the material and keep the machine supervised. Stop it in LightBurn or at the machine."}</p>
       <div className="flex flex-wrap justify-end gap-2">
         {onFrame && <button onClick={onFrame} disabled={starting} className="min-h-11 px-3 py-2 rounded border border-line">Frame with laser off</button>}
         <button onClick={onClose} disabled={starting} className="px-3 py-2 rounded border border-line">Back</button>

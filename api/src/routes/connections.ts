@@ -7,6 +7,8 @@
 // are write-only — never returned (the list shows which keys are set, not their
 // values).
 
+import { createApprovalRequest, decideApprovalRequest, withdrawApprovalRequest } from "../platform/approvals.js";
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
 import { z } from "zod";
@@ -109,11 +111,16 @@ async function supersedeShareOffersForAllOwners(orgId: string): Promise<void> {
   for (const o of owners) await supersedeShareOffers(o, orgId);
 }
 
-/** Ping a workspace's owners when a member OFFERS to share their AI there (a
- *  workspace-default route into a workspace they don't own). Best-effort. */
+/** Raise each new AI-share offer as an approval request (#6911): the owners
+ *  get one card, in the bell and the DM, whose Approve and Deny decide it in
+ *  one tap. The offer email still goes (the bell is easy to miss and a shared
+ *  AI powers nothing until it is approved), on its own, not as a second bell
+ *  row. An offer already approved is not asked again, and one that cannot be
+ *  raised as a request (an offerer who is a guest) is told the old way. */
 async function notifyOwnersOfOffers(
   offererId: string,
   offererName: string,
+  credentialId: string,
   routes: CredentialRoute[],
 ): Promise<void> {
   const shares = routes.filter((r) => r.mode === "workspace-default");
@@ -121,42 +128,95 @@ async function notifyOwnersOfOffers(
     const owners = await workspaceOwnerIds(r.org_id);
     const nonSelf = owners.filter((o) => o !== offererId);
     if (nonSelf.length === 0) continue; // self-share needs no offer
-    // Workspace name for a human subject line — falls back gracefully.
-    const org = await meta
-      .selectFrom("orgs")
-      .select(["name"])
-      .where("id", "=", r.org_id)
-      .executeTakeFirst();
+    const offers = await listWorkspaceAiOffers(r.org_id);
+    if (offers.some((o) => o.credential_id === credentialId && o.status === "approved")) continue;
+    const org = await meta.selectFrom("orgs").select(["name"]).where("id", "=", r.org_id).executeTakeFirst();
     const wsName = org?.name ?? "your workspace";
-    // Stored relative (see receipt-ingest); the absolute form is for the DM body.
     const configPath = "/configuration/ai";
     const configUrl = absoluteAppUrl(configPath);
+    const email = {
+      subject: `${offererName} wants to share their AI with ${wsName}`,
+      text:
+        `${offererName} offered to share their AI connection with ${wsName} on ${productName()}.\n\n` +
+        `Until you approve it, the workspace's Ask Cobb chat and other AI features stay off. ` +
+        `Approve or decline it from the notification, or here:\n${configUrl}\n\n` +
+        `(You can always change this later under Configuration → AI.)`,
+    };
+    const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", r.org_id).where("user_id", "=", offererId).executeTakeFirst();
+    const asked = membership
+      ? await createApprovalRequest({
+          orgId: r.org_id,
+          requesterId: offererId,
+          requesterRole: membership.role,
+          remedies: [{ kind: "ai-share", key: credentialId }],
+          subject: "Use their AI connection for this workspace's Ask Cobb and AI features",
+          resume: null,
+          route: configPath,
+        }).catch((err: unknown) => {
+          console.error("[connections] an AI-share offer could not be raised as a request:", (err as Error).message);
+          return null;
+        })
+      : null;
     for (const ownerId of nonSelf) {
-      // Collapse any prior unread offer for this owner+workspace first, so a
-      // re-share doesn't stack up identical "wants to share their AI" rows — the
-      // newest one below is the single live action item.
+      if (asked?.ok) {
+        // The card is the request's; only a new one sends its email.
+        if (!asked.existing) {
+          await notifyAccount({ userId: ownerId, representativeOrgId: r.org_id, notificationType: "platform.ai.share_offered", only: ["email"], message: `${offererName} offered to share their AI with this workspace.`, link_url: configPath, email }).catch(() => {});
+        }
+        continue;
+      }
       await supersedeShareOffers(ownerId, r.org_id);
-      // A shared AI can't power the workspace until the owner approves it, and
-      // the in-app bell is easy to miss — so this rides email too (a tier-2
-      // platform notification; delivered only if the owner hasn't opted out and
-      // a mail sender is configured — notifyAccount gates both).
       await notifyAccount({
         userId: ownerId,
         representativeOrgId: r.org_id,
         notificationType: "platform.ai.share_offered",
         message: `${offererName} offered to share their AI with this workspace. Review it under Configuration → AI.`,
         link_url: configPath,
-        email: {
-          subject: `${offererName} wants to share their AI with ${wsName}`,
-          text:
-            `${offererName} offered to share their AI connection with ${wsName} on Cobblr.\n\n` +
-            `Until you approve it, the workspace's Ask Cobb chat and other AI features stay off. ` +
-            `Approve or decline the offer here:\n${configUrl}\n\n` +
-            `(You can always change this later under Configuration → AI.)`,
-        },
+        email,
       }).catch(() => {});
     }
   }
+}
+
+/** The approval request still waiting for this offer, if it was raised as one. */
+async function pendingShareRequest(orgId: string, credentialId: string): Promise<string | null> {
+  const row = await meta
+    .selectFrom("approval_requests")
+    .select("id")
+    .where("org_id", "=", orgId)
+    .where("dedupe_key", "=", `ai-share:${credentialId}`)
+    .where("status", "=", "pending")
+    .executeTakeFirst();
+  return row?.id ?? null;
+}
+
+/** A share the member took back takes its request with it: the owner's card
+ *  stops asking about an offer that no longer stands. */
+async function withdrawSharesNoLongerOffered(offererId: string, credentialId: string, stillOfferedTo: ReadonlySet<string>): Promise<void> {
+  const rows = await meta
+    .selectFrom("approval_requests")
+    .select(["id", "org_id"])
+    .where("requester_id", "=", offererId)
+    .where("dedupe_key", "=", `ai-share:${credentialId}`)
+    .where("status", "=", "pending")
+    .execute();
+  for (const row of rows) if (!stillOfferedTo.has(row.org_id)) await withdrawApprovalRequest(row.id, offererId).catch(() => null);
+}
+
+/** Approve or decline an offer: through its request when it was raised as one
+ *  (the card's own door, so the bell, the DM and this page cannot disagree),
+ *  directly when it predates requests. */
+async function decideShareOffer(orgId: string, deciderId: string, credentialId: string, decision: "approve" | "deny", makeActive: boolean): Promise<{ ok: true } | { ok: false; status: number; code: string; message: string }> {
+  const requestId = await pendingShareRequest(orgId, credentialId);
+  if (requestId) {
+    const r = await decideApprovalRequest({ requestId, deciderId, decision });
+    if (!r.ok) return { ok: false, status: r.status, code: r.code === "not_approver" ? "not_owner" : r.code, message: r.message };
+    if (decision === "approve" && makeActive) await setActiveWorkspaceAi(deciderId, orgId, credentialId);
+    return { ok: true };
+  }
+  const done = decision === "approve" ? await approveWorkspaceAiOffer(deciderId, orgId, credentialId, makeActive) : await rejectWorkspaceAiOffer(deciderId, orgId, credentialId);
+  if (!done) return { ok: false, status: 403, code: "not_owner", message: decision === "approve" ? "Only the workspace owner can approve shared AI." : "Only the workspace owner can decline shared AI." };
+  return { ok: true };
 }
 
 // The secret-free provider catalogue (same shape the per-workspace AI page uses)
@@ -310,7 +370,7 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
     if (prepared?.afterSave) await prepared.afterSave(id);
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
-      await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
+      await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", id, parsed.data.routes);
     }
     res.status(201).json({ id, ...(verification ? { verification } : {}) });
   } catch (err) {
@@ -382,9 +442,12 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
       return;
     }
     if (prepared?.ok && prepared.afterSave) await prepared.afterSave(id);
+    if (parsed.data.routes) {
+      await withdrawSharesNoLongerOffered(req.session!.id, id, new Set(parsed.data.routes.filter((r) => r.mode === "workspace-default").map((r) => r.org_id)));
+    }
     if (parsed.data.routes?.length) {
       const me = await meta.selectFrom("users").select("display_name").where("id", "=", req.session!.id).executeTakeFirst();
-      await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", parsed.data.routes);
+      await notifyOwnersOfOffers(req.session!.id, me?.display_name ?? "A member", id, parsed.data.routes);
     }
     if (verification) res.json({ verification });
     else res.status(204).end();
@@ -429,6 +492,7 @@ connectionsRouter.delete("/me/connections/:id", requireAuth, async (req, res, ne
       }
     }
     const ok = await deleteUserCredential(req.session!.id, id);
+    if (ok) await withdrawSharesNoLongerOffered(req.session!.id, id, new Set());
     if (!ok) {
       res.status(404).json({ error: { code: "not_found", message: "Connection not found." } });
       return;
@@ -498,14 +562,9 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
   try {
     // ROLE: the owner, checked by approveWorkspaceAiOffer
     const parsed = ApproveBody.safeParse(req.body ?? {});
-    const ok = await approveWorkspaceAiOffer(
-      req.session!.id,
-      orgId(req),
-      req.params.credentialId!,
-      parsed.success ? parsed.data.active ?? false : false,
-    );
-    if (!ok) {
-      res.status(403).json({ error: { code: "not_owner", message: "Only the workspace owner can approve shared AI." } });
+    const r = await decideShareOffer(orgId(req), req.session!.id, req.params.credentialId!, "approve", parsed.success ? parsed.data.active ?? false : false);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
     // Resolved — clear the offer notification so it stops reading as a to-do.
@@ -522,9 +581,9 @@ workspaceAiSharesRouter.post("/ai-shares/:credentialId/approve", requireAuth, wi
 workspaceAiSharesRouter.post("/ai-shares/:credentialId/reject", requireAuth, withTenant, async (req, res, next) => {
   try {
     // ROLE: the owner, checked in the handler (not_owner)
-    const ok = await rejectWorkspaceAiOffer(req.session!.id, orgId(req), req.params.credentialId!);
-    if (!ok) {
-      res.status(403).json({ error: { code: "not_owner", message: "Only the workspace owner can decline shared AI." } });
+    const r = await decideShareOffer(orgId(req), req.session!.id, req.params.credentialId!, "deny", false);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
       return;
     }
     // Resolved — clear the offer notification so it stops reading as a to-do.

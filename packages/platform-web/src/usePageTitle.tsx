@@ -8,12 +8,13 @@
 // The hook prefixes "cobblr · " automatically so every tab title in a
 // multi-tab session is identifiable at a glance.
 
+import { productName } from "./product-name";
 import { useEffect } from "react";
 
 export function usePageTitle(title: string | null | undefined): void {
   useEffect(() => {
     const previous = document.title;
-    document.title = title ? `${title} · cobblr` : "cobblr";
+    document.title = title ? `${title} · ${productName()}` : productName();
     return () => {
       document.title = previous;
     };

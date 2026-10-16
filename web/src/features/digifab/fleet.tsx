@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { cncBridgeConfig, cncEnvelopeFields } from "./cncBridgeConfig";
 import { jobDisplayName } from "./jobDisplayName";
 import { MachinePrintBatches } from "./PrintBatchCard";
@@ -367,7 +368,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
         <BridgeAbout />
       </div>) : (<>
       <p className="text-[13px] text-muted dark:text-slate-400">
-        {lightBurn ? "Install the bridge on the computer with LightBurn. Pairing happens on that computer. To use a bridge elsewhere, enable LightBurn’s network API first." : "A hosted Cobblr reaches your machines through a bridge on your network. Install it on an always-on computer, then add your machines below."}
+        {lightBurn ? "Install the bridge on the computer with LightBurn. Pairing happens on that computer. To use a bridge elsewhere, enable LightBurn’s network API first." : `A hosted ${productName()} reaches your machines through a bridge on your network. Install it on an always-on computer, then add your machines below.`}
       </p>
       {/* STEP 1 — install the bridge (name + token; no machines needed yet). */}
       <label className="block">
@@ -376,7 +377,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
       </label>
       <BridgeInstallMethod slug={activeSlug} label={label} bridgeId={installationId || ""} lightBurn={lightBurn} onStarted={id => setInstallationId(id)} />
       <div>
-        <span className={lbl}>3 · Cobblr is watching for it</span>
+        <span className={lbl}>3 · {productName()} is watching for it</span>
         <div className={"flex items-center gap-2 text-sm rounded border p-2 " + (connected ? "border-moss-500/40 bg-moss-50 dark:bg-moss-950/30" : "border-line dark:border-slate-700")}>
           <span className={"w-2 h-2 rounded-full " + (connected ? "bg-moss-500" : "bg-amber-500 animate-pulse")} />
           {connected ? <span className="text-moss-700 dark:text-moss-300">{bridgeLabel} online</span> : <span className="text-muted dark:text-slate-400">Waiting for {bridgeLabel} to dial in…</span>}
@@ -440,7 +441,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
                 {m.driver === "sdcp" && <p className="col-span-2 text-xs text-muted">The shared bridge reaches this resin printer over LAN. Upload a sliced GOO file, load its resin and approve Start at an authorized browser station.</p>}
               </div>
               {m.driver === "gcode-laser" && m.cfg.firmware === "forgefirm" && <p className="mt-2 text-sm text-muted">
-                Stock cloud Glowforges are not supported. <a href="https://github.com/openglow-org/forgefirm" target="_blank" rel="noreferrer" className="text-accent underline">ForgeFIRM</a> is beta, third-party firmware you install at your own risk. Cobblr does not install it. It connects over TCP port 23 and keeps the machine's physical arming button. Copy the HTTPS certificate fingerprint from the machine's Setup card. If panel reads are locked, create a token with machine.read access there.
+                Stock cloud Glowforges are not supported. <a href="https://github.com/openglow-org/forgefirm" target="_blank" rel="noreferrer" className="text-accent underline">ForgeFIRM</a> is beta, third-party firmware you install at your own risk. {productName()} does not install it. It connects over TCP port 23 and keeps the machine's physical arming button. Copy the HTTPS certificate fingerprint from the machine's Setup card. If panel reads are locked, create a token with machine.read access there.
               </p>}
             </div>
           );
@@ -1554,7 +1555,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       {!laser && <ToolTemperatures tools={d.temps?.tools} />}
       {d.state === "unpaired" && d.station_kind === "print" && <SnapmakerPairing slug={slug} connectionId={connId} onPaired={invalidateFleet} />}
       {d.managed_by_detector && (
-        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title="An external detector owns this printer's detection and camera - Cobblr isn't watching it or pulling its camera">
+        <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title={`An external detector owns this printer's detection and camera - ${productName()} isn't watching it or pulling its camera`}>
           👁 watched by detector
         </div>
       )}
@@ -2614,7 +2615,7 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               {/* The watch, in words: freshness + source + a live one-tap reading. */}
               {!laser && device.managed_by_detector ? (
                 <div className="flex items-center gap-1.5 text-[11px] text-faint">
-                  👁 An external detector watches this printer and raises its own alerts; Cobblr stands down its camera (single-owner rule).
+                  👁 An external detector watches this printer and raises its own alerts; {productName()} stands down its camera (single-owner rule).
                 </div>
               ) : fail && (fail.watching || fail.samples > 0 || fail.paused) ? (
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-faint">

@@ -4,6 +4,7 @@
 // the driver if it isn't already, create the connection, test it, and hand back
 // the connection + discovered devices so the New-3D-printer modal can link it.
 // No trip to the Print Manager, no pasted JSON — same "you do nothing" feel as Bambu.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Printer } from "lucide-react";
@@ -86,7 +87,7 @@ export function DirectManagerConnect({
     },
     onSuccess: ({ conn, devices, ok }) => {
       if (ok) toast.success(`${kindLabel} connected`);
-      else toast.error("Created, but Cobblr couldn't reach it - check the address is right and on the network.");
+      else toast.error(`Created, but ${productName()} couldn't reach it - check the address is right and on the network.`);
       onConnected(conn, devices);
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -96,7 +97,7 @@ export function DirectManagerConnect({
     <div className="space-y-3">
       <div className="flex items-center gap-2 text-xs text-muted">
         <Printer size={14} className="text-accent" />
-        <span>Point Cobblr at your <strong>{kindLabel}</strong> on the network - we install the driver and connect.</span>
+        <span>Point {productName()} at your <strong>{kindLabel}</strong> on the network - we install the driver and connect.</span>
       </div>
       <label className="block">
         <span className={lbl}>Address (URL or IP)</span>
@@ -109,7 +110,7 @@ export function DirectManagerConnect({
         </label>
       )}
       <HomeNetworkHint address={url} hosted={hosted} />
-      <p className="text-[11px] text-faint">Stored encrypted. Cobblr sends files + start/status to this address; it never streams motion.</p>
+      <p className="text-[11px] text-faint">Stored encrypted. {productName()} sends files + start/status to this address; it never streams motion.</p>
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={onCancel} className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800">Cancel</button>
         <button type="button" onClick={() => connect.mutate()} disabled={connect.isPending || !url.trim() || catalog.isLoading}

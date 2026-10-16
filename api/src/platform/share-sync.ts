@@ -13,6 +13,7 @@
 // Both sides on one Cobblr is the same path with the network taken out: the
 // flush hands the batch straight to the apply function the route would.
 
+import { productName } from "./product-name.js";
 import { trustedPeers } from "./cloud.js";
 import { randomBytes } from "node:crypto";
 import { sql } from "kysely";
@@ -126,7 +127,7 @@ export async function peerFetch(orgId: string, url: string, init: RequestInit): 
 /** POST to the other side of a paired link, signed with this side's key:
  *  the one way anything crosses to another Cobblr. */
 export async function signedPeerPost(link: ShareLinkRow, path: string, body: unknown): Promise<Response> {
-  if (!link.peer_url || !link.send_key_encrypted) throw new ShareDeliveryError("this share is not paired with another Cobblr");
+  if (!link.peer_url || !link.send_key_encrypted) throw new ShareDeliveryError(`this share is not paired with another ${productName()}`);
   const key = parseServiceKey(decryptCreds(link.send_key_encrypted));
   if (!key) throw new ShareDeliveryError("this share's key is unreadable");
   const raw = JSON.stringify(body);
@@ -156,10 +157,10 @@ async function deliver(link: ShareLinkRow, ops: ShareOp[]): Promise<void> {
   if (res.ok) return;
   const said = (await res.json().catch(() => null)) as { error?: { code?: string; message?: string } } | null;
   if (res.status === 426 || said?.error?.code === "needs_update") {
-    throw new ShareDeliveryError(`${link.peer_name ?? "The other side"}'s Cobblr needs updating to sync this share`, true);
+    throw new ShareDeliveryError(`${link.peer_name ?? "The other side"}'s ${productName()} needs updating to sync this share`, true);
   }
   if (res.status === 410 || said?.error?.code === "share_revoked") throw new ShareDeliveryError("the other side ended this share", false, true);
-  throw new ShareDeliveryError(said?.error?.message ?? `the other Cobblr answered ${res.status}`);
+  throw new ShareDeliveryError(said?.error?.message ?? `the other ${productName()} answered ${res.status}`);
 }
 
 /** Links a flush was asked for while one was running, in this process. The
@@ -342,7 +343,7 @@ export class ShareApplyError extends Error {
 export async function applyShareOps(link: ShareLinkRow, body: unknown): Promise<{ applied: string[] }> {
   const b = (body ?? {}) as { v?: unknown; ops?: unknown };
   const v = typeof b.v === "number" ? b.v : 0;
-  if (v > SHARE_ENVELOPE_VERSION) throw new ShareApplyError(426, "needs_update", `This Cobblr reads share changes up to version ${SHARE_ENVELOPE_VERSION}; this one is ${v}. It needs updating.`);
+  if (v > SHARE_ENVELOPE_VERSION) throw new ShareApplyError(426, "needs_update", `This ${productName()} reads share changes up to version ${SHARE_ENVELOPE_VERSION}; this one is ${v}. It needs updating.`);
   if (link.status === "revoked") throw new ShareApplyError(410, "share_revoked", "This share has ended.");
   const ops = Array.isArray(b.ops) ? (b.ops as ShareOp[]) : [];
   const applied: string[] = [];
@@ -355,7 +356,7 @@ export async function applyShareOps(link: ShareLinkRow, body: unknown): Promise<
       continue;
     }
     const handler = HANDLERS.get(o.op);
-    if (!handler) throw new ShareApplyError(426, "needs_update", `This Cobblr does not know the change "${o.op}"; it needs updating.`);
+    if (!handler) throw new ShareApplyError(426, "needs_update", `This ${productName()} does not know the change "${o.op}"; it needs updating.`);
     await handler(link, (o.payload ?? {}) as Record<string, unknown>);
     // A change can end the link itself (a share space taken away with its
     // link): then there is nothing left to remember it against.

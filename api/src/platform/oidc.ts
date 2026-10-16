@@ -30,6 +30,7 @@
 // through an enabled provider (passwordOffRefusal), so nobody locks the
 // instance out; `node dist/cli/password-sign-in.js on` turns it back on.
 
+import { productName } from "./product-name.js";
 import { createHash, randomBytes } from "node:crypto";
 import * as client from "openid-client";
 import { z } from "zod";
@@ -262,7 +263,7 @@ export async function finishLogin(callbackUrl: URL): Promise<CallbackOutcome> {
       );
     }
   }
-  if (!provider.allow_signup) return refused("no_account", `There is no account here for your ${provider.display_name} sign-in, and new accounts are made by invitation. Ask whoever runs this Cobblr.`, provider);
+  if (!provider.allow_signup) return refused("no_account", `There is no account here for your ${provider.display_name} sign-in, and new accounts are made by invitation. Ask whoever runs this ${productName()}.`, provider);
   if (!email) return refused("no_email", `${provider.display_name} did not share an email address, which a new account needs.`, provider);
   if (!verified) return refused("email_unverified", `${provider.display_name} has not verified ${email}, so no account is made for it here.`, provider);
   if (provider.signup_groups.length > 0 && !groups.some((g) => provider.signup_groups.includes(g))) {

@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import { exportSendFile } from "./record-send-file.js";
 import { listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { createPairing, deletePairing, updatePairing } from "./pairings-ops.js";
@@ -2748,7 +2749,7 @@ export function registerPlatformActionHandlers(): void {
   };
   // Mirrored and delivered before this answers (share-picks.ts); when the
   // other side did not take it in time, the person is told it is on its way.
-  const pending = (delivered: boolean | undefined) => (delivered === false ? " Their Cobblr has not taken the change yet; it follows when it answers." : "");
+  const pending = (delivered: boolean | undefined) => (delivered === false ? ` Their ${productName()} has not taken the change yet; it follows when it answers.` : "");
   for (const [handler, stop] of [["platform.share-with", false], ["platform.stop-sharing", true]] as const) {
     registerHandler(handler, async (ctx: ActionInvokeContext) => {
       const a = await shareArgs(ctx, !stop);
@@ -2784,7 +2785,7 @@ export function registerPlatformActionHandlers(): void {
     registerPlanner(handler, async (ctx: ActionInvokeContext) => {
       const a = await shareArgs(ctx, !stop);
       if ("error" in a) return { error: a.error };
-      if ("invite" in a) return { title: `Invite ${a.invite} to ${await describeInviteScope(ctx.orgId, { kind: a.kind, ...(a.collection ? {} : { ids: a.ids }) })}`, lines: ["Emails them an invite when this Cobblr can send mail, and gives you the link either way. Only an account with that address can use it."] };
+      if ("invite" in a) return { title: `Invite ${a.invite} to ${await describeInviteScope(ctx.orgId, { kind: a.kind, ...(a.collection ? {} : { ids: a.ids }) })}`, lines: [`Emails them an invite when this ${productName()} can send mail, and gives you the link either way. Only an account with that address can use it.`] };
       if (a.collection) return { title: `${stop ? "Stop sharing" : "Share"} ${(await kindWords(ctx.orgId, a.kind)).many} with ${a.target.to}`, lines: [stop ? "Remove the whole-collection rule. Individually shared records stay shared." : "Every current and future record in this collection, with existing exclusions kept."] };
       const lines = await goneTitles(ctx.orgId, a.kind, a.ids);
       return { title: `${stop ? "Stop sharing" : "Share"} ${countOf(lines.length, "thing")} with ${a.target.to}`, lines };

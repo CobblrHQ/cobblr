@@ -18,7 +18,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 /** One thing a request asks for. `key` is the id the remedy is keyed on: an
  *  action id for a capability, a bundle's external id for an install, a
  *  module's name for a module to turn on. */
-export type ApprovalRemedyKind = "capability" | "install" | "module";
+export type ApprovalRemedyKind = "capability" | "install" | "module" | "ai-share";
 
 export interface ApprovalRemedy {
   kind: ApprovalRemedyKind;

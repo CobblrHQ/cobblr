@@ -38,6 +38,9 @@ export interface UsersTable {
    *  ACCOUNT because localStorage forgets on a new device, a different origin
    *  (the main host vs a preview host) and a cleared cache. */
   tour_seen_at: Date | null;
+  /** The IANA time zone this person's own browser reports (migration 226):
+   *  what "today" is for them. null = never said; dayFor then falls back. */
+  time_zone: string | null;
   /** Tips shown and dismissed, per tip id (first shown at / dismissed at).
    *  Account-level, like tour_seen_at: a dismissal holds on every device. */
   tips: Generated<UserTips>;

@@ -4,6 +4,7 @@
 // wherever it happens to be. A step whose target is not on the page is skipped.
 // The step content + order come from tour.config.ts.
 
+import { productName } from "@cobblr/platform-web";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ArrowRight, Moon, Sun } from "lucide-react";
@@ -186,7 +187,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
             {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
             {theme === "dark" ? "Light" : "Dark"}
           </button>
-          <div className={`text-center ${kicker}`}>Cobblr</div>
+          <div className={`text-center ${kicker}`}>{productName()}</div>
           <h3 className="text-center text-lg font-bold">{step.title}</h3>
           <p className={`text-center text-sm mt-1.5 ${muted}`}>{step.body}</p>
           {step.kind === "chooseLayout" && <div className="flex flex-col gap-2 mt-4" role="radiogroup" aria-label="Desktop layout">
@@ -254,7 +255,7 @@ export function GuidedTour({ steps: allSteps, onClose }: { steps: TourStep[]; on
 
       {step.kind === "done" && (
         <div ref={cardRef} className={`absolute z-[210] left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2 w-[380px] max-w-[calc(100vw-24px)] rounded-2xl ${surface} shadow-2xl p-5 text-center`}>
-          <div className={kicker}>Cobblr</div>
+          <div className={kicker}>{productName()}</div>
           <h3 className="text-lg font-bold">{step.title}</h3>
           <p className={`text-sm mt-1.5 ${muted}`}>{step.body}</p>
           <div className="flex items-center justify-center gap-3 mt-4">

@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/platform-contract",
-  "version": "0.5.99",
+  "version": "0.5.100",
   "private": true,
   "type": "module",
   "sideEffects": [

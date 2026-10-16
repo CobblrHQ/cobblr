@@ -4,6 +4,7 @@
 // One action: post-message. Args: { text, blocks? }. If a template
 // rendered string is provided, it goes in `text`.
 
+import { sendFetch } from "../outbound-send.js";
 import { registerOutboundConnector } from "../services.js";
 
 export function register(): void {
@@ -37,15 +38,11 @@ export function register(): void {
         throw new Error("slack: webhook URL must be a https://hooks.slack.com/ address");
       const text = ctx.rendered ?? String(ctx.args.text ?? "");
       if (!text) throw new Error("slack: empty message");
-      const res = await fetch(url, {
+      const res = await sendFetch("slack", url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      if (!res.ok) {
-        const t = await res.text().catch(() => "");
-        throw new Error(`slack: ${res.status} ${t.slice(0, 200)}`);
-      }
       return { status: res.status };
     },
     testConnection: async (credentials) => {

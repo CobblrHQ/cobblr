@@ -14,6 +14,7 @@
 // The rule is discordInviteLines, pure, so the table of who sees what is a
 // test; discordInviteFor gathers the facts it needs.
 
+import { productName } from "./product-name.js";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { discordConnectConfigured } from "./discord-oauth.js";
@@ -51,7 +52,7 @@ export function discordInviteLines(f: DiscordInviteFacts): EmailLine[] {
   const lines: EmailLine[] = [];
   if (f.inviteUrl && f.member !== true) {
     lines.push([
-      "Join the Cobblr community on Discord to ask questions, share your projects, and see what's new: ",
+      `Join the ${productName()} community on Discord to ask questions, share your projects, and see what's new: `,
       { text: f.inviteUrl.replace(/^https?:\/\//, ""), href: f.inviteUrl },
     ]);
   }

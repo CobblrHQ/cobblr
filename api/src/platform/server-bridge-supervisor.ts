@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import {createHash} from "node:crypto";
 import {readdir,readFile,mkdir,writeFile} from "node:fs/promises";
 import {join} from "node:path";
@@ -38,7 +39,7 @@ export class ServerBridgeSupervisor{
 }
 export async function launchServerBridge(cache:string):Promise<ServerBridgeWorker>{
  await mkdir(cache,{recursive:true,mode:0o700});const bundle=join(cache,"bridge.bundle.cjs");await writeFile(bundle,bridgeBundleJs(),{mode:0o600});
- const env:NodeJS.ProcessEnv={BRIDGE_SERVER_MODE:"true",BRIDGE_NETWORK_ONLY:"true",BRIDGE_HOST_NAME:"Cobblr Server"};
+ const env:NodeJS.ProcessEnv={BRIDGE_SERVER_MODE:"true",BRIDGE_NETWORK_ONLY:"true",BRIDGE_HOST_NAME:`${productName()} Server`};
  for(const key of ["PATH","TMPDIR","TEMP","SystemRoot","SSL_CERT_FILE","NODE_EXTRA_CA_CERTS"])if(process.env[key])env[key]=process.env[key];
  const child=spawn(process.execPath,[bundle],{cwd:cache,env,stdio:["ignore","inherit","inherit","ipc"]});
  let alive=true;child.once("error",()=>{alive=false;});child.once("exit",()=>{alive=false;});

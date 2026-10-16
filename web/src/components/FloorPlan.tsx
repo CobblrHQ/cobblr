@@ -1867,9 +1867,13 @@ function PlanFor({
       )}
 
       {/* ── edit panel: docked to the bottom of the screen while the plan
-          is on it, so selecting something visibly does something ── */}
+          is on it, so selecting something visibly does something. Never
+          more than under half the screen, scrolling inside, and not docked
+          at all on a screen too short to spare it (a phone on its side): it
+          covered the plan's own head and its Done on a small phone, so nobody
+          could leave editing ── */}
       {edit && (
-      <div className="sticky z-10 shadow-lg rounded-md" style={{ bottom: bare ? 0 : "var(--bottom-chrome-height, 0px)" }} data-testid="plan-panel">
+      <div className="sticky z-10 shadow-lg rounded-md max-h-[45dvh] overflow-y-auto overscroll-contain [@media(max-height:500px)]:static [@media(max-height:500px)]:max-h-none" style={{ bottom: bare ? 0 : "var(--bottom-chrome-height, 0px)" }} data-testid="plan-panel">
       {sel?.type === "entity" && (
         <EntityPanel
           ent={occupants.find((o) => o.id === sel.id && o.kind === sel.kind) ?? null}

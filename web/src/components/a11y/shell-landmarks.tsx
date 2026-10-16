@@ -12,6 +12,7 @@
 //
 // lint:every-main-can-be-skipped-to holds every <main> to MAIN_ID and every
 // file that draws one to <SkipToContent/>.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 
@@ -37,8 +38,10 @@ export function SkipToContent() {
 
 /** The page's own name, from the title usePageTitle set ("Assets · cobblr"). */
 export function pageNameOf(title: string): string {
-  const name = title.replace(/\s*·\s*cobblr\s*$/i, "").trim();
-  return /^cobblr$/i.test(name) ? "" : name;
+  const brand = productName().toLowerCase();
+  const raw = title.trim();
+  const name = raw.toLowerCase().endsWith(`· ${brand}`) ? raw.slice(0, -brand.length - 2).trim() : raw;
+  return name.toLowerCase() === brand ? "" : name;
 }
 
 /** Says the new page's name once the navigation has settled. The first page

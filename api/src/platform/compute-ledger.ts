@@ -15,8 +15,15 @@
 // the process did meanwhile, 46% of one hosted surface's CPU for a request that waits. A route that never ran alone
 // has no share (`cpu_share: null`), rather than a wrong one. Per-callback timing (async hooks) would say
 // exactly, and cost every request about half again in promise-heavy code, so it is not done here.
+//
+// A HELD-OPEN ROUTE (a long poll, a stream) is no CPU cost at all. One that sat alone for 25 seconds was still
+// charged everything the process did meanwhile (sweeps, timers): a hosted surface's two edge long-polls read 77% of
+// its CPU on 2026-10-14 with a median of 0 ms a call. A route whose median call is held open (HELD_WALL_MS)
+// and spends nothing (HELD_CPU_MS) is marked `held_open`, has no share and is left out of the total.
 
 const MAX_ROUTES = 400;
+export const HELD_WALL_MS = 5_000;
+export const HELD_CPU_MS = 1;
 const SAMPLES = 500;
 
 interface RouteTally {
@@ -145,15 +152,22 @@ export interface ComputeRow {
   cpu_ms_overlapped: { p50: number; p95: number; max: number; samples: number };
   /** Its measured-alone CPU times its calls, as a share of every route's; null when it never ran alone. */
   cpu_share: number | null;
-  /** Its mean CPU measured alone, times its calls, in ms; null when it never ran alone. */
+  /** Its mean CPU measured alone, times its calls, in ms; null when it never ran alone, or is held open. */
   cpu_estimated_ms: number | null;
+  /** A long poll or a stream: its median call is held open and spends nothing, so it has no CPU share. */
+  held_open: boolean;
   rss_growth_max_mb: number;
   per_workspace_day: { workspaces: number; p50: number; p95: number; max: number };
 }
 
 /** Every route seen since the api started, the heaviest by total CPU first. */
 export function computeStats(limit = 60): { since: string; uptime_s: number; routes_seen: number; cpu_total_ms: number; cpu_estimated_ms: number; rows: ComputeRow[] } {
-  const estimate = (t: RouteTally) => (t.soloN ? (t.soloSum / t.soloN) * t.calls : null);
+  const held = (t: RouteTally) => {
+    const median = (a: number[]) => pct([...a].sort((x, y) => x - y), 0.5);
+    const cpu = t.cpuSolo.length ? t.cpuSolo : t.cpuOverlapped;
+    return t.wall.length > 0 && median(t.wall) >= HELD_WALL_MS && median(cpu) <= HELD_CPU_MS;
+  };
+  const estimate = (t: RouteTally) => (t.soloN && !held(t) ? (t.soloSum / t.soloN) * t.calls : null);
   const total = [...routes.values()].reduce((s, t) => s + (estimate(t) ?? 0), 0);
   const rows = [...routes.entries()]
     .map(([route, t]): ComputeRow => {
@@ -167,6 +181,7 @@ export function computeStats(limit = 60): { since: string; uptime_s: number; rou
         cpu_ms_overlapped: spread(t.cpuOverlapped),
         cpu_share: estimate(t) === null ? null : total ? Math.round((estimate(t)! / total) * 1000) / 1000 : 0,
         cpu_estimated_ms: estimate(t) === null ? null : Math.round(estimate(t)!),
+        held_open: held(t),
         rss_growth_max_mb: round(t.rssGrowthMax / 1024 / 1024),
         per_workspace_day: { workspaces: new Set([...t.perWorkspaceDay.values()].flatMap((d) => [...d.keys()])).size, p50: pct(perDay, 0.5), p95: pct(perDay, 0.95), max: perDay.at(-1) ?? 0 },
       };

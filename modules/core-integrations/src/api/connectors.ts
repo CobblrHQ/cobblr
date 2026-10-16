@@ -64,6 +64,40 @@ connectorsRouter.get(
   }),
 );
 
+// AI-REACH: exempt Send again repeats a failed call from the log; Cobb sends again by running the connector's service (core-integrations.<connector>.<action>) with the same arguments
+connectorsRouter.post(
+  "/calls/:callId/resend",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const db = tenantDb(req);
+    const call = await db.selectFrom("core_integrations_calls").selectAll().where("id", "=", req.params.callId!).executeTakeFirst();
+    const meta = (call?.request_meta ?? {}) as { gave_up?: boolean; connection_id?: string; args?: Record<string, unknown>; rendered?: string | null; resent_at?: string };
+    if (!call || call.direction !== "outbound" || !meta.gave_up || !meta.connection_id) {
+      res.status(404).json({ error: { code: "not_found", message: "that send did not fail, or cannot be sent again" } });
+      return;
+    }
+    const out = await invokeSavedConnector(db, tenantContext(req).org.id, meta.connection_id, call.action_or_event, meta.args ?? {}, meta.rendered ?? undefined);
+    if (out.kind === "not_found" || out.kind === "disabled" || out.kind === "unknown_connector") {
+      res.status(409).json({ error: { code: "connection_unavailable", message: "the connection it was sent through is gone or switched off" } });
+      return;
+    }
+    await db
+      .updateTable("core_integrations_calls")
+      .set({ request_meta: sql`request_meta || ${JSON.stringify({ resent_at: new Date().toISOString() })}::jsonb` as never })
+      .where("id", "=", call.id)
+      .execute();
+    if (out.kind === "queued") {
+      res.status(202).json({ ok: true, queued: true, run_at: out.runAt.toISOString() });
+      return;
+    }
+    if (!out.ok) {
+      res.status(502).json({ error: { code: "connector_failed", message: out.error ?? "connector error" } });
+      return;
+    }
+    res.json({ ok: true, ms: out.ms });
+  }),
+);
+
 // ────────────────────────────── CRUD ───────────────────────────────
 
 connectorsRouter.get(
@@ -294,6 +328,10 @@ connectorsRouter.post(
       res.status(400).json({
         error: { code: "unknown_connector", message: `Connector ${out.connectorId} not registered` },
       });
+      return;
+    }
+    if (out.kind === "queued") {
+      res.status(202).json({ ok: true, queued: true, run_at: out.runAt.toISOString(), because: out.because, error: out.error });
       return;
     }
     const { ok, ms, result, error: errorMsg } = out;

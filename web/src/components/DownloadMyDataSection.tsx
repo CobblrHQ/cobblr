@@ -1,6 +1,7 @@
 // "Download my data" (#4185): a person's own copy of what Cobblr holds about
 // them, whatever their role anywhere. Beside Delete account, on purpose:
 // before you delete, take your data.
+import { productName } from "@cobblr/platform-web";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { downloadBlob, useToast } from "@cobblr/platform-web";
@@ -35,7 +36,7 @@ export function DownloadMyDataSection() {
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2" data-testid="download-my-data">
       <div className="text-sm font-medium text-content dark:text-mortar-100">Download my data</div>
       <div className="text-xs text-muted">
-        A copy of what Cobblr holds about you: your profile, the workspaces you belong to, your tokens and connections (never
+        A copy of what {productName()} holds about you: your profile, the workspaces you belong to, your tokens and connections (never
         their secrets), your notification settings, what you did and what you sent us. The records in a workspace stay with
         that workspace's backup. One copy a day, kept for {days} days.
       </div>

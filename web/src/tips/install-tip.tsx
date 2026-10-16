@@ -9,6 +9,7 @@
 //
 // The standing door is `InstallThisPhoneItem` in the account menu: it ignores
 // "Not now", so a person who declined can still find it.
+import { productName } from "@cobblr/platform-web";
 import { lazy, Suspense, useState, type ComponentProps } from "react";
 import { Smartphone } from "lucide-react";
 import { Modal, registerTip, type Tip } from "@cobblr/platform-web";
@@ -29,7 +30,7 @@ export const installTip: Tip = {
   id: INSTALL_TIP_ID,
   priority: 100,
   applies: () => shouldOfferInstall(installRoute(readInstallEnv())),
-  text: "Cobblr works best as an app on this phone.",
+  text: `${productName()} works best as an app on this phone.`,
   actionLabel: "Show me",
   body: ({ close, dismiss }) => <InstallWalkBody route={installRoute(readInstallEnv())} onDone={close} onNotNow={dismiss} />,
   device: { dismissed: installDismissed, dismiss: dismissInstall },
@@ -51,7 +52,7 @@ export function InstallThisPhoneItem({ className, onOpen }: { className: string;
   return (
     <>
       <button type="button" className={className} role="menuitem" onClick={() => { onOpen?.(); setWalking(true); }}>
-        <Smartphone size={14} className="text-faint dark:text-slate-400" /> Install Cobblr on this phone
+        <Smartphone size={14} className="text-faint dark:text-slate-400" /> Install {productName()} on this phone
       </button>
       {walking && (
         <Modal open onClose={() => setWalking(false)} size="sm">

@@ -22,7 +22,16 @@
 // same time (the canary channel, a rolling promote, a box reboot bringing every
 // container up at once). The whole run is therefore serialised behind a
 // per-(database, scope) advisory lock — see acquireScopeLock.
+//
+// A RENUMBERED MIGRATION IS THE SAME MIGRATION (#6703). A branch applied `0060_large_format.sql` to the shared
+// A6 dev rig; main shipped it as `0062_large_format.sql`, so 112 workspaces failed it on every sync with
+// "relation already exists" and every later digifab migration waited behind it. When a pending file fails, and
+// the ledger holds the same slug under another ordinal that this build does not ship (renumberedTwin), and the
+// twin's recorded checksum does not say the content differs, the twin's row is renamed to this file: recorded,
+// not re-run. Every row now carries its file's checksum, so a twin with different content is named, never
+// adopted. Merged migrations are never renumbered, so this fires only where a branch's build ran.
 
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pool, PoolClient } from "pg";
@@ -69,6 +78,22 @@ export interface MigrationResult {
    *  applied them before this was recorded. */
   breaking: string[];
 }
+
+/** A migration file's name without its ordinal: `0062_large_format.sql` → `large_format.sql`,
+ *  `20261016-226-person-time-zone.sql` → `person-time-zone.sql`. */
+export function migrationSlug(file: string): string {
+  return file.replace(/^\d{8}-\d+-/, "").replace(/^\d+_/, "");
+}
+
+/** The applied file a pending one is a renumbering of: an applied name this build does not ship (`unknown`),
+ *  with the same slug and another name. Null when there is none, or more than one could be it. */
+export function renumberedTwin(file: string, unknown: readonly string[]): string | null {
+  const slug = migrationSlug(file);
+  const twins = unknown.filter((u) => u !== file && migrationSlug(u) === slug);
+  return twins.length === 1 ? twins[0]! : null;
+}
+
+const checksumOf = (sql: string): string => createHash("sha256").update(sql).digest("hex");
 
 function storedName(scope: string, file: string): string {
   return `${scope}::${file}`;
@@ -194,7 +219,8 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
     await acquireScopeLock(client, scope);
     try {
       await bootstrapTrackerTable(client);
-      const applied = await fetchAppliedNames(client, scope);
+      const appliedRows = await fetchApplied(client, scope);
+      const applied = new Set(appliedRows.keys());
       const files = await listMigrationFiles(directory);
       const pending = files.filter((f) => !applied.has(f));
 
@@ -215,15 +241,29 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
 
       const justRan: string[] = [];
       const breaking: string[] = [];
+      const renamed = new Set<string>();
       for (const file of pending) {
         const sql = await readFile(join(directory, file), "utf8");
         console.log(`[migrate:${scope}] applying ${file}`);
-        await applyOne(client, scope, file, sql);
+        try {
+          await applyOne(client, scope, file, sql);
+        } catch (err) {
+          // Only "it is already there" is evidence of a twin: any other failure is the file's own.
+          const twin = /already exists/i.test((err as Error).message) ? renumberedTwin(file, unknown.filter((u) => !renamed.has(u))) : null;
+          if (!twin) throw err;
+          const was = appliedRows.get(twin);
+          if (was && was !== checksumOf(sql)) {
+            throw new Error(`${(err as Error).message} (the ledger holds ${twin}, the same name under another number, with different content: not adopted)`);
+          }
+          await client.query("update migrations set name = $1, checksum = $2 where name = $3", [storedName(scope, file), checksumOf(sql), storedName(scope, twin)]);
+          renamed.add(twin);
+          console.log(`[migrate:${scope}] ${file} is ${twin} renumbered: recorded under its new name, not re-run`);
+        }
         justRan.push(file);
         if (hasContractMarker(sql) && findBreakingChanges(sql).length > 0) breaking.push(file);
       }
 
-      const all = [...applied, ...justRan].sort();
+      const all = [...[...applied].filter((f) => !renamed.has(f)), ...justRan].sort();
       return { applied: justRan, alreadyApplied: applied.size, total: all.length, latest: all.length ? all[all.length - 1]! : null, breaking };
     } finally {
       await releaseScopeLock(client, scope);
@@ -245,15 +285,20 @@ async function bootstrapTrackerTable(client: PoolClient) {
       applied_at    timestamptz not null default now()
     )
   `);
+  // The checksum of each applied file (#6703), added to ledgers that predate it. Asked first, so a ledger that
+  // has it takes no ALTER, and no lock, on every run of every scope.
+  const has = await client.query("select 1 from information_schema.columns where table_name = 'migrations' and column_name = 'checksum' and table_schema = current_schema()");
+  if (!has.rowCount) await client.query("alter table migrations add column if not exists checksum text");
 }
 
-async function fetchAppliedNames(client: PoolClient, scope: string): Promise<Set<string>> {
+/** Each applied file of the scope, with its checksum (null for a row older than checksums). */
+async function fetchApplied(client: PoolClient, scope: string): Promise<Map<string, string | null>> {
   const prefix = `${scope}::`;
-  const res = await client.query<{ name: string }>(
-    "select name from migrations where name like $1 order by id",
+  const res = await client.query<{ name: string; checksum: string | null }>(
+    "select name, checksum from migrations where name like $1 order by id",
     [`${likeEscape(prefix)}%`],
   );
-  return new Set(res.rows.map((r) => r.name.slice(prefix.length)));
+  return new Map(res.rows.map((r) => [r.name.slice(prefix.length), r.checksum]));
 }
 
 async function listMigrationFiles(dir: string): Promise<string[]> {
@@ -269,7 +314,7 @@ async function applyOne(client: PoolClient, scope: string, file: string, sql: st
   await client.query("begin");
   try {
     await client.query(sql);
-    await client.query("insert into migrations(name) values ($1)", [storedName(scope, file)]);
+    await client.query("insert into migrations(name, checksum) values ($1, $2)", [storedName(scope, file), checksumOf(sql)]);
     await client.query("commit");
   } catch (err) {
     await client.query("rollback");

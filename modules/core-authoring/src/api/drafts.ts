@@ -214,7 +214,9 @@ draftsRouter.get(
 // configured (the caller then shows the full catalog). See
 // docs/architecture/templates-first-authoring.md.
 const MatchBody = z.object({ intent: z.string().min(1).max(4000) });
-// AI-REACH: a step of the design-a-workspace flow, which the assistant enters through the build move (chat.ts) and the user drives from the Build page
+// AI-REACH: exempt — writes nothing; a step inside the design-a-workspace
+// flow, which the assistant reaches whole through its chat build move (it
+// compiles, builds and previews; a person applies)
 // UI-REACH: hosted scoring for authoring clients; Build offers ready-made bundles through its local matcher without a model call.
 draftsRouter.post(
   "/match-template",
@@ -229,7 +231,8 @@ draftsRouter.post(
 
 // ── POST /context — preview the assembled context (+ warnings) ──
 const ContextBody = z.object({ selected_kinds: z.array(z.string()).optional() });
-// AI-REACH: a step of the design-a-workspace flow (see /build)
+// AI-REACH: exempt — writes nothing; a step inside the design-a-workspace
+// flow the assistant reaches whole through its build move (see /match-template)
 // UI-REACH: read-only context inspection for external authoring clients; Build assembles this context inside compile and build.
 draftsRouter.post(
   "/context",
@@ -256,7 +259,8 @@ const CompileBody = z.object({
   task: z.string().optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   base_template_id: optionalField(z.string()),
 });
-// AI-REACH: a step of the design-a-workspace flow (see /build)
+// AI-REACH: exempt — saves a draft inside the design-a-workspace flow, which
+// the assistant reaches whole through its build move (see /match-template)
 draftsRouter.post(
   "/compile",
   asyncHandler(async (req, res) => {
@@ -430,7 +434,9 @@ async function runBuild(
   }
 }
 
-// AI-REACH: the assistant enters this through the chat build move, not as a tool; a whole-workspace build always previews before applying
+// AI-REACH: exempt — the assistant runs this through its chat build move, not
+// a tool: a whole-workspace build writes kinds, fields and wires at once, so
+// it always previews and a person applies it
 draftsRouter.post(
   "/build",
   asyncHandler(async (req, res) => {
@@ -498,7 +504,8 @@ const RefineBody = z.object({
   intent: z.string().min(1).max(4000),
   run: z.boolean().optional(),
 });
-// AI-REACH: refines a draft the user is looking at on the Build page; a Build-page step
+// AI-REACH: exempt — reworks the draft a person is looking at on the Build
+// page; the assistant's own builds refine through its build move
 draftsRouter.post(
   "/drafts/:id/refine",
   asyncHandler(async (req, res) => {
@@ -578,7 +585,8 @@ draftsRouter.post(
 
 // ── POST /drafts/:id/candidate — paste a manifest back → validate ──
 const CandidateBody = z.object({ manifest: z.unknown() });
-// AI-REACH: a Build-page step
+// AI-REACH: exempt — a person pasting a manifest back from another tool;
+// the assistant's builds arrive through its build move, never as a paste
 draftsRouter.post(
   "/drafts/:id/candidate",
   asyncHandler(async (req, res) => {
@@ -644,7 +652,8 @@ draftsRouter.post(
 );
 
 // ── POST /drafts/:id/repair-prompt — copy-paste repair prompt ──
-// AI-REACH: a Build-page step
+// AI-REACH: exempt — writes nothing; the copy-paste repair prompt for a person
+// using another tool, which the assistant's own build loop does itself
 draftsRouter.post(
   "/drafts/:id/repair-prompt",
   asyncHandler(async (req, res) => {
@@ -672,7 +681,9 @@ draftsRouter.post(
 
 // ── POST /drafts/:id/apply — install the validated candidate ──
 const ApplyBody = z.object({ confirm: z.boolean().optional() });
-// AI-REACH: applies a previewed build; the confirm lives on the Build page and in the chat's build proposal card
+// AI-REACH: exempt — installs a previewed whole-workspace build; the person's
+// confirm on the Build page or on the chat's build card is what applies it,
+// and an assistant pressing its own confirm would defeat it
 draftsRouter.post(
   "/drafts/:id/apply",
   asyncHandler(async (req, res) => {

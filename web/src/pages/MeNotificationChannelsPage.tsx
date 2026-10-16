@@ -9,6 +9,7 @@
 // in the workspace at the chosen priority — proves the config
 // works without waiting for a real event.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { DiscordUnsubscribedCallout } from "../components/DiscordUnsubscribedCallout";
@@ -111,7 +112,7 @@ const CHANNEL_OPTIONS: Array<{
   {
     channel: "email",
     label: "Email",
-    hint: "Bring your own delivery. Pick a provider and paste its creds. Cobblr doesn't host an outbound mail server.",
+    hint: `Bring your own delivery. Pick a provider and paste its creds. ${productName()} doesn't host an outbound mail server.`,
     fields: [
       ...EMAIL_PROVIDER_FIELDS.slice(0, 2),
       { key: "to", label: "Send to", placeholder: "you@example.com" },
@@ -145,7 +146,7 @@ export function MeNotificationChannelsPage() {
     <div className="space-y-5">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
       <p className="text-sm text-content dark:text-mortar-200">
-        Send Cobblr events to Discord, Slack, your email, SMS, or any
+        Send {productName()} events to Discord, Slack, your email, SMS, or any
         webhook. Each binding picks a channel, an event type (or{" "}
         <code className="font-mono text-xs">*</code> for all events),
         and a minimum priority - so you can wire{" "}

@@ -7,6 +7,7 @@
 // audiences page) asks it. lint:notifications-are-named fails a type the code
 // sends that none of them names: the inbox used to show "digifab.print.failed"
 // and "platform.approval.requested" as the only line under a notification.
+import { productName } from "./product-name.js";
 import { BRIDGE_NOTIFICATION_KINDS } from "./edge-outages.js";
 import { NOTIFICATION_TYPES } from "./notification-catalog.js";
 import { listEntries } from "../modules/registry.js";
@@ -40,13 +41,13 @@ export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
   { eventType: "platform.mail_source.connected", label: "Mailbox connected", description: "A mailbox you connected started bringing receipts in." },
   { eventType: "platform.field.seller_upgrade", label: "Track sellers as a field?", description: "The same seller came up often enough, or through enough places, to be worth a field of its own." },
   { eventType: "platform.mail_source.stopped", label: "Mailbox stopped", description: "A connected mailbox stopped bringing receipts in, and why." },
-  { eventType: "core-scan.email.forwarding_verification", scope: "account", label: "Confirm email forwarding", description: "Your mail provider wants you to confirm forwarding to Cobblr." },
+  { eventType: "core-scan.email.forwarding_verification", scope: "account", label: "Confirm email forwarding", description: `Your mail provider wants you to confirm forwarding to ${productName()}.` },
   { eventType: "core-scan.email.received", scope: "account", label: "Receipt email received", description: "A receipt you emailed in arrived and is being read." },
   { eventType: "core-scan.email.imported", scope: "account", label: "Receipt imported", description: "The items on a receipt you emailed in are in your scan inbox." },
   { eventType: "core-scan.email.duplicate", scope: "account", label: "Receipt already imported", description: "A receipt you emailed in was one you had already imported." },
   { eventType: "core-scan.email.tracking_added", scope: "account", label: "Tracking added to an order", description: "A shipping notice you forwarded added its tracking number to the order, and which lines are in that parcel." },
-  { eventType: "core-scan.email.shipment_unmatched", scope: "account", label: "Tracking number not added", description: "A shipping notice you forwarded named an order Cobblr could not match, so its tracking number was not added." },
-  { eventType: "core-scan.email.no_receipt", scope: "account", label: "No receipt in that email", description: "An email you sent in had no receipt Cobblr could read." },
+  { eventType: "core-scan.email.shipment_unmatched", scope: "account", label: "Tracking number not added", description: `A shipping notice you forwarded named an order ${productName()} could not match, so its tracking number was not added.` },
+  { eventType: "core-scan.email.no_receipt", scope: "account", label: "No receipt in that email", description: `An email you sent in had no receipt ${productName()} could read.` },
   { eventType: "platform.assistant.change_held", label: "Assistant wants to delete something", description: "An assistant asked to delete a record, and it waits for your yes." },
   { eventType: "platform.service.awaiting_confirm", label: "Service waiting for your yes", description: "An automation or a module asked for a service that runs only once someone says yes." },
   { eventType: "platform.service.stuck", label: "Service run stuck", description: "A service run stopped moving, and what you can do about it." },

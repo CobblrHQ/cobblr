@@ -2,6 +2,7 @@
 // one-line install with a pairing code (the default, nothing secret pasted),
 // or Docker with the bridge's token. One component, so the two ways stay the
 // same everywhere a bridge is installed.
+import { productName } from "@cobblr/platform-web";
 import { bridgeInstallCommands, bridgeOneLineInstall, bridgeTokenName } from "@cobblr/platform-contract/edge-channel";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
@@ -91,7 +92,7 @@ export function BridgeInstallMethod({
               >
                 {pair.isPending ? "Making a code…" : "Get an install code"}
               </button>
-              <p className="text-[11px] text-faint">{method === "mac" ? "Native Mac bridge. Starts at login, without an administrator password." : method === "windows" ? "Windows x64 or ARM64 bridge. Starts when you sign in, without an administrator password." : method === "desktop" ? "Use Cobblr Desktop on this computer. Its bridge updates automatically." : "For Linux x64 or ARM64, and Raspberry Pi OS on ARM64 or ARMv7."}</p>
+              <p className="text-[11px] text-faint">{method === "mac" ? "Native Mac bridge. Starts at login, without an administrator password." : method === "windows" ? "Windows x64 or ARM64 bridge. Starts when you sign in, without an administrator password." : method === "desktop" ? `Use ${productName()} Desktop on this computer. Its bridge updates automatically.` : "For Linux x64 or ARM64, and Raspberry Pi OS on ARM64 or ARMv7."}</p>
             </div>
           ) : (
             <div className="space-y-1.5">
@@ -149,7 +150,7 @@ export function BridgeInstallMethod({
                   Run this on a box at your site. Token shown once - it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).
                 </p>
                 <p className="text-[11px] text-faint mt-0.5">
-                  Stock public image - the bridge fetches its code from this Cobblr (sha-verified) and keeps itself
+                  Stock public image - the bridge fetches its code from this {productName()} (sha-verified) and keeps itself
                   updated automatically. Nothing to pull from a registry, ever.
                 </p>
               </>
@@ -207,17 +208,17 @@ function BridgeTrustList() {
   return (
       <ul className="mt-1.5 ml-4 list-disc space-y-1">
         <li>
-          It only calls out to this Cobblr. It opens no port on your network, and nothing outside can connect to it.
+          It only calls out to this {productName()}. It opens no port on your network, and nothing outside can connect to it.
         </li>
         <li>
-          It reaches the addresses you add in Cobblr, like a printer or a sync source, when Cobblr asks. To hold it to a
-          fixed list whatever Cobblr asks, set <code>BRIDGE_ALLOW</code> on the machine (for example{" "}
+          It reaches the addresses you add in {productName()}, like a printer or a sync source, when {productName()} asks. To hold it to a
+          fixed list whatever {productName()} asks, set <code>BRIDGE_ALLOW</code> on the machine (for example{" "}
           <code>BRIDGE_ALLOW=192.168.1.0/24,printer.local</code>).
         </li>
         <li>
           Its key can only run a bridge. It cannot read or change anything in your workspace.
         </li>
-        <li>It updates itself from this Cobblr and checks each update's fingerprint before running it.</li>
+        <li>It updates itself from this {productName()} and checks each update's fingerprint before running it.</li>
         <li>
           <strong>Disconnect</strong> on the bridges page stops it at once: its key stops working and it is removed.
         </li>
@@ -231,7 +232,7 @@ export function methodIdentity(id: string, name: string, nonce: string) {
 function DesktopConnect({ code }: { code: string }) {
   const connect = useMutation({ mutationFn: () => desktopBridgeAction("connect", code) });
   return <div className="space-y-1">
-    <button type="button" onClick={() => connect.mutate()} disabled={connect.isPending || connect.isSuccess} className="rounded bg-cobble-600 text-white px-3 py-1.5 disabled:opacity-50">{connect.isSuccess ? "Desktop connected" : connect.isPending ? "Connecting Desktop…" : "Connect Cobblr Desktop"}</button>
+    <button type="button" onClick={() => connect.mutate()} disabled={connect.isPending || connect.isSuccess} className="rounded bg-cobble-600 text-white px-3 py-1.5 disabled:opacity-50">{connect.isSuccess ? "Desktop connected" : connect.isPending ? "Connecting Desktop…" : `Connect ${productName()} Desktop`}</button>
     {connect.error && <p role="alert">{connect.error.message}</p>}
   </div>;
 }

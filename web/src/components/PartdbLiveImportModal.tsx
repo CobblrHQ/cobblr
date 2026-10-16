@@ -8,6 +8,7 @@
 //     "Access API" permission, and Part-DB answers 403, not 401. Telling the
 //     user to re-paste the token would not help, so the 403 gets its own copy.
 
+import { productName } from "@cobblr/platform-web";
 import { LiveImportModal, type LiveImportSource } from "./LiveImportModal";
 import type { ImportPlan } from "../lib/api";
 
@@ -48,7 +49,7 @@ export const PARTDB_LIVE: LiveImportSource = {
         const n = multiLotCount(plan);
         if (n === 0) return [];
         return [
-          `${n} ${n === 1 ? "part is" : "parts are"} stocked in more than one place. Cobblr tracks one location per part, so each landed at its first lot's location. Every lot is kept on the part, and the quantity is the total across all of them.`,
+          `${n} ${n === 1 ? "part is" : "parts are"} stocked in more than one place. ${productName()} tracks one location per part, so each landed at its first lot's location. Every lot is kept on the part, and the quantity is the total across all of them.`,
         ];
       },
     },

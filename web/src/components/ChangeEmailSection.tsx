@@ -2,6 +2,7 @@
 // it. A change is only asked for here: a link goes to the new address and
 // nothing changes until it is used (api/src/platform/email-change.ts). An
 // account managed by the central account service changes its address there.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PasswordInput, useToast } from "@cobblr/platform-web";
@@ -47,7 +48,7 @@ export function ChangeEmailSection({ email }: { email: string }) {
         )}
       </div>
       {managed && (
-        <div className="text-[11px] text-faint mt-1">You sign in through your Cobblr account, so this address changes there.</div>
+        <div className="text-[11px] text-faint mt-1">You sign in through your {productName()} account, so this address changes there.</div>
       )}
       {pending && !open && (
         <div className="text-[11px] text-faint mt-1">

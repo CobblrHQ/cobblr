@@ -3,6 +3,7 @@
 // invites with copy-link/revoke. A small form at the bottom mints
 // a new invite link.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Plus, Printer, Trash2, X } from "lucide-react";
@@ -196,8 +197,8 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
       void navigator.clipboard?.writeText(url).catch(() => {});
       toast.success(
         sentTo && inv.emailed
-          ? `Invite to start their own Cobblr sent to ${sentTo}. Link copied too.`
-          : "“Start their own Cobblr” link copied. Share it however you like.",
+          ? `Invite to start their own ${productName()} sent to ${sentTo}. Link copied too.`
+          : `“Start their own ${productName()}” link copied. Share it however you like.`,
       );
     },
     onError: (e: unknown) => {
@@ -505,7 +506,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 onChange={setInviteKind}
                 options={[
                   { value: "workspace", label: "Join this workspace" },
-                  { value: "platform", label: "Start their own Cobblr" },
+                  { value: "platform", label: `Start their own ${productName()}` },
                 ]}
               />
             )}
@@ -608,7 +609,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 disabled={createInvite.isPending || createSignupInvite.isPending}
                 className="px-3 py-1.5 rounded-md text-sm font-medium bg-slate-700 hover:bg-slate-600 text-mortar-50 transition disabled:opacity-50 flex items-center gap-1"
               >
-                <Plus size={13} /> {inviteKind === "platform" ? "Invite to Cobblr" : joinLink ? "Make join link" : "Mint invite"}
+                <Plus size={13} /> {inviteKind === "platform" ? `Invite to ${productName()}` : joinLink ? "Make join link" : "Mint invite"}
               </button>
             </div>
 
@@ -616,7 +617,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
             {inviteKind === "workspace" ? (
               <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
                 They join <span className="font-semibold text-muted dark:text-slate-400">{displaySlug(slug)}</span> as a{" "}
-                <span className="font-semibold text-muted dark:text-slate-400">{inviteRole}</span>. New to Cobblr?
+                <span className="font-semibold text-muted dark:text-slate-400">{inviteRole}</span>. New to {productName()}?
                 Accepting creates their account - they become a member <span className="font-semibold">here</span>,
                 they don't get a workspace of their own. We email the link if you add an address (and notify them
                 in-app if they already have an account); it's copied to your clipboard either way.
@@ -638,9 +639,9 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                   </span>
                 </label>
                 <p className="text-[11px] text-faint dark:text-slate-500 leading-relaxed">
-                  They get their <span className="font-semibold">own</span> brand-new Cobblr workspace - they are{" "}
+                  They get their <span className="font-semibold">own</span> brand-new {productName()} workspace - they are{" "}
                   <span className="font-semibold">not</span> added to {displaySlug(slug)}. Best for inviting a friend to
-                  try Cobblr. We email the join link if you add an address; it's copied to your clipboard too.
+                  try {productName()}. We email the join link if you add an address; it's copied to your clipboard too.
                 </p>
               </>
             )}

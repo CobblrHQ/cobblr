@@ -5,6 +5,7 @@
 // an iPhone or iPad only from Cobblr added to the Home Screen (iOS 16.4 and
 // later), and only when the person taps to allow it. So the readiness rule
 // below is pure, and the page shows exactly one thing for each state.
+import { productName } from "@cobblr/platform-web";
 import { api } from "./api";
 import type { InstallRoute } from "./install-app";
 
@@ -36,8 +37,8 @@ const isApple = (env: Pick<PushEnv, "userAgent" | "platform" | "maxTouchPoints">
 /** Where a person turns notifications back on after saying no, on their device. */
 export function howToAllowAgain(env: Pick<PushEnv, "userAgent" | "platform" | "maxTouchPoints" | "route">): string {
   const ua = env.userAgent;
-  if (isApple(env)) return "Open the Settings app, then Notifications, then Cobblr, and turn on Allow Notifications.";
-  if (/Android/.test(ua)) return "Long-press the Cobblr icon and tap App info (or tap the icon left of the address bar), then Notifications, and allow them.";
+  if (isApple(env)) return `Open the Settings app, then Notifications, then ${productName()}, and turn on Allow Notifications.`;
+  if (/Android/.test(ua)) return `Long-press the ${productName()} icon and tap App info (or tap the icon left of the address bar), then Notifications, and allow them.`;
   if (/Firefox\//.test(ua)) return "Click the icon left of the address bar, and clear the Blocked setting next to Send Notifications. Then reload the page.";
   if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return "In Safari, open Settings, then Websites, then Notifications, and set this site to Allow.";
   return "Click the icon left of the address bar, open Site settings, and set Notifications to Allow. Then reload the page.";
@@ -173,11 +174,11 @@ export function pushTurnOnProblem(failure: { why: PushTurnOnFailure; message?: s
   const words: Record<PushTurnOnFailure, { says: string; next: string }> = {
     denied: { says: "Notifications were blocked when the browser asked.", next: howToAllowAgain(env) },
     dismissed: { says: "The browser's question was closed without an answer, so nothing was turned on.", next: "Press Try again and choose Allow." },
-    unsupported: { says: "This browser can't show notifications from Cobblr.", next: "Open Cobblr in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad." },
+    unsupported: { says: `This browser can't show notifications from ${productName()}.`, next: `Open ${productName()} in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad.` },
     "no-key": { says: "This server has not made its notification key yet, so nothing was turned on.", next: "Try again in a minute." },
-    "no-worker": { says: "This page's background worker did not start, and notifications need it.", next: "Reload the page and press Try again. If it keeps happening, open Cobblr in another browser." },
+    "no-worker": { says: "This page's background worker did not start, and notifications need it.", next: `Reload the page and press Try again. If it keeps happening, open ${productName()} in another browser.` },
     refused: { says: `The browser allowed notifications but would not sign this device up for them.${detail}`, next: "Check that your computer or phone lets this browser show notifications (its system notification settings), then press Try again. A private window can't take them." },
-    "not-saved": { says: `This device signed up, but Cobblr could not save it.${detail}`, next: "Press Try again." },
+    "not-saved": { says: `This device signed up, but ${productName()} could not save it.${detail}`, next: "Press Try again." },
   };
   return words[failure.why];
 }

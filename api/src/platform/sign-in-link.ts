@@ -9,6 +9,7 @@
 //
 // Two copies of this would drift, and the half that drifts is the half nobody
 // watches. So it lives here and both import it.
+import { productName } from "./product-name.js";
 import { createHash, randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { sendAuthEmail } from "./hosted-seams.js";
@@ -72,9 +73,9 @@ export async function issueSignInLink(req: SignInLinkRequest): Promise<SignInLin
   const absLink = `${req.absBase}${path}`;
   const sent = await sendAuthEmail({
     to: req.email,
-    subject: req.subject ?? "Your Cobblr sign-in link",
+    subject: req.subject ?? `Your ${productName()} sign-in link`,
     text:
-      `${req.intro ?? "Sign in to Cobblr:"}\n\n${absLink}\n\n` +
+      `${req.intro ?? `Sign in to ${productName()}:`}\n\n${absLink}\n\n` +
       `The link expires shortly. If you didn't request it, you can ignore this email.`,
     kind: "magic_link",
   });

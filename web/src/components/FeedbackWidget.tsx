@@ -396,8 +396,8 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
           <div className="text-[10px] text-faint dark:text-slate-500">
             {hosted === false
               ? diag
-                ? "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules, and you can read the whole of it first."
-                : "This stays on your own instance. To report it to the Cobblr project, copy the report below - it carries your browser and page, but no server details until you're in a workspace."
+                ? /* PRODUCT-NAME: Feedback about the upstream engine project names that project. */ "This stays on your own instance. To report it to the Cobblr project, copy the report below - it includes your version, browser and enabled modules, and you can read the whole of it first."
+                : /* PRODUCT-NAME: Feedback about the upstream engine project names that project. */ "This stays on your own instance. To report it to the Cobblr project, copy the report below - it carries your browser and page, but no server details until you're in a workspace."
               : "We attach the page you're on + your browser so we can track it down."}
           </div>
           {error && <div className="text-xs text-ember-500">{error}</div>}

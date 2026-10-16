@@ -309,6 +309,7 @@ catalogsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 catalogsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -344,6 +345,7 @@ catalogsRouter.post(
   }),
 );
 
+// AI-REACH: crud
 catalogsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -398,6 +400,7 @@ catalogsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 catalogsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -593,7 +596,9 @@ async function importCsvIntoCatalog(
   return { ok: true, imported: upserted, total: Number(count), schema_used: schemaConfig };
 }
 
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a bulk upsert of up to 5 MB of CSV that overwrites
+// entries by key with no undo; as an action argument the whole file would be
+// ledgered and put on a confirm card, so it stays the catalog page's import
 catalogsRouter.post(
   "/:id/import-csv",
   asyncHandler(async (req, res) => {
@@ -858,7 +863,8 @@ catalogsRouter.get(
 
 // Manual sync trigger. For CSV catalogs (no puller_id), no-op + 400.
 // For pullable catalogs (v0.3), kicks off a core-queue job.
-// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
+// AI-REACH: exempt — answers 501 until pullers have a runtime; there is
+// nothing to reach yet, and a puller that ships gets its action with it
 // UI-REACH: reserved puller protocol currently returns 501; people refresh catalogs through CSV import until pullers have a runtime.
 catalogsRouter.post(
   "/:id/sync",

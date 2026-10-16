@@ -2,6 +2,22 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-16
+
+### Features
+- When a member offers to share their AI with your workspace, you can approve or decline it with one tap from the notification, in Cobblr or in your Discord DM.
+- A message to Slack, Discord or a webhook that meets a busy or briefly-down service is tried again, sent at the service's pace, and kept with a Send again button if it still fails
+- Assets and locations from a Snipe-IT instance import with their serial numbers, asset tags, prices and pictures, and can be kept in sync
+
+### Improvements
+- A notification channel can no longer be flooded: each person's channel sends at most so many notices an hour, holds the rest for its next summary and says so once in the bell; sign-in links are never delayed
+- Ask Cobb whether a label printer is online; it checks without printing anything
+- Every phone, every shape. On a phone or tablet every button and link is now a finger-sized 44 pixels, so a tap lands where you aim. The top bar and the scan inbox's header keep their height and their words. Turn an iPhone on its side and the header, the page, the Feedback button and open records keep clear of the Dynamic Island and the rounded corners. The phone menu no longer scrolls the page behind it, and a record's Duplicate, Move and Delete row sits at the very bottom, with nothing scrolling beneath it.
+- Recount from a tag's page. A tag's page now has Recount these… beside each collection's group of things carrying the tag: it starts a recount of just those things and opens it, the same recount Cobb starts when you ask it to recount everything tagged garage.
+
+### Fixes
+- An operator can now send a job from the machines page, queue it, retry it and print it again. Any member can still stop or pause a machine, but resuming, framing or starting one, or starting a production test, now needs an operator or an admin. A refusal says which permission to ask for.
+
 ## 2026-10-15
 
 ### Features

@@ -100,10 +100,10 @@ export function TipLine({ state, onShown, onDismiss, tips, now }: TipStripProps)
     <div className="flex items-center gap-2 text-xs" data-testid="tip-line" data-tip={tip.id}>
       <Lightbulb size={13} className="text-accent shrink-0" aria-hidden />
       <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-200">{tip.text}</span>
-      <button type="button" onClick={() => setOpen(true)} className="shrink-0 text-accent hover:underline font-medium">
+      <button type="button" onClick={() => setOpen(true)} className="shrink-0 inline-flex items-center justify-center text-accent hover:underline font-medium">
         {tip.actionLabel}
       </button>
-      <button type="button" onClick={dismiss} className="shrink-0 text-faint hover:text-content" title="Dismiss this tip" aria-label="Dismiss this tip">
+      <button type="button" onClick={dismiss} className="shrink-0 inline-flex items-center justify-center text-faint hover:text-content" title="Dismiss this tip" aria-label="Dismiss this tip">
         <X size={13} />
       </button>
       {open && (

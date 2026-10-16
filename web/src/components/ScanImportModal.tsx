@@ -2,6 +2,7 @@
 // Flow: pick file → preview (detected columns, first 5 rows, per-row parse
 // errors, a column mapper when a CSV has unmapped headers) → options
 // (duplicate policy, fetch photos, dry-run) → import → summary card.
+import { productName } from "@cobblr/platform-web";
 import { SendFileImport } from "../features/sharing/SendFileImport";
 import { SendFileSchema, SendReceiptSchema, type SendFile, type SendReceipt } from "@cobblr/platform-contract/send-file";
 import { useState } from "react";
@@ -117,9 +118,9 @@ export function ScanImportModal({ slug, open, onClose, onImported }: {
         {!file && (
           <>
             <p className="text-muted dark:text-slate-400">
-              Bring a send file from another Cobblr, its confirmation or return file, or a batch of scans from another system - an <strong>inbox export</strong> (JSON or CSV)
+              Bring a send file from another {productName()}, its confirmation or return file, or a batch of scans from another system - an <strong>inbox export</strong> (JSON or CSV)
               works as-is; any other CSV works with a quick column mapping. Items land in this inbox as ordinary
-              pending scans and go through Cobblr's own matching.
+              pending scans and go through {productName()}'s own matching.
             </p>
             <label className="block">
               <input

@@ -6,6 +6,7 @@
 // makes "<their name>'s workspace (shared)" for you here
 // (docs/design-decisions/share-spaces.md).
 
+import { productName } from "@cobblr/platform-web";
 import { dropShareInvite, holdShareInvite } from "../lib/share-invite-pending";
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
@@ -30,7 +31,7 @@ function inviteFromHash(hash: string): { raw: string; from: string | null; name:
 export function ShareJoinPage() {
   const { hash } = useLocation();
   const invite = inviteFromHash(hash);
-  usePageTitle(invite?.own ? "Connect your other Cobblr" : "A share for you");
+  usePageTitle(invite?.own ? `Connect your other ${productName()}` : "A share for you");
   const { user } = useAuth();
   const toast = useToast();
   const [target, setTarget] = useState("");
@@ -73,12 +74,12 @@ export function ShareJoinPage() {
   };
   const otherCobblr = (
     <div className="mt-4 space-y-2 border-t border-line pt-3 dark:border-slate-700">
-      <p className="text-xs text-muted">Is your account on another Cobblr? Accept it there:</p>
+      <p className="text-xs text-muted">Is your account on another {productName()}? Accept it there:</p>
       <div className="flex gap-2">
         <input
           value={elsewhere}
           onChange={(e) => setElsewhere(e.target.value)}
-          placeholder="Your Cobblr's address"
+          placeholder={`Your ${productName()}'s address`}
           data-testid="share-join-elsewhere"
           className="min-w-0 flex-1 rounded-md border border-line bg-surface px-3 py-2 text-sm text-content dark:border-slate-700"
         />
@@ -96,7 +97,7 @@ export function ShareJoinPage() {
     holdShareInvite(invite.raw);
     const back = encodeURIComponent(`/share/join#${invite.raw}`);
     return (
-      <CenteredCard tone="info" title={invite.own ? "Connect your other Cobblr" : `${who} wants to share with you`}>
+      <CenteredCard tone="info" title={invite.own ? `Connect your other ${productName()}` : `${who} wants to share with you`}>
         <p className="text-sm text-content">{invite.own ? "Sign in here to choose and approve an existing workspace. This invite opens again after." : `Sign in to accept, or make an account here first; this invite opens again after. You get a workspace of your own for what ${who} shares.`}</p>
         <button
           type="button"
@@ -127,7 +128,7 @@ export function ShareJoinPage() {
     );
   }
   return (
-    <CenteredCard tone="info" title={invite.own ? "Connect your other Cobblr" : `${who} wants to share with you`}>
+    <CenteredCard tone="info" title={invite.own ? `Connect your other ${productName()}` : `${who} wants to share with you`}>
       {invite.own ? <div className="space-y-3"><p>Connect <strong>{what}</strong>{preview.data?.from_host ? ` on ${preview.data.from_host}` : ""} to a workspace here. You can then send selected items in either direction. This shares no collection or workspace view.</p><label className="block text-sm">Workspace to connect<select aria-label="Workspace to connect" value={target} onChange={(e) => setTarget(e.target.value)} className="mt-1 w-full rounded border border-line bg-surface p-2 text-base"><option value="">Choose an existing workspace</option>{workspaces.data?.items.filter((o) => o.kind !== "share" && o.role !== "guest").map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label><p className="text-sm text-muted">Revoking later keeps both workspaces and the items already sent.</p>{workspaces.isError && <p role="alert">{(workspaces.error as Error).message}</p>}</div> : <p className="text-sm text-content">
         <strong>{who}</strong> shares part of <strong>{what}</strong>
         {preview.data?.from_host ? <> from <strong>{preview.data.from_host}</strong></> : null}. Accepting makes{" "}

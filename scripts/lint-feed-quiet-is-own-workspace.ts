@@ -19,6 +19,11 @@
 // this case's own. A late pass on an older scan advanced the cursor beyond a
 // precision fixture, so truncating it no longer replayed the fixture.
 //
+// Owning the workspace is not enough when this case's own captures are still
+// changing. An empty-feed assertion must not depend on a helper that infers
+// completion from a quiet interval. Cursor/count fixtures are stable rows with
+// no detached pipeline, and opt out of the picture sweep.
+//
 // THE BOUNDARY. Only the scan feed: it is the one listing whose whole point
 // is "what changed since", so anything any case did lands in it. Other
 // listings filter by what a case made (a title, an id) and their emptiness
@@ -60,6 +65,72 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
+/** Silence between detached writes is not evidence that their work is done. */
+function checkQuietIntervals(file: string, tree: ts.SourceFile): Violation[] {
+  const functions = new Map<string, ts.Node>();
+  const callsIn = (node: ts.Node): Set<string> => {
+    const calls = new Set<string>();
+    const visit = (child: ts.Node): void => {
+      if (ts.isCallExpression(child) && ts.isIdentifier(child.expression)) calls.add(child.expression.text);
+      ts.forEachChild(child, visit);
+    };
+    visit(node);
+    return calls;
+  };
+  const infersQuiet = (node: ts.Node): boolean => {
+    const text = node.getText(tree);
+    return /Date\.now\(\)\s*-/.test(text) && /\.cursor\b/.test(text) && /\.scans\b/.test(text);
+  };
+  const collect = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) {
+      functions.set(node.name.text, node.initializer.body);
+    } else if (ts.isFunctionDeclaration(node) && node.name && node.body) functions.set(node.name.text, node.body);
+    ts.forEachChild(node, collect);
+  };
+  collect(tree);
+  const quiet = new Set([...functions].filter(([, body]) => infersQuiet(body)).map(([name]) => name));
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [name, body] of functions) {
+      if (!quiet.has(name) && [...callsIn(body)].some((call) => quiet.has(call))) {
+        quiet.add(name);
+        changed = true;
+      }
+    }
+  }
+  const assertsEmpty = (body: ts.Node): boolean => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const matcher = node.expression.name.text;
+        const arg = node.arguments[0];
+        const empty = arg && ((matcher === "toEqual" && ts.isArrayLiteralExpression(arg) && !arg.elements.length)
+          || (matcher === "toHaveLength" && ts.isNumericLiteral(arg) && arg.text === "0"));
+        const expect = node.expression.expression;
+        if (empty && ts.isCallExpression(expect) && ts.isIdentifier(expect.expression) && expect.expression.text === "expect"
+          && expect.arguments[0] && /\.scans\b/.test(expect.arguments[0].getText(tree))) found = true;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(body);
+    return found;
+  };
+  const out: Violation[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && /^(?:it|test)(?:\.\w+)*$/.test(node.expression.getText(tree))) {
+      const body = node.arguments.find((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg));
+      if (body && assertsEmpty(body) && (infersQuiet(body) || [...callsIn(body)].some((call) => quiet.has(call)))) {
+        out.push({ file, line: tree.getLineAndCharacterOfPosition(node.getStart(tree)).line + 1,
+          what: "a quiet interval cannot prove the scan pipeline finished; use stable rows for an empty-feed assertion" });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(tree);
+  return out;
+}
+
 /** The check. Return every violation in one file; an empty array is a pass. */
 export function check(file: string, src: string): Violation[] {
   if (!src.includes("/modules/core-scan/feed")) return [];
@@ -72,6 +143,7 @@ export function check(file: string, src: string): Violation[] {
     out.push({ file, line: i + 1, what: "the feed asserted empty without saying the workspace is this case's alone (FEED-OWN-WORKSPACE)" });
   }
   const tree = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
+  out.push(...checkQuietIntervals(file, tree));
   const reported = new Set<number>();
   const visit = (node: ts.Node): void => {
     const date = ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Date";

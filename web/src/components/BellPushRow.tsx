@@ -7,6 +7,7 @@
 // off. Settings is in every state (#5774: it used to vanish at Turn on). A
 // Turn on that did not finish says what failed and what to do, with Try again
 // (#5810: a refused registration used to bring back the same button, silent).
+import { productName } from "@cobblr/platform-web";
 import { lazy, Suspense, useState } from "react";
 import { AlertTriangle, BellRing, Smartphone, X } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -79,7 +80,7 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
         "install-first": (
           <>
             <Smartphone size={14} className="text-accent shrink-0" aria-hidden />
-            <span className="flex-1 min-w-0">Get notifications on this device: add Cobblr to your Home Screen first, then open it from there.</span>
+            <span className="flex-1 min-w-0">Get notifications on this device: add {productName()} to your Home Screen first, then open it from there.</span>
             <button type="button" className={quietAct} onClick={() => setWalking(true)}>
               Show me how
             </button>
@@ -95,7 +96,7 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
         denied: (
           <>
             <BellRing size={14} className="text-faint shrink-0" aria-hidden />
-            <span className="flex-1 min-w-0">This device blocks notifications from Cobblr. {readiness.kind === "denied" ? readiness.howToAllow : null}</span>
+            <span className="flex-1 min-w-0">This device blocks notifications from {productName()}. {readiness.kind === "denied" ? readiness.howToAllow : null}</span>
           </>
         ),
         failed: (

@@ -3,6 +3,7 @@
 // exactly where somebody ends up after deleting their only workspace to get
 // here; a door that needs a workspace to reach would strand them one step
 // from the end.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Modal, useToast, PasswordInput } from "@cobblr/platform-web";
@@ -77,9 +78,9 @@ export function DeleteAccountSection() {
           ) : portal ? (
             <div className="space-y-2 text-sm text-content dark:text-mortar-100">
               <div>
-                This account is managed by your Cobblr account, so it is deleted there and removed here too.{" "}
+                This account is managed by your {productName()} account, so it is deleted there and removed here too.{" "}
                 <a href={portal} className="underline text-cobble-700 dark:text-cobble-300">
-                  Open your Cobblr account
+                  Open your {productName()} account
                 </a>
               </div>
               {/* The portal's own delete is not shipped on every account

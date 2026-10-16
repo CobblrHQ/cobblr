@@ -2,6 +2,7 @@
 // URL (e.g. a Polar Filament spool QR) is matched, fetched, and mapped to a
 // product by a DATA manifest — no code per vendor. Built-ins ship with Cobblr;
 // operators add their own here. Backed by /super-admin/scan-url-resolvers.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, JsonField, useToast, useConfirm, MutationError } from "@cobblr/platform-web";
@@ -47,7 +48,7 @@ export function ScanResolversTab() {
       <header className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm text-muted dark:text-slate-400 max-w-2xl">
-            Built-ins ship with Cobblr; add your own as data.
+            Built-ins ship with {productName()}; add your own as data.
           </p>
         </div>
         <button

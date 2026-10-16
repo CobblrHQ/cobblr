@@ -3,6 +3,7 @@ type: feature
 scope: sales
 date: 2026-10-15
 docs_target: docs/USER_GUIDE.md#3.26 Sales (outbound orders)
+docs_published: 2026-10-16
 ---
 Sales orders gained quotes and numbered invoice PDFs with shop branding, tax, payment dates and email sending by the workspace owner.
 

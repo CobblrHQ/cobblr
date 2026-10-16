@@ -54,7 +54,7 @@ export function buildICS(events: CalendarEvent[], opts: BuildOpts = {}): string 
   const lines: string[] = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
-    "PRODID:-//Cobblr//Workspace Calendar//EN",
+    /* PRODUCT-NAME: The calendar generator identifies the engine, independent of the calendar name. */ "PRODID:-//Cobblr//Workspace Calendar//EN",
     "CALSCALE:GREGORIAN",
     "METHOD:PUBLISH",
     `X-WR-CALNAME:${esc(name)}`,

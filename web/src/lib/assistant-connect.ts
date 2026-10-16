@@ -1,3 +1,5 @@
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 // What "Connect an AI assistant" tells a person to paste, per client. Pure so a
 // test can hold the claims: every snippet names this deployment's endpoint and
 // the workspace, and a client is only ever offered as working when the
@@ -37,7 +39,7 @@ export function assistantClients(endpoint: string, token: string | null, signIn:
       status: "ready",
       where: "In a terminal",
       steps: [
-        "Run this once in a terminal. --scope user makes Cobblr available in every folder you open Claude Code in; without it, it is only added to the folder you ran it from.",
+        `Run this once in a terminal. --scope user makes ${productName()} available in every folder you open Claude Code in; without it, it is only added to the folder you ran it from.`,
         "In Claude Code, type /mcp to check that cobblr shows as connected.",
       ],
       snippet: `claude mcp add --scope user --transport http cobblr "${endpoint}" --header "Authorization: Bearer ${t}"`,
@@ -72,7 +74,7 @@ export function assistantClients(endpoint: string, token: string | null, signIn:
           status: "ready",
           where: "claude.ai: Settings → Connectors → Add custom connector",
           steps: [
-            "Add a custom connector named Cobblr with this URL. There is no token to paste: Connect opens a Cobblr sign-in, where you choose the one workspace it may use and whether it may only look or also make changes.",
+            `Add a custom connector named ${productName()} with this URL. There is no token to paste: Connect opens ${withArticle(productName())} sign-in, where you choose the one workspace it may use and whether it may only look or also make changes.`,
             "The Claude phone apps use the connectors on your account, so it shows there too. Once approved it is listed under Connected apps below, and Disconnect there ends it.",
           ],
           snippet: signIn.url,

@@ -13,6 +13,7 @@
 //   DELETE /me/oidc/:slug             unlink, never the last way in
 //   /super-admin/sign-in/…            the operator's providers and the
 //                                     password switch
+import { productName } from "../platform/product-name.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { meta } from "../db/meta.js";
@@ -75,7 +76,7 @@ oidcAuthRouter.get("/oidc/:slug/start", async (req, res) => {
   } catch (err) {
     // A browser came here: it gets a page with the reason, never JSON.
     console.error(`[oidc] start failed: ${(err as Error).message}`);
-    res.redirect(302, `${origin(req)}/sign-in/oidc?${new URLSearchParams({ error: "provider_unreachable", message: "Your sign-in provider did not answer. Try again in a moment; if it keeps happening, tell whoever runs this Cobblr." })}`);
+    res.redirect(302, `${origin(req)}/sign-in/oidc?${new URLSearchParams({ error: "provider_unreachable", message: `Your sign-in provider did not answer. Try again in a moment; if it keeps happening, tell whoever runs this ${productName()}.` })}`);
   }
 });
 
@@ -188,7 +189,7 @@ oidcMeRouter.delete("/me/oidc/:slug", requireAuth, async (req, res, next) => {
     const passwordWorks = me.password_hash.length > 0 && (await passwordSignInOn());
     if (!passwordWorks && !me.identity_id && others.length === 0) {
       return void res.status(409).json({
-        error: { code: "last_way_in", message: `${p.display_name} is the only way you sign in here. Set a password first (if this Cobblr allows one), or link another.` },
+        error: { code: "last_way_in", message: `${p.display_name} is the only way you sign in here. Set a password first (if this ${productName()} allows one), or link another.` },
       });
     }
     await meta.deleteFrom("user_oidc_links").where("user_id", "=", req.session!.id).where("provider_id", "=", p.id).execute();

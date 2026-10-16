@@ -2,6 +2,7 @@
 // filters by auth method (session / api_token / system), by entity
 // type, and by token. Pollable every 10s.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Filter, KeyRound, ShieldCheck, Wrench } from "lucide-react";
@@ -23,7 +24,7 @@ const MADE_BY: Record<AuthMethod | "all", string> = {
   all: "any way",
   session: "in the app",
   api_token: "with a token",
-  system: "by Cobblr",
+  system: `by ${productName()}`,
 };
 
 export function ActivityPage() {

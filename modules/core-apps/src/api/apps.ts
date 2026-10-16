@@ -211,7 +211,8 @@ appsRouter.get(
 // reads. Only if the caller can open the app. The token acts AS the
 // member, so it's bounded by their capabilities + field-read-scope; it
 // can never exceed them.
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — mints a token that acts as the member for the App Player's
+// sandbox; the assistant never mints or holds a credential
 // UI-REACH: sandbox handshake performed by the App Player, not a credential a person creates or copies.
 appsRouter.post(
   "/:slug/token",
@@ -281,7 +282,9 @@ appsRouter.get(
   }),
 );
 
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — an app's own saved state, written by that app's page as
+// it runs; a second writer would hand the app values its own code never
+// wrote. What an app shows from the workspace is reachable as records
 appsRouter.put(
   "/:slug/data/:key",
   asyncHandler(async (req, res) => {
@@ -360,7 +363,8 @@ async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>)
   return errors;
 }
 
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — writes nothing; the editor's check before it saves an
+// app, and authoring an app is kept from the assistant (see POST below)
 // UI-REACH: dry-run schema and reference validation for authoring clients; the app editor validates through create and update before saving.
 appsRouter.post(
   "/validate",
@@ -382,7 +386,9 @@ appsRouter.post(
 );
 
 // POST /apps — author a new app (admin/owner only).
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — an app can run its own page code with each viewer's
+// rights (the App Player mints it a token as them); one written from a chat
+// could read whatever its viewers can, so authoring is an admin's in the editor
 appsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -425,7 +431,8 @@ appsRouter.post(
 );
 
 // PATCH /apps/:slug — edit (admin/owner only).
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — changes the code an app runs with each viewer's rights;
+// see POST above
 appsRouter.patch(
   "/:slug",
   asyncHandler(async (req, res) => {
@@ -455,7 +462,8 @@ appsRouter.patch(
 );
 
 // DELETE /apps/:slug — remove (admin/owner only).
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — removes a screen people use, pages and saved state with
+// it, and there is no undo that could rebuild them; an admin's call
 appsRouter.delete(
   "/:slug",
   asyncHandler(async (req, res) => {

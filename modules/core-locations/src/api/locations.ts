@@ -159,6 +159,7 @@ locationsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 locationsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -278,6 +279,7 @@ locationsRouter.post(
   }),
 );
 
+// AI-REACH: crud
 locationsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -446,6 +448,7 @@ locationsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 locationsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

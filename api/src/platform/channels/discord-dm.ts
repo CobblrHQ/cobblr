@@ -17,6 +17,7 @@
 //
 // See docs/design-decisions/discord-workspace-app.md.
 
+import { productName } from "../product-name.js";
 import { meta } from "../../db/meta.js";
 import { sendDiscordDm, dmResultUnverifies } from "../discord-bot-trigger.js";
 import { canDeliverDiscordDm } from "../discord-connection.js";
@@ -135,6 +136,6 @@ export function discordDmPayload(
  *  press was a dead end. A link button needs no custom id and no handler. */
 function withOpenButton(rows: unknown[] | undefined, url: string | null): unknown[] | undefined {
   if (!url) return rows;
-  const open = { type: 1, components: [{ type: 2, style: 5, label: "Open in Cobblr", url }] };
+  const open = { type: 1, components: [{ type: 2, style: 5, label: `Open in ${productName()}`, url }] };
   return [...(rows ?? []), open].slice(0, 5);
 }

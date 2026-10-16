@@ -16,6 +16,7 @@
 // Kept deliberately plain: two rows per channel, a time next to each. A screen
 // about reducing noise should not itself be busy.
 
+import { productName } from "@cobblr/platform-web";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock, MessageSquare, CalendarClock } from "lucide-react";
@@ -27,7 +28,7 @@ import { useDiscordStatus } from "../lib/useDiscordStatus";
 /** Channels worth offering a cadence for. `in_app` is deliberately absent: the
  *  bell is a place you look, not a push, and the platform refuses to defer it. */
 const CHANNELS: Array<{ key: string; label: string; hint: string; batchedOnly?: boolean }> = [
-  { key: "discord_dm", label: "Discord DM", hint: "direct messages from Cobblr" },
+  { key: "discord_dm", label: "Discord DM", hint: `direct messages from ${productName()}` },
   // Daily here sends the day's pushes as one, instead of a Discord DM digest.
   { key: "browser_push", label: "Push to my devices", hint: "the phones and computers you turned notifications on for" },
   {

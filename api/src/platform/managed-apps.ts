@@ -36,7 +36,7 @@ export interface ManagedApp {
 export const MANAGED_APPS: Record<string, ManagedApp> = {
   yarn: {
     id: "yarn",
-    label: "Cobblr for Yarn",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Yarn",
     bundleId: "cobblr.flagship.yarn",
     // The Yarn bundle provides an inventory instance named "yarn" → its table
     // lives at /instances/yarn. That's where the user lands.
@@ -56,7 +56,7 @@ export const MANAGED_APPS: Record<string, ManagedApp> = {
   },
   home: {
     id: "home",
-    label: "Cobblr for Home",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Home",
     bundleId: "cobblr.flagship.home-inventory",
     // The catalog is the home; the CAMERA is the first screen on a phone (the
     // web's StartAppPage sends a touch device straight to /scan/camera after
@@ -73,7 +73,7 @@ export const MANAGED_APPS: Record<string, ManagedApp> = {
   },
   groceries: {
     id: "groceries",
-    label: "Cobblr for Groceries",
+    label: /* PRODUCT-NAME: A named managed app has its own brand on every server. */ "Cobblr for Groceries",
     bundleId: "cobblr.flagship.groceries",
     // The board ("What's on hand", the bundle's pinned vending view) is the
     // app: the instance page opens on its pinned board when asked to, and the

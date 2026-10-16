@@ -56,7 +56,7 @@ export function connectorInputSchema(def: OutboundConnectorDef, action: Connecto
 
 const OUTPUT_SCHEMA = {
   type: "object",
-  properties: { status: { type: ["integer", "null"] }, ms: { type: "number" }, connection: { type: "string" } },
+  properties: { status: { type: ["integer", "null"] }, ms: { type: "number" }, connection: { type: "string" }, queued: { type: "boolean" }, will_send_at: { type: "string" }, because: { type: "string" } },
   required: ["ms", "connection"],
 };
 
@@ -120,6 +120,9 @@ export function connectorBuiltIns(def: OutboundConnectorDef, deps: ConnectorServ
         const db = await deps.getDb(ctx.orgId);
         const conn = await deps.pick(db, def, connection_id);
         const out = await deps.invoke(db, ctx.orgId, conn.id, action.id, args);
+        if (out.kind === "queued") {
+          return { output: { status: null, ms: 0, connection: conn.label, queued: true, will_send_at: out.runAt.toISOString(), because: out.because === "pace" ? "waiting its turn" : "the first try failed and it will try again" } };
+        }
         if (out.kind !== "done") throw new Error(`${def.label}: the saved connection could not be used (${out.kind}).`);
         if (!out.ok) throw new Error(out.error ?? `${def.label} failed`);
         return { output: { status: out.status, ms: out.ms, connection: conn.label } };

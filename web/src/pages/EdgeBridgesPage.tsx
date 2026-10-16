@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import {BrowserLaserOption} from "../features/digifab/BrowserLaserOption";
 // /configuration/edge — the edge-bridge pane of glass. GENERIC by design: a
 // bridge is kernel infrastructure (one tunnel from your site), and modules are
@@ -84,7 +85,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
           </h1>
         )}
         <p className="text-sm text-muted dark:text-slate-400 mt-1">
-          A bridge is a small program on your own network that connects Cobblr to things the cloud can't reach.
+          A bridge is a small program on your own network that connects {productName()} to things the cloud can't reach.
           Set one up once - everything that needs your site attaches to it.
         </p>
       </div>
@@ -141,8 +142,8 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
                     {" · "}{d.instances} {d.instances === 1 ? "machine" : "machines"}
                     {d.auth === "none" ? " · no token" : d.auth === "mixed" ? " · some machines have no token" : ""}
                     {everOk
-                      ? " · Cobblr reached it"
-                      : " · Cobblr hasn't reached it yet"}
+                      ? ` · ${productName()} reached it`
+                      : ` · ${productName()} hasn't reached it yet`}
                   </span>
                   <Link
                     to="/configuration/print"
@@ -320,7 +321,7 @@ function BridgeRow({
                   const ok = await confirm({
                     title: `Disconnect ${bridgeDisplayName(bridge)}?`,
                     message:
-                      "Its key stops working at once, so it can no longer reach Cobblr or anything through it. To use that machine again, set it up as a new bridge.",
+                      `Its key stops working at once, so it can no longer reach ${productName()} or anything through it. To use that machine again, set it up as a new bridge.`,
                     confirmLabel: "Disconnect",
                     destructive: true,
                   });
@@ -346,7 +347,7 @@ function BridgeRow({
         <span data-testid="bridge-reach" className="block text-xs text-faint dark:text-slate-400">
           {bridge.allowlist?.length
             ? `Reaches only ${bridge.allowlist.join(", ")} (set on the bridge)`
-            : "Reaches the addresses you add in Cobblr"}
+            : `Reaches the addresses you add in ${productName()}`}
         </span>
       </span>
     </li>

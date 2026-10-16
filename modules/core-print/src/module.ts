@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-print",
-  version: "0.1.3",
+  version: "0.2.0",
   displayName: "Printing",
   description:
     "Print documents and labels to your printers, at home or through an on-site bridge.",
@@ -47,10 +47,11 @@ export default defineModule({
 
   dependencies: [],
 
-  // AI-REACH: no kinds/actions of its own by design — printing is reached through
-  // the labels module's labels:print action, which is the surface a person
-  // actually asks for ("print a label for this"). This module is the driver
-  // layer underneath (CUPS, Bluetooth, edge), not a thing to ask about.
+  // AI-REACH: no kinds by design — printing is reached through the labels
+  // module's labels:print action, which is the surface a person actually asks
+  // for ("print a label for this"). This module is the driver layer underneath
+  // (CUPS, Bluetooth, edge); the one thing to ask it directly is whether a
+  // printer is there (core-print:test-printer).
 
   provides: {
     entityKinds: [],
@@ -58,7 +59,23 @@ export default defineModule({
 
   exposes: {
     events: ["core-print.job.submitted", "core-print.job.failed"],
-    actions: [],
+    actions: [
+      {
+        group: "label",
+        // UI-SCREEN: /configuration/print
+        id: "core-print:test-printer",
+        runBy: "member",
+        examples: ["is the label printer online", "check the Zebra is connected"],
+        label: "Check a printer",
+        description: "Ask a label or document printer whether it is reachable and ready, without printing anything. Says what it answered.",
+        scope: "workspace",
+        invokeHandler: "core-print.test-printer",
+        userInvokable: true,
+        argsSchema: {
+          printer: { label: "Which printer (its name; empty: the default one)", type: "text" },
+        },
+      },
+    ],
   },
 
   subscribes: [],

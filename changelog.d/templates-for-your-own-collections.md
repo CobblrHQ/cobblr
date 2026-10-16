@@ -4,6 +4,7 @@ scope: core-templates
 date: 2026-10-15
 docs_target: docs/USER_GUIDE.md#Item templates
 ui: none (the Records collection's header gains the same menu beside New that Assets and Machines have, and the Kind of thing list names the workspace's own kinds)
+docs_published: 2026-10-16
 ---
 Templates work for your own collections: a Bookshelf, or any collection built on Records, can have templates and offers New from template, the Kind of thing list is the one your workspace has, and the starting values are filled in as fields, not typed as JSON.
 

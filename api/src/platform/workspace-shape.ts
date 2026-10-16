@@ -22,7 +22,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { forgetPerRequest } from "../lib/request-context.js";
 
-export const WORKSPACE_SHAPE_HEADER = "X-Cobblr-Workspace-Shape";
+export const WORKSPACE_SHAPE_HEADER = /* PRODUCT-NAME: A wire protocol header shared by existing clients and servers. */ "X-Cobblr-Workspace-Shape";
 
 const latest = new Map<string, number>();
 

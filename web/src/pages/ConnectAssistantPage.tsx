@@ -1,6 +1,7 @@
 // /configuration/connect-assistant: connect Claude (or another MCP client) to
 // this workspace. The endpoint URL, a one-click token, and a paste-ready
 // snippet per client, with clients that cannot connect yet named as such.
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -149,7 +150,7 @@ function ConnectedApps() {
   const disconnect = useMutation({
     mutationFn: (id: string) => api.revokeOAuthGrant(id),
     onSuccess: () => {
-      toast.success("Disconnected. It can no longer reach Cobblr.");
+      toast.success(`Disconnected. It can no longer reach ${productName()}.`);
       void qc.invalidateQueries({ queryKey: ["oauth-grants"] });
     },
     onError: (e) => toast.error(`Couldn't disconnect it: ${(e as Error).message}`),

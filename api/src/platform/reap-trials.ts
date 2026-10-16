@@ -38,6 +38,7 @@
 // which would take down any unit test (or test:unit) that merely imports this module. The
 // pure helpers + the injected-deps orchestration stay import-clean.
 
+import { productName } from "./product-name.js";
 import type { AuthEmailMessage } from "@cobblr/platform-contract";
 import { runExclusive } from "./exclusive.js";
 
@@ -135,14 +136,14 @@ export function buildTrialWarningEmail(to: string, o: TrialOrg): AuthEmailMessag
   const ends = isoDate(o.trial_expires_at);
   const text =
     `Hi,\n\n` +
-    `Your Cobblr trial workspace "${o.slug}" is scheduled to end on ${ends}. ` +
+    `Your ${productName()} trial workspace "${o.slug}" is scheduled to end on ${ends}. ` +
     `After that date the workspace and everything in it will be removed.\n\n` +
     `If you want to keep a copy, please export your data before then. In the app, open ` +
     `Configuration and use the Backup & Export feature to download your whole workspace.\n\n` +
-    `If you would like to keep using Cobblr, just reply to this email and we will help you ` +
+    `If you would like to keep using ${productName()}, just reply to this email and we will help you ` +
     `carry on.\n\n` +
-    `Thanks for trying Cobblr.`;
-  return { to, subject: "Your Cobblr trial ends soon", text, kind: "notification" };
+    `Thanks for trying ${productName()}.`;
+  return { to, subject: `Your ${productName()} trial ends soon`, text, kind: "notification" };
 }
 
 async function defaultListTrialOrgs(): Promise<TrialOrg[]> {

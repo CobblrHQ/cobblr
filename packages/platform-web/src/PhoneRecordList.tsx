@@ -16,6 +16,7 @@
 // and are untouched. A page hands over plain data per row; the layout lives
 // here once, so the next list gets the phone layout by calling it.
 
+import { SelectBox } from "./SelectBox";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 
@@ -76,16 +77,9 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
     >
       {selection?.onSelectAll && rows.length > 0 && (
         <li className="flex items-center gap-2.5 bg-subtle/60 dark:bg-slate-800/40 px-3 py-1.5">
-          <label className="flex items-center gap-2.5 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
-            <input
-              type="checkbox"
-              checked={rows.every((r) => selection.selected.has(r.id))}
-              onChange={(e) => selection.onSelectAll!(e.target.checked)}
-              className="accent-cobble-600"
-              aria-label="Select all"
-            />
+          <SelectBox checked={rows.every((r) => selection.selected.has(r.id))} onChange={(checked) => selection.onSelectAll!(checked)} label="Select all" className="gap-2.5 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
             Select all
-          </label>
+          </SelectBox>
         </li>
       )}
       {rows.map((r) => {
@@ -95,13 +89,7 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
         return (
           <li key={r.id} data-testid="phone-record-row" data-record-id={r.id} className="flex items-center">
             {selection && (
-              <input
-                type="checkbox"
-                checked={selection.selected.has(r.id)}
-                onChange={(e) => selection.onToggle(r.id, e.target.checked)}
-                className="accent-cobble-600 ml-3 shrink-0"
-                aria-label={`Select ${r.name}`}
-              />
+              <SelectBox checked={selection.selected.has(r.id)} onChange={(checked) => selection.onToggle(r.id, checked)} label={`Select ${r.name}`} className="ml-3" />
             )}
             <button
               type="button"

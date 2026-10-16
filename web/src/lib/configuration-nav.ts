@@ -549,7 +549,7 @@ export const CONFIG_DESTINATIONS: ConfigDestination[] = [
     icon: Share2,
     label: "Sharing",
     description:
-      "Share part of this workspace with someone, on this Cobblr or another one. They get a workspace of their own for it, and things can be handed over between you.",
+      "Share part of this workspace with someone, on this server or another one. They get a workspace of their own for it, and things can be handed over between you.",
     to: "/configuration/sharing",
     keywords: ["share", "friend", "hand over", "give", "offer", "another cobblr"],
   },

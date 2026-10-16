@@ -465,18 +465,23 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
         {/* Always a normal bell — a struck-through (BellOff) icon reads as
             "notifications muted", which is wrong; zero unread is just an empty
             badge, not a disabled state. */}
-        <Bell size={14} className="shrink-0" />
+        {/* The badge rides the bell, not the button: on a phone the button is a
+            44 px box from the status bar's edge, and a badge on its corner sat
+            under the status bar, away from the icon (#6876). */}
+        <span className="relative inline-flex shrink-0">
+          <Bell size={14} className="shrink-0" />
+          {count > 0 && !asRow && (
+            <span
+              className={`absolute -top-2 -right-2.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
+                otherOnly ? "bg-sky-600 text-white" : "bg-ember-500 text-mortar-50"
+              }`}
+              aria-label={otherOnly ? `${count} unread in other workspaces` : `${count} unread`}
+            >
+              {count > 99 ? "99+" : count}
+            </span>
+          )}
+        </span>
         {asRow && <span>Notifications{count > 0 ? ` (${count})` : ""}</span>}
-        {count > 0 && !asRow && (
-          <span
-            className={`absolute -top-0.5 -right-0.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
-              otherOnly ? "bg-sky-600 text-white" : "bg-ember-500 text-mortar-50"
-            }`}
-            aria-label={otherOnly ? `${count} unread in other workspaces` : `${count} unread`}
-          >
-            {count > 99 ? "99+" : count}
-          </span>
-        )}
       </button>
 
       {/* DROPDOWN mode — compact popover anchored under the bell. */}

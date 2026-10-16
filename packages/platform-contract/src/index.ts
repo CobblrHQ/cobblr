@@ -1799,7 +1799,7 @@ const ModuleManifest = z.object({
             /** Registry id, `<module>:<panel>` (e.g. "digifab:fleet-tab") —
              *  must have a component registered web-side. */
             id: z.string().regex(/^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*$/),
-            surface: z.enum(["module-page-tab", "entity-detail-panel", "configuration-section", "view-toolbar"]),
+            surface: z.enum(["module-page-tab", "entity-detail-panel", "configuration-section", "view-toolbar", "tag-toolbar"]),
             /** Target module ("machines") for a page tab, entity kind
              *  ("machines:machine") for a detail panel, or a Configuration
              *  page (one of CONFIGURATION_SECTION_HOSTS) for a section. For a

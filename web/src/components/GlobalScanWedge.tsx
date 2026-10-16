@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import { useScanOrigins } from "../lib/useScanOrigins";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -254,7 +255,7 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
               )}
             </div>
             <div className="text-sm text-content dark:text-mortar-200">
-              You scanned a Cobblr <strong>{ask.noun}</strong> label. Want scanned QR
+              You scanned {withArticle(productName())} <strong>{ask.noun}</strong> label. Want scanned QR
               labels to jump this screen straight to what they point at? A USB or
               Bluetooth scanner then works like a remote for the app.
               <div className="mt-1 text-xs text-muted dark:text-slate-400">

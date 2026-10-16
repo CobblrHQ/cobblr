@@ -4,6 +4,7 @@
 // fields. You tap-select one or more record types; that selection drives BOTH
 // the code shown below and the scope of the token it mints (records:<target>:
 // <action> + provenance) via the existing token surface.
+import { productName } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -143,7 +144,7 @@ function buildFile(
 ): string {
   const cp = lang === "node" || lang === "ts" ? "//" : "#";
   // Never write a real token into a downloaded file — always the placeholder.
-  const head = [`${cp} Cobblr API examples. One token, one env var.`, ...langPreamble(lang, "cblr_...your token here...")];
+  const head = [`${cp} ${productName()} API examples. One token, one env var.`, ...langPreamble(lang, "cblr_...your token here...")];
   const sections = items.map(({ k, label, createUrl, listUrl, updateUrl }) => {
     const fields = nativeFieldsOf(k).map((f) => `${f.name}${f.role === "title" ? "*" : ""}`).join(", ");
     const lines = ["", `${cp} ── ${label}  (${routeHint(k)})`];

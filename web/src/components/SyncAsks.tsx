@@ -5,6 +5,7 @@
 // record already here, the run lists the question and keeps Cobblr's version
 // until the person answers; the answers are here.
 
+import { productName } from "@cobblr/platform-web";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@cobblr/platform-web";
 import { CONFLICT_POLICIES, CONFLICT_POLICY_LABELS } from "@cobblr/platform-contract/sync-merge";
@@ -30,7 +31,7 @@ export function SyncRuleSelect({ slug, connId, entityType, value }: { slug: stri
     <label className="flex items-center gap-1 text-[10px] text-faint dark:text-slate-500 shrink-0" title={RULE_WORDS[value]}>
       If they differ
       <select
-        aria-label={`If Cobblr and the source differ in ${entityType}`}
+        aria-label={`If ${productName()} and the source differ in ${entityType}`}
         data-testid={`sync-rule-${entityType}`}
         value={value}
         disabled={save.isPending}

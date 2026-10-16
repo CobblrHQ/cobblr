@@ -11,6 +11,7 @@
 // carrier and can fail or be unavailable, so it fills in after, and its
 // absence never blocks the carrier line or the tracking link.
 
+import { productName } from "@cobblr/platform-web";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, Truck, HelpCircle, PackageCheck, PackageX, Loader2 } from "lucide-react";
 import { api, type ShipmentState, type TrackingLookup } from "../../lib/api";
@@ -179,13 +180,13 @@ export function ShipmentPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
           {!statusQ.isLoading && !status && (
             <div className="text-[11px] text-faint">
               {statusQ.data?.reason === "quota_exhausted"
-                ? "Your tracking service is at capacity, so Cobblr could not start following this parcel. The link above still works."
+                ? `Your tracking service is at capacity, so ${productName()} could not start following this parcel. The link above still works.`
                 : statusQ.data?.reason === "busy"
-                ? "Your tracking service is busy right now; Cobblr will ask it again shortly. The link above still works."
+                ? `Your tracking service is busy right now; ${productName()} will ask it again shortly. The link above still works.`
                 : statusQ.data?.reason === "not_connected"
-                ? `${carrier.name} is not connected here, so Cobblr cannot follow this parcel. The link above still works.`
+                ? `${carrier.name} is not connected here, so ${productName()} cannot follow this parcel. The link above still works.`
                 : statusQ.data?.reason === "no_driver"
-                  ? `Cobblr cannot follow ${carrier.name} parcels yet. The link above still works.`
+                  ? `${productName()} cannot follow ${carrier.name} parcels yet. The link above still works.`
                   : `${carrier.name} did not answer just now. The link above still works.`}
             </div>
           )}
@@ -206,7 +207,7 @@ export function ShipmentPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
             {lookup && <LookupLink lookup={lookup} />}
           </div>
           <div className="text-[11px] text-faint">
-            Cobblr identifies FedEx, UPS, USPS, DHL, Amazon and OnTrac numbers. If yours is not one of those, the link
+            {productName()} identifies FedEx, UPS, USPS, DHL, Amazon and OnTrac numbers. If yours is not one of those, the link
             above searches every carrier. If it should be, check for a typo.
           </div>
         </div>

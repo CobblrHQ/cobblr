@@ -991,8 +991,8 @@ function HealthTab() {
                     <tr key={r.route}>
                       <td className="px-3 py-1.5 text-xs font-mono text-content dark:text-mortar-100 break-all">{r.route}</td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">{r.calls.toLocaleString()}</td>
-                      <td className="px-3 py-1.5 text-right font-mono text-xs" title={r.cpu_share === null ? "Never ran alone, so its own CPU is not measured" : undefined}>
-                        {r.cpu_share === null ? "-" : `${Math.round(r.cpu_share * 100)}%`}
+                      <td className="px-3 py-1.5 text-right font-mono text-xs" title={r.held_open ? "Held open (a long poll or a stream): it waits, and costs no CPU of its own" : r.cpu_share === null ? "Never ran alone, so its own CPU is not measured" : undefined}>
+                        {r.held_open ? "held open" : r.cpu_share === null ? "-" : `${Math.round(r.cpu_share * 100)}%`}
                       </td>
                       <td className="px-3 py-1.5 text-right font-mono text-xs">
                         {r.cpu_ms.samples ? `${r.cpu_ms.p50} / ${r.cpu_ms.p95}` : `≤${r.cpu_ms_overlapped.p50} / ≤${r.cpu_ms_overlapped.p95}`}

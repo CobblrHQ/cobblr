@@ -2380,6 +2380,7 @@ export function ScanPage() {
           omni box is the elastic member and normal packing is correct. */}
       <div
         data-inbox-header
+        data-toolbar="row"
         className={
           "relative flex items-center gap-2 max-sm:gap-1.5 max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5 " +
           // A phone's open search is a line of its own under the row (see the

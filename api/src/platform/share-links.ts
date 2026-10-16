@@ -13,6 +13,7 @@
 // and the keys: names arrive for display only, and what a change may do is
 // decided by the side that applies it.
 
+import { productName } from "./product-name.js";
 import { decodeBase64urlExact } from "@cobblr/platform-contract/base64url-exact";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
@@ -117,7 +118,7 @@ export async function createShareInvite(p: {
     const refused = await shareRefusal(p.orgId, [p.collection.kind]);
     if (refused) throw new Error(refused);
   }
-  if (!p.here) throw new Error("This Cobblr does not know its own address (PUBLIC_BASE_URL), so an invite could not reach it.");
+  if (!p.here) throw new Error(`This ${productName()} does not know its own address (PUBLIC_BASE_URL), so an invite could not reach it.`);
   const code = b64url(randomBytes(24));
   const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
   const row = await meta
@@ -198,7 +199,7 @@ export async function claimShareInvite(req: ClaimRequest): Promise<{ owner_link_
   const row = await pendingInvite(req.code);
   if (!row) return null;
   const own = (row.settings as {purpose?: string} | null)?.purpose === "own";
-  if (own !== (req.purpose === "own") || (own && !req.share_org_id)) throw new ShareInviteError(409, "This connection needs an updated Cobblr and an existing workspace. Use a send file instead.");
+  if (own !== (req.purpose === "own") || (own && !req.share_org_id)) throw new ShareInviteError(409, `This connection needs an updated ${productName()} and an existing workspace. Use a send file instead.`);
   const refused = bindingRefusal(row.invite_email, req.person_email);
   if (refused) throw new ShareInviteError(403, refused);
   const toOwner = req.key_to_owner.split(".");
@@ -260,13 +261,13 @@ export async function readInvite(token: InviteToken, here: string): Promise<{
   preview: { owner_name: string | null; workspace_name: string; for_email?: string | null; v: number; purpose?: "own" };
 }> {
   const ownerUrl = token.u.replace(/\/+$/, "");
-  if (!/^https?:\/\//.test(ownerUrl)) throw new ShareInviteError(400, "That invite does not say which Cobblr it came from.");
+  if (!/^https?:\/\//.test(ownerUrl)) throw new ShareInviteError(400, `That invite does not say which ${productName()} it came from.`);
   const local = sameInstance(ownerUrl, here);
-  if (token.p === "own" && isTheCloud(here) && !local && !trustedPeers().includes(new URL(ownerUrl).origin)) throw new ShareInviteError(403, "This cloud only connects Cobblrs its operator trusts. Use a send file instead.");
+  if (token.p === "own" && isTheCloud(here) && !local && !trustedPeers().includes(new URL(ownerUrl).origin)) throw new ShareInviteError(403, `This cloud only connects ${productName()} servers its operator trusts. Use a send file instead.`);
   const preview = local
     ? await previewInvite(token.c)
     : await askOwner<{ owner_name: string | null; workspace_name: string; for_email?: string | null; v: number; purpose?: "own" }>(ownerUrl, `/api/v1/share-links/invite/${encodeURIComponent(token.c)}`, { method: "GET" });
-  if (preview && (preview.purpose === "own") !== (token.p === "own")) throw new ShareInviteError(409, "This Cobblr needs updating for this connection. Use a send file instead.");
+  if (preview && (preview.purpose === "own") !== (token.p === "own")) throw new ShareInviteError(409, `This ${productName()} needs updating for this connection. Use a send file instead.`);
   if (!preview) throw new ShareInviteError(404, "That invite is used, expired or was withdrawn. Ask for a new one.");
   return { ownerUrl, local, preview };
 }
@@ -276,7 +277,7 @@ export async function readInvite(token: InviteToken, here: string): Promise<{
  *  claim that fails takes the new share space away again. */
 export async function acceptShareInvite(p: { userId: string; token: InviteToken; here: string; targetOrg?: string }): Promise<{ orgId: string; slug: string; linkId: string }> {
   const { ownerUrl, local, preview } = await readInvite(p.token, p.here);
-  if (preview.v > SHARE_ENVELOPE_VERSION) throw new ShareInviteError(409, "The Cobblr that sent this invite is newer than this one, which needs updating to accept it.");
+  if (preview.v > SHARE_ENVELOPE_VERSION) throw new ShareInviteError(409, `The ${productName()} that sent this invite is newer than this one, which needs updating to accept it.`);
 
   if (preview.purpose === "own") return acceptOwnConnection(p, {ownerUrl, local});
   if (p.targetOrg) throw new ShareInviteError(409, "This is a share invite, not a connection to your own workspace.");
@@ -350,7 +351,7 @@ async function acceptOwnConnection(p: {userId: string; token: InviteToken; here:
   const toOwner = mintShareKey();
   const claim: ClaimRequest = {purpose: "own", share_org_id: target.id, code: p.token.c, share_url: peer.local ? "" : p.here, share_link_id: linkId, person_name: (await userName(p.userId)) ?? "", person_email: await confirmedEmail(p.userId), share_workspace_name: target.name, key_to_share: toShare.text, key_to_owner: toOwner.text, v: SHARE_ENVELOPE_VERSION};
   const got = peer.local ? await claimShareInvite(claim) : await askOwner<Awaited<ReturnType<typeof claimShareInvite>>>(peer.ownerUrl, "/api/v1/share-links/claim", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(claim)});
-  if (!got || got.purpose !== "own" || !got.owner_org_id) throw new ShareInviteError(409, "The sending Cobblr needs updating for this connection. Use a send file instead.");
+  if (!got || got.purpose !== "own" || !got.owner_org_id) throw new ShareInviteError(409, `The sending ${productName()} needs updating for this connection. Use a send file instead.`);
   if (peer.local && got.owner_org_id === target.id) throw new ShareInviteError(409, "Choose a different workspace.");
   await meta.insertInto("share_links").values({id: linkId, org_id: target.id, side: "share", status: "active", peer_url: peer.local ? null : peer.ownerUrl, peer_link_id: got.owner_link_id, peer_name: got.owner_name, peer_workspace_name: got.workspace_name, send_key_encrypted: encryptCreds(toOwner.text), receive_key_id: toShare.keyId, receive_secret_encrypted: encryptCreds(toShare.secret), created_by: p.userId, peer_version: got.v, settings: {purpose: "own", peer_org_id: got.owner_org_id}, last_synced_at: new Date()}).execute();
   await enqueueShareOp(linkId, "link.hello", {name: target.name});

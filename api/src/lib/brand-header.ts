@@ -1,3 +1,5 @@
+import { productName } from "../platform/product-name.js";
+import { escHtml } from "../platform/esc-html.js";
 // The brand header for pages the api serves straight to a visitor's browser:
 // the sandbox arrival page, the hour-is-up page, anything else a stranger can
 // land on outside the React shell.
@@ -25,10 +27,11 @@ export function cobblestoneMarkSvg(size = 26): string {
 
 /** Mark + wordmark, linking back to the site the visitor came from. */
 export function brandHeaderHtml(): string {
+  const home = productName() === "Cobblr" ? "https://cobblr.xyz" : "/"; // PRODUCT-NAME: The default product links to its own site; other products stay on their server.
   return (
-    `<header class="brand"><a href="https://cobblr.xyz" aria-label="Cobblr">` +
+    `<header class="brand"><a href="${home}" aria-label="${escHtml(productName())}">` +
     cobblestoneMarkSvg(26) +
-    `<span class="wordmark">Cobblr</span></a></header>`
+    `<span class="wordmark">${escHtml(productName())}</span></a></header>`
   );
 }
 

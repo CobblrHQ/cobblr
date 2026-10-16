@@ -6,6 +6,7 @@
 // waiting, Sync now, and End. In a share space (someone shared with you): who
 // shared it, how it is syncing, and Leave.
 
+import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -155,7 +156,7 @@ export function SharingPage() {
 function ShareRow({ link, onSync, syncing, onEnd, endLabel, onWhat, onEdits }: { link: ShareLinkItem; onSync: () => void; syncing: boolean; onEnd: () => void; endLabel: string; onWhat?: () => void; onEdits?: () => void }) {
   const made = `Link made ${new Date(link.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
   const who = link.side === "share" ? (link.peer_name ? `Shared by ${link.peer_name}` : "Shared with you") : (link.peer_name ?? link.invite_email ?? link.label ?? (link.status === "pending" ? made : "Someone"));
-  const where = link.peer_host ? `on ${link.peer_host}` : "on this Cobblr";
+  const where = link.peer_host ? `on ${link.peer_host}` : `on this ${productName()}`;
   return (
     <div data-testid="share-row" className="rounded-lg border border-line bg-surface p-3 dark:border-slate-600 space-y-1">
       <div className="flex flex-wrap items-center gap-2">

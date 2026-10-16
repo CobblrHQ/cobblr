@@ -269,7 +269,7 @@ export function writeRefusal(tool: string, mode: WriteMode): string | null {
   if (mode === "auto") return null;
   return mode === "off"
     ? 'Changes are turned off for this chat. The user can allow them in the chat\'s tool settings ("Changes" → Ask or Auto).'
-    : 'Changes are set to "Ask" for this chat, and this connection cannot show a confirmation prompt. The user can switch "Changes" to Auto in the chat\'s tool settings (every change stays tracked and undoable), or make this one in Cobblr directly.';
+    : `Changes are set to "Ask" for this chat, and this connection cannot show a confirmation prompt. The user can switch "Changes" to Auto in the chat's tool settings (every change stays tracked and undoable), or make this one in ${productName()} directly.`;
 }
 
 export { actionRefusal };

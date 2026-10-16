@@ -1,6 +1,7 @@
 // "Sign in with <provider>" on the sign-in page, for each provider the
 // instance's operator set up (#4492). When password sign-in is off, these are
 // the only way in and the page says so.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { KeyRound } from "lucide-react";
 import { api } from "../lib/api";
@@ -30,7 +31,7 @@ export function SignInWithProviders({ items, onlyWay, next }: { items: Array<{ s
   if (items.length === 0) return null;
   return (
     <div className="space-y-2 mb-3" data-testid="sign-in-with">
-      {onlyWay && <p className="text-xs text-muted text-center">This Cobblr signs in through its own sign-in.</p>}
+      {onlyWay && <p className="text-xs text-muted text-center">This {productName()} signs in through its own sign-in.</p>}
       {items.map((p) => (
         <button
           key={p.slug}

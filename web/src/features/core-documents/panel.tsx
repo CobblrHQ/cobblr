@@ -8,6 +8,7 @@
 // Cobblr, so the browser never holds its address or token. With no document
 // system connected the panel is not there at all.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageIcon, Search, X } from "lucide-react";
@@ -162,7 +163,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
     <section data-testid="documents-panel">
       {disconnected.map(([system, href]) => (
         <div key={system} className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100" data-testid="library-disconnected">
-          <p><strong>{system} is disconnected.</strong> Existing links stay here, and copies already brought into Cobblr stay with this record. Reconnect to refresh matches or previews, or to make new links and copies.</p>
+          <p><strong>{system} is disconnected.</strong> Existing links stay here, and copies already brought into {productName()} stay with this record. Reconnect to refresh matches or previews, or to make new links and copies.</p>
           <Link to={href} className="mt-1 inline-flex min-h-8 items-center font-medium text-accent" data-testid="library-reconnect">
             Reconnect {system}
           </Link>
@@ -218,11 +219,11 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                       </Link>
                     ) : d.copied_at ? (
                       <span className="text-xs text-muted" title={d.copied_filename ?? undefined}>
-                        Copied into Cobblr
+                        Copied into {productName()}
                       </span>
                     ) : canOf.get(d.connection_id)?.can_copy ? (
                       <button type="button" className="text-xs text-accent min-h-8" onClick={() => copy.mutate(d)} disabled={copy.isPending}>
-                        {copy.isPending ? "Copying…" : "Bring a copy into Cobblr"}
+                        {copy.isPending ? "Copying…" : `Bring a copy into ${productName()}`}
                       </button>
                     ) : null}
                     <button

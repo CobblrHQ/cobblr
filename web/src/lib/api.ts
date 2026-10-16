@@ -1,3 +1,4 @@
+import { productName } from "@cobblr/platform-web";
 import type { FactScope } from "@cobblr/platform-contract/fact-scope";
 import type {BridgeDiscovery} from "@cobblr/platform-contract/bridge-discovery";
 import type {ServerBridgeState} from "@cobblr/platform-contract/server-bridge";
@@ -25,6 +26,7 @@ import type { ProviderReason } from "@cobblr/platform-contract/provider-reason";
 import type { ProposalValue } from "./proposal-values";
 import { AI_AVAILABILITY_WRITE } from "./ai-availability-keys";
 import { markSandboxEnded } from "./sandbox-session";
+import { markWorkspaceUnfinished, slugOfRequest } from "./workspace-unfinished";
 import { busySentence, parseRetryAfter } from "./request-wait";
 import { announceScanFiled, type ScanFiledChange } from "./scanFiled";
 import { awaitBlockedAction, carriesOnItself, isMutating, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
@@ -310,6 +312,14 @@ export function subscribeOfflineCopies(listener: OfflineListener): () => void {
 /** What a person reads when a write or an unopened read is made offline. */
 export const OFFLINE_SENTENCE = "You're offline. This will work again when you're back online.";
 
+/** The 5xx the api itself answers with a reason: never a gateway's "down". */
+const API_ANSWERED_5XX = new Set(["tenant_unprovisioned"]);
+async function answeredByTheApi(res: Response): Promise<boolean> {
+  if (!(res.headers.get("content-type") ?? "").includes("application/json")) return false;
+  const code = await res.clone().json().then((b: { error?: { code?: string } }) => b?.error?.code).catch(() => undefined);
+  return !!code && API_ANSWERED_5XX.has(code);
+}
+
 /** Liveness ping the banner polls while down, so it auto-clears on recovery
  *  even when the user is idle (no in-flight request to flip the flag). */
 export async function pingHealth(): Promise<boolean> {
@@ -475,7 +485,7 @@ async function sendRequest<T>(
     // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
     setApiDown(true);
     if (typeof navigator !== "undefined" && navigator.onLine === false) throw new ApiError(0, "offline", OFFLINE_SENTENCE);
-    throw new ApiError(0, "network_error", "Can't reach Cobblr. Check your connection and try again.");
+    throw new ApiError(0, "network_error", `Can't reach ${productName()}. Check your connection and try again.`);
   }
   // Offline, the service worker answered: a kept copy (marked with when it was
   // fetched) or "never kept". Either way we are not connected, and a kept copy
@@ -487,9 +497,12 @@ async function sendRequest<T>(
     else throw new ApiError(0, "offline", OFFLINE_SENTENCE);
   } else {
     // A gateway 5xx = proxy up but api/web down; any other response (even a
-    // 4xx) proves connectivity and clears the banner.
-    setApiDown(res.status >= 502 && res.status <= 504);
-    if (res.status < 502 || res.status > 504) setOfflineAsOf(null);
+    // 4xx) proves connectivity and clears the banner. A 503 the api answers
+    // itself, with a reason (a workspace not set up yet, #5146), is the api
+    // up and saying why: "can't reach" over it was the wrong sentence.
+    const down = res.status >= 502 && res.status <= 504 && !(await answeredByTheApi(res));
+    setApiDown(down);
+    if (!down) setOfflineAsOf(null);
   }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
   if (res.ok && isMutating(method)) {
@@ -560,12 +573,17 @@ async function sendRequest<T>(
     const reason =
       (err?.message?.trim() ? err.message : null) ??
       (typeof body.message === "string" && body.message.trim() ? body.message : null) ??
-      (res.status >= 500 ? `Cobblr hit a problem on its side and did not say what (${res.status}). Try again.` : null);
+      (res.status >= 500 ? `${productName()} hit a problem on its side and did not say what (${res.status}). Try again.` : null);
     // The server saying the sandbox's hour is up ends it for the whole app,
     // whichever request heard it first; the workspace shell becomes the ending.
     if (res.status === 410 && err?.code === "sandbox_expired") markSandboxEnded("sandbox");
     // A kept trial past the length the person chose: the other ending.
     if (res.status === 410 && err?.code === "trial_expired") markSandboxEnded("trial");
+    // A workspace whose database was never made: the shell says so and offers to finish it (#5146).
+    if (res.status === 503 && err?.code === "tenant_unprovisioned") {
+      const slug = slugOfRequest(path);
+      if (slug) markWorkspaceUnfinished(decodeURIComponent(slug));
+    }
     // A 429 is the server asking us to wait, and says so in the same words on
     // every page, whatever sentence the limiter that sent it happened to carry.
     const message =
@@ -621,6 +639,8 @@ export interface SessionUser {
    *  account has not loaded yet. Account-level so a new device, a different
    *  origin and a new workspace all agree. */
   tour_seen_at?: string | null;
+  /** The IANA zone this account last reported from a browser; absent when the response did not carry it. */
+  time_zone?: string | null;
   /** Tips this person has been shown and dismissed (users.tips); absent = not loaded. */
   tips?: TipState;
   /** True when an admin minted this account with a temp password. UI
@@ -1571,6 +1591,7 @@ export const api = {
   changelog: () => request<{ sections: ChangelogDay[] }>("GET", "/changelog"),
   authConfig: () =>
     request<{
+      product_name?: string;
       signup_enabled: boolean;
       self_serve_invites?: boolean;
       hosted?: boolean;
@@ -1896,6 +1917,12 @@ export const api = {
   /** This person dismissed a tip: final, on every device. */
   tipDismissed: (id: string) =>
     request<{ tips: TipState }>("POST", `/me/tips/${encodeURIComponent(id)}/dismissed`, {}),
+  /** Tell the engine where this person is, when this browser says otherwise than the account:
+   *  "today" on what it dates for them is then their day. Null when the browser names no zone. */
+  syncTimeZone: (known: string | null) => {
+    const tz = browserTimeZone();
+    return tz && tz !== known ? request<{ user: { time_zone: string | null } }>("PATCH", "/me", { time_zone: tz }) : Promise.resolve(null);
+  },
   setTourSeen: (tour_seen: boolean) =>
     request<{ user: { tour_seen_at: string | null } }>("PATCH", "/me", { tour_seen }),
   /** Owner-only rename. `name` = display name (safe). `slug` = the URL handle
@@ -4852,10 +4879,16 @@ export const api = {
     id: string,
     body: { action_id: string; args?: Record<string, unknown>; rendered?: string },
   ) =>
-    request<{ ok: boolean; ms: number; result: unknown }>(
+    request<{ ok: boolean; ms?: number; result?: unknown; queued?: boolean; run_at?: string; because?: "pace" | "retry"; error?: string | null }>(
       "POST",
       `/orgs/${slug}/modules/core-integrations/connectors/${id}/invoke`,
       body,
+    ),
+  resendIntegrationCall: (slug: string, callId: string) =>
+    request<{ ok: boolean; queued?: boolean; run_at?: string }>(
+      "POST",
+      `/orgs/${slug}/modules/core-integrations/connectors/calls/${callId}/resend`,
+      {},
     ),
   listIntegrationCalls: (slug: string, limit = 50) =>
     request<{ items: IntegrationCall[] }>(
@@ -5630,6 +5663,9 @@ export const api = {
 
   /** Owner only: delete this workspace after the grace period. `confirmName`
    *  is the workspace's name, typed. Resolves to the day it goes. */
+  /** Finish a workspace whose database was never made (#5146). Any member. */
+  finishWorkspaceSetup: (slug: string) => request<{ finished: boolean; already: boolean }>("POST", `/orgs/${slug}/finish-setup`, {}),
+
   scheduleWorkspaceDeletion: (slug: string, confirmName: string) =>
     request<{ deletion_due_at: string }>("POST", `/orgs/${slug}/deletion`, { confirm_name: confirmName }),
 
@@ -7126,6 +7162,7 @@ export const api = {
         cpu_ms_overlapped: { p50: number; p95: number; max: number; samples: number };
         cpu_share: number | null;
         cpu_estimated_ms: number | null;
+        held_open: boolean;
         rss_growth_max_mb: number;
         per_workspace_day: { workspaces: number; p50: number; p95: number; max: number };
       }>;
@@ -7655,7 +7692,7 @@ export const CONNECTION_KIND_LABELS: Record<string, { title: string; blurb: stri
   },
   "mail-source": {
     title: "Mail",
-    blurb: "A mailbox Cobblr reads for store and carrier mail, so orders and parcels track themselves.",
+    blurb: `A mailbox ${productName()} reads for store and carrier mail, so orders and parcels track themselves.`,
   },
 };
 
@@ -11246,6 +11283,8 @@ export interface ApprovalRequestView {
   expires_at: string;
   has_resume: boolean;
   route: string | null;
+  /** Whether you may answer this one (an AI share is the owner's alone). */
+  can_decide?: boolean;
   /** For a yes: whether it still holds for the requester as of this read, and
    *  what was taken back if not. Null for anything that was never a yes; the
    *  list omits it. Anything saying a permission is in place reads this, never

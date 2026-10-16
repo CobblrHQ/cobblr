@@ -15,6 +15,8 @@
 //                   operator registers a Google Cloud OAuth app); the OAuth
 //                   connect flow lives in routes/backup.ts.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "./product-name.js";
 import { writeFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { AwsClient } from "aws4fetch";
@@ -180,7 +182,7 @@ registerBackupDriver({
   id: "google_drive",
   label: "Google Drive",
   available: () => googleDriveUsable(),
-  configFields: () => [{ key: "folder_id", label: "Drive folder ID", required: false, placeholder: "optional — defaults to a Cobblr Backups folder" }],
+  configFields: () => [{ key: "folder_id", label: "Drive folder ID", required: false, placeholder: `optional, defaults to ${withArticle(productName())} Backups folder` }],
   async put({ filename, bytes, config, credentials }) {
     const refresh = typeof credentials.refresh_token === "string" ? credentials.refresh_token : "";
     if (!refresh) throw new Error("Google Drive not connected (no refresh token)");

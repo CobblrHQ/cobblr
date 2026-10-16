@@ -151,8 +151,10 @@ export function HeaderActions({ asRows = false, trailing }: {
         <Icon size={16} className={inRow === "bar" ? undefined : "shrink-0"} />
         {/* Text label where there's room — the bare icon alone was the
             discoverability gap the author named. Phones keep icon-only;
-            a sidebar row is always labelled. */}
-        <span className={inRow === "bar" ? "hidden md:inline text-xs" : ""}>{ha.label}</span>
+            a sidebar row is always labelled. From lg: a phone on its side
+            (852 px less its side insets) has no room for the words, and the
+            nav beside them was cut in half (#6782). */}
+        <span className={inRow === "bar" ? "hidden lg:inline text-xs" : ""}>{ha.label}</span>
       </NavLink>
     );
   };

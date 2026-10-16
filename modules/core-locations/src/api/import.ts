@@ -100,7 +100,9 @@ const ImportBody = z.object({
 
 // Build the existing-location lookup keyed by the chosen match column.
 
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a bulk import of up to 5 MB of CSV; as an action
+// argument the whole file would be ledgered and put on a confirm card. The
+// assistant adds places through create_records, one undoable set of up to 200
 locationsImportRouter.post(
   "/import",
   asyncHandler(async (req, res) => {

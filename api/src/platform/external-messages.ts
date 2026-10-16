@@ -19,6 +19,7 @@
 //   - every attempt is in external_message_log, and every send in the
 //     outbound email log, naming the member who made the wire.
 
+import { productName } from "./product-name.js";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -77,11 +78,11 @@ export async function externalMessagingRefusal(orgId: string, via: ExternalVia =
   if (!settings.enabled) return "messages to people outside this workspace are off; an owner or admin turns them on under Configuration, Email";
   if (via === "text") {
     const texts = await outboundSmsStatus(orgId);
-    if (!texts.configured) return "this workspace has no text message sender of its own; add its Twilio account under Configuration, Email (Cobblr never texts people outside a workspace itself)";
+    if (!texts.configured) return `this workspace has no text message sender of its own; add its Twilio account under Configuration, Email (${productName()} never texts people outside a workspace itself)`;
     return null;
   }
   const sender = await outboundEmailStatus(orgId);
-  if (!sender.configured) return "this workspace has no email sender of its own; add one under Configuration, Email (Cobblr's own mail is never used for people outside a workspace)";
+  if (!sender.configured) return `this workspace has no email sender of its own; add one under Configuration, Email (${productName()}'s own mail is never used for people outside a workspace)`;
   return null;
 }
 

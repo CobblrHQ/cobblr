@@ -12,6 +12,7 @@
 // The iCal feed doubles as the Google-Calendar integration: paste the .ics
 // URL into Google Calendar's "From URL" and it subscribes — no OAuth.
 
+import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import { z } from "zod";
 import { randomBytes } from "node:crypto";
@@ -197,7 +198,7 @@ calendarPublicRouter.get("/:token", async (req, res, next) => {
         return detailUrl ? { ...event, detailUrl } : event;
       }),
     );
-    const ics = buildICS(addressed, { name: "Cobblr" });
+    const ics = buildICS(addressed, { name: productName() });
     res
       .status(200)
       .type("text/calendar; charset=utf-8")

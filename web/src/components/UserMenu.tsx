@@ -6,6 +6,7 @@
 // operator. Search, notifications + module quick-actions stay as their
 // own navbar affordances.
 
+import { productName } from "@cobblr/platform-web";
 import { InstallThisPhoneItem } from "../tips/install-tip";
 import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -217,7 +218,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               className={itemCls}
               role="menuitem"
             >
-              <Rocket size={14} className="text-faint dark:text-slate-400" /> Do more with Cobblr
+              <Rocket size={14} className="text-faint dark:text-slate-400" /> Do more with {productName()}
               <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
             </button>
           )}
@@ -399,13 +400,17 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
       >
         <span className="font-medium">{user.display_name}</span>
         {isAdmin && <SuperAdminChip />}
-        <ChevronDown size={12} className={open ? "rotate-180 transition" : "transition"} />
-        {/* Bundle-updates signal — visible without opening the menu. */}
-        {!open && (
-          <span className="absolute -top-0.5 -right-0.5">
-            <UpdateBadge slug={activeSlug} variant="dot" />
-          </span>
-        )}
+        {/* Bundle-updates signal, visible without opening the menu, on the
+            chevron rather than the button's corner: on a phone the button is
+            a 44 px box and its corner is not where the eye is (#6876). */}
+        <span className="relative inline-flex">
+          <ChevronDown size={12} className={open ? "rotate-180 transition" : "transition"} />
+          {!open && (
+            <span className="absolute -top-1.5 -right-1.5">
+              <UpdateBadge slug={activeSlug} variant="dot" />
+            </span>
+          )}
+        </span>
       </button>
 
       {open && !inline && pos && createPortal(
@@ -465,7 +470,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
               className={itemCls}
               role="menuitem"
             >
-              <Rocket size={14} className="text-faint dark:text-slate-400" /> Do more with Cobblr
+              <Rocket size={14} className="text-faint dark:text-slate-400" /> Do more with {productName()}
               <ArrowRight size={13} className="ml-auto text-faint dark:text-slate-500" />
             </button>
           )}

@@ -17,6 +17,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { assertSafePrinterUrl } from "../drivers/ssrf.js";
 import { isDriverKind } from "../drivers/registry.js";
 import { isEdgeManagerUrl } from "../edge.js";
@@ -25,6 +26,9 @@ import type { PrintDoc } from "../drivers/types.js";
 import type { CorePrintPrintersTable } from "../db.js";
 import type { Selectable } from "kysely";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { registerTestPrinterAction } from "./test-printer-action.js";
+
+registerTestPrinterAction();
 
 const router = Router({ mergeParams: true });
 
@@ -160,7 +164,8 @@ router.get(
   }),
 );
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — takes a printer's username, password or API key and the
+// address the server will connect to; the assistant never handles a secret
 router.post(
   "/printers",
   asyncHandler(async (req, res) => {
@@ -235,7 +240,8 @@ router.post(
   }),
 );
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — replaces a printer's credentials or the address they are
+// sent to; the assistant never handles or redirects a secret
 router.patch(
   "/printers/:id",
   asyncHandler(async (req, res) => {
@@ -290,7 +296,8 @@ router.patch(
   }),
 );
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — removes a printer and its stored credentials for good; no
+// undo can bring a secret back, so it is the owner's
 router.delete(
   "/printers/:id",
   asyncHandler(async (req, res) => {
@@ -307,11 +314,11 @@ router.delete(
 
 // ───────────────────────────── test + print ─────────────────────────
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-ACTION: core-print:test-printer
 router.post(
   "/printers/:id/test",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-print:test-printer"))) return;
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const row = await db.selectFrom("core_print_printers").selectAll().where("id", "=", req.params.id as string).executeTakeFirst();
@@ -324,7 +331,9 @@ router.post(
   }),
 );
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — sends a printer whatever bytes the caller supplies; the
+// assistant prints through labels:print, which renders the label itself, so
+// it never feeds a physical printer arbitrary bytes
 router.post(
   "/printers/:id/print",
   asyncHandler(async (req, res) => {

@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { platform, countOf } from "@cobblr/platform-contract";
@@ -56,7 +57,7 @@ export async function importSendFile(orgId: string, userId: string, p: IncomingS
     const intake = platform().scan.offerIntake();
     if (!intake?.file) throw new SendError("Enable the scan inbox to receive this file.");
     const targetInstance = hereUrl(origin);
-    if (!targetInstance) throw new SendError("This Cobblr needs its address before it can make an import confirmation.");
+    if (!targetInstance) throw new SendError(`This ${productName()} needs its address before it can make an import confirmation.`);
     const made: string[] = [];
     try {
       for (const [ordinal, {thing, preview}] of plan.things.entries()) {
@@ -64,7 +65,7 @@ export async function importSendFile(orgId: string, userId: string, p: IncomingS
         const row = await meta.insertInto("share_offers").values({link_id: null, target_org_id: orgId, direction: "in", batch: id, title: thing.name, created_by: userId, source: json({org_id: p.packet.source.org, kind: p.packet.collection.kind, id: preview.id}), transfer: json(t)}).onConflict((oc) => oc.expression(sql`batch, (source->>'id')`).where("target_org_id","is not",null).doUpdateSet({batch: id})).returningAll().executeTakeFirstOrThrow();
         made.push(row.id);
         const [arrival] = await intake.receive(orgId, {own: true, session: {key: `send-file:${id}`, label: `Sent from ${t.source_name}`, from: t.source_name}, things: [{offer_id: row.id, thing}], acquiredFrom: t.source_name, acquiredOn: await platform().accounts.dayFor(userId), as: {userId, orgSlug: plan.target.slug}});
-        if (!arrival) throw new SendError("The item did not arrive. The source is still on the sending Cobblr.");
+        if (!arrival) throw new SendError(`The item did not arrive. The source is still on the sending ${productName()}.`);
         const landed = {org_id: orgId, inbox_id: arrival.inbox_id};
         t.state = "landed";
         await saveImport(row.id, t, landed);
@@ -103,7 +104,7 @@ export async function importSendFile(orgId: string, userId: string, p: IncomingS
     }
     await meta.updateTable("share_offers").set({transfer: sql`transfer || '{"batch_complete":true}'::jsonb` as never}).where("batch", "=", id).where("target_org_id", "=", orgId).execute();
     await platform().activity.log({orgId,userId,action: "send_file_imported",diff: {items: made.length, from: p.packet.source.instance, person: p.packet.source.person},ref: {module: "platform",entityType: "send",entityId: id}});
-    return {import_id: id, sent: made.length, offer_ids: made, items: plan.things.map((i) => i.preview), receipt: await receiptForImport(orgId,userId,id,"imported"), summary: `${made.length} ${made.length === 1 ? "item" : "items"} imported. The source stays on the sending Cobblr until a Move is confirmed there.`};
+    return {import_id: id, sent: made.length, offer_ids: made, items: plan.things.map((i) => i.preview), receipt: await receiptForImport(orgId,userId,id,"imported"), summary: `${made.length} ${made.length === 1 ? "item" : "items"} imported. The source stays on the sending ${productName()} until a Move is confirmed there.`};
   });
 }
 
@@ -114,8 +115,8 @@ export async function undoSendFileImport(orgId: string, userId: string, id: stri
     const rows = await rowsForImport(orgId,userId,id);
     if (!rows.length) throw new SendError("That is not a file import you made here.");
     for (const row of rows) await undoFileArrival(orgId,userId,row.id,true,true);
-    if (dryRun) return {summary: `Undo ${countOf(rows.length, "imported item")} here. The source on the sending Cobblr stays as it is.`};
+    if (dryRun) return {summary: `Undo ${countOf(rows.length, "imported item")} here. The source on the sending ${productName()} stays as it is.`};
     for (const row of rows.reverse()) await undoFileArrival(orgId,userId,row.id,false,true);
-    return {ok: true, receipt: await receiptForImport(orgId,userId,id,"undone"), summary: "Import undone here. For a Move, take this return file to the source Cobblr to restore the source separately."};
+    return {ok: true, receipt: await receiptForImport(orgId,userId,id,"undone"), summary: `Import undone here. For a Move, take this return file to the source ${productName()} to restore the source separately.`};
   });
 }

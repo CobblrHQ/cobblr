@@ -6,6 +6,7 @@
 // dedicated connector — the make.com "HTTP" app equivalent.
 
 import { registerOutboundConnector } from "../services.js";
+import { sendFetch } from "../outbound-send.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
 
 function parseJsonObject(v: unknown): Record<string, string> {
@@ -27,6 +28,7 @@ export function register(): void {
     describeCredentials: () => ({
       base_url: { label: "Base URL (optional, prepended to a relative URL)", secret: false },
       bearer_token: { label: "Bearer token (optional)", secret: true },
+      max_per_second: { label: "Most requests per second (optional)", secret: false },
     }),
     actions: [
       {
@@ -75,9 +77,8 @@ export function register(): void {
         if (!headers["content-type"]) headers["content-type"] = "application/json";
       }
 
-      const res = await fetch(target, { method, headers, body, signal: AbortSignal.timeout(10_000) });
+      const res = await sendFetch("http", target, { method, headers, body });
       const text = await res.text().catch(() => "");
-      if (!res.ok) throw new Error(`http: ${res.status} ${res.statusText} ${text.slice(0, 200)}`);
       return { status: res.status, body: text.slice(0, 2000) };
     },
     testConnection: async (credentials) => {

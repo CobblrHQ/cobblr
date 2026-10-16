@@ -8,6 +8,7 @@
 // Deliberately inline-styled and table-free: every mail client mangles
 // something, and inline styles on simple blocks is the shape that survives.
 
+import { productName } from "./product-name.js";
 import { escHtml } from "./esc-html.js";
 
 /** One line of an aside: plain text, a link, or a bold phrase, in order. */
@@ -78,6 +79,6 @@ export function cobblrEmailHtml(opts: CobblrEmail): string {
     ${aside}
     ${cta}
     ${opts.footerNote ? `<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The ${escHtml(productName())} team</p>
   </div></body></html>`;
 }

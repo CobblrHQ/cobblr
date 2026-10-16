@@ -1,3 +1,4 @@
+import { productName } from "./product-name.js";
 import type { ActionGroupId } from "@cobblr/platform-contract/action-groups";
 // The KERNEL's own actions — workspace configuration the platform owns.
 //
@@ -536,7 +537,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Turn on a feature",
     description:
-      "Turn on one of Cobblr's features for this workspace (Purchases, Maintenance, Shipments, …) so its screens and records appear. Name it the way it is written in the app. Turning one on is safe and repeatable: a feature already on says so rather than doing anything. Runs on the workspace, not a record. Use get_workspace_setup to see what is already on.",
+      `Turn on one of ${productName()}'s features for this workspace (Purchases, Maintenance, Shipments, …) so its screens and records appear. Name it the way it is written in the app. Turning one on is safe and repeatable: a feature already on says so rather than doing anything. Runs on the workspace, not a record. Use get_workspace_setup to see what is already on.`,
     icon: "toggle-right",
     scope: "workspace",
     invoke_handler: "platform.enable-module",
@@ -863,7 +864,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     undoable: false,
     examples: ["does my email setup work?", "send me a test email"],
     args_schema: {
-      subject: { label: "Its subject line, to find it in your inbox (default: Test from Cobblr)", type: "text" },
+      subject: { label: `Its subject line, to find it in your inbox (default: Test from ${productName()})`, type: "text" },
     },
     version: "0.1.0",
   },
@@ -926,7 +927,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       entity_kind: { label: "Record kind", type: "text", required: true },
       ids: { label: "Record ids", type: "list", required: true },
       target_org: { label: "Target workspace id or slug", type: "text", required: true },
-      connection_id: { label: "Connection id from send_targets for another Cobblr", type: "text" },
+      connection_id: { label: `Connection id from send_targets for another ${productName()}`, type: "text" },
       collection: { label: "Target collection kind", type: "text" },
       create_matching: { label: "Create a matching collection if needed", type: "boolean" },
       add_fields: { label: "Source field labels to add in the target", type: "list" },
@@ -943,14 +944,14 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines
     group: "share", id: "platform:undo-send", run_by: "member", min_role: "guest", label: "Undo a workspace send",
-    description: "Undo your workspace send. Across Cobblrs, undo the import there first, then restore the source here with restore_source.",
+    description: `Undo your workspace send. Across ${productName()} servers, undo the import there first, then restore the source here with restore_source.`,
     icon: "undo", scope: "workspace", invoke_handler: "platform.undo-send", user_invokable: true, undoable: false,
     args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true }, restore_source: { label: "Restore the source here after connected import Undo", type: "boolean" } }, version: "0.1.1",
   },
   {
     // UI-SCREEN: /scan
     group: "share", id: "platform:export-send-file", run_by: "member", min_role: "guest",
-    label: 'Download a send file', description: 'Prepare a versioned send file with original documents for another Cobblr. Download the returned link. A Move keeps its source until import confirmation.',
+    label: 'Download a send file', description: `Prepare a versioned send file with original documents for another ${productName()}. Download the returned link. A Move keeps its source until import confirmation.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.export-send-file", user_invokable: true, undoable: false,
     args_schema: {
       entity_kind: {label: 'Record kind',type: 'text',required: true},
@@ -981,7 +982,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /scan
     group: "share", id: "platform:confirm-send-file", run_by: "member", min_role: "guest",
-    label: 'Confirm an imported send file', description: 'Apply an import confirmation on the source Cobblr. A Move removes only unchanged source items after the complete import is confirmed.',
+    label: 'Confirm an imported send file', description: `Apply an import confirmation on the source ${productName()}. A Move removes only unchanged source items after the complete import is confirmed.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.confirm-send-file", user_invokable: true, undoable: false,
     args_schema: {
       file_id: {label: 'Uploaded import confirmation file id',type: 'text',required: true},
@@ -1001,7 +1002,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /scan
     group: "share", id: "platform:restore-send-file-source", run_by: "member", min_role: "member",
-    label: 'Restore the source of a file Move', description: 'Apply a return file on the source Cobblr after the target import was undone. Restores only the source of that confirmed Move.',
+    label: 'Restore the source of a file Move', description: `Apply a return file on the source ${productName()} after the target import was undone. Restores only the source of that confirmed Move.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.restore-send-file-source", user_invokable: true, undoable: false,
     args_schema: {
       file_id: {label: 'Uploaded return file id',type: 'text',required: true},
@@ -1095,7 +1096,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     user_invokable: true,
     // A push, once sent, is not taken back; the assistant asks the person first.
     undoable: false,
-    examples: ["send a test notification to my iPhone", "check my phone gets Cobblr notifications"],
+    examples: ["send a test notification to my iPhone", `check my phone gets ${productName()} notifications`],
     args_schema: {
       device_id: { label: "The device, by id", type: "text", required: true },
     },
@@ -1108,7 +1109,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "guest",
     label: "Stop notifications on a device",
     description:
-      "Remove one of your own phones or computers from the devices Cobblr sends notifications to. It is turned on again on the device itself. Device ids come from the notification delivery read.",
+      `Remove one of your own phones or computers from the devices ${productName()} sends notifications to. It is turned on again on the device itself. Device ids come from the notification delivery read.`,
     icon: "bell-off",
     scope: "workspace",
     invoke_handler: "platform.remove-push-device",
@@ -1231,7 +1232,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "Turn off a feature",
     description:
-      "Turn one of Cobblr's features off for this workspace: its screens leave the navigation. Records already stored are kept and come back if it is turned on again, but the fields and automations that came WITH the feature are cleared out. Refuses when another feature in use depends on it, and says which. Runs on the workspace, not a record.",
+      `Turn one of ${productName()}'s features off for this workspace: its screens leave the navigation. Records already stored are kept and come back if it is turned on again, but the fields and automations that came WITH the feature are cleared out. Refuses when another feature in use depends on it, and says which. Runs on the workspace, not a record.`,
     icon: "toggle-left",
     scope: "workspace",
     invoke_handler: "platform.disable-module",
@@ -1404,14 +1405,14 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "admin",
     label: "Copy an app's records into this workspace",
     description:
-      "Copy the records of one of your own Cobblr apps (Cobblr for Yarn and the like, a workspace of its own) into this workspace: its table and fields are set up here, then every record is copied. The app keeps its records; nothing there changes. Name the app as it is called, or its address. You must be an owner or admin of both. Runs on the workspace, not a record.",
+      `Copy the records of one of your own apps (each a workspace of its own) into this workspace: its table and fields are set up here, then every record is copied. The app keeps its records; nothing there changes. Name the app as it is called, or its address. You must be an owner or admin of both. Runs on the workspace, not a record.`,
     icon: "download",
     scope: "workspace",
     invoke_handler: "platform.import-app",
     user_invokable: true,
     // It copies records into this workspace from another: the card is the yes.
     undoable: false,
-    examples: ["bring my yarn app's records over", "copy everything from Cobblr for Yarn into here"],
+    examples: ["bring my yarn app's records over", "copy everything from my yarn app into here"],
     args_schema: {
       from: { label: "The app, by its name or address", type: "text", required: true },
     },

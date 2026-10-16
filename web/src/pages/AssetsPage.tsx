@@ -1,4 +1,4 @@
-import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { SelectBox, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -575,13 +575,7 @@ function AssetsTable({
         <thead className="bg-subtle/60 dark:bg-slate-800/40 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           <tr>
             <th className="w-8 px-3 py-2">
-              <input
-                type="checkbox"
-                checked={allChecked}
-                onChange={(e) => onSelectAll(e.target.checked)}
-                className="accent-cobble-600"
-                aria-label="Select all"
-              />
+              <SelectBox checked={allChecked} onChange={(checked) => onSelectAll(checked)} label="Select all" />
             </th>
             <th className="text-left px-3 py-2">Name</th>
             <th className="text-left px-3 py-2">{fp.label("manufacturer", "Manufacturer")}</th>
@@ -604,13 +598,7 @@ function AssetsTable({
               className="hover:bg-subtle dark:hover:bg-slate-800/40 transition cursor-pointer"
             >
               <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(a.id)}
-                  onChange={(e) => onToggle(a.id, e.target.checked)}
-                  className="accent-cobble-600"
-                  aria-label={`Select ${a.name}`}
-                />
+                <SelectBox checked={selected.has(a.id)} onChange={(checked) => onToggle(a.id, checked)} label={`Select ${a.name}`} />
               </td>
               <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
                 <div className="flex items-center gap-3">

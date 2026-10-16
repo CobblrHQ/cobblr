@@ -1,4 +1,4 @@
-import { useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -1011,13 +1011,7 @@ function MachineTable({
           <tr>
             {showSelect && (
               <th className="w-8 px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={allChecked}
-                  onChange={(e) => onSelectAll?.(e.target.checked)}
-                  className="accent-cobble-600"
-                  aria-label="Select all"
-                />
+                <SelectBox checked={allChecked} onChange={(checked) => onSelectAll?.(checked)} label="Select all" />
               </th>
             )}
             <th className="text-left px-3 py-2">Name</th>
@@ -1047,13 +1041,7 @@ function MachineTable({
                   className="px-3 py-2 w-8"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <input
-                    type="checkbox"
-                    checked={selected!.has(m.id)}
-                    onChange={(e) => onToggle!(m.id, e.target.checked)}
-                    className="accent-cobble-600"
-                    aria-label={`Select ${m.name}`}
-                  />
+                  <SelectBox checked={selected!.has(m.id)} onChange={(checked) => onToggle!(m.id, checked)} label={`Select ${m.name}`} />
                 </td>
               )}
               <td className="px-3 py-2 text-content dark:text-mortar-100 font-medium">
@@ -1929,7 +1917,7 @@ function NewMachineModal({
                 </button>
               ) : directDevices.length === 0 ? (
                 <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  Saved {directConn.label}, but Cobblr couldn't reach a printer there - it'll still create, and you can fix the address in the Print Manager.{" "}
+                  Saved {directConn.label}, but {productName()} couldn't reach a printer there - it'll still create, and you can fix the address in the Print Manager.{" "}
                   <button type="button" onClick={() => { setDirectConn(null); setView("direct"); }} className="text-accent hover:underline">Try again →</button>
                 </p>
               ) : (
@@ -1950,7 +1938,7 @@ function NewMachineModal({
             {connect === "edge" && (
               <div className="space-y-1">
                 <p className="text-[11px] text-muted dark:text-slate-400">
-                  Cobblr is hosted, so it can't reach this {kindLabel} on your network directly. Run a tiny bridge at your site - it dials out, no firewall changes.
+                  {productName()} is hosted, so it can't reach this {kindLabel} on your network directly. Run a tiny bridge at your site - it dials out, no firewall changes.
                 </p>
                 <button type="button" onClick={() => setView("edge")} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1.5">
                   Install the edge connector →

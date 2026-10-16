@@ -7,6 +7,7 @@
 // It is a full page rather than a redirect handled in App because the exchange
 // can fail in ways a person has to be able to read — most often "your hour is
 // up", which is not an error so much as the thing we told them would happen.
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState } from "react";
 import { setToken } from "../lib/api";
 
@@ -63,7 +64,7 @@ export function SandboxLanding() {
         // a back button returns to a page that redeems again.
         window.location.replace(`/w/${body.slug}${sandboxLandingPath(window.location.search)}`);
       } catch {
-        if (!cancelled) setState({ kind: "error", message: "We could not reach Cobblr." });
+        if (!cancelled) setState({ kind: "error", message: `We could not reach ${productName()}.` });
       }
     })();
     return () => {

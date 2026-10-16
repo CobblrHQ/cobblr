@@ -27,6 +27,7 @@
 // body padding, and publishes the sum (--bottom-chrome-height) for the corner
 // pieces above it. It yields while any overlay is open, the way every piece of
 // chrome does by default; it once sat over the camera's shutter (#3012).
+import { productName } from "@cobblr/platform-web";
 import { useCallback, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FloatingChrome, lazyOverlay } from "@cobblr/platform-web";
@@ -269,7 +270,7 @@ export function WorkspaceStateBar({ slug }: { slug: string }) {
               }}
               className={PRIMARY + DOOR}
             >
-              {leaving === "going" ? "One moment…" : "Make this yours on Cobblr"}
+              {leaving === "going" ? "One moment…" : `Make this yours on ${productName()}`}
             </button>
             <button type="button" onClick={() => setModal("save")} className={SECONDARY + DOOR}>
               Keep it

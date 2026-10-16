@@ -6,6 +6,7 @@
 // signed in can accept. (No SMTP yet — we don't need email-based
 // flow until later.)
 
+import { productName } from "../platform/product-name.js";
 import { sendLimitRefusal } from "../platform/send-limits.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -329,9 +330,9 @@ export async function deliverInvite(opts: {
   if (hasAuthEmailSender()) {
     await sendAuthEmail({
       to: email,
-      subject: `${inviterName} invited you to "${orgName}" on Cobblr`,
+      subject: `${inviterName} invited you to "${orgName}" on ${productName()}`,
       text:
-        `${inviterName} invited you to join the "${orgName}" workspace on Cobblr as ${role}.\n\n` +
+        `${inviterName} invited you to join the "${orgName}" workspace on ${productName()} as ${role}.\n\n` +
         `Accept the invite:\n  ${inviteUrl}\n\n` +
         `This link expires ${expiresAt.toDateString()}. If you weren't expecting this, you can ignore it.`,
       kind: "notification",

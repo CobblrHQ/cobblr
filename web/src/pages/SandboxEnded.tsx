@@ -34,6 +34,8 @@
 // The person stays signed in on this page (the keep route needs the session
 // and the frozen workspace answers 410 to everything else); only "start
 // another sandbox" signs out first.
+import { withArticle } from "@cobblr/platform-contract/plural";
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useState, type ReactElement } from "react";
 import { trialLengthMorePhrase, trialLengthPhrase } from "@cobblr/platform-contract/trial-length";
 import { api, ApiError } from "../lib/api";
@@ -147,7 +149,7 @@ function MakeYoursCard() {
   return (
     <section className="rounded-xl border-2 border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 p-4" data-testid="door-carry">
       <h2 className="font-display text-xl font-bold text-content dark:text-mortar-100">Move it to your own account</h2>
-      <p className="mt-1 text-sm text-muted">Create a Cobblr account and everything you made moves in, photos too.</p>
+      <p className="mt-1 text-sm text-muted">Create {withArticle(productName())} account and everything you made moves in, photos too.</p>
       <button type="button" onClick={() => void go()} disabled={busy} className={"mt-3 " + PRIMARY}>
         {busy ? "One moment…" : "Create my account"}
       </button>
@@ -279,7 +281,7 @@ function FreshCard({ paths }: { paths: EndingPaths | null }) {
   return (
     <section className="rounded-xl border-2 border-cobble-400 dark:border-cobble-600 bg-surface dark:bg-slate-900 p-4" data-testid="door-fresh">
       <h2 className="font-display text-xl font-bold text-content dark:text-mortar-100">Start for real</h2>
-      <p className="mt-1 text-sm text-muted">A new account on Cobblr that is yours to keep.</p>
+      <p className="mt-1 text-sm text-muted">A new account on {productName()} that is yours to keep.</p>
       <a href={href} className={"mt-3 block text-center " + PRIMARY}>
         Make an account
       </a>
@@ -330,7 +332,7 @@ function MoreLinks({
   if (paths?.selfhost_url) {
     items.push(
       <a key="self" href={paths.selfhost_url} target="_blank" rel="noreferrer" className={link}>
-        Self-host Cobblr
+        Self-host {productName()}
       </a>,
     );
   }
@@ -428,7 +430,7 @@ export { carryUrl };
 function CarryNote() {
   return (
     <p className="mt-3 text-xs text-faint text-center" data-testid="carry-note">
-      Bringing what you added into a Cobblr account is coming soon.
+      Bringing what you added into {withArticle(productName())} account is coming soon.
     </p>
   );
 }

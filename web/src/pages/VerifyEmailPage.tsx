@@ -1,6 +1,7 @@
 // /verify/:token — confirm an email address from a verification link. Public
 // (the token is the secret). Consumes the token on mount and shows the result.
 
+import { productName } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { CheckCircle2, XCircle } from "lucide-react";
@@ -85,7 +86,7 @@ export function VerifyEmailPage() {
             href="/"
             className="inline-block w-full rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-sm font-medium py-2 transition"
           >
-            Continue to Cobblr
+            Continue to {productName()}
           </a>
         )}
       </div>

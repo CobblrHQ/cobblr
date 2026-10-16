@@ -175,101 +175,6 @@
     "path": "/:id/test"
   },
   {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "post",
-    "path": "/:slug/token"
-  },
-  {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "put",
-    "path": "/:slug/data/:key"
-  },
-  {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "post",
-    "path": "/validate"
-  },
-  {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "patch",
-    "path": "/:slug"
-  },
-  {
-    "file": "modules/core-apps/src/api/apps.ts",
-    "method": "delete",
-    "path": "/:slug"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/match-template"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/context"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/compile"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/build"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/drafts/:id/refine"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/drafts/:id/candidate"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/drafts/:id/repair-prompt"
-  },
-  {
-    "file": "modules/core-authoring/src/api/drafts.ts",
-    "method": "post",
-    "path": "/drafts/:id/apply"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "patch",
-    "path": "/:id"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "delete",
-    "path": "/:id"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "post",
-    "path": "/:id/import-csv"
-  },
-  {
-    "file": "modules/core-catalogs/src/api/catalogs.ts",
-    "method": "post",
-    "path": "/:id/sync"
-  },
-  {
     "file": "modules/core-devices/src/api/ingest.ts",
     "method": "post",
     "path": "/"
@@ -425,31 +330,6 @@
     "path": "/connections/:id/syncs/:entityType/run"
   },
   {
-    "file": "modules/core-locations/src/api/floorplan.ts",
-    "method": "post",
-    "path": "/:id/floorplan/seed"
-  },
-  {
-    "file": "modules/core-locations/src/api/import.ts",
-    "method": "post",
-    "path": "/import"
-  },
-  {
-    "file": "modules/core-locations/src/api/locations.ts",
-    "method": "post",
-    "path": "/"
-  },
-  {
-    "file": "modules/core-locations/src/api/locations.ts",
-    "method": "patch",
-    "path": "/:id"
-  },
-  {
-    "file": "modules/core-locations/src/api/locations.ts",
-    "method": "delete",
-    "path": "/:id"
-  },
-  {
     "file": "modules/core-maintenance/src/api/entries.ts",
     "method": "patch",
     "path": "/:id"
@@ -473,31 +353,6 @@
     "file": "modules/core-placement/src/api/index.ts",
     "method": "post",
     "path": "/remove"
-  },
-  {
-    "file": "modules/core-print/src/api/index.ts",
-    "method": "post",
-    "path": "/printers"
-  },
-  {
-    "file": "modules/core-print/src/api/index.ts",
-    "method": "patch",
-    "path": "/printers/:id"
-  },
-  {
-    "file": "modules/core-print/src/api/index.ts",
-    "method": "delete",
-    "path": "/printers/:id"
-  },
-  {
-    "file": "modules/core-print/src/api/index.ts",
-    "method": "post",
-    "path": "/printers/:id/test"
-  },
-  {
-    "file": "modules/core-print/src/api/index.ts",
-    "method": "post",
-    "path": "/printers/:id/print"
   },
   {
     "file": "modules/core-public-surfaces/src/api/surfaces.ts",
