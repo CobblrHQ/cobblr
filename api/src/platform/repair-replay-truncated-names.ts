@@ -57,16 +57,17 @@ import { markSwept, sweepVersion, sweptClean } from "./boot-sweep-marks.js";
 
 const SHIM = "api/src/platform/repair-replay-truncated-names.ts";
 
-export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: number; rowsRepaired: number }> {
-  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1") return { orgsTouched: 0, rowsRepaired: 0 };
+export async function repairReplayTruncatedNames(opts: { onlyOrgId?: string } = {}): Promise<{ orgsTouched: number; rowsRepaired: number }> {
+  if (process.env.COBBLR_SKIP_HISTORICAL_MIGRATIONS === "1" && !opts.onlyOrgId) return { orgsTouched: 0, rowsRepaired: 0 };
   const version = sweepVersion(repairReplayTruncatedNames, TRUNCATED_BY_FALLBACK_SQL);
-  if (await sweptClean(SHIM, version)) return { orgsTouched: 0, rowsRepaired: 0 };
+  if (!opts.onlyOrgId && (await sweptClean(SHIM, version))) return { orgsTouched: 0, rowsRepaired: 0 };
 
-  const orgs = await meta
+  let q = meta
     .selectFrom("org_modules")
     .select("org_id")
-    .where("module_name", "=", "core-scan")
-    .execute();
+    .where("module_name", "=", "core-scan");
+  if (opts.onlyOrgId) q = q.where("org_id", "=", opts.onlyOrgId);
+  const orgs = await q.execute();
 
   let orgsTouched = 0;
   let rowsRepaired = 0;
@@ -112,7 +113,9 @@ export async function repairReplayTruncatedNames(): Promise<{ orgsTouched: numbe
 
   // The update takes every damaged row it can identify, so what it repaired
   // is what it found.
-  await noteHealShim(SHIM, rowsRepaired, failed);
-  await markSwept(SHIM, version, failed);
+  if (!opts.onlyOrgId) {
+    await noteHealShim(SHIM, rowsRepaired, failed);
+    await markSwept(SHIM, version, failed);
+  }
   return { orgsTouched, rowsRepaired };
 }

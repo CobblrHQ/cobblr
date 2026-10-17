@@ -19,13 +19,19 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-recurrence",
-  version: "0.1.2",
+  version: "0.2.0",
   displayName: "Recurrence",
   description:
     "Run an automation on a schedule: every Monday morning, the first of the month, whenever you set.",
   icon: "calendar",
   band: "stock",
   autoEnable: true, // ambient capability — on for every workspace
+
+  // The overdue sweep remembers which tier each record was told (src/overdue.ts).
+  schema: {
+    tablePrefix: "core_recurrence_",
+    migrationsDir: "./migrations",
+  },
 
   dependencies: [],
 
@@ -36,7 +42,15 @@ export default defineModule({
   // up through list_calendar and the owning record's own kind.
 
   exposes: {
-    events: ["core-recurrence.rule.fired"],
+    // overdue: a record at or past its deadline, once per tier (due, late,
+    // stale), with how many days and who has it. Wires decide what each earns.
+    events: [
+      "core-recurrence.rule.fired",
+      "core-recurrence.overdue",
+      "core-recurrence.overdue.due",
+      "core-recurrence.overdue.late",
+      "core-recurrence.overdue.stale",
+    ],
     actions: [],
   },
 
@@ -46,6 +60,8 @@ export default defineModule({
     onBoot: async () => {
       const { startRecurrenceScheduler } = await import("./api/scheduler.js");
       startRecurrenceScheduler();
+      const { startOverdueSweeper } = await import("./overdue.js");
+      startOverdueSweeper();
     },
     onShutdown: async () => {
       const { stopRecurrenceScheduler } = await import("./api/scheduler.js");

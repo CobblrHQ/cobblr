@@ -175,7 +175,8 @@ export function pushTurnOnProblem(failure: { why: PushTurnOnFailure; message?: s
     denied: { says: "Notifications were blocked when the browser asked.", next: howToAllowAgain(env) },
     dismissed: { says: "The browser's question was closed without an answer, so nothing was turned on.", next: "Press Try again and choose Allow." },
     unsupported: { says: `This browser can't show notifications from ${productName()}.`, next: `Open ${productName()} in Chrome, Edge, Firefox or Safari, or from the Home Screen on an iPhone or iPad.` },
-    "no-key": { says: "This server has not made its notification key yet, so nothing was turned on.", next: "Try again in a minute." },
+    // The server's own reason when it gave one (#7033): a key it cannot open is not "not made yet".
+    "no-key": said ? { says: `${/[.!?]$/.test(said) ? said : `${said}.`} Nothing was turned on.`, next: "Tell whoever runs this server, then try again." } : { says: "This server has not made its notification key yet, so nothing was turned on.", next: "Try again in a minute." },
     "no-worker": { says: "This page's background worker did not start, and notifications need it.", next: `Reload the page and press Try again. If it keeps happening, open ${productName()} in another browser.` },
     refused: { says: `The browser allowed notifications but would not sign this device up for them.${detail}`, next: "Check that your computer or phone lets this browser show notifications (its system notification settings), then press Try again. A private window can't take them." },
     "not-saved": { says: `This device signed up, but ${productName()} could not save it.${detail}`, next: "Press Try again." },

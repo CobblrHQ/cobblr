@@ -39,6 +39,32 @@ export function workspaceLinks(
     "api" in to ? (api === null ? null : `${api}/orgs/${org}${to.api}`) : app === null ? null : `${app}/w/${org}${to.app}`;
 }
 
+/** A status no server sent: the transport's own "the request never got an
+ *  answer" (the MCP client says 0 with a network_error body). */
+export const CONNECTION_LOST_STATUS = 599;
+
+/** The transport as every tool sees it: a request that got no HTTP answer at
+ *  all is a failure with a status the tools' `status >= 400` checks catch.
+ *  Before this, status 0 slipped past every one of them and a lost connection
+ *  was told to the assistant as a done action (#6968). A write that lost its
+ *  answer may still have happened, so it says so and never retries. */
+export function honestTransport(api: WorkspaceApi): WorkspaceApi {
+  return {
+    ...api,
+    // The call goes through exactly as the tool made it, arguments and all.
+    async request(...call: Parameters<WorkspaceApi["request"]>) {
+      const [method] = call;
+      const res = await api.request(...call);
+      if (Number.isInteger(res.status) && res.status >= 100 && res.status < 600) return res;
+      const message =
+        method === "GET"
+          ? "Cobblr could not be reached, so nothing was read."
+          : "The connection to Cobblr was lost before it answered, so it is not known whether this change happened. Check before trying it again.";
+      return { status: CONNECTION_LOST_STATUS, body: { error: { code: "connection_lost", message } } };
+    },
+  };
+}
+
 /** Uniform tool outcome — small, model-friendly, never a thrown string soup. */
 export interface ToolResult {
   ok: boolean;

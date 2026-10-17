@@ -27,6 +27,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { apiDirs, manifestSources } from "./lib/manifest-sources.ts";
 
 export interface Action {
   id: string;
@@ -96,13 +97,14 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   }
   const violations: string[] = [];
   for (const mod of readdirSync("modules")) {
-    const file = join("modules", mod, "src", "module.ts");
-    if (!existsSync(file)) continue;
-    const before = new Set(actionsOf(git(["show", `${base}:${file}`]) ?? "").map((a) => a.id));
-    for (const a of actionsOf(readFileSync(file, "utf8"))) {
+    const files = manifestSources(join("modules", mod));
+    // Before, across the module's manifest files then and now: an action that
+    // moved from module.ts into a family's manifest was not added.
+    const before = new Set(files.flatMap((f) => actionsOf(git(["show", `${base}:${f}`]) ?? "")).map((a) => a.id));
+    for (const file of files) for (const a of actionsOf(readFileSync(file, "utf8"))) {
       if (before.has(a.id)) continue;
       const [module, slug] = a.id.split(":");
-      const handler = existsSync(join("modules", module ?? mod, "src", "api", `${slug}-action.ts`));
+      const handler = apiDirs(join("modules", module ?? mod)).some((d) => existsSync(join(d, `${slug}-action.ts`)));
       const named = git(["grep", "-l", "-F", "-e", `"${a.id}"`, "-e", `"${module}.${slug}"`, "--", "api/tests", `modules/${module}`]) ?? "";
       const test = named.split("\n").some((f) => /\.test\.[cm]?[jt]sx?$/.test(f));
       const lack = missing(a, { handler, test });

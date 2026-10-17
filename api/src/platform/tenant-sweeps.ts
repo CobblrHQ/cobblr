@@ -81,12 +81,17 @@ const registry = new Map<string, Registered>();
 const QUIET_EVERY_MS = 24 * 60 * 60 * 1000;
 const quietVisits = new Map<string, Map<string, number>>();
 export function quietVisitDue(pass: TenantSweepPass, orgId: string, now: number): boolean {
+  const last = quietVisits.get(pass.name)?.get(orgId);
+  return last === undefined || now - last >= Math.max(QUIET_EVERY_MS, pass.everyMs);
+}
+/** The day's visit is spent only by a visit that happened (#7155): a pool
+ *  that would not open, a lock that was busy or threw, or a pass that failed
+ *  leaves the workspace due, so the short retry reaches it instead of the
+ *  next day. */
+function noteQuietVisit(pass: TenantSweepPass, orgId: string, now: number): void {
   const seen = quietVisits.get(pass.name) ?? new Map<string, number>();
   quietVisits.set(pass.name, seen);
-  const last = seen.get(orgId);
-  if (last !== undefined && now - last < Math.max(QUIET_EVERY_MS, pass.everyMs)) return false;
   seen.set(orgId, now);
-  return true;
 }
 let started: { stop: () => void } | null = null;
 let rand: () => number = Math.random;
@@ -135,8 +140,9 @@ export function startTenantSweeps(opts: { startAfterMs?: number } = {}): { stop:
   const startAt = Date.now() + (opts.startAfterMs ?? 0);
   for (const r of registry.values()) r.nextDue = firstDue(r.pass, startAt);
   // SINGLE-PROCESS-SAFE: every pass a round walks is held under its own
-  // advisory lock for the length of the walk (tryHoldExclusive), so a second
-  // api against the same database sits that pass out.
+  // advisory lock for the length of the walk, all of them on one connection
+  // (openLockSession), so a second api against the same database sits that
+  // pass out.
   const timer = setInterval(() => {
     void round(Date.now()).catch((err) => console.error("[tenant-sweeps] round failed:", (err as Error).stack ?? (err as Error).message));
   }, SWEEP_TICK_MS);
@@ -247,14 +253,20 @@ export interface WalkDeps {
   openDb: (orgId: string) => Promise<unknown>;
   releaseDb: (orgId: string) => Promise<void>;
   concurrency: number;
+  /** Lets go of the walk's lock connection, after every lock is released. */
+  done?: () => Promise<void>;
 }
 
 async function realDeps(): Promise<WalkDeps> {
-  const { tryHoldExclusive } = await import("./exclusive.js");
+  const { openLockSession } = await import("./exclusive.js");
+  // Every lock the walk takes, its passes' and each workspace visit's, on one
+  // connection: a connection per lock held about forty for the whole walk.
+  const locks = await openLockSession("tenant-sweeps");
   const { meta } = await import("../db/meta.js");
   const { getTenantDb, releaseSweepPool } = await import("../db/tenant.js");
   return {
-    holdLock: tryHoldExclusive,
+    holdLock: locks.tryHold,
+    done: locks.close,
     listWorkspaces: async (orgIds) => {
       // One meta read for the round: every workspace and what it has enabled.
       const q = sql<{ id: string; modules: string[] | null; quiet: boolean }>`
@@ -278,7 +290,12 @@ async function realDeps(): Promise<WalkDeps> {
 }
 
 async function walk(passes: TenantSweepPass[], opts: { now: Date; orgIds?: string[]; waitForLockMs?: number }): Promise<Map<string, TenantSweepRunResult>> {
-  return walkWith(await realDeps(), passes, opts);
+  const deps = await realDeps();
+  try {
+    return await walkWith(deps, passes, opts);
+  } finally {
+    await deps.done?.();
+  }
 }
 
 /** The walk itself: the workspaces in scope for the passes given, visited
@@ -379,6 +396,7 @@ export async function walkWith(
           try {
             const r = (await s.pass.visit({ orgId, db, now: opts.now })) as TenantSweepVisitResult | void;
             s.result.visited++;
+            if (opts.orgIds === undefined && quiet.has(orgId)) noteQuietVisit(s.pass, orgId, opts.now.getTime());
             s.result.results.push({ orgId, result: r });
             if (r?.backlog) s.result.backlog = true;
             if (r?.stop) s.result.stopped = true;
@@ -412,10 +430,7 @@ export async function walkWith(
         return;
       }
       if (!lock) {
-        for (const s of here) {
-          s.result.skipped = true;
-          if (opts.orgIds === undefined && quiet.has(orgId)) quietVisits.get(s.pass.name)?.delete(orgId);
-        }
+        for (const s of here) s.result.skipped = true;
         return;
       }
       try {

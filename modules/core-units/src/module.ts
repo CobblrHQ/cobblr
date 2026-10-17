@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-units",
-  version: "0.2.7",
+  version: "0.3.0",
   displayName: "Units",
   description:
     "The units you count and measure in (grams, metres, pieces, your own), shown the way you like.",
@@ -41,20 +41,22 @@ export default defineModule({
     events: [],
     actions: [
       {
-        // NO-PHRASING: the way back for another action, run only from Undo
+        // WORKSPACE-scoped, and also the way back for add-unit.
         group: "more",
+        // UI-SCREEN: /configuration/units
         id: "core-units:remove-unit",
-        // ADMIN-ONLY: the undo of add-unit, admin
+        // ADMIN-ONLY: the page's own route DELETE /units/:code is owner or admin (units.ts)
         runBy: "admin",
-        internal: true,
+        examples: ["remove the fathom unit", "we don't measure in balls any more"],
+        undoable: true,
         label: "Remove a unit",
-        description: "Internal, the inverse of adding a unit this workspace made: removes it again. Runs from Undo on the card; not for direct use.",
-        icon: "undo",
+        description:
+          "Remove a unit this workspace added (never a built-in one). Quantities already stored in it keep their numbers; Undo puts the unit back as it was.",
+        icon: "ruler",
         scope: "workspace" as const,
-        userInvokable: false,
         invokeHandler: "core-units.remove-unit",
         argsSchema: {
-          code: { label: "The unit's code", type: "text" },
+          code: { label: "Which unit (its code or name)", type: "text", required: true },
         },
       },
       {
@@ -82,6 +84,25 @@ export default defineModule({
           name: { label: "Singular name", type: "text", required: true },
           plural: { label: "Plural name", type: "text" },
           category: { label: "What it measures (length, mass, volume, count, …)", type: "text" },
+        },
+      },
+      {
+        group: "more",
+        // UI-SCREEN: /configuration/units
+        id: "core-units:set-display-mode",
+        // ADMIN-ONLY: the page's own route PUT /units/settings is owner or admin (units.ts)
+        runBy: "admin",
+        examples: ["show units as full names", "use unit symbols"],
+        undoable: true,
+        label: "Show units as symbols or names",
+        description:
+          "Choose how quantities show their unit across the workspace: the symbol (3 kg), the name (3 kilograms), or both. Undo puts back what it was.",
+        icon: "ruler",
+        scope: "workspace",
+        invokeHandler: "core-units.set-display-mode",
+        userInvokable: true,
+        argsSchema: {
+          display_mode: { label: "symbol, name or both", type: "text", required: true },
         },
       },
     ],

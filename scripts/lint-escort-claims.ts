@@ -22,6 +22,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const TOOLS = join("packages", "workspace-tools", "src", "tools.ts");
 const src = readFileSync(TOOLS, "utf8");
@@ -42,8 +43,7 @@ function collect(file: string): void {
   }
 }
 for (const mod of readdirSync("modules")) {
-  const man = join("modules", mod, "src", "module.ts");
-  if (existsSync(man)) collect(man);
+  for (const man of manifestSources(join("modules", mod))) collect(man);
 }
 const kernelActions = join("api", "src", "platform", "platform-actions.ts");
 if (existsSync(kernelActions)) collect(kernelActions);

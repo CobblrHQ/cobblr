@@ -1,3 +1,4 @@
+import { clearPart, partStates, setPart } from "../platform/module-parts.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { activityPresentation } from "@cobblr/platform-contract/activity-summary";
 import { nameActivityRows } from "../platform/activity-subjects.js";
@@ -168,8 +169,14 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
       .where("org_id", "=", req.tenant!.org.id)
       .execute();
     const enabledSet = new Map(enabled.map((e) => [e.module_name, e]));
+    // Each enabled module's parts, on or off here (module-parts.ts): an off
+    // part's panels are not sent, and the list says which parts are on, which
+    // is how Cobb's tool list and the web's panels both hide an off part.
+    const parts = await partStates(req.tenant!.org.id, new Set(enabledSet.keys()));
     const items = registered.filter(m => !m.retirement || enabledSet.has(m.name)).map((m) => {
       const on = enabledSet.get(m.name);
+      const mine = parts.filter((p) => p.module === m.name);
+      const offParts = new Set(mine.filter((p) => !p.on).map((p) => p.id));
       return {
         name: m.name,
         aliases: m.aliases ?? [],
@@ -211,7 +218,8 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
         // Full panel contributions (not just a count) — the web's panel
         // registry renders these into the target module's pages. Gated at
         // manifest validation: target module must be in operatesOn.
-        panels: m.contributes.panels,
+        panels: m.contributes.panels.filter((p) => !p.part || (on && !offParts.has(p.part))),
+        parts: m.parts.map((p) => ({ id: p.id, label: p.label, description: p.description, default: p.default, on: mine.find((x) => x.id === p.id)?.on ?? false, chosen: mine.find((x) => x.id === p.id)?.chosen ?? false })),
         // Every workspace gets it at signup, with no decision asked (the
         // kernel's own isDefaultModule). Tests read it so they never switch
         // on by hand what a real signup should have given them.
@@ -222,6 +230,32 @@ orgsRouter.get("/:slug/modules", requireAuth, withTenant, async (req, res, next)
       };
     });
     res.json({ items });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orgs/:slug/module-parts/:moduleName/:part { enabled: true | false | null }
+// — turn one part of a module on or off for the workspace, or (null) let it
+// follow its default again. Hides, never deletes (module-parts.ts).
+// AI-ACTION: platform:set-module-part
+orgsRouter.post("/:slug/module-parts/:moduleName/:part", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    if (!(await requireCapability(req, res, "platform:set-module-part"))) return;
+    const name = getModuleEntry(req.params.moduleName ?? "")?.manifest.name;
+    const enabled = (req.body as { enabled?: unknown } | undefined)?.enabled;
+    if (!name || !(enabled === true || enabled === false || enabled === null)) {
+      res.status(400).json({ error: { code: "invalid_body", message: "Name a module and say enabled true, false or null." } });
+      return;
+    }
+    const orgId = req.tenant!.org.id;
+    if (!(await partStates(orgId)).some((p) => p.module === name && p.id === req.params.part)) {
+      res.status(404).json({ error: { code: "not_found", message: "That module is off here or has no such part." } });
+      return;
+    }
+    if (enabled === null) await clearPart(orgId, name, req.params.part!);
+    else await setPart(orgId, name, req.params.part!, enabled, req.session!.id);
+    res.json({ part: (await partStates(orgId)).find((p) => p.module === name && p.id === req.params.part) });
   } catch (err) {
     next(err);
   }

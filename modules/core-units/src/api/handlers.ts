@@ -92,13 +92,30 @@ export function registerUnitsHandlers(): void {
 }
 
 function registerUndos(): void {
+  // A unit this workspace added, by code or name; a built-in is not ours to remove.
   platform().actions.registerHandler("core-units.remove-unit", async (ctx) => {
-    const code = String((ctx.args as { code?: unknown } | null)?.code ?? "").trim().toLowerCase();
-    if (!code) return { ok: false, error: "missing code" };
+    const want = String((ctx.args as { code?: unknown } | null)?.code ?? "").trim().toLowerCase();
+    if (!want) return { ok: false, error: "Say which unit." };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreUnitsDB>;
-    const row = await db.deleteFrom("core_units_custom").where("code", "=", code).returning(["code", "name"]).executeTakeFirst();
-    if (!row) return { ok: true, skipped: true, reason: "already gone" };
-    return { ok: true, summary: `${row.name} is no longer a unit here.`, removed: row.code };
+    const rows = await db.selectFrom("core_units_custom").selectAll().execute();
+    const unit = rows.find((r) => r.code === want) ?? rows.find((r) => r.name.toLowerCase() === want || r.plural.toLowerCase() === want);
+    if (!unit) {
+      const builtin = BUILTIN_UNITS.find((u) => u.code === want || u.name.toLowerCase() === want);
+      if (builtin) return { ok: false, error: `${builtin.name} is built in, so it stays.` };
+      return { ok: true, skipped: true, reason: "already gone", summary: `There is no unit called "${want}" here.` };
+    }
+    await db.deleteFrom("core_units_custom").where("code", "=", unit.code).execute();
+    return {
+      ok: true,
+      summary: `${unit.name} is no longer a unit here.`,
+      removed: unit.code,
+      data: { code: unit.code, symbol: unit.symbol, name: unit.name, plural: unit.plural, category: unit.category },
+    };
+  });
+  platform().actions.registerUndo("core-units.remove-unit", (result) => {
+    const d = (result as { ok?: unknown; skipped?: unknown; data?: Record<string, string> } | null);
+    if (d?.ok !== true || d.skipped || !d.data?.code) return null;
+    return { action_id: "core-units:add-unit", args: { ...d.data } };
   });
   // A unit that already existed was updated in place, which this cannot put
   // back exactly, so it hands back nothing; one this run made is removed.

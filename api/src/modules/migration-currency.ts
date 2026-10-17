@@ -39,6 +39,10 @@ export interface ModuleMigrationFiles {
   count: number;
   /** Every `.sql` name on disk. */
   names: ReadonlySet<string>;
+  /** Set when the module declares a migrations directory this build could
+   *  not read (#7154): the module is then never current, so boot opens the
+   *  workspace (and the runner says why it cannot) and health says pending. */
+  unreadable?: string;
 }
 
 export interface OrgModuleMarker {
@@ -53,6 +57,7 @@ export type MigrationState = "current" | "behind" | "ahead";
 
 /** Where the ledger stands against this build's files. */
 export function migrationState(row: OrgModuleMarker, files: ModuleMigrationFiles): MigrationState {
+  if (files.unreadable) return "behind"; // what it would apply is unknown, not nothing
   if (files.latest === null) return "current"; // nothing on disk to apply
   if (row.migration_count === null) return "behind"; // never counted: look once
   if (row.last_migration === files.latest && row.migration_count === files.count) return "current";
@@ -114,6 +119,11 @@ export function newerName(a: string | null | undefined, b: string | null | undef
 }
 
 /** The files as the runner sees them: sorted by full name, `.sql` only. */
+/** A declared migrations directory that could not be read: not an empty one. */
+export function unreadableMigrationFiles(reason: string): ModuleMigrationFiles {
+  return { latest: null, count: 0, names: new Set(), unreadable: reason };
+}
+
 export function describeMigrationFiles(names: string[]): ModuleMigrationFiles {
   const files = names.filter((f) => f.endsWith(".sql")).sort();
   return { latest: files.length ? files[files.length - 1]! : null, count: files.length, names: new Set(files) };

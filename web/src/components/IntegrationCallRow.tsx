@@ -6,7 +6,7 @@ import { relativeTime } from "@cobblr/platform-web";
 import type { IntegrationCall } from "../lib/api";
 
 export function IntegrationCallRow({ call: c, onSendAgain, sending }: { call: IntegrationCall; onSendAgain: (callId: string) => void; sending: boolean }) {
-  const meta = (c.request_meta ?? {}) as { attempt?: number; gave_up?: boolean; retry_at?: string; resent_at?: string };
+  const meta = (c.request_meta ?? {}) as { attempt?: number; gave_up?: boolean; needs_look?: boolean; retry_at?: string; resent_at?: string };
   const retrying = !c.ok && !!meta.retry_at;
   const canSendAgain = c.direction === "outbound" && !c.ok && !!meta.gave_up && !meta.resent_at;
   return (
@@ -21,8 +21,9 @@ export function IntegrationCallRow({ call: c, onSendAgain, sending }: { call: In
       <span className="text-faint">{new Date(c.occurred_at).toLocaleString()}</span>
       {c.error && <span className="text-red-500 break-words min-w-0">{c.error}</span>}
       {retrying && <span className="text-amber-600 dark:text-amber-400">Trying again {relativeTime(meta.retry_at!)}</span>}
-      {!c.ok && meta.gave_up && (meta.attempt ?? 1) > 1 && <span className="text-faint">Gave up after {meta.attempt} tries</span>}
-      {!c.ok && meta.gave_up && (meta.attempt ?? 1) <= 1 && <span className="text-faint">Not delivered</span>}
+      {!c.ok && meta.needs_look && <span className="text-amber-600 dark:text-amber-400">May already have arrived. Check before sending again.</span>}
+      {!c.ok && meta.gave_up && !meta.needs_look && (meta.attempt ?? 1) > 1 && <span className="text-faint">Gave up after {meta.attempt} tries</span>}
+      {!c.ok && meta.gave_up && !meta.needs_look && (meta.attempt ?? 1) <= 1 && <span className="text-faint">Not delivered</span>}
       {meta.resent_at && <span className="text-faint">Sent again</span>}
       {canSendAgain && (
         <button

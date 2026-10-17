@@ -12,7 +12,7 @@ import { meta } from "../db/meta.js";
 import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { isPushServiceEndpoint } from "../platform/push-endpoints.js";
-import { vapidKeys } from "../platform/push-keys.js";
+import { vapidKeyState } from "../platform/push-keys.js";
 import { pushSettingsFor, pushToDevice, unreadCountFor } from "../platform/push-delivery.js";
 import { buildPushPayload, inQuietHours, worthAPush } from "../platform/push-policy.js";
 import type { NotificationPriority } from "../db/schema.js";
@@ -61,7 +61,7 @@ mePushRouter.get("/me/push", requireAuth, async (req, res, next) => {
   try {
     const userId = req.session!.id;
     const [keys, devices, settings, held] = await Promise.all([
-      vapidKeys(),
+      vapidKeyState(),
       meta
         .selectFrom("push_subscriptions")
         .select(["id", "org_id", "label", "created_at", "last_success_at", "last_failure_at", "last_failure", "failures_in_a_row"])
@@ -77,7 +77,9 @@ mePushRouter.get("/me/push", requireAuth, async (req, res, next) => {
         .executeTakeFirst(),
     ]);
     res.json({
-      public_key: keys?.publicKey ?? null,
+      public_key: keys.keys?.publicKey ?? null,
+      // Why there is no key to subscribe with, for the page to say.
+      unavailable: keys.unavailable,
       devices,
       settings,
       quiet_now: inQuietHours(settings, new Date()),
@@ -97,6 +99,9 @@ mePushRouter.post("/me/push/devices", requireAuth, async (req, res, next) => {
     if (!isPushServiceEndpoint(b.endpoint)) {
       return bad(res, 400, "not_a_push_service", "That address is not a browser's push service, so nothing sent there would reach a device.");
     }
+    // A device subscribed under no usable key could never be reached.
+    const { unavailable } = await vapidKeyState();
+    if (unavailable) return bad(res, 409, "push_unavailable", unavailable);
     const userId = req.session!.id;
     if (b.org_id) {
       const member = await meta.selectFrom("org_memberships").select("org_id").where("org_id", "=", b.org_id).where("user_id", "=", userId).executeTakeFirst();
@@ -219,7 +224,7 @@ mePushOrgRouter.get("/:slug/my-push", requireAuth, withTenant, async (req, res, 
     const userId = req.session!.id;
     const orgId = req.tenant!.org.id;
     const [keys, devices, settings, held, binding, recent] = await Promise.all([
-      vapidKeys(),
+      vapidKeyState(),
       meta
         .selectFrom("push_subscriptions")
         .select(["id", "org_id", "label", "created_at", "last_success_at", "last_failure_at", "last_failure", "failures_in_a_row"])
@@ -251,7 +256,8 @@ mePushOrgRouter.get("/:slug/my-push", requireAuth, withTenant, async (req, res, 
         .execute(),
     ]);
     res.json({
-      push_ready_on_server: !!keys,
+      push_ready_on_server: !!keys.keys,
+      push_unavailable: keys.unavailable,
       devices,
       settings,
       quiet_now: inQuietHours(settings, new Date()),

@@ -15,6 +15,7 @@
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
+import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
 
 const SHIPPED: readonly SalesOrderStatus[] = ["shipped", "closed"];
@@ -55,49 +56,51 @@ export async function cancelOrder(
   orderId: string,
   opts: { returned?: boolean } = {},
 ): Promise<CancelResult> {
-  const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
-  if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
-  if (order.status === "cancelled") return { ok: false, code: "already_cancelled", message: "This order is already cancelled." };
-  const shipped = SHIPPED.includes(order.status);
-  if (shipped && opts.returned === undefined) {
-    return {
-      ok: false,
-      code: "ask_returned",
-      message: "This order has shipped. Was it returned? If it was, what it took goes back on the shelf.",
-    };
-  }
-
-  const restocked: Restocked[] = [];
-  if (!shipped || opts.returned) {
-    const lines = await db
-      .selectFrom("sales_order_items")
-      .select(["id", "part_id", "qty_fulfilled"])
-      .where("order_id", "=", orderId)
-      .execute();
-    for (const l of lines) {
-      const taken = Number(l.qty_fulfilled) || 0;
-      if (!l.part_id || taken <= 0) continue;
-      const back = await adjust(orgId, userId, orderId, l.part_id, taken, "sale-cancelled");
-      if (back <= 0) continue;
-      await db
-        .updateTable("sales_order_items")
-        .set({ qty_fulfilled: String(Math.max(0, taken - back)), updated_at: new Date() })
-        .where("id", "=", l.id)
-        .execute();
-      restocked.push({ line_id: l.id, part_id: l.part_id, qty: back });
+  return withOrderLock(db, orgId, userId, orderId, async () => {
+    const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
+    if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
+    if (order.status === "cancelled") return { ok: false, code: "already_cancelled", message: "This order is already cancelled." };
+    const shipped = SHIPPED.includes(order.status);
+    if (shipped && opts.returned === undefined) {
+      return {
+        ok: false,
+        code: "ask_returned",
+        message: "This order has shipped. Was it returned? If it was, what it took goes back on the shelf.",
+      };
     }
-  }
 
-  await db.updateTable("sales_orders").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", orderId).execute();
-  if (restocked.length > 0) {
-    await orderHappened(db, orgId, orderId, {
-      kind: "stock",
-      detail: { returned: restocked.map((r) => ({ part_id: r.part_id, qty: r.qty })), because: shipped ? "came back" : "cancelled before it shipped" },
-      by_user: userId,
-    });
-  }
-  await orderHappened(db, orgId, orderId, { kind: "status", from_status: order.status, to_status: "cancelled", by_user: userId });
-  return { ok: true, from: order.status, restocked };
+    const restocked: Restocked[] = [];
+    if (!shipped || opts.returned) {
+      const lines = await db
+        .selectFrom("sales_order_items")
+        .select(["id", "part_id", "qty_fulfilled"])
+        .where("order_id", "=", orderId)
+        .execute();
+      for (const l of lines) {
+        const taken = Number(l.qty_fulfilled) || 0;
+        if (!l.part_id || taken <= 0) continue;
+        const back = await adjust(orgId, userId, orderId, l.part_id, taken, "sale-cancelled");
+        if (back <= 0) continue;
+        await db
+          .updateTable("sales_order_items")
+          .set({ qty_fulfilled: String(Math.max(0, taken - back)), updated_at: new Date() })
+          .where("id", "=", l.id)
+          .execute();
+        restocked.push({ line_id: l.id, part_id: l.part_id, qty: back });
+      }
+    }
+
+    await db.updateTable("sales_orders").set({ status: "cancelled", updated_at: new Date() }).where("id", "=", orderId).execute();
+    if (restocked.length > 0) {
+      await orderHappened(db, orgId, orderId, {
+        kind: "stock",
+        detail: { returned: restocked.map((r) => ({ part_id: r.part_id, qty: r.qty })), because: shipped ? "came back" : "cancelled before it shipped" },
+        by_user: userId,
+      });
+    }
+    await orderHappened(db, orgId, orderId, { kind: "status", from_status: order.status, to_status: "cancelled", by_user: userId });
+    return { ok: true, from: order.status, restocked };
+  });
 }
 
 /** Take a cancel back: the order returns to the status it had, and what the
@@ -109,27 +112,29 @@ export async function reinstateOrder(
   orderId: string,
   undo: { from: SalesOrderStatus; restocked: Restocked[] },
 ): Promise<{ ok: true; retaken: Restocked[] } | { ok: false; code: "not_found" | "not_cancelled"; message: string }> {
-  const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
-  if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
-  if (order.status !== "cancelled") return { ok: false, code: "not_cancelled", message: `This order is ${order.status}, not cancelled.` };
-  const retaken: Restocked[] = [];
-  for (const r of undo.restocked) {
-    const took = await adjust(orgId, userId, orderId, r.part_id, -r.qty, "sale-reinstated");
-    if (took <= 0) continue;
-    const line = await db.selectFrom("sales_order_items").select(["qty_fulfilled"]).where("id", "=", r.line_id).where("order_id", "=", orderId).executeTakeFirst();
-    if (line) {
-      await db
-        .updateTable("sales_order_items")
-        .set({ qty_fulfilled: String((Number(line.qty_fulfilled) || 0) + took), updated_at: new Date() })
-        .where("id", "=", r.line_id)
-        .execute();
+  return withOrderLock(db, orgId, userId, orderId, async () => {
+    const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
+    if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
+    if (order.status !== "cancelled") return { ok: false, code: "not_cancelled", message: `This order is ${order.status}, not cancelled.` };
+    const retaken: Restocked[] = [];
+    for (const r of undo.restocked) {
+      const took = await adjust(orgId, userId, orderId, r.part_id, -r.qty, "sale-reinstated");
+      if (took <= 0) continue;
+      const line = await db.selectFrom("sales_order_items").select(["qty_fulfilled"]).where("id", "=", r.line_id).where("order_id", "=", orderId).executeTakeFirst();
+      if (line) {
+        await db
+          .updateTable("sales_order_items")
+          .set({ qty_fulfilled: String((Number(line.qty_fulfilled) || 0) + took), updated_at: new Date() })
+          .where("id", "=", r.line_id)
+          .execute();
+      }
+      retaken.push({ ...r, qty: took });
     }
-    retaken.push({ ...r, qty: took });
-  }
-  await db.updateTable("sales_orders").set({ status: undo.from, updated_at: new Date() }).where("id", "=", orderId).execute();
-  if (retaken.length > 0) {
-    await orderHappened(db, orgId, orderId, { kind: "stock", detail: { taken: retaken.map((r) => ({ part_id: r.part_id, qty: r.qty })), because: "the cancel was undone" }, by_user: userId });
-  }
-  await orderHappened(db, orgId, orderId, { kind: "status", from_status: "cancelled", to_status: undo.from, by_user: userId });
-  return { ok: true, retaken };
+    await db.updateTable("sales_orders").set({ status: undo.from, updated_at: new Date() }).where("id", "=", orderId).execute();
+    if (retaken.length > 0) {
+      await orderHappened(db, orgId, orderId, { kind: "stock", detail: { taken: retaken.map((r) => ({ part_id: r.part_id, qty: r.qty })), because: "the cancel was undone" }, by_user: userId });
+    }
+    await orderHappened(db, orgId, orderId, { kind: "status", from_status: "cancelled", to_status: undo.from, by_user: userId });
+    return { ok: true, retaken };
+  });
 }

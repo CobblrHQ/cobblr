@@ -50,6 +50,76 @@ export const DEFAULT_TOKEN_ACCESS: TokenAccess = "change";
  *  connection's settings or the member list is a token that can leak them. */
 const GUARDED = /\/(connections|api-tokens|integrations|members|invites|roles|permissions|ai-settings|settings)(\/|$)/;
 
+/** Module routes that write a credential, or say where one is sent. A module
+ *  route's path carries the module's name, not the word "connections", so
+ *  GUARDED cannot see these and the generic "a module route is a record write"
+ *  allowance would let a `change` token replace them. Each is named. The first
+ *  is the whole integrations module, reads included: its settings and call log
+ *  name the workspace's connections. */
+const CREDENTIAL_MODULE_ROUTES: RegExp[] = [
+  /^\/modules\/core-integrations(\/|$)/,
+];
+
+/** Module routes whose WRITES (never their reads, never an action on one such as
+ *  /test or /print) carry a credential. The method and the exact shape are part
+ *  of the match: a collection POST, or an item PATCH/PUT/DELETE. */
+const CREDENTIAL_MODULE_WRITES: RegExp[] = [
+  /^\/modules\/core-ai\/providers(\/[^/]+)?$/,
+  /^\/modules\/core-print\/printers(\/[^/]+)?$/,
+  /^\/modules\/digifab\/connections(\/[^/]+)?$/,
+  /^\/modules\/digifab\/print-rules\/channels(\/[^/]+)?$/,
+  /^\/modules\/digifab\/failure\/detectors(\/[^/]+)?$/,
+  /^\/modules\/inventory\/spoolman\/connections(\/[^/]+)?$/,
+];
+
+/** Every module API file that encrypts or stores a credential, and the route a
+ *  token below `full` must not write through it (or that it only reads). A test
+ *  scans modules/*\/src/api and fails on a file that handles a credential and is
+ *  not here, so a new one is classified when it is written, not after a review
+ *  finds the hole. */
+export const CREDENTIAL_ROUTE_FILES: Record<string, string> = {
+  "modules/core-integrations/src/api/connectors.ts": "PATCH /api/v1/orgs/x/modules/core-integrations/connectors/c1",
+  "modules/core-integrations/src/api/sync.ts": "PATCH /api/v1/orgs/x/modules/core-integrations/sync/connections/c1",
+  "modules/core-integrations/src/api/test-connection-action.ts": "reads-only",
+  "modules/core-ai/src/api/providers.ts": "PATCH /api/v1/orgs/x/modules/core-ai/providers/p1",
+  "modules/core-print/src/api/index.ts": "PATCH /api/v1/orgs/x/modules/core-print/printers/p1",
+  "modules/digifab/src/api/connections.ts": "PATCH /api/v1/orgs/x/modules/digifab/connections/c1",
+  "modules/digifab/src/api/print-rules.ts": "PATCH /api/v1/orgs/x/modules/digifab/print-rules/channels/ch1",
+  "modules/digifab/src/api/failure.ts": "PATCH /api/v1/orgs/x/modules/digifab/failure/detectors/d1",
+  "modules/digifab/src/api/fleet.ts": "reads-only",
+  "modules/inventory/src/api/spoolman.ts": "PATCH /api/v1/orgs/x/modules/inventory/spoolman/connections/c1",
+};
+
+/** Whether the query asks for secrets in the clear. Read the way the server
+ *  will read it, not the way it was typed: names and values are percent-decoded
+ *  (`include_%73ecrets=%74rue`), a name is case-blind and loses a trailing `[]`
+ *  (a framework's query parser reads `include_secrets[]=true` as the same
+ *  parameter), and when the name is repeated any one of them can be the one
+ *  that counts. Fails closed: anything but an explicit "false" or "0" is a yes. */
+function wantsSecrets(query: string): boolean {
+  let pairs: Array<[string, string]>;
+  try {
+    pairs = [...new URLSearchParams(query).entries()];
+  } catch {
+    return true;
+  }
+  return pairs.some(([name, value]) => {
+    if (name.trim().toLowerCase().replace(/\[[^\]]*\]$/, "") !== "include_secrets") return false;
+    return !["false", "0"].includes(value.trim().toLowerCase());
+  });
+}
+
+/** The path as the router will route it, for matching: percent-decoded, doubled
+ *  slashes made one, the trailing slash dropped, and lower case, because the
+ *  router ignores case. Null when it cannot be decoded: that is refused. */
+function routedPath(rawPath: string): string | null {
+  try {
+    return decodeURIComponent(rawPath).replace(/\/{2,}/g, "/").replace(/\/+$/, "").toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /** The one platform write a `change` token may make beside record routes. */
 const CHANGE_PLATFORM_WRITES = new Set(["/actions/invoke"]);
 
@@ -61,7 +131,14 @@ export function tokenAccessAllows(
   originalUrl: string,
 ): TokenAccessVerdict {
   const access: TokenAccess = grant.access ?? "full";
-  const path = (originalUrl.split("?")[0] ?? "").replace(/\/+$/, "");
+  const [rawPath = "", ...queryParts] = originalUrl.split("?");
+  const query = queryParts.join("?");
+  const routed = routedPath(rawPath);
+  // A path that cannot be read is refused to anything below full.
+  if (routed === null) {
+    return access === "full" && !grant.orgSlug ? { ok: true } : { ok: false, code: "token_access", message: accessMessage(access) };
+  }
+  const path = routed;
   const m = /^\/api\/v1\/orgs\/([^/]+)(\/.*)?$/.exec(path);
   const read = method === "GET" || method === "HEAD";
 
@@ -78,13 +155,16 @@ export function tokenAccessAllows(
     return { ok: true };
   }
 
-  const slug = decodeURIComponent(m[1] ?? "");
+  const slug = m[1] ?? "";
   const rel = m[2] ?? "";
-  if (grant.orgSlug && slug !== grant.orgSlug) {
+  if (grant.orgSlug && slug !== grant.orgSlug.toLowerCase()) {
     return { ok: false, code: "token_workspace_only", message: `This token is for the ${grant.orgSlug} workspace only.` };
   }
   if (access === "full") return { ok: true };
-  if (rel.includes("..") || GUARDED.test(rel)) {
+  if (rel.includes("..") || GUARDED.test(rel) || wantsSecrets(query) || CREDENTIAL_MODULE_ROUTES.some((r) => r.test(rel))) {
+    return { ok: false, code: "token_access", message: accessMessage(access) };
+  }
+  if (!read && CREDENTIAL_MODULE_WRITES.some((r) => r.test(rel))) {
     return { ok: false, code: "token_access", message: accessMessage(access) };
   }
   if (read) return { ok: true };

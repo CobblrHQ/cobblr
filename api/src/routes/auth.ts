@@ -19,13 +19,13 @@ import { z } from "zod";
 import { decodeInvite, hereUrl, readInvite } from "../platform/share-links.js";
 import { trustedPeers } from "../platform/cloud.js";
 import { publicOrigin } from "./edge.js";
-import { sql } from "kysely";
 import { meta, metaPool } from "../db/meta.js";
-import { lockoutState, isLocked } from "../auth/lockout.js";
+import { isUndeliverableAddress } from "../platform/usernames.js";
+import { attemptPasswordLogin, clearLoginAttempts, recordFailedLogin } from "../auth/password-login.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionWholeOrRemove, WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "../platform/provision-workspace.js";
 import { slugifyBase } from "../lib/slugify.js";
-import { hashPassword, verifyPassword } from "../auth/password.js";
+import { hashPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
 import { captchaVerdict, captchaRefusal, captchaEnabled } from "../platform/captcha.js";
 import { blockDisposableEnabled, isDisposableEmail } from "../platform/disposable-emails.js";
@@ -36,11 +36,6 @@ import { productName } from "../platform/product-name.js";
 // A throwaway hash, computed once, so the "no such user / inactive" login
 // path spends the same ~bcrypt time as a real password check — otherwise the
 // timing difference leaks which emails are registered. (Audit 2026-06-26 P2.)
-let _dummyHash: Promise<string> | null = null;
-function dummyPasswordHash(): Promise<string> {
-  if (!_dummyHash) _dummyHash = hashPassword("cobblr-login-timing-equalizer");
-  return _dummyHash;
-}
 import { signSession } from "../auth/jwt.js";
 import { loadSessionUser } from "../auth/session-user.js";
 import { listMembershipsForUser } from "../platform/memberships.js";
@@ -134,13 +129,15 @@ const SignupBody = z.object({
 });
 
 const LoginBody = z.object({
-  email: z.string().email().max(255),
+  // An email or a username (#6910). `email` is kept for the field's old name.
+  identifier: optionalField(z.string().trim().min(1).max(255)),
+  email: optionalField(z.string().trim().min(1).max(255)),
   password: z.string().min(1).max(128),
   // Where an account whose address is still unconfirmed comes back to after the
   // fresh link this sends it: the app and source the page was opened with.
   app: z.string().min(1).max(40).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   source: z.string().max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
-});
+}).refine((b) => !!(b.identifier ?? b.email), { message: "Give an email or a username." });
 
 /** Candidate slugs in preference order: the bare name, then `-2`, `-3`, … on
  *  collision, and finally a random suffix as an (astronomically unlikely)
@@ -720,48 +717,6 @@ const ACCOUNT_LOCKED = {
   },
 } as const;
 
-/** Read the shared per-account lockout row for a (lowercased) email. */
-async function readLoginAttempt(email: string): Promise<{ failed_count: number; locked_until: Date | null } | undefined> {
-  return meta
-    .selectFrom("login_attempts")
-    .select(["failed_count", "locked_until"])
-    .where("email", "=", email)
-    .executeTakeFirst();
-}
-
-/** Record one failed login for `email`: atomically bump the consecutive-failure
- *  count in cobblr_meta (shared across api instances) and set locked_until per
- *  the backoff once the threshold is crossed. Bucketed by submitted email so it
- *  behaves the same for registered and unregistered addresses. */
-async function recordFailedLogin(email: string, now: Date): Promise<void> {
-  const row = await meta
-    .insertInto("login_attempts")
-    .values({ email, failed_count: 1, last_failed_at: now, updated_at: now })
-    .onConflict((oc) =>
-      oc.column("email").doUpdateSet({
-        failed_count: sql`login_attempts.failed_count + 1`,
-        last_failed_at: now,
-        updated_at: now,
-      }),
-    )
-    .returning("failed_count")
-    .executeTakeFirstOrThrow();
-  const decision = lockoutState(row.failed_count, now);
-  if (decision.locked) {
-    await meta
-      .updateTable("login_attempts")
-      .set({ locked_until: decision.lockedUntil, updated_at: now })
-      .where("email", "=", email)
-      .execute();
-  }
-}
-
-/** Clear the counter after a proven-correct password so a legitimate user's
- *  earlier typos never accumulate toward a lock. */
-async function clearLoginAttempts(email: string): Promise<void> {
-  await meta.deleteFrom("login_attempts").where("email", "=", email).execute();
-}
-
 authRouter.post("/login", async (req, res, next) => {
   try {
     if (overLimit(loginLimiter, req)) return rateLimited(res);
@@ -769,61 +724,40 @@ authRouter.post("/login", async (req, res, next) => {
     // instance's own provider is the only way in (platform/oidc.ts).
     if (!(await passwordSignInOn())) return res.status(403).json(PASSWORD_SIGN_IN_OFF);
     const body = LoginBody.parse(req.body);
-    const email = body.email.toLowerCase().trim();
+    // One field, an email or a username (#6910); `email` is the field's old name.
+    const identifier = (body.identifier ?? body.email ?? "").toLowerCase().trim();
     const now = new Date();
 
-    // Same response for "no user" + "wrong password" so we don't
-    // leak which emails are registered.
+    // Same response for "no account" and "wrong password", so it never says
+    // which names are registered.
     const denied = () =>
       res.status(401).json({
-        error: { code: "invalid_credentials", message: "Email or password incorrect." },
+        error: { code: "invalid_credentials", message: "That email or username and password do not match." },
       });
 
-    // Per-account lockout (shared across api instances via cobblr_meta), checked
-    // BEFORE the password so a locked account never reaches the hash. Bucketed by
-    // submitted email, so a locked response is identical for existing and
-    // non-existing accounts — no enumeration oracle. Skipped under the test rig,
-    // which logs in thousands of times as the same handful of accounts.
-    if (!AUTH_LIMITS_OFF) {
-      const attempt = await readLoginAttempt(email);
-      if (attempt && isLocked(attempt.locked_until, now)) {
-        // Spend ~bcrypt time so the locked path's latency matches the others.
-        await verifyPassword(body.password, await dummyPasswordHash());
-        return res.status(429).json(ACCOUNT_LOCKED);
-      }
-    }
-
-    const user = await meta
-      .selectFrom("users")
-      .select(["id", "email", "password_hash", "active", "email_verified_at"])
-      .where("email", "=", email)
-      .executeTakeFirst();
-
-    // A disabled account is a decision somebody made; nothing below reopens it.
-    if (user && !user.active) {
-      await verifyPassword(body.password, await dummyPasswordHash());
-      if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
+    // The password and the shared per-account lockout (auth/password-login.ts):
+    // whichever name is typed, an account is one bucket, its email.
+    const signIn = await attemptPasswordLogin({ identifier, password: body.password, now, limits: !AUTH_LIMITS_OFF });
+    if (signIn.outcome === "locked") return res.status(429).json(ACCOUNT_LOCKED);
+    if (signIn.outcome === "denied" && signIn.disabled) {
+      if (!AUTH_LIMITS_OFF) await recordFailedLogin(signIn.bucket, now);
       return denied();
     }
-    const ok = user
-      ? await verifyPassword(body.password, user.password_hash)
-      : // Spend the same ~bcrypt time as the real path so a missing account
-        // isn't distinguishable by latency. (Audit 2026-06-26 P2.)
-        (await verifyPassword(body.password, await dummyPasswordHash()), false);
-    if (!ok) {
+    if (signIn.outcome === "denied") {
       // The central account. Where one fronts this surface, a person made on
       // the account service (or on this page through it) has no password here
       // at all, so the password is asked of the account service, from this
-      // server: the same form, no trip to another site.
-      if (identityCallbackEnabled()) {
+      // server: the same form, no trip to another site. It knows people by
+      // email, so a username is asked only of this server.
+      if (identityCallbackEnabled() && signIn.kind === "email") {
         const central = await surfaceAccountCall("login", {
-          email,
+          email: identifier,
           password: body.password,
           clientIp: req.ip ?? "unknown",
           returnTo: callbackReturnTo(pageOrigin(req), { app: body.app ?? null, source: body.source ?? null }),
         });
         if (central.ok && central.token) {
-          if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
+          if (!AUTH_LIMITS_OFF) await clearLoginAttempts(signIn.bucket);
           const out = await completeIdentitySignIn(central.token, body.app, body.source, req.get("Accept-Language")?.split(",")[0]?.split(";")[0]);
           return res.status(out.status).json(out.body);
         }
@@ -834,17 +768,16 @@ authRouter.post("/login", async (req, res, next) => {
         }
         if (!central.ok && central.status === 429) return rateLimited(res);
       }
-      if (!AUTH_LIMITS_OFF) await recordFailedLogin(email, now);
+      if (!AUTH_LIMITS_OFF) await recordFailedLogin(signIn.bucket, now);
       return denied();
     }
-    if (!user) return denied();
-    // Correct password — the credential is proven, so clear any prior failures
-    // (the account is not brute-forced) before the email-verification gate.
-    if (!AUTH_LIMITS_OFF) await clearLoginAttempts(email);
+    const user = signIn.user;
+    const email = user.email;
 
     // Email-verification gate (trial): deny login until verified, and resend the
     // link so the user has a fresh one. No-op unless COBBLR_REQUIRE_EMAIL_VERIFY.
-    if (requireEmailVerify() && !user.email_verified_at) {
+    // An account made without an email (#6910) has nothing to confirm.
+    if (requireEmailVerify() && !user.email_verified_at && !isUndeliverableAddress(email)) {
       // DETACHED: an email; the refusal already says to check for it, and asking again resends
       void issueAndSendVerifyEmail(user.id, email, req).catch((e) =>
         console.error("[login] verify-email resend failed:", e),

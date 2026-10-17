@@ -6,6 +6,11 @@ import { Router } from "express";
 import { viewsRouter } from "./views.js";
 import { registerViewsHandlers } from "./handlers.js";
 import { registerWireViewReader } from "./saved-view-reader.js";
+import { registerEditViewAction } from "./edit-view-action.js";
+import { registerRestoreViewAction } from "./restore-view-action.js";
+
+registerEditViewAction();
+registerRestoreViewAction();
 
 // The workspace-scoped action's handler, so "make me a board of my open tasks"
 // is reachable through invoke_action and not only through this router.

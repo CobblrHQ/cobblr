@@ -1,27 +1,26 @@
 // Part-DB — the one-click LIVE import card. The flow lives in LiveImportModal;
 // this is Part-DB's descriptor. Two things are Part-DB-specific:
-//   • Part-DB stocks one part in several places (lots). Cobblr keeps one
-//     location per part today, so the parts section previews first and the
-//     summary says how many parts were collapsed, rather than dropping the
-//     fact quietly. Every lot is kept on the part.
+//   • Part-DB stocks one part in several places (lots). A part lands as one
+//     card with a row for each place, so the parts section previews first and
+//     the summary says how many parts that applies to and how many places it
+//     makes.
 //   • A token can be valid and still be refused: the token's user needs the
 //     "Access API" permission, and Part-DB answers 403, not 401. Telling the
 //     user to re-paste the token would not help, so the 403 gets its own copy.
 
-import { productName } from "@cobblr/platform-web";
 import { LiveImportModal, type LiveImportSource } from "./LiveImportModal";
 import type { ImportPlan } from "../lib/api";
 
-/** Parts whose Part-DB record carries more than one lot: the single location_id
- *  Cobblr keeps is a lossy pick for exactly these. Counted from the previewed
- *  records (the mapped metadata rides in `fields`). */
-export function multiLotCount(plan: ImportPlan): number {
-  let n = 0;
-  for (const it of plan.items) {
-    const md = (it.fields?.metadata as { partdb?: { lots?: unknown } } | undefined)?.partdb;
-    if (Array.isArray(md?.lots) && md.lots.length > 1) n += 1;
-  }
-  return n;
+/** What the import does with parts kept in several bins: each is one card with
+ *  a place for every bin, so say how many parts and how many places. Counted
+ *  from the previewed records, which carry how many more places each makes. */
+export function placesNote(plan: ImportPlan): string[] {
+  const kept = plan.items.filter((it) => (it.holdings ?? 0) > 0);
+  if (kept.length === 0) return [];
+  const places = kept.reduce((n, it) => n + (it.holdings ?? 0), 0);
+  return [
+    `${kept.length} ${kept.length === 1 ? "part is" : "parts are"} kept in more than one place. Each lands as one card with a row for every place, ${places} more ${places === 1 ? "place" : "places"} in all, and the card's quantity is the total across them.`,
+  ];
 }
 
 export const PARTDB_LIVE: LiveImportSource = {
@@ -45,13 +44,7 @@ export const PARTDB_LIVE: LiveImportSource = {
       key: "parts",
       running: "your parts",
       stat: "parts imported",
-      previewNotes: (plan) => {
-        const n = multiLotCount(plan);
-        if (n === 0) return [];
-        return [
-          `${n} ${n === 1 ? "part is" : "parts are"} stocked in more than one place. ${productName()} tracks one location per part, so each landed at its first lot's location. Every lot is kept on the part, and the quantity is the total across all of them.`,
-        ];
-      },
+      previewNotes: placesNote,
     },
   ],
   viewHref: "/inventory",

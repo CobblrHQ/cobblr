@@ -46,6 +46,7 @@ const AttachBody = z.object({
   { message: "exactly one of tag_name or tag_id must be provided" },
 );
 
+// AI-REACH: crud
 tagsRouter.post(
   "/tags",
   asyncHandler(async (req, res) => {
@@ -118,6 +119,7 @@ tagsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 tagsRouter.patch(
   "/tags/:id",
   asyncHandler(async (req, res) => {
@@ -181,6 +183,7 @@ tagsRouter.patch(
 // workspace, so it is an owner's or admin's call (or a grant of
 // core-tags:delete-tag); a member is told so and can ask. What it took is
 // kept, so it can be put back (tag-writes.ts).
+// AI-REACH: crud
 tagsRouter.delete(
   "/tags/:id",
   asyncHandler(async (req, res) => {
@@ -357,11 +360,11 @@ tagsRouter.get(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: core-tags:untag-record
 tagsRouter.delete(
   "/attachments/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-tags:untag-record"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

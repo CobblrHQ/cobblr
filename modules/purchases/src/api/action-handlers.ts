@@ -123,6 +123,7 @@ export function registerPurchasesActionHandlers(): void {
       .executeTakeFirst();
     let created = false;
     if (!order) {
+      // check-then-insert: the only unique key on an order is metadata.import_key, which an auto-drafted order never has, so two of these cannot collide on it
       order = await db
         .insertInto("purchases_orders")
         .values({

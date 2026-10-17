@@ -20,7 +20,8 @@ const Body = z.object({
   source: z.object({ kind: z.string(), id: z.string() }).optional(),
 });
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — a raw model call spends the workspace's AI credit outside
+// any conversation; from the assistant it would be an unmetered model-in-a-model loop
 // UI-REACH: low-level capability invocation for API clients; people use the task-specific chat, scan and build flows.
 invokeRouter.post(
   "/",

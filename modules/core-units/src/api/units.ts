@@ -12,7 +12,8 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
-import { tenantDb } from "../db.js";
+import type { Kysely } from "kysely";
+import { tenantDb, type CoreUnitsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { BUILTIN_UNITS } from "../units-catalog.js";
 
@@ -100,11 +101,11 @@ unitsRouter.post(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: core-units:remove-unit
 unitsRouter.delete(
   "/:code",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-units:remove-unit"))) return;
     const code = req.params.code;
     if (!code) {
       res.status(400).json({ error: { code: "missing_code", message: "code required" } });
@@ -123,26 +124,28 @@ unitsRouter.get(
   }),
 );
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+export const DISPLAY_MODES = ["symbol", "name", "both"] as const;
+export type DisplayMode = (typeof DISPLAY_MODES)[number];
+
+/** The one write of the workspace's unit display, for the route and core-units:set-display-mode. */
+export async function writeDisplayMode(db: Kysely<CoreUnitsDB>, mode: DisplayMode): Promise<void> {
+  await db
+    .insertInto("core_units_settings")
+    .values({ id: 1, display_mode: mode })
+    .onConflict((oc) => oc.column("id").doUpdateSet({ display_mode: mode, updated_at: new Date() }))
+    .execute();
+}
+
+// AI-ACTION: core-units:set-display-mode
 unitsRouter.put(
   "/settings",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-units:set-display-mode"))) return;
     const parsed = z
-      .object({ display_mode: z.enum(["symbol", "name", "both"]) })
+      .object({ display_mode: z.enum(DISPLAY_MODES) })
       .safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    await db
-      .insertInto("core_units_settings")
-      .values({ id: 1, display_mode: parsed.data.display_mode })
-      .onConflict((oc) =>
-        oc.column("id").doUpdateSet({
-          display_mode: parsed.data.display_mode,
-          updated_at: new Date(),
-        }),
-      )
-      .execute();
+    await writeDisplayMode(tenantDb(req), parsed.data.display_mode);
     res.json({ display_mode: parsed.data.display_mode });
   }),
 );

@@ -16,6 +16,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
 import { buildEdgeRelay, reverseBuildIfCommitted, markJobTerminal } from "../jobs-core.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
@@ -110,7 +111,8 @@ connectionsRouter.get(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — takes a machine manager's credentials; the assistant
+// never handles a secret
 connectionsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -150,7 +152,8 @@ connectionsRouter.get(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — replaces a manager's credentials or the address they are
+// sent to; the assistant never handles or redirects a secret
 connectionsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -186,7 +189,8 @@ connectionsRouter.patch(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — deletes a manager's stored credentials for good and cuts
+// every machine on it off; no undo can bring a secret back
 connectionsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -228,24 +232,31 @@ connectionsRouter.delete(
 
 // ── driver operations (still here — they build a fabrication driver) ─────────
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+/** Ask a connection's manager whether it answers with the stored credentials,
+ *  and stamp what it said. The route and digifab:test-connection share it; the
+ *  result is the driver's verdict, never the credentials. Takes an id or label. */
+export async function testMachineConnection(
+  db: Kysely<DigifabDB>,
+  orgId: string,
+  ref: string,
+): Promise<{ found: false } | { found: true; id: string; result: Awaited<ReturnType<MachineDriver["testConnection"]>> }> {
+  const row = await store().getInternal(orgId, ref);
+  if (!row) return { found: false };
+  const driver = await buildDriver(db, orgId, row);
+  const result = await driver.testConnection();
+  await store().setProbe(orgId, row.id, result.capabilities as unknown as Record<string, unknown>, result.ok ? "ok" : `error: ${result.detail ?? "unknown"}`);
+  void platform().events.emit("digifab.connection.tested", { orgId, rowId: row.id, ok: result.ok });
+  return { found: true, id: row.id, result };
+}
+
+// AI-ACTION: digifab:test-connection
 connectionsRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const ctx = tenantContext(req);
-    const row = await store().getInternal(ctx.org.id, req.params.id!);
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
-    const driver = await buildDriver(tenantDb(req), ctx.org.id, row);
-    const result = await driver.testConnection();
-    await store().setProbe(
-      ctx.org.id,
-      row.id,
-      result.capabilities as unknown as Record<string, unknown>,
-      result.ok ? "ok" : `error: ${result.detail ?? "unknown"}`,
-    );
-    void platform().events.emit("digifab.connection.tested", { orgId: ctx.org.id, rowId: req.params.id!, ok: result.ok });
-    res.json(result);
+    if (!(await requireCapability(req, res, "digifab:test-connection"))) return;
+    const out = await testMachineConnection(tenantDb(req), tenantContext(req).org.id, req.params.id!);
+    if (!out.found) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    res.json(out.result);
   }),
 );
 

@@ -6,10 +6,11 @@
 // ./drivers; this is the connection registry + its HTTP surface.
 
 import { defineModule } from "@cobblr/platform-contract";
+import { FAMILY_ACTIONS, FAMILY_PANELS, FAMILY_PARTS } from "./families/manifests.js";
 
 export default defineModule({
   name: "digifab",
-  version: "0.39.0",
+  version: "0.40.5",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -24,6 +25,10 @@ export default defineModule({
   // model file's page). Keeps it out of the funnel's "track a kind of
   // thing" column — what-to-do-funnel.md option (c).
   operatesOn: ["machines", "core-files"],
+
+  // Families of machines a workspace has on or off on their own: robot arms
+  // first (docs/modules/digifab-families.md).
+  parts: FAMILY_PARTS,
 
   schema: {
     tablePrefix: "digifab_",
@@ -176,6 +181,7 @@ export default defineModule({
       // Print this on a model file's own page (Services §14.3): the door to a
       // Make, a printer it fits, a slice, and the one yes.
       { id: "digifab:print-this", surface: "entity-detail-panel" as const, target: "core-files:file", title: "Print this" },
+      ...FAMILY_PANELS,
     ],
   },
 
@@ -722,6 +728,23 @@ export default defineModule({
         invokeHandler: "digifab.run-command",
         userInvokable: false,
       },
+      {
+        group: "more",
+        // UI-SCREEN: /digifab
+        id: "digifab:test-connection",
+        // ADMIN-ONLY: the page's own route POST /connections/:id/test is owner or admin (connections.ts)
+        runBy: "admin",
+        examples: ["is the OctoPrint connection still working", "check the Duet link"],
+        label: "Test a machine connection",
+        description: "Check that a machine manager (OctoPrint, Duet, Klipper, a Bambu account, a bridge) still answers with the credentials stored for it, and say what it found. The credentials are never shown; nothing is sent to a machine.",
+        scope: "workspace",
+        invokeHandler: "digifab.test-connection",
+        userInvokable: true,
+        argsSchema: {
+          connection: { label: "Which connection (its name)", type: "text", required: true },
+        },
+      },
+      ...FAMILY_ACTIONS,
     ],
   },
 

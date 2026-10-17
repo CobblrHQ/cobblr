@@ -23,6 +23,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { apiDirs } from "./lib/manifest-sources.ts";
 
 const MODULES_DIR = "modules";
 const MARKER = "ENDPOINT-SERVED:";
@@ -113,8 +114,7 @@ async function main(): Promise<void> {
       continue; // an invalid manifest is lint-manifests' failure, not this one's
     }
     if (kinds.length === 0) continue;
-    const apiDir = join(dir, "src", "api");
-    const routes = servedRoutes([...walk(apiDir)].map((f) => readFileSync(f, "utf8")));
+    const routes = servedRoutes(apiDirs(dir).flatMap((d) => [...walk(d)]).map((f) => readFileSync(f, "utf8")));
     const manifest = readFileSync(entry, "utf8").split("\n");
     for (const k of kinds) {
       for (const [field, methods] of VERBS) {

@@ -219,9 +219,11 @@ if (LOCATION !== -1 && FILE_ALL !== -1) {
         "identifies the session and the filing trio, not for more controls). " +
         "e2e/mobile-text-not-cut.mjs is the check.",
     );
-  } else if (!/\boverflow-hidden\b/.test(hdrTag)) {
+  // overflow-x-clip clips the same sideways and lets a 44 px target reach into
+  // the row's padding above and below (#6881).
+  } else if (!/\boverflow-(hidden|x-clip)\b/.test(hdrTag)) {
     errors.push(
-      "the session header row must carry `overflow-hidden` - without it a row " +
+      "the session header row must carry `overflow-hidden` or `overflow-x-clip` - without it a row " +
         "that does not fit pushes the whole page sideways.",
     );
   }
@@ -321,9 +323,9 @@ if (!headerBar) {
   // One clipping row at every width, the phone included (#2982): the name
   // truncates, a control never wraps. Any flex-wrap on the bar is the drift.
   errors.push("the session header bar is one line at every width - no flex-wrap, not even under sm; the name truncates instead (#2982)");
-} else if (!headerBar[0].includes("overflow-hidden")) {
+} else if (!/\boverflow-(hidden|x-clip)\b/.test(headerBar[0])) {
   errors.push(
-    "the session header bar must keep overflow-hidden - without it a fully-loaded session pushes the page sideways instead of clipping",
+    "the session header bar must keep overflow-hidden or overflow-x-clip - without it a fully-loaded session pushes the page sideways instead of clipping",
   );
 }
 

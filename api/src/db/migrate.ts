@@ -67,7 +67,11 @@ export interface MigrationResult {
    *  forever (#2944). */
   total: number;
   latest: string | null;
-  /** What this run applied that an OLDER api could not survive: a declared
+  /** Every migration applied in this scope, and on this build's disk, that an
+   *  OLDER api could not survive, whether this run applied it or an earlier
+   *  one did (#7148): a run that committed a contract migration and died
+   *  before the platform marker was written, or a pre-pass whose result was
+   *  not kept, must not leave the next run unable to say so. A declared
    *  contract migration (`-- PHASE: contract`) that drops, renames, retypes
    *  or constrains (migration-shape.ts). Recorded beside the marker so an
    *  older api sharing the database can tell a harmless newer build from one
@@ -260,8 +264,15 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
           console.log(`[migrate:${scope}] ${file} is ${twin} renumbered: recorded under its new name, not re-run`);
         }
         justRan.push(file);
-        if (hasContractMarker(sql) && findBreakingChanges(sql).length > 0) breaking.push(file);
+        if (isBreaking(sql)) breaking.push(file);
       }
+      // And what earlier runs applied, which this run's caller may be the
+      // first to record.
+      for (const file of files) {
+        if (!applied.has(file) || renamed.has(file)) continue;
+        if (await appliedFileBreaks(directory, file, appliedRows.get(file) ?? null)) breaking.push(file);
+      }
+      breaking.sort();
 
       const all = [...[...applied].filter((f) => !renamed.has(f)), ...justRan].sort();
       return { applied: justRan, alreadyApplied: applied.size, total: all.length, latest: all.length ? all[all.length - 1]! : null, breaking };
@@ -273,6 +284,24 @@ export async function runMigrations(opts: MigrationRunOptions): Promise<Migratio
     // checkout re-attaching would stack one more copy per migration run.
     client.release();
   }
+}
+
+function isBreaking(sql: string): boolean {
+  return hasContractMarker(sql) && findBreakingChanges(sql).length > 0;
+}
+
+/** Whether an applied file breaks an older api, remembered by its content's
+ *  checksum (or, for a ledger row older than checksums, its path): a merged
+ *  migration never changes, so a settled ledger reads each file once per
+ *  process, not once per workspace per boot. */
+const appliedBreaks = new Map<string, boolean>();
+async function appliedFileBreaks(directory: string, file: string, checksum: string | null): Promise<boolean> {
+  const key = checksum ?? `path:${join(directory, file)}`;
+  const known = appliedBreaks.get(key);
+  if (known !== undefined) return known;
+  const verdict = isBreaking(await readFile(join(directory, file), "utf8"));
+  appliedBreaks.set(key, verdict);
+  return verdict;
 }
 
 async function bootstrapTrackerTable(client: PoolClient) {

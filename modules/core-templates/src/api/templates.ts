@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { platform, type EntityKindRecord } from "@cobblr/platform-contract";
 import { bearer, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
 export const templatesRouter = Router({ mergeParams: true });
@@ -51,7 +52,7 @@ const KIND_CREATE_ENDPOINTS: Record<string, string> = {
 /** Where a template for this kind makes a record: the fixed paths first, then any
  *  primary kind the registry says can be created (its module-relative create
  *  endpoint), so a module's kind needs no edit here to take templates (#6755). */
-function createPathOf(kindId: string, kind: EntityKindRecord | null): string | null {
+export function createPathOf(kindId: string, kind: EntityKindRecord | null): string | null {
   const fixed = KIND_CREATE_ENDPOINTS[kindId];
   if (fixed) return fixed;
   const create = kind?.endpoints?.create;
@@ -107,11 +108,11 @@ templatesRouter.get(
   }),
 );
 
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-ACTION: core-templates:save-template
 templatesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-templates:save-template"))) return;
     const parsed = TemplateCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -137,11 +138,11 @@ templatesRouter.post(
   }),
 );
 
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-ACTION: core-templates:save-template
 templatesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-templates:save-template"))) return;
     const parsed = TemplateUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const id = req.params.id;
@@ -180,11 +181,11 @@ templatesRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: core-templates:delete-template
 templatesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-templates:delete-template"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -213,7 +214,10 @@ templatesRouter.delete(
 // with (defaults ∪ overrides), then attaches default_tags via
 // core-tags' polymorphic attachments table. Returns the created
 // entity verbatim.
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — re-issues the person's own sign-in to the target kind's
+// create door, which an assistant has none of; the assistant makes the same
+// record with create_record from the template's values and tags, which
+// get_workspace_setup (part: "templates") reads out
 templatesRouter.post(
   "/:id/instantiate",
   asyncHandler(async (req, res) => {

@@ -1,7 +1,7 @@
 // The no-code wire composer — a guided "When X → Do Y" builder that emits the
 // same createBinding payload as the old flat form. Pure logic (RRULE, tokens,
 // preview) lives in ../lib/wire-composer; this is the UI shell.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
 import { useToast, NumberField, SegmentedChoice } from "@cobblr/platform-web";
@@ -16,7 +16,8 @@ import {
   type StockChange,
   type WireRecords,
 } from "@cobblr/platform-contract/wire-narrowing";
-import { withArticle } from "@cobblr/platform-contract/plural";
+import { countOf, withArticle } from "@cobblr/platform-contract/plural";
+import { HOLDING_OF } from "@cobblr/platform-contract/holdings";
 import { StockChangePicker, WireRecordsPicker, wireRecordsReady } from "./WireNarrowing";
 import {
   TRIGGER_OPTIONS,
@@ -225,6 +226,25 @@ export function WireComposer({
     whose: recordless ? null : whoseRecords(records, kind?.display_name ?? "record", recordName),
   });
 
+  // How many records this wire would fire on if it ran now. Asked a moment
+  // after the last keystroke, over the same filter the wire would be saved with.
+  const filterNow = JSON.stringify(builtFilter());
+  const [askedFilter, setAskedFilter] = useState(filterNow);
+  useEffect(() => {
+    const t = setTimeout(() => setAskedFilter(filterNow), 350);
+    return () => clearTimeout(t);
+  }, [filterNow]);
+  const reach = useQuery({
+    queryKey: ["wire-preview", slug, sourceKind, triggerType, askedFilter],
+    queryFn: () => api.previewWire(slug, { source_kind: sourceKind, trigger_type: triggerType, filter: JSON.parse(askedFilter) }),
+    enabled: !!slug && !!sourceKind && !recordless,
+  });
+  const relationships = useQuery({
+    queryKey: ["relationship-kinds", slug, sourceKind],
+    queryFn: () => api.listRelationshipKinds(slug, sourceKind),
+    enabled: !!slug && !!sourceKind && showTarget,
+  });
+
   const filledArgs = (): Record<string, unknown> | undefined => {
     const out: Record<string, unknown> = {};
     for (const [name, v] of Object.entries(args)) {
@@ -306,6 +326,14 @@ export function WireComposer({
       <div className="rounded-lg border-l-2 border-accent/40 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
         <span className={L}>Preview</span>
         <p className="text-sm italic text-muted dark:text-slate-300">{preview}</p>
+        {reach.data && reach.data.count !== null && (
+          <p data-testid="wire-reach" className="mt-1 text-xs text-muted dark:text-slate-400">
+            {countOf(reach.data.count, kind?.display_name?.toLowerCase() || "record")}
+            {reach.data.of !== null && reach.data.of !== reach.data.count ? ` of ${reach.data.of}` : ""} {reach.data.means}.
+            {!reach.data.complete ? " Counted from the first 5000." : ""}
+            {reach.data.ignored.length ? ` Not counted: ${reach.data.ignored.join(", ")} (only known when it happens).` : ""}
+          </p>
+        )}
       </div>
 
       {/* WHEN */}
@@ -676,11 +704,10 @@ export function WireComposer({
             />
             {target !== "self" && (
                   <div className="mt-1.5 grid grid-cols-3 gap-2">
-                    <input
+                    <RelationshipPicker
                       value={target.rel}
-                      onChange={(e) => setTarget({ ...target, rel: e.target.value })}
-                      placeholder="relationship (e.g. matches)"
-                      className="input text-xs col-span-2"
+                      onChange={(rel) => setTarget({ ...target, rel })}
+                      items={withKnownRelationships(relationships.data?.items ?? [])}
                     />
                     <select aria-label="Direction"
                       value={target.dir ?? "out"}
@@ -853,4 +880,66 @@ function whoseRecords(r: WireRecords | null, kindLabel: string, recordName: stri
   if (r.tag) return `${withArticle(noun)} tagged “${r.tag}”`;
   if (r.view) return `${withArticle(noun)} the saved view shows`;
   return null;
+}
+
+/** The two links the product itself makes are always offered, in use or not. */
+function withKnownRelationships(inUse: { relationship: string; count: number }[]) {
+  const missing = ["matches", HOLDING_OF].filter((r) => !inUse.some((i) => i.relationship === r));
+  return [...inUse, ...missing.map((relationship) => ({ relationship, count: 0 }))];
+}
+
+/** The relationships in use as a list, with how many links each has. A new one
+ *  is still typed: "Something else" opens a box. */
+function RelationshipPicker({
+  value,
+  onChange,
+  items,
+}: {
+  value: string;
+  onChange: (rel: string) => void;
+  items: { relationship: string; count: number }[];
+}) {
+  const known = items.some((i) => i.relationship === value);
+  const [typing, setTyping] = useState(!!value && !known);
+  const NEW = "__new__";
+  if (typing || items.length === 0) {
+    return (
+      <div className="col-span-2 flex gap-1">
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="relationship (e.g. matches)"
+          aria-label="Relationship"
+          className="input text-xs min-w-0 flex-1"
+        />
+        {items.length > 0 && (
+          <button type="button" className="text-[10px] text-accent px-1" onClick={() => { setTyping(false); onChange(""); }}>
+            pick
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <select
+      aria-label="Relationship"
+      value={known ? value : ""}
+      onChange={(e) => {
+        if (e.target.value === NEW) {
+          setTyping(true);
+          onChange("");
+        } else onChange(e.target.value);
+      }}
+      className="input text-xs col-span-2"
+    >
+      <option value="">Pick a relationship…</option>
+      {items.map((i) => (
+        <option key={i.relationship} value={i.relationship}>
+          {i.relationship}
+          {i.count > 0 ? ` (${countOf(i.count, "link")})` : ""}
+        </option>
+      ))}
+      <option value={NEW}>Something else…</option>
+    </select>
+  );
 }

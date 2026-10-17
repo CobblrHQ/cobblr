@@ -162,9 +162,15 @@ function AccountCard({
  *  each hold one field is the thin-page smell. */
 export function MeIdentityPage() {
   usePageTitle("Identity & password");
-  const { user } = useAuth();
+  const { user, refreshMe } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
+  // The session user is what each section starts from, so a save refreshes it;
+  // the ["me"] query alone left a section comparing against the name before the save.
+  const saved = () => {
+    void qc.invalidateQueries({ queryKey: ["me"] });
+    void refreshMe();
+  };
   return (
     <div className="space-y-4">
       {user && (
@@ -172,8 +178,18 @@ export function MeIdentityPage() {
           initial={user.display_name}
           email={user.email}
           onSaved={() => {
-            void qc.invalidateQueries({ queryKey: ["me"] });
+            saved();
             toast.success("Profile saved");
+          }}
+        />
+      )}
+      {user && (
+        <UsernameSection
+          initial={user.username ?? ""}
+          hasEmail={user.has_email !== false}
+          onSaved={(u) => {
+            saved();
+            toast.success(u ? `You can sign in as ${u} now.` : "Username removed. Sign in with your email.");
           }}
         />
       )}
@@ -192,6 +208,60 @@ export function MeAppearancePage() {
       <TitleFormatSection />
       <LayoutSection />
     </div>
+  );
+}
+
+/** A name to sign in with beside the email (#6910): "demo" on a shared kiosk
+ *  instead of an address. Lower-case letters, digits, dots, dashes and
+ *  underscores; the server says why one is refused. */
+function UsernameSection({ initial, hasEmail, onSaved }: { initial: string; hasEmail: boolean; onSaved: (u: string | null) => void }) {
+  // DRAFT-OK: the person's own sign-in name on their own profile form; no action elsewhere moves it.
+  const [name, setName] = useState(initial);
+  const toast = useToast();
+  const save = useMutation({
+    mutationFn: (username: string | null) => api.updateMe({ username }),
+    onSuccess: (_d, username) => onSaved(username),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
+  const cleaned = name.trim().toLowerCase();
+  const dirty = cleaned !== initial;
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3" data-testid="username-section">
+      <h2 className="text-sm font-medium text-content dark:text-slate-300">Username</h2>
+      <p className="text-xs text-muted">
+        {hasEmail
+          ? "Optional. Sign in with it or with your email, whichever is easier to type on the device in front of you."
+          : "This account has no email, so it signs in with its username. If you forget the password, an admin of your workspace resets it."}
+      </p>
+      <label className="block">
+        <div className="text-xs text-muted mb-1">Username</div>
+        <input
+          type="text"
+          value={name}
+          autoCapitalize="none"
+          spellCheck={false}
+          autoComplete="username"
+          placeholder="e.g. demo"
+          onChange={(e) => setName(e.target.value)}
+          className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
+        />
+      </label>
+      <div className="flex justify-end gap-2 pt-2">
+        {initial && hasEmail && (
+          <button type="button" onClick={() => save.mutate(null)} disabled={save.isPending} className="px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 text-muted hover:text-content">
+            Remove
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => save.mutate(cleaned || null)}
+          disabled={!dirty || !cleaned || save.isPending}
+          className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white"
+        >
+          {save.isPending ? "saving…" : "Save"}
+        </button>
+      </div>
+    </section>
   );
 }
 

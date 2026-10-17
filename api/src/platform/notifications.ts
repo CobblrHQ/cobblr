@@ -5,6 +5,7 @@
 // Channel registry is process-static — channels can't be added at
 // runtime (and don't need to be in Phase 0).
 
+import { isCapped, notePaused, takeSendSlot } from "./channel-send-cap.js";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { orgMemberIds } from "./memberships.js";
@@ -39,6 +40,7 @@ import {
   windowsFor,
   windowFor,
   enqueueDeferred,
+  winningSubscription,
   type TriggeredBy,
 } from "./delivery-windows.js";
 import { decodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
@@ -228,16 +230,10 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     NotificationChannel,
     typeof subs[number]
   >();
-  for (const s of subs) {
-    const existing = winningByChannel.get(s.channel);
-    if (!existing) {
-      winningByChannel.set(s.channel, s);
-      continue;
-    }
-    // Exact beats wildcard.
-    if (existing.event_type === "*" && s.event_type !== "*") {
-      winningByChannel.set(s.channel, s);
-    }
+  // The held send asks the same question when it flushes (#7074).
+  for (const channel of new Set(subs.map((s) => s.channel))) {
+    const won = winningSubscription(subs.filter((s) => s.channel === channel), p.eventType);
+    if (won) winningByChannel.set(channel, won);
   }
 
   const effective: Array<{
@@ -332,6 +328,39 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       liveChannels.push({ channel: channel as NotificationChannel, config: null });
     }
   }
+
+  // 2c. The send cap (#6908): a channel that has sent its hour's worth holds
+  //     the rest for its next digest, and the bell says so once. The bell is
+  //     never capped. Counted per send, atomically, so a burst cannot race past.
+  const sendNow: typeof liveChannels = [];
+  for (const e of liveChannels) {
+    if (!isCapped(e.channel)) {
+      sendNow.push(e);
+      continue;
+    }
+    const slot = await takeSendSlot(p.userId, e.channel);
+    if (slot.allowed) {
+      sendNow.push(e);
+      continue;
+    }
+    try {
+      await enqueueDeferred(meta as never, {
+        user_id: p.userId,
+        channel: e.channel,
+        notification_id: inserted.id,
+        org_id: p.orgId,
+        event_type: p.eventType,
+        message: e.channel === "browser_push" && p.private ? privatePushLine(p.eventType) : p.message,
+        link_url: p.link_url ?? null,
+        priority,
+        triggered_by: triggeredBy,
+      });
+      if (slot.firstOver) await notePaused({ orgId: p.orgId, userId: p.userId, channel: e.channel, slot });
+    } catch (err) {
+      console.error(`[notify] holding over-cap ${e.channel} failed:`, err);
+    }
+  }
+  liveChannels.splice(0, liveChannels.length, ...sendNow);
 
   // 3. Fan out in parallel. A failing channel doesn't take the others
   //    down with it. Channels not in the registry (or stubbed out)
@@ -532,6 +561,35 @@ export function answerChannel(
  *  channels: in_app (the bell), email (the platform sender), discord_dm (the
  *  bot — only if connected + verified). Honors the Communication Preferences
  *  matrix; a disabled channel is simply skipped. */
+/** Whether an account notice may go out on a capped channel now (#7076): it
+ *  takes the same per-person slot as a workspace dispatch, so the two funnels
+ *  share one hourly budget. A credential (tier 1) is never held. Over the cap
+ *  the notice waits for that channel's next summary and the bell says once
+ *  that the channel paused. */
+async function accountSendSlot(
+  args: NotifyAccountParams,
+  channel: "email" | "discord_dm",
+  notificationId: string | null,
+): Promise<"send" | "held" | "capped"> {
+  if (tierOf(args.notificationType) === 1) return "send";
+  const slot = await takeSendSlot(args.userId, channel);
+  if (slot.allowed) return "send";
+  if (slot.firstOver) await notePaused({ orgId: args.representativeOrgId, userId: args.userId, channel, slot });
+  if (!notificationId) return "capped";
+  await enqueueDeferred(meta as never, {
+    user_id: args.userId,
+    channel,
+    notification_id: notificationId,
+    org_id: args.representativeOrgId,
+    event_type: args.notificationType,
+    message: channel === "discord_dm" ? (args.discordMessage ?? args.message) : args.message,
+    link_url: args.link_url ?? null,
+    priority: args.priority ?? "normal",
+    triggered_by: "activity",
+  });
+  return "held";
+}
+
 export async function notifyAccount(
   args: NotifyAccountParams,
 ): Promise<{ notificationId: string | null; deliveredVia: PrefChannel[]; outcomes: DeliveryOutcomes }> {
@@ -601,8 +659,11 @@ export async function notifyAccount(
       .select(["email"])
       .where("id", "=", args.userId)
       .executeTakeFirst();
+    const slot = u?.email ? await accountSendSlot(args, "email", notificationId) : null;
     if (!u?.email) {
       outcomes.email = "no-address";
+    } else if (slot !== "send") {
+      outcomes.email = slot!;
     } else {
       const ok = await sendAuthEmail({ to: u.email, subject: args.email.subject, text: args.email.text, html: args.email.html, kind: "notification", replyTo: args.email.replyTo, from: args.email.from, inReplyTo: args.email.inReplyTo, references: args.email.references });
       if (ok) {
@@ -620,6 +681,8 @@ export async function notifyAccount(
     outcomes.discord_dm = "opted-out";
   } else {
     const state = discordConnectionState(conn);
+    // Only a DM that would really go takes a send slot.
+    const dmSlot = state === "verified" ? await accountSendSlot(args, "discord_dm", notificationId) : null;
     if (state === "not-connected") {
       outcomes.discord_dm = "not-connected";
     } else if (state === "unverified") {
@@ -629,6 +692,8 @@ export async function notifyAccount(
       // current bot may not share a server with this person, so the DM would
       // vanish rather than fail loudly. Say so instead of sending into it.
       outcomes.discord_dm = "stale-app";
+    } else if (dmSlot !== "send") {
+      outcomes.discord_dm = dmSlot!;
     } else {
       // The same DM a workspace notification becomes, card and all.
       const res = await sendDiscordDm({

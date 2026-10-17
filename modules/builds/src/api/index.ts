@@ -14,6 +14,9 @@ import { registerBuildsActionHandlers } from "./action-handlers.js";
 import { asyncHandler } from "./util.js";
 import { sessionUser, tenantContext } from "../db.js";
 import { searchComponents } from "../component-search.js";
+import { registerSetSubAssemblySourceAction } from "./set-sub-assembly-source-action.js";
+
+registerSetSubAssemblySourceAction();
 
 registerBoardRevisionActions();
 registerAssemblyOrderActions();

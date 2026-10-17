@@ -8,7 +8,7 @@
 import { sql, type Kysely } from "kysely";
 import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
-import { consumeComponents, explodeLeafComponents } from "../build-engine.js";
+import { consumePlan, explodeLeafComponents, planBuild, planLines } from "../build-engine.js";
 import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
 
 let registered = false;
@@ -50,12 +50,12 @@ export function registerBuildsActionHandlers(): void {
     if (!build) return { ok: false, skipped: "build not found" };
     if ((build.metadata as { assembly?: unknown } | null)?.assembly) return { ok: false, error: "Use this board revision’s assembly work order to record production." };
 
-    // Explode nested sub-assemblies down to leaf inventory parts, then consume.
-    const comps = await explodeLeafComponents(ctx.orgId, buildId);
+    // Stocked sub-assemblies first, the rest exploded down to leaf parts; consume both.
+    const plan = await planBuild(ctx.orgId, buildId, qty);
 
-    let consumed: Awaited<ReturnType<typeof consumeComponents>>;
+    let consumed: Awaited<ReturnType<typeof consumePlan>>;
     try {
-      consumed = await consumeComponents(ctx.orgId, ctx.userId, buildId, comps, qty);
+      consumed = await consumePlan(ctx.orgId, ctx.userId, buildId, plan);
     } catch (e) {
       if (isActionRefusal(e)) return { ok: false, error: e.message };
       throw e;
@@ -112,7 +112,8 @@ export function registerBuildsActionHandlers(): void {
       qtyBuilt: qty,
       viaWire: ctx.event?.trigger_type === "event",
     });
-    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed, outputDeferred: deferOutput };
+    const lines = planLines(plan);
+    return { ok: true, runId: run.id, buildId, qtyBuilt: qty, consumed, outputDeferred: deferOutput, ...(lines.length ? { summary: `Built ${qty} ${build.name}. ${lines.join("; ")}.` } : {}) };
   });
 
   // The output leg of a deferred build-one: N builds came out good, so their
@@ -308,7 +309,21 @@ export function registerBuildsActionHandlers(): void {
       .executeTakeFirst();
     if (!build) return { ok: false, skipped: "build not found" };
 
-    const comps = await explodeLeafComponents(ctx.orgId, buildId);
+    // What the latest run took, per unit, comes back: a sub-assembly taken from
+    // the shelf goes back as itself, not as the parts it would have been made of.
+    // A build never run through Cobblr gives back its exploded parts, as before.
+    const last = await db
+      .selectFrom("builds_runs")
+      .select(["qty_built", "consumed"])
+      .where("build_id", "=", buildId)
+      .where(sql<boolean>`qty_built::numeric > 0`)
+      .orderBy("built_at", "desc")
+      .executeTakeFirst();
+    const lastQty = Number(last?.qty_built) || 0;
+    const took = Array.isArray(last?.consumed) ? (last!.consumed as Array<{ part_id?: unknown; quantity?: unknown }>) : [];
+    const comps = lastQty > 0 && took.length
+      ? took.filter((c) => typeof c.part_id === "string" && Number(c.quantity) > 0).map((c) => ({ part_id: c.part_id as string, quantity: Number(c.quantity) / lastQty }))
+      : await explodeLeafComponents(ctx.orgId, buildId);
     const returned: Array<{ part_id: string; quantity: number }> = [];
     for (const c of comps) {
       const inc = c.quantity * qty;

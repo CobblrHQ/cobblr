@@ -96,6 +96,17 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "views:read-a-view-query",
+    what: "a saved view's query (filter, where, sort) is read off its config by viewQuery, the one reading every surface shares",
+    why: "the public view, board and app readers passed only filter and sort, so a published \"Status is not Draft\" view showed its drafts to anyone with the link (#7126)",
+    owner: "packages/platform-contract/src/index.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /\b(cfg|vcfg|viewConfig|viewCfg)\.(filter|where)\b/,
+    also: /\bentities\.list(All)?\(/,
+    use: "...viewQuery(view.config, today) from @cobblr/platform-contract, and in a public reader publicViewRows from api/src/routes/public.ts",
+  },
+  {
+    kind: "owns",
     id: "inventory:stock-writes-refresh",
     what: "a stock write in inventory's screens goes through useStockWrites, which refreshes every read of the stock it changed",
     why: "Workshop stock kept the old remaining after Use some (#5811) and again after Stock arrived (#5895): each screen refreshed what its author remembered",

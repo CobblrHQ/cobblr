@@ -37,6 +37,7 @@
 
 import { readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { apiDirs } from "./lib/manifest-sources.ts";
 
 const MODULES_DIR = "modules";
 const BASELINE_PATH = "scripts/ai-coverage-baseline.json";
@@ -49,6 +50,13 @@ const ROUTE_RE = /(\w*[Rr]outer)\.(post|put|patch|delete)\(\s*["'`]([^"'`]*)["'`
 // lint-ai-reach-routes reads (and checks against the manifest), so a route
 // that says it once in either form is classified by both lints.
 const CATEGORY_RE = /AI-REACH:\s*(action|crud|exempt)\b|AI-TOOL:\s*[a-z0-9_]+|AI-ACTION:\s*[a-z0-9-]+:[a-z0-9-]+/i;
+
+// An exempt has to say WHY, as a reason the owner would agree with: a security
+// or safety boundary, or the door that does reach it. "Not needed" is the gap
+// this lint exists to close, not a reason (#6947).
+const EXEMPT_RE = /AI-REACH:\s*exempt\b\s*(?:internal\b)?[\s:—–-]*([^\n]*(?:\n\s*\/\/(?!\s*(?:UI-REACH|AI-|AUTH|TODO))[^\n]*)*)/i;
+const DISMISSAL_RE = /\b(not needed|no need|unneeded|not necessary|not useful|nobody (?:needs|asks)|not worth)\b/i;
+const MIN_REASON_WORDS = 4;
 
 interface Finding {
   file: string;
@@ -72,11 +80,12 @@ function walk(dir: string, out: string[]): void {
 }
 
 const findings: Finding[] = [];
+const badReasons: Array<Finding & { why: string }> = [];
 for (const m of readdirSync(MODULES_DIR)) {
-  const apiDir = join(MODULES_DIR, m, "src", "api");
-  if (!existsSync(apiDir) || !statSync(apiDir).isDirectory()) continue;
+  const dirs = apiDirs(join(MODULES_DIR, m)).filter((d) => statSync(d).isDirectory());
+  if (dirs.length === 0) continue;
   const files: string[] = [];
-  walk(apiDir, files);
+  for (const apiDir of dirs) walk(apiDir, files);
   for (const file of files.sort()) {
     const src = readFileSync(file, "utf8");
     const lines = src.split("\n");
@@ -86,7 +95,16 @@ for (const m of readdirSync(MODULES_DIR)) {
       const line = src.slice(0, match.index).split("\n").length; // 1-based
       // Marker lookback: the LOOKBACK lines immediately above the route line.
       const context = lines.slice(Math.max(0, line - 1 - LOOKBACK), line).join("\n");
-      if (CATEGORY_RE.test(context)) continue; // classified — reachable or justified
+      if (CATEGORY_RE.test(context)) {
+        const ex = context.match(EXEMPT_RE);
+        if (ex && !/AI-ACTION:|AI-TOOL:|AI-REACH:\s*(action|crud)\b/i.test(context)) {
+          const reason = ex[1]!.replace(/\/\//g, " ").replace(/\s+/g, " ").trim();
+          const words = reason.split(" ").filter((w) => /[a-z]/i.test(w)).length;
+          if (words < MIN_REASON_WORDS) badReasons.push({ file, method, path: routePath, line, why: "gives no reason" });
+          else if (DISMISSAL_RE.test(reason)) badReasons.push({ file, method, path: routePath, line, why: `says "${reason.match(DISMISSAL_RE)![0]}", which is not a reason` });
+        }
+        continue; // classified — reachable or justified
+      }
       findings.push({ file, method, path: routePath, line });
     }
   }
@@ -116,6 +134,14 @@ if (stale.length > 0) {
   console.log(
     `  (${stale.length} baseline entr${stale.length === 1 ? "y is" : "ies are"} stale — route gone or now classified; prune with --write-baseline)`,
   );
+}
+if (badReasons.length > 0) {
+  console.error(`\n✗ AI-REACH: exempt without a reason the owner would agree with:\n`);
+  for (const v of badReasons) console.error(`  ${v.file}:${v.line} — ${v.method.toUpperCase()} ${v.path}: ${v.why}`);
+  console.error(`\nSay what boundary keeps the assistant out (a secret, a person's own consent or
+Confirm, money, the device wire, a file stream) or which action/tool reaches the
+same thing. If none applies, the route needs an action, not an exemption.`);
+  process.exit(1);
 }
 if (fresh.length > 0) {
   console.error(`\n✗ NEW mutating route(s) with no AI-reachability classification:\n`);

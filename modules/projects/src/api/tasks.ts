@@ -174,6 +174,7 @@ tasksRouter.get(
   }),
 );
 
+// AI-REACH: crud
 tasksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -232,6 +233,7 @@ tasksRouter.post(
   }),
 );
 
+// AI-REACH: crud
 tasksRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -317,6 +319,7 @@ tasksRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 tasksRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

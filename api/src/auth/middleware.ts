@@ -167,6 +167,7 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/modules/digifab/floor",
   "/modules/digifab/fleet",
   /^\/modules\/digifab\/kilns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^\/modules\/digifab\/arms\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   "/modules/digifab/laser/profiles",
   "/modules/digifab/laser/plans",
   /^\/modules\/digifab\/laser\/design\/[A-Za-z0-9-]+$/,
@@ -203,6 +204,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/ai-job-order",
   "/personal-documents-reader",
   "/bindings",
+  // how many records a wire would fire on, and the links a wire can run on
+  "/bindings/preview",
+  "/relationship-kinds",
   "/modules/core-views/views",
   "/modules/core-apps/apps",
   "/modules/core-templates/templates",

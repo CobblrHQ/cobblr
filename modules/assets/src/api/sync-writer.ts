@@ -26,6 +26,11 @@ function patchOf(fields: Record<string, unknown>): Record<string, unknown> {
   if (fields.location_id !== undefined) patch.location_id = asStr(fields.location_id);
   if (fields.type !== undefined) patch.type = asStr(fields.type);
   if (fields.notes !== undefined) patch.notes = asStr(fields.notes);
+  // What a source that mirrors a register brings: the tag printed on it (the
+  // short name), its picture and when the warranty ends.
+  if (fields.short_name !== undefined) patch.short_name = asStr(fields.short_name);
+  if (fields.image_path !== undefined) patch.image_path = asStr(fields.image_path);
+  if (fields.warranty_until !== undefined) patch.warranty_until = asStr(fields.warranty_until);
   // What paperwork fills, by role or by its own words (a bill of sale's
   // make, model, VIN, date, price and dealer).
   if (fields.manufacturer !== undefined) patch.manufacturer = asStr(fields.manufacturer);
@@ -73,12 +78,13 @@ export function registerAssetsWriter(): void {
       const inserted = await db
         .insertInto("assets_assets")
         .values({
+          // Every column the caller supplies lands on the first write, as on an
+          // update: a sync mirrors a whole record, and a serial or a picture that
+          // only arrived on the SECOND run would never arrive (the hash is stored
+          // after the first). `type` is the asset's category (its declared
+          // categoryField), the one place the form shows it.
+          ...patchOf(fields),
           name: String(fields.name ?? "Untitled"),
-          // The asset's category (its declared categoryField): an import or a
-          // sync that knows it writes it here, the one place the form shows.
-          type: asStr(fields.type),
-          location_id: asStr(fields.location_id),
-          notes: asStr(fields.notes),
           metadata: sql`${JSON.stringify(fields.metadata ?? {})}::jsonb` as never,
         } as never)
         .returning("id")

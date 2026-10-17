@@ -34,6 +34,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [emailInput, setEmailInput] = useState("");
+  const [usernameInput, setUsernameInput] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [roleInput, setRoleInput] = useState<Role>("member");
   const [tempPassword, setTempPassword] = useState<TempPasswordResult | null>(null);
@@ -48,19 +49,21 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const create = useMutation({
     mutationFn: () =>
       api.adminCreateUser(activeSlug, {
-        email: emailInput.trim(),
+        ...(emailInput.trim() ? { email: emailInput.trim() } : {}),
+        ...(usernameInput.trim() ? { username: usernameInput.trim() } : {}),
         display_name: nameInput.trim(),
         role: roleInput,
       }),
     onSuccess: (res) => {
       setTempPassword({
-        email: res.user.email,
+        email: res.user.email ?? res.user.username ?? "",
         display_name: res.user.display_name,
         user_id: res.user.id,
         temp_password: res.temp_password,
       });
       void qc.invalidateQueries({ queryKey: ["permissions-matrix", activeSlug] });
       setEmailInput("");
+      setUsernameInput("");
       setNameInput("");
       setRoleInput("member");
       setOpen(false);
@@ -87,7 +90,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    if (!emailInput.trim() || !nameInput.trim()) return;
+    if ((!emailInput.trim() && !usernameInput.trim()) || !nameInput.trim()) return;
     create.mutate();
   }
 
@@ -183,12 +186,29 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
             </span>
             <input
               type="email"
-              required
+              // An account can go without an email only with a username, and only where
+              // the server allows it (COBBLR_USERNAME_ONLY_ACCOUNTS); it says so if not (#6910).
+              required={!usernameInput.trim()}
               autoFocus
               value={emailInput}
               onChange={(e) => setEmailInput(e.target.value)}
               className="input"
             />
+          </label>
+          <label className="block">
+            <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">
+              Username (optional)
+            </span>
+            <input
+              type="text"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="e.g. demo"
+              value={usernameInput}
+              onChange={(e) => setUsernameInput(e.target.value)}
+              className="input"
+            />
+            <span className="block text-xs text-muted mt-1">They can sign in with it or with their email.</span>
           </label>
           <label className="block">
             <span className="block text-[10px] uppercase tracking-widest text-faint mb-1">

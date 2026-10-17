@@ -87,7 +87,8 @@ function summarize(p: HomeboxParse) {
   };
 }
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — writes nothing; the person's look at their Homebox export
+// before they import it (see /homebox below)
 // UI-SCREEN: /configuration/integrations (Homebox CSV import previews the chosen file)
 homeboxRouter.post("/homebox/preview", (req, res, next) => {
   void (async () => {
@@ -139,7 +140,9 @@ async function ensureLocations(slug: string, token: string, paths: string[][]): 
   return { map, created, failed };
 }
 
-// AI-REACH: a one-shot importer of an uploaded export; the input is a file
+// AI-REACH: exempt — a bulk import of a whole Homebox export; as an action
+// argument the file would be ledgered and put on a confirm card. The
+// assistant adds records through create_records, one undoable set at a time
 // UI-SCREEN: /configuration/integrations (Homebox CSV import confirms the preview)
 homeboxRouter.post("/homebox", (req, res, next) => {
   void (async () => {

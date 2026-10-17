@@ -122,6 +122,7 @@ export const FIELD_ROLE_VALUES = [
   "pack",
   "identifier",
   "expiry",
+  "due",
   "assignee",
   "acquired-from",
   "acquired-on",
@@ -168,6 +169,11 @@ export const FIELD_ROLE_LABELS: Record<
   pack: { label: "How many in a pack", pickable: true },
   identifier: { label: "Its identifier (serial, VIN)", pickable: true },
   expiry: { label: "When it expires", pickable: true },
+  // A deadline, which is not an expiry: a chore is due and milk expires, and
+  // overdue means two different things for them. A record past this date with
+  // nothing done about it is told again, louder, each step (core-recurrence's
+  // overdue sweep); an expiry has a "Goes off" face instead.
+  due: { label: "When it is due", pickable: true, type: "date" },
   assignee: { label: "Who it is assigned to", pickable: true },
   "acquired-from": { label: "Where it came from", pickable: true },
   "acquired-on": { label: "When it became yours", pickable: true },

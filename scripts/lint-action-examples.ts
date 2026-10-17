@@ -26,6 +26,7 @@
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const MODULES = "modules";
 const LOOKBACK = 6;
@@ -41,9 +42,7 @@ const findings: Finding[] = [];
 let checked = 0;
 let withExamples = 0;
 
-for (const mod of readdirSync(MODULES)) {
-  const manifest = join(MODULES, mod, "src", "module.ts");
-  if (!existsSync(manifest)) continue;
+for (const mod of readdirSync(MODULES)) for (const manifest of manifestSources(join(MODULES, mod))) {
   const src = readFileSync(manifest, "utf8");
   const lines = src.split("\n");
   const ids = [...src.matchAll(/^\s*id: "([a-z0-9-]+:[a-z0-9-]+)",$/gm)];

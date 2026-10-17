@@ -22,15 +22,14 @@
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const MODULES_DIR = "modules";
 const MARKER = "DELIBERATELY universal";
 const LOOKBACK = 8;
 
 const findings: string[] = [];
-for (const mod of existsSync(MODULES_DIR) ? readdirSync(MODULES_DIR) : []) {
-  const manifest = join(MODULES_DIR, mod, "src", "module.ts");
-  if (!existsSync(manifest)) continue;
+for (const mod of existsSync(MODULES_DIR) ? readdirSync(MODULES_DIR) : []) for (const manifest of manifestSources(join(MODULES_DIR, mod))) {
   const text = readFileSync(manifest, "utf8");
   const lines = text.split("\n");
   lines.forEach((line, i) => {

@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.3.4",
+  version: "0.4.0",
   displayName: "Views",
   description:
     "Save the ways you like to see a list (filtered, sorted, as a board or a calendar) and come back to them.",
@@ -59,19 +59,22 @@ export default defineModule({
     ],
     actions: [
       {
-        // NO-PHRASING: the way back for another action, run only from Undo
+        // WORKSPACE-scoped, and also the way back for save-view (by view_id).
         group: "organise",
+        // UI-SCREEN: /views
         id: "core-views:delete-view",
         runBy: "member",
-        internal: true,
-        label: "Delete a saved view",
-        description: "Internal, the inverse of saving a view: deletes it again. Runs from Undo on the card; not for direct use.",
-        icon: "undo",
+        examples: ["delete the Idle machines board", "get rid of the old orders view"],
+        undoable: true,
+        label: "Remove a saved view",
+        description:
+          "Remove a saved view by its name. Only a view this person can see: one shared with the workspace, or their own. The records it showed are not touched, and Undo puts the view back.",
+        icon: "trash-2",
         scope: "workspace" as const,
-        userInvokable: false,
         invokeHandler: "core-views.delete-view",
         argsSchema: {
-          view_id: { label: "The view's id", type: "text" },
+          view: { label: "Which view (its name)", type: "text" },
+          view_id: { label: "The view's id, when it is known", type: "text" },
         },
       },
       {
@@ -96,6 +99,45 @@ export default defineModule({
           name: { label: "What to call the view", type: "text", required: true },
           view_type: { label: "table, list, kanban, calendar or gantt", type: "text", required: true },
           pinned: { label: "Pin it to the dashboard", type: "boolean" },
+        },
+      },
+      {
+        group: "organise",
+        // UI-SCREEN: /views
+        id: "core-views:edit-view",
+        runBy: "member",
+        examples: ["rename the Idle machines board to Free machines", "unpin the orders table"],
+        undoable: true,
+        label: "Change a saved view",
+        description:
+          "Rename a saved view, change its layout (table, list, kanban, calendar or gantt) or its columns and filters, or pin or unpin it on the dashboard. Only a view this person can see; a shared view stays shared.",
+        icon: "layout-dashboard",
+        scope: "workspace",
+        invokeHandler: "core-views.edit-view",
+        userInvokable: true,
+        argsSchema: {
+          view: { label: "Which view (its name)", type: "text", required: true },
+          name: { label: "Its new name", type: "text" },
+          view_type: { label: "table, list, kanban, calendar or gantt", type: "text" },
+          config: { label: "Its configuration: columns, grouping, filters", type: "json" },
+          pinned: { label: "Pin it to the dashboard (false to unpin)", type: "boolean" },
+        },
+      },
+      {
+        // NO-PHRASING: the way back for delete-view, run only from Undo
+        group: "organise",
+        id: "core-views:restore-view",
+        runBy: "member",
+        internal: true,
+        examples: ["put the view back"],
+        label: "Put a removed view back",
+        description: "Internal, the inverse of removing a saved view: puts it back as it was, for whoever it belonged to. Runs from Undo on the card; not for direct use.",
+        icon: "undo",
+        scope: "workspace" as const,
+        userInvokable: false,
+        invokeHandler: "core-views.restore-view",
+        argsSchema: {
+          view: { label: "The removed view, as it was", type: "json" },
         },
       },
     ],

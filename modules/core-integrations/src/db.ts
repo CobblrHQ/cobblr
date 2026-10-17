@@ -100,7 +100,13 @@ export interface CoreIntegrationsSyncSourceDefsTable {
   updated_at: Generated<Date>;
 }
 
+export interface CoreIntegrationsPaceTable {
+  connection_id: string;
+  next_at: Generated<Date>;
+}
+
 export interface CoreIntegrationsDB {
+  core_integrations_pace: CoreIntegrationsPaceTable;
   core_integrations_connectors: CoreIntegrationsConnectorsTable;
   core_integrations_inbound_tokens: CoreIntegrationsInboundTokensTable;
   core_integrations_calls: CoreIntegrationsCallsTable;

@@ -28,6 +28,7 @@ import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platf
 import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
 import { handOffThings, type HandOffResult } from "../platform/person-things.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { withWorkspaceLock } from "../platform/workspace-lock.js";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -37,6 +38,29 @@ export const invitesRootRouter = Router();
 // ── helpers ──────────────────────────────────────────────────────
 
 const ADMINISH: ReadonlyArray<OrgRole> = ["owner", "admin"];
+
+/** Every change that can take an owner away runs here, one per workspace at a
+ *  time: two owners leaving at once each counted two owners and both went
+ *  (#6958). Inside, the target's role is read again and the owners counted
+ *  after any earlier change has committed. */
+function withOwnersLock<T>(orgId: string, fn: () => Promise<T>): Promise<T> {
+  return withWorkspaceLock(orgId, "owners", fn);
+}
+
+async function ownerCount(orgId: string): Promise<number> {
+  const r = await meta
+    .selectFrom("org_memberships")
+    .select(({ fn }) => fn.countAll<string>().as("c"))
+    .where("org_id", "=", orgId)
+    .where("role", "=", "owner")
+    .executeTakeFirstOrThrow();
+  return Number(r.c);
+}
+
+async function roleOf(orgId: string, userId: string): Promise<OrgRole | undefined> {
+  const r = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", orgId).where("user_id", "=", userId).executeTakeFirst();
+  return r?.role;
+}
 
 /** Returns null if caller is admin/owner of the org; otherwise an
  *  error response object the route should emit. */
@@ -134,32 +158,31 @@ membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) 
       });
       return;
     }
-    // Can't strip the last owner.
-    if (parsed.data.role !== "owner" && target?.role === "owner") {
-      const ownerCount = await meta
-        .selectFrom("org_memberships")
-        .select(({ fn }) => fn.countAll<string>().as("c"))
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("role", "=", "owner")
-        .executeTakeFirstOrThrow();
-      if (Number(ownerCount.c) <= 1) {
-        res.status(400).json({
-          error: { code: "last_owner", message: "Can't change the last owner's role." },
-        });
-        return;
-      }
+    const orgId = req.tenant!.org.id;
+    const outcome = await withOwnersLock(orgId, async () => {
+      // Can't strip the last owner, counted under the lock.
+      if (parsed.data.role !== "owner" && (await roleOf(orgId, userId)) === "owner" && (await ownerCount(orgId)) <= 1) return "last_owner" as const;
+      return (
+        (await meta
+          .updateTable("org_memberships")
+          .set({ role: parsed.data.role })
+          .where("org_id", "=", orgId)
+          .where("user_id", "=", userId)
+          .returningAll()
+          .executeTakeFirst()) ?? ("not_found" as const)
+      );
+    });
+    if (outcome === "last_owner") {
+      res.status(400).json({
+        error: { code: "last_owner", message: "Can't change the last owner's role." },
+      });
+      return;
     }
-    const updated = await meta
-      .updateTable("org_memberships")
-      .set({ role: parsed.data.role })
-      .where("org_id", "=", req.tenant!.org.id)
-      .where("user_id", "=", userId)
-      .returningAll()
-      .executeTakeFirst();
-    if (!updated) {
+    if (outcome === "not_found") {
       res.status(404).json({ error: { code: "not_found", message: "Member not found." } });
       return;
     }
+    const updated = outcome;
     await activity.log({
       orgId: req.tenant!.org.id,
       action: "member_role_changed",
@@ -205,15 +228,31 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
       });
       return;
     }
-    // Don't let admins remove the last owner.
-    if (target?.role === "owner") {
-      const ownerCount = await meta
-        .selectFrom("org_memberships")
-        .select(({ fn }) => fn.countAll<string>().as("c"))
-        .where("org_id", "=", req.tenant!.org.id)
-        .where("role", "=", "owner")
-        .executeTakeFirstOrThrow();
-      if (Number(ownerCount.c) <= 1) {
+    const orgId = req.tenant!.org.id;
+    // ?hand_to=<person>: what they own goes to someone else on the People
+    // list before they go. Without it their things stay theirs, named and
+    // marked as having left, never silently unowned.
+    const handTo = typeof req.query.hand_to === "string" && req.query.hand_to ? req.query.hand_to : null;
+    const outcome = await withOwnersLock(orgId, async () => {
+      // The last owner stays, counted under the lock.
+      if ((await roleOf(orgId, userId)) === "owner" && (await ownerCount(orgId)) <= 1) return { refused: "last_owner" as const };
+      let handOff: HandOffResult | null = null;
+      if (handTo && target) {
+        const leaving = await personForUser(orgId, userId);
+        const people = await listPeople(orgId);
+        if (!leaving || !people.some((p) => p.id === handTo) || handTo === leaving) return { refused: "bad_hand_to" as const };
+        handOff = await handOffThings(orgId, leaving, handTo);
+      }
+      const deleted = await meta
+        .deleteFrom("org_memberships")
+        .where("org_id", "=", orgId)
+        .where("user_id", "=", userId)
+        .returning("user_id")
+        .executeTakeFirst();
+      return deleted ? { handOff } : { refused: "not_found" as const };
+    });
+    if ("refused" in outcome) {
+      if (outcome.refused === "last_owner") {
         res.status(400).json({
           error: {
             code: "last_owner",
@@ -222,34 +261,14 @@ membersRouter.delete("/:userId", requireAuth, withTenant, async (req, res, next)
               : "Can't remove the last owner.",
           },
         });
-        return;
-      }
-    }
-    // ?hand_to=<person>: what they own goes to someone else on the People
-    // list before they go. Without it their things stay theirs, named and
-    // marked as having left, never silently unowned.
-    const handTo = typeof req.query.hand_to === "string" && req.query.hand_to ? req.query.hand_to : null;
-    let handOff: HandOffResult | null = null;
-    if (handTo && target) {
-      const orgId = req.tenant!.org.id;
-      const leaving = await personForUser(orgId, userId);
-      const people = await listPeople(orgId);
-      if (!leaving || !people.some((p) => p.id === handTo) || handTo === leaving) {
+      } else if (outcome.refused === "bad_hand_to") {
         res.status(400).json({ error: { code: "bad_hand_to", message: "Hand their things to someone else on this workspace's People list." } });
-        return;
+      } else {
+        res.status(404).json({ error: { code: "not_found", message: "Member not found." } });
       }
-      handOff = await handOffThings(orgId, leaving, handTo);
-    }
-    const deleted = await meta
-      .deleteFrom("org_memberships")
-      .where("org_id", "=", req.tenant!.org.id)
-      .where("user_id", "=", userId)
-      .returning("user_id")
-      .executeTakeFirst();
-    if (!deleted) {
-      res.status(404).json({ error: { code: "not_found", message: "Member not found." } });
       return;
     }
+    const { handOff } = outcome;
     clearPeopleCache(req.tenant!.org.id);
     await activity.log({
       orgId: req.tenant!.org.id,

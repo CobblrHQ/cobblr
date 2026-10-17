@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-files",
-  version: "0.8.4",
+  version: "0.9.0",
   displayName: "Files",
   description:
     "Keep photos, manuals and other files with the things they belong to.",
@@ -125,6 +125,39 @@ export default defineModule({
         invokeHandler: "core-files.restore",
         argsSchema: {
           file_id: { label: "File", type: "text" },
+        },
+      },
+      {
+        group: "organise",
+        id: "core-files:attach-file",
+        runBy: "member",
+        examples: ["attach the drill manual to this one too", "put the receipt on the new laptop"],
+        undoable: true,
+        label: "Attach a file",
+        description:
+          "Attach a file already in this workspace's Files (a manual, a receipt, a photo) to this record, by its name. Undo takes it off again. A new file comes in through the scan inbox, not here.",
+        // DELIBERATELY universal: the Files panel attaches to any record, so anything that can hold a file can be given one.
+        appliesTo: { any: true },
+        invokeHandler: "core-files.attach-file",
+        userInvokable: false,
+        argsSchema: {
+          file: { label: "Which file (its name)", type: "text", required: true },
+        },
+      },
+      {
+        group: "organise",
+        id: "core-files:detach-file",
+        runBy: "member",
+        examples: ["take the old manual off this drill"],
+        undoable: true,
+        label: "Take a file off",
+        description: "Take a file off this record by its name. The file stays in Files and on any other record it is on; Undo puts it back.",
+        // DELIBERATELY universal: mirrors attach-file — anything a file can be put on, it can be taken off.
+        appliesTo: { any: true },
+        invokeHandler: "core-files.detach-file",
+        userInvokable: false,
+        argsSchema: {
+          file: { label: "Which file (its name)", type: "text", required: true },
         },
       },
     ],

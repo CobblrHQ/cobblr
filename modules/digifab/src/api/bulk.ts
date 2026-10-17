@@ -55,7 +55,8 @@ function hostLabel(url: string): string {
   }
 }
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — saves many managers' credentials at once; the assistant
+// never handles a secret
 bulkRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -166,7 +167,9 @@ async function probeText(url: string, headers: Record<string, string>): Promise<
   }
 }
 
-// AI-REACH: detects machines on the LAN from the bridge; discovery is a set-up step with the hardware present
+// AI-REACH: exempt — probes an address on the person's network with an API
+// key they type; the assistant never handles a secret, and a chat must not
+// point the server at arbitrary hosts on someone's LAN
 bulkRouter.post(
   "/detect",
   asyncHandler(async (req, res) => {

@@ -110,7 +110,7 @@ export function humanize(name: string): string {
 // A filter row is one predicate. `is` / `is any of` map to config.filter
 // (equality / IN); everything else maps to a config.where comparison.
 
-export type FilterOp = "has a value" | "is empty" | "is" | "is any of" | "is not" | ">=" | "<=" | ">" | "<";
+export type FilterOp = "has a value" | "is empty" | "is" | "is any of" | "is not" | "contains" | "does not contain" | ">=" | "<=" | ">" | "<";
 
 export interface FilterRow {
   field: string;
@@ -145,7 +145,7 @@ export function configToFilterRows(cfg: Record<string, unknown>): FilterRow[] {
     [];
   for (const w of where) {
     if (!w || w.ref_col) continue; // column-to-column comparisons stay raw-only
-    const op: FilterOp = w.op === "empty" ? "is empty" : w.op === "not_empty" ? "has a value" : w.op === "!=" ? "is not" : (w.op as FilterOp);
+    const op: FilterOp = w.op === "empty" ? "is empty" : w.op === "not_empty" ? "has a value" : w.op === "!=" ? "is not" : w.op === "not_contains" ? "does not contain" : (w.op as FilterOp);
     rows.push({ field: w.col, op, value: String(w.value ?? ""), values: [] });
   }
   return rows;
@@ -167,6 +167,10 @@ export function filterRowsToConfig(rows: FilterRow[]): {
     } else if (r.op === "is any of") {
       const vals = r.values.filter((v) => v.trim());
       if (vals.length) filter[r.field] = vals;
+    } else if (r.op === "contains" || r.op === "does not contain") {
+      // Text, kept as typed: "123" contains the digits, not the number.
+      if (r.value.trim() === "") continue;
+      where.push({ col: r.field, op: r.op === "contains" ? "contains" : "not_contains", value: r.value.trim() });
     } else {
       const op = r.op === "is not" ? "!=" : r.op;
       if (r.value.trim() === "") continue;
@@ -279,6 +283,16 @@ export function SortBuilder({
 }
 
 const OPS: FilterOp[] = ["is", "is any of", "is not", ">=", "<=", ">", "<"];
+/** The field types a "contains" reads (#6896). */
+const TEXT_TYPES = new Set(["text", "textarea", "string", "url", "email", "markdown"]);
+
+/** What a field may be filtered by: a secret only by whether it has a value;
+ *  a text field also by what it contains; anything else by the comparisons. */
+export function opsFor(field: Pick<KindField, "type"> | undefined): FilterOp[] {
+  if (field?.type === "secret") return ["has a value", "is empty"];
+  if (field && TEXT_TYPES.has(field.type)) return ["is", "is any of", "is not", "contains", "does not contain", ">=", "<=", ">", "<"];
+  return OPS;
+}
 
 export function FilterBuilder({
   fields,
@@ -297,11 +311,14 @@ export function FilterBuilder({
         const field = fields.find((f) => f.name === r.field);
         const choices = field?.choices ?? [];
         return (
-          <div key={i} className="flex items-start gap-1.5">
+          // Wraps: on a phone the field, the condition and the value do not fit
+          // one row, and the value box (what to look for) was pushed off the
+          // screen (#6896).
+          <div key={i} className="flex flex-wrap items-start gap-1.5">
             <FieldSelect
               fields={fields}
               value={r.field}
-              onChange={(v) => set(i, { field: v, op: fields.find((f) => f.name === v)?.type === "secret" ? "has a value" : "is", value: "", values: [] })}
+              onChange={(v) => set(i, { field: v, op: opsFor(fields.find((f) => f.name === v))[0]!, value: "", values: [] })}
               allowBlank
               blankLabel="Pick a field…"
               testid="filter-field"
@@ -312,7 +329,7 @@ export function FilterBuilder({
               value={r.op}
               onChange={(e) => set(i, { op: e.target.value as FilterOp })}
             >
-              {(field?.type === "secret" ? ["has a value", "is empty"] : OPS).map((o) => (
+              {opsFor(field).map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>
@@ -354,7 +371,7 @@ export function FilterBuilder({
                 className={smallCls}
                 data-testid="filter-value"
                 value={r.value}
-                placeholder={field?.type === "date" ? "Date, today+60 or year-start" : "value"}
+                placeholder={field?.type === "date" ? "Date, today+60 or year-start" : r.op === "contains" || r.op === "does not contain" ? "words to look for" : "value"}
                 onChange={(e) => set(i, { value: e.target.value })}
               />
             )}

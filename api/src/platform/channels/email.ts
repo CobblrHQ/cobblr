@@ -24,23 +24,33 @@ function readConfig(payload: unknown): ValidConfig | null {
   return r.config;
 }
 
+function subjectAndText(event: ChannelEvent): { subject: string; text: string } {
+  const subject = `[${event.eventType}] ` + event.message.slice(0, 60) + (event.message.length > 60 ? "…" : "");
+  const text = [event.message, "", event.link_url ? `Link: ${absoluteAppUrl(event.link_url)}` : null, "", `Priority: ${event.priority}`, `Sent by ${productName()}.`]
+    .filter((line) => line !== null)
+    .join("\n");
+  return { subject, text };
+}
+
+async function accountEmail(event: ChannelEvent): Promise<boolean> {
+  const { hasAuthEmailSender, sendAuthEmail } = await import("../hosted-seams.js");
+  if (!hasAuthEmailSender()) return false;
+  const { meta } = await import("../../db/meta.js");
+  const u = await meta.selectFrom("users").select("email").where("id", "=", event.userId).executeTakeFirst();
+  if (!u?.email) return false;
+  return sendAuthEmail({ to: u.email, ...subjectAndText(event), kind: "notification" });
+}
+
 export const emailChannel: Channel = {
   name: "email",
   async deliver(event: ChannelEvent): Promise<boolean> {
+    // No binding of its own: an account notice held over its hourly cap
+    // (#7076), sent as notifyAccount sends one live, from the platform's
+    // sender to the account's address.
+    if (event.subscriptionConfig == null) return accountEmail(event);
     const cfg = readConfig(event.subscriptionConfig);
     if (!cfg) return false;
-    const subject =
-      `[${event.eventType}] ` + event.message.slice(0, 60) + (event.message.length > 60 ? "…" : "");
-    const text = [
-      event.message,
-      "",
-      event.link_url ? `Link: ${absoluteAppUrl(event.link_url)}` : null,
-      "",
-      `Priority: ${event.priority}`,
-      `Sent by ${productName()}.`,
-    ]
-      .filter((line) => line !== null)
-      .join("\n");
+    const { subject, text } = subjectAndText(event);
     try {
       await sendEmailVia(cfg, subject, text);
       return true;

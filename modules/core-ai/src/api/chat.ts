@@ -253,6 +253,8 @@ export function toolDefsFor(
     // (the read failed) sends them all: a tool too many costs characters, a
     // tool hidden costs the person the answer.
     .filter((t) => !t.module || !opts.modules || opts.modules.has(t.module))
+    // A part's tools only where the part is on: the module list names it `<module>/<part>`.
+    .filter((t) => !t.part || !t.module || !opts.modules || opts.modules.has(`${t.module}/${t.part}`))
     .filter((t) => (t.consentBy ? true : t.mode === "read" ? prefs.read_tools : prefs.write_mode !== "off"))
     .map(
     (t) => ({
@@ -841,7 +843,7 @@ async function answerTurn(
     .catch(() => false);
   const enabledModules = await callApi(c, "GET", "/modules")
     .then((r) => (r.status < 400 && Array.isArray(r.body.items)
-      ? new Set((r.body.items as Array<{ name?: string; enabled?: boolean; enabled_at?: string | null }>).filter((m) => m.enabled === true || !!m.enabled_at).map((m) => String(m.name)))
+      ? new Set((r.body.items as Array<{ name?: string; enabled?: boolean; enabled_at?: string | null; parts?: Array<{ id: string; on: boolean }> }>).filter((m) => m.enabled === true || !!m.enabled_at).flatMap((m) => [String(m.name), ...(m.parts ?? []).filter((p) => p.on).map((p) => `${m.name}/${p.id}`)]))
       : null))
     .catch(() => null);
   const toolDefs = toolDefsFor(prefs, { services: hasServices, "scan-stations": hasStations, modules: enabledModules });
@@ -1353,7 +1355,8 @@ function sendWriteOutcome(res: Response, out: { ok: boolean; message: string }):
     .json(out.ok ? out : { ...(out as object), error: { code: "write_failed", message: out.message } });
 }
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — the chat door itself; the assistant calling it would be a
+// turn inside its own turn
 chatRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -1869,7 +1872,8 @@ const PrefsBody = z.object({
   credential_id: z.string().max(80).nullable().optional(),
 });
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — the person's model pill decides which provider reads their
+// messages and who pays; the assistant never picks its own model
 chatRouter.put(
   "/prefs",
   asyncHandler(async (req, res) => {
@@ -2051,7 +2055,8 @@ chatRouter.get(
   }),
 );
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — putting a change back is a person's decision about the
+// assistant's work, never the assistant's own move.
 chatRouter.post(
   "/writes/:id/undo",
   asyncHandler(async (req, res) => {
@@ -2208,7 +2213,8 @@ const ExecBody = z.object({
   proposal: ExecProposal.optional(),
 });
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — the person's Confirm on a proposal; an assistant that
+// could press its own Confirm would defeat the confirm
 chatRouter.post(
   "/execute",
   asyncHandler(async (req, res) => {
@@ -2410,7 +2416,11 @@ chatRouter.post(
   }),
 );
 
-const ConversationBody = z.object({ messages: z.array(z.record(z.unknown())).max(200) });
+// `owner` is the account the panel read these messages for. A browser that
+// another member signed into still held the last one's conversation, and saved
+// it to the new account (#7062); a write for anyone but the person signed in is
+// refused, whatever the panel believes.
+const ConversationBody = z.object({ messages: z.array(z.record(z.unknown())).max(200), owner: z.string().min(1) });
 
 // GET /chat/conversation         → my conversation, as the panel keeps it, so
 //                                  another tab or device opens on the same one.
@@ -2419,7 +2429,8 @@ chatRouter.get(
   "/conversation",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    res.json({ conversation: await readConversation(tenantDb(req), sessionUserId(req) ?? "") });
+    const me = sessionUserId(req);
+    res.json({ conversation: me ? await readConversation(tenantDb(req), me) : null });
   }),
 );
 // AI-REACH: exempt internal: the panel keeps its own conversation here; nothing in it is a change to the workspace
@@ -2429,11 +2440,16 @@ chatRouter.put(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = ConversationBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    const me = sessionUserId(req);
+    if (!me || parsed.data.owner !== me) {
+      res.status(409).json({ error: { code: "not_your_conversation", message: "This conversation was read for another account, so it is not kept for this one." } });
+      return;
+    }
     if (JSON.stringify(parsed.data.messages).length > 1_000_000) {
       res.status(413).json({ error: { code: "too_large", message: "That conversation is too long to keep; the newest part is kept on this device." } });
       return;
     }
-    res.json({ updated_at: await writeConversation(tenantDb(req), sessionUserId(req) ?? "", parsed.data.messages) });
+    res.json({ updated_at: await writeConversation(tenantDb(req), me, parsed.data.messages) });
   }),
 );
 

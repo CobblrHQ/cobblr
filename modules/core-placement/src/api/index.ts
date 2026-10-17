@@ -243,11 +243,11 @@ const PlaceBody = z.object({
 });
 
 // POST /place { containee, container, slot?, position?, via? } — put a thing inside a container.
-// AI-REACH: covered by core-placement:place and :remove actions on the placed record
+// AI-ACTION: core-placement:place
 router.post(
   "/place",
   wrap(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-placement:place"))) return;
     const parsed = PlaceBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee + container required" } });
@@ -312,11 +312,11 @@ router.post(
 const RemoveBody = z.object({ containee: Ref });
 
 // POST /remove { containee } — take a thing out of its container.
-// AI-REACH: covered by core-placement:place and :remove actions on the placed record
+// AI-ACTION: core-placement:remove
 router.post(
   "/remove",
   wrap(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-placement:remove"))) return;
     const parsed = RemoveBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee required" } });

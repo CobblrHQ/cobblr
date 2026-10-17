@@ -1,7 +1,7 @@
 // "Migrate in from another app" — a section on the Integrations page for
 // imports FROM other inventory systems (as opposed to the ongoing live-sync
 // connectors above). This is APP-FIRST: you pick the app you're coming from
-// (Homebox and Part-DB today; Snipe-IT etc. slot in as more entries), and only THEN
+// (Homebox, Part-DB and Snipe-IT today; others slot in as more entries), and only THEN
 // choose how (live connect vs CSV) in a second step. That keeps any one app
 // from dominating the section and scales as more sources arrive.
 
@@ -12,15 +12,16 @@ import { Modal } from "@cobblr/platform-web";
 import { HomeboxImportModal } from "./HomeboxImportModal";
 import { HomeboxLiveImportModal } from "./HomeboxLiveImportModal";
 import { PartdbLiveImportModal } from "./PartdbLiveImportModal";
+import { SnipeitLiveImportModal } from "./SnipeitLiveImportModal";
 import { openSheetImport } from "../lib/sheet-import";
 import { SettingsSection } from "./SettingsSection";
 
 type Method = { id: string; label: string; desc: string; icon: LucideIcon };
-type Source = { id: string; name: string; blurb: string; methods: Method[] };
+export type Source = { id: string; name: string; blurb: string; methods: Method[] };
 
 // One entry per app you can migrate FROM. A source declares its own methods;
 // a single-method source skips the chooser and opens straight through.
-const SOURCES: Source[] = [
+export const SOURCES: Source[] = [
   {
     id: "spreadsheet",
     name: "A spreadsheet",
@@ -59,6 +60,19 @@ const SOURCES: Source[] = [
       },
     ],
   },
+  {
+    id: "snipeit",
+    name: "Snipe-IT",
+    blurb: `Bring your Snipe-IT assets into ${productName()}.`,
+    methods: [
+      {
+        id: "live",
+        label: "Live connect",
+        desc: "Connect with your Snipe-IT URL + API token. Assets (serial, asset tag, model, price, picture) and the location tree come across. Import once, or keep it synced.",
+        icon: Zap,
+      },
+    ],
+  },
 ];
 
 export function MigrateInSection() {
@@ -67,12 +81,14 @@ export function MigrateInSection() {
   const [homeboxLive, setHomeboxLive] = useState(false);
   const [homeboxCsv, setHomeboxCsv] = useState(false);
   const [partdbLive, setPartdbLive] = useState(false);
+  const [snipeitLive, setSnipeitLive] = useState(false);
 
   function runMethod(sourceId: string, methodId: string) {
     setPicked(null);
     if (sourceId === "homebox" && methodId === "live") setHomeboxLive(true);
     else if (sourceId === "homebox" && methodId === "csv") setHomeboxCsv(true);
     else if (sourceId === "partdb" && methodId === "live") setPartdbLive(true);
+    else if (sourceId === "snipeit" && methodId === "live") setSnipeitLive(true);
     else if (sourceId === "spreadsheet") openSheetImport();
   }
 
@@ -138,6 +154,7 @@ export function MigrateInSection() {
       <HomeboxLiveImportModal open={homeboxLive} onClose={() => setHomeboxLive(false)} />
       <HomeboxImportModal open={homeboxCsv} onClose={() => setHomeboxCsv(false)} />
       <PartdbLiveImportModal open={partdbLive} onClose={() => setPartdbLive(false)} />
+      <SnipeitLiveImportModal open={snipeitLive} onClose={() => setSnipeitLive(false)} />
     </SettingsSection>
   );
 }

@@ -11,11 +11,10 @@
 // reconnects on mount).
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { slimForStore, type StoredChatMessage } from "./chat-store";
+import { forgetUnownedChat, personalChatKey } from "./personal-chat-store";
 
-export const CHAT_STORE_PREFIX = "cobblr.cobbchat.";
-
-export function chatStoreKey(slug: string | null | undefined): string | null {
-  return slug ? `${CHAT_STORE_PREFIX}${slug}` : null;
+export function chatStoreKey(owner: string | null | undefined, slug: string | null | undefined): string | null {
+  return personalChatKey("chat", owner, slug);
 }
 
 /** Where the conversation is kept beyond this device: the server (so another
@@ -23,20 +22,27 @@ export function chatStoreKey(slug: string | null | undefined): string | null {
  *  where there is none. */
 export interface ConversationRemote {
   read: () => Promise<{ messages: unknown[]; updated_at: string } | null>;
-  write: (messages: unknown[]) => Promise<string>;
+  /** `owner` is the account the messages were read for: the server refuses
+   *  them for anyone else. */
+  write: (messages: unknown[], owner: string) => Promise<string>;
 }
 
 /** How long the panel waits after the last change before keeping the
  *  conversation server-side: a turn's messages arrive in a burst. */
 export const REMOTE_WRITE_DELAY_MS = 1500;
 
-const stampKey = (key: string) => `${key}.at`;
-
+/** Everything here is one person's in one workspace (personal-chat-store.ts):
+ *  the scope is both, and the messages are only ever read, kept and written
+ *  for the scope they were read back for. Signing in as someone else is a new
+ *  scope exactly as switching workspace is, and cancels a write still pending
+ *  for the last one. */
 export function useStoredConversation<M extends StoredChatMessage>(
+  owner: string | null | undefined,
   slug: string | null | undefined,
   max: number,
   remote?: ConversationRemote,
 ): [M[], Dispatch<SetStateAction<M[]>>] {
+  const scope = owner && slug ? `${owner}/${slug}` : null;
   const [messages, setMessages] = useState<M[]>([]);
   const [messagesFor, setMessagesFor] = useState<string | null>(null);
   const remoteRef = useRef(remote);
@@ -46,8 +52,8 @@ export function useStoredConversation<M extends StoredChatMessage>(
   const [remoteReadFor, setRemoteReadFor] = useState<string | null>(null);
 
   useEffect(() => {
-    if (messagesFor !== (slug ?? null)) return; // not yet read back for this workspace
-    const key = chatStoreKey(slug);
+    if (messagesFor !== scope) return; // not yet read back for this person in this workspace
+    const key = chatStoreKey(owner, slug);
     if (!key) return;
     try {
       // Plain data only (chat-store.ts): the words, the refs, a plan card with
@@ -56,27 +62,30 @@ export function useStoredConversation<M extends StoredChatMessage>(
       const slim = slimForStore(messages, max);
       if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
       else localStorage.removeItem(key);
-      localStorage.setItem(stampKey(key), new Date().toISOString());
+      localStorage.setItem(personalChatKey("chat.at", owner, slug)!, new Date().toISOString());
     } catch {
       /* quota exceeded / storage disabled: history just won't persist */
     }
-  }, [messages, slug, messagesFor, max]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, scope, messagesFor, max]);
 
   // The same conversation, kept server-side, a moment after it settles.
   useEffect(() => {
     const r = remoteRef.current;
-    if (!r || messagesFor !== (slug ?? null) || remoteReadFor !== (slug ?? null)) return;
+    if (!r || !owner || !scope || messagesFor !== scope || remoteReadFor !== scope) return;
     const slim = slimForStore(messages, max);
     const t = setTimeout(() => {
-      void r.write(slim).catch(() => {
+      void r.write(slim, owner).catch(() => {
         /* offline: this device still has it, and the next change tries again */
       });
     }, REMOTE_WRITE_DELAY_MS);
     return () => clearTimeout(t);
-  }, [messages, slug, messagesFor, remoteReadFor, max]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, scope, messagesFor, remoteReadFor, max]);
 
   useEffect(() => {
-    const key = chatStoreKey(slug);
+    forgetUnownedChat();
+    const key = chatStoreKey(owner, slug);
     let loaded: M[] = [];
     if (key) {
       try {
@@ -88,19 +97,19 @@ export function useStoredConversation<M extends StoredChatMessage>(
       }
     }
     setMessages(loaded);
-    setMessagesFor(slug ?? null);
+    setMessagesFor(scope);
     setRemoteReadFor(null);
     // The server's copy, when it is newer than this device's: another tab or
     // device carried the conversation on.
     const r = remoteRef.current;
     if (!r || !key) {
-      setRemoteReadFor(slug ?? null);
+      setRemoteReadFor(scope);
       return;
     }
     let cancelled = false;
     let localAt = "";
     try {
-      localAt = localStorage.getItem(stampKey(key)) ?? "";
+      localAt = localStorage.getItem(personalChatKey("chat.at", owner, slug)!) ?? "";
     } catch {
       /* private mode */
     }
@@ -114,12 +123,13 @@ export function useStoredConversation<M extends StoredChatMessage>(
         /* offline: this device's copy stands */
       })
       .finally(() => {
-        if (!cancelled) setRemoteReadFor(slug ?? null);
+        if (!cancelled) setRemoteReadFor(scope);
       });
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   return [messages, setMessages];
 }

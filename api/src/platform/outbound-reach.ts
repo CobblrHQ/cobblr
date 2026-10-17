@@ -117,10 +117,13 @@ const TTL_MS = 60_000;
 let cached: { at: number; results: OutboundResult[] } | null = null;
 let inflight: Promise<OutboundResult[]> | null = null;
 
-/** The last minute's answer, asking again when it is older. */
-export async function outboundReport(now = Date.now()): Promise<OutboundResult[]> {
+/** The last minute's answer, asking again when it is older. A dependency found out is said in the log, at
+ *  most once a check: the monitor keeps only the status, so a 503 that cleared by the next poll left no
+ *  trace of what was out (try, 2026-10-17: three 503s in three hours and nothing to say which). */
+export async function outboundReport(now = Date.now(), probe: Probe = realProbe): Promise<OutboundResult[]> {
   if (cached && now - cached.at < TTL_MS) return cached.results;
-  inflight ??= checkOutbound(outboundTargets()).then((results) => {
+  inflight ??= checkOutbound(outboundTargets(), probe).then((results) => {
+    for (const r of results) if (!r.ok) console.warn(`[outbound] ${r.name} is out: ${r.error}`);
     cached = { at: Date.now(), results };
     inflight = null;
     return results;

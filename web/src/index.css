@@ -413,6 +413,20 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
     margin-block: -8px;
     min-width: 28px !important;
   }
+  /* A row that is already 44 tall and gives back WIDTH on the narrowest
+     phones (the scan inbox's session strip, #5903): under 360 px its controls
+     keep their 44 px of height and their tuned width, 28 px at least, so the
+     date and the count still fit beside five controls. The rule above made
+     every one 44 wide, and the strip lost its date and count at 320 (#6881).
+     From 360 up the strip's own classes keep each one 44 by 44. */
+  @media (max-width: 359px) {
+    [data-toolbar="strip"] button,
+    [data-toolbar="strip"] a[href],
+    [data-toolbar="strip"] [role="button"],
+    [data-toolbar="strip"] label:has(> input[type="checkbox"]:only-child) {
+      min-width: 28px !important;
+    }
+  }
 }
 
 /* Full-sidebar mode: ephemeral toasts land in the sidebar's empty middle —

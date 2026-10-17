@@ -40,6 +40,7 @@ export interface CoreDevicesConnectionsTable {
 
 export interface CoreDevicesDB {
   core_devices_readings: { link_id: string; value: number; unit: string | null; sampled_at: Date };
+  core_devices_deliveries: { connection_id: string; device: string; delivery: string; received_at: Generated<Date> };
   core_devices_links: CoreDevicesLinksTable;
   core_devices_connections: CoreDevicesConnectionsTable;
 }

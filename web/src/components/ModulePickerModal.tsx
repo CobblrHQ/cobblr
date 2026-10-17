@@ -19,6 +19,7 @@ import { changeWorkspaceShape, Modal, useToast, useConfirm } from "@cobblr/platf
 import { useSayWhereItWent } from "../lib/moreApps";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { applyNavOrder, readNavOrder, writeNavOrder } from "../lib/nav-order";
+import { ModuleParts } from "./ModuleParts";
 
 // Launch-surface curation (docs/product/launch-simplification.md §4): the
 // everyday tiles are the inventory-with-extra-hands set, the machine/floor
@@ -561,6 +562,7 @@ function Row({
             blocked - enable {missingDeps.join(", ")} first
           </div>
         )}
+        <ModuleParts m={m} />
       </div>
       <div className="shrink-0 flex items-center gap-2">
         {m.enabled ? (

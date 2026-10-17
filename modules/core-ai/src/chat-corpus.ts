@@ -640,8 +640,11 @@ const RAW_CORPUS: CorpusCase[] = [
   ...ph("escort", answer("export-backup"), "escort:backup", [
     "restore last week's backup",
   ]),
-  ...ph("escort", none, "escort:wires", [
-    "when stock hits zero, email me",  // composing an automation is consented in the composer
+  // Setting up an automation is an action since #6539 (platform:add-wire,
+  // confirmed on its card), so the right answer is the card, not a trip to
+  // the composer. Scored as an escort, the card counted as a miss (#6562).
+  ...ph("workspace", neverOffer, "action:platform:add-wire", [
+    "when stock hits zero, email me",
   ]),
   // ── genuinely out of scope (honest none; AI answers generally) ───────────
   ...ph("general", none, "answer", [

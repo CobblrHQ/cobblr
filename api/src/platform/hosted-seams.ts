@@ -5,6 +5,7 @@
 // (verification / GDPR delete), and abuse rate-limiting. Mirrors the existing
 // `ai.registerEntitlementGuard` / `ai.registerProvider` pattern.
 
+import { isUndeliverableAddress } from "./usernames.js";
 import { featureOff } from "./features.js";
 import { noteRefusal } from "./guard-refusals.js";
 import type { RequestHandler } from "express";
@@ -63,6 +64,9 @@ export function hasAuthEmailSender(): boolean {
 }
 export async function sendAuthEmail(msg: AuthEmailMessage): Promise<boolean> {
   if (!authEmailSender) return false;
+  // An account made with only a username (#6910) has an address on the
+  // reserved .invalid domain: nothing is ever sent to it, by any sender.
+  if (isUndeliverableAddress(msg.to)) return false;
   try {
     // Every email goes out through here, so this is where the "Cobblr
     // Receipts" / "Cobblr Orders" name is held to its own address (#5462).

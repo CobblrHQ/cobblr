@@ -10,10 +10,12 @@
 import { Router } from "express";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { tick } from "./scheduler.js";
+import { overdueTick } from "../overdue.js";
 
 const router = Router({ mergeParams: true });
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — an operator's tick that fires every scheduled wire in the
+// workspace at once; only the schedule's own clock may do that
 // UI-REACH: an operator's tick of the recurrence sweep, which otherwise runs on its own
 router.post("/tick", (req, res, next) => {
   // Ops/test endpoint: force-firing every scheduled wire for the workspace is
@@ -33,6 +35,20 @@ router.post("/tick", (req, res, next) => {
     const tenant = (req as unknown as { tenant?: { org: { id: string } } }).tenant;
     const result = await tick({ orgId: tenant?.org.id });
     res.json(result);
+  })().catch(next);
+});
+
+// AI-REACH: exempt — an operator's diagnostic that runs the daily overdue sweep
+// now; it tells people nothing an agent could not wait for the schedule to do
+// UI-REACH: an operator's run of the overdue sweep, which otherwise runs on its own
+router.post("/overdue/sweep", (req, res, next) => {
+  const tenant = (req as unknown as { tenant?: { org: { id: string }; role?: string } }).tenant;
+  if (tenant?.role && !roleSatisfies(tenant.role, ["owner", "admin"])) {
+    res.status(403).json({ error: { code: "forbidden", message: "This action requires owner or admin." } });
+    return;
+  }
+  void (async () => {
+    res.json(await overdueTick({ orgId: tenant?.org.id }));
   })().catch(next);
 });
 

@@ -198,6 +198,15 @@ export function splitShare(n, env = process.env, capped) {
   return { [SHARE_ENV]: String(share / Math.max(1, n)) };
 }
 
+/** The cores one heavy slot may use (#7202): inside scripts/heavy-slot.sh, the box's cores over its slot count.
+ *  A slot was sized as if it had the box: typecheck-tsgo fanned out to ~10 compilers in each of 4 slots, and the
+ *  fleet VM's 12 cores ran at load 87 with the slots "holding". Outside a slot (CI's own containers), all of them. */
+export function slotCores(cores, env = process.env) {
+  const slots = Number(env.HEAVY_SLOT_COUNT);
+  if (!env.HEAVY_SLOT_HELD || !Number.isInteger(slots) || slots < 1) return cores;
+  return Math.max(1, Math.floor(cores / slots));
+}
+
 /**
  * @param {"tsc"|"vitest"|"lint"} kind
  * @param {{ max?: number, cores?: number, memMib?: number | null, capped?: boolean, env?: Record<string, string | undefined> }} [o]
@@ -208,7 +217,7 @@ export function width(kind, o = {}) {
   if (Number.isInteger(pinned) && pinned > 0) return pinned;
   const cap = Number(env[CAP[kind]]);
   const max = Math.min(o.max ?? 8, Number.isInteger(cap) && cap > 0 ? cap : Infinity);
-  const cores = Math.floor(o.cores ?? availableParallelism());
+  const cores = slotCores(Math.floor(o.cores ?? availableParallelism()), env);
   const room = o.memMib === undefined ? memoryRoom() : { mib: o.memMib, capped: o.capped ?? false };
   const mem = room.mib;
   const byMem = mem == null ? max : Math.floor((mem * shareOf(env, room.capped)) / unitMib(kind));

@@ -81,6 +81,7 @@ metricsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 metricsRouter.post(
   "/metrics",
   asyncHandler(async (req, res) => {
@@ -139,6 +140,7 @@ metricsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 metricsRouter.patch(
   "/metrics/:id",
   asyncHandler(async (req, res) => {
@@ -171,6 +173,7 @@ metricsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 metricsRouter.delete(
   "/metrics/:id",
   asyncHandler(async (req, res) => {

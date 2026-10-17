@@ -98,6 +98,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
 
   // ── Carried by the Blueprint ──────────────────────────────────────────
   org_modules: { travels: "blueprint" },
+  org_module_parts: { travels: "blueprint" },
   workspace_module_instances: { travels: "blueprint" },
   bundles: { travels: "blueprint" },
   bundle_resource_claims: { travels: "blueprint" },

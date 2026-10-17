@@ -13,6 +13,7 @@ import { tenantContext } from "../db.js";
 import { qrTenantDb, getQrTokenStyle, getQrLabelBaseUrl, qrScanUrl, qrShortcode } from "./qr-db.js";
 import type { Request } from "express";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { permanentNavToken } from "../services/permanent-nav-token.js";
 
 export const qrTokensRouter = Router({ mergeParams: true });
 
@@ -110,32 +111,19 @@ qrTokensRouter.post(
       parsed.data.mode === "navigate" &&
       !parsed.data.expires_in_days &&
       parsed.data.auth === "session";
-    const meta = platform().db.meta as unknown as {
-      insertInto: (table: string) => unknown;
-      selectFrom: (table: string) => unknown;
-    };
     // Resolve the base once so every response (reuse or fresh) carries a
     // ready-to-print scan_url — clients never guess the origin.
     const base = await effectiveBase(req);
-    // A descriptive nav token is one-per-entity: reuse an existing (unrevoked)
-    // one so a reprint keeps the already-printed URL. Query by entity (the slug
-    // is random now, not computable from the entity).
+    // A descriptive nav token is one-per-entity and permanent: reuse the one
+    // already printed, never an expired, expiring, public or revoked one
+    // (permanent-nav-token.ts, the rule every print door shares).
     if (isDescriptive) {
-      const sel = meta.selectFrom("core_labels_qr_tokens") as unknown as { selectAll: () => unknown };
-      let q = sel.selectAll() as unknown as {
-        where: (col: string, op: string, val: unknown) => unknown;
-      };
-      q = q.where("org_id", "=", ctx.org.id) as typeof q;
-      q = q.where("entity_kind", "=", entityKind) as typeof q;
-      q = q.where("entity_id", "=", parsed.data.entity_id) as typeof q;
-      q = q.where("mode", "=", "navigate") as typeof q;
-      const existing = (await (q as unknown as {
-        executeTakeFirst: () => Promise<MetaQrToken | undefined>;
-      }).executeTakeFirst()) as MetaQrToken | undefined;
-      if (existing && !existing.revoked_at) {
-        res.status(200).json({ ...existing, scan_url: qrScanUrl(base, existing.token) });
-        return;
-      }
+      const { row, reused } = await permanentNavToken(ctx.org.id, entityKind, parsed.data.entity_id, () =>
+        insertQrToken({ orgId: ctx.org.id, entityKind, entityId: parsed.data.entity_id, mode: "navigate", actionId: null, auth: "session", config: parsed.data.config ?? {}, expiresAt: null, descriptive: true }),
+      );
+      if (!reused) void platform().events.emit("labels.qr.token.created", { orgId: ctx.org.id, tokenId: row.id, entityKind: row.entity_kind, entityId: row.entity_id });
+      res.status(reused ? 200 : 201).json({ ...row, scan_url: qrScanUrl(base, row.token) });
+      return;
     }
     const expiresAt = parsed.data.expires_in_days
       ? new Date(Date.now() + parsed.data.expires_in_days * 86_400_000)

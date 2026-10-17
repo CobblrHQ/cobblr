@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-devices",
-  version: "0.2.7",
+  version: "0.2.9",
   displayName: "Devices",
   description:
     "Connect a scale, a reader or another device to the thing it measures, in one place.",

@@ -233,11 +233,75 @@ export interface DeferredItem {
  * to be clever about grouping is a second place for a use case to leak in, and
  * the caller already knows nothing about what these events mean.
  */
-export function composeDigest(items: DeferredItem[]): string {
+export function composeDigest(items: DeferredItem[], from: { workspace?: string | null; workspaces?: number } = {}): string {
   if (items.length === 0) return "";
   if (items.length === 1) return items[0]!.message;
   const lines = items.map((i) => `• ${i.message}`);
-  return `${countOf(items.length, "update")} from your workspace:\n${lines.join("\n")}`;
+  const source = from.workspace ? from.workspace : (from.workspaces ?? 1) > 1 ? "your workspaces" : "your workspace";
+  return `${countOf(items.length, "update")} from ${source}:\n${lines.join("\n")}`;
+}
+
+/** One flush's rows as the messages it sends (#6907): all of them as one for a
+ *  channel that digests per person, one per workspace for a channel that
+ *  digests per workspace, each workspace's rows in their own order, workspaces
+ *  in the order their first row was queued. PURE. */
+export function digestBatches<T extends { org_id: string | null }>(rows: readonly T[], scope: "person" | "workspace"): T[][] {
+  if (scope === "person") return rows.length ? [[...rows]] : [];
+  const byOrg = new Map<string | null, T[]>();
+  for (const r of rows) byOrg.set(r.org_id, [...(byOrg.get(r.org_id) ?? []), r]);
+  return [...byOrg.values()];
+}
+
+/** The subscription that decides a channel for one event (exact beats
+ *  wildcard), from rows already narrowed to one person, workspace and
+ *  channel. The live send and the held send ask this same question. PURE. */
+export function winningSubscription<S extends { event_type: string }>(subs: readonly S[], eventType: string): S | undefined {
+  return subs.find((s) => s.event_type === eventType) ?? subs.find((s) => s.event_type === "*");
+}
+
+export interface HeldDestination {
+  org_id: string;
+  event_type: string;
+  enabled: boolean;
+  config: unknown;
+}
+
+/** Held notices grouped by where they go (#7074). A notice held for a
+ *  subscription goes to that subscription's destination as it is NOW (its
+ *  URL may have changed, and no secret is copied into the queue); one sent
+ *  by the account fallback (no subscription) goes with no config, as it
+ *  would have live. A notice whose subscription was turned off is dropped:
+ *  the person said stop. Notices bound for different destinations never
+ *  share a digest. PURE. */
+export function destinationBatches<T extends { org_id: string | null; event_type: string }>(
+  rows: readonly T[],
+  subs: readonly HeldDestination[],
+  scope: "person" | "workspace",
+): { batches: Array<{ rows: T[]; config: unknown }>; dropped: T[] } {
+  const byDest = new Map<string, { rows: T[]; config: unknown }>();
+  const dropped: T[] = [];
+  for (const r of rows) {
+    const sub = r.org_id ? winningSubscription(subs.filter((s) => s.org_id === r.org_id), r.event_type) : undefined;
+    if (sub && !sub.enabled) {
+      dropped.push(r);
+      continue;
+    }
+    const config = sub?.config ?? null;
+    const key = JSON.stringify(config);
+    const dest = byDest.get(key) ?? { rows: [], config };
+    dest.rows.push(r);
+    byDest.set(key, dest);
+  }
+  const batches = [...byDest.values()].flatMap((d) => digestBatches(d.rows, scope).map((b) => ({ rows: b, config: d.config })));
+  return { batches, dropped };
+}
+
+/** Where a digest's link goes (#6907): the one item's own page, or, for many
+ *  from one workspace, that workspace's notifications; a digest across
+ *  workspaces has nowhere single to open. PURE. */
+export function digestLink(batch: ReadonlyArray<{ link_url: string | null }>, workspaceSlug: string | null): string | null {
+  if (batch.length === 1) return batch[0]!.link_url;
+  return workspaceSlug ? `/w/${workspaceSlug}/me/notifications` : null;
 }
 
 // ── storage ────────────────────────────────────────────────────────────────

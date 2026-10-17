@@ -13,6 +13,7 @@
 // is refused when it is saved, with the reason.
 
 import { platform, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { ASSIGNEE_RECIPIENT, HOUSEHOLD_RECIPIENT, isRecipientRole } from "@cobblr/platform-contract/recipients";
 
 export const MESSAGE_EVENT = "core-notifications.message";
 
@@ -29,7 +30,7 @@ export function registerMessageSomeone(): void {
   // with the reason, while the workspace cannot message outside it.
   platform().actions.registerWireCheck("core-notifications:message-someone", async ({ orgId, args }) => {
     const to = typeof args.to === "string" ? args.to.trim() : "";
-    if (!to || /\{\{/.test(to)) return null;
+    if (!to || /\{\{/.test(to) || isRecipientRole(to)) return null;
     if (await platform().accounts.userForPerson(orgId, to)) return null;
     return platform().outboundEmail.automatedRefusal(orgId, args.via === "text" ? "text" : "email");
   });
@@ -41,6 +42,25 @@ async function messageSomeone(ctx: ActionInvokeContext, entity: ActionInvokeCont
   if (!to) return { ok: false, error: "who should get the message? pick a person" };
   const record = entity ? await platform().entities.lookup(ctx.orgId, entity.kind, entity.id).catch(() => null) : null;
   const said = typeof args.message === "string" && args.message.trim() ? args.message.trim() : defaultMessage(record?.title);
+  // A role, not a person: whoever the event says has the record (the whole
+  // household when nobody does, or they have no account to tell), or everyone.
+  if (isRecipientRole(to)) {
+    const named = to === ASSIGNEE_RECIPIENT ? ctx.event?.payload?.assigneeUserId : null;
+    const toIds = typeof named === "string" && named ? [named] : to === HOUSEHOLD_RECIPIENT || to === ASSIGNEE_RECIPIENT ? await platform().notifications.orgMemberIds(ctx.orgId) : [];
+    for (const userId of toIds) {
+      // dispatch-per-row-ok: one message to each of its recipients, never one per record
+      await platform().notifications.dispatch({
+        orgId: ctx.orgId,
+        userId,
+        eventType: MESSAGE_EVENT,
+        message: said.slice(0, 500),
+        module: "core-notifications",
+        ...(entity ? { entityType: entity.kind, entityId: entity.id } : {}),
+        ...(record?.detailUrl ? { link_url: record.detailUrl } : { no_link_reason: "a message about no record, or one that is gone" }),
+      });
+    }
+    return { ok: true, summary: `Told ${toIds.length === 1 ? "one person" : `${toIds.length} people`}: ${said.slice(0, 120)}`, activity_label: "Messaged someone" };
+  }
   const userId = await platform().accounts.userForPerson(ctx.orgId, to);
   if (!userId) {
     // Outside the workspace: only an automation, through the workspace's own

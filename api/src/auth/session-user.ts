@@ -19,12 +19,15 @@
 
 import { meta } from "../db/meta.js";
 import { hasAuthEmailSender } from "../platform/hosted-seams.js";
+import { isUndeliverableAddress } from "../platform/usernames.js";
 
 /** Every column the client is given about itself. Add account-level
  *  preferences HERE, not in a route. */
 export const SESSION_USER_COLUMNS = [
   "id",
   "email",
+  // The name they can sign in with beside the email, or null (#6910).
+  "username",
   "display_name",
   "must_reset_password",
   "email_verified_at",
@@ -55,5 +58,7 @@ export async function loadSessionUser(userId: string) {
   // email sender (the setup builder's "Email: None") can never verify, and
   // asked its operator to on the first screen anyway, with a Resend that sent
   // nothing (#6442). The client asks only when this is true.
-  return { ...rest, email_verified: email_verified_at !== null, can_verify_email: hasAuthEmailSender() };
+  // An account made with only a username (#6910) carries an address nothing is
+  // sent to; the client says "no email" rather than showing it.
+  return { ...rest, email_verified: email_verified_at !== null, can_verify_email: hasAuthEmailSender(), has_email: !isUndeliverableAddress(rest.email) };
 }

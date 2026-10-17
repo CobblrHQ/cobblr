@@ -6,8 +6,20 @@
 // dedicated connector — the make.com "HTTP" app equivalent.
 
 import { registerOutboundConnector } from "../services.js";
-import { sendFetch } from "../outbound-send.js";
+import { sendFetch, idempotencyHeaderOf } from "../outbound-send.js";
+import { safeFetch } from "./safe-fetch.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
+
+/** The scheme, host and port of an address ("https://host:8443"), lower-cased and
+ *  with the scheme's default port dropped; null for anything that is not one. */
+function originOf(address: string): string | null {
+  try {
+    const u = new URL(address);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
 
 function parseJsonObject(v: unknown): Record<string, string> {
   if (typeof v !== "string" || !v.trim()) return {};
@@ -29,6 +41,7 @@ export function register(): void {
       base_url: { label: "Base URL (optional, prepended to a relative URL)", secret: false },
       bearer_token: { label: "Bearer token (optional)", secret: true },
       max_per_second: { label: "Most requests per second (optional)", secret: false },
+      idempotency_header: { label: "Idempotency key header (default Idempotency-Key, \"none\" for no key)", secret: false },
     }),
     actions: [
       {
@@ -66,7 +79,13 @@ export function register(): void {
         ...parseJsonObject(args.headers),
       };
       const bearer = ctx.credentials.bearer_token;
-      if (typeof bearer === "string" && bearer && !headers.authorization) {
+      if (typeof bearer === "string" && bearer && !Object.keys(headers).some((k) => k.toLowerCase() === "authorization")) {
+        // The saved token belongs to the connection's own address. A member who
+        // may run the connection can name any URL, so a token goes only where the
+        // connection points: another origin is refused, not sent without it.
+        const own = originOf(base);
+        if (!own) throw new Error("http: this connection has a token but no base address for it to belong to; set the base URL");
+        if (originOf(target) !== own) throw new Error(`http: this connection's token is for ${own} and cannot be sent to another address`);
         headers.authorization = `Bearer ${bearer}`;
       }
 
@@ -77,7 +96,9 @@ export function register(): void {
         if (!headers["content-type"]) headers["content-type"] = "application/json";
       }
 
-      const res = await sendFetch("http", target, { method, headers, body });
+      const keyHeader = idempotencyHeaderOf(ctx.credentials);
+      if (keyHeader && ctx.idempotencyKey && !Object.keys(headers).some((k) => k.toLowerCase() === keyHeader.toLowerCase())) headers[keyHeader] = ctx.idempotencyKey;
+      const res = await sendFetch("http", target, { method, headers, body }, keyHeader);
       const text = await res.text().catch(() => "");
       return { status: res.status, body: text.slice(0, 2000) };
     },
@@ -86,9 +107,7 @@ export function register(): void {
       if (!base) return { ok: true }; // base_url is optional; nothing to test
       try {
         await assertSafeOutboundUrl(base);
-        const res = await fetch(base, { method: "HEAD", signal: AbortSignal.timeout(8_000) }).catch(() =>
-          fetch(base, { method: "GET", signal: AbortSignal.timeout(8_000) }),
-        );
+        const res = await safeFetch(base, { method: "HEAD" }, 8_000).catch(() => safeFetch(base, { method: "GET" }, 8_000));
         return { ok: res.ok || res.status < 500 };
       } catch (err) {
         return { ok: false, error: (err as Error).message };

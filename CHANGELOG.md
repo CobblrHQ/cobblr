@@ -2,18 +2,57 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-17
+
+### Features
+- The wire composer now says how many existing records a wire fits right now ("2 parts of 3 in that state now"), updating as you change it, and says what the number means for the trigger. When a wire runs on linked records, the relationship is picked from the links in use in your workspace, with a way to type a new one. The assistant reads the same count and the same list before it sets an automation up.
+- A build takes sub-assemblies from stock before making more
+- A task left undone is now told again, louder each step: its assignee hears on the day it is due and again when it is late (the task is tagged late), and the whole household hears only when it has gone stale. A task nobody has goes to everyone at once, and marking it done stops the next step.
+
+### Improvements
+- Ask Cobb to rename, re-lay or remove a saved view, change how units show or remove one, save or delete a template, and attach a file to a record or take it off
+- Ask Cobb to make or remove a printer pool, take a printer out of one, pause or cancel a production run, or arrange the machine floor
+- Ask Cobb to move a print job up the queue, refresh or clear a job, and rename or delete a file in the print library; none of it starts a machine
+- Ask Cobb to turn print failure detection on and tune it, check a print for failure now, or test a failure detector
+- Ask Cobb whether a printer manager connection is still working; it checks without sending anything to a machine
+- A device post sent again under its delivery id is applied once, so a lost answer no longer counts pulses or parts twice
+- A new workspace's home leads with one box to add things, then three clear rows and a section of ready-made setups, with a one-line AI notice you can close
+
+### Fixes
+- A bundle update that stopped or failed part-way used to leave the workspace without the bundle, and the hourly update pass never found it again. The old version now stays until its replacement is in, and an install that did not finish is finished on the next pass, with no reinstall.
+- When two collections each have a date field with the same name, the calendar now gives each record the label and the meaning of its own collection's field. Before, a past purchase could be shown as "Return by" and counted overdue, or an overdue return filed as a past event.
+- Turning a module off now takes its dates off the calendar and out of the subscribed feed as well, and turning it back on brings the same records back. Before, a task due tomorrow stayed on the calendar after Projects was off.
+- A module part that is turned off now refuses its routes whatever capitals they are written with. Before, `/ARMS/1` still answered after Robot arms was off, because the gate matched the exact text while the router did not.
+- On a small phone, a part's Duplicate button keeps its word whole beside Move and Delete
+- On a phone, the Locations page fits the screen again: Export and Import sit beside Recently deleted instead of pushing the page sideways
+- On a phone, a place's name on the Locations list stays readable: Add inside and Edit share one More menu on each row
+- A read notification keeps its buttons at full strength, and a one-item notification says its line once
+- On a phone, a list counted in a unit other than each keeps each name readable: the amount control moves under the name instead of squeezing it
+- A public page's photo stops being served once its record leaves the page, its photo is replaced, or the page ends
+- A public link to a saved view, board or app shows only the records the view's conditions keep, never ones its comparisons exclude
+- A public record with a custom look opens again after you go back to the list
+- A discussion comment sent again while it is posting is posted once, not twice
+- Signing in as another account in the same tab no longer shows anything the previous account had open, such as its connections
+- Sharing several photos or links to Cobblr says which ones failed to save, keeps them, and offers Try again for only those.
+
 ## 2026-10-16
 
 ### Features
 - When a member offers to share their AI with your workspace, you can approve or decline it with one tap from the notification, in Cobblr or in your Discord DM.
 - A message to Slack, Discord or a webhook that meets a busy or briefly-down service is tried again, sent at the service's pace, and kept with a Send again button if it still fails
+- A Part-DB part kept in several storage locations imports as one card with a place for each, with the right amount in each
+- Robot arms are machines: an arm's page shows its controller's connection, mode, program and safety state, keeps its programs by revision and family and what it is known to work with, and its station loads, starts, pauses and stops programs. Cobblr never moves an arm or clears a stop. Robot arms are a part of Digital Fabrication you can switch off in Configuration, Modules: features can now have parts, and an off part's screens, actions and assistant tools disappear while everything it recorded is kept.
 - Assets and locations from a Snipe-IT instance import with their serial numbers, asset tags, prices and pictures, and can be kept in sync
 
 ### Improvements
 - A notification channel can no longer be flooded: each person's channel sends at most so many notices an hour, holds the rest for its next summary and says so once in the bell; sign-in links are never delayed
+- Ask Cobb to sync a connected shop now, turn a section's sync on or off, archive or bring back a connection, or test whether it still works
 - Ask Cobb whether a label printer is online; it checks without printing anything
+- A Discord digest is one card per workspace, naming it and linking back into it; email still gathers every workspace into one message
 - Every phone, every shape. On a phone or tablet every button and link is now a finger-sized 44 pixels, so a tap lands where you aim. The top bar and the scan inbox's header keep their height and their words. Turn an iPhone on its side and the header, the page, the Feedback button and open records keep clear of the Dynamic Island and the rounded corners. The phone menu no longer scrolls the page behind it, and a record's Duplicate, Move and Delete row sits at the very bottom, with nothing scrolling beneath it.
 - Recount from a tag's page. A tag's page now has Recount these… beside each collection's group of things carrying the tag: it starts a recount of just those things and opens it, the same recount Cobb starts when you ask it to recount everything tagged garage.
+- You can sign in with a username as well as your email (set it under Your account, Identity & password), and a kiosk install can make accounts that have no email at all.
+- A saved view can look for words. In a view's filters, a text field now offers contains and does not contain: *notes contain warranty* finds "Warranty until 2027" and "kept the WARRANTY card", ignoring case, and what you type is matched exactly, a `%` or `_` included. Does not contain also keeps the records with nothing written there. Cobb can filter the same way when you ask ("which tools mention a warranty?"), and a collection that cannot filter by text says so instead of showing everything. On a phone, a filter's value box now wraps onto its own line instead of running off the screen.
 
 ### Fixes
 - An operator can now send a job from the machines page, queue it, retry it and print it again. Any member can still stop or pause a machine, but resuming, framing or starting one, or starting a production test, now needs an operator or an admin. A refusal says which permission to ask for.

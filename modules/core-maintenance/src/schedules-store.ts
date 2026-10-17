@@ -273,6 +273,20 @@ export async function unroll(db: Db, orgId: string, was: RolledFrom): Promise<vo
   await ensureOccurrence(db, orgId, s);
 }
 
+/** Undo of a service, but only while the schedule still reflects THAT service:
+ *  a later one that has moved the schedule on since is the one that says when
+ *  the next is due, and rolling back to the earlier one's snapshot would put
+ *  the due date (and a bound record's expiry) behind a service that is in the
+ *  history (#7129). `undoneAt` is when the service being undone was done. */
+export async function unrollIfCurrent(db: Db, orgId: string, was: RolledFrom, undoneAt: Date | null): Promise<boolean> {
+  if (undoneAt) {
+    const s = await db.selectFrom("core_maintenance_schedules").select(["last_done_at"]).where("id", "=", was.schedule_id).executeTakeFirst();
+    if (s?.last_done_at && new Date(s.last_done_at).getTime() !== new Date(undoneAt).getTime()) return false;
+  }
+  await unroll(db, orgId, was);
+  return true;
+}
+
 export function rolledFromOf(v: unknown): RolledFrom | null {
   const r = v as Partial<RolledFrom> | null;
   if (!r || typeof r.schedule_id !== "string") return null;

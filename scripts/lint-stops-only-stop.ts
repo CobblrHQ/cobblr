@@ -22,6 +22,7 @@
 //   npx tsx scripts/lint-stops-only-stop.ts   (pnpm lint stops-only-stop)
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const ALLOWED = new Set(["stop", "abort", "pause", "cancel"]);
 const FORBIDDEN = /\b(start(?:s|ed|ing)?|resum(?:e|es|ed|ing)|frame[sd]?|framing|hom(?:e|es|ed|ing)|jog(?:s|ged|ging)?|mov(?:e|es|ed|ing)|heat(?:s|ed|ing)?|preheat\w*|send(?:s|ing)?|print(?:s|ed|ing)?)\b/i;
@@ -66,9 +67,7 @@ export function check(file: string, src: string): Violation[] {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const violations: Violation[] = [];
   let judged = 0;
-  for (const mod of readdirSync("modules")) {
-    const file = join("modules", mod, "src", "module.ts");
-    if (!existsSync(file)) continue;
+  for (const mod of readdirSync("modules")) for (const file of manifestSources(join("modules", mod))) {
     const src = readFileSync(file, "utf8");
     judged += actionBlocks(src).filter((b) => /\beffect:\s*"stops"/.test(b.text)).length;
     violations.push(...check(file, src));

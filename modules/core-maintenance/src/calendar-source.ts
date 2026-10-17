@@ -72,5 +72,5 @@ export function registerMaintenanceCalendarSource(): void {
       if (msg.includes("does not exist")) return [];
       throw err;
     }
-  });
+  }, { module: "core-maintenance" });
 }

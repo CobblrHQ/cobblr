@@ -25,6 +25,27 @@ async function parentRow(db: Kysely<CoreScanDB>, id: string) {
 /** Undo the split `id` belongs to: it may be the split line or one of its
  *  parts. */
 export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: string, http: PurchaseHttp | null): Promise<UndoSplitResult> {
+    // One transaction, the line and its parts locked before their statuses
+    // are read (#7144): a part filed between the read and the write was
+    // discarded after its record was made, and the line came back holding
+    // it again. A Confirm now either lands first (and this refuses) or waits
+    // and finds the part discarded.
+    const r = await db.transaction().execute((tx) => undoSplitLocked(tx as unknown as Kysely<CoreScanDB>, id));
+    if (!r.ok) return r;
+    const { parent: restored, live } = r;
+    // Its parts' order lines become its one line again (#5734).
+    if (http && live.length) {
+      await relineAfterChange(db, http, live, [restored.id]).catch((e: Error) =>
+        console.warn("[core-scan] undo split: order lines kept as they were:", e.message),
+      );
+    }
+    for (const childId of live) {
+      void platform().events.emit("core-scan.scan.discarded", { orgId, itemId: childId });
+    }
+    return { ok: true as const, parent: restored, live };
+}
+
+async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string): Promise<UndoSplitResult> {
     const start = await db
       .selectFrom("core_scan_inbox_items")
       .select(["id", "suggested_metadata"])
@@ -39,6 +60,7 @@ export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: strin
       .selectFrom("core_scan_inbox_items")
       .selectAll()
       .where("id", "=", parentId)
+      .forUpdate()
       .executeTakeFirst();
     const parentMeta = (parent?.suggested_metadata ?? {}) as { split_into?: unknown; split_prior_notes?: unknown };
     if (!parent || !Array.isArray(parentMeta.split_into)) {
@@ -48,6 +70,7 @@ export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: strin
       .selectFrom("core_scan_inbox_items")
       .select(["id", "status", "suggested_name", "suggested_metadata"])
       .where(sql`suggested_metadata->>'split_from'`, "=", parent.id)
+      .forUpdate()
       .execute();
     const filed = children.find((c) => c.status === "resolved");
     if (filed) {
@@ -98,15 +121,6 @@ export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: strin
       .where("id", "=", parent.id)
       .returningAll()
       .executeTakeFirstOrThrow();
-    // Its parts' order lines become its one line again (#5734).
-    if (http && live.length) {
-      await relineAfterChange(db, http, live, [parent.id]).catch((e: Error) =>
-        console.warn("[core-scan] undo split: order lines kept as they were:", e.message),
-      );
-    }
-    for (const childId of live) {
-      void platform().events.emit("core-scan.scan.discarded", { orgId, itemId: childId });
-    }
     return { ok: true as const, parent: restored, live };
 }
 

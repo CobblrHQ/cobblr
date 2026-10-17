@@ -6,11 +6,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import ts from "typescript";
 import { ACTION_GROUPS, actionGroupCollision, similarActionGroup } from "../packages/platform-contract/src/action-groups.ts";
+import { manifestSources } from "./lib/manifest-sources.ts";
 const errors: string[] = [];
 const collision = actionGroupCollision(ACTION_GROUPS);
 if (collision) errors.push(`${collision.group.id}: looks like ${collision.existing.label}; use ${collision.existing.id}`);
-for (const name of readdirSync("modules")) {
-  const file = `modules/${name}/src/module.ts`;
+for (const name of readdirSync("modules")) for (const file of manifestSources(`modules/${name}`)) {
   let source: string; try { source = readFileSync(file, "utf8"); } catch { continue; }
   const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
   function visit(node: ts.Node) {

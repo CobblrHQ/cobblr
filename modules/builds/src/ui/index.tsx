@@ -205,7 +205,8 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const toast = useToast();
   const [qty, setQty] = useState(1);
   const [serial, setSerial] = useState("");
-  const detail = useQuery({ queryKey: ["builds-detail", buildId], queryFn: () => api.getBuild(buildId) });
+  // Planned for the quantity being built: stocked sub-assemblies cover the first few, the rest are made.
+  const detail = useQuery({ queryKey: ["builds-detail", buildId, qty], queryFn: () => api.getBuild(buildId, qty), placeholderData: (prev) => prev });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["builds-detail", buildId] });
@@ -224,6 +225,11 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   });
   const removeComponent = useMutation({
     mutationFn: (cid: string) => api.removeComponent(buildId, cid),
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
+  });
+  const stockChoice = useMutation({
+    mutationFn: (v: { id: string; use_stock: boolean }) => api.setComponentUseStock(buildId, v.id, v.use_stock),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
@@ -283,7 +289,7 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 
   const d = detail.data;
   const max = d?.buildable.max_buildable ?? 0;
-  const short = d ? shortageSentence(d.buildable.components ?? [], qty) : null;
+  const short = d ? (d.plan_qty === qty && d.shortage !== undefined ? d.shortage : shortageSentence(d.buildable.components ?? [], qty)) : null;
   const limitingIds = new Set((d?.buildable.limiting ?? []).map((l) => l.part_id));
 
   return (
@@ -372,13 +378,23 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
                       </span>
                       <span className="text-xs text-muted tabular-nums">
                         {isSub ? (
-                          <>{c.per_build}/build · {c.sub_max_buildable ?? 0} buildable</>
+                          <>
+                            {c.per_build}/build · {c.sub_max_buildable ?? 0} buildable
+                            {c.from_stock != null && c.to_make != null && (c.from_stock > 0 || c.to_make > 0) && (
+                              <> · <span data-testid="sub-plan">{[c.from_stock > 0 ? `${c.from_stock} from stock` : null, c.to_make > 0 ? `${c.to_make} to make` : null].filter(Boolean).join(", ")}</span></>
+                            )}
+                          </>
                         ) : (
                           <>
                             {c.per_build}/build · <span className={short ? "text-red-500 font-medium" : ""}>{c.available} in stock</span>
                           </>
                         )}
                       </span>
+                      {isSub && (
+                        <button type="button" onClick={() => stockChoice.mutate({ id: c.id, use_stock: c.use_stock === false })} disabled={stockChoice.isPending} className="text-[11px] rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-muted hover:text-content" title={c.use_stock === false ? "Always made from its parts. Press to use its stock first." : "Its stock is used first. Press to always make it."}>
+                          {c.use_stock === false ? "Always make" : "Use stock first"}
+                        </button>
+                      )}
                       <button title="Remove component" type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
                         <X size={14} />
                       </button>

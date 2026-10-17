@@ -9,11 +9,7 @@ import { randomBytes } from "node:crypto";
 import { platform } from "@cobblr/platform-contract";
 import { sql } from "kysely";
 import { qrShortcode } from "../api/qr-db.js";
-
-interface MetaQrTokenRow {
-  token: string;
-  revoked_at: Date | null;
-}
+import { permanentNavToken, type NavTokenRow } from "./permanent-nav-token.js";
 
 function slug(): string {
   return randomBytes(9).toString("base64url"); // 12 chars — matches the routes
@@ -24,7 +20,7 @@ function isDupKey(e: unknown): boolean {
   return err.code === "23505" || /duplicate key|unique constraint/i.test(err.message ?? "");
 }
 
-/** Reuse the entity's live navigate token, else mint one. Returns the token
+/** Reuse the entity's permanent navigate token, else mint one (permanent-nav-token.ts). Returns the token
  *  string (`p/ab12…` descriptive or an opaque slug), ready for qrScanUrl(). */
 export async function ensureNavToken(
   orgId: string,
@@ -36,61 +32,40 @@ export async function ensureNavToken(
   // (`bookshelf:item`) and the module kind name the same row (#3591).
   entityKind = await platform().entities.baseKindOf(orgId, entityKind);
   const meta = platform().db.meta as unknown as {
-    selectFrom: (t: string) => {
-      select: (cols: string[]) => {
-        where: (c: string, o: string, v: unknown) => {
-          where: (c: string, o: string, v: unknown) => {
-            where: (c: string, o: string, v: unknown) => {
-              where: (c: string, o: string, v: unknown) => {
-                executeTakeFirst: () => Promise<MetaQrTokenRow | undefined>;
-              };
-            };
-          };
-        };
-      };
-    };
     insertInto: (t: string) => {
       values: (v: Record<string, unknown>) => {
-        returning: (cols: string[]) => { executeTakeFirstOrThrow: () => Promise<{ token: string }> };
+        returningAll: () => { executeTakeFirstOrThrow: () => Promise<NavTokenRow> };
       };
     };
   };
-
-  const existing = await meta
-    .selectFrom("core_labels_qr_tokens")
-    .select(["token", "revoked_at"])
-    .where("org_id", "=", orgId)
-    .where("entity_kind", "=", entityKind)
-    .where("entity_id", "=", entityId)
-    .where("mode", "=", "navigate")
-    .executeTakeFirst();
-  if (existing && !existing.revoked_at) return existing.token;
-
   const mkToken = () =>
     style === "descriptive" ? `${qrShortcode(entityKind)}/${slug()}` : slug();
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      // check-then-insert: the key is a random QR token minted here
-      const row = await meta
-        .insertInto("core_labels_qr_tokens")
-        .values({
-          token: mkToken(),
-          org_id: orgId,
-          entity_kind: entityKind,
-          entity_id: entityId,
-          mode: "navigate",
-          action_id: null,
-          auth: "session",
-          config: sql`'{}'::jsonb` as never,
-          expires_at: null,
-        })
-        .returning(["token"])
-        .executeTakeFirstOrThrow();
-      return row.token;
-    } catch (e) {
-      if (isDupKey(e) && attempt < 4) continue;
-      throw e;
+  const mint = async (): Promise<NavTokenRow> => {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        // check-then-insert: the key is a random QR token minted here
+        return await meta
+          .insertInto("core_labels_qr_tokens")
+          .values({
+            token: mkToken(),
+            org_id: orgId,
+            entity_kind: entityKind,
+            entity_id: entityId,
+            mode: "navigate",
+            action_id: null,
+            auth: "session",
+            config: sql`'{}'::jsonb` as never,
+            expires_at: null,
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+      } catch (e) {
+        if (isDupKey(e) && attempt < 4) continue;
+        throw e;
+      }
     }
-  }
-  throw new Error("could not mint a unique QR token");
+    throw new Error("could not mint a unique QR token");
+  };
+  // A label printed now must open the record for as long as it is on the shelf.
+  return (await permanentNavToken(orgId, entityKind, entityId, mint)).row.token;
 }

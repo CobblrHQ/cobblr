@@ -66,6 +66,14 @@ import { registerPrintThis } from "../print-this.js";
 import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
+import { registerTestConnectionAction } from "./test-connection-action.js";
+
+registerTestConnectionAction();
+import { registerFamilies } from "../core/families.js";
+import { FAMILIES } from "../families/index.js";
+
+registerFamilies(FAMILIES);
+
 
 registerMachineStationVerifier();
 registerBench();
@@ -121,6 +129,8 @@ router.use("/resin", resinRouter);
 router.use("/snapmaker", snapmakerRouter);
 router.use("/laser", laserRouter);
 router.use("/kilns", kilnsRouter);
+// Each family's routes, at the paths its module part owns (core/families.ts).
+for (const family of FAMILIES) for (const r of family.routes) router.use(r.path, r.router);
 router.use("/cutter", cutterRouter);
 router.use("/large-format",largeFormatRouter);
 router.use("/embroidery", embroideryRouter);

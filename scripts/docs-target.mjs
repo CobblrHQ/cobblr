@@ -79,6 +79,20 @@ export function headingsAlreadyIn(fileText, docsBody) {
     .filter((t) => have.has(t.toLowerCase()));
 }
 
+/** Paragraphs of a staged `## docs` body its target file already carries,
+ *  compared with whitespace collapsed. An author who writes the guide text by
+ *  hand and leaves the blurb staged gets it printed twice by the flush: the
+ *  robot-arm entry (#6943) shipped its three paragraphs in USER_GUIDE.md and in
+ *  its changelog body at once. Short lines are skipped; they repeat by chance. */
+export function paragraphsAlreadyIn(fileText, docsBody) {
+  const flat = (t) => t.replace(/\s+/g, " ").trim();
+  const have = flat(fileText);
+  return String(docsBody)
+    .split(/\n\s*\n/)
+    .map(flat)
+    .filter((para) => para.length >= 60 && have.includes(para));
+}
+
 /** Every heading TEXT in a markdown doc, in order — for "did you mean" hints. */
 export function listHeadings(text) {
   return headingLines(text).map((h) => h.text);

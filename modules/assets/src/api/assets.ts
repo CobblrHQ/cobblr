@@ -8,6 +8,7 @@ import { DISPOSITION_KEY, dispositionOf, readRecordDisposition } from "@cobblr/p
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { forViewer, maySeeSerials, refuseSerialWrite, withoutSerial } from "./serial-scope.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const assetsRouter = Router({ mergeParams: true });
@@ -111,7 +112,8 @@ assetsRouter.get(
     // Person and relation fields read as names (assigned_to_label).
     res.json({
       ...answer,
-      items: await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items),
+      items: await forViewer(req, await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items)),
+      can_see_serials: await maySeeSerials(req),
       archived_count: Number(put?.n ?? 0),
       paid_total_cents: centsFromAmount(total.amount),
       money_total: total,
@@ -139,13 +141,15 @@ assetsRouter.get(
       return;
     }
     const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), [row as Record<string, unknown>]);
-    res.json(labelled);
+    res.json(await maySeeSerials(req) ? labelled : withoutSerial(labelled as Record<string, unknown>));
   }),
 );
 
+// AI-REACH: crud
 assetsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
+    if (await refuseSerialWrite(req, res, req.body)) return;
     await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetCreate.safeParse(routed);
@@ -189,10 +193,11 @@ assetsRouter.post(
       orgId: ctx.org.id,
       assetId: inserted.id,
     });
-    res.status(201).json(inserted);
+    res.status(201).json(await maySeeSerials(req) ? inserted : withoutSerial(inserted as Record<string, unknown>));
   }),
 );
 
+// AI-REACH: crud
 assetsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -201,6 +206,7 @@ assetsRouter.patch(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    if (await refuseSerialWrite(req, res, req.body)) return;
     await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetUpdate.safeParse(routed);
@@ -287,8 +293,10 @@ assetsRouter.patch(
       userId: sessionUser(req).id,
       action: "asset_updated",
       ref: { module: "assets", entityType: "asset", entityId: id },
-      diff: parsed.data,
-      before,
+      // The history is read by people who may not see serials: it says a serial
+      // changed, never what it was or became.
+      diff: serialInHistory(parsed.data),
+      before: withoutSerial(before as Record<string, unknown>),
     });
     // Flat before/after bags (native columns + flattened metadata) so a
     // transition wire can compare {{event.before.x}} vs {{event.after.x}}.
@@ -305,10 +313,16 @@ assetsRouter.patch(
       before: { ...before, ...beforeMeta },
       after: { ...before, ...nativeChanges, ...afterMeta },
     });
-    res.json(updated);
+    res.json(await maySeeSerials(req) ? updated : withoutSerial(updated as Record<string, unknown>));
   }),
 );
 
+/** A change's record for the history: a serial is marked as changed, not shown. */
+function serialInHistory<T extends Record<string, unknown>>(diff: T): Record<string, unknown> {
+  return "serial_number" in diff ? { ...diff, serial_number: "changed" } : diff;
+}
+
+// AI-REACH: crud
 assetsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -9,10 +9,12 @@ import type {
   SyncConnector,
   SyncEntityType,
   SyncFetchContext,
+  SyncHolding,
   SyncRecord,
   SyncWebhookHit,
 } from "@cobblr/platform-contract";
 import type { FieldSpec, SyncEntityTypeManifest, SyncSourceManifest } from "./manifest.js";
+import { lotsByPlace, type StockRow } from "./lots-by-place.js";
 import { mapLimit } from "./map-limit.js";
 
 /** Resolve a "$.a.b" dot-path against a record; "='lit'" returns the literal.
@@ -35,11 +37,21 @@ function resolve(expr: string, data: unknown): unknown {
     if (cur == null || typeof cur !== "object") return undefined;
     cur = (cur as Record<string, unknown>)[key];
   }
+  if (op === "cents") return toCents(cur);
   if (op !== "last") return cur;
   if (cur == null || cur === "") return cur;
   const s = String(cur).replace(/\/+$/, "");
   const seg = s.slice(s.lastIndexOf("/") + 1);
   return seg === "" ? null : seg;
+}
+
+/** A money amount as whole cents. A source may send a number (12.5) or text as a
+ *  person writes it ("1,249.99", "$349.00"); the thousands comma and a currency
+ *  sign are not part of the number. Anything that is not an amount is null. */
+function toCents(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(String(v).replace(/[^0-9.\-]/g, ""));
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
 }
 
 /** Resolve an image extract → a URL/path string, or null. If the extract carries
@@ -61,6 +73,14 @@ function resolveImage(expr: string, data: unknown): string | null {
   return v != null && String(v).trim() ? String(v) : null;
 }
 
+function requireSourceRow(data: unknown, idField: string): asserts data is Record<string, unknown> {
+  const id = resolve(idField, data);
+  if (data == null || typeof data !== "object" || Array.isArray(data) ||
+    !(typeof id === "string" && id.trim() !== "" || typeof id === "number" && Number.isFinite(id))) {
+    throw new Error(`Incomplete source list: expected a record with a stable id at ${idField}`);
+  }
+}
+
 /** Flatten a nested tree (roots + `childrenKey` arrays) into a flat list,
  *  stamping each node's parent id (read via `idField` from the ancestor) into
  *  `__parent_id` and dropping the children array. Lets a tree-only listing feed
@@ -68,9 +88,13 @@ function resolveImage(expr: string, data: unknown): string | null {
 function flattenTree(nodes: unknown[], childrenKey: string, idField: string, parentId: string | null): unknown[] {
   const out: unknown[] = [];
   for (const n of nodes) {
-    if (n == null || typeof n !== "object") continue;
-    const node = n as Record<string, unknown>;
-    const kids = Array.isArray(node[childrenKey]) ? (node[childrenKey] as unknown[]) : [];
+    requireSourceRow(n, idField);
+    const node = n;
+    const children = node[childrenKey];
+    if (children != null && !Array.isArray(children)) {
+      throw new Error(`Incomplete source list: expected an array at ${childrenKey}`);
+    }
+    const kids = (children ?? []) as unknown[];
     const flat = { ...node, __parent_id: parentId };
     delete (flat as Record<string, unknown>)[childrenKey];
     out.push(flat);
@@ -175,7 +199,8 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
   const references: Record<string, { section: string; externalId: string }> = {};
   if (et.references) {
     for (const [field, spec] of Object.entries(et.references)) {
-      const v = resolve(spec.from, data);
+      let v = resolve(spec.from, data);
+      if ((v == null || v === "") && spec.fallback) v = resolve(spec.fallback, data);
       if (v != null) references[field] = { section: spec.section, externalId: String(v) };
     }
   }
@@ -187,6 +212,7 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
     }
   }
   const tags = et.tags ? tagNames(resolve(et.tags.from, data), et.tags.split) : [];
+  const holdings = et.holdings ? placeStock(et, data, fields, references) : undefined;
   return {
     externalId: String(idVal),
     parentExternalId: parentVal != null ? String(parentVal) : null,
@@ -194,8 +220,36 @@ function mapRecord(et: SyncEntityTypeManifest, data: unknown): SyncRecord {
     ...(Object.keys(references).length ? { references } : {}),
     ...(Object.keys(images).length ? { images } : {}),
     ...(tags.length ? { tags } : {}),
+    ...(holdings ? { holdings } : {}),
     ...(instance ? { instance } : {}),
   };
+}
+
+/** A record kept as several stock rows: the card's own row replaces the
+ *  source's whole-thing figures in `fields` and `references`, and every other
+ *  place is returned. Nothing to place (no rows): the record is left as mapped. */
+function placeStock(
+  et: SyncEntityTypeManifest,
+  data: unknown,
+  fields: Record<string, unknown>,
+  references: Record<string, { section: string; externalId: string }>,
+): SyncHolding[] {
+  const spec = et.holdings!;
+  const raw = resolve(spec.from, data);
+  const rows: StockRow[] = [];
+  for (const r of Array.isArray(raw) ? raw : []) {
+    const id = resolve(spec.idField, r);
+    if (id == null) continue;
+    const place = resolve(spec.location.from, r);
+    rows.push({ id: String(id), place: place == null ? null : String(place), qty: Number(resolve(spec.qty, r)) });
+  }
+  if (rows.length === 0) return [];
+  const placed = lotsByPlace(rows);
+  fields.qty = placed.own.qty;
+  delete references.location_id;
+  if (placed.own.place != null) references.location_id = { section: spec.location.section, externalId: placed.own.place };
+  if (placed.others.length > 0) for (const f of spec.dropWhenSplit ?? []) fields[f] = null;
+  return placed.others.map((o) => ({ externalId: o.id, qty: o.qty, location: { section: spec.location.section, externalId: o.place }, rows: o.rows }));
 }
 
 function authHeaders(manifest: SyncSourceManifest, ctx: SyncFetchContext): Record<string, string> {
@@ -281,21 +335,27 @@ async function fetchList(
   const basePath = substitutePath(et.list.path, vars);
   const readArray = (body: unknown): unknown[] => {
     const arr = et.list.arrayPath ? resolve(et.list.arrayPath, body) : body;
-    const list = Array.isArray(arr) ? arr : [];
-    return et.list.tree ? flattenTree(list, et.list.tree.children, et.idField, null) : list;
+    if (!Array.isArray(arr)) {
+      throw new Error(`${manifest.name} ${basePath}: incomplete source list, expected an array at ${et.list.arrayPath || "the response body"}`);
+    }
+    for (const row of arr) requireSourceRow(row, et.idField);
+    return arr;
   };
   const pg = et.list.paginate;
-  if (!pg) return readArray(await get(manifest, ctx, et.list.method, basePath));
+  const flatten = (items: unknown[]) => et.list.tree ? flattenTree(items, et.list.tree.children, et.idField, null) : items;
+  if (!pg) return flatten(readArray(await get(manifest, ctx, et.list.method, basePath)));
   const rows: unknown[] = [];
   let page = pg.startPage;
   for (let n = 0; n < pg.maxPages; n++, page++) {
     const sep = basePath.includes("?") ? "&" : "?";
-    const q = `${pg.param}=${page}` + (pg.sizeParam ? `&${pg.sizeParam}=${pg.size}` : "");
+    const at = pg.offset ? (page - pg.startPage) * pg.size : page;
+    const q = `${pg.param}=${at}` + (pg.sizeParam ? `&${pg.sizeParam}=${pg.size}` : "");
     const items = readArray(await get(manifest, ctx, et.list.method, `${basePath}${sep}${q}`));
-    rows.push(...items);
-    if (items.length < pg.size) break; // short page → last page
+    rows.push(...flatten(items));
+    // Count source rows before tree expansion or filtering to prove the end.
+    if (items.length < pg.size) return rows;
   }
-  return rows;
+  throw new Error(`${manifest.name} ${basePath}: incomplete source list after ${pg.maxPages} pages; the final page was full`);
 }
 
 /** Fetch + unwrap one row's full record via the `item` endpoint (or null).
@@ -376,7 +436,8 @@ function buildEntityType(manifest: SyncSourceManifest, et: SyncEntityTypeManifes
           const id = resolve(et.idField, it);
           if (id == null) return null;
           const obj = await fetchDetailObj(manifest, ctx, et, String(id), vars);
-          if (obj == null || !passesFilter(et, obj) || !passesInstanceBy(et, obj)) return null;
+          requireSourceRow(obj, et.idField);
+          if (!passesFilter(et, obj) || !passesInstanceBy(et, obj)) return null;
           const rec = mapRecord(et, obj);
           return rec.externalId && rec.externalId !== "undefined" ? rec : null;
         });

@@ -70,7 +70,9 @@ capabilitiesRouter.get(
   }),
 );
 
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — which provider and model answer a capability decides where
+// the workspace's data is sent and whose account pays; an assistant that re-routed
+// itself could move that data on one instruction. The owner's call.
 capabilitiesRouter.put(
   "/",
   asyncHandler(async (req, res) => {
@@ -186,7 +188,8 @@ capabilitiesRouter.put(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — clearing a capability's routing moves where the data goes;
+// see PUT above
 capabilitiesRouter.delete(
   "/:capability",
   asyncHandler(async (req, res) => {

@@ -151,6 +151,7 @@ export interface InventoryAllocationsTable {
  *  a consumable shows WHAT drew it down and HOW MUCH (the spool's print history).
  *  delta is signed: negative = consumed, positive = restocked. */
 export interface InventoryConsumptionTable {
+  operation_key: Generated<string | null>;
   unit: Generated<string | null>;
   id: Generated<string>;
   part_id: string;

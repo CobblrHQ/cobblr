@@ -87,14 +87,20 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
         const fields = (r.fields ?? []).filter((f) => present(f.value)).slice(0, maxFields);
         const under = [identity, ...fields.map((f) => `${f.label} ${f.value}`)].filter(present).join(" · ");
         return (
-          <li key={r.id} data-testid="phone-record-row" data-record-id={r.id} className="flex items-center">
+          // A row may wrap, and its button asks for 9rem (a basis: a phone
+          // gives every button a min-width that beats ours). A count stepper
+          // still sits beside the name on a 375 px phone, ticking box and all;
+          // one too wide for that ("- 1 ingredient +", a unit other than
+          // "each") goes under the name, where it once left the name two
+          // letters wide (#6951).
+          <li key={r.id} data-testid="phone-record-row" data-record-id={r.id} className="flex flex-wrap items-center">
             {selection && (
               <SelectBox checked={selection.selected.has(r.id)} onChange={(checked) => selection.onToggle(r.id, checked)} label={`Select ${r.name}`} className="ml-3" />
             )}
             <button
               type="button"
               onClick={() => onOpen(r.id)}
-              className="min-w-0 flex-1 flex items-center gap-2.5 px-3 py-1.5 text-left hover:bg-subtle dark:hover:bg-slate-800/40 transition"
+              className="min-w-0 grow basis-36 flex items-center gap-2.5 px-3 py-1.5 text-left hover:bg-subtle dark:hover:bg-slate-800/40 transition"
             >
               {r.picture && <span className="shrink-0">{r.picture}</span>}
               <span className="min-w-0 flex-1">
@@ -126,7 +132,7 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
               </span>
               <ChevronRight size={14} className="shrink-0 text-faint dark:text-slate-600" aria-hidden />
             </button>
-            {r.trailing && <span className="shrink-0 pr-2">{r.trailing}</span>}
+            {r.trailing && <span className="shrink-0 ml-auto pr-2">{r.trailing}</span>}
           </li>
         );
       })}

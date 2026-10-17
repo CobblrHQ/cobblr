@@ -39,7 +39,7 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { walkListPages } from "./entity-list-walk.js";
-import { platform, TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, type EntityViewer, type FilterPredicate } from "@cobblr/platform-contract";
+import { platform, TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, isTextWhereOp, type EntityViewer, type FilterPredicate, type ListResolverOptions } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -69,12 +69,20 @@ const listResolvers = new Map<string, EntityListResolver>();
 // so views/data/search/calendar see instance entities through the generic
 // layer. Modules register once (not per instance).
 const instanceListResolvers = new Map<string, EntityInstanceListResolver>();
+// The kinds and instance modules whose resolver runs `contains` itself (#6896).
+// For any other, a text predicate is reported unapplied before the call: the
+// resolvers skip an op they do not know, and would answer with everything.
+const textOpsKinds = new Set<string>();
+const textOpsModules = new Set<string>();
 
 export function registerInstanceListResolver(
   moduleName: string,
   resolver: EntityInstanceListResolver,
+  options: ListResolverOptions = {},
 ): void {
   instanceListResolvers.set(moduleName, resolver);
+  if (options.textOps) textOpsModules.add(moduleName);
+  else textOpsModules.delete(moduleName);
 }
 
 // Single-entity twin of instanceListResolvers — lets a `<name>:item` LOOKUP
@@ -227,8 +235,11 @@ async function instanceFallbackResolver(
   if (!row) return null;
   const fn = instanceListResolvers.get(row.module_name);
   if (!fn) return null;
-  return (oid, query) => fn(oid, instanceName, query);
+  const resolve: EntityListResolver = (oid, query) => fn(oid, instanceName, query);
+  if (textOpsModules.has(row.module_name)) textOpsResolvers.add(resolve);
+  return resolve;
 }
+const textOpsResolvers = new WeakSet<EntityListResolver>();
 
 // In-process cache of the exposable-fields whitelist per kind. Filled
 // lazily on first lookup; kept until process restart (kinds rarely
@@ -315,6 +326,18 @@ function assistantReadableFieldsOf(kind: string): string[] | null {
   return null;
 }
 
+/** The registered kind whose field read scopes govern `kind` in this
+ *  workspace: itself when registered, and for a named collection
+ *  (`supplies:item`) its module's primary kind. A named collection is never
+ *  in entity_kinds, so reading its scopes by its own id found none, and a
+ *  member without inventory:view-costs read a part's cost through the
+ *  collection (#7117). The field whitelist stays the collection's own: its
+ *  reads return notes and serials the primary's list leaves out (#3807). */
+async function policyKind(kind: string, orgId?: string): Promise<string> {
+  if (!orgId) return kind;
+  return perRequest(`policy-kind:${orgId}:${kind}`, () => baseKindOf(orgId, kind).catch(() => kind));
+}
+
 async function getExposableFields(kind: string): Promise<string[] | null> {
   if (exposableFieldsCache.has(kind)) {
     return exposableFieldsCache.get(kind) ?? null;
@@ -339,36 +362,45 @@ async function getExposableFields(kind: string): Promise<string[] | null> {
 async function getFieldReadScopes(
   kind: string,
   orgId?: string,
+  reader?: unknown,
 ): Promise<Record<string, string> | null> {
+  // A named collection takes its base kind's policy (#7117) for anyone
+  // reading it; the workspace's own scopes on the base apply to it too, and
+  // its own on top. A read with no viewer is a module's own work (a VIN
+  // fill, a kit's stock check): without a reader there is nobody to hide a
+  // field from, and the fail-closed projection would blind it.
+  const base = reader ? await policyKind(kind, orgId) : kind;
   let manifest: Record<string, string> | null;
-  if (fieldReadScopesCache.has(kind)) {
-    manifest = fieldReadScopesCache.get(kind) ?? null;
+  if (fieldReadScopesCache.has(base)) {
+    manifest = fieldReadScopesCache.get(base) ?? null;
   } else {
     const row = await meta
       .selectFrom("entity_kinds")
       .select(["field_read_scopes"])
-      .where("id", "=", kind)
+      .where("id", "=", base)
       .executeTakeFirst();
     manifest =
       (row?.field_read_scopes as Record<string, string> | null | undefined) ??
       null;
-    fieldReadScopesCache.set(kind, manifest);
+    fieldReadScopesCache.set(base, manifest);
   }
   if (!orgId) return manifest;
   // Once per request, not once per row: this ran for every record of a list
   // and was half of a meta-pool burst in CI (#4876). Still read fresh on the
   // next request, so an admin's edit takes effect at once.
-  const perOrg = await perRequest(`field-scopes:${orgId}:${kind}`, () =>
+  const kinds = base === kind ? [kind] : [base, kind];
+  const perOrg = await perRequest(`field-scopes:${orgId}:${kinds.join(",")}`, () =>
     meta
       .selectFrom("workspace_field_scopes")
-      .select(["field", "capability"])
+      .select(["kind", "field", "capability"])
       .where("org_id", "=", orgId)
-      .where("kind", "=", kind)
+      .where("kind", "in", kinds)
       .execute(),
   );
   if (perOrg.length === 0) return manifest;
   const merged: Record<string, string> = { ...(manifest ?? {}) };
-  for (const r of perOrg) merged[r.field] = r.capability; // per-org wins
+  // Per-org wins over the manifest, and the collection's own over its base's.
+  for (const k of kinds) for (const r of perOrg) if (r.kind === k) merged[r.field] = r.capability;
   return merged;
 }
 
@@ -544,8 +576,11 @@ export async function getEntityWriterFor(
 export function registerListResolver(
   kind: string,
   resolver: EntityListResolver,
+  options: ListResolverOptions = {},
 ): void {
   listResolvers.set(kind, resolver);
+  if (options.textOps) textOpsKinds.add(kind);
+  else textOpsKinds.delete(kind);
 }
 
 /** Forget which modules a workspace has enabled. Called the moment enablement
@@ -656,6 +691,22 @@ async function loadActiveLinkedSources(
   }
 }
 
+/** How a linked workspace's record is projected in the workspace reading it
+ *  (#7118): by the SOURCE's policy, the kind's whitelist and the source
+ *  workspace's own field scopes, and with no read scope at all. A person's
+ *  grants (or all-access as owner) in the recipient workspace are not grants
+ *  in the source, and the projection fails closed without a read scope, so a
+ *  field the source gates stays hidden whoever reads it here. The list used
+ *  the recipient's scopes and the recipient owner's all-access, so a source's
+ *  costs showed in a list the single lookup withheld them from; both doors
+ *  now take this one policy. */
+async function linkedProjection(srcOrgId: string, kind: string): Promise<{ whitelist: string[] | null; fieldReadScopes: Record<string, string> | null }> {
+  // A linked read always has a reader, the recipient's, so a linked
+  // collection takes its base kind's policy in the source too.
+  const [whitelist, fieldReadScopes] = await Promise.all([getExposableFields(kind), getFieldReadScopes(kind, srcOrgId, true)]);
+  return { whitelist, fieldReadScopes };
+}
+
 /** Can this kind be looked up at all here? `lookup` answers null for a kind
  *  with no resolver and for a record that does not exist alike; a door that
  *  refuses a record it cannot find must know which it was, or it refuses
@@ -674,7 +725,7 @@ export async function lookup(
   if (!resolver) return null;
   const publicRead = viewer?.publicRead === true;
   const whitelist = await getExposableFields(kind);
-  const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+  const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
   const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
   const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
 
@@ -713,7 +764,8 @@ export async function lookup(
     try {
       const resolved = await resolver(src.id, id);
       if (!resolved) continue;
-      const projected = applyExposableProjection(resolved, whitelist, fieldReadScopes, undefined, publicRead);
+      const policy = await linkedProjection(src.id, kind);
+      const projected = applyExposableProjection(resolved, policy.whitelist, policy.fieldReadScopes, undefined, publicRead);
       return {
         ...projected,
         fields: {
@@ -771,7 +823,7 @@ export async function lookupMany(
       const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
       if (!resolver) return [] as ResolvedEntity[];
       const whitelist = await getExposableFields(kind);
-      const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+      const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
       const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
       const resolved = await Promise.all(
         ids.map(async (id) => {
@@ -979,7 +1031,7 @@ export async function list(
   const baseModule = listResolvers.has(kind) ? kind.split(":")[0] : undefined;
   if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [], unlisted: "module-off" };
   const whitelist = await getExposableFields(kind);
-  const fieldReadScopes = await getFieldReadScopes(kind, orgId);
+  const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
   const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
 
   const by = normalizeGrouping(query.group_by);
@@ -1030,9 +1082,15 @@ export async function list(
   // view that could not run its date window must not look like one that did.
   let unapplied: FilterPredicate[] | undefined;
   let failed = false;
+  // A text predicate goes only to a resolver that said it runs one; for any
+  // other it is reported, not handed over to be skipped (#6896).
+  const runsText = listResolvers.has(kind) ? textOpsKinds.has(kind) : textOpsResolvers.has(resolver);
+  const textUnrun = runsText ? [] : (query.where ?? []).filter((p) => isTextWhereOp(p.op));
+  if (textUnrun.length) query = { ...query, where: query.where!.filter((p) => !isTextWhereOp(p.op)) };
   try {
     const result = await resolver(orgId, query);
-    unapplied = result.unapplied?.length ? result.unapplied : undefined;
+    const notRun = [...textUnrun, ...(result.unapplied ?? [])];
+    unapplied = notRun.length ? notRun : undefined;
     // Compute AFTER projection (see lookup() — gated fields are stripped
     // before the template runs, so a computed field can't leak them).
     // A search matches the whole row, hidden fields included, so a row the
@@ -1077,12 +1135,13 @@ export async function list(
   for (const src of linkedSources) {
     try {
       const result = await resolver(src.id, query);
+      const policy = await linkedProjection(src.id, kind);
       for (const r of result.items) {
         const projected = applyExposableProjection(
           r,
-          whitelist,
-          fieldReadScopes,
-          readScope,
+          policy.whitelist,
+          policy.fieldReadScopes,
+          undefined,
           publicRead,
         );
         items.push({
@@ -1126,7 +1185,7 @@ export async function list(
  *  only to leave their COLUMNS out, e.g. an export, which would otherwise
  *  print an empty column named after a field the viewer is not to know about. */
 export async function hiddenFieldsFor(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<Set<string>> {
-  const scopes = await getFieldReadScopes(kind, orgId);
+  const scopes = await getFieldReadScopes(kind, orgId, viewer);
   if (!scopes) return new Set();
   const rs = viewer.userId ? await effectiveCapabilities(orgId, viewer.userId, viewer.role ?? "member") : { all: false, caps: new Set<string>() };
   if (rs.all) return new Set();

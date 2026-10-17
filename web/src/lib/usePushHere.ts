@@ -32,7 +32,7 @@ export function usePushHere() {
       if (r.ok) {
         setMine(r.id);
         toast.success("Notifications are on for this device. Send a test to see one arrive.");
-      } else setProblem({ why: r.why, message: r.message });
+      } else setProblem({ why: r.why, message: r.why === "no-key" ? (q.data?.unavailable ?? undefined) : r.message });
       refresh();
     },
     onError: (e) => setProblem({ why: "not-saved", message: e instanceof Error ? e.message : String(e) }),

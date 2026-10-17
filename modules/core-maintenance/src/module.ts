@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.18",
+  version: "0.2.19",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",

@@ -354,7 +354,7 @@ type View =
 interface LastMove {
   request_id: string;
   words: string;
-  queued: boolean;
+  status: "waiting" | "sending" | "applied";
   at: number;
   /** A record action's run (Lend, Log service), undone at its own door. */
   action?: boolean;
@@ -373,6 +373,9 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   const [mover, setMover] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [queue, setQueue] = useState<QueuedMove[]>(() => loadQueue(slug, address, Date.now()));
+  const replaying = useRef(new Map<string, Promise<void>>());
+  const flushing = useRef<Promise<void> | null>(null);
+  const undoing = useRef(new Set<string>());
   const lastScan = useRef<{ code: string; at: number } | null>(null);
   const touchedAt = useRef(Date.now());
   // The camera's lens on THIS device: its own pick, else the station's (#5353).
@@ -438,13 +441,13 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       try {
         const moved = await api.stationCount(slug, address, { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}) });
         setView((v) => (v.kind === "record" && v.record.id === record.id ? { ...v, record: { ...v.record, qty: moved.qty } } : v));
-        setLast({ request_id, words: moved.note ? `${words}. ${moved.note}` : words, queued: false, at: Date.now() });
+        setLast({ request_id, words: moved.note ? `${words}. ${moved.note}` : words, status: "applied", at: Date.now() });
         signal(true);
       } catch (e) {
         if (unreachable(e)) {
           const q = [...loadQueue(slug, address, Date.now()), { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}), title: record.title, at: Date.now() }];
           persistQueue(q);
-          setLast({ request_id, words: `${words} (waiting to sync)`, queued: true, at: Date.now() });
+          setLast({ request_id, words, status: "waiting", at: Date.now() });
           signal(true);
           return;
         }
@@ -455,16 +458,46 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     [slug, address, signal, persistQueue],
   );
 
-  const flush = useCallback(async () => {
-    const q = loadQueue(slug, address, Date.now());
-    if (!q.length) return;
-    const r = await flushQueue(
-      q,
-      async (m) => void (await api.stationCount(slug, address, { request_id: m.request_id, kind: m.kind, entity_id: m.entity_id, op: m.op, ...(m.value !== undefined ? { value: m.value } : {}) })),
-      unreachable,
-    );
-    persistQueue(r.waiting);
-    if (r.refused.length) setView({ kind: "error", message: `${r.refused.length} waiting ${r.refused.length === 1 ? "change was" : "changes were"} refused: ${r.refused[0]!.why}` });
+  const flush = useCallback(() => {
+    if (flushing.current) return flushing.current;
+    const run = async () => {
+      const q = loadQueue(slug, address, Date.now());
+      const r = await flushQueue(
+        q,
+        async (m) => {
+          if (!loadQueue(slug, address, Date.now()).some((waiting) => waiting.request_id === m.request_id)) return;
+          const send = async () => {
+            setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "sending" } : previous);
+            try {
+              const moved = await api.stationCount(slug, address, { request_id: m.request_id, kind: m.kind, entity_id: m.entity_id, op: m.op, ...(m.value !== undefined ? { value: m.value } : {}) });
+              setView((v) => v.kind === "record" && v.record.kind === m.kind && v.record.id === m.entity_id ? { ...v, record: { ...v.record, qty: moved.qty } } : v);
+              setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "applied", words: moved.note ? `${previous.words}. ${moved.note}` : previous.words } : previous);
+              persistQueue(loadQueue(slug, address, Date.now()).filter((waiting) => waiting.request_id !== m.request_id));
+            } catch (e) {
+              setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "waiting" } : previous);
+              throw e;
+            }
+          };
+          const pending = send();
+          replaying.current.set(m.request_id, pending);
+          try {
+            await pending;
+          } finally {
+            replaying.current.delete(m.request_id);
+          }
+        },
+        unreachable,
+      );
+      if (r.refused.length) {
+        const refused = new Set(r.refused.map(({ move }) => move.request_id));
+        persistQueue(loadQueue(slug, address, Date.now()).filter((waiting) => !refused.has(waiting.request_id)));
+        setLast((previous) => previous && refused.has(previous.request_id) ? null : previous);
+        setView({ kind: "error", message: `${r.refused.length} waiting ${r.refused.length === 1 ? "change was" : "changes were"} refused: ${r.refused[0]!.why}` });
+      }
+    };
+    const pending = run().finally(() => { flushing.current = null; });
+    flushing.current = pending;
+    return pending;
   }, [slug, address, persistQueue]);
 
   useEffect(() => {
@@ -500,7 +533,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         try {
           const r = await api.stationActionRun(slug, address, { request_id, action_id: a.id, kind: record.kind, entity_id: record.id, args });
           showNow(record.id, r.now);
-          setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, queued: false, at: Date.now(), action: true, undoable: r.undoable });
+          setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, status: "applied", at: Date.now(), action: true, undoable: r.undoable });
           signal(true);
         } catch (e) {
           setView({ kind: "error", message: unreachable(e) ? "No connection. Try it again when the network is back." : errText(e) });
@@ -535,17 +568,25 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       }
       return;
     }
-    if (last.queued) {
-      persistQueue(loadQueue(slug, address, Date.now()).filter((m) => m.request_id !== last.request_id));
-      setLast(null);
-      return;
-    }
+    if (undoing.current.has(last.request_id)) return;
+    undoing.current.add(last.request_id);
     try {
-      const r = await api.stationUndo(slug, address, last.request_id);
-      setView((v) => (v.kind === "record" ? { ...v, record: { ...v.record, qty: r.qty ?? v.record.qty } } : v));
-      setLast(null);
+      // A sending move can already have landed. Wait for its acknowledgement
+      // before deciding whether to cancel locally or reverse it on the server.
+      const pending = replaying.current.get(last.request_id);
+      if (pending) await pending.catch(() => {});
+      const waiting = loadQueue(slug, address, Date.now());
+      if (waiting.some((m) => m.request_id === last.request_id)) {
+        persistQueue(waiting.filter((m) => m.request_id !== last.request_id));
+      } else {
+        const r = await api.stationUndo(slug, address, last.request_id);
+        setView((v) => (v.kind === "record" && view.kind === "record" && v.record.kind === view.record.kind && v.record.id === view.record.id ? { ...v, record: { ...v.record, qty: r.qty ?? v.record.qty } } : v));
+      }
+      setLast((previous) => previous?.request_id === last.request_id ? null : previous);
     } catch (e) {
       setView({ kind: "error", message: errText(e) });
+    } finally {
+      undoing.current.delete(last.request_id);
     }
   }, [last, slug, address, persistQueue, view, showNow]);
 
@@ -862,7 +903,7 @@ function Ready({ label, last, onUndo, camera, children }: { label: string; last:
 function UndoBar({ last, onUndo }: { last: LastMove; onUndo: () => void }) {
   return (
     <div className="inline-flex items-center gap-3 rounded-full bg-moss-100 px-4 py-2 text-lg text-moss-900 dark:bg-moss-900/40 dark:text-moss-100" role="status" data-testid="station-last">
-      <Check size={20} /> {last.words}
+      <Check size={20} /> {last.words}{last.status === "waiting" ? " (waiting to sync)" : last.status === "sending" ? " (syncing)" : ""}
       {last.undoable !== false && <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium underline-offset-2 hover:underline">
         <Undo2 size={18} /> Undo
       </button>}

@@ -7,6 +7,7 @@
 // than one, and Up inside a paragraph must still move the caret), what happens
 // when you walk off the end of history (your draft comes back, not an empty
 // box), and whether sending the same thing twice buries the entry before it.
+import { personalChatKey } from "./personal-chat-store";
 
 /** How many sent messages to remember per workspace. */
 export const HISTORY_MAX = 100;
@@ -76,15 +77,16 @@ export function caretOnLastLine(value: string, caret: number): boolean {
   return !value.slice(caret).includes("\n");
 }
 
-/** Per-workspace storage key. Separate from the conversation cache on purpose:
- *  clearing the chat clears what was SAID, and should not also forget what you
- *  typed, the same way a shell's history outlives `clear`. */
-export function historyStoreKey(slug: string | null | undefined): string | null {
-  return slug ? `cobblr.cobbinput.${slug}` : null;
+/** Per-person, per-workspace storage key (personal-chat-store.ts). Separate
+ *  from the conversation cache on purpose: clearing the chat clears what was
+ *  SAID, and should not also forget what you typed, the same way a shell's
+ *  history outlives `clear`. */
+export function historyStoreKey(owner: string | null | undefined, slug: string | null | undefined): string | null {
+  return personalChatKey("input", owner, slug);
 }
 
-export function loadHistory(slug: string | null | undefined): string[] {
-  const key = historyStoreKey(slug);
+export function loadHistory(owner: string | null | undefined, slug: string | null | undefined): string[] {
+  const key = historyStoreKey(owner, slug);
   if (!key) return [];
   try {
     const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
@@ -94,8 +96,8 @@ export function loadHistory(slug: string | null | undefined): string[] {
   }
 }
 
-export function saveHistory(slug: string | null | undefined, entries: string[]): void {
-  const key = historyStoreKey(slug);
+export function saveHistory(owner: string | null | undefined, slug: string | null | undefined, entries: string[]): void {
+  const key = historyStoreKey(owner, slug);
   if (!key) return;
   try {
     if (entries.length) localStorage.setItem(key, JSON.stringify(entries));

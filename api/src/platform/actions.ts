@@ -16,6 +16,7 @@ import { requiredArgsRefusal, typedArgs } from "@cobblr/platform-contract/action
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { meta } from "../db/meta.js";
+import { actionPart, enabledOwnersWithParts, partOffRefusal, partOwner } from "./module-parts.js";
 import { listEntries } from "../modules/registry.js";
 import { facesForKind } from "./faces.js";
 import { fieldRolesForKind } from "./field-defs.js";
@@ -156,7 +157,24 @@ export async function undoFor(actionId: string, result: unknown, ctx: ActionUndo
  *  the record's own action bar, and invoke. */
 export async function enabledActionOwners(orgId: string): Promise<Set<string>> {
   const rows = await meta.selectFrom("org_modules").select("module_name").where("org_id", "=", orgId).execute();
-  return new Set([PLATFORM_OWNER, ...rows.map((r) => r.module_name)]);
+  // And `<module>/<part>` for each part that is on (module-parts.ts).
+  return enabledOwnersWithParts(orgId, new Set([PLATFORM_OWNER, ...rows.map((r) => r.module_name)]));
+}
+
+/** The owner an action answers to: its module, or its module's part. */
+export function actionOwner(a: { id: string; module_name: string }): string {
+  const p = actionPart(a.id);
+  return p ? partOwner(p.module, p.part) : a.module_name;
+}
+
+/** Why an action is not available here, when its module or part is off. */
+async function offRefusal(row: { id: string; label: string; module_name: string }, orgId: string): Promise<{ code: string; module: string; part?: string; error: string } | null> {
+  if (row.module_name === PLATFORM_OWNER) return null;
+  const on = await enabledActionOwners(orgId);
+  if (!on.has(row.module_name)) return { code: "module_not_enabled", module: row.module_name, error: moduleOffRefusal(row.label, row.module_name) };
+  const p = actionPart(row.id);
+  if (p && !on.has(partOwner(p.module, p.part))) return { code: "part_not_enabled", module: p.module, part: p.part, error: partOffRefusal(row.label, p.module, p.part) };
+  return null;
 }
 
 /** The door's sentence for an action whose module is off here, in words: the
@@ -201,9 +219,8 @@ export async function planFor(
   // The module first (#3255), then the record, then the arguments: no plan
   // for an action whose module is off here or a record that is not there,
   // and the reason goes back to the caller before any card exists.
-  if (row && row.module_name !== PLATFORM_OWNER && !(await enabledActionOwners(ctx.orgId)).has(row.module_name)) {
-    return { error: moduleOffRefusal(row.label, row.module_name) };
-  }
+  const off = row ? await offRefusal({ ...row, id: actionId }, ctx.orgId) : null;
+  if (off) return { error: off.error };
   const gone = row ? await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity") : null;
   if (gone) return { error: gone };
   const lent = await lentRefusal(actionId, ctx);
@@ -306,7 +323,7 @@ export async function listApplicable(
   const on = orgId ? await enabledActionOwners(orgId) : null;
   if (on) for (const m of opts.alsoOn ?? []) on.add(m);
   const eligible = allActions
-    .filter((a) => !on || on.has(a.module_name))
+    .filter((a) => !on || (on.has(a.module_name) && (opts.alsoOn?.includes(a.module_name) || on.has(actionOwner(a)))))
     .map(rowToActionRecord)
     .filter((a) =>
       belongsOnEntity(
@@ -466,12 +483,11 @@ export async function invoke(
   // turned on (#3255), a record that is not there (#3141), then an argument
   // the schema says it needs (#3123). A card that renders and dies on press
   // was a call the door could have refused.
-  if (row.module_name !== PLATFORM_OWNER && !(await enabledActionOwners(ctx.orgId)).has(row.module_name)) {
-    // The code and the app's name travel with the sentence, so a module that
-    // relays this refusal can hand its person the switch, not just the words
-    // (#5865).
-    return { ok: false, code: "module_not_enabled", module: row.module_name, error: moduleOffRefusal(row.label, row.module_name) };
-  }
+  // The code and the app's name travel with the sentence, so a module that
+  // relays this refusal can hand its person the switch, not just the words
+  // (#5865). A part that is off answers the same way, naming its part.
+  const off = await offRefusal(row, ctx.orgId);
+  if (off) return { ok: false, ...off };
   const gone = await missingRecordRefusal(ctx, row.scope === "workspace" ? "workspace" : "entity");
   if (gone) return { ok: false, error: gone };
   const lent = await lentRefusal(actionId, ctx);

@@ -5,6 +5,7 @@
 // are not actions either; inspect declarations, rather than every label property.
 import ts from "typescript";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 interface Action { file: string; line: number; id: string; label: string; description: string }
 
@@ -41,8 +42,7 @@ return errors;
 if (process.argv[1]?.endsWith("lint-record-action-copy.ts")) {
   const actions: Action[] = [];
   for (const mod of readdirSync("modules")) {
-    const file = `modules/${mod}/src/module.ts`;
-    if (existsSync(file)) actions.push(...readActions(file, readFileSync(file, "utf8")));
+    for (const file of manifestSources(`modules/${mod}`)) actions.push(...readActions(file, readFileSync(file, "utf8")));
   }
   const errors = checkActions(actions);
   if (errors.length) { console.error(errors.join("\n")); process.exit(1); }

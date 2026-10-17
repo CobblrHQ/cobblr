@@ -37,6 +37,11 @@
   --inset-right: env(safe-area-inset-right, 0px);
   --safe-top: max(0px, calc(var(--inset-top) - var(--top-chrome-height, 0px)));
   --top-edge: max(var(--inset-top), var(--top-chrome-height, 0px));
+  /* Where a modal card over a live surface (the camera) starts: 2rem, or past
+     the status bar on a notched phone. With the backdrop's 1rem gutter the
+     card clears the inset by half a rem; a fixed 2rem put the camera's Scan
+     area Close under the clock (#6881). */
+  --live-card-top: max(2rem, calc(var(--inset-top) - 0.5rem));
 }
 
 .fc-fixed {

@@ -28,6 +28,7 @@
 //   npx tsx scripts/lint-every-action-says-who-runs-it.ts   (pnpm lint every-action-says-who-runs-it)
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 interface Violation {
   file: string;
@@ -117,8 +118,7 @@ const read = (dir: string): string => {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const violations: Violation[] = [];
-  for (const mod of readdirSync("modules")) {
-    const file = join("modules", mod, "src", "module.ts");
+  for (const mod of readdirSync("modules")) for (const file of manifestSources(join("modules", mod))) {
     let src: string;
     try {
       src = readFileSync(file, "utf8");

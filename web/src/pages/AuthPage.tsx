@@ -296,11 +296,14 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             </div>
           )}
 
-          <Field label="Email">
+          <Field label={mode === "login" ? "Email or username" : "Email"}>
             <input
               required
-              type="email"
-              autoComplete="email"
+              // Signing in takes an email or a username (#6910); signing up is email-first.
+              type={mode === "login" ? "text" : "email"}
+              autoComplete={mode === "login" ? "username" : "email"}
+              autoCapitalize="none"
+              spellCheck={false}
               value={email}
               // Strip whitespace whenever the field value changes,
               // however it changed:
@@ -336,7 +339,7 @@ export function AuthPage({ initialMode, carrying }: { initialMode?: Mode; carryi
             />
           </Field>
 
-          {mode === "login" && <ForgotPasswordRow email={email} />}
+          {mode === "login" && <ForgotPasswordRow email={email.includes("@") ? email : ""} />}
 
           {mode === "signup" && captchaCfg?.site_key && (
             <TurnstileWidget siteKey={captchaCfg.site_key} onToken={setCaptchaToken} />

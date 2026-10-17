@@ -28,6 +28,7 @@
 import type { ExclusiveRun } from "@cobblr/platform-contract";
 import type { Client } from "pg";
 import { lockKeyFor } from "./advisory-lock.js";
+import { IDLE_RELEASE_MS } from "../db/connection-budget.js";
 
 export { lockKeyFor, withAdvisoryLock } from "./advisory-lock.js";
 
@@ -99,6 +100,49 @@ export async function tryHoldExclusive(name: string): Promise<{ release: () => P
   };
 }
 
+/** Many locks held on ONE connection, for a holder that takes several at once
+ *  and holds them a while: the tenant-sweep walk takes a lock per due pass and
+ *  one per workspace it visits. Opening a connection for each held about forty
+ *  of a 100-connection server for a whole walk, outside every pool budget, and
+ *  staging's lists failed with "too many clients" while it ran (#6928). An
+ *  advisory lock belongs to its session, so one session holds them all, and
+ *  close() lets go of whatever is still held. */
+export interface LockSession {
+  tryHold: (name: string) => Promise<{ release: () => Promise<void> } | null>;
+  close: () => Promise<void>;
+}
+
+export async function openLockSession(label = "walk"): Promise<LockSession> {
+  const { env } = await import("../env.js");
+  const { createClient } = await import("../db/client-error-guard.js");
+  let client: Client | null = null;
+  const connect = async (): Promise<Client> => {
+    if (client) return client;
+    const c = createClient({ connectionString: env.DATABASE_URL }, `advisory-lock ${label}`);
+    await c.connect();
+    client = c;
+    return c;
+  };
+  return {
+    tryHold: async (name) => {
+      const key = lockKeyFor(name).toString();
+      const c = await connect();
+      const got = await c.query<{ locked: boolean }>("select pg_try_advisory_lock($1) as locked", [key]);
+      if (!got.rows[0]?.locked) return null;
+      return {
+        release: async () => {
+          await c.query("select pg_advisory_unlock($1)", [key]);
+        },
+      };
+    },
+    close: async () => {
+      const c = client;
+      client = null;
+      await c?.end().catch(() => {});
+    },
+  };
+}
+
 /**
  * Run `work` once every other holder of `name` has finished, across every api
  * process: the WAITING form, for a request that must still do its work after
@@ -148,7 +192,7 @@ let lockPool: import("pg").Pool | null = null;
 async function lockConnection(name: string): Promise<Held> {
   const { env } = await import("../env.js");
   const { createClient, createPool } = await import("../db/client-error-guard.js");
-  lockPool ??= createPool({ connectionString: env.DATABASE_URL, max: LOCK_POOL_SIZE, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 2_000 }, "advisory-locks");
+  lockPool ??= createPool({ connectionString: env.DATABASE_URL, max: LOCK_POOL_SIZE, min: 0, idleTimeoutMillis: IDLE_RELEASE_MS, connectionTimeoutMillis: 2_000 }, "advisory-locks");
   try {
     const pooled = (await lockPool.connect()) as import("pg").PoolClient & { lockTimeout?: number };
     return {
@@ -165,3 +209,7 @@ async function lockConnection(name: string): Promise<Held> {
 }
 /** Warm connections kept for serialised runs. */
 const LOCK_POOL_SIZE = 8;
+/** What this api can hold on cobblr_meta for locks, outside the meta pool:
+ *  the warm pool and the sweep walk's one session. The connection budget
+ *  counts it. */
+export const LOCK_CONNECTIONS = LOCK_POOL_SIZE + 1;

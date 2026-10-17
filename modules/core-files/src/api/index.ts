@@ -13,6 +13,11 @@ import { importZipRouter } from "./import-zip.js";
 import { registerFileResolvers } from "./resolvers.js";
 import { registerAttachmentsOfFile } from "./attachments-of-file.js";
 import { registerFolders } from "./folders-seam.js";
+import { registerAttachFileAction } from "./attach-file-action.js";
+import { registerDetachFileAction } from "./detach-file-action.js";
+
+registerAttachFileAction();
+registerDetachFileAction();
 
 registerFileResolvers();
 

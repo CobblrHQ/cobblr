@@ -144,6 +144,8 @@ async function recordStep(db: ImportDb, runId: string, step: StepRow): Promise<v
     .execute();
 }
 
+class JournalError extends Error {}
+
 export class Ledger {
   private seq = 0;
   constructor(
@@ -155,7 +157,48 @@ export class Ledger {
   }
   async add(step: Omit<StepRow, "seq">): Promise<void> {
     this.seq += 1;
-    await recordStep(this.db, this.runId, { ...step, seq: this.seq });
+    try {
+      await recordStep(this.db, this.runId, { ...step, seq: this.seq });
+    } catch (err) {
+      throw new JournalError(`could not save Undo: ${(err as Error).message}`);
+    }
+  }
+  async record(
+    orgId: string,
+    step: Omit<StepRow, "seq" | "kind" | "entity_kind"> & { kind: "record-create" | "record-update"; entity_kind: string },
+    write: () => Promise<string>,
+    finish: (id: string) => Promise<void>,
+  ): Promise<void> {
+    await this.add({ ...step, detail: { pending: true } });
+    let seq = this.seq;
+    const checkpoint = async (id: string) => {
+      try {
+        // Bind a returned creation id before even reading its fingerprint.
+        await this.db.updateTable("core_import_run_steps").set({ entity_id: id }).where("run_id", "=", this.runId).where("seq", "=", seq).execute();
+        const after = await platform().entities.snapshot(orgId, step.entity_kind, id);
+        const next = ++this.seq;
+        // The record stays ahead of its attachments in reverse-order Undo.
+        await this.db.updateTable("core_import_run_steps").set({ seq: next, after_hash: stateHash(after), detail: JSON.stringify({ pending: false }) as never }).where("run_id", "=", this.runId).where("seq", "=", seq).execute();
+        seq = next;
+      } catch (err) {
+        throw new JournalError(`could not save Undo: ${(err as Error).message}`);
+      }
+    };
+    let id: string;
+    try {
+      id = await write();
+    } catch (err) {
+      if (!step.entity_id) throw new JournalError(`could not confirm record creation: ${(err as Error).message}`);
+      await checkpoint(step.entity_id);
+      throw err;
+    }
+    await checkpoint(id);
+    try {
+      await finish(id);
+    } finally {
+      // A failed tag, picture, retirement or placement can leave a real edit.
+      await checkpoint(id);
+    }
   }
   get last(): number {
     return this.seq;
@@ -425,6 +468,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
         // date, a count that is not a number) goes in as written; said here too,
         // so the result names every one, not only the plan the person closed.
         for (const p of rec.problems ?? []) note(sum, rec.row, rec.name, p);
+        let changed: "created" | "updated" | null = null;
         try {
           const { top, metadata } = recordFields(rec, ws);
           if (rec.category) {
@@ -483,8 +527,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
             sum.retired = (sum.retired ?? 0) + 1;
           };
 
-          if (rec.action === "create") {
-            const id = await writer.create(orgId, { ...top, metadata });
+          const finish = async (id: string) => {
             await retire(id);
             await attachPicture(id);
             await placeRecord(orgId, baseKind, id, locationId);
@@ -492,33 +535,30 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
               const r = await platform().tags.attach({ orgId, tagName: t, target: { kind: baseKind, id } });
               await ledger.add({ kind: "tag", entity_kind: baseKind, entity_id: id, label: t, detail: { assigned: r.created, tag_created: r.tagCreated ?? false } });
             }
-            const after = await platform().entities.snapshot(orgId, ws.kind, id);
-            // After its tags, so an undo (newest first) reaches the record
-            // first and knows whether it is kept before touching its tags.
-            await ledger.add({ kind: "record-create", entity_kind: ws.kind, entity_id: id, label: rec.name, after_hash: stateHash(after) });
-            sum.created++;
+          };
+          if (rec.action === "create") {
+            await ledger.record(orgId, { kind: "record-create", entity_kind: ws.kind, label: rec.name }, async () => {
+              const id = await writer.create(orgId, { ...top, metadata });
+              changed = "created";
+              sum.created++;
+              return id;
+            }, finish);
           } else if (rec.action === "update" && rec.existing_id) {
             const id = rec.existing_id;
             const before = await platform().entities.snapshot(orgId, ws.kind, id);
             if (!before) throw new Error("the record is gone");
-            // The writer replaces the metadata bag, so what the row holds now
-            // is carried forward under what the sheet says.
             const held = (before.metadata && typeof before.metadata === "object" ? before.metadata : {}) as Record<string, unknown>;
-            await writer.update(orgId, id, { ...top, metadata: { ...held, ...metadata } });
-            await retire(id);
-            await attachPicture(id);
-            if (locationId) await placeRecord(orgId, baseKind, id, locationId);
-            for (const t of rec.tags ?? []) {
-              const r = await platform().tags.attach({ orgId, tagName: t, target: { kind: baseKind, id } });
-              await ledger.add({ kind: "tag", entity_kind: baseKind, entity_id: id, label: t, detail: { assigned: r.created, tag_created: r.tagCreated ?? false } });
-            }
-            const after = await platform().entities.snapshot(orgId, ws.kind, id);
-            await ledger.add({ kind: "record-update", entity_kind: ws.kind, entity_id: id, label: rec.name, before, after_hash: stateHash(after) });
-            sum.updated++;
+            await ledger.record(orgId, { kind: "record-update", entity_kind: ws.kind, entity_id: id, label: rec.name, before }, async () => {
+              await writer.update(orgId, id, { ...top, metadata: { ...held, ...metadata } });
+              changed = "updated";
+              sum.updated++;
+              return id;
+            }, finish);
           }
         } catch (err) {
           sum.failed++;
-          note(sum, rec.row, rec.name, `not written: ${(err as Error).message}`);
+          note(sum, rec.row, rec.name, `${changed ? `record ${changed}, but row incomplete` : "could not finish the row"}: ${(err as Error).message}`);
+          if (err instanceof JournalError) throw err;
         }
         done++;
         if (done % PROGRESS_EVERY === 0) await setProgress(db, runId, done);
@@ -602,7 +642,26 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
   const hold = (s: { kind: string; label: string | null }, why: string) => held.push({ kind: s.kind, label: s.label ?? "", why });
   // A record kept because somebody changed it keeps what hangs off it too.
   const keptRecords = new Set<string>();
+  const uncertainRecords = new Map<string, string>();
   const modules: typeof steps = [];
+  // A failed final checkpoint can leave attachments newer than their record.
+  // Check each record's latest step before touching any of its attachments.
+  if (!force) {
+    const checked = new Set<string>();
+    for (const s of steps) {
+      if (s.kind !== "record-create" && s.kind !== "record-update") continue;
+      const id = s.entity_id;
+      if (!id || checked.has(id)) continue;
+      checked.add(id);
+      try {
+        const now = await platform().entities.snapshot(orgId, s.entity_kind ?? "", id);
+        if (now && stateHash(now) !== s.after_hash) keptRecords.add(id);
+      } catch (err) {
+        keptRecords.add(id);
+        uncertainRecords.set(id, `could not check the record: ${(err as Error).message}`);
+      }
+    }
+  }
 
   for (const s of steps) {
     try {
@@ -646,14 +705,18 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
         case "record-create": {
           const kind = s.entity_kind ?? "";
           const id = s.entity_id ?? "";
+          if (!id) {
+            hold(s, "the record creation could not be confirmed");
+            break;
+          }
           const now = await platform().entities.snapshot(orgId, kind, id);
           if (!now) {
             await done(s.id);
             break;
           }
-          if (!force && stateHash(now) !== s.after_hash) {
+          if (!force && (keptRecords.has(id) || stateHash(now) !== s.after_hash)) {
             keptRecords.add(id);
-            hold(s, "changed since the import");
+            hold(s, uncertainRecords.get(id) ?? "changed since the import");
             break;
           }
           const writer = await platform().entities.getWriter(orgId, kind);
@@ -675,9 +738,9 @@ export async function undoRun(orgId: string, db: ImportDb, lb: Loopback, runId: 
             hold(s, "deleted since the import");
             break;
           }
-          if (!force && stateHash(now) !== s.after_hash) {
+          if (!force && (keptRecords.has(id) || stateHash(now) !== s.after_hash)) {
             keptRecords.add(id);
-            hold(s, "changed since the import");
+            hold(s, uncertainRecords.get(id) ?? "changed since the import");
             break;
           }
           const before = (typeof s.before === "string" ? JSON.parse(s.before) : s.before) as Record<string, unknown>;

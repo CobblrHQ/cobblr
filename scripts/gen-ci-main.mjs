@@ -46,6 +46,7 @@ const OUT = join(ROOT, ".forgejo/workflows/ci-main.yml");
 const OUT_FAST = join(ROOT, ".forgejo/workflows/ci-fast.yml");
 const OUT_IMPACT = join(ROOT, ".forgejo/workflows/ci-impact.yml");
 const OUT_RECHECK = join(ROOT, ".forgejo/workflows/ci-recheck.yml");
+const OUT_RECHECK_FIRST = join(ROOT, ".forgejo/workflows/ci-recheck-first.yml");
 
 export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
 export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
@@ -161,7 +162,7 @@ export const IMPACT_DROPS = [
   "Say what this run covered (suite / affected, suite / full)",
   "The impact map's shadow",
   "Report the impact map's shadow",
-  "Record the coverage cells the tests claim (main runs)",
+  "Record the coverage cells the tests claim",
   "Find the merge that turned main red (main, on red)",
   "Report this merge's verdict to the red tip that asked (bisect runs)",
   "Deploy if the images are pushed (else the image side deploys)",
@@ -279,6 +280,25 @@ export const RECHECK = {
   tail: [],
 };
 
+// THE RE-CHECK THAT FREEZES MAIN RUNS FIRST (lib/main-freeze.mjs, 2026-10-17). While main is frozen for one pull
+// request's re-check, every other merge waits for it; on the pull request lane it queued behind the very pull
+// requests the freeze held, so #6952's fourth re-check waited an hour while about forty green ones waited on it.
+// That one run, pushed to recheck-first/<pr>-<head>, takes the reserved fast runner's labels.
+// Its own labels, on its own reserved runner (cobblr-recheck-aurora, server-setup #312): on the fast runner's one
+// slot #7008's freeze re-check waited behind a critical pull request's run while every merge waited (2026-10-17).
+export const RECHECK_FIRST_LANE = { "pr-check": "fast-recheck-light", "ci-test": "fast-recheck-test" };
+export const RECHECK_FIRST = {
+  lane: RECHECK_FIRST_LANE,
+  branches: "['recheck-first/**']",
+  group: "ci-recheck-first-${{ github.ref }}-${{ github.sha }}",
+  header: [
+    "# The same CI as ci.yml, for a push to recheck-first/<pr>-<head>: the re-check",
+    "# that holds main frozen (scripts/lib/main-freeze.mjs). On labels only it asks",
+    "# for (its own reserved runner), so it never waits behind anything else.",
+  ],
+  tail: [],
+};
+
 /**
  * The fast lane's jobs wait on a `live` job, on the dispatcher's small slot, that asks whether the pull
  * request is still open and still at the head this run merged (scripts/ci/fast-lane.mjs live). A run
@@ -362,7 +382,7 @@ export function generate(ci, kind = MAIN) {
     const m = /^( {4}runs-on: )(\S+)\s*$/.exec(l);
     if (!m) return l;
     const to = LANE[m[2]];
-    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no ${kind === MAIN ? "main" : kind === FAST ? "fast" : kind === IMPACT ? "impact" : "recheck"} lane in gen-ci-main.mjs`);
+    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no ${kind === MAIN ? "main" : kind === FAST ? "fast" : kind === IMPACT ? "impact" : kind === RECHECK_FIRST ? "recheck-first" : "recheck"} lane in gen-ci-main.mjs`);
     return `${m[1]}${to}`;
   });
   for (const [from, to] of Object.entries(LANE)) {
@@ -400,7 +420,7 @@ function trimEnd(lines) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const ci = readFileSync(SRC, "utf8");
-  const outs = [[OUT, generate(ci, MAIN)], [OUT_FAST, generate(ci, FAST)], [OUT_RECHECK, generate(ci, RECHECK)], [OUT_IMPACT, generate(ci, IMPACT)]];
+  const outs = [[OUT, generate(ci, MAIN)], [OUT_FAST, generate(ci, FAST)], [OUT_RECHECK, generate(ci, RECHECK)], [OUT_RECHECK_FIRST, generate(ci, RECHECK_FIRST)], [OUT_IMPACT, generate(ci, IMPACT)]];
   if (process.argv.includes("--check")) {
     let bad = 0;
     for (const [out, want] of outs) {
@@ -414,7 +434,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       }
     }
     if (bad) process.exit(1);
-    console.log("lint:ci-main-generated OK (ci-main.yml, ci-fast.yml, ci-recheck.yml and ci-impact.yml are ci.yml on their lanes)");
+    console.log("lint:ci-main-generated OK (ci-main.yml, ci-fast.yml, ci-recheck.yml, ci-recheck-first.yml and ci-impact.yml are ci.yml on their lanes)");
   } else {
     for (const [out, want] of outs) {
       writeFileSync(out, want);

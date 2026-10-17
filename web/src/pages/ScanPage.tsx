@@ -31,7 +31,7 @@ import { SessionReadVerdict } from "../components/SessionReadVerdict";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
+import { AlertCircle, CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, Mail, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
 import { useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
@@ -69,6 +69,7 @@ import { } from "../lib/namelessCard";
 import { receiptDateWords, type DateReading } from "../lib/receiptDateWords";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { HeaderMenu, MenuHead, MenuItem, MenuNote, MenuSep } from "../components/HeaderMenu";
+import { phoneFoldsSourceIcons } from "./sessionStripFold";
 import { DuplicateRecordsSheet } from "./DuplicateRecordsSheet";
 import { ReceiptAddressChip } from "../components/ReceiptAddressChip";
 import { classifyOmni, omniPlaceholder } from "./omniIntake";
@@ -1117,6 +1118,7 @@ export function ScanPage() {
     if (g.sourceFileId && src.docName) documentNames.set(g.sourceFileId, src.docName);
   }
   const [addedByOpen, setAddedByOpen] = useState<string | null>(null);
+  const menuAnchorRect = useRef<DOMRect | null>(null);
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
   // Sessions whose "Do these belong together?" was pressed in the ⋯ (#3064).
   const [themeAsked, setThemeAsked] = useState<Set<string>>(new Set());
@@ -2412,7 +2414,11 @@ export function ScanPage() {
         <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
-        <div className="flex items-baseline gap-0 max-sm:gap-2 shrink min-w-0 leading-none overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
+        {/* The counts keep their words' width and the row scrolls: the touch
+            rule's min-width replaces a flex item's own (its text), so a
+            count could shrink under its words and "1 ready" drew over
+            "1 to review" at 320 (#7100). */}
+        <div data-inbox-facets className="flex items-baseline gap-0 max-sm:gap-2 shrink min-w-0 leading-none overflow-x-auto [&>*]:shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
           {/* The total. On a tablet the word is a luxury the counts paid ~55px
               for, so it shows only on a desktop or on an empty inbox (a lone
               "0" is a riddle). On a phone it leaves the row whenever a facet
@@ -3690,6 +3696,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             const canReadAgain = isReceiptSession && !!g.batchId && !!g.sourceFileId;
             const canReviewPlan = busy === 0 && pendingInSession > 0 && g.isBatch && !!g.batchId;
             const phoneTucks = !!batchId && (docChip || canReadAgain || canReviewPlan);
+            // The email and parcel icons fold into ⋯ on a phone when that
+            // frees a control, so the store's name gets the width (#6095).
+            const emailIcon = !!source.addedBy && !(unreadDocName && source.addedBy.kind === "email");
+            const parcelControl = (isReceiptSession && (g.origin === "email" || !!g.orderRef || !!g.shipmentState)) || (!!g.batchId && !!g.trackingNumber);
+            const parcelOnPhone = parcelControl && !!(g.shipmentState || trackingArrival || g.trackingNumber);
+            const phoneFolds = !!g.batchId && phoneFoldsSourceIcons({ email: emailIcon, parcel: parcelOnPhone, menuOtherwise: !!g.batchId && (!!themeOffer || !!mergeInto || phoneTucks) });
             const openPlan = () => {
               const first = g.items.find((it) => it.status === "pending");
               setFileEverything({
@@ -3747,9 +3759,16 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                 <div
                   data-session-header
                   data-testid="scan-session-header"
+                  // Under 360px the inbox's strip keeps its controls' height
+                  // and gives back their width (index.css, #6881); a
+                  // session's own page keeps every one 44 by 44.
+                  data-toolbar={batchId ? undefined : "strip"}
                   // gap-1.5, not gap-2: eleven gaps across this row, so the
-                  // half-step is most of a control's width back.
-                  className={`flex w-full items-center gap-1.5 max-sm:gap-0 overflow-hidden rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-0 max-sm:py-0 text-left text-xs max-sm:[&>button]:min-h-11 ${batchId ? "max-sm:[&>button]:min-w-11 max-sm:[&>a]:min-w-11" : "min-[360px]:max-sm:[&>button]:min-w-11 min-[360px]:max-sm:[&>a]:min-w-11 max-[359px]:[&>a]:px-1"} max-sm:[&>button]:justify-center max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:justify-center`}
+                  // half-step is most of a control's width back. Clipped
+                  // sideways only: the receipt's 44 px target reaches into
+                  // the row's padding on a desk, and clipping it top and
+                  // bottom left 34 px to press (#6881).
+                  className={`flex w-full items-center gap-1.5 max-sm:gap-0 overflow-x-clip rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-0 max-sm:py-0 text-left text-xs max-sm:[&>button]:min-h-11 ${batchId ? "max-sm:[&>button]:min-w-11 max-sm:[&>a]:min-w-11" : "min-[360px]:max-sm:[&>button]:min-w-11 min-[360px]:max-sm:[&>a]:min-w-11 max-[359px]:[&>a]:px-1"} max-sm:[&>button]:justify-center max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:justify-center`}
                 >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). The label
@@ -3900,13 +3919,15 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     />
                   )}
                   {/* An unread email's headline already names its sender. */}
-                  {source.addedBy && !(unreadDocName && source.addedBy.kind === "email") && (
-                    <SessionAddedByChip
-                      by={source.addedBy}
-                      words={addedByWords(source.addedBy)}
-                      open={addedByOpen === g.key}
-                      onToggle={() => setAddedByOpen((k) => (k === g.key ? null : g.key))}
-                    />
+                  {emailIcon && source.addedBy && (
+                    <span className={phoneFolds ? "contents max-sm:hidden" : "contents"}>
+                      <SessionAddedByChip
+                        by={source.addedBy}
+                        words={addedByWords(source.addedBy)}
+                        open={addedByOpen === g.key}
+                        onToggle={() => setAddedByOpen((k) => (k === g.key ? null : g.key))}
+                      />
+                    </span>
                   )}
                   {/* ...and the offer to add one takes the SAME slot when there
                       is none. They are one fact in one place: an "+ #" sitting
@@ -3978,7 +3999,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       session read as nagging). "Do these belong together?"
                       costs nothing until pressed; it also surfaces on its own
                       below, but only on evidence of a shared theme. */}
-                  {g.batchId && (themeOffer || mergeInto || phoneTucks) && (
+                  {g.batchId && (themeOffer || mergeInto || phoneTucks || phoneFolds) && (
                     <HeaderMenu
                       width={264}
                       align="right"
@@ -3987,6 +4008,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            // Where a folded parcel's panel opens from (#6095).
+                            menuAnchorRect.current = e.currentTarget.getBoundingClientRect();
                             toggle();
                           }}
                           aria-label="Session actions"
@@ -4009,6 +4032,36 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     >
                       {({ close }) => (
                         <>
+                          {/* The email and parcel icons, folded on a phone
+                              (#6095): each item does what its icon did. */}
+                          {phoneFolds && (
+                            <div className="sm:hidden">
+                              {emailIcon && source.addedBy && (
+                                <MenuItem
+                                  icon={<Mail size={13} />}
+                                  label={addedByWords(source.addedBy)}
+                                  onClick={() => { close(); setAddedByOpen(g.key); }}
+                                />
+                              )}
+                              {parcelOnPhone && (
+                                <MenuItem
+                                  icon={<Truck size={13} />}
+                                  label={`Parcel: ${g.shipmentState ? (SHIPMENT_LABEL[g.shipmentState] ?? g.shipmentState) : trackingArrival ? arrivalLabel(trackingArrival) : "tracking number"}`}
+                                  onClick={() => {
+                                    close();
+                                    if (!g.trackingNumber) {
+                                      setTrackingInput("");
+                                      setEditingTracking(g.batchId!);
+                                      return;
+                                    }
+                                    const r = menuAnchorRect.current;
+                                    if (r) setTrackingRect({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 256 - 8)) });
+                                    setTrackingPopover(g.batchId!);
+                                  }}
+                                />
+                              )}
+                            </div>
+                          )}
                           {phoneTucks && (
                             <div className="sm:hidden">
                               {canReviewPlan && (
@@ -4213,7 +4266,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         // label IS the delivery status; without one it offers to
                         // follow a parcel.
                         className={`relative shrink-0 ${
-                          g.shipmentState || trackingArrival || g.trackingNumber
+                          (g.shipmentState || trackingArrival || g.trackingNumber) && !phoneFolds
                             ? "inline-flex"
                             : "hidden sm:inline-flex"
                         }`}
@@ -4555,11 +4608,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       waiting on an admin
                     </span>
                   ) : pendingInSession > 0 ? (
+                    // Under 360px the words cost the store's name the 60px it
+                    // needs (#6095): the alert says it, and the rows say why.
                     <span
                       className="shrink-0 inline-flex items-center gap-1 text-amber-600/80 dark:text-amber-400/80 text-[10px] font-medium"
                       title="Every item still here needs a manual look - open the cards to give each a name or destination"
                     >
-                      needs review
+                      <AlertCircle size={13} aria-hidden className="min-[360px]:hidden" />
+                      <span className="max-[359px]:sr-only">needs review</span>
                     </span>
                   ) : g.verdict.kind === "failed" || g.verdict.kind === "in_flight" ? null : (
                     // No rows because they were all filed; never because the

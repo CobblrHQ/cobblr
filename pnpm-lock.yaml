@@ -1080,6 +1080,9 @@ importers:
       '@cobblr/platform-web':
         specifier: workspace:*
         version: link:../../packages/platform-web
+      '@electric-sql/pglite':
+        specifier: ^0.5.8
+        version: 0.5.8
       '@tanstack/react-query':
         specifier: ^5.62.7
         version: 5.100.10(react@19.2.6)

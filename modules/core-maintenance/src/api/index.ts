@@ -31,6 +31,8 @@ router.post("/schedules/:id/end", asyncHandler(async (req, res) => {
 // Synchronous tick endpoint — fires the due-soon sweeper for THIS
 // workspace only. Used by tests + ops; the background interval
 // still ticks across every workspace once an hour.
+// AI-REACH: exempt — an operator's and the tests' tick of the hourly sweep; it
+// sends every due reminder at once, which only the sweep's own clock may do
 router.post("/sweep", (req, res, next) => {
   void (async () => {
     const tenant = (req as unknown as { tenant?: { org: { id: string } } }).tenant;

@@ -27,6 +27,8 @@ import type { Channel, ChannelEvent } from "./types.js";
 
 export const discordDmChannel: Channel = {
   name: "discord_dm",
+  // A card opens one place: a digest is one per workspace, named and linked (#6907).
+  digestScope: "workspace",
   async deliver(event: ChannelEvent): Promise<boolean> {
     const conn = await meta
       .selectFrom("discord_connections")

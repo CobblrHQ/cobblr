@@ -39,6 +39,7 @@ export interface ConnectorInvokeContext {
   args: Record<string, unknown>;
   rendered?: string;                          // template render result if any
   event?: { name: string | null; payload: Record<string, unknown> };
+  idempotencyKey?: string;
 }
 
 export interface OutboundConnector {

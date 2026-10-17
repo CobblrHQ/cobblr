@@ -9,11 +9,12 @@ import { projectsRouter } from "./projects.js";
 import { tasksRouter } from "./tasks.js";
 import { registerProjectsHandlers } from "./handlers.js";
 import { registerProjectsNotificationMappers } from "./notification-mapper.js";
-import { registerProjectsCalendarSource } from "./calendar-source.js";
+import { registerProjectsCalendarSource, registerProjectsOverdueSource } from "./calendar-source.js";
 import { registerPatternPhotoSubscriber } from "./pattern-photo.js";
 import { registerPatternNeedsSubscriber } from "./pattern-needs.js";
 
 registerProjectsCalendarSource();
+registerProjectsOverdueSource();
 registerProjectsHandlers();
 registerProjectsNotificationMappers();
 // A pattern PDF attached to a design pulls its own photo out (issue #2402).

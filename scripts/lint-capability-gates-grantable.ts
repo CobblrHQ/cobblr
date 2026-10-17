@@ -21,6 +21,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -60,8 +61,7 @@ function grantableActionIds(): Set<string> {
   } catch {
     return ids;
   }
-  for (const name of names) {
-    const manifest = join(modules, name, "src", "module.ts");
+  for (const name of names) for (const manifest of manifestSources(join(modules, name))) {
     let src: string;
     try {
       src = readFileSync(manifest, "utf8");

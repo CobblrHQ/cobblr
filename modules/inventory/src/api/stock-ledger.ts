@@ -26,6 +26,7 @@ import type { InventoryDB } from "../db.js";
 export type LedgerExec = Kysely<InventoryDB> | Transaction<InventoryDB>;
 
 export interface ConsumptionEntry {
+  operationKey?: string;
   partId: string;
   unit?: string;
   /** Signed: negative = consumed, positive = restocked/opened. */
@@ -49,6 +50,7 @@ export async function recordConsumption(exec: LedgerExec, e: ConsumptionEntry): 
     .insertInto("inventory_consumption")
     .values({
       part_id: e.partId,
+      operation_key: e.operationKey ?? null,
       unit: e.unit ?? sql<string>`(select unit from inventory_parts where id = ${e.partId})`,
       delta: String(e.delta),
       reason: e.reason ?? null,

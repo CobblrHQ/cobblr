@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/inventory",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -63,6 +63,7 @@
   },
   "devDependencies": {
     "@cobblr/platform-web": "workspace:*",
+    "@electric-sql/pglite": "^0.5.8",
     "@tanstack/react-query": "^5.62.7",
     "@types/react": "^19.0.2",
     "react": "^19.0.0",

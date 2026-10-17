@@ -3,6 +3,7 @@ import { metaPool } from "./meta.js";
 import { sweepGate } from "./sweep-gate.js";
 import { CONFIGURED_TENANT_POOLS, TENANT_POOL_MAX, setTenantPoolCap } from "./tenant.js";
 import { connectionBudget, recordAppliedBudget } from "./connection-budget.js";
+import { LOCK_CONNECTIONS } from "../platform/exclusive.js";
 import { notePassFailure } from "../platform/pass-failures.js";
 
 export async function applyConnectionBudget(): Promise<void> {
@@ -19,6 +20,7 @@ export async function applyConnectionBudget(): Promise<void> {
       maxConnections,
       reserved,
       metaPoolMax: Number((metaPool as unknown as { options?: { max?: number } }).options?.max) || 10,
+      lockConnections: LOCK_CONNECTIONS,
       tenantPoolMax: TENANT_POOL_MAX,
       configuredTenantPools: CONFIGURED_TENANT_POOLS,
       configuredSweepPools: sweepGate.ceiling,
@@ -27,7 +29,7 @@ export async function applyConnectionBudget(): Promise<void> {
     sweepGate.setLimit(b.sweepPools);
     recordAppliedBudget({ ...b, maxConnections });
     console.log(
-      `[db] connection budget: server allows ${maxConnections}, this api ${b.perApi}; workspace pools ${b.tenantPools} of ${CONFIGURED_TENANT_POOLS}, sweeps ${b.sweepPools}${b.fits ? "" : " (lowered to fit the server)"}`,
+      `[db] connection budget: server allows ${maxConnections}, this api ${b.perApi} (at most ${b.worstCase} held); workspace pools ${b.tenantPools} of ${CONFIGURED_TENANT_POOLS}, sweeps ${b.sweepPools}${b.lowered ? " (lowered to fit the server)" : ""}${b.fits ? "" : "; two apis at their worst do NOT fit"}`,
     );
   } catch (err) {
     notePassFailure("applyConnectionBudget", null, err);

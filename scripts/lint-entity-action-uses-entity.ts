@@ -113,7 +113,7 @@ const violations: Array<{ file: string; line: number; id: string; handler: strin
 const optionalButRequired: string[] = [];
 const carried: string[] = [];
 
-for (const f of files.filter((x) => x.endsWith("module.ts"))) {
+for (const f of files.filter((x) => x.endsWith("module.ts") || /\/src\/families\/[^/]+\/manifest\.ts$/.test(x))) {
   const sf = parse(f);
   const visit = (n: ts.Node): void => {
     if (ts.isObjectLiteralExpression(n)) {

@@ -5,14 +5,17 @@
 
 import { forgetSignedInWith, signedInWith } from "../lib/oidc-sign-in";
 import { forgetKeptReads } from "../lib/offline";
+import { onSessionChange } from "../lib/session-identity";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createContext, useCallback, useContext, useEffect, useState,
   type ReactNode,
 } from "react";
 import {
-  ApiError, api, getToken, setToken,
+  ApiError, SESSION_CHANGED, api, getToken, setToken,
   type OrgMembership, type SessionUser, type AuthResponse,
 } from "../lib/api";
+import { forgetPersonalChat } from "../lib/personal-chat-store";
 
 interface AuthState {
   user: SessionUser | null;
@@ -66,6 +69,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading: true,
   });
 
+  // Signed in as someone else, in the same page: nothing the query cache holds
+  // or is still fetching is theirs. clear() cancels what is in flight too, so
+  // a late answer for the last account lands nowhere (#6970).
+  const queryClient = useQueryClient();
+  useEffect(() => onSessionChange(() => queryClient.clear()), [queryClient]);
+
   // Hydrate from /me on mount when a token's already present.
   useEffect(() => {
     let cancelled = false;
@@ -82,6 +91,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
       .catch((err) => {
         if (cancelled) return;
+        // Signed in as someone else while this was asked: their sign-in set the state.
+        if (err instanceof ApiError && err.code === SESSION_CHANGED) return;
         // Offline with nothing kept: still signed in, just not reachable.
         if (err instanceof ApiError && (err.code === "offline" || err.code === "network_error")) {
           setState({ user: null, orgs: [], loading: false, offline: true });
@@ -140,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void forgetKeptReads();
+    forgetPersonalChat();
     // Signed in through the instance's own provider: end that session too,
     // when the provider says where (RP-initiated logout, #4492).
     const via = signedInWith();

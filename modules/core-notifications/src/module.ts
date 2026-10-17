@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-notifications",
-  version: "0.2.3",
+  version: "0.2.4",
   displayName: "Notifications",
   description:
     "Get told about what matters to you, in the app and through the channels you choose.",
@@ -46,14 +46,14 @@ export default defineModule({
         runBy: "member",
         label: "Message someone",
         description:
-          "Send a short message to a person in the workspace through their own notification channels (in the app, push, email, Discord, as they chose). The message may use the record's fields ({{name}}, {{quantity}}, {{unit}}) and {{event.actor.display_name}}; left empty it says the record is used up and asks for more. Someone on the People list who is not a member is emailed, or texted when `via` is text, through the workspace's own sender, only from an automation and once an owner or admin allowed it. Wire it to a record running out to ask someone to get more.",
+          "Send a short message to a person in the workspace through their own notification channels (in the app, push, email, Discord, as they chose). The message may use the record's fields ({{name}}, {{quantity}}, {{unit}}) and {{event.actor.display_name}}; left empty it says the record is used up and asks for more. Someone on the People list who is not a member is emailed, or texted when `via` is text, through the workspace's own sender, only from an automation and once an owner or admin allowed it. Choosing whoever it is assigned to reads the assignee off the event (an overdue task names them) and tells everyone when nobody has it or they have no account; choosing everyone tells every member. Wire it to a record running out to ask someone to get more, or to an overdue record to tell its assignee.",
         examples: ["tell Sam when the coffee runs out", "message me when we are out of milk"],
         // DELIBERATELY universal: anything a workspace keeps can be the
         // subject of a message, and the record only fills the words.
         appliesTo: { any: true },
         invokeHandler: "core-notifications.message-someone",
         argsSchema: {
-          to: { label: "Who", type: "text", required: true, choicesFrom: "people" },
+          to: { label: "Who (a person, whoever the record is assigned to, or everyone)", type: "text", required: true, choicesFrom: "recipients" },
           message: { label: "What to say (empty: “<name> is used up. Could you get more?”)", type: "text" },
           reply_link: { label: "Someone outside the workspace can answer: Got it, or Bought it (it goes on the shopping list)", type: "boolean" },
           via: {

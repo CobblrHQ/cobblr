@@ -64,6 +64,12 @@ export interface Channel {
    *  built yet): the reason, and the channel is then not offered to bind.
    *  A channel a person can pick must be one that delivers. */
   readonly notOffered?: string;
+  /** What one digest gathers when this channel's window flushes (#6907).
+   *  "person" (the default): one message across every workspace, right for
+   *  email, which a person reads as one inbox. "workspace": one message per
+   *  workspace, naming it and linking into it, right for a chat card that can
+   *  only open one place. Declared here, never branched in the sweeper. */
+  readonly digestScope?: "person" | "workspace";
   /** Deliver. Resolves true on success — caller logs which channels
    *  succeeded in `notifications.delivered_via`. */
   deliver(event: ChannelEvent): Promise<boolean>;

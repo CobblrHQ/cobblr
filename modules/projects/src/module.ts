@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.39",
+  version: "0.3.40",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -262,6 +262,40 @@ export default defineModule({
       { entity_kind: "projects:task", name: "assignee", display_label: "Assigned to", type: "person" as const },
     ],
     wires: [
+      // A task left undone is told again, louder each step (the overdue sweep
+      // in core-recurrence; household-accountability.md section 3): its
+      // assignee on the day and again when late (the record is tagged "late"),
+      // the whole household only when it has gone stale. An assignee with no
+      // account, or nobody assigned, falls through to the household. Ordinary
+      // wires: change the words, add one, or turn any off.
+      {
+        source_kind: "projects:task",
+        action_id: "core-notifications:message-someone",
+        trigger_type: "event",
+        trigger_event: "core-recurrence.overdue.due",
+        args: { to: "@assignee", message: '"{{event.title}}" is due today.' },
+      },
+      {
+        source_kind: "projects:task",
+        action_id: "core-notifications:message-someone",
+        trigger_type: "event",
+        trigger_event: "core-recurrence.overdue.late",
+        args: { to: "@assignee", message: '"{{event.title}}" was due {{event.dueOn}} and is still not done.' },
+      },
+      {
+        source_kind: "projects:task",
+        action_id: "core-tags:tag-record",
+        trigger_type: "event",
+        trigger_event: "core-recurrence.overdue.late",
+        args: { tag_name: "late" },
+      },
+      {
+        source_kind: "projects:task",
+        action_id: "core-notifications:message-someone",
+        trigger_type: "event",
+        trigger_event: "core-recurrence.overdue.stale",
+        args: { to: "@household", message: '"{{event.title}}" has been overdue since {{event.dueOn}} and nobody has done it.' },
+      },
       // Auto-unblock a task when its part comes back in stock.
       {
         source_kind: "inventory:part",

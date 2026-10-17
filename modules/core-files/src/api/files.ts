@@ -52,7 +52,8 @@ const upload = uploadOne({});
 //
 // Naming: keep them snake_case to match the rest of the API and the
 // /attachments POST body. `attach_role` defaults to null = primary.
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a multipart upload of the file's bytes; the assistant
+// holds no file, and what it reads arrives through the scan inbox
 filesRouter.post(
   "/",
   upload,
@@ -587,6 +588,7 @@ filesRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 filesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

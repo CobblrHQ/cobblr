@@ -22,12 +22,14 @@ const sha = (s) => createHash("sha256").update(s).digest("hex");
 export const LINT_RUNNER = ["scripts/run-lints.mjs", "scripts/lib/lint-command.mjs", "scripts/lib/ts-resolve.mjs", "scripts/lib/lint-inputs.cjs", "scripts/lib/lint-reads.cjs", "scripts/lib/lint-verdicts.mjs", "scripts/lib/verdict-cache.mjs", "pnpm-lock.yaml", "package.json", "tsconfig.json", "tsconfig.base.json"];
 
 /** PURE. Whether this run reuses lint verdicts. A pull request reuses ("on", #5761, 2026-10-12: 105 shadow
- *  runs, 0 misses, median 128 of 487 lints reusable); a push to main runs every lint and keys them in
- *  shadow, so main stays the backstop and keeps looking for misses; outside CI nothing. COBBLR_LINT_VERDICTS
- *  overrides; a scheduled or dispatched run (COBBLR_VERDICT_CACHE=off, the release's) is shadow whatever
- *  is set. */
+ *  runs, 0 misses, median 128 of 487 lints reusable); so does a re-check (a push to recheck/ or recheck-first/,
+ *  lib/direct-merge.mjs: one pull request on current main, #7182: run 51567 found 457 of 521 reusable in shadow
+ *  and ran all 521). A push to main runs every lint and keys them in shadow, so main stays the backstop and
+ *  keeps looking for misses; outside CI nothing. COBBLR_LINT_VERDICTS overrides; a scheduled or dispatched
+ *  run (COBBLR_VERDICT_CACHE=off, the release's) is shadow whatever is set. */
 export function verdictMode(env) {
-  const mode = env.COBBLR_LINT_VERDICTS || (env.CI ? (env.GITHUB_EVENT_NAME === "pull_request" ? "on" : "shadow") : "off");
+  const recheck = env.GITHUB_EVENT_NAME === "push" && /^recheck(-first)?\//.test(env.GITHUB_REF_NAME ?? "");
+  const mode = env.COBBLR_LINT_VERDICTS || (env.CI ? (env.GITHUB_EVENT_NAME === "pull_request" || recheck ? "on" : "shadow") : "off");
   return { mode, shadow: mode === "shadow" || env.COBBLR_VERDICT_CACHE === "off" };
 }
 

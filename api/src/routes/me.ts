@@ -1,6 +1,7 @@
 // /api/v1/me — current session profile + org memberships. Mirrors
 // the shape /auth/login returns so the web can reuse the same hook.
 
+import { isUndeliverableAddress, normalizeUsername, usernameProblem } from "../platform/usernames.js";
 import { productName } from "../platform/product-name.js";
 import { childTerms } from "../auth/token-lineage.js";
 import { OPERATOR_ONLY_ACTIONS, IMPORT_ROW } from "../platform/activity.js";
@@ -258,6 +259,8 @@ const MeUpdate = z.object({
   // How a titled work's original / translated / transliterated title reads
   // for this person (#3061). null = the default format.
   title_pref: z.enum(TITLE_FORMATS as [TitleFormat, ...TitleFormat[]]).nullable().optional(),
+  // A name to sign in with beside the email, or null to stop using one (#6910).
+  username: z.string().trim().max(64).nullable().optional(),
 });
 meRouter.patch("/me", requireAuth, async (req, res, next) => {
   try {
@@ -272,9 +275,33 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
       res.status(400).json({ error: { code: "empty_patch", message: "Nothing to update" } });
       return;
     }
+    let username: string | null | undefined;
+    if (parsed.data.username !== undefined) {
+      username = parsed.data.username === null || parsed.data.username === "" ? null : normalizeUsername(parsed.data.username);
+      const problem = username === null ? null : usernameProblem(username);
+      if (problem) {
+        res.status(400).json({ error: { code: "invalid_username", message: problem } });
+        return;
+      }
+      if (username !== null) {
+        const taken = await meta.selectFrom("users").select("id").where("username", "=", username).where("id", "!=", req.session!.id).executeTakeFirst();
+        if (taken) {
+          res.status(409).json({ error: { code: "username_taken", message: "That username is taken." } });
+          return;
+        }
+      } else {
+        // An account with no email signs in only by its username: it cannot give it up.
+        const me = await meta.selectFrom("users").select("email").where("id", "=", req.session!.id).executeTakeFirstOrThrow();
+        if (isUndeliverableAddress(me.email)) {
+          res.status(400).json({ error: { code: "username_required", message: "This account has no email, so its username is how it signs in. Change it instead." } });
+          return;
+        }
+      }
+    }
     const updated = await meta
       .updateTable("users")
       .set({
+        ...(username !== undefined && { username }),
         ...(parsed.data.display_name !== undefined && {
           display_name: parsed.data.display_name.trim(),
         }),
@@ -292,7 +319,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
         }),
       })
       .where("id", "=", req.session!.id)
-      .returning(["id", "email", "display_name", "theme_pref", "nav_pref", "title_pref", "tour_seen_at", "time_zone"])
+      .returning(["id", "email", "username", "display_name", "theme_pref", "nav_pref", "title_pref", "tour_seen_at", "time_zone"])
       .executeTakeFirstOrThrow();
     if (parsed.data.time_zone !== undefined) forgetTimeZone(req.session!.id);
     res.json({ user: updated });

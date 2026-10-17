@@ -22,7 +22,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
-import { completeEntry, rollForward, rolledFromOf, unroll } from "../schedules-store.js";
+import { completeEntry, rollForward, rolledFromOf, unrollIfCurrent } from "../schedules-store.js";
 import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
@@ -307,9 +307,17 @@ function registerUndos(): void {
     const id = String((ctx.args as { entry_id?: unknown } | null)?.entry_id ?? "").trim();
     if (!id) return { ok: false, error: "missing entry_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const row = await db.deleteFrom("core_maintenance_entries").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
     const was = rolledFromOf((ctx.args as { schedule_was?: unknown } | null)?.schedule_was);
-    if (was) await unroll(db, ctx.orgId, was);
+    // With the schedule locked, so an undo and a completion queue; and the
+    // schedule is rolled back only when this service is still the one it
+    // reflects, and only when this undo is the one that removed the entry (a
+    // repeated undo changes nothing).
+    const row = await db.transaction().execute(async (tx) => {
+      if (was) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", was.schedule_id).forUpdate().executeTakeFirst();
+      const gone = await tx.deleteFrom("core_maintenance_entries").where("id", "=", id).returning(["id", "name", "performed_at"]).executeTakeFirst();
+      if (gone && was) await unrollIfCurrent(tx, ctx.orgId, was, gone.performed_at);
+      return gone;
+    });
     if (!row) return { ok: true, skipped: true, reason: "already gone" };
     return { ok: true, summary: `Removed the ${row.name} entry.`, removed: row.id };
   });
@@ -318,24 +326,29 @@ function registerUndos(): void {
     const id = String(a.entry_id ?? "").trim();
     if (!id) return { ok: false, error: "missing entry_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const before = await db.selectFrom("core_maintenance_entries").select(["performed_at", "performed_by"]).where("id", "=", id).executeTakeFirst();
-    const row = await db
-      .updateTable("core_maintenance_entries")
-      .set({
-        performed_at: instantFromInput(a.performed_at),
-        performed_by: typeof a.performed_by === "string" && a.performed_by ? a.performed_by : null,
-      } as never)
-      .where("id", "=", id)
-      .returning(["id", "name"])
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: `no maintenance entry with id ${id}` };
     const was = rolledFromOf(a.schedule_was);
-    if (was) await unroll(db, ctx.orgId, was);
+    const out = await db.transaction().execute(async (tx) => {
+      if (was) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", was.schedule_id).forUpdate().executeTakeFirst();
+      const before = await tx.selectFrom("core_maintenance_entries").select(["performed_at", "performed_by"]).where("id", "=", id).executeTakeFirst();
+      const row = await tx
+        .updateTable("core_maintenance_entries")
+        .set({
+          performed_at: instantFromInput(a.performed_at),
+          performed_by: typeof a.performed_by === "string" && a.performed_by ? a.performed_by : null,
+        } as never)
+        .where("id", "=", id)
+        .returning(["id", "name"])
+        .executeTakeFirst();
+      // An entry that was not done any more (a repeated undo) leaves the schedule as it is.
+      if (row && was && before?.performed_at) await unrollIfCurrent(tx, ctx.orgId, was, before.performed_at);
+      return { row, before };
+    });
+    if (!out.row) return { ok: false, error: `no maintenance entry with id ${id}` };
     return {
       ok: true,
-      summary: `${row.name} is back to how it was.`,
-      result: { id: row.id },
-      was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null },
+      summary: `${out.row.name} is back to how it was.`,
+      result: { id: out.row.id },
+      was: { performed_at: out.before?.performed_at ?? null, performed_by: out.before?.performed_by ?? null },
     };
   });
   platform().actions.registerUndo("core-maintenance.log", (result) => {

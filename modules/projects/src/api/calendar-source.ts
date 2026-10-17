@@ -48,5 +48,42 @@ export function registerProjectsCalendarSource(): void {
       if (msg.includes("does not exist")) return [];
       throw err;
     }
+  }, { module: "projects" });
+}
+
+interface LateTaskRow {
+  id: string;
+  title: string;
+  due_date: string;
+  assignee: string | null;
+}
+
+/** Overdue source: open tasks due today or earlier, with who has each. A done
+ *  or cancelled task has nothing left to be late for, so marking one done is
+ *  what stops the next step of the overdue sweep. */
+export function registerProjectsOverdueSource(): void {
+  platform().calendar.registerOverdueSource({
+    kind: "projects:task",
+    read: async (orgId, today) => {
+      const tdb = (await platform().tenants.getDb(orgId)) as Kysely<unknown>;
+      const compiled = sql<LateTaskRow>`
+        select id::text as id, title, due_date::text as due_date, metadata->>'assignee' as assignee
+        from projects_tasks
+        where due_date is not null
+          and status not in ('done', 'cancelled')
+          and due_date::date <= ${today}::date
+      `.compile(tdb);
+      let rows: LateTaskRow[];
+      try {
+        rows = ((await tdb.executeQuery(compiled)) as { rows: LateTaskRow[] }).rows;
+      } catch (err) {
+        if ((err as Error).message.includes("does not exist")) return [];
+        throw err;
+      }
+      return rows.flatMap((r) => {
+        const dueOn = dayStoredAt(r.due_date, "UTC");
+        return dueOn ? [{ kind: "projects:task", id: r.id, name: r.title, dueOn, assigneePersonId: r.assignee || null }] : [];
+      });
+    },
   });
 }

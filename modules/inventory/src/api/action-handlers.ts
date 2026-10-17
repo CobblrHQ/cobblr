@@ -13,8 +13,8 @@ import { stockTrackerAllows } from "../stock-tracker.js";
 // (The Lego kit→parts expansion that used to live here moved to the Lego domain
 //  module, bricklink-connector — it drives create-items + update-item.)
 
-import { sql, type Kysely } from "kysely";
-import { ActionRefusal, columnSet, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
+import { sql, type Kysely, type Transaction } from "kysely";
+import { ActionRefusal, columnSet, isActionRefusal, platform, quantityWithUnit, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 import { statedQuantity } from "@cobblr/platform-contract/stated-quantity";
 import type { InventoryDB } from "../db.js";
@@ -110,7 +110,16 @@ async function announce(orgId: string, userId: string | null | undefined, applie
   }
 }
 
+interface StockDraw {
+  partId: string;
+  quantity: number;
+  optional: boolean;
+}
+
 interface AdjustStockPayload {
+  operationKey?: string;
+  /** All required draws succeed together, or none of the stock moves. */
+  draws?: StockDraw[];
   partId?: string;
   delta?: number;
   reason?: string;
@@ -223,50 +232,81 @@ export function goneStockRefusal(name: string | null | undefined): string {
  *  opt-out. A non-zero `delta` is assumed (callers guard). */
 export async function applyStockDelta(
   orgId: string,
-  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware" },
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware"; operationKey?: string },
 ): Promise<Record<string, unknown>> {
-  const { partId, delta, reason } = p;
+  if (p.operationKey !== undefined && (typeof p.operationKey !== "string" || !p.operationKey.trim() || p.operationKey.length > 200 || p.delta >= 0)) {
+    throw new ActionRefusal("A stock draw receipt needs a key of at most 200 characters and a negative quantity.");
+  }
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-  const movement = await db.transaction().execute(async trx => {
+  const movement = await db.transaction().execute(trx => moveStock(trx, orgId, p));
+  return announceStockMove(db, orgId, p, movement);
+}
 
-    // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
-    // external system counts usage and Cobblr mirrors it on sync — mutating here
-    // too would double-count. Generic — any external tracker opts a part out.
-    const ext = await trx
-      .selectFrom("inventory_parts")
-      .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty", "metadata", "name"])
-      .where("id", "=", partId)
-      .forUpdate().executeTakeFirst();
-    if (!ext) return { ok: false, error: "part_not_found" };
-    if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name) };
-    if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
-      return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+type StockDelta = Parameters<typeof applyStockDelta>[1];
+
+async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockDelta & { exact?: boolean; optional?: boolean }) {
+  const { partId, delta, reason } = p;
+  // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
+  // external system counts usage and Cobblr mirrors it on sync — mutating here
+  // too would double-count. Generic — any external tracker opts a part out.
+  const ext = await trx
+    .selectFrom("inventory_parts")
+    .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty", "metadata", "name"])
+    .where("id", "=", partId)
+    .forUpdate().executeTakeFirst();
+  if (!ext) return { ok: false, error: "part_not_found" };
+  if (p.operationKey) {
+    const prior = await trx.selectFrom("inventory_consumption").select(["delta", "source_kind", "source_id"])
+      .where("part_id", "=", partId).where("operation_key", "=", p.operationKey).executeTakeFirst();
+    if (prior) {
+      if (prior.source_kind !== (p.sourceKind ?? null) || prior.source_id !== (p.sourceId ?? null)) throw new ActionRefusal("Stock operation belongs to another source");
+      return { ok: true, partId, delta: Number(prior.delta), replayed: true };
     }
+  }
+  if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name) };
+  if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
+    return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+  }
 
-    if (delta < 0 && !p.correction) await assertStorageReady(trx, orgId, partId);
-
-    // The floor. A decrement on an empty record is refused with the one
-    // sentence every surface shows; one larger than what is on hand takes what
-    // is there and says so. Applied here, at the write, so use-one, use-up,
-    // mark-spoiled and a wire's negative delta all inherit it (stock-floor.ts).
-    const verdict = floorDelta(Number(ext.qty), delta);
-    if (verdict.kind === "refuse") {
-      return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, Number(ext.qty)) };
+  if (delta < 0 && !p.correction) {
+    try {
+      await assertStorageReady(trx, orgId, partId);
+    } catch (error) {
+      if (p.optional && isActionRefusal(error)) return { ok: false, error: error.message };
+      throw error;
     }
-    const applied = verdict.applied;
+  }
 
-    const updated = await trx
-      .updateTable("inventory_parts")
-      .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
-      .where("id", "=", partId)
-      .where(sql<boolean>`coalesce(metadata->>'tracked_by', '') = ${p.reporter === "firmware" ? "firmware" : ""}`)
-      .returning(["id", "name", "qty", "min_qty"])
-      .executeTakeFirst();
-    if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
+  // The floor. A decrement on an empty record is refused with the one
+  // sentence every surface shows; one larger than what is on hand takes what
+  // is there and says so. Applied here, at the write, so use-one, use-up,
+  // mark-spoiled and a wire's negative delta all inherit it (stock-floor.ts).
+  const verdict = floorDelta(Number(ext.qty), delta);
+  if (verdict.kind === "refuse") {
+    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, Number(ext.qty)) };
+  }
+  if (p.exact && verdict.applied !== delta) {
+    throw new ActionRefusal(`Not enough ${ext.name} in stock for the required draw.`);
+  }
+  const applied = verdict.applied;
 
-    await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null });
-    return { updated, applied, verdict };
-  });
+  const updated = await trx
+    .updateTable("inventory_parts")
+    .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
+    .where("id", "=", partId)
+    .where(sql<boolean>`coalesce(metadata->>'tracked_by', '') = ${p.reporter === "firmware" ? "firmware" : ""}`)
+    .returning(["id", "name", "qty", "min_qty"])
+    .executeTakeFirst();
+  if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
+
+  await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null, operationKey: p.operationKey });
+  return { updated, applied, verdict };
+}
+
+async function announceStockMove(
+  db: Kysely<InventoryDB>, orgId: string, p: StockDelta,
+  movement: Awaited<ReturnType<typeof moveStock>>,
+): Promise<Record<string, unknown>> {
   if (!movement.updated) return movement;
   const { updated, applied, verdict } = movement;
 
@@ -281,7 +321,7 @@ export async function applyStockDelta(
     delta: applied,
     newQty,
     minQty,
-    reason: reason ?? null,
+    reason: p.reason,
     ledger: false,
   });
   // `delta` is what actually moved (the inverse of this is +delta); a clamp
@@ -296,9 +336,42 @@ export async function applyStockDelta(
     // took one off can offer the shopping list there and then (#3897).
     minQty,
     low,
-    ...(verdict.kind === "clamp" ? { clamped: true, requested: delta, note: verdict.note } : {}),
+    ...(verdict.kind === "clamp" ? { clamped: true, requested: p.delta, note: verdict.note } : {}),
   };
 }
+
+/** Lock in part order so overlapping recipes cannot deadlock or share a draw.
+ * The ledger commits with the quantities; listeners hear only committed moves. */
+async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string): Promise<Record<string, unknown>> {
+  if (!Array.isArray(draws) || draws.some(d => !d || typeof d.partId !== "string" || !d.partId || !Number.isFinite(d.quantity) || d.quantity <= 0 || typeof d.optional !== "boolean")) {
+    throw new ActionRefusal("Choose stock records and positive quantities for the draw.");
+  }
+  const grouped = new Map<string, StockDraw>();
+  for (const d of draws) {
+    const old = grouped.get(d.partId);
+    grouped.set(d.partId, { ...d, quantity: d.quantity + (old?.quantity ?? 0), optional: d.optional && (old?.optional ?? true) });
+  }
+  const db = await platform().tenants.getDb(orgId) as Kysely<InventoryDB>;
+  const movements = await db.transaction().execute(async trx => {
+    const out = [];
+    for (const d of [...grouped.values()].sort((a, b) => a.partId.localeCompare(b.partId))) {
+      const p = { partId: d.partId, delta: -d.quantity, reason, exact: !d.optional, optional: d.optional };
+      const movement = await moveStock(trx, orgId, p);
+      if (!movement.updated && !d.optional) {
+        throw new ActionRefusal(movement.error === "part_not_found" ? "A required component is no longer available." : movement.error || "A required component could not be drawn from stock.");
+      }
+      out.push({ p, movement });
+    }
+    return out;
+  });
+  const consumed = [];
+  for (const { p, movement } of movements) {
+    await announceStockMove(db, orgId, p, movement);
+    if (movement.updated) consumed.push({ part_id: p.partId, quantity: -movement.applied });
+  }
+  return { ok: true, consumed };
+}
+
 
 
 // ─────────────────────────── the way back ───────────────────────────────
@@ -691,8 +764,10 @@ export function registerInventoryActionHandlers(): void {
     return { ok: true, filed, areas_created: areasCreated };
   });
 
-  platform().actions.registerHandler("inventory.adjust-stock", (ctx) =>
-    withPartUndo(ctx, async () => {
+  platform().actions.registerHandler("inventory.adjust-stock", (ctx) => {
+    const args = (ctx.args as AdjustStockPayload | null) ?? {};
+    if (args.draws !== undefined) return applyStockDraws(ctx.orgId, args.draws, args.reason ?? "Stock draw");
+    return withPartUndo(ctx, async () => {
       // Args take precedence (an admin can hardwire a wire to "always
       // add 1"); otherwise we pull from the event payload. The one thing that
       // beats a fixed arg is a QUANTITY the person stated on the gesture
@@ -712,6 +787,9 @@ export function registerInventoryActionHandlers(): void {
       const inUnit = await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
       if (!inUnit.ok) return { ok: true, skipped: true, reason: inUnit.reason };
       const delta = inUnit.delta;
+      if (args.operationKey !== undefined) {
+        return applyStockDelta(ctx.orgId, { partId, delta, reason, sourceKind: args.sourceKind, sourceId: args.sourceId, operationKey: args.operationKey });
+      }
       const sourceKind = args.sourceKind ?? ev.sourceKind;
       const sourceId = args.sourceId ?? ev.sourceId;
       if ((args.once ?? ev.once) === true && sourceKind && sourceId && (await alreadyApplied(ctx.orgId, partId, sourceKind, sourceId, delta, (args.reversible ?? ev.reversible) === true))) {
@@ -749,8 +827,8 @@ export function registerInventoryActionHandlers(): void {
         sourceId: args.sourceId ?? ev.sourceId,
         ...(args.correction === true ? { correction: true } : {}),
       });
-    }),
-  );
+    });
+  });
 
 
 

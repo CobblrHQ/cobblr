@@ -47,7 +47,9 @@ renderersRouter.get(
 
 // POST — install (admin). Upserts on name. Verifies the signature if the
 // bundle is signed; a signed-but-bad bundle is rejected.
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-REACH: exempt — installs JavaScript that runs whenever a file is
+// previewed; code from a chat would run in every viewer's browser, so
+// installing a renderer is the owner's
 renderersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -84,7 +86,7 @@ renderersRouter.post(
 );
 
 // DELETE — uninstall (admin).
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — removes renderer code the owner installed; see POST above
 renderersRouter.delete(
   "/:name",
   asyncHandler(async (req, res) => {

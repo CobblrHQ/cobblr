@@ -10,7 +10,7 @@
 // Unbuilt chips filtered nothing (#2772, #2422). Two read paths, one rule,
 // one place, so they cannot disagree again.
 import { sql, type SelectQueryBuilder } from "kysely";
-import { columnSet, arrivedEverywhere, parseSort, type EntityListQuery, type FilterPredicate } from "@cobblr/platform-contract";
+import { columnSet, arrivedEverywhere, parseSort, containsPattern, isTextWhereOp, type EntityListQuery, type FilterPredicate } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS } from "../db.js";
 import { filterValues, isMulti } from "./filter-values.js";
@@ -117,7 +117,27 @@ export function applyPartFilters<Q extends PartsQuery>(
   if (query.where) {
     const COMPARABLE = columnSet<InventoryDB["inventory_parts"]>()(["qty", "min_qty", "cost", "created_at", "updated_at"]);
     const skip = (p: FilterPredicate) => opts.unapplied?.push(p);
+    // The text columns a "contains" reads natively; any other name is a custom
+    // field, read from metadata (bound as a parameter, never spliced).
+    const TEXT = columnSet<InventoryDB["inventory_parts"]>()(["name", "description", "manufacturer", "notes", "serial_number", "model_number", "assigned_to", "warranty_details", "supplier_url"]);
     for (const p of query.where) {
+      if (isTextWhereOp(p.op)) {
+        // Case-insensitive, and what the person typed is matched literally:
+        // containsPattern escapes % and _ (#6896). "Does not contain" keeps a
+        // row with no value, which does not contain the text either.
+        const pattern = p.ref_col ? null : containsPattern(p.value);
+        if (!pattern) {
+          skip(p);
+          continue;
+        }
+        const value = TEXT.has(p.col) ? sql`${col(p.col)}` : sql`${meta} ->> ${p.col}`;
+        q = q.where(
+          p.op === "contains"
+            ? sql<boolean>`${value} ILIKE ${pattern} ESCAPE '\\'`
+            : sql<boolean>`coalesce(${value}, '') NOT ILIKE ${pattern} ESCAPE '\\'`,
+        );
+        continue;
+      }
       if (!["<", "<=", ">", ">=", "=", "!="].includes(p.op)) {
         skip(p);
         continue;

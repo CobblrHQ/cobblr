@@ -16,6 +16,7 @@ import type { Kysely } from "kysely";
 import { ViewCreate } from "./views.js";
 import type { CoreViewsDB } from "../db.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { findVisibleView } from "./view-lookup.js";
 
 /** The renderers core-views ships. A model asked for "a board" means kanban and
  *  "a timeline" means gantt; mapping the words it actually uses is cheaper than
@@ -109,13 +110,24 @@ export function registerViewsHandlers(): void {
 }
 
 function registerUndos(): void {
+  // Removes a view this person can see, named or by id (save-view's Undo
+  // passes the id of the view it made). The row goes into the result so its
+  // own Undo can put it back exactly.
   platform().actions.registerHandler("core-views.delete-view", async (ctx) => {
-    const id = String((ctx.args as { view_id?: unknown } | null)?.view_id ?? "").trim();
-    if (!id) return { ok: false, error: "missing view_id" };
+    const args = (ctx.args ?? {}) as { view?: unknown; view_id?: unknown };
+    const named = String(args.view_id ?? args.view ?? "").trim();
+    if (!named) return { ok: false, error: "Say which view." };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreViewsDB>;
-    const row = await db.deleteFrom("core_views_views").where("id", "=", id).returning(["id", "name"]).executeTakeFirst();
-    if (!row) return { ok: true, skipped: true, reason: "already gone" };
-    return { ok: true, summary: `Removed the ${row.name} view.`, removed: row.id };
+    const view = await findVisibleView(db, ctx.userId, named);
+    if ("error" in view) return args.view_id ? { ok: true, skipped: true, reason: "already gone" } : { ok: false, error: view.error };
+    await db.deleteFrom("core_views_views").where("id", "=", view.id).execute();
+    await platform().events.emit("core-views.view.deleted", { orgId: ctx.orgId, viewId: view.id });
+    return { ok: true, summary: `Removed the ${view.name} view.`, removed: view.id, data: { view } };
+  });
+  platform().actions.registerUndo("core-views.delete-view", (result) => {
+    const d = (result as { ok?: unknown; skipped?: unknown; data?: { view?: { id?: string } } } | null);
+    if (d?.ok !== true || d.skipped || !d.data?.view?.id) return null;
+    return { action_id: "core-views:restore-view", args: { view: d.data.view } };
   });
   platform().actions.registerUndo("core-views.save-view", (result) => {
     const r = result as { ok?: unknown; result?: { id?: unknown }; view?: { id?: unknown }; id?: unknown } | null;

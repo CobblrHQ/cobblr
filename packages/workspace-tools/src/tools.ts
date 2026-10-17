@@ -16,7 +16,7 @@
 
 import { HUMAN_ONLY_ACTIONS } from "@cobblr/platform-contract/human-only";
 import { z } from "zod";
-import { type WorkspaceApi, type WorkspaceApiResponse, type ToolResult, toolOk, toolFail, apiErrorMessage } from "./api.js";
+import { type WorkspaceApi, type WorkspaceApiResponse, type ToolResult, toolOk, toolFail, apiErrorMessage, honestTransport } from "./api.js";
 import {
   withKindsTitleField,
   fetchKinds,
@@ -64,6 +64,9 @@ interface WorkspaceToolBase {
    *  every-turn budget holds the kernel's tools and each module's own set
    *  grows apart from it (lint:tool-descriptions). Absent: a kernel tool. */
   module?: string;
+  /** The module part this tool belongs to (manifest `parts`): sent only
+   *  where `<module>/<part>` is on, and its route answers 409 where it is off. */
+  part?: string;
   /** Why this result must reach the model whole: a caller that trims tool
    *  results to a budget (the chat loop's clampJson) leaves this one entire.
    *  For a menu the model chooses from, where a trimmed tail is not "less
@@ -496,6 +499,7 @@ interface TemplateRow {
   target_kind: string;
   description?: string | null;
   defaults?: Record<string, unknown>;
+  default_tags?: string[];
 }
 
 interface UnitVocabularyRow {
@@ -816,7 +820,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       tag: "a tag name, to narrow it to records carrying it",
       view: "a shared saved view's id, to narrow it to the records the view shows",
     },
-    why: "setting one up, changing, removing and switching one on or off are actions, each confirmed on a card; the composer is for a person who wants to build one by hand, with its live preview of what it would do",
+    why: "building one by hand",
     covered_by: ["platform:set-wire-enabled", "platform:add-wire", "platform:edit-wire", "platform:remove-wire"],
   },
   {
@@ -883,6 +887,20 @@ export function lookOnlyCanRun(tool: Pick<WorkspaceTool, "name" | "mode">): bool
  *  (#4537): one wording for every tool that takes them. */
 const ROLES_SAID = "By role: acquired-from, seller, acquired-on, acquired-for";
 
+/** list_records' `contains` (#6896): a value led by "-" is does-not-contain,
+ *  the search-box idiom, so one parameter carries both and the every-turn
+ *  schema stays inside its budget. */
+function splitContains(raw: unknown): { contains: Record<string, string>; notContains: Record<string, string> } {
+  const contains: Record<string, string> = {};
+  const notContains: Record<string, string> = {};
+  for (const [field, value] of Object.entries((raw ?? {}) as Record<string, unknown>)) {
+    const v = String(value ?? "").trim();
+    if (v.startsWith("-") && v.length > 1) notContains[field] = v.slice(1).trim();
+    else if (v) contains[field] = v;
+  }
+  return { contains, notContains };
+}
+
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     module: "digifab",
@@ -898,6 +916,22 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const items = Array.isArray(res.body.items) ? res.body.items : [];
       const next = offset + items.length < Number(res.body.total) ? { offset: offset + items.length, machine_id: String(args.machine_id) } : null;
       return toolOk({ ...res.body, ...pageEnd("read_kiln", next) });
+    },
+  },
+  {
+    module: "digifab", part: "arms",
+    name: "read_robot_arm", description: "Robot arm state, programs, compatibility, commands.", mode: "read", paging: { by: "cursor" },
+    params: { machine_id: z.string().uuid(), cursor: CURSOR_PARAM },
+    execute: async (api, args) => {
+      const cursor = decodeCursor<{ offset: number; machine_id: string }>("read_robot_arm", args.cursor);
+      if (!cursor.ok) return toolFail(cursor.error);
+      if (cursor.state && cursor.state.machine_id !== args.machine_id) return toolFail("Use this arm's cursor or omit it to start again.");
+      const offset = cursor.state?.offset ?? 0;
+      const res = await api.request("GET", `/modules/digifab/arms/${encodeURIComponent(String(args.machine_id))}?limit=20&offset=${offset}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "Could not read this arm"));
+      const items = Array.isArray(res.body.items) ? res.body.items : [];
+      const next = offset + items.length < Number(res.body.total) ? { offset: offset + items.length, machine_id: String(args.machine_id) } : null;
+      return toolOk({ ...res.body, ...pageEnd("read_robot_arm", next) });
     },
   },
   {
@@ -983,8 +1017,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     // to choose this tool and to NOT choose it over an action - the longer
     // rationale that used to sit here cost 900 chars on every turn.
     description:
-      "ESCORT to configuration you cannot operate: prefill only, submit nothing. " +
-      "NEVER escort for an action: use list_actions. Destinations: " +
+      "ESCORT to configuration you cannot operate (prefill, never submit). An action: list_actions, never an escort. Destinations: " +
       ESCORT_DESTINATIONS.map(
         (d) =>
           `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} are actions` : ""})`,
@@ -1047,16 +1080,17 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     mode: "read",
     paging: { by: "cursor" },
     params: {
-      kind: z.string().describe("Entity kind id, e.g. inventory:part (see list_record_kinds)"),
+      kind: z.string().describe("Entity kind, e.g. inventory:part (list_record_kinds)"),
       q: z.string().optional().describe(LIST_Q_MEANS),
       presence: z.record(z.enum(["empty", "has_value"])).optional().describe("Secret field keys: empty or has_value. Never values."),
-      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group by one or two fields with full counts, numeric totals by currency and a bounded page per group."),
-      group_offset: z.number().int().min(0).optional().describe("Skip this many groups, default 0."),
-      group_keys: z.array(z.string().nullable()).optional().describe("Read a page of one exact group using the keys returned by grouping."),
-      offset: z.number().int().min(0).optional().describe("With group_keys, skip this many records within that group."),
+      contains: z.record(z.string()).optional().describe("Text field → words it contains; lead with - for does not."),
+      group_by: z.union([z.string(), z.array(z.object({ field: z.string(), bucket: z.enum(["month", "quarter", "year"]).optional() })).max(2)]).optional().describe("Group by one or two fields: full counts, totals by currency, a page per group."),
+      group_offset: z.number().int().min(0).optional().describe("Groups to skip."),
+      group_keys: z.array(z.string().nullable()).optional().describe("One group's keys from grouping: reads its page."),
+      offset: z.number().int().min(0).optional().describe("With group_keys, skip this many in the group."),
       limit: z.number().optional().describe(`Max results (default 20, max ${LIST_LIMIT_MAX})`),
-      include_retired: z.boolean().optional().describe("Include archived/retired records when asked about old things; default off."),
-      lent_out: z.boolean().optional().describe("Only things lent out now, with who has each and when it is due back."),
+      include_retired: z.boolean().optional().describe("Include archived records, for old things."),
+      lent_out: z.boolean().optional().describe("Only things lent out now: who has each, when due back."),
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
@@ -1077,12 +1111,15 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         if (args.group_keys) qs.set("group_keys", JSON.stringify(args.group_keys));
         if (args.include_retired) qs.set("include_retired", "1");
         for (const [field, value] of Object.entries((args.presence ?? {}) as Record<string, string>)) qs.set(`presence[${field}]`, value);
+        const text = splitContains(args.contains);
+        for (const [field, value] of Object.entries(text.contains)) qs.set(`contains[${field}]`, value);
+        for (const [field, value] of Object.entries(text.notContains)) qs.set(`not_contains[${field}]`, value);
         const grouped = await api.request("GET", `/entities/${encodeURIComponent(String(args.kind))}?${qs}`);
         if (grouped.status >= 400) return toolFail(apiErrorMessage(grouped, "Couldn't group this collection."));
         const refusedGroup = listRefusal(grouped.body, String(args.kind));
         return refusedGroup ? toolFail(refusedGroup) : toolOk(grouped.body);
       }
-      const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean; p?: Record<string, "empty" | "has_value"> }>("list_records", args.cursor);
+      const cur = decodeCursor<{ k: string; o: number; q?: string; r?: boolean; s?: boolean; p?: Record<string, "empty" | "has_value">; c?: Record<string, string>; n?: Record<string, string> }>("list_records", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
       const st = cur.state;
       const kind = st?.k ?? String(args.kind ?? "");
@@ -1094,9 +1131,15 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const includeRetired = st ? st.r === true : args.include_retired === true;
       const offset = st?.o ?? 0;
       const presence = st ? st.p ?? {} : (args.presence ?? {}) as Record<string, "empty" | "has_value">;
+      // What a text field contains (#6896), carried in the cursor like presence.
+      const asked = splitContains(args.contains);
+      const contains = st ? st.c ?? {} : asked.contains;
+      const notContains = st ? st.n ?? {} : asked.notContains;
       const presenceQuery = new URLSearchParams();
       for (const [field, value] of Object.entries(presence)) presenceQuery.set(`presence[${field}]`, value);
-      const state = (o: number, s?: boolean) => ({ k: kind, o, ...(Object.keys(presence).length ? { p: presence } : {}), ...(qText ? { q: qText } : {}), ...(includeRetired ? { r: true } : {}), ...(s ? { s: true } : {}) });
+      for (const [field, value] of Object.entries(contains)) presenceQuery.set(`contains[${field}]`, value);
+      for (const [field, value] of Object.entries(notContains)) presenceQuery.set(`not_contains[${field}]`, value);
+      const state = (o: number, s?: boolean) => ({ k: kind, o, ...(Object.keys(presence).length ? { p: presence } : {}), ...(Object.keys(contains).length ? { c: contains } : {}), ...(Object.keys(notContains).length ? { n: notContains } : {}), ...(qText ? { q: qText } : {}), ...(includeRetired ? { r: true } : {}), ...(s ? { s: true } : {}) });
       const kinds = () => fetchKinds(api).catch(() => []);
       if (!st?.s) {
         const q = qText ? `&q=${encodeURIComponent(qText)}` : "";
@@ -1111,9 +1154,13 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           const end = offset + shown;
           const more = typeof page.total === "number" ? end < page.total : shown === limit;
           const shownPage = qText && Array.isArray(page.items) ? { ...page, items: labelMatches(page.items, qText) } : page;
+          // A filter the collection could not run is said, never answered as
+          // if it had run: these records are NOT narrowed by it.
+          const unrun = Array.isArray((res.body as { unapplied?: unknown[] })?.unapplied) ? ((res.body as { unapplied: Array<{ col: string; op: string; value?: unknown }> }).unapplied) : [];
           return toolOk({
             ...(explainRecords(shownPage, await kinds()) as Record<string, unknown>),
             ...(qText && Array.isArray(page.items) ? severalMatch(page.items, qText) : {}),
+            ...(unrun.length ? { not_filtered_by: unrun.map((p) => `${p.col} ${p.op.replace("_", " ")}${p.value === undefined ? "" : ` "${String(p.value)}"`}: this collection cannot filter that way, so these records are not narrowed by it`) } : {}),
             ...pageEnd("list_records", more ? state(end) : null),
           });
         }
@@ -1152,7 +1199,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "count_records",
     description:
-      "Count every record of one kind exactly, optionally group_by a field. Use for totals or existence; units counts represented things, such as printers.",
+      "Count every record of one kind exactly, optionally group_by a field. For totals or existence; units counts the things represented (printers).",
     mode: "read",
     paging: { by: "one-call", why: "counts in code over every record (walks the kind itself); returns numbers, not rows" },
     params: {
@@ -1438,7 +1485,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_actions",
     description:
-      "Discover actions: no filter returns an index mapping action ids to labels. Pass kind for that kind's own actions with their arguments, or action_id for one action in full. Run invoke_action; send_targets lists destinations and recent sends.",
+      "Discover actions: no filter gives an index of action ids and labels. Pass kind for that kind's actions with arguments, or action_id for one in full. Run with invoke_action; send_targets lists destinations and recent sends.",
     mode: "read",
     paging: { by: "one-call", why: "every action the workspace registers; the registry is small and whole" },
     wholeResult: "the index is the menu of every action Cobb can offer; a trimmed index drops actions that exist",
@@ -1647,7 +1694,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_activity",
     description:
-      "History, newest first: who changed what and when. Filter entity_kind and entity_id for one record; history_entry_id selects an edit for platform:restore-record-version.",
+      "History, newest first: who changed what, when. entity_kind and entity_id filter to one record; history_entry_id picks an edit for platform:restore-record-version.",
 
     mode: "read",
     paging: { by: "cursor" },
@@ -1859,7 +1906,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "find_addresses",
     description:
-      "Find addresses this workspace already used (on any record's address field), by a place's name or street: \"mvc\" finds MVC Lodi Agency. Use it before writing an address field, so a place used before is written the same way; with no match, write the address as the person said it.",
+      "Find addresses this workspace already used, by a place's name or street: \"mvc\" finds MVC Lodi Agency. Use before writing an address field so a place is written the same way; no match: write it as the person said it.",
     mode: "read",
     paging: { by: "one-call", why: "the few best matches; ask with more of the name or street to narrow" },
     params: {
@@ -1922,7 +1969,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "list_scan_inbox",
     description:
-      "The ITEMS waiting in the scan inbox (barcodes, photos, notes, receipt lines) not yet filed; list_records cannot reach it. facet: needs_review (low confidence), waiting (over 2 days), unfiled (no destination), ready. One in full: get_scan_item.",
+      "The ITEMS waiting unfiled in the scan inbox (barcodes, photos, notes, receipt lines); list_records cannot reach it. facet: needs_review (low confidence), waiting (over 2 days), unfiled (no destination), ready. One in full: get_scan_item.",
 
     mode: "read",
     paging: { by: "cursor" },
@@ -2037,7 +2084,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
     params: {
       part: z
-        .enum(["all", "instances", "views", "automations", "apps", "templates", "units", "devices", "ai"])
+        .enum(["all", "instances", "views", "automations", "relationships", "apps", "templates", "units", "devices", "ai"])
         .optional()
         .describe("Area; default all"),
       bridge:z.string().max(60).optional().describe("Devices: bridge name; omit for default"),
@@ -2109,6 +2156,12 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           }));
         }
       }
+      // The links a wire can run on (target {rel, dir}), by name, so one that
+      // is drafted names a relationship that exists.
+      if (want("relationships")) {
+        const rows = await grab("/relationship-kinds", (b) => (b.items as Array<{ relationship: string; count: number }> | undefined) ?? []);
+        if (rows) out.relationships = rows.map((r) => ({ relationship: r.relationship, links: r.count }));
+      }
       if (want("apps")) {
         const rows = await grab("/modules/core-apps/apps", (b) => (b.items as AppRow[] | undefined) ?? []);
         if (rows) out.apps = rows.map((a) => ({ name: a.name, slug: a.slug }));
@@ -2123,7 +2176,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
             name: t.name,
             creates: t.target_kind,
             ...(t.description ? { description: t.description } : {}),
-            prefills: Object.keys(t.defaults ?? {}),
+            // The values themselves, so "a new one from the PLA template" is a
+            // create_record with them and a tag_record per tag (#6947).
+            prefills: t.defaults ?? {},
+            ...(t.default_tags?.length ? { tags: t.default_tags } : {}),
           }));
         }
       }
@@ -2173,6 +2229,27 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    name: "preview_wire",
+    description: "Count the existing records a wire would fire on, and what the count means for its trigger. Use before add-wire.",
+    mode: "read",
+    paging: { by: "one-call", why: "a count and a sentence, not rows" },
+    params: {
+      source_kind: z.string(),
+      trigger_type: z.string().optional().describe("As add-wire; default event"),
+      filter: z.record(z.string(), z.unknown()).optional().describe("As add-wire"),
+    },
+    execute: async (api, args) => {
+      const q = new URLSearchParams({
+        source_kind: String(args.source_kind ?? ""),
+        trigger_type: typeof args.trigger_type === "string" && args.trigger_type ? args.trigger_type : "event",
+        ...(args.filter ? { filter: JSON.stringify(args.filter) } : {}),
+      });
+      const res = await api.request("GET", `/bindings/preview?${q}`);
+      if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't count what that wire would fire on"));
+      return toolOk(res.body);
+    },
+  },
+  {
     name: "get_putaway_plan",
     description:
       "The put-away situation: how many scanned items have no home, and the CURRENT organize plan (groups, destinations, evidence, unresolved). Use it when the user talks about putting things away, bins, or 'the plan'; places they describe become core-locations:location records (confirmed), which the plan routes to.",
@@ -2218,7 +2295,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "replan_putaway",
     description:
-      "Recompute the user's put-away plan against the CURRENT workspace. It only refreshes the proposal; nothing is filed. Call this ONCE after you finish creating or renaming locations for them, the open plan updates automatically. Optionally pass a hint of what you learned (e.g. 'camping gear; the hallway closet holds electronics').",
+      "Recompute the put-away plan against the CURRENT workspace; nothing is filed. Call ONCE after creating or renaming locations. Optional hint of what you learned (e.g. 'camping gear; the hallway closet holds electronics').",
     mode: "read",
     paging: { by: "one-call", why: "recomputes the plan; returns a status, not rows" },
     params: {
@@ -2257,7 +2334,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "add_thing",
     description:
-      "The way to add a THING the person has. Runs the scan inbox's intake: duplicate check, table, fields, picture, place. Returns what it found, fields_refused (tell your person) and hints (empty fields: ask). Lands in the inbox; file: true files it. Several things in ONE photo: invoke_action core-scan:add-things-from-photo with the photo and a list, and Cobblr crops each.",
+      "The way to add a THING the person has. Runs the scan intake: duplicate check, table, fields, picture, place. Returns what it found, fields_refused (tell your person) and hints (empty fields: ask). Lands in the inbox; file: true files it. Several things in ONE photo: invoke_action core-scan:add-things-from-photo with the photo and a list, and Cobblr crops each.",
     mode: "write",
     params: {
       name: z.string(),
@@ -2343,7 +2420,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "create_record",
     description:
-      "Create ONE new record. A physical thing the person owns: use add_thing instead. Use the kind's EXACT field names from list_record_kinds (e.g. knowledge entries want \"title\", parts want \"name\"). Only kinds with can_create are accepted.",
+      "Create ONE record. A physical thing the person owns: use add_thing. Use the kind's EXACT field names from list_record_kinds (knowledge entries want \"title\", parts \"name\"). Only kinds with can_create.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_create true"),
@@ -2390,6 +2467,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         if (res.status >= 400) failed.push({ index: i, error: apiErrorMessage(res, "create failed") });
         else created.push(res.body);
       }
+      // None made is a failure, not an empty success: a lost connection or a
+      // server error on every row was told as "created: 0, ok" (#6968).
+      if (created.length === 0) return toolFail(failed[0]?.error ?? "no record was created");
       // Partial success is the NORMAL outcome here ("each rack should have
       // Shelf 1-5" against a rack that already has two of them), so it is
       // reported rather than thrown: the model needs to tell the person what
@@ -2400,7 +2480,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "update_record",
     description:
-      "Update fields on ONE existing record (partial update, only the fields you pass change). Only kinds with can_update are accepted.",
+      "Update fields on ONE existing record; only the fields you pass change. Only kinds with can_update.",
     mode: "write",
     params: {
       kind: z.string().describe("Entity kind id with can_update true"),
@@ -2657,6 +2737,14 @@ export function noneFound(body: Record<string, unknown>, q: string): { none_foun
   if (asked.length === 0 && failed.length === 0) return { none_found: "this workspace has nothing a search can look through yet: no list is turned on" };
   const gap = failed.length ? `; ${failed.length} could not be searched, so this is not the whole workspace` : "";
   return { none_found: `nothing in the ${asked.length} kind${asked.length === 1 ? "" : "s"} of record searched mentions "${q}"${gap}` };
+}
+
+// Every tool runs over the honest transport, whoever calls it (the chat, the
+// stdio MCP server, the hosted MCP endpoint): a request with no HTTP answer is
+// a failure in every tool's own status check, never a success (#6968).
+for (const t of WORKSPACE_TOOLS) {
+  const run = t.execute;
+  t.execute = (api, args) => run(honestTransport(api), args);
 }
 
 export function offerableToAssistant(a: { id?: string; wire_only?: boolean; internal?: boolean }): boolean {

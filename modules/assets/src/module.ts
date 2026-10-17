@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.6.4",
+  version: "0.6.7",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",
@@ -100,11 +100,18 @@ export default defineModule({
           // "what did the van cost", gated below like a part's cost.
           "purchase_price_cents",
           "vendor",
+          // The serial number: shown and searched only for a viewer holding
+          // assets:view-serials (an owner or admin always does), below.
+          "serial_number",
         ],
         // Only viewers granted `assets:view-costs` see the price (admins and
         // owners see everything), the same tier a part's cost sits behind.
         fieldReadScopes: {
           purchase_price_cents: "assets:view-costs",
+          // Anti-theft: a serial number is what proves a stolen thing is yours,
+          // and what lets someone claim it is theirs. Without this capability
+          // no read, search, export, share or public page shows or matches it.
+          serial_number: "assets:view-serials",
         },
         detailRoute: "/assets/{id}",
       },

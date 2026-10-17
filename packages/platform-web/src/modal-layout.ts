@@ -22,9 +22,11 @@
 export function modalPanelLayout(overLive: boolean, fillHeight: boolean, stickyFooter = false): string {
   if (overLive) {
     // A centred card at EVERY width, so the live surface stays visible around it.
+    // Its top clears the status bar on a notched phone (--live-card-top,
+    // floating-chrome.css), and its height gives that room back (#6881).
     return (
-      "my-8 rounded-xl max-h-[calc(var(--overlay-height,100dvh)-4rem)] " +
-      (fillHeight ? "min-h-[calc(var(--overlay-height,100dvh)-4rem)] " : "")
+      "mt-[var(--live-card-top)] mb-8 rounded-xl max-h-[calc(var(--overlay-height,100dvh)-2rem-var(--live-card-top))] " +
+      (fillHeight ? "min-h-[calc(var(--overlay-height,100dvh)-2rem-var(--live-card-top))] " : "")
     );
   }
   return (

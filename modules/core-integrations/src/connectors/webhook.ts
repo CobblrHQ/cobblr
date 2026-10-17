@@ -6,7 +6,8 @@
 // service can be wired up via this until a dedicated connector exists.
 
 import { registerOutboundConnector } from "../services.js";
-import { sendFetch } from "../outbound-send.js";
+import { sendFetch, idempotencyHeaderOf } from "../outbound-send.js";
+import { safeFetch } from "./safe-fetch.js";
 import { assertSafeOutboundUrl } from "./ssrf.js";
 
 export function register(): void {
@@ -18,6 +19,7 @@ export function register(): void {
       bearer_token: { label: "Bearer token (optional)", secret: true },
       hmac_secret: { label: "HMAC signing secret (optional)", secret: true },
       max_per_second: { label: "Most sends per second (optional)", secret: false },
+      idempotency_header: { label: "Idempotency key header (default Idempotency-Key, \"none\" for no key)", secret: false },
     }),
     actions: [
       {
@@ -51,7 +53,9 @@ export function register(): void {
         headers["x-cobblr-signature"] = `sha256=${sig}`;
       }
       await assertSafeOutboundUrl(url);
-      const res = await sendFetch("webhook", url, { method: "POST", headers, body });
+      const keyHeader = idempotencyHeaderOf(ctx.credentials);
+      if (keyHeader && ctx.idempotencyKey) headers[keyHeader] = ctx.idempotencyKey;
+      const res = await sendFetch("webhook", url, { method: "POST", headers, body }, keyHeader);
       return { status: res.status };
     },
     testConnection: async (credentials) => {
@@ -60,9 +64,7 @@ export function register(): void {
       try {
         await assertSafeOutboundUrl(url);
         // HEAD first, fall back to GET. Some webhook targets reject HEAD.
-        const res = await fetch(url, { method: "HEAD", signal: AbortSignal.timeout(8_000) }).catch(() =>
-          fetch(url, { method: "GET", signal: AbortSignal.timeout(8_000) }),
-        );
+        const res = await safeFetch(url, { method: "HEAD" }, 8_000).catch(() => safeFetch(url, { method: "GET" }, 8_000));
         return { ok: res.ok || res.status < 500 };
       } catch (err) {
         return { ok: false, error: (err as Error).message };

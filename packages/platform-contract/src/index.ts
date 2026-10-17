@@ -1246,7 +1246,12 @@ export const NotificationKind = z.object({
 });
 export type NotificationKind = z.infer<typeof NotificationKind>;
 
+export const MODULE_PART_ID = /^[a-z][a-z0-9-]*$/;
+
 const EntityAction = z.object({
+  /** The module part this action belongs to (manifest `parts`). Off in a
+   *  workspace, the action is hidden and refused there like a module's. */
+  part: z.string().regex(MODULE_PART_ID).optional(),
   group: ActionGroupReference.optional(),
   primary: z.boolean().default(false),
   id: z
@@ -1409,7 +1414,7 @@ const EntityAction = z.object({
         // depend on the record's kind (its counters), resolved by the server
         // when it lists the kind's actions.
         choices: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) })).optional(),
-        choicesFrom: z.enum(["counters", "people"]).optional(),
+        choicesFrom: z.enum(["counters", "people", "recipients"]).optional(),
         // Offered on the button's sheet though the action runs without it.
         ask: z.boolean().optional(),
         // Asked and required together with that argument (every_n with
@@ -1645,6 +1650,30 @@ const ModuleManifest = z.object({
   // docs/design-decisions/what-to-do-funnel.md.
   operatesOn: z.array(z.string()).default([]),
 
+  // Parts: the pieces of one module a workspace can have on or off on their
+  // own (digifab's robot arms beside its printers and lasers). A part owns
+  // the actions, panels, workspace tools and route prefixes that name it; off,
+  // the kernel hides them at every door and keeps their data. "with-collection"
+  // is on exactly where the workspace has one of the part's collections, so a
+  // part added to a module changes nothing for a workspace that never chose
+  // it. A bundle family's parts (#5026) are collections; these are code. See
+  // docs/architecture/module-parts.md.
+  parts: z
+    .array(
+      z.object({
+        id: z.string().regex(MODULE_PART_ID, "part id must be kebab-case"),
+        label: z.string().min(1),
+        description: z.string().min(1),
+        default: z.enum(["on", "off", "with-collection"]),
+        /** The collections (instance names, any module) that turn a
+         *  "with-collection" part on. */
+        collections: z.array(z.string().regex(/^[a-z0-9][a-z0-9-]*$/)).default([]),
+        /** Route prefixes under the module's API this part owns ("/arms"). */
+        routes: z.array(z.string().regex(/^\/[a-z0-9][a-z0-9/-]*$/)).default([]),
+      }),
+    )
+    .default([]),
+
   // Which side of a grown sidebar this module's row sits on: a COLLECTION is
   // a place a person keeps things (Inventory, Purchases, the pantry); a TOOL
   // is a place they go to do something (Labels, Lists, Digital Fabrication).
@@ -1825,6 +1854,8 @@ const ModuleManifest = z.object({
              *  platform().panels.registerPresence. With neither this nor
              *  `collections`, `target` and `appliesTo` alone decide. */
             presence: z.boolean().optional(),
+            /** The module part this panel belongs to; off, the panel is not sent. */
+            part: z.string().regex(MODULE_PART_ID).optional(),
             /** The face this panel belongs to, for disclosure (see the same
              *  field on an action). */
             face: FaceSchema.optional(),
@@ -1842,6 +1873,12 @@ const ModuleManifest = z.object({
               .default("user-invoked"),
             trigger_event: z.string().optional(),
             template: z.string().optional(),
+            // The action's own arguments, as a bundle's wire carries them
+            // (strings may use {{event.…}} and the record's fields). A default
+            // wire that says what to do (who to tell, in which words) needs
+            // them; one wire per (kind, action, event) is the dedupe key, so
+            // two defaults for one action listen to different events.
+            args: z.record(z.unknown()).optional(),
             // Q1 wire target. Omit (or "self") → action runs on the
             // source entity (default). Object form opts into cross-
             // module pairing traversal: action runs on each entity
@@ -1883,6 +1920,11 @@ const ModuleManifest = z.object({
     })
     .optional(),
 }).superRefine((m, ctx) => {
+  const partIds = new Set(m.parts.map((p) => p.id));
+  if (partIds.size !== m.parts.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["parts"], message: `module "${m.name}" declares a part twice` });
+  for (const p of m.parts) if (p.default === "with-collection" && p.collections.length === 0) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["parts"], message: `part "${p.id}" is on with its collection but names none` });
+  for (const a of m.exposes?.actions ?? []) if (a.part && !partIds.has(a.part)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exposes", "actions"], message: `action "${a.id}" names part "${a.part}", which "${m.name}" does not declare` });
+  for (const p of m.contributes?.panels ?? []) if (p.part && !partIds.has(p.part)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["contributes", "panels"], message: `panel "${p.id}" names part "${p.part}", which "${m.name}" does not declare` });
   // A declared capability is this module's own: its id carries the module's
   // name, and it is not one of the module's actions under a second label
   // (grantableActions lists the action first and would drop this one's words
@@ -1958,6 +2000,13 @@ const ModuleManifest = z.object({
 });
 
 export type ModuleManifest = z.infer<typeof ModuleManifest>;
+export type ModulePart = ModuleManifest["parts"][number];
+/** What a manifest is written as (defaults optional), and its pieces, for a
+ *  module that assembles its manifest from parts (digifab's families). */
+export type ModuleManifestInput = z.input<typeof ModuleManifest>;
+export type ModuleActionInput = NonNullable<NonNullable<ModuleManifestInput["exposes"]>["actions"]>[number];
+export type ModulePanelInput = NonNullable<NonNullable<ModuleManifestInput["contributes"]>["panels"]>[number];
+export type ModulePartInput = NonNullable<ModuleManifestInput["parts"]>[number];
 export type ModuleIntent = z.infer<typeof Intent>;
 export type EntityKindDecl = z.infer<typeof EntityKind>;
 export type EntityFieldDecl = z.infer<typeof EntityField>;
@@ -2507,12 +2556,15 @@ export type EntityResolver = (
  *    { col: 'due_date', op: '<=', value: 'now' }    // overdue tasks
  *    { col: 'created_at', op: '>=', value: '2026-01-01' }
  *
- *  Resolvers ignore predicates they don't understand (unknown col,
- *  unsupported op for that column's type) so a config that's too
- *  aggressive degrades to "no extra filter" rather than 500ing. */
+ *  A predicate a resolver cannot run is reported back in
+ *  `EntityListResult.unapplied`, never dropped in silence. `contains` and
+ *  `not_contains` (#6896) are case-insensitive text matches, run only by a
+ *  resolver registered with `{ textOps: true }`; the platform reports them
+ *  unapplied for any other. A resolver builds the pattern with
+ *  `containsPattern`, so a `%` or `_` the person typed matches literally. */
 export interface FilterPredicate {
   col: string;
-  op: "<" | "<=" | ">" | ">=" | "=" | "!=" | "empty" | "not_empty";
+  op: "<" | "<=" | ">" | ">=" | "=" | "!=" | "empty" | "not_empty" | "contains" | "not_contains";
   /** Literal value. Use the string `'now'` for current timestamp on
    *  date/timestamptz columns, and `'today'` for the READER's calendar day
    *  against a date field (`EntityListQuery.today`): "ready to drink" is
@@ -2523,6 +2575,30 @@ export interface FilterPredicate {
   /** Compare against another column on the same row (low-stock-style
    *  qty < min_qty). Mutually exclusive with `value`. */
   ref_col?: string;
+}
+
+/** The text where-ops (#6896): a case-insensitive "contains" and its
+ *  negation. Only a resolver registered with `{ textOps: true }` runs them. */
+export const TEXT_WHERE_OPS = ["contains", "not_contains"] as const;
+export type TextWhereOp = (typeof TEXT_WHERE_OPS)[number];
+export const isTextWhereOp = (op: string): op is TextWhereOp => (TEXT_WHERE_OPS as readonly string[]).includes(op);
+
+/** The ILIKE pattern for "contains <text>" (run it with ESCAPE '\'), escaped
+ *  by likeEscape so what a person types is matched literally, never read as a
+ *  wildcard. Null for nothing to look for. */
+export function containsPattern(text: unknown): string | null {
+  if (text === null || text === undefined) return null;
+  const s = String(text);
+  if (!s.trim()) return null;
+  return `%${likeEscape(s)}%`;
+}
+
+/** How a list resolver says what it can run. */
+export interface ListResolverOptions {
+  /** It runs `contains` / `not_contains` (TEXT_WHERE_OPS) itself. Without
+   *  this the platform reports those predicates unapplied rather than let the
+   *  resolver skip them and answer with everything. */
+  textOps?: boolean;
 }
 
 /** Query passed to a list resolver — generic primitives so the
@@ -3080,7 +3156,7 @@ export interface PlatformEntities {
   /** Register a list-resolver for a kind. Optional — without one,
    *  list() returns an empty result. Modules opt in when they want
    *  their kind to appear in core-views, search results, etc. */
-  registerListResolver(kind: string, resolver: EntityListResolver): void;
+  registerListResolver(kind: string, resolver: EntityListResolver, options?: ListResolverOptions): void;
   /** Register a list-resolver for the items of any instance of a multi-instance
    *  module (keyed by module name). The platform invokes it for
    *  `<instance_name>:item` kinds. Lets instance entities appear in
@@ -3088,6 +3164,7 @@ export interface PlatformEntities {
   registerInstanceListResolver(
     moduleName: string,
     resolver: EntityInstanceListResolver,
+    options?: ListResolverOptions,
   ): void;
   /** Register a single-entity resolver for the items of any instance of a
    *  multi-instance module (keyed by module name). The platform invokes it for a
@@ -3766,7 +3843,7 @@ export interface EntityActionRecord {
   position: number;
   /** Machine-readable arg shape for the wire composer / invoke forms; null if
    *  the action declared none. */
-  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" | "date"; required?: boolean; oneOf?: string; choices?: { value: string; label: string }[]; choicesFrom?: "counters" | "people"; ask?: boolean; with?: string }> | null;
+  args_schema: Record<string, { label: string; type: "text" | "number" | "boolean" | "list" | "json" | "date"; required?: boolean; oneOf?: string; choices?: { value: string; label: string }[]; choicesFrom?: "counters" | "people" | "recipients"; ask?: boolean; with?: string }> | null;
   version: string;
 }
 
@@ -3961,6 +4038,9 @@ export interface DateFieldCalendarSpec {
   entityModule: string;
   /** Entity type for the event payload, e.g. "part". */
   entityType: string;
+  /** The table's column that says which collection (instance) a row is in.
+   *  Default "instance", which every dated table has. */
+  instanceColumn?: string;
   /** The columns that say how much of a record is on hand and which
    *  collection it is in. A record of a collection with the STOCK face and
    *  nothing on hand has nothing left to date: the kernel leaves its date
@@ -3981,8 +4061,19 @@ export interface DateFieldCalendarSpec {
 
 }
 
+/** Who a calendar source answers to: the module that registers it, and its
+ *  part where it belongs to one. A workspace that has turned that module (or
+ *  part) off gets nothing from the source, and the source is not even called:
+ *  the module's records stay, its dates leave the calendar and the feed
+ *  (#7160). Required, so a source cannot be added that nobody can switch off. */
+export interface CalendarSourceOwner {
+  /** The owning module's name ("projects"), or "platform" for the kernel's own. */
+  module: string;
+  part?: string;
+}
+
 export interface PlatformCalendar {
-  registerSource(id: string, source: CalendarSource): void;
+  registerSource(id: string, source: CalendarSource, owner: CalendarSourceOwner): void;
   /** Register the generic date-custom-field calendar source for an entity kind.
    *  Called by the OWNING module at boot (e.g. inventory for inventory:part),
    *  so the kernel never hardcodes which modules/tables have date fields. */
@@ -4008,6 +4099,34 @@ export interface PlatformCalendar {
    *  a reader that found nothing due asks here so it can SAY which record
    *  needs a person, rather than go quiet (#3279). */
   unreadableDateField(orgId: string, kind: string, field: string): Promise<Array<{ id: string; name: string; value: string }>>;
+  /** A module that keeps a deadline of its own (a task's due date is a column,
+   *  not a field) says how to read what has come due, so the overdue sweep sees
+   *  it without naming the module. Rows left out: anything done or retired. */
+  registerOverdueSource(source: OverdueSource): void;
+  /** Every record whose deadline is `today` (a YYYY-MM-DD day) or earlier, from
+   *  the registered sources and from any date field declared with the `due`
+   *  role, not yet done. A source that cannot be read throws: "could not ask"
+   *  is not "nothing is late". */
+  overdue(orgId: string, today: string): Promise<OverdueRow[]>;
+}
+
+/** One record at or past its deadline. */
+export interface OverdueRow {
+  kind: string;
+  id: string;
+  name: string;
+  /** The day it was due, YYYY-MM-DD. */
+  dueOn: string;
+  /** Whose it is, as a person on the workspace's People list; null when
+   *  nobody has it. */
+  assigneePersonId: string | null;
+}
+
+export interface OverdueSource {
+  /** The kind the rows are of (a task's `projects:task`). */
+  kind: string;
+  /** Rows due on `today` or before, not done. */
+  read(orgId: string, today: string): Promise<OverdueRow[]>;
 }
 
 /** One address a module keeps outside record fields (a service visit's), as
@@ -4235,11 +4354,29 @@ export interface SyncRecord {
   /** Tag names to attach to the mirrored entity (by name; created if missing).
    *  Additive: a tag absent here is never detached. */
   tags?: string[];
+  /** The record is ONE card kept in several places: the source's own rows of
+   *  stock (Part-DB's lots), already grouped by place. The record's fields and
+   *  location are the card's own row; each of these is another place, written
+   *  as a record of the same kind paired `holding-of` to the card. Present
+   *  (even empty) means the source speaks for the card's places: a place no
+   *  longer listed is retired. Absent means the source says nothing about them. */
+  holdings?: SyncHolding[];
   /** Per-record target instance (multi-instance modules) — the section's
    *  `instanceBy` routes each row to an instance by a field value, so ONE section
    *  fans a single endpoint out to several instances. Overrides the section's
    *  static `targetInstance` when set. */
   instance?: string | null;
+}
+
+/** One more place a card is kept. */
+export interface SyncHolding {
+  /** Stable across syncs: the source's id of the first stock row in this place. */
+  externalId: string;
+  qty: number;
+  /** Where it is kept, a reference into another section like `references`. */
+  location?: { section: string; externalId: string } | null;
+  /** The source's own stock rows that make up this place, for the record's history. */
+  rows: string[];
 }
 
 export interface SyncEntityType {
@@ -4310,6 +4447,8 @@ export interface ImportPlanItem {
   changes?: Array<{ field: string; ours: unknown; theirs: unknown; decision: "write" | "keep" | "ask" }>;
   /** For ask: the existing records it might be. */
   candidates?: Array<{ id: string; name: string }>;
+  /** How many more places this record will be kept in, beside its own row. */
+  holdings?: number;
 }
 
 export interface ImportPlan {
@@ -4352,6 +4491,9 @@ export interface PlatformIntegrations {
         args: Record<string, unknown>;
         rendered?: string;
         event?: { name: string | null; payload: Record<string, unknown> };
+        /** Stable across every try of one send: a connector whose remote dedupes
+         *  by a key sends it, so a retry cannot deliver twice. */
+        idempotencyKey?: string;
       },
       actionId: string,
     ) => Promise<unknown>;
@@ -4441,6 +4583,7 @@ export interface PlatformIntegrations {
       args?: Record<string, unknown>;
       rendered?: string;
       event?: { name: string | null; payload: Record<string, unknown> };
+      idempotencyKey?: string;
     },
     actionId: string,
   ): Promise<unknown>;
@@ -6528,6 +6671,7 @@ export interface FileIntakeDecl {
 export type ExclusiveRun = { ran: true } | { ran: false; heldElsewhere: true };
 
 export interface PlatformExclusive {
+  serial<T>(name: string, work: () => Promise<T>): Promise<T>;
   run(name: string, work: () => Promise<void>): Promise<ExclusiveRun>;
 }
 
@@ -7311,6 +7455,14 @@ export interface PlatformPanels {
   registerPresence(panelId: string, check: (ctx: { orgId: string; kind: string; id: string; collection: string | null }) => Promise<boolean>): void;
 }
 
+/** Module parts (manifest `parts`): whether one is on in a workspace. The
+ *  kernel already hides an off part's actions, panels, tools and routes; a
+ *  module asks this for its own doors the kernel cannot see (a station for a
+ *  part's kind of machine, a sweep over a part's records). */
+export interface PlatformParts {
+  isOn(orgId: string, module: string, part: string): Promise<boolean>;
+}
+
 export interface Platform {
   vault: PlatformVault;
   deletedRecords: PlatformDeletedRecords;
@@ -7333,6 +7485,7 @@ export interface Platform {
   entities: PlatformEntities;
   actions: PlatformActions;
   panels: PlatformPanels;
+  parts: PlatformParts;
   live: PlatformLive;
   templates: PlatformTemplates;
   wires: PlatformWires;

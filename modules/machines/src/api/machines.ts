@@ -126,6 +126,7 @@ machinesRouter.get(
   }),
 );
 
+// AI-REACH: crud
 machinesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -175,6 +176,7 @@ machinesRouter.post(
   }),
 );
 
+// AI-REACH: crud
 machinesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -250,6 +252,7 @@ machinesRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 machinesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -43,6 +43,7 @@ export async function submitReviewedJob(driver: MachineDriver, bytes: Uint8Array
   if (posted && await driver.jobReviewKind?.() !== "cnc") throw new ReviewRequired("Choose a CNC station connection for this posted program. It cannot start through an unreviewed connector.");
   if (await driver.jobReviewRequired?.()) {
     if (!args.approval || !driver.getJobReview) throw new ReviewRequired("Review this job's project settings and approve Start first.");
+    if (!args.checkStartAllowed) throw new ReviewRequired("Approve at the machine's station.");
     if (!(await driver.jobReviewKind?.() === "cutter" ? hasCutterPermit(stationPermit, args.approval) : hasStationPermit(stationPermit, args.approval))) throw new ReviewRequired("Approve at the machine's station.");
     const review = await driver.getJobReview(args.approval.fileId);
     const contentHash = createHash("sha256").update(bytes).digest("hex");

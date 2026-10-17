@@ -552,6 +552,29 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/modules
+    group: "more",
+    id: "platform:set-module-part",
+    min_role: "grantable",
+    label: "Turn part of a feature on or off",
+    description:
+      `Turn one part of a feature on or off for this workspace (Robot arms in Digital Fabrication, …), so its screens, actions and tools appear or disappear. Off hides it and keeps everything it recorded; on again shows all of it. Name the feature and the part the way the app writes them; on is true or false, or omit it to follow the part's default again. Runs on the workspace, not a record. Use get_workspace_setup to see each feature's parts.`,
+    icon: "toggle-right",
+    scope: "workspace",
+    invoke_handler: "platform.set-module-part",
+    user_invokable: true,
+    // Its undo puts the part's previous choice back, or forgets the choice
+    // when there was none; nothing a part recorded is ever touched.
+    undoable: true,
+    examples: ["turn on robot arms", "hide the robot arm screens, we don't have arms", "follow the default for robot arms again"],
+    args_schema: {
+      module: { label: "The feature, by its name in the app (e.g. Digital Fabrication)", type: "text", required: true },
+      part: { label: "The part, by its name in the app (e.g. Robot arms)", type: "text", required: true },
+      on: { label: "On (true) or off (false); omit to follow the default", type: "boolean" },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /settings/connections (Who answers for you)
     group: "more",
     id: "platform:set-my-default-ai", run_by: "member",

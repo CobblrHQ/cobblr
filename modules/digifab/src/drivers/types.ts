@@ -6,7 +6,8 @@ import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/lase
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
 export interface RemoteDevice {
-  station_kind?: "laser" | "print" | "cnc" | "cutter" | "production-test";
+  /** A core kind, or one a family declares (core/families.ts). */
+  station_kind?: "laser" | "print" | "cnc" | "cutter" | "production-test" | (string & {});
   camera_available?: boolean;
   /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;

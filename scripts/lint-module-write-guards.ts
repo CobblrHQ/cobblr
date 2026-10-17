@@ -13,6 +13,7 @@
 
 import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { apiDirs } from "./lib/manifest-sources.ts";
 
 const MODULES_DIR = "modules";
 
@@ -46,9 +47,9 @@ function tsFiles(dir: string): string[] {
 
 const offenders: string[] = [];
 for (const m of readdirSync(MODULES_DIR)) {
-  const apiDir = join(MODULES_DIR, m, "src", "api");
-  if (!existsSync(apiDir)) continue;
-  const files = tsFiles(apiDir).map((f) => ({ f, src: readFileSync(f, "utf8") }));
+  const dirs = apiDirs(join(MODULES_DIR, m));
+  if (dirs.length === 0) continue;
+  const files = dirs.flatMap((d) => tsFiles(d)).map((f) => ({ f, src: readFileSync(f, "utf8") }));
   const hasWrite = files.some(({ src }) => WRITE_VERB.test(src));
   const hasGuard = files.some(({ src }) => GUARD.test(src));
   if (hasWrite && !hasGuard && !ALLOW.has(m)) {

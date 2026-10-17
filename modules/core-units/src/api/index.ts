@@ -6,6 +6,9 @@ import { Router } from "express";
 import { unitsRouter } from "./units.js";
 import { registerUnitsService } from "./platform-service.js";
 import { registerUnitsHandlers } from "./handlers.js";
+import { registerSetDisplayModeAction } from "./set-display-mode-action.js";
+
+registerSetDisplayModeAction();
 
 // The vocabulary owner registers the platform().units service at load —
 // server-side resolve/convert for every consumer, through the contract only.

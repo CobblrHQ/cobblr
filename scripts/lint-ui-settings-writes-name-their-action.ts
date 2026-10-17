@@ -30,6 +30,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -60,7 +61,7 @@ function* walk(dir: string): Generator<string> {
 /** Every action id declared anywhere: the kernel's list and each module's manifest. */
 function declaredActions(): Set<string> {
   const files = ["api/src/platform/platform-actions.ts"];
-  for (const m of readdirSync("modules")) files.push(join("modules", m, "src", "module.ts"));
+  for (const m of readdirSync("modules")) files.push(...manifestSources(join("modules", m)));
   const ids = new Set<string>();
   for (const f of files) {
     let src: string;

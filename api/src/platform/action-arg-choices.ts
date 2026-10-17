@@ -6,6 +6,7 @@
 // offers the same names a record page does (#4640).
 import { platform } from "@cobblr/platform-contract";
 import { listPeople } from "./people.js";
+import { RECIPIENT_ROLES } from "@cobblr/platform-contract/recipients";
 
 /** The kind's own choices put into its actions' argument schemas: an
  *  argument whose choices depend on the kind (`choicesFrom: "counters"`)
@@ -24,10 +25,14 @@ export async function argChoicesFor(orgId: string, kind: string, schemas: readon
   // The workspace's People (members and anyone listed by name): what a
   // "who" argument picks from, so "lend it to" is a list of names, never an id.
   let people: { value: string; label: string }[] = [];
-  if (wants("people")) {
+  const wantsRecipients = wants("recipients");
+  if (wants("people") || wantsRecipients) {
     people = (await listPeople(orgId).catch(() => [])).map((p) => ({ value: p.id, label: p.name }));
   }
-  const choicesOf = (from: unknown) => (from === "counters" ? counters : from === "people" ? people : null);
+  // "recipients": the same People, led by the two roles an automation can
+  // address without naming anyone (whoever has the record, or everybody).
+  const recipients = [...RECIPIENT_ROLES.map((r) => ({ value: r.value, label: r.label })), ...people];
+  const choicesOf = (from: unknown) => (from === "counters" ? counters : from === "people" ? people : from === "recipients" ? recipients : null);
   return (schema) => {
     const entries = specsOf(schema);
     if (!entries.some(([, spec]) => spec?.choicesFrom)) return schema;

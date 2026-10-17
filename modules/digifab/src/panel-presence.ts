@@ -11,7 +11,7 @@ import type { DigifabDB } from "./db.js";
 const MACHINE = "machines:machine";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-async function onMachine(ctx: { orgId: string; kind: string; id: string }, has: (db: Kysely<DigifabDB>, machineId: string) => Promise<boolean>): Promise<boolean> {
+export async function onMachine(ctx: { orgId: string; kind: string; id: string }, has: (db: Kysely<DigifabDB>, machineId: string) => Promise<boolean>): Promise<boolean> {
   if (!UUID.test(ctx.id)) return false;
   const { base } = await platform().entities.resolveKind(ctx.orgId, ctx.kind);
   if (base !== MACHINE) return false;
@@ -19,7 +19,7 @@ async function onMachine(ctx: { orgId: string; kind: string; id: string }, has: 
   return has(db, ctx.id);
 }
 
-const exists = async (q: { executeTakeFirst(): Promise<unknown> }) => (await q.executeTakeFirst()) !== undefined;
+export const exists = async (q: { executeTakeFirst(): Promise<unknown> }) => (await q.executeTakeFirst()) !== undefined;
 
 /** Called once when the module's api loads. */
 export function registerPanelPresence(): void {

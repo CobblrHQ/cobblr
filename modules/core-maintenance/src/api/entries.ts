@@ -225,7 +225,9 @@ entriesRouter.post(
   }),
 );
 
-// AI-REACH: editing a past service entry rewrites history; log and complete have actions, edits stay a person's
+// AI-REACH: exempt — rewrites a past service entry, which is the record a
+// warranty claim or an inspection relies on; logging and completing have
+// actions, and changing what was recorded stays a person's
 entriesRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -256,17 +258,34 @@ entriesRouter.patch(
     }
     if (parsed.data.address !== undefined) patch.address = parsed.data.address;
 
-    const row = await db
-      .updateTable("core_maintenance_entries")
-      .set(patch as never)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    // Saying an entry was done is ONE transition, from not done to done: it
+    // advances the schedule once. Saving the same entry again (a retried
+    // request, an edit of its notes that carries the date along) corrects
+    // what was recorded and moves nothing; and when the entry is the service
+    // the schedule last counted, the schedule's last-done date follows the
+    // correction. The schedule is locked, so two saves at once queue (#7128).
+    const row = await db.transaction().execute(async (tx) => {
+      const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirst();
+      if (!before) return null;
+      if (before.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
+      const updated = await tx.updateTable("core_maintenance_entries").set(patch as never).where("id", "=", id).returningAll().executeTakeFirst();
+      if (!updated || !parsed.data.performed_at) return updated;
+      if (!before.performed_at) {
+        await rollForward(tx, ctx.org.id, updated);
+      } else if (before.schedule_id && updated.performed_at && updated.performed_at.getTime() !== before.performed_at.getTime()) {
+        await tx
+          .updateTable("core_maintenance_schedules")
+          .set({ last_done_at: updated.performed_at, updated_at: new Date() })
+          .where("id", "=", before.schedule_id)
+          .where("last_done_at", "=", before.performed_at)
+          .execute();
+      }
+      return updated;
+    });
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
-    if (parsed.data.performed_at) await rollForward(db, ctx.org.id, row);
     void platform().events.emit("core-maintenance.entry.updated", {
       orgId: ctx.org.id,
       entryId: row.id,
@@ -275,7 +294,9 @@ entriesRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — erases a past service entry, the evidence a warranty or
+// inspection relies on (see PATCH above); the assistant's own just-logged
+// entry is undone through its card
 entriesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

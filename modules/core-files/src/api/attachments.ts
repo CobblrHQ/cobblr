@@ -11,6 +11,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 
 export const attachmentsRouter = Router({ mergeParams: true });
 
@@ -23,12 +24,12 @@ const AttachmentCreate = z.object({
   sort_order: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
-// AI-REACH: attaches an uploaded file; the assistant cannot carry a file
+// AI-ACTION: core-files:attach-file
 attachmentsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     const started = performance.now();
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-files:attach-file"))) return;
     const parsed = AttachmentCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -165,11 +166,11 @@ attachmentsRouter.get(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: core-files:detach-file
 attachmentsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-files:detach-file"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

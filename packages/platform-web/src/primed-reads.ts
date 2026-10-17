@@ -88,7 +88,8 @@ export async function primedRead(method: string, input: string): Promise<Snapsho
   return lookup(path, Date.now());
 }
 
-/** For a test: the state between tests. */
+/** Nothing primed and nothing held: between tests, and when the page starts
+ *  answering for another account (#6970). */
 export function resetPrimedReads(): void {
   clearPrimedReads();
   held = null;

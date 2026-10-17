@@ -38,6 +38,8 @@ function bridgeOf(req: Request): string | null {
 export const edgeRelayRouter = Router({ mergeParams: true });
 
 // POST /register — the bridge announces itself (Bearer = a workspace API token).
+// AI-REACH: exempt — the bridge announcing itself with its own token: the
+// device wire, never something a person or the assistant starts
 edgeRelayRouter.post("/register", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   // Same report as the kernel's /register, so a bridge on this older path is
@@ -65,6 +67,8 @@ edgeRelayRouter.get("/poll", asyncHandler(async (req, res) => {
 }));
 
 // POST /respond — the bridge returns a polled request's result.
+// AI-REACH: exempt — the bridge returning a relayed call's result: the
+// device wire, never something a person or the assistant starts
 edgeRelayRouter.post("/respond", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin", "member")) return;
   const parsed = parseRelayResponse(req.body);

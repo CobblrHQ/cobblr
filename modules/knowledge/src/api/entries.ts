@@ -48,6 +48,7 @@ entriesRouter.get(
   }),
 );
 
+// AI-REACH: crud
 entriesRouter.post(
   "/entries",
   asyncHandler(async (req, res) => {
@@ -96,6 +97,7 @@ entriesRouter.get(
   }),
 );
 
+// AI-REACH: crud
 entriesRouter.patch(
   "/entries/:id",
   asyncHandler(async (req, res) => {
@@ -134,6 +136,7 @@ entriesRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 entriesRouter.delete(
   "/entries/:id",
   asyncHandler(async (req, res) => {

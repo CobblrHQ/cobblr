@@ -64,6 +64,7 @@
 import { readdirSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { MODULES, WIRE_PATH, kernelRoutes, moduleRoutes, norm, walkTs as walk } from "./lib/mutating-routes.ts";
+import { apiDirs, manifestSources } from "./lib/manifest-sources.ts";
 const BASELINE_FILE = join("scripts", "ai-reach-kernel-baseline.json");
 /** The method the assistant's record tools use for each declared endpoint. */
 const CRUD_VERB: Record<string, string> = { create: "POST", update: "PATCH", delete: "DELETE" };
@@ -181,10 +182,9 @@ let checked = 0;
 for (const mod of readdirSync(MODULES)) {
   const dir = join(MODULES, mod);
   const man = join(dir, "src", "module.ts");
-  const api = join(dir, "src", "api");
-  if (!existsSync(man) || !existsSync(api)) continue;
+  if (!existsSync(man) || apiDirs(dir).length === 0) continue;
 
-  const manSrc = readFileSync(man, "utf8");
+  const manSrc = manifestSources(dir).map((f) => readFileSync(f, "utf8")).join("\n");
   // Keyed by VERB and path, as the assistant's tools call them: create is a
   // POST, update a PATCH, delete a DELETE. Keyed by path alone, a declared
   // GET covered every write on the same path, so `DELETE /measurements/:id`
@@ -238,9 +238,7 @@ for (const mod of readdirSync(MODULES)) {
 // module's action (nav headings are core-presentation's), so the whole
 // registry is the vocabulary here.
 const allActionIds = new Set<string>();
-for (const mod of readdirSync(MODULES)) {
-  const man = join(MODULES, mod, "src", "module.ts");
-  if (!existsSync(man)) continue;
+for (const mod of readdirSync(MODULES)) for (const man of manifestSources(join(MODULES, mod))) {
   for (const m of readFileSync(man, "utf8").matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]/g)) {
     allActionIds.add(m[1]!);
   }
@@ -348,9 +346,7 @@ for (const m of platformActionSrc.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["
   if (wireOnlyDecl(platformActionSrc, m.index)) continue;
   actionsByModule.set("the kernel itself", [...new Set([...(actionsByModule.get("the kernel itself") ?? []), m[1]!])]);
 }
-for (const mod of readdirSync(MODULES)) {
-  const man = join(MODULES, mod, "src", "module.ts");
-  if (!existsSync(man)) continue;
+for (const mod of readdirSync(MODULES)) for (const man of manifestSources(join(MODULES, mod))) {
   const src = readFileSync(man, "utf8");
   for (const m of src.matchAll(/id:\s*["'`]([a-z0-9-]+:[a-z0-9-]+)["'`]([\s\S]{0,400}?)label:\s*["'`]([^"'`]+)["'`]/g)) {
     // An action that exists only as the way back for another is no door the

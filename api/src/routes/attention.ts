@@ -115,13 +115,41 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     const slug = String(req.params.slug);
     const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
     const rows: AttentionRow[] = [];
+    const sources = {
+      inbox: j<{ items: Array<{ id: string }> }>(
+        `/orgs/${slug}/modules/core-scan/inbox?status=pending`,
+        token,
+      ),
+      waiting: listShareEdits(req.tenant!.org.id, { open: true }, 500).catch(() => []),
+      added: listAdditions(req.tenant!.org.id).catch(() => []),
+      wantPhoto: j<{
+        items: Array<{ id: string; suggested_name: string | null }>;
+        total?: number;
+      }>(`/orgs/${slug}/modules/core-scan/inbox?triage=photo_wanted&limit=8`, token),
+      instances: j<{
+        items: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean }>;
+      }>(`/orgs/${slug}/instances`, token),
+      tasks: j<{ items: Array<{ id: string; title: string; status: string; due_date: string | null }> }>(
+        `/orgs/${slug}/modules/projects/tasks?limit=${ITEM_CAP}`,
+        token,
+      ),
+      loans: listOpenLoans(req.tenant!.org.id).catch(() => []),
+      maint: j<{
+        items: Array<{ id: string; name: string; entity_module: string; entity_type: string; entity_id: string; scheduled_at: string | null; schedule_id?: string | null }>;
+      }>(`/orgs/${slug}/modules/core-maintenance/entries?kind=scheduled&due_within_days=${WINDOW_DAYS}&limit=${ITEM_CAP}`, token),
+      fleet: j<{ connections: Array<{ connection_id: string; devices: Array<{ id: string; name: string; needs_attention: { reason: string } | null }> }> }>(
+        `/orgs/${slug}/modules/digifab/fleet`,
+        token,
+      ),
+      failed: j<{ items: Array<{ file_ref: string; updated_at: string }> }>(
+        `/orgs/${slug}/modules/digifab/jobs?status=failed&limit=25`,
+        token,
+      ),
+    };
     for (const s of await listTidySuggestions(req.tenant!.org.id, req.tenant!.role)) rows.push({ kind: "tidy", label: s.candidate.why, count: s.candidate.records.length, sample: s.candidate.records.slice(0, 3).map((r) => r.name), route: s.candidate.action.route, suggestion: s });
 
     // Pending captures first — always actionable.
-    const inbox = await j<{ items: Array<{ id: string }> }>(
-      `/orgs/${slug}/modules/core-scan/inbox?status=pending`,
-      token,
-    );
+    const inbox = await sources.inbox;
     if (inbox && inbox.items.length > 0) {
       rows.push({
         kind: "pending_scans",
@@ -134,8 +162,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
     // Edits someone you share with suggested on your things (share-spaces.md
     // §10): one row, whoever and however many.
-    const waiting = await listShareEdits(req.tenant!.org.id, { open: true }, 500).catch(() => []);
-    const added = await listAdditions(req.tenant!.org.id).catch(() => []);
+    const waiting = await sources.waiting;
+    const added = await sources.added;
     if (waiting.length + added.length > 0) {
       const records = new Map<string, AttentionEntry>();
       for (const e of waiting) {
@@ -159,10 +187,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     // does (platform-contract/scan-triage), so the dashboard and the viewfinder
     // can never disagree about what is waiting. `total` rather than the page
     // length, or the count would silently cap at the entry limit.
-    const wantPhoto = await j<{
-      items: Array<{ id: string; suggested_name: string | null }>;
-      total?: number;
-    }>(`/orgs/${slug}/modules/core-scan/inbox?triage=photo_wanted&limit=8`, token);
+    const wantPhoto = await sources.wantPhoto;
     if (wantPhoto && wantPhoto.items.length > 0) {
       const name = (i: { suggested_name: string | null }) => i.suggested_name?.trim() || "an unnamed capture";
       rows.push({
@@ -181,9 +206,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       });
     }
 
-    const instances = await j<{
-      items: Array<{ module_name: string; instance_name: string; display_name: string; is_default: boolean }>;
-    }>(`/orgs/${slug}/instances`, token);
+    const instances = await sources.instances;
     const domain = instancesToAsk(instances?.items ?? [], hasPrimaryRouter).slice(0, INSTANCE_CAP);
 
     const now = Date.now();
@@ -263,7 +286,8 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         // a window (a wine's drink-by) is past its best. The label words are
         // for fields nobody declared.
         const dueFields = dateFields.filter(
-          (d) => d.field_role === "expiry" || d.field_role === "ready-until" || DUE_RE.test(`${d.name} ${d.display_label ?? ""}`),
+          // VOCAB-ENUMERATION OK: which date roles are deadlines is this route's own reading, beside the label fallback
+          (d) => d.field_role === "expiry" || d.field_role === "ready-until" || d.field_role === "due" || DUE_RE.test(`${d.name} ${d.display_label ?? ""}`),
         );
         if (dueFields.length === 0) return;
         // A stock-face record with nothing on hand has nothing left to date:
@@ -382,10 +406,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     // the classic "overdue to-do" never surfaced here (found seeding a demo
     // workspace — two overdue tasks, zero attention rows). 404s harmlessly
     // when the projects module is off (j() → null).
-    const tasks = await j<{ items: Array<{ id: string; title: string; status: string; due_date: string | null }> }>(
-      `/orgs/${slug}/modules/projects/tasks?limit=${ITEM_CAP}`,
-      token,
-    );
+    const tasks = await sources.tasks;
     if (tasks) {
       const openTasks = tasks.items.filter(
         (t) => t.due_date && !["done", "cancelled"].includes(t.status),
@@ -424,7 +445,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
 
     // Things lent out: due back, overdue, or out a month with no day set
     // (record-loans.md). One read of every loan, whatever kind it is on.
-    const loans: OpenLoan[] = await listOpenLoans(req.tenant!.org.id).catch(() => []);
+    const loans = await sources.loans;
     const lentKeys = new Set(loans.map((l) => `${l.kind}:${l.id}`));
     {
       const loanEntry = (l: OpenLoan, words: string) => ({
@@ -464,9 +485,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     // sweeper). A native column, so the field sweep above never saw it; it
     // only surfaced when a tracker happened to name a date field "service"
     // (#3876). 404s harmlessly when core-maintenance is off.
-    const maint = await j<{
-      items: Array<{ id: string; name: string; entity_module: string; entity_type: string; entity_id: string; scheduled_at: string | null; schedule_id?: string | null }>;
-    }>(`/orgs/${slug}/modules/core-maintenance/entries?kind=scheduled&due_within_days=${WINDOW_DAYS}&limit=${ITEM_CAP}`, token);
+    const maint = await sources.maint;
     if (maint && maint.items.length > 0) {
       const orgId = req.tenant!.org.id;
       // A thing lent out is not here to service: its reminders wait until
@@ -528,10 +547,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     // plate for the bed-clear verdict + recent failed prints. Both read
     // digifab's own endpoints (fleet serves its SWR snapshot — instant); 404
     // harmlessly when the module is off.
-    const fleet = await j<{ connections: Array<{ connection_id: string; devices: Array<{ id: string; name: string; needs_attention: { reason: string } | null }> }> }>(
-      `/orgs/${slug}/modules/digifab/fleet`,
-      token,
-    );
+    const fleet = await sources.fleet;
     if (fleet) {
       const waiting = fleet.connections.flatMap((c) => c.devices.map((d) => ({ ...d, conn: c.connection_id }))).filter((d) => d.needs_attention);
       if (waiting.length > 0)
@@ -544,10 +560,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
           entries: waiting.slice(0, 8).map((d) => ({ id: `${d.conn}:${d.id}`, title: d.name, action: { connection_id: d.conn, device_id: d.id } })),
         });
     }
-    const failed = await j<{ items: Array<{ file_ref: string; updated_at: string }> }>(
-      `/orgs/${slug}/modules/digifab/jobs?status=failed&limit=25`,
-      token,
-    );
+    const failed = await sources.failed;
     if (failed) {
       const recent = failed.items.filter((f) => Date.parse(f.updated_at) > now - 7 * 86_400_000);
       if (recent.length > 0)

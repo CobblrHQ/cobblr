@@ -14,7 +14,8 @@
 import { type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
-import { fulfilOrder, type FulfilDoor, type Shortage } from "./fulfilment.js";
+import { fulfilOrderUnderLock, type FulfilDoor, type Shortage } from "./fulfilment.js";
+import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
 
 export interface Lookup {
@@ -147,75 +148,77 @@ export async function shipOrder(
     emailCustomer?: { pressedBy: string } | null;
   },
 ): Promise<ShipResult> {
-  const order = await db.selectFrom("sales_orders").selectAll().where("id", "=", args.orderId).executeTakeFirst();
-  if (!order) return { ok: false, code: "not_found", message: "That order is not here any more.", shortages: [], doors: [] };
-  if (order.status === "shipped" || order.status === "closed") {
-    return { ok: false, code: "already_shipped", message: `This order is already ${order.status}.`, shortages: [], doors: [] };
-  }
-  if (order.status === "cancelled") {
-    return { ok: false, code: "cancelled", message: "A cancelled order does not ship.", shortages: [], doors: [] };
-  }
-  if (order.status !== "fulfilled") {
-    const f = await fulfilOrder(db, orgId, args.userId, order.id, "all");
-    if (!f.ok) return { ok: false, code: f.code, message: f.message, shortages: f.shortages, doors: f.doors };
-    if (!f.complete) {
-      return { ok: false, code: "not_enough_stock", message: "Not all of this order came out of stock, so it cannot ship yet.", shortages: [], doors: [] };
+  return withOrderLock(db, orgId, args.userId, args.orderId, async () => {
+    const order = await db.selectFrom("sales_orders").selectAll().where("id", "=", args.orderId).executeTakeFirst();
+    if (!order) return { ok: false, code: "not_found", message: "That order is not here any more.", shortages: [], doors: [] };
+    if (order.status === "shipped" || order.status === "closed") {
+      return { ok: false, code: "already_shipped", message: `This order is already ${order.status}.`, shortages: [], doors: [] };
     }
-  }
-
-  const tracking = args.trackingNumber?.trim() || null;
-  const found = await identify(orgId, tracking ?? "");
-  const carrier = args.carrier?.trim() || found.carrier;
-  await db
-    .updateTable("sales_orders")
-    .set({ status: "shipped", carrier, tracking_number: tracking, shipped_at: new Date(), updated_at: new Date() })
-    .where("id", "=", order.id)
-    .execute();
-  await orderHappened(db, orgId, order.id, { kind: "shipped", detail: { carrier, tracking_number: tracking }, by_user: args.userId });
-  await orderHappened(db, orgId, order.id, { kind: "status", from_status: "fulfilled", to_status: "shipped", by_user: args.userId });
-
-  const customer = await customerOf(db, order.customer_id);
-  const words = noticeText({
-    shop: args.shop,
-    customerName: customer.name ?? order.customer_name,
-    orderNumber: order.order_number,
-    carrier,
-    trackingNumber: tracking,
-    lookup: found.lookup,
-  });
-  const notice: CustomerNotice = { to: customer.email, ...words };
-
-  let email: Extract<ShipResult, { ok: true }>["email"] = { asked: false };
-  if (args.emailCustomer?.pressedBy) {
-    const can = await emailAvailability(orgId, customer.email);
-    if (!can.available || !customer.email) {
-      email = { asked: true, sent: false, reason: can.reason ?? "The customer has no email address on file." };
-    } else {
-      const sent = await platform().outboundEmail.send(orgId, {
-        to: customer.email,
-        subject: words.subject,
-        text: words.text,
-        sentBy: args.emailCustomer.pressedBy,
-        source: { kind: "sales:order", id: order.id },
-      });
-      if (sent.ok) {
-        await orderHappened(db, orgId, order.id, {
-          kind: "email",
-          detail: { to: customer.email, subject: words.subject, message_id: sent.messageId, log_id: sent.logId, status: sent.status },
-          by_user: args.emailCustomer.pressedBy,
-        });
-        email = { asked: true, sent: true, to: customer.email, status: sent.status };
-      } else {
-        await orderHappened(db, orgId, order.id, {
-          kind: "email",
-          detail: { to: customer.email, subject: words.subject, log_id: sent.logId, status: "failed", error: sent.message },
-          by_user: args.emailCustomer.pressedBy,
-        });
-        email = { asked: true, sent: false, reason: sent.message };
+    if (order.status === "cancelled") {
+      return { ok: false, code: "cancelled", message: "A cancelled order does not ship.", shortages: [], doors: [] };
+    }
+    if (order.status !== "fulfilled") {
+      const f = await fulfilOrderUnderLock(db, orgId, args.userId, order.id, "all");
+      if (!f.ok) return { ok: false, code: f.code, message: f.message, shortages: f.shortages, doors: f.doors };
+      if (!f.complete) {
+        return { ok: false, code: "not_enough_stock", message: "Not all of this order came out of stock, so it cannot ship yet.", shortages: [], doors: [] };
       }
     }
-  }
 
-  void platform().events.emit("sales.order.shipped", { orgId, orderId: order.id, carrier, trackingNumber: tracking });
-  return { ok: true, status: "shipped", carrier, tracking_number: tracking, lookup: found.lookup, notice, email };
+    const tracking = args.trackingNumber?.trim() || null;
+    const found = await identify(orgId, tracking ?? "");
+    const carrier = args.carrier?.trim() || found.carrier;
+    await db
+      .updateTable("sales_orders")
+      .set({ status: "shipped", carrier, tracking_number: tracking, shipped_at: new Date(), updated_at: new Date() })
+      .where("id", "=", order.id)
+      .execute();
+    await orderHappened(db, orgId, order.id, { kind: "shipped", detail: { carrier, tracking_number: tracking }, by_user: args.userId });
+    await orderHappened(db, orgId, order.id, { kind: "status", from_status: "fulfilled", to_status: "shipped", by_user: args.userId });
+
+    const customer = await customerOf(db, order.customer_id);
+    const words = noticeText({
+      shop: args.shop,
+      customerName: customer.name ?? order.customer_name,
+      orderNumber: order.order_number,
+      carrier,
+      trackingNumber: tracking,
+      lookup: found.lookup,
+    });
+    const notice: CustomerNotice = { to: customer.email, ...words };
+
+    let email: Extract<ShipResult, { ok: true }>["email"] = { asked: false };
+    if (args.emailCustomer?.pressedBy) {
+      const can = await emailAvailability(orgId, customer.email);
+      if (!can.available || !customer.email) {
+        email = { asked: true, sent: false, reason: can.reason ?? "The customer has no email address on file." };
+      } else {
+        const sent = await platform().outboundEmail.send(orgId, {
+          to: customer.email,
+          subject: words.subject,
+          text: words.text,
+          sentBy: args.emailCustomer.pressedBy,
+          source: { kind: "sales:order", id: order.id },
+        });
+        if (sent.ok) {
+          await orderHappened(db, orgId, order.id, {
+            kind: "email",
+            detail: { to: customer.email, subject: words.subject, message_id: sent.messageId, log_id: sent.logId, status: sent.status },
+            by_user: args.emailCustomer.pressedBy,
+          });
+          email = { asked: true, sent: true, to: customer.email, status: sent.status };
+        } else {
+          await orderHappened(db, orgId, order.id, {
+            kind: "email",
+            detail: { to: customer.email, subject: words.subject, log_id: sent.logId, status: "failed", error: sent.message },
+            by_user: args.emailCustomer.pressedBy,
+          });
+          email = { asked: true, sent: false, reason: sent.message };
+        }
+      }
+    }
+
+    void platform().events.emit("sales.order.shipped", { orgId, orderId: order.id, carrier, trackingNumber: tracking });
+    return { ok: true, status: "shipped", carrier, tracking_number: tracking, lookup: found.lookup, notice, email };
+  });
 }

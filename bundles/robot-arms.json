@@ -1,0 +1,115 @@
+{
+  "manifest": {
+    "id": "cobblr.community.robot-arms",
+    "catalog": "extended",
+    "version": "0.1.0",
+    "name": "Robot Arms",
+    "author": "Cobblr",
+    "released_at": "2026-10-17",
+    "description": "Keep your robot arms: maker, reach and payload, the controller, its programs and what each arm is known to work with.",
+    "changelog": "Keep your robot arms: maker, reach and payload, the controller, its programs and what each arm is known to work with.",
+    "releases": [
+      {
+        "version": "0.1.0",
+        "released_at": "2026-10-17",
+        "notes": "Keep your robot arms: maker, reach and payload, the controller, its programs and what each arm is known to work with."
+      }
+    ],
+    "requires": [
+      {
+        "module": "machines"
+      }
+    ],
+    "features": [
+      {
+        "key": "digifab",
+        "name": "Follow your arms' controllers",
+        "question": "Want to see each arm's state and programs from its controller?",
+        "default": true,
+        "requires": [
+          {
+            "module": "digifab"
+          }
+        ],
+        "description": "Adds the arm's page panel and its station: connection, mode, program and safety state read from the controller through your shop's bridge, the programs it holds, and Load, Start and Stop at the cell. It never moves an arm or clears a stop."
+      }
+    ],
+    "provides_instances": [
+      {
+        "module": "machines",
+        "instance_name": "robot-arms",
+        "display_name": "Robot Arms",
+        "item_noun": "robot arm",
+        "glyph": "🦾",
+        "scan_keywords": [
+          "robot arm",
+          "cobot",
+          "industrial robot"
+        ],
+        "field_defs": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "reach_mm",
+            "display_label": "Reach (mm)",
+            "type": "number",
+            "aggregate": "none",
+            "position": 1
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "payload_kg",
+            "display_label": "Payload (kg)",
+            "type": "number",
+            "aggregate": "none",
+            "position": 2
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "controller",
+            "display_label": "Controller",
+            "type": "text",
+            "position": 3,
+            "learns": true,
+            "choices": [
+              "UR CB3",
+              "UR e-Series",
+              "FANUC R-30iB Plus",
+              "KUKA KR C4",
+              "KUKA KR C5",
+              "ABB IRC5",
+              "ABB OmniCore",
+              "Doosan",
+              "Dobot",
+              "Elite"
+            ]
+          },
+          {
+            "entity_kind": "machines:machine",
+            "name": "cell",
+            "display_label": "Cell",
+            "type": "text",
+            "position": 4,
+            "learns": true
+          }
+        ],
+        "saved_views": [
+          {
+            "entity_kind": "machines:machine",
+            "name": "My robot arms",
+            "view_type": "table",
+            "pinned": true,
+            "config": {
+              "visible_fields": [
+                "title",
+                "reach_mm",
+                "payload_kg",
+                "controller",
+                "cell"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

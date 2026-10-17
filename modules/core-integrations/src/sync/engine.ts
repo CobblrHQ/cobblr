@@ -32,7 +32,9 @@ import { createHash } from "node:crypto";
 import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { edgeRelayFetch } from "./edge-fetch.js";
+import { reconcileHoldings, retireHoldingsOf } from "./holdings.js";
 import { mapLimit } from "./map-limit.js";
+import { deleteMirror } from "./delete-mirror.js";
 
 /** A resolved, decrypted handle to one sync connection. */
 export interface SyncConnectionRef {
@@ -71,7 +73,7 @@ export interface ReconcileResult {
    *  WROTE are listed; one whose source and mapping state are unchanged was
    *  said the first time. */
   unmapped: string[];
-  /** Records the target refused, one sentence each, in the target's words.
+  /** Records the target refused to write or delete, one sentence each.
    *  The rest of the run carries on; a run with any is a warning. */
   failed: string[];
   /** Fields where the person's Cobblr value was kept over a different one at
@@ -209,6 +211,7 @@ function hashRecord(
   targetInstance?: string | null,
   images?: SyncRecord["images"],
   tags?: SyncRecord["tags"],
+  holdings?: SyncRecord["holdings"],
 ): string {
   return createHash("sha1")
     .update(
@@ -220,6 +223,7 @@ function hashRecord(
         targetInstance: targetInstance ?? null,
         images: images ?? null,
         tags: tags ?? null,
+        ...(holdings ? { holdings } : {}),
       }),
     )
     .digest("hex");
@@ -442,7 +446,41 @@ function upsertOne(
   record: SyncRecord,
   run: RunCtx,
 ): Promise<{ action: UpsertAction; tagsFailed: number; unmapped: Unmapped[] }> {
-  return oneAtATime(`${ref.connectorRowId}:${type.key}:${record.externalId}`, () => upsertOneLocked(db, ref, type, record, run));
+  return oneAtATime(`${ref.connectorRowId}:${type.key}:${record.externalId}`, async () => {
+    const res = await upsertOneLocked(db, ref, type, record, run);
+    if (!record.holdings || res.action === "ask") return res;
+    return { ...res, unmapped: [...res.unmapped, ...(await settleHoldings(db, ref, type, record))] };
+  });
+}
+
+/** The card is written; make its other places match the source's. Runs on an
+ *  unchanged card too: it is cheap (one read, a hash per place) and a place
+ *  that could not be written last time, its location not mirrored yet, is
+ *  written now. */
+async function settleHoldings(db: Kysely<CoreIntegrationsDB>, ref: SyncConnectionRef, type: SyncEntityType, record: SyncRecord): Promise<Unmapped[]> {
+  const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
+  const row = await db
+    .selectFrom("core_integrations_synced_records")
+    .select("cobblr_entity_id")
+    .where("connector_row_id", "=", ref.connectorRowId)
+    .where("entity_type", "=", type.key)
+    .where("external_id", "=", record.externalId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirst();
+  if (!writer || !row) return [];
+  const card = writer.read ? await writer.read(ref.orgId, row.cobblr_entity_id).catch(() => null) : null;
+  const out = await reconcileHoldings({
+    db,
+    ref,
+    writer,
+    targetKind: type.targetKind,
+    typeKey: type.key,
+    cardExternalId: record.externalId,
+    cardId: row.cobblr_entity_id,
+    card: card as Record<string, unknown> | null,
+    holdings: record.holdings ?? [],
+  });
+  return out.unmapped.map((u) => ({ field: "holding location", section: u.section, externalId: u.externalId }));
 }
 
 /** Work for one source id runs one at a time, in order. Create-or-link is a
@@ -490,7 +528,7 @@ async function upsertOneLocked(
   const unmappedSaid = unmapped.length ? unmappedWords(unmapped, type.sourceLabel || ref.connectorId) : [];
   const name = String(record.fields.name ?? record.externalId);
   const hash =
-    hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images, record.tags) + unmappedMark(unmapped) + `:p=${run.policy}`;
+    hashRecord(type.targetKind, parentCobblrId, record.fields, record.references, instance, record.images, record.tags, record.holdings) + unmappedMark(unmapped) + `:p=${run.policy}`;
 
   const existing = await db
     .selectFrom("core_integrations_synced_records")
@@ -804,13 +842,9 @@ async function tombstoneOne(
     .executeTakeFirst();
   if (!row) return false;
   const writer = await platform().entities.getWriter(ref.orgId, type.targetKind);
-  if (writer) {
-    try {
-      await writer.delete(ref.orgId, row.cobblr_entity_id);
-    } catch {
-      /* mirror already gone — tombstone anyway */
-    }
-  }
+  if (!writer) throw new Error(`sync: no entity writer registered for ${type.targetKind}`);
+  await retireHoldingsOf({ db, ref, writer, targetKind: type.targetKind, typeKey: type.key, cardExternalId: externalId, cardId: row.cobblr_entity_id });
+  await deleteMirror(writer, ref.orgId, row.cobblr_entity_id);
   await db
     .updateTable("core_integrations_synced_records")
     .set({ deleted_at: new Date(), updated_at: new Date() })
@@ -923,7 +957,14 @@ async function reconcileOnce(
   // dropped 130 parts held the sync's lock for 20 s one by one, and past a
   // minute on a busy box. Distinct records; the tenant pool holds five.
   const gone = mapped.filter((m) => !present.has(m.external_id));
-  const done = await mapLimit(gone, TOMBSTONE_CONCURRENCY, (m) => tombstoneOne(db, ref, type, m.external_id));
+  const done = await mapLimit(gone, TOMBSTONE_CONCURRENCY, async (m) => {
+    try {
+      return await tombstoneOne(db, ref, type, m.external_id);
+    } catch (err) {
+      failed.push(`${source} ${m.external_id}: could not delete: ${(err as Error).message}`);
+      return false;
+    }
+  });
   const tombstoned = done.filter(Boolean).length;
   return { created, updated, linked, tombstoned, total: records.length, tagsFailed, unmapped, failed, kept: run.kept, conflicts: run.conflicts, ambiguous: run.ambiguous };
 }
@@ -976,7 +1017,7 @@ export async function planReconcile(
     const parentUnmapped = !!r.parentExternalId && parentCobblrId === null;
     const unmapped = [...refs.unmapped];
     if (parentUnmapped) unmapped.push({ field: "parent_id", section: type.key, externalId: String(r.parentExternalId) });
-    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, instance, r.images, r.tags) + unmappedMark(unmapped) + `:p=${run.policy}`;
+    const hash = hashRecord(type.targetKind, parentCobblrId, r.fields, r.references, instance, r.images, r.tags, r.holdings) + unmappedMark(unmapped) + `:p=${run.policy}`;
     // Show the resolved cross-section references in the preview (e.g. location_id
     // → the mirrored Cobblr id, or left out if that section isn't imported yet).
     const fields = { ...r.fields, ...refs.values };
@@ -1050,6 +1091,12 @@ export async function planReconcile(
       const match = await readMatch(m.cobblr_entity_id, m.external_id);
       items.push({ externalId: m.external_id, name: match.name, action: "delete", cobblrId: m.cobblr_entity_id, match });
     }
+  }
+  // How many more places each record will be kept in, whatever happens to its card.
+  const placesOf = new Map(live.map((r) => [r.externalId, r.holdings?.length ?? 0]));
+  for (const it of items) {
+    const n = placesOf.get(it.externalId);
+    if (n && it.action !== "delete") it.holdings = n;
   }
   return { entityType: type.key, targetKind: type.targetKind, policy: run.policy, counts, items };
 }

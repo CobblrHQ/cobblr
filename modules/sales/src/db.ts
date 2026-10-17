@@ -109,6 +109,7 @@ export interface SalesOrderDocumentsTable {
 }
 
 export interface SalesDB {
+  sales_stock_draws: { id: string; order_id: string; line_id: string; part_id: string; qty_before: string; qty: string; completed: boolean };
   sales_order_documents: SalesOrderDocumentsTable;
   sales_document_counters: { instance: string; kind: "quote" | "invoice"; last_number: number };
   sales_customers: SalesCustomersTable;

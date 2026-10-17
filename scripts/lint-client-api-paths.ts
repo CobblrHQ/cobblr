@@ -44,6 +44,7 @@ import { readdirSync, readFileSync, existsSync, mkdirSync, statSync, writeFileSy
 import { execFileSync } from "node:child_process";
 import { envForOtherRepo } from "./lib/git-env.mjs";
 import { dirname, join, resolve } from "node:path";
+import { apiDirs, familyMounts } from "./lib/manifest-sources.ts";
 
 // Both overridable so a test can hand the lint a fixture server and fixture
 // clients, and run it as a child the way CI does.
@@ -279,7 +280,8 @@ export function routeTable(root = ROOT): string[] {
           modMounts.set(m[2]!, m[1] ? norm(m[1]) : "");
         }
       }
-      collect(api, `/orgs/:slug/modules/${name}`, (v) => modMounts.get(v) ?? "");
+      for (const [router, path] of familyMounts(join(modulesDir, name))) modMounts.set(router, norm(path));
+      for (const dir of apiDirs(join(modulesDir, name))) collect(dir, `/orgs/:slug/modules/${name}`, (v) => modMounts.get(v) ?? "");
     }
   }
   return [...out].sort();

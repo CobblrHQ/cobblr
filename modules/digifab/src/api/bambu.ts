@@ -84,7 +84,8 @@ const LoginBody = z.object({
   email: z.string().min(3).max(200),
   password: z.string().min(1).max(200),
 });
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — takes a person's Bambu account password; the assistant
+// never handles a secret
 bambuRouter.post("/login", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = LoginBody.safeParse(req.body);
@@ -115,7 +116,8 @@ bambuRouter.post("/login", asyncHandler(async (req, res) => {
 
 // ── POST /code {session, code} — email verify OR 2FA ─────────────────────────
 const CodeBody = z.object({ session: z.string().uuid(), code: z.string().min(1).max(20) });
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — the one-time sign-in code Bambu emails the person; a
+// human-only step of account security
 bambuRouter.post("/code", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CodeBody.safeParse(req.body);
@@ -145,7 +147,8 @@ const CreateBody = z.object({
   mode: z.enum(["cloud", "lan", "hybrid"]),
   label: z.string().min(1).max(120).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — saves the Bambu account token from a sign-in session as a
+// connection; the assistant never handles a secret
 bambuRouter.post("/create", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CreateBody.safeParse(req.body);
@@ -211,7 +214,9 @@ const CommandBody = z.object({
   serial: z.string().min(1),
   command: z.enum(["pause", "resume", "stop", "light_on", "light_off", "nudge"]),
 });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — an experimental cloud door whose resume starts a printer
+// again; the assistant pauses or stops a machine through digifab:stop and
+// machine-control, which keep Start behind the station
 bambuRouter.post("/command", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const parsed = CommandBody.safeParse(req.body);

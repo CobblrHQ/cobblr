@@ -19,6 +19,11 @@ import {
   computeShortfall,
   consumeComponents,
   explodeLeafComponents,
+  buildableOf,
+  consumePlan,
+  planBuild,
+  planLines,
+  shortfallOf,
 } from "../build-engine.js";
 import { rollupOperation } from "../execution.js";
 import { traceBackward, lineageCodes, nameGenealogy, type GenealogyLoaders, type RunInput } from "../genealogy.js";
@@ -27,6 +32,7 @@ import { scheduleEDD, type PlannedItem } from "../schedule.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveOutputPart } from "../output-part.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { shortageSentence } from "../shortage.js";
 
 export const buildsRouter = Router({ mergeParams: true });
 
@@ -51,6 +57,8 @@ const ComponentCreate = z
     sub_assembly_build_id: z.string().uuid().optional(),
     quantity: z.number().positive(),
     optional: z.boolean().optional(),
+    // A sub-assembly line: take its output's stock first (default) or always make it.
+    use_stock: z.boolean().optional(),
     notes: z.string().max(2_000).nullable().optional(),
   })
   .refine((d) => (d.part_id ? !d.sub_assembly_build_id : !!d.sub_assembly_build_id), {
@@ -78,6 +86,7 @@ const OperationUpdate = z.object({
 });
 
 // ─────────────────────────── builds CRUD ───────────────────────────
+// AI-REACH: crud
 buildsRouter.post(
   "/builds",
   asyncHandler(async (req, res) => {
@@ -173,8 +182,7 @@ buildsRouter.get(
           .select(["name"])
           .where("id", "=", r.sub_assembly_build_id!)
           .executeTakeFirst();
-        const subLeaves = await explodeLeafComponents(ctx.org.id, r.sub_assembly_build_id!);
-        const subBuildable = computeBuildable(await readComponentStock(ctx.org.id, subLeaves));
+        const subBuildable = await buildableOf(ctx.org.id, r.sub_assembly_build_id!);
         components.push({
           ...r,
           kind: "subassembly" as const,
@@ -185,9 +193,16 @@ buildsRouter.get(
       }
     }
 
-    // "Buildable now" uses the EXPLODED leaf requirements (sub-assemblies included).
-    const leaves = await explodeLeafComponents(ctx.org.id, build.id);
-    const buildable = computeBuildable(await readComponentStock(ctx.org.id, leaves));
+    // "Buildable now" takes stocked sub-assemblies first and makes the rest.
+    const { plan: _bestPlan, ...buildable } = await buildableOf(ctx.org.id, build.id);
+    // How each sub-assembly line is met for the quantity asked about (1 by default).
+    const planQty = Math.max(1, Math.floor(Number(req.query.qty ?? 1)) || 1);
+    const plan = await planBuild(ctx.org.id, build.id, planQty);
+    for (const c of components) {
+      if (c.kind !== "subassembly") continue;
+      const met = plan.sub_assemblies.find((s) => s.build_id === c.sub_assembly_build_id);
+      Object.assign(c, { from_stock: met?.from_stock ?? 0, to_make: met?.to_make ?? 0, plan_qty: planQty });
+    }
 
     const operationRows = await db
       .selectFrom("builds_operations")
@@ -230,10 +245,14 @@ buildsRouter.get(
       ? { part_id: build.output_part_id, name: outputPart?.title ?? null, qty: outputPart ? Number(outputPart.fields?.qty ?? 0) : null }
       : null;
 
-    res.json({ build, components, buildable, operations, quality, output });
+    // What is short to make the quantity asked about, after stocked sub-assemblies are taken.
+    const planStock = await readComponentStock(ctx.org.id, [...plan.from_stock, ...plan.leaves]);
+    const shortage = shortageSentence(planStock.map((c) => ({ ...c, per_build: c.quantity })), 1);
+    res.json({ build, components, buildable, operations, quality, output, plan_qty: planQty, shortage, plan: planLines(plan) });
   }),
 );
 
+// AI-REACH: crud
 buildsRouter.patch(
   "/builds/:id",
   asyncHandler(async (req, res) => {
@@ -285,6 +304,7 @@ buildsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 buildsRouter.delete(
   "/builds/:id",
   asyncHandler(async (req, res) => {
@@ -336,11 +356,33 @@ buildsRouter.post(
         sub_assembly_build_id: parsed.data.sub_assembly_build_id ?? null,
         quantity: String(parsed.data.quantity),
         optional: parsed.data.optional ?? false,
+        use_stock: parsed.data.use_stock ?? true,
         notes: parsed.data.notes ?? null,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
     res.status(201).json(row);
+  }),
+);
+
+const ComponentUpdate = z.object({ use_stock: z.boolean() });
+// AI-REACH: action builds:set-sub-assembly-source
+buildsRouter.patch(
+  "/builds/:id/components/:cid",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "builds:set-sub-assembly-source"))) return;
+    const parsed = ComponentUpdate.safeParse(req.body);
+    if (!parsed.success) return badBody(res, parsed.error);
+    const row = await tenantDb(req)
+      .updateTable("builds_components")
+      .set({ use_stock: parsed.data.use_stock })
+      .where("id", "=", req.params.cid!)
+      .where("build_id", "=", req.params.id!)
+      .where("sub_assembly_build_id", "is not", null)
+      .returningAll()
+      .executeTakeFirst();
+    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "No sub-assembly line with that id on this build." } });
+    res.json(row);
   }),
 );
 
@@ -615,9 +657,8 @@ buildsRouter.get(
   "/builds/:id/buildable",
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);
-    const leaves = await explodeLeafComponents(ctx.org.id, req.params.id!);
-    const stock = await readComponentStock(ctx.org.id, leaves);
-    res.json(computeBuildable(stock));
+    const { plan, ...buildable } = await buildableOf(ctx.org.id, req.params.id!);
+    res.json({ ...buildable, sub_assemblies: plan.sub_assemblies, plan: planLines(plan) });
   }),
 );
 
@@ -626,9 +667,7 @@ buildsRouter.get(
   asyncHandler(async (req, res) => {
     const ctx = tenantContext(req);
     const target = Math.max(1, Number(req.query.target ?? 1) || 1);
-    const leaves = await explodeLeafComponents(ctx.org.id, req.params.id!);
-    const stock = await readComponentStock(ctx.org.id, leaves);
-    const shortfall = computeShortfall(stock, target);
+    const { plan, shortfall } = await shortfallOf(ctx.org.id, req.params.id!, target);
     if (shortfall.length > 0) {
       await platform().events.emit("builds.shortfall.detected", {
         orgId: ctx.org.id,
@@ -637,7 +676,7 @@ buildsRouter.get(
         shortfall,
       });
     }
-    res.json({ target, shortfall });
+    res.json({ target, shortfall, sub_assemblies: plan.sub_assemblies, plan: planLines(plan) });
   }),
 );
 
@@ -670,9 +709,9 @@ buildsRouter.post(
       return;
     }
     if ((build.metadata as { assembly?: unknown }).assembly) throw new ActionRefusal("Use an assembly work order to place, reflow and inspect this board revision.");
-    // Explode nested sub-assemblies to leaf inventory parts, then consume those.
-    const leaves = await explodeLeafComponents(ctx.org.id, build.id);
-    const consumed = await consumeComponents(ctx.org.id, session?.id ?? null, build.id, leaves, qty);
+    // Stocked sub-assemblies first, the rest exploded to leaf parts; consume both.
+    const plan = await planBuild(ctx.org.id, build.id, qty);
+    const consumed = await consumePlan(ctx.org.id, session?.id ?? null, build.id, plan);
 
     const run = await db
       .insertInto("builds_runs")
@@ -742,8 +781,8 @@ buildsRouter.post(
     });
 
     // Return the run + the fresh buildable so the UI updates without a round-trip.
-    const stock = await readComponentStock(ctx.org.id, leaves);
-    res.status(201).json({ run, buildable: computeBuildable(stock) });
+    const { plan: _next, ...buildable } = await buildableOf(ctx.org.id, build.id);
+    res.status(201).json({ run, buildable, plan: planLines(plan) });
   }),
 );
 

@@ -33,5 +33,5 @@ export function registerExpiryCalendarSource(): void {
       entityType: entityType!,
       entityId: r.id,
     }));
-  });
+  }, { module: "lists" });
 }

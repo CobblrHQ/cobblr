@@ -24,6 +24,20 @@ import { buildSyncConnector } from "../sync/declarative.js";
 import { RAVELRY_MANIFEST } from "../sync/sources/ravelry.js";
 import { HOMEBOX_MANIFEST } from "../sync/sources/homebox.js";
 import { PARTDB_MANIFEST } from "../sync/sources/partdb.js";
+import { registerSyncNowAction } from "./sync-now-action.js";
+import { registerSetSyncAction } from "./set-sync-action.js";
+import { registerArchiveSyncConnectionAction } from "./archive-sync-connection-action.js";
+import { registerUnarchiveSyncConnectionAction } from "./unarchive-sync-connection-action.js";
+import { registerTestSyncConnectionAction } from "./test-sync-connection-action.js";
+import { registerTestConnectionAction } from "./test-connection-action.js";
+
+registerSyncNowAction();
+registerSetSyncAction();
+registerArchiveSyncConnectionAction();
+registerUnarchiveSyncConnectionAction();
+registerTestSyncConnectionAction();
+registerTestConnectionAction();
+import { SNIPEIT_MANIFEST } from "../sync/sources/snipeit.js";
 
 let registered = false;
 function registerBuiltins(): void {
@@ -42,6 +56,7 @@ function registerBuiltins(): void {
   platform().integrations.registerSyncConnector(buildSyncConnector(RAVELRY_MANIFEST));
   platform().integrations.registerSyncConnector(buildSyncConnector(HOMEBOX_MANIFEST));
   platform().integrations.registerSyncConnector(buildSyncConnector(PARTDB_MANIFEST));
+  platform().integrations.registerSyncConnector(buildSyncConnector(SNIPEIT_MANIFEST));
   // The inbound handler (live push) + the reconcile worker are global.
   registerSyncInboundHandler();
   registerSyncWorker();

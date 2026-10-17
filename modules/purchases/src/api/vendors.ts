@@ -95,6 +95,7 @@ vendorsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 vendorsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -122,6 +123,7 @@ vendorsRouter.post(
   }),
 );
 
+// AI-REACH: crud
 vendorsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -169,6 +171,7 @@ vendorsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 vendorsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

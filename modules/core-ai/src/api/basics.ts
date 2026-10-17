@@ -104,7 +104,8 @@ basicsRouter.get(
 );
 
 // POST /basics/answer — match a message → reply (chat's no-AI path + the tester).
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — writes nothing but a count of unanswered questions; it is
+// the assistant's own no-AI front door and the owner's tester, not a tool for it
 basicsRouter.post(
   "/answer",
   asyncHandler(async (req, res) => {
@@ -174,7 +175,9 @@ basicsRouter.post(
 );
 
 // POST /basics — create a custom rule, or override a built-in (builtin_key set).
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — a basic is what the assistant says to everyone in the
+// workspace; one that could write its own would let a single instruction (or text
+// planted in a record) set the reply every later person gets. The owner's call.
 basicsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -221,7 +224,7 @@ basicsRouter.post(
 );
 
 // PATCH /basics/:id — edit a custom rule or an existing built-in override.
-// AI-REACH: this module IS the assistant; its own configuration is not a thing it should reach into
+// AI-REACH: exempt — editing what the assistant says to everyone; see POST above
 basicsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -257,7 +260,8 @@ basicsRouter.patch(
 );
 
 // DELETE /basics/:id — remove a custom rule, or reset a built-in to its default.
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — removing or resetting what the assistant says to everyone;
+// see POST above
 basicsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -792,7 +796,8 @@ basicsRouter.post(
 );
 
 // PATCH /basics/commands/:id — turn one off without forgetting it.
-// AI-REACH: exempt — see POST above
+// AI-REACH: exempt — switching the workspace's own write commands is the owner's
+// call; an assistant that could switch them could widen its own reach (see POST above)
 basicsRouter.patch(
   "/commands/:id",
   asyncHandler(async (req, res) => {
@@ -809,7 +814,8 @@ basicsRouter.patch(
 );
 
 // DELETE /basics/commands/:id — forget it.
-// AI-REACH: exempt — see POST above
+// AI-REACH: exempt — forgetting one of the workspace's write commands is the
+// owner's call about the assistant's reach (see POST above)
 basicsRouter.delete(
   "/commands/:id",
   asyncHandler(async (req, res) => {

@@ -1445,7 +1445,7 @@ export function isJunkName(name: string | null | undefined): boolean {
   }
   const alnum = n.replace(/[^a-z0-9]/gi, "");
   if (alnum.length < 3) return true; // too short to be a product name
-  if (/(.)\1{3,}/i.test(alnum)) return true; // a run of one char ≥4 (placeholder)
+  if (/^(.)\1{3,}$/i.test(alnum)) return true; // a run of one char ≥4 (placeholder)
   // Artifacts of SEARCHING A BARE NUMBER, not identifications: a 12-digit UPC
   // looks like a phone number to a search engine, so a no-result code reliably
   // surfaces directory/lookup SEO. This is the structural class (query-shaped

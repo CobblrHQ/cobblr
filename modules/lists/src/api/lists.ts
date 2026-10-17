@@ -58,6 +58,7 @@ listsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 listsRouter.post(
   "/lists",
   asyncHandler(async (req, res) => {
@@ -195,6 +196,7 @@ listsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 listsRouter.patch(
   "/lists/:id",
   asyncHandler(async (req, res) => {
@@ -225,6 +227,7 @@ listsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 listsRouter.delete(
   "/lists/:id",
   asyncHandler(async (req, res) => {
@@ -284,6 +287,7 @@ const ItemUpdate = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+// AI-REACH: crud
 listsRouter.post(
   "/items",
   asyncHandler(async (req, res) => {
@@ -331,6 +335,7 @@ listsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 listsRouter.patch(
   "/items/:id",
   asyncHandler(async (req, res) => {
@@ -454,6 +459,7 @@ listsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 listsRouter.delete(
   "/items/:id",
   asyncHandler(async (req, res) => {

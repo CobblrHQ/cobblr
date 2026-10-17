@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.21",
+  version: "0.21.23",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -738,7 +738,7 @@ export default defineModule({
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots? }. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -756,11 +756,13 @@ export default defineModule({
         readsFromEvent: ["partId", "delta"],
         argsSchema: {
           unit: { label: "The unit delta is in (\"g\"); converted to the thing's own unit first", type: "text" },
+          operationKey: { label: "Receipt key for a recoverable stock draw", type: "text" },
           once: { label: "Apply once per source: a repeat for the same thing, source and direction changes nothing", type: "boolean" },
           reversible: { label: "With once: the source can take it back, so a repeat is judged on what it has done net (a shopping line unticked, then ticked again)", type: "boolean" },
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
+          draws: { label: "Atomic stock draw: [{ partId, quantity, optional }] (optional)", type: "json" },
           lots: { label: "Of the units arriving, how many carry which lot or batch number, as their boxes printed it: [{ lot, qty }] (optional)", type: "json" },
           timezone: { label: "Timezone to date arriving stock in (optional)", type: "text" },
           reason: { label: "Reason (optional)", type: "text" },

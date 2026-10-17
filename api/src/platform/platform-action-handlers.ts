@@ -44,6 +44,7 @@ import { SYSTEM_VIEWER, isFieldScope, platform, pluralise, readListArg, type Act
 import { matchByLabel, splitNames } from "@cobblr/platform-contract/said-names";
 import { kindWordsFrom, type KindWords } from "@cobblr/platform-contract/kind-label";
 import { disableModuleForOrg, enableModuleForOrg } from "../modules/enable.js";
+import { clearPart, partStates, setPart } from "./module-parts.js";
 import { listEntries } from "../modules/registry.js";
 import { meta } from "../db/meta.js";
 import { MAX_STEPS, jobOfWords, myAiDefaultsView, pickMyAiStep, saveMyAiDefaults } from "./my-ai-defaults.js";
@@ -1392,6 +1393,52 @@ export function registerPlatformActionHandlers(): void {
     return {
       title: `Turn on the ${found.label} feature`,
       lines: [`${found.label} appears in the menu for everyone in this workspace.`],
+    };
+  });
+
+  /** A part of a found module, by its id or its label. */
+  const findPart = (module: string, said: string): { id: string; label: string } | { error: string } => {
+    const parts = (listEntries().find((e) => e.manifest.name === module)?.manifest.parts ?? []).map((p) => ({ name: p.id, label: p.label }));
+    if (parts.length === 0) return { error: "that feature has no parts to turn on or off" };
+    const byId = parts.find((p) => p.name === said.trim().toLowerCase());
+    if (byId) return { id: byId.name, label: byId.label };
+    const hit = matchByLabel(said, parts);
+    if (!hit) return { error: `no part called "${said}" — it has ${parts.map((p) => `"${p.label}"`).join(", ")}` };
+    if ("ambiguous" in hit) return { error: `"${said}" could be ${hit.ambiguous.map((a) => `"${a.label}"`).join(" or ")} — which one?` };
+    return { id: hit.name, label: hit.label };
+  };
+  const partArgs = (ctx: ActionInvokeContext): { error: string } | { mod: { name: string; label: string }; part: { id: string; label: string }; on: boolean | null } => {
+    const a = ctx.args ?? {};
+    if (!str(a.module)) return { error: "module is required (the feature's name)" };
+    const mod = findModule(str(a.module));
+    if ("error" in mod) return { error: mod.error };
+    const part = findPart(mod.name, str(a.part));
+    if ("error" in part) return { error: part.error };
+    const on = a.on === undefined || a.on === null || a.on === "" ? null : a.on === true || a.on === "true";
+    return { mod, part, on };
+  };
+
+  registerHandler("platform.set-module-part", async (ctx: ActionInvokeContext) => {
+    const got = partArgs(ctx);
+    if ("error" in got) return { ok: false, error: got.error };
+    const before = (await partStates(ctx.orgId, new Set([got.mod.name]))).find((p) => p.id === got.part.id);
+    if (!before) return { ok: false, error: `${got.mod.label} is not turned on in this workspace` };
+    if (got.on === null) await clearPart(ctx.orgId, got.mod.name, got.part.id);
+    else await setPart(ctx.orgId, got.mod.name, got.part.id, got.on, ctx.userId ?? null);
+    const after = (await partStates(ctx.orgId, new Set([got.mod.name]))).find((p) => p.id === got.part.id)!;
+    return { ok: true, summary: `${got.part.label} is ${after.on ? "on" : "off"}`, data: { module: got.mod.name, part: got.part.id, on: after.on, was: before.chosen ? before.on : null } };
+  });
+  registerUndo("platform.set-module-part", (result) => {
+    const d = (result as { data?: { module?: unknown; part?: unknown; was?: unknown } } | null)?.data;
+    if (typeof d?.module !== "string" || typeof d.part !== "string") return null;
+    return { action_id: "platform:set-module-part", args: { module: d.module, part: d.part, ...(typeof d.was === "boolean" ? { on: d.was } : {}) } };
+  });
+  registerPlanner("platform.set-module-part", async (ctx: ActionInvokeContext) => {
+    const got = partArgs(ctx);
+    if ("error" in got) return { error: got.error };
+    return {
+      title: got.on === null ? `Let ${got.part.label} follow its default` : `Turn ${got.part.label} ${got.on ? "on" : "off"}`,
+      lines: [got.on === false ? `Its screens, actions and tools disappear for everyone in this workspace. Everything it recorded is kept, and turning it back on shows all of it.` : `Its screens, actions and tools appear for everyone in this workspace.`],
     };
   });
 

@@ -37,7 +37,9 @@ sourceDefsRouter.get(
 
 // Install a declarative sync source (a manifest). Upserts on source_id so
 // re-installing updates it.
-// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
+// AI-REACH: exempt — a source manifest decides which outside hosts the
+// workspace's stored credentials are sent to; one installed from a chat could
+// send them anywhere, so installing one is the owner's
 sourceDefsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -71,7 +73,8 @@ sourceDefsRouter.post(
 );
 
 // Uninstall.
-// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
+// AI-REACH: exempt — uninstalling a source strands every connection built on
+// it, and only the owner can install it again (see POST above)
 sourceDefsRouter.delete(
   "/:sourceId",
   asyncHandler(async (req, res) => {

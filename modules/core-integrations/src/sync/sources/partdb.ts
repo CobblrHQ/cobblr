@@ -10,9 +10,11 @@
 //     `arrayPath`. Requesting `.jsonld` under that header returns an error.
 //   • `parent` on a structural element is an IRI ("/api/storage_locations/1"),
 //     hence `|last`.
-//   • Stock lives on part LOTS and a part can have several. Cobblr has one
-//     location per part today, so the first lot wins and every lot is kept in
-//     metadata; the import UI counts multi-lot parts and says so.
+//   • Stock lives on part LOTS and a part can have several. A part is one card
+//     with a row per place (docs/design-decisions/holdings-and-units.md): the
+//     `holdings` block below sums the lots of a bin, makes the oldest lot's bin
+//     the card's own row and every other bin a holding of it, kept in step by
+//     lot id. Every lot is also kept whole in metadata.
 //   • `minamount` defaults to 0 meaning "no minimum"; Cobblr reads a non-null
 //     min_qty as a reorder point, so 0 is mapped to null.
 //   • The master picture's `media_url` is a path on the Part-DB host for an
@@ -85,9 +87,16 @@ export const PARTDB_MANIFEST = SyncSourceManifest.parse({
       idField: "$.id",
       // Part-DB's tags field is one comma-separated string.
       tags: { from: "$.tags", split: "," },
+      // The card's own row and its other places come from the lots.
+      holdings: {
+        from: "$.partLots",
+        idField: "$.id",
+        qty: "$.amount",
+        location: { section: "locations", from: "$.storage_location.id" },
+        // Part-DB's minimum is for the whole; Cobblr's is per place.
+        dropWhenSplit: ["min_qty"],
+      },
       references: {
-        // First lot wins; every lot is kept in metadata.partdb.lots.
-        location_id: { section: "locations", from: "$.partLots.0.storage_location.id" },
         category_id: { section: "categories", from: "$.category.id" },
       },
       map: {
@@ -119,6 +128,7 @@ export const PARTDB_MANIFEST = SyncSourceManifest.parse({
                 manufacturer_product_url: "$.manufacturer_product_url",
                 manufacturing_status: "$.manufacturing_status",
                 lots: "$.partLots",
+                minamount: "$.minamount",
                 orderdetails: "$.orderdetails",
                 parameters: "$.parameters",
                 eda_info: "$.eda_info",

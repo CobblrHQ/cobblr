@@ -180,7 +180,18 @@ customRolesRouter.patch(
       }
       const orgId = req.tenant!.org.id;
       const id = req.params.id!;
-      await meta.transaction().execute(async (trx) => {
+      const found = await meta.transaction().execute(async (trx) => {
+        // The capability rows carry no org_id, so every write below is
+        // scoped through this owned, locked parent; the lock also makes two
+        // saves at once replace in turn rather than merge.
+        const role = await trx
+          .selectFrom("workspace_roles")
+          .select("id")
+          .where("id", "=", id)
+          .where("org_id", "=", orgId)
+          .forUpdate()
+          .executeTakeFirst();
+        if (!role) return false;
         if (parsed.data.name !== undefined || parsed.data.description !== undefined) {
           const set: { name?: string; description?: string | null } = {};
           if (parsed.data.name !== undefined) set.name = parsed.data.name;
@@ -212,7 +223,12 @@ customRolesRouter.patch(
               .execute();
           }
         }
+        return true;
       });
+      if (!found) {
+        res.status(404).json({ error: { code: "not_found", message: "Role not found." } });
+        return;
+      }
       res.status(204).end();
     } catch (err) {
       next(err);

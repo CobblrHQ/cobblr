@@ -2,6 +2,7 @@
 // missing; anything malformed crashes the process at startup rather
 // than mysteriously at request time.
 
+import { parseSendCaps } from "./platform/channel-send-cap-rule.js";
 import { destinationsProblem } from "./platform/cloud.js";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { z } from "zod";
@@ -227,6 +228,20 @@ const Schema = z.object({
   HAND_OFFS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   SALES_DOCUMENT_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   TEST_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(5)),
+  /** Sends per person per notification channel per hour, over the defaults in
+   *  platform/channel-send-cap-rule.ts, e.g. "webhook=300,email=20" (#6908).
+   *  Over it, notices wait for that channel's next digest. A value that cannot
+   *  be read refuses boot. */
+  NOTIFY_SEND_CAP_PER_HOUR: z
+    .string()
+    .optional()
+    .superRefine((v, ctx) => {
+      try {
+        parseSendCaps(v);
+      } catch (e) {
+        ctx.addIssue({ code: "custom", message: (e as Error).message });
+      }
+    }),
   /** How often expired sandboxes are swept. Minutes, unlike the trial reaper's
    *  6h: an hour-long sandbox that lingers for six is not an hour-long one. */
   TRY_SANDBOX_REAP_INTERVAL_MS: z.coerce.number().int().positive().default(300_000),
@@ -330,6 +345,14 @@ const Schema = z.object({
   // "true" requires a verified email before login succeeds (needs a real SMTP
   // sender configured, COBBLR_AUTH_EMAIL_PROVIDER). The try box sets it.
   COBBLR_REQUIRE_EMAIL_VERIFY: z.string().optional(),
+  /** Self-host, kiosk and demo installs (#6910): an admin may add an account
+   *  with a username and no email. Nothing is ever sent to it (its address is
+   *  on the reserved .invalid domain), so a forgotten password is reset by an
+   *  admin on People. Off by default; a value other than true or false
+   *  refuses boot. */
+  COBBLR_USERNAME_ONLY_ACCOUNTS: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
 
   // Central identity federation (Slice 3). ALL optional — unset = this surface
   // owns its own accounts as before (no central identity, no behaviour change).

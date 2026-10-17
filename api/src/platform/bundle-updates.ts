@@ -46,6 +46,10 @@ export interface InstalledBundle {
   enabled_features: string[];
   /** The workspace is a trial sandbox (orgs.sandbox). */
   sandbox?: boolean;
+  /** "active" when every step ran; "pending" while an install is in flight
+   *  (or stopped there); "partial" when a workspace-side step failed. */
+  install_status?: "active" | "pending" | "partial";
+  installed_at?: Date;
 }
 
 export interface CatalogEntry {
@@ -62,6 +66,30 @@ export interface PlannedUpdate {
   tier: BundleUpdateTier;
   manifest: unknown;
   enabledFeatures: string[];
+  /** Not a newer version: the version it has, finished. */
+  repair?: boolean;
+}
+
+/** An install that is "pending" this long is not in flight, it stopped. */
+export const PENDING_IS_STOPPED_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * The installs to finish: a bundle whose update stopped half way ("pending")
+ * or whose workspace-side steps failed ("partial"), re-applied at the version
+ * it has. A bundle that is also due an update is left to that update, which
+ * replaces it whole. Pure, like the plan above.
+ */
+export function planBundleRepairs(installed: InstalledBundle[], updates: PlannedUpdate[], now: Date = new Date()): PlannedUpdate[] {
+  const due = new Set(updates.map((u) => `${u.orgId}\u0000${u.externalId}`));
+  const out: PlannedUpdate[] = [];
+  for (const b of installed) {
+    const status = b.install_status ?? "active";
+    if (status === "active") continue;
+    if (status === "pending" && b.installed_at && now.getTime() - b.installed_at.getTime() < PENDING_IS_STOPPED_AFTER_MS) continue;
+    if (due.has(`${b.org_id}\u0000${b.external_id}`)) continue;
+    out.push({ orgId: b.org_id, externalId: b.external_id, from: b.version, to: b.version, tier: "patch", manifest: b.manifest, enabledFeatures: b.enabled_features ?? [], repair: true });
+  }
+  return out;
 }
 
 /**
@@ -136,13 +164,13 @@ function registerBundleUpdatesPass(): void {
       const rows = await meta
         .selectFrom("bundles")
         .innerJoin("orgs", "orgs.id", "bundles.org_id")
-        .select(["bundles.org_id", "bundles.external_id", "bundles.version", "bundles.manifest", "bundles.enabled_features", "orgs.sandbox"])
-        .where("bundles.install_status", "=", "active")
+        .select(["bundles.org_id", "bundles.external_id", "bundles.version", "bundles.manifest", "bundles.enabled_features", "bundles.install_status", "bundles.installed_at", "orgs.sandbox"])
         .execute();
-      const plan = planBundleUpdates(
-        rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [], sandbox: r.sandbox === true })),
-        serverCatalog(),
-      );
+      const installed = rows.map((r) => ({ ...r, enabled_features: (r.enabled_features as string[] | null) ?? [], sandbox: r.sandbox === true }));
+      // An install that never finished is not a candidate for a newer version
+      // alone: it is finished at the version it has, or replaced whole by one.
+      const updates = planBundleUpdates(installed, serverCatalog());
+      const plan = [...updates, ...planBundleRepairs(installed, updates)];
       const byOrg = new Map<string, PlannedUpdate[]>();
       for (const u of plan) byOrg.set(u.orgId, [...(byOrg.get(u.orgId) ?? []), u]);
       lastPlan = { planned: plan.length, byOrg };
@@ -180,9 +208,11 @@ async function applyPlannedUpdates(orgId: string, updates: PlannedUpdate[]): Pro
         skipped++;
         continue;
       }
-      await applyValidatedBundle(orgId, { id: owner.id, display_name: owner.display_name ?? null, auth_method: "system" }, v);
+      await applyValidatedBundle(orgId, { id: owner.id, display_name: owner.display_name ?? null, auth_method: "system" }, v, {
+        ...(u.repair ? { repair: true, logInstall: false } : {}),
+      });
       applied++;
-      console.log(`[bundle-updates] org ${orgId}: ${u.externalId} ${u.from} → ${u.to} (${u.tier})`);
+      console.log(`[bundle-updates] org ${orgId}: ${u.externalId} ${u.repair ? `${u.to} finished` : `${u.from} → ${u.to} (${u.tier})`}`);
     } catch (err) {
       notePassFailure("reconcileBundleUpdates", orgId, err);
       skipped++;

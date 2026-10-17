@@ -299,26 +299,28 @@ export function BrickLinkPage() {
   const importOrder = useMutation({
     mutationFn: async () => {
       if (!parsedOrder) throw new Error("Preview the order first.");
-      const order = await api.request<{ id: string }>("POST", `/orgs/${activeSlug}/modules/purchases/orders`, {
-        vendor: "BrickLink",
-        order_number: parsedOrder.summary.order_id,
-        total_cost: parsedOrder.summary.total,
-        status: "ordered",
-        metadata: { source: "bricklink" },
-      });
-      for (const line of parsedOrder.lines) {
-        await api.request("POST", `/orgs/${activeSlug}/modules/purchases/orders/${order.id}/items`, {
+      // One request: the purchase and every line commit together, and pressing
+      // Import again (after a lost answer, or twice) finds the first one.
+      const done = await api.request<{ id: string; items: unknown[]; already_imported: boolean }>("POST", `/orgs/${activeSlug}/modules/purchases/orders/import`, {
+        order: {
+          vendor: "BrickLink",
+          order_number: parsedOrder.summary.order_id,
+          total_cost: parsedOrder.summary.total,
+          status: "ordered",
+          metadata: { source: "bricklink" },
+        },
+        items: parsedOrder.lines.map((line) => ({
           description: line.description || `${TYPE_LABEL[line.item_type]} ${line.item_id}`,
           qty: line.qty,
           unit_cost: line.unit_price,
           line_amount: line.line_total,
           metadata: { source: "bricklink", item_type: line.item_type, item_id: line.item_id, color_id: line.color_id, condition: line.condition, lot_id: line.lot_id },
-        });
-      }
-      return { id: order.id, count: parsedOrder.lines.length };
+        })),
+      });
+      return { id: done.id, count: done.items.length, already: done.already_imported };
     },
-    onSuccess: ({ id, count }) => {
-      const label = `Imported ${plural(count, "line")} as a purchase`;
+    onSuccess: ({ id, count, already }) => {
+      const label = already ? "This order was already imported: here is the purchase" : `Imported ${plural(count, "line")} as a purchase`;
       setSaved({ label, href: `/purchases/${id}` });
       setActionError(null);
       toast.success(label);

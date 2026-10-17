@@ -8,7 +8,7 @@
 // overwriting the state is what this replaces. History keeps every loan.
 
 import { switchFaceOn } from "./faces.js";
-import { platform } from "@cobblr/platform-contract";
+import { platform, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { LOAN_KEY, loanOfFields, readRecordLoan, sayLoan, type RecordLoan } from "@cobblr/platform-contract/loan";
 import * as activity from "./activity.js";
 import { sql, type Kysely } from "kysely";
@@ -217,5 +217,5 @@ export async function loanCalendarEvents(orgId: string, fromISO: string, toISO: 
 }
 
 export function registerLoanCalendar(): void {
-  registerSource("loans", loanCalendarEvents);
+  registerSource("loans", loanCalendarEvents, { module: PLATFORM_OWNER });
 }

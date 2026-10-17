@@ -79,6 +79,7 @@ export async function backfillDefaultBindings(): Promise<number> {
             trigger_type: w.trigger_type,
             trigger_event: w.trigger_event ?? null,
             template: w.template ?? null,
+            args: w.args ?? null,
             source_module: r.module_name,
           })),
         )

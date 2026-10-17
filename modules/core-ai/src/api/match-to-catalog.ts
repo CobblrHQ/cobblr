@@ -33,7 +33,8 @@ const Body = z.object({
   top_k: optionalField(z.number().int().positive().max(50)),
 });
 
-// AI-REACH: this module IS the assistant; match-to-catalog is a capability the scan flow calls, and the assistant reaches catalogs through core-catalogs:match-to-catalog
+// AI-REACH: exempt — the provider-level matcher; the assistant reaches the same
+// match through core-catalogs:match-to-catalog, with the record's context and role
 // UI-REACH: provider-level matching for API clients; the Catalog match screen uses core-catalogs:match-to-catalog with record context.
 matchToCatalogRouter.post(
   "/",

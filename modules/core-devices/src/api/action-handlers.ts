@@ -87,6 +87,11 @@ export async function applyToLinkedEntity(
       reason: `device:${device}`,
     });
     if (mapped) {
+      // The bus runs any action it is asked to; a person's reading is checked
+      // here. No person (the ESPHome sweep, a wire) is the workspace's own device.
+      if (userId && !(await platform().auth.userMayRun({ orgId, userId, actionId: mapped.actionId }))) {
+        return { ok: false, refused: mapped.actionId, entityId: link.entity_id, reason: `You may not run ${mapped.actionId} here, so the reading changed nothing.` };
+      }
       await invoke(mapped.actionId, mapped.args);
       return { ok: true, applied: mapped.actionId, entityId: link.entity_id, args: mapped.args };
     }

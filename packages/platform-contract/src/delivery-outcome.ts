@@ -26,7 +26,13 @@ export type ChannelOutcome =
   | "not-offered"
   // An acknowledgement replies on the channel the conversation came in on;
   // this channel was not that one. Deliberate quiet, not a failure.
-  | "ack-on-origin";
+  | "ack-on-origin"
+  // Over the channel's hourly send cap (#6908, #7076): held for its next
+  // summary, and the bell said once that it paused.
+  | "held"
+  // Over the cap with nothing to hold it by (the person keeps no bell row for
+  // it), so this copy was not sent; the bell's pause notice says why.
+  | "capped";
 
 export type DeliveryChannel = "in_app" | "email" | "discord_dm";
 export type DeliveryOutcomes = Partial<Record<DeliveryChannel, ChannelOutcome>>;
@@ -45,6 +51,8 @@ export function describeOutcome(outcome: ChannelOutcome): string {
     case "send-failed": return "send failed";
     case "not-offered": return "not offered for this message";
     case "ack-on-origin": return "answered on the channel it came in on";
+    case "held": return "over its hourly limit - in their next summary";
+    case "capped": return "over its hourly limit - not sent";
     default: {
       const unreachable: never = outcome;
       throw new Error(`unnamed delivery outcome: ${String(unreachable)}`);

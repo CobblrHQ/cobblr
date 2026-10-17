@@ -37,6 +37,11 @@ export interface ComponentRow {
   max_from_this?: number;
   // sub-assembly lines only — how many of the sub-assembly are buildable now
   sub_max_buildable?: number;
+  /** Take the sub-assembly's stock first (true), or always make it. */
+  use_stock?: boolean;
+  /** For plan_qty builds: how many come off the shelf, how many are made. */
+  from_stock?: number;
+  to_make?: number;
 }
 
 export interface OperationRow {
@@ -76,6 +81,12 @@ export interface BuildDetail {
   components: ComponentRow[];
   buildable: Buildable;
   operations: OperationRow[];
+  /** The quantity the sub-assembly lines and `shortage` were planned for. */
+  plan_qty?: number;
+  /** What is short to make plan_qty, after stocked sub-assemblies are taken; null when nothing is. */
+  shortage?: string | null;
+  /** "Controller board: 2 from stock, 1 to make", per sub-assembly. */
+  plan?: string[];
   /** Everything counted for this build: hand logs and judged prints. */
   quality?: { good_qty: number; scrap_qty: number; yield_pct: number | null };
   /** The part a Build press adds to stock, or null: it adds nothing. */
@@ -253,8 +264,11 @@ export class BuildsApi {
   listBuilds() {
     return this.req<{ items: BuildSummary[] }>("GET", "/builds");
   }
-  getBuild(id: string) {
-    return this.req<BuildDetail>("GET", `/builds/${id}`);
+  getBuild(id: string, qty = 1) {
+    return this.req<BuildDetail>("GET", `/builds/${id}?qty=${qty}`);
+  }
+  setComponentUseStock(buildId: string, componentId: string, use_stock: boolean) {
+    return this.req<ComponentRow>("PATCH", `/builds/${buildId}/components/${componentId}`, { use_stock });
   }
   createBuild(body: { name: string; description?: string | null; output_part_id?: string | null; output_part_name?: string; notes?: string | null }) {
     return this.req<BuildSummary>("POST", "/builds", body);

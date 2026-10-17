@@ -131,6 +131,9 @@ export const SATELLITE_TABLES: SatelliteRef[] = [
   // The signal debounce follows the record too: leaving it behind would let the
   // move re-announce "running low" for something the user just reorganised.
   { table: "core_cadence_signals", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
+  // The overdue sweep's memory of which tier a record was told follows the
+  // record: left behind, the move would tell its household "stale" a second time.
+  { table: "core_recurrence_overdue_signals", db: "tenant", kindCol: "entity_kind", idCol: "entity_id" },
   {
     table: "core_maintenance_entries",
     db: "tenant",

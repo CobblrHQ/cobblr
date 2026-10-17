@@ -110,6 +110,7 @@ projectsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 projectsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -180,6 +181,7 @@ projectsRouter.post(
   }),
 );
 
+// AI-REACH: crud
 projectsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -248,6 +250,7 @@ projectsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 projectsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

@@ -20,7 +20,9 @@
 // scheduling latency, which starts well before the box is oversubscribed. A second is in it: the
 // scan's one-second table budget (#6555) read 1306 ms at 0.85 per core during the full suite and
 // was judged red by the long rule, because the line sat at "under a second" (#6617).
-// WALL_CLOCK_LOAD_MAX is 1.0 per core: over it the box is oversubscribed and
+// Bounds over one second and up to two seconds use 0.75 per core: the dashboard
+// exceeded its 1.5 s budget at 0.91 per core despite quiet times of 360 to 550 ms.
+// Longer bounds use WALL_CLOCK_LOAD_MAX, 1.0 per core: over it the box is oversubscribed and
 // every process is waiting for a core, which is what stretches a wall clock.
 // The run that motivated this was at 1.48 (17.8 on 12) and crawling; a runner
 // with one test job and one docker build beside it sits at 0.7-0.8 and passes;
@@ -47,6 +49,8 @@ export const WALL_CLOCK_LOAD_MAX = Number(process.env.COBBLR_WALL_CLOCK_LOAD_MAX
  *  job and a docker build beside it) already stretches a 120 ms median to 170 ms, so it is judged at 0.4. */
 export const SHORT_BOUND_MS = 1000;
 export const WALL_CLOCK_SHORT_LOAD_MAX = Number(process.env.COBBLR_WALL_CLOCK_SHORT_LOAD_MAX) || 0.4;
+export const MIDDLE_BOUND_MS = 2000;
+export const WALL_CLOCK_MIDDLE_LOAD_MAX = 0.75;
 
 export interface BoxLoad {
   load1: number;
@@ -70,7 +74,11 @@ export type WallClockVerdict = "pass" | "fail" | "inconclusive";
 
 /** The per-core load over which a missed bound is inconclusive: one place, so the
  *  verdict and the message that explains it never disagree. */
-export const loadLimitFor = (maxMs: number): number => (maxMs <= SHORT_BOUND_MS ? WALL_CLOCK_SHORT_LOAD_MAX : WALL_CLOCK_LOAD_MAX);
+export const loadLimitFor = (maxMs: number): number => {
+  if (maxMs <= SHORT_BOUND_MS) return WALL_CLOCK_SHORT_LOAD_MAX;
+  if (maxMs <= MIDDLE_BOUND_MS) return WALL_CLOCK_MIDDLE_LOAD_MAX;
+  return WALL_CLOCK_LOAD_MAX;
+};
 
 /** The decision, pure, so it can be tested without a clock or a box. */
 export function judgeWallClock(

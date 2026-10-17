@@ -16,6 +16,8 @@ import { inQuietHours } from "./push-policy.js";
 import { REGISTRY } from "./notifications.js";
 import {
   composeDigest,
+  destinationBatches,
+  digestLink,
   planDeliveryGroups,
   type DeliveryWindow,
   type DeferredItem,
@@ -31,6 +33,11 @@ const TICK_MS = 5 * 60 * 1000;
  *  than retried forever against a dead channel. Seven days is well past any
  *  digest window; the notification itself remains in the bell/history. */
 const MAX_DEFER_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A claim older than this is a flush that died partway (#7075): the next
+ *  flush takes its rows over, so a notice is retried rather than lost. Far
+ *  longer than one flush's sends (an 8 s timeout each). */
+const CLAIM_STALE_MS = 10 * 60 * 1000;
 
 
 let handle: ReturnType<typeof setInterval> | null = null;
@@ -91,7 +98,10 @@ interface SweepDB {
     priority: string;
     triggered_by: TriggeredBy;
     queued_at: Date;
+    claimed_at: Date | null;
   };
+  orgs: { id: string; name: string; slug: string };
+  notification_subscriptions: { user_id: string; org_id: string; channel: string; event_type: string; enabled: boolean; config: unknown };
 }
 
 export async function deliveryTick(
@@ -206,15 +216,23 @@ export async function deliveryTick(
     for (const group of groups) {
       if (!group.due) continue;
       // Each group is isolated: one class's send failure never blocks the other.
+      let claimed: string[] = [];
       try {
-        const rows = await db
-          .selectFrom("notification_deferred")
-          .select(["id", "org_id", "event_type", "message", "link_url", "priority", "notification_id"])
-          .where("user_id", "=", user_id)
-          .where("channel", "=", channel)
-          .where("triggered_by", "in", group.triggeredBys)
-          .orderBy("queued_at", "asc")
-          .execute();
+        // Claim what this flush sends, in one statement (#7075). Every entry
+        // point (the timer, a person's "send now") comes through here, so two
+        // that overlap split the rows instead of both sending them.
+        const rows = (
+          await db
+            .updateTable("notification_deferred")
+            .set({ claimed_at: now })
+            .where("user_id", "=", user_id)
+            .where("channel", "=", channel)
+            .where("triggered_by", "in", group.triggeredBys)
+            .where((eb) => eb.or([eb("claimed_at", "is", null), eb("claimed_at", "<", new Date(now.getTime() - CLAIM_STALE_MS))]))
+            .returning(["id", "org_id", "event_type", "message", "link_url", "priority", "notification_id", "queued_at"])
+            .execute()
+        ).sort((a, b) => a.queued_at.getTime() - b.queued_at.getTime());
+        claimed = rows.map((r) => r.id);
         if (rows.length === 0) continue;
 
         const adapter = REGISTRY[channel as keyof typeof REGISTRY];
@@ -222,44 +240,73 @@ export async function deliveryTick(
           // No adapter (channel removed, or stubbed): drop the bucket rather than
           // letting it grow without bound. The notifications themselves are still
           // in history — only the push copy is discarded.
-          await db
-            .deleteFrom("notification_deferred")
-            .where("user_id", "=", user_id)
-            .where("channel", "=", channel)
-            .where("triggered_by", "in", group.triggeredBys)
-            .execute();
+          await db.deleteFrom("notification_deferred").where("id", "in", claimed).execute();
           continue;
         }
 
-        const items: DeferredItem[] = rows.map((r) => ({
-          event_type: r.event_type,
-          message: r.message,
-          link_url: r.link_url,
-        }));
-        const first = rows[0]!;
-        const ok = await adapter.deliver({
-          notificationId: first.notification_id,
-          orgId: first.org_id ?? "",
-          userId: user_id,
-          eventType: rows.length === 1 ? first.event_type : "notifications.digest",
-          message: composeDigest(items),
-          // A digest of many cannot deep-link to one, so only a single-item
-          // flush keeps its link.
-          link_url: rows.length === 1 ? first.link_url : null,
-          priority: "normal",
-          subscriptionConfig: null,
-          payload: { digest_count: rows.length },
-          actions: null,
-        });
+        // One message per person for email; one per workspace for a channel
+        // whose card can open only one place (Channel.digestScope, #6907).
+        // Each goes to the subscription it was held for, as it is now (#7074):
+        // a webhook, Slack or Discord binding is nothing without its config.
+        const scope = adapter.digestScope ?? "person";
+        const orgIds = [...new Set(rows.map((r) => r.org_id).filter((id): id is string => !!id))];
+        const subs = orgIds.length
+          ? await db
+              .selectFrom("notification_subscriptions")
+              .select(["org_id", "event_type", "enabled", "config"])
+              .where("user_id", "=", user_id)
+              .where("channel", "=", channel)
+              .where("org_id", "in", orgIds)
+              .where("event_type", "in", [...new Set(rows.map((r) => r.event_type)), "*"])
+              .execute()
+          : [];
+        const { batches, dropped } = destinationBatches(rows, subs, scope);
+        // Turned off since they were held: the person said stop.
+        if (dropped.length) await db.deleteFrom("notification_deferred").where("id", "in", dropped.map((r) => r.id)).execute();
+        const orgs = new Map(
+          (orgIds.length ? await db.selectFrom("orgs").select(["id", "name", "slug"]).where("id", "in", orgIds).execute() : []).map((o) => [o.id, o]),
+        );
+        let allSent = true;
+        for (const { rows: batch, config } of batches) {
+          const items: DeferredItem[] = batch.map((r) => ({
+            event_type: r.event_type,
+            message: r.message,
+            link_url: r.link_url,
+          }));
+          const first = batch[0]!;
+          const org = scope === "workspace" && first.org_id ? orgs.get(first.org_id) : undefined;
+          const ok = await adapter.deliver({
+            notificationId: first.notification_id,
+            orgId: first.org_id ?? "",
+            userId: user_id,
+            eventType: batch.length === 1 ? first.event_type : "notifications.digest",
+            message: composeDigest(items, { workspace: org?.name, workspaces: new Set(batch.map((r) => r.org_id)).size }),
+            // One item keeps its own link; many from one workspace open that
+            // workspace's notifications; a digest across workspaces has no one place.
+            link_url: digestLink(batch, org?.slug ?? null),
+            priority: "normal",
+            subscriptionConfig: config,
+            payload: { digest_count: batch.length },
+            actions: null,
+          });
+          // Clear only on success. A failed send leaves its rows, so the next
+          // tick retries rather than silently eating the day's mail.
+          if (!ok) {
+            allSent = false;
+            await db.updateTable("notification_deferred").set({ claimed_at: null }).where("id", "in", batch.map((r) => r.id)).execute();
+            continue;
+          }
+          await db
+            .deleteFrom("notification_deferred")
+            .where("id", "in", batch.map((r) => r.id))
+            .execute();
+          flushed++;
+          messages += batch.length;
+        }
+        // A batch that did not go stays queued and the window unstamped, so the
+        // next tick sends it rather than waiting a day.
+        if (!allSent) continue;
 
-        // Clear only on success. A failed send leaves the bucket intact, so the
-        // next tick retries rather than silently eating the day's mail.
-        if (!ok) continue;
-
-        await db
-          .deleteFrom("notification_deferred")
-          .where("id", "in", rows.map((r) => r.id))
-          .execute();
         if (win) {
           // Stamp the ONE column this group is governed by (the planner already
           // resolved inherit vs a split schedule cadence into a single column),
@@ -271,11 +318,12 @@ export async function deliveryTick(
             .where("channel", "=", channel)
             .execute();
         }
-        flushed++;
-        messages += rows.length;
       } catch (err) {
         // One group's failure never blocks another group or anyone else's mail.
         console.error(`[notify] flush ${channel} for ${user_id} failed:`, (err as Error).message);
+        // What it claimed and did not send goes back for the next tick; a
+        // release that fails too is taken over once the claim is stale.
+        if (claimed.length) await db.updateTable("notification_deferred").set({ claimed_at: null }).where("id", "in", claimed).execute().catch(() => undefined);
       }
     }
   }

@@ -15,6 +15,7 @@ import { decryptCreds } from "./crypto.js";
 import type { TenantDB } from "./tenant-schema.js";
 import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
+import { IDLE_RELEASE_MS } from "./connection-budget.js";
 import { poolCounts, type PoolCounts } from "./pool-stats.js";
 
 interface CachedTenant {
@@ -198,6 +199,9 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     // pool-cap eviction, so bounding per-pool conns is the durable lever. Default
     // 5 (prod); CI sets COBBLR_TENANT_POOL_MAX=3.
     max: TENANT_POOL_MAX,
+    // A quiet workspace's pool gives its connections back (connection-budget.ts).
+    min: 0,
+    idleTimeoutMillis: IDLE_RELEASE_MS,
   }, `tenant-pool ${orgId}`);
   // The Kysely handed to callers talks to the pool through this shim rather than
   // holding the Pool directly. If the pool it was built on has been ended (an

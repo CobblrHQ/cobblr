@@ -21,6 +21,8 @@ export interface UserTips {
 export interface UsersTable {
   id: Generated<string>;
   email: string;
+  /** An optional name to sign in with beside the email, lower-case and unique (#6910). */
+  username: string | null;
   password_hash: string;
   display_name: string;
   active: Generated<boolean>;
@@ -271,6 +273,15 @@ export interface MigrationsTable {
   id: Generated<number>;
   name: string;
   applied_at: Generated<Date>;
+}
+
+export interface OrgModulePartsTable {
+  org_id: string;
+  module_name: string;
+  part: string;
+  enabled: boolean;
+  updated_by: string | null;
+  updated_at: Generated<Date>;
 }
 
 export interface OrgModulesTable {
@@ -1948,6 +1959,7 @@ export interface MetaDB {
   org_memberships: OrgMembershipsTable;
   migrations: MigrationsTable;
   org_modules: OrgModulesTable;
+  org_module_parts: OrgModulePartsTable;
   bundle_resource_claims: BundleResourceClaimsTable;
   scan_url_resolvers: ScanUrlResolversTable;
   workspace_invites: WorkspaceInvitesTable;
@@ -2527,4 +2539,6 @@ export interface NotificationDeferredTable {
   /** Which of the two windows this item is waiting for. */
   triggered_by: Generated<"activity" | "schedule">;
   queued_at: Generated<Date>;
+  /** Set while a flush is sending it (#7075); a stale claim is taken over. */
+  claimed_at: Generated<Date | null>;
 }

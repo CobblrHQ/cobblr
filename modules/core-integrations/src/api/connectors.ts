@@ -10,6 +10,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { invokeSavedConnector } from "../invoke-saved.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
@@ -121,7 +122,8 @@ connectorsRouter.get(
   }),
 );
 
-// AI-REACH: creates a connector, which holds credentials; the assistant must never handle these
+// AI-REACH: exempt — takes an outside service's credentials (a Slack token, a
+// webhook secret); the assistant never handles a secret
 connectorsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -171,7 +173,8 @@ connectorsRouter.post(
   }),
 );
 
-// AI-REACH: edits a connector's stored config, which can carry credentials
+// AI-REACH: exempt — replaces a connector's stored config, which carries its
+// credentials and where they are sent; the assistant never handles a secret
 connectorsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -224,7 +227,8 @@ connectorsRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — deletes a connector's credentials for good and stops every
+// wire that sends through it; no undo can bring a secret back, so it is the owner's
 connectorsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -256,11 +260,11 @@ connectorsRouter.delete(
 
 // ────────────────────────── test-connection ────────────────────────
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-ACTION: core-integrations:test-connection
 connectorsRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-integrations:test-connection"))) return;
     const ctx = tenantContext(req);
     const id = req.params.id;
     if (!id) {
@@ -302,7 +306,7 @@ connectorsRouter.post(
 
 // ─────────────────────────────── invoke ────────────────────────────
 
-// AI-REACH: invokes an external connector with the workspace's credentials; a person owns that call
+// AI-TOOL: invoke_service
 connectorsRouter.post(
   "/:id/invoke",
   asyncHandler(async (req, res) => {

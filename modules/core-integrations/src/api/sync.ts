@@ -13,8 +13,10 @@ import { sql } from "kysely";
 import { platform, type SyncConnector } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { loadConnectionRef } from "../sync/connection.js";
 import { ReconcileBusyError, runReconcile, planReconcile, resolveAsked, runStatusOf, type AskedAnswer } from "../sync/engine.js";
+import { archiveConnection, loadSection, setSectionSync, syncNow, testSyncConnection, unarchiveConnection } from "../sync/operations.js";
 import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "../sync/worker.js";
 import { CONFLICT_POLICIES, type ConflictPolicy } from "@cobblr/platform-contract/sync-merge";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
@@ -151,7 +153,8 @@ const ConnectionCreate = z.object({
 });
 
 // ── create a connection (+ mint the webhook token) ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — takes an outside service's credentials and mints the
+// webhook token for its live pushes; the assistant never handles a secret
 syncRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -244,7 +247,8 @@ const ConnectionUpdate = z.object({
   enabled: z.boolean().optional(),
 });
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — replaces the stored credentials and the address they are
+// sent to; the assistant never handles a secret or redirects one
 syncRouter.patch(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -267,7 +271,9 @@ syncRouter.patch(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — deletes the stored credentials and the webhook token for
+// good; no undo can bring a secret back, so it is the owner's (Archive is the
+// reversible door, core-integrations:archive-sync-connection)
 syncRouter.delete(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -290,49 +296,38 @@ syncRouter.delete(
   }),
 );
 
-// ── archive: move a connection to the history section (NOT delete). Turns off
-//    ongoing sync so the poll worker drops it; the id-map + config survive, so
-//    un-archive resumes it. run/preview/import 404 while archived. ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// ── archive: move a connection to the history section (NOT delete); see
+//    archiveConnection. ──
+// AI-ACTION: core-integrations:archive-sync-connection
 syncRouter.post(
   "/connections/:id/archive",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const db = tenantDb(req);
-    const id = req.params.id!;
-    await db.updateTable("core_integrations_connectors").set({ archived_at: new Date(), updated_at: new Date() }).where("id", "=", id).execute();
-    // Stop the poll worker: disable every entity-type sync + clear its due-time.
-    await db.updateTable("core_integrations_sync_state").set({ enabled: false, next_run_at: null, updated_at: new Date() }).where("connector_row_id", "=", id).execute();
+    if (!(await requireCapability(req, res, "core-integrations:archive-sync-connection"))) return;
+    await archiveConnection(tenantDb(req), req.params.id!);
     res.json({ ok: true });
   }),
 );
 
-// ── un-archive: one click back to the normal list. Sync stays OFF (archiving is
-//    not the same as disabling ongoing sync) — you re-enable it if you want. ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// ── un-archive: one click back to the normal list; sync stays OFF. ──
+// AI-ACTION: core-integrations:unarchive-sync-connection
 syncRouter.post(
   "/connections/:id/unarchive",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const db = tenantDb(req);
-    await db.updateTable("core_integrations_connectors").set({ archived_at: null, updated_at: new Date() }).where("id", "=", req.params.id!).execute();
+    if (!(await requireCapability(req, res, "core-integrations:unarchive-sync-connection"))) return;
+    await unarchiveConnection(tenantDb(req), req.params.id!);
     res.json({ ok: true });
   }),
 );
 
 // ── test the connection's credentials ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-ACTION: core-integrations:test-sync-connection
 syncRouter.post(
   "/connections/:id/test",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const ctx = tenantContext(req);
-    const db = tenantDb(req);
-    const ref = await loadConnectionRef(db, ctx.org.id, req.params.id!);
-    if (!ref) return void res.status(404).json({ error: { code: "not_found", message: "connection not found / disabled" } });
-    const def = await resolveSyncConnector(db, ref.connectorId);
-    if (!def?.testConnection) return void res.json({ ok: true, note: "connector has no test" });
-    const result = await def.testConnection({ orgId: ref.orgId, baseUrl: ref.baseUrl, credentials: ref.credentials, fetch });
+    if (!(await requireCapability(req, res, "core-integrations:test-sync-connection"))) return;
+    const out = await testSyncConnection(tenantDb(req), tenantContext(req).org.id, req.params.id!);
+    if (!out.found) return void res.status(404).json({ error: { code: "not_found", message: "connection not found / disabled" } });
+    const { found: _found, ...result } = out;
     res.json(result);
   }),
 );
@@ -342,46 +337,15 @@ const SyncConfig = z.object({
   cadence_min: z.number().int().min(1).max(1440).optional(),
 });
 
-// ── enable/disable live sync + cadence ──
-// Live sync only starts once the first import is approved. Before that the row
-// stays in PREVIEW (next_run_at null) regardless of the enabled flag.
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// ── enable/disable live sync + cadence (see setSectionSync) ──
+// AI-ACTION: core-integrations:set-sync
 syncRouter.put(
   "/connections/:id/syncs/:entityType",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "core-integrations:set-sync"))) return;
     const parsed = SyncConfig.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const ctx = tenantContext(req);
-    const db = tenantDb(req);
-    const cadence = parsed.data.cadence_min ?? DEFAULT_CADENCE_MIN;
-    const existing = await db
-      .selectFrom("core_integrations_sync_state")
-      .select(["import_approved_at"])
-      .where("connector_row_id", "=", req.params.id!)
-      .where("entity_type", "=", req.params.entityType!)
-      .executeTakeFirst();
-    const approved = !!existing?.import_approved_at;
-    const nextRun = parsed.data.enabled && approved ? new Date() : null;
-    await db
-      .insertInto("core_integrations_sync_state")
-      .values({
-        connector_row_id: req.params.id!,
-        entity_type: req.params.entityType!,
-        enabled: parsed.data.enabled,
-        cadence_min: cadence,
-        next_run_at: nextRun,
-      })
-      .onConflict((oc) =>
-        oc.columns(["connector_row_id", "entity_type"]).doUpdateSet({
-          enabled: parsed.data.enabled,
-          cadence_min: cadence,
-          next_run_at: nextRun,
-          updated_at: new Date(),
-        }),
-      )
-      .execute();
-    if (parsed.data.enabled && approved) await ensureSyncScan(ctx.org.id);
+    await setSectionSync(tenantDb(req), tenantContext(req).org.id, req.params.id!, req.params.entityType!, parsed.data.enabled, parsed.data.cadence_min);
     res.json({ ok: true });
   }),
 );
@@ -391,25 +355,18 @@ async function loadRefType(
   req: import("express").Request,
   res: import("express").Response,
 ): Promise<{ ref: NonNullable<Awaited<ReturnType<typeof loadConnectionRef>>>; type: import("@cobblr/platform-contract").SyncEntityType } | null> {
-  const ctx = tenantContext(req);
-  const db = tenantDb(req);
-  const ref = await loadConnectionRef(db, ctx.org.id, req.params.id!);
-  if (!ref) {
-    res.status(404).json({ error: { code: "not_found", message: "connection not found / disabled" } });
+  const rt = await loadSection(tenantDb(req), tenantContext(req).org.id, req.params.id!, req.params.entityType!);
+  if ("error" in rt) {
+    res.status(404).json({ error: { code: rt.error, message: rt.error === "not_found" ? rt.message : "entity type not offered by this connector" } });
     return null;
   }
-  const def = await resolveSyncConnector(db, ref.connectorId);
-  const type = def?.entityTypes.find((t) => t.key === req.params.entityType);
-  if (!type) {
-    res.status(404).json({ error: { code: "unknown_type", message: "entity type not offered by this connector" } });
-    return null;
-  }
-  return { ref, type };
+  return rt;
 }
 
 // ── import PREVIEW: a dry-run plan (create/update/link/unchanged/delete) that
 // writes NOTHING. The "what a manual one-time import would do" view. ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — writes nothing; it is the first half of a person's review
+// of a one-time import (the plan they read before they approve it at /import)
 syncRouter.post(
   "/connections/:id/syncs/:entityType/preview",
   asyncHandler(async (req, res) => {
@@ -502,7 +459,9 @@ syncRouter.post(
 );
 
 // ── approve & run the one-time IMPORT (merges by name), then go LIVE. ──
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a person's approval of the import plan they just read: a
+// bulk write that merges by name into their records, cheap to ask for and
+// expensive to get wrong, so it stays a press beside the plan it approves
 syncRouter.post(
   "/connections/:id/syncs/:entityType/import",
   asyncHandler(async (req, res) => {
@@ -563,57 +522,16 @@ syncRouter.post(
 );
 
 // ── sync now: live reconcile (strict external-id; only AFTER import approved) ──
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-ACTION: core-integrations:sync-now
 syncRouter.post(
   "/connections/:id/syncs/:entityType/run",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-integrations:sync-now"))) return;
     const rt = await loadRefType(req, res);
     if (!rt) return;
-    const db = tenantDb(req);
-    const state = await db
-      .selectFrom("core_integrations_sync_state")
-      .select(["import_approved_at"])
-      .where("connector_row_id", "=", rt.ref.connectorRowId)
-      .where("entity_type", "=", rt.type.key)
-      .executeTakeFirst();
-    if (!state?.import_approved_at) {
-      return void res
-        .status(409)
-        .json({ error: { code: "not_imported", message: "run the import preview + approve it first" } });
-    }
-    try {
-      const result = await runReconcile(db, rt.ref, rt.type); // live: no name-merge
-      // A manual run is the poll's run: push its next turn a cadence out, for
-      // the same reason the import does (#2880).
-      await db
-        .updateTable("core_integrations_sync_state")
-        .set({
-          last_run_at: new Date(),
-          ...runStatusOf(result),
-          last_synced_count: result.total,
-          next_run_at: sql`now() + make_interval(mins => coalesce(cadence_min, ${DEFAULT_CADENCE_MIN}))`,
-          updated_at: new Date(),
-        })
-        .where("connector_row_id", "=", rt.ref.connectorRowId)
-        .where("entity_type", "=", rt.type.key)
-        .execute();
-      res.json({ ok: true, result });
-    } catch (e) {
-      // A busy sync has not failed, so it must not be written down as failed:
-      // last_status would read "error" until the next successful run and the
-      // connection would look broken on the page.
-      if (e instanceof ReconcileBusyError) {
-        res.status(409).json({ ok: false, error: e.message });
-        return;
-      }
-      await db
-        .updateTable("core_integrations_sync_state")
-        .set({ last_run_at: new Date(), last_status: "error", last_error: (e as Error).message, updated_at: new Date() })
-        .where("connector_row_id", "=", rt.ref.connectorRowId)
-        .where("entity_type", "=", rt.type.key)
-        .execute();
-      res.status(502).json({ ok: false, error: (e as Error).message });
-    }
+    const out = await syncNow(tenantDb(req), rt.ref, rt.type);
+    if (out.ok) return void res.json({ ok: true, result: out.result });
+    if (out.code === "not_imported") return void res.status(409).json({ error: { code: "not_imported", message: out.message } });
+    res.status(out.code === "busy" ? 409 : 502).json({ ok: false, error: out.message });
   }),
 );

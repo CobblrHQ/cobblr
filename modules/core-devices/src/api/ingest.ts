@@ -16,8 +16,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { tenantContext } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { sql } from "kysely";
+import { tenantContext, tenantDb } from "../db.js";
+import { asyncHandler, badBody, requireRole, sessionUserId } from "./util.js";
 import { applyToLinkedEntity, type DevicePayload } from "./action-handlers.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
@@ -36,7 +37,12 @@ const IngestBody = z.object({
   delta: optionalField(z.number().int()),
   /** When the device sampled it (ISO-8601); defaults to receipt time. */
   at: optionalField(z.string().datetime()),
+  /** The device's id for this post. A device that lost the answer sends the
+   *  same post again under the same id; it is applied once. */
+  delivery: optionalText(64),
 });
+
+const KEEP_DELIVERIES = "7 days";
 
 const EVENT_BY_KIND = {
   reading: "core-devices.device.reading",
@@ -44,7 +50,8 @@ const EVENT_BY_KIND = {
   counted: "core-devices.device.counted",
 } as const;
 
-// AI-REACH: the device wire; a sensor or a bridge posts readings here, not a person
+// AI-REACH: exempt — the device wire: a sensor or bridge posts its readings here
+// with its own key, and a reading the assistant made up would be a false one
 // UI-REACH: the device wire; a sensor or a bridge posts readings here
 ingestRouter.post(
   "/",
@@ -70,9 +77,26 @@ ingestRouter.post(
           : { ...base, count: d.count ?? null, delta: d.delta ?? null };
     const event = EVENT_BY_KIND[d.kind];
 
-    // Emit for power-user wires, then resolve + apply the link (the common case).
-    await platform().events.emit(event, payload);
-    const applied = await applyToLinkedEntity(ctx.org.id, payload);
-    res.status(202).json({ ok: true, event, applied });
+    // A post sent again under an id already applied changes nothing: its
+    // first copy arrived, and only the answer was lost on the way back.
+    const db = tenantDb(req);
+    if (d.delivery) {
+      await db.deleteFrom("core_devices_deliveries").where("connection_id", "=", d.connection).where("device", "=", d.device).where("received_at", "<", sql<Date>`now() - ${KEEP_DELIVERIES}::interval`).execute();
+      const claimed = await db.insertInto("core_devices_deliveries").values({ connection_id: d.connection, device: d.device, delivery: d.delivery }).onConflict(oc => oc.doNothing()).returning("delivery").executeTakeFirst();
+      if (!claimed) return void res.status(200).json({ ok: true, event, duplicate: true });
+    }
+
+    try {
+      // Emit for power-user wires, then resolve + apply the link (the common case).
+      await platform().events.emit(event, payload);
+      // As the caller: a reading does no more than the person (or the person
+      // whose token the device holds) may do through the action itself.
+      const applied = await applyToLinkedEntity(ctx.org.id, payload, sessionUserId(req));
+      res.status(202).json({ ok: true, event, applied });
+    } catch (err) {
+      // Not applied, so the device's next try must not read as a repeat.
+      if (d.delivery) await db.deleteFrom("core_devices_deliveries").where("connection_id", "=", d.connection).where("device", "=", d.device).where("delivery", "=", d.delivery).execute();
+      throw err;
+    }
   }),
 );

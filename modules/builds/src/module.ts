@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.1.25",
+  version: "0.2.0",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -408,6 +408,23 @@ export default defineModule({
           qty: { label: "How many to reverse, defaults to 1", type: "number" },
         },
         userInvokable: false,
+      },
+      {
+        // UI-SCREEN: /builds the build's sub-assembly line toggles Use stock first / Always make.
+        group: "make",
+        id: "builds:set-sub-assembly-source",
+        runBy: "member",
+        examples: ["Always make the controller boards for the printer build", "Use the stocked harnesses first when building the loom"],
+        label: "Use stock first or always make",
+        description: "Sets whether a build takes a sub-assembly from stock before making more, or always makes it from its parts.",
+        scope: "workspace",
+        invokeHandler: "builds.set-sub-assembly-source",
+        userInvokable: true,
+        argsSchema: {
+          build: { label: "Build", type: "text", required: true },
+          sub_assembly: { label: "Sub-assembly", type: "text", required: true },
+          use_stock: { label: "Take it from stock first", type: "boolean", required: true },
+        },
       },
     ],
   },

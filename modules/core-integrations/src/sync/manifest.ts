@@ -20,7 +20,7 @@ import { z } from "zod";
 
 /** Operators a `$.path|<op>` extract may carry. `last`: the final segment of a
  *  URL/IRI value, for sources that express a foreign key as a link. */
-const EXTRACT_OPS = new Set(["last"]);
+const EXTRACT_OPS = new Set(["last", "cents"]);
 
 /** A dot-path (`$.x.y`, optionally `$.x.y|last`) or literal (`='lit'`) string
  *  extract. An unknown operator is rejected HERE, at manifest-parse time: a typo
@@ -31,7 +31,7 @@ const Extract = z
   .min(1)
   .refine(
     (s) => !s.startsWith("$.") || !s.includes("|") || EXTRACT_OPS.has(s.slice(s.indexOf("|") + 1)),
-    { message: "unknown extract operator (supported: |last)" },
+    { message: "unknown extract operator (supported: |last, |cents)" },
   );
 const Method = z.enum(["GET", "POST"]).default("GET");
 
@@ -82,7 +82,8 @@ export const SyncEntityTypeManifest = z.object({
    *  response (e.g. "$.items"); omit if the body IS the array. `paginate` walks
    *  page-numbered endpoints: the engine appends `?<param>=N&<sizeParam>=<size>`
    *  (starting at `startPage`, default 1) and keeps fetching until a page returns
-   *  fewer than `size` rows (or `maxPages` is hit — a safety bound). Omit for a
+   *  fewer than `size` rows. A full page at `maxPages` fails as incomplete,
+   *  preserving existing mirrors rather than treating the partial list as complete. Omit for a
    *  single-shot list. e.g. { "param": "page", "sizeParam": "page_size", "size": 100 } */
   list: z.object({
     method: Method,
@@ -93,6 +94,9 @@ export const SyncEntityTypeManifest = z.object({
         param: z.string().min(1).max(40),
         size: z.number().int().min(1).max(500),
         sizeParam: z.string().min(1).max(40).optional(),
+        /** The parameter counts rows skipped, not pages (`offset=200`, as Snipe-IT
+         *  has it): page n sends (n - startPage) * size. */
+        offset: z.boolean().optional(),
         startPage: z.number().int().min(0).max(1).default(1),
         maxPages: z.number().int().min(1).max(1000).default(200),
       })
@@ -139,7 +143,7 @@ export const SyncEntityTypeManifest = z.object({
    *  engine resolves `from` (the external id in the source) through that
    *  section's id-map to the mirrored Cobblr id. Keep the field OUT of `map` —
    *  references win. e.g. { "location_id": { "section": "locations", "from": "$.location_id" } } */
-  references: z.record(z.object({ section: z.string().min(1), from: Extract })).optional(),
+  references: z.record(z.object({ section: z.string().min(1), from: Extract, fallback: Extract.optional() })).optional(),
   /** Image fields to pull across: a target field → the extract for the source
    *  image URL/path. The engine fetches each (authed, through the bridge), stores
    *  the bytes in core-files, and sets the field to the served file URL. Relative
@@ -153,6 +157,27 @@ export const SyncEntityTypeManifest = z.object({
    *  yields an array (strings, or objects carrying a `name`) or, with `split`,
    *  one delimited string. e.g. { "from": "$.tags", "split": "," } */
   tags: z.object({ from: Extract, split: z.string().min(1).max(4).optional() }).optional(),
+  /** One source record is kept in several places (a part with a stock row per
+   *  bin). `from` is the array of stock rows; each has an id, a quantity and a
+   *  place (`location`: a reference into another section). Rows in one place
+   *  are summed. The place of the oldest row is the card's own (its location
+   *  and quantity); every other place becomes a record of the same kind paired
+   *  `holding-of` to the card, kept in step on every sync by the row's id: a
+   *  new place adds one, a place that went retires one, a changed amount or a
+   *  moved row updates only that one. Rows with no place add to the card's own
+   *  row. `dropWhenSplit` names mapped fields that describe the whole and so
+   *  make no sense on one row once there are several (a minimum is per place
+   *  in Cobblr); they are left off the card then, the source's value still
+   *  riding in the mapped metadata. */
+  holdings: z
+    .object({
+      from: Extract,
+      idField: Extract,
+      qty: Extract,
+      location: z.object({ section: z.string().min(1), from: Extract }),
+      dropWhenSplit: z.array(z.string().min(1)).optional(),
+    })
+    .optional(),
 });
 export type SyncEntityTypeManifest = z.infer<typeof SyncEntityTypeManifest>;
 

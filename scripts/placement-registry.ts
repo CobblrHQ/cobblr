@@ -205,6 +205,19 @@ export const PLACEMENT: PlacementRow[] = [
     notes: ["Load the `authoring-a-module` skill first — it owns those three decisions."],
   },
   {
+    id: "module-family",
+    what: "a family of machines or things inside one module, on or off on its own (digifab's robot arms)",
+    keywords: ["family", "families", "module part", "sub module", "submodule", "robot arms family", "digifab family", "turn part off"],
+    dir: "modules/<name>/src/families/<family>/",
+    exemplar: "modules/digifab/src/families/arms/index.ts",
+    why: "A family is a module part: its manifest piece (manifest.ts) and its registration (index.ts) declare it to the module's core, which never imports it, so the family can be off in a workspace and moved or added without touching the rest.",
+    lints: ["lint:core-imports-no-family", "lint:family-imports-only-core", "lint:manifests"],
+    notes: [
+      "Declare the part, its actions and panels in families/<family>/manifest.ts and add them to families/manifests.ts; register handlers, routes and boot work in families/<family>/index.ts and add it to families/index.ts.",
+      "Give each action, panel and workspace tool of the family `part: \"<family>\"`, and the routes it owns in the part's `routes`, so the kernel hides them where the part is off (docs/architecture/module-parts.md).",
+    ],
+  },
+  {
     id: "contract-resolver",
     what: "a pure rule in the platform contract that every surface reads (a resolver, a predicate, the context it takes)",
     keywords: ["resolver", "contract", "context", "predicate", "one rule", "platform-contract", "scan-triage", "row state", "eligibility", "readiness", "resolver context field"],

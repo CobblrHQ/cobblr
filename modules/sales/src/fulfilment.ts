@@ -14,6 +14,8 @@
 import { type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
+import { withOrderLock } from "./order-lock.js";
+import { drawStock } from "./stock-draw.js";
 import { orderHappened } from "./history.js";
 
 export interface FulfilLine {
@@ -48,9 +50,16 @@ export type FulfilResult =
       status: SalesOrderStatus;
       shipped: Array<{ line_id: string; part_id: string; qty: number }>;
     }
-  | { ok: false; code: "not_enough_stock" | "nothing_to_ship" | "already_fulfilled" | "not_found"; message: string; shortages: Shortage[]; doors: FulfilDoor[] };
+  | { ok: false; code: "not_enough_stock" | "nothing_to_ship" | "already_fulfilled" | "cancelled" | "not_found"; message: string; shortages: Shortage[]; doors: FulfilDoor[] };
 
-const DONE: SalesOrderStatus[] = ["fulfilled", "shipped", "closed"];
+const FULFILMENT_REFUSAL = {
+  draft: null,
+  confirmed: null,
+  fulfilled: "already_fulfilled",
+  shipped: "already_fulfilled",
+  closed: "already_fulfilled",
+  cancelled: "cancelled",
+} satisfies Record<SalesOrderStatus, "already_fulfilled" | "cancelled" | null>;
 
 /** The stock door a fulfilment draws through. A record whose kind keeps its
  *  count behind this action can be sold from; stock-search.ts reads it. */
@@ -155,10 +164,15 @@ export async function fulfilOrder(
   orderId: string,
   mode: FulfilMode,
 ): Promise<FulfilResult> {
+  return withOrderLock(db, orgId, userId, orderId, () => fulfilOrderUnderLock(db, orgId, userId, orderId, mode));
+}
+
+export async function fulfilOrderUnderLock(db: Kysely<SalesDB>, orgId: string, userId: string | null, orderId: string, mode: FulfilMode): Promise<FulfilResult> {
   const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
   if (!order) return { ok: false, code: "not_found", message: "That order is not here any more.", shortages: [], doors: [] };
-  if (DONE.includes(order.status)) {
-    return { ok: false, code: "already_fulfilled", message: `This order is already ${order.status}.`, shortages: [], doors: [] };
+  const refusal = FULFILMENT_REFUSAL[order.status];
+  if (refusal) {
+    return { ok: false, code: refusal, message: refusal === "cancelled" ? "A cancelled order does not fulfil." : `This order is already ${order.status}.`, shortages: [], doors: [] };
   }
   const rows = await db
     .selectFrom("sales_order_items")
@@ -187,28 +201,8 @@ export async function fulfilOrder(
   for (const l of lines) {
     const n = take.get(l.id) ?? 0;
     if (!l.part_id || n <= 0) continue;
-    const res = (await platform().actions.invoke(DRAW_ACTION, {
-      orgId,
-      userId,
-      entity: { kind: "inventory:part", id: l.part_id },
-      event: {
-        name: "sales.order.fulfilled",
-        payload: {},
-        actor: { user_id: userId, display_name: null, auth_method: "session" },
-        timestamp: new Date().toISOString(),
-        trigger_type: "event",
-      },
-      args: { partId: l.part_id, delta: -n, reason: `sale:${orderId}`, sourceKind: "sales:order", sourceId: orderId },
-    })) as { ok?: boolean; delta?: number } | null;
-    // What actually left the shelf. A refusal or a clamp (stock moved between
-    // the plan and the draw) ships only what moved, never the asked-for number.
-    const moved = res?.ok ? Math.abs(Number(res.delta ?? 0)) : 0;
+    const moved = await drawStock(db, orgId, userId, orderId, { ...l, part_id: l.part_id }, n);
     if (moved <= 0) continue;
-    await db
-      .updateTable("sales_order_items")
-      .set({ qty_fulfilled: String(l.qty_fulfilled + moved), updated_at: new Date() })
-      .where("id", "=", l.id)
-      .execute();
     l.qty_fulfilled += moved;
     shipped.push({ line_id: l.id, part_id: l.part_id, qty: moved });
   }
@@ -224,13 +218,6 @@ export async function fulfilOrder(
     .set({ status, ...(complete ? { fulfilled_at: new Date() as never } : {}), updated_at: new Date() })
     .where("id", "=", orderId)
     .execute();
-  if (shipped.length > 0) {
-    await orderHappened(db, orgId, orderId, {
-      kind: "stock",
-      detail: { taken: shipped.map((s) => ({ part_id: s.part_id, qty: s.qty })), complete },
-      by_user: userId,
-    });
-  }
   if (status !== order.status) {
     await orderHappened(db, orgId, orderId, { kind: "status", from_status: order.status, to_status: status, by_user: userId });
   }

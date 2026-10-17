@@ -7,6 +7,7 @@ import { orderFigures, combineOrderTotals } from "../order-money.js";
 
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { receiveIfArrived, receiveOrderLines, setReceivedCount } from "../receive.js";
+import { createHash } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -297,6 +298,7 @@ ordersRouter.get(
   }),
 );
 
+// AI-REACH: crud
 ordersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -345,6 +347,96 @@ ordersRouter.post(
   }),
 );
 
+/** A whole order from an importer: the order and every line, or nothing. */
+const OrderImport = z.object({
+  order: z.record(z.unknown()),
+  items: z.array(z.record(z.unknown())).max(1000),
+  /** What this order is, so bringing it in again finds it. Derived from the order
+   *  and its lines when the importer does not name one. */
+  import_key: z.string().min(1).max(200).optional(),
+});
+
+/** The same order and lines always make the same key. */
+function importKeyOf(order: Record<string, unknown>, items: Array<Record<string, unknown>>): string {
+  const lines = items.map((i) => [i.description ?? null, i.qty ?? null, i.unit_cost ?? null, i.line_amount ?? null]);
+  return createHash("sha256").update(JSON.stringify({ v: order.vendor ?? order.vendor_id ?? null, n: order.order_number ?? null, t: order.total_cost ?? null, lines })).digest("hex");
+}
+
+// AI-REACH: exempt the importer's single door, so a lost answer cannot leave half an order; Cobb files an order and its lines through the order and add-line actions
+ordersRouter.post(
+  "/import",
+  asyncHandler(async (req, res) => {
+    const body = OrderImport.safeParse(req.body);
+    if (!body.success) return badBody(res, body.error);
+    await refuseUnknownFields(req, body.data.order, ORDER_NATIVE_KEYS, "purchases:order");
+    const order = OrderCreate.safeParse(routeUnknownToMetadata(body.data.order, ORDER_NATIVE_KEYS));
+    if (!order.success) return badBody(res, order.error);
+    const lines: Array<z.infer<typeof ItemCreate>> = [];
+    for (const raw of body.data.items) {
+      const line = ItemCreate.safeParse(routeUnknownToMetadata(raw, ITEM_NATIVE_KEYS));
+      if (!line.success) return badBody(res, line.error);
+      lines.push(line.data);
+    }
+    const db = tenantDb(req);
+    const ctx = tenantContext(req);
+    const session = sessionUser(req);
+    const key = body.data.import_key ?? importKeyOf(body.data.order, body.data.items);
+    const vendorText = await vendorTextFor(req, order.data.vendor_id, order.data.vendor);
+    const main = await platform().money.currency(ctx.org.id);
+    const orderCurrency = fieldCurrency(order.data.metadata, "total_cost", main);
+    const orderMetadata = Object.assign({}, order.data.metadata, { currency: orderCurrency, import_key: key });
+    // One transaction: the order and every line commit together or not at all, and
+    // a second import of the same order (a retry, a double press) waits for the
+    // first and then finds it, because the key is unique.
+    const done = await db.transaction().execute(async (trx) => {
+      const inserted = await trx
+        .insertInto("purchases_orders")
+        .values({
+          ...order.data,
+          vendor: vendorText,
+          instance: instanceOf(req),
+          status: order.data.status ?? "ordered",
+          metadata: orderMetadata,
+          ...(order.data.tracking_number ? { tracking_added_by_user_id: session.id } : {}),
+        })
+        .onConflict((oc) => oc.expression(sql`(metadata ->> 'import_key')`).where(sql<boolean>`metadata ->> 'import_key' is not null`).doNothing())
+        .returningAll()
+        .executeTakeFirst();
+      if (!inserted) {
+        const existing = await trx
+          .selectFrom("purchases_orders")
+          .selectAll()
+          .where(sql<boolean>`metadata ->> 'import_key' = ${key}`)
+          .executeTakeFirstOrThrow();
+        const existingItems = await trx.selectFrom("purchases_order_items").selectAll().where("order_id", "=", existing.id).orderBy("created_at").execute();
+        return { order: existing, items: existingItems, already: true };
+      }
+      const rows = lines.map(({ subject_kind: _k, subject_id: _i, add_to_stock: _a, ...line }) => ({
+        ...line,
+        part_id: null,
+        order_id: inserted.id,
+        metadata: Object.assign({}, line.metadata, { currency: fieldCurrency(line.metadata, "unit_cost", orderCurrency) }),
+      }));
+      const items = rows.length ? await trx.insertInto("purchases_order_items").values(rows).returningAll().execute() : [];
+      return { order: inserted, items, already: false };
+    });
+    if (!done.already) {
+      await platform().activity.log({
+        orgId: ctx.org.id,
+        userId: session.id,
+        action: "order_created",
+        ref: { module: "purchases", entityType: "order", entityId: done.order.id },
+        diff: { vendor: order.data.vendor, status: done.order.status, lines: done.items.length },
+      });
+      platform().events.emit("purchases.order.created", { orgId: ctx.org.id, orderId: done.order.id });
+      if (done.order.order_number) await attachWaiting(db, ctx.org.id).catch((err: unknown) => console.error("[purchases] order page attach failed:", (err as Error).name));
+      await receiveIfArrived(db, ctx.org.id, done.order.id, undefined);
+    }
+    res.status(done.already ? 200 : 201).json({ ...done.order, items: done.items, already_imported: done.already });
+  }),
+);
+
+// AI-REACH: crud
 ordersRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -425,6 +517,7 @@ ordersRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 ordersRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

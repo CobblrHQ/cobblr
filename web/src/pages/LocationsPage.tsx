@@ -17,8 +17,9 @@ import { parseRange } from "../lib/nameRange";
 import { LocationFloorPlanTab } from "../components/LocationFloorPlanTab";
 import { SPACE_PARAM, placeItemsHref } from "../components/placeItems/useSelectedSpace";
 import { NewBinSheet } from "./NewBinSheet";
+import { HeaderMenu, MenuItem } from "../components/HeaderMenu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, ChevronsDownUp, ChevronsUpDown, Layers, PackageOpen } from "lucide-react";
+import { Camera, Plus, Printer, Trash2, Pencil, Box as BoxIcon, MapPin as AreaIcon, Upload, Download, GripVertical, CheckSquare, ChevronRight, ChevronsDownUp, ChevronsUpDown, Layers, MoreHorizontal, PackageOpen } from "lucide-react";
 import {
   DndContext,
   type DragEndEvent,
@@ -400,15 +401,23 @@ export function LocationsPage() {
 
   return (
     <div className="space-y-4">
-      <Link className="inline-block text-xs text-muted underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
+      {/* Below `sm`, Export and Import live on this small line instead of the
+          title row: there the title, the Floor Plan / List switch and three
+          icon buttons came to 416 px and every phone scrolled sideways (#6930). */}
+      <div className="flex items-center gap-3 text-xs text-muted">
+        <Link className="inline-flex items-center underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
+        <button type="button" onClick={exportCsv} className="inline-flex items-center sm:hidden underline" title="Download all locations as a CSV">Export</button>
+        <button type="button" onClick={() => setImportOpen(true)} className="inline-flex items-center sm:hidden underline" title="Import locations from a file">Import</button>
+      </div>
       {/* ONE row on every width. It used to wrap, which kept the page from
           scrolling sideways but spent three of a phone's rows on chrome before
           the first location. The secondary actions keep their icon and drop
           their LABEL below `sm` instead (they are recognisable, and rarely the
           reason you opened this page), and "+ New location" has moved down to
-          share the search row. */}
+          share the search row. The heading is the one item that may shrink, so
+          the row can never push the page wider than the screen. */}
       <div className="flex items-center gap-x-2 sm:gap-x-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 shrink-0">
+        <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 min-w-0 truncate">
           Locations
         </h1>
         <span className="hidden sm:inline text-sm text-muted dark:text-slate-400 shrink-0">
@@ -455,7 +464,7 @@ export function LocationsPage() {
           onClick={exportCsv}
           aria-label="Export"
           title="Export: download all locations as a CSV"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
+          className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <Download size={14} /> <span className="hidden sm:inline">Export</span>
         </button>
@@ -463,7 +472,7 @@ export function LocationsPage() {
           onClick={() => setImportOpen(true)}
           aria-label="Import"
           title="Import locations from a file"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
+          className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <Upload size={14} /> <span className="hidden sm:inline">Import</span>
         </button>
@@ -892,12 +901,15 @@ function LocationCard({
           <span className="hidden sm:inline text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
             {node.kind}
           </span>
+          {/* On a phone the two are one More menu: each control is a 44 px
+              target there, and two of them left a place's name about 80 px
+              ("Back wor...", #7023). */}
           <button
             aria-label="Add child"
             type="button"
             onClick={() => onAddChild(node.id)}
             title="Add child"
-            className="text-faint hover:text-accent transition p-1"
+            className="hidden sm:inline-flex text-faint hover:text-accent transition p-1"
           >
             <Plus size={14} />
           </button>
@@ -906,10 +918,28 @@ function LocationCard({
             type="button"
             onClick={() => onEdit(node)}
             title="Edit"
-            className="text-faint hover:text-accent transition p-1"
+            className="hidden sm:inline-flex text-faint hover:text-accent transition p-1"
           >
             <Pencil size={14} />
           </button>
+          <span className="sm:hidden">
+            <HeaderMenu
+              width={200}
+              align="right"
+              trigger={({ toggle }) => (
+                <button type="button" onClick={toggle} aria-label={`More for ${node.name}`} title="More: add inside, edit" className="inline-flex items-center justify-center text-faint hover:text-accent transition">
+                  <MoreHorizontal size={16} />
+                </button>
+              )}
+            >
+              {({ close }) => (
+                <>
+                  <MenuItem icon={<Plus size={14} />} label="Add inside" onClick={() => { close(); onAddChild(node.id); }} />
+                  <MenuItem icon={<Pencil size={14} />} label="Edit" onClick={() => { close(); onEdit(node); }} />
+                </>
+              )}
+            </HeaderMenu>
+          </span>
           {/* No per-row delete. Deleting a location cascades to everything
               under it, so it is the one action here you cannot take back — and
               it was a 14px target beside two harmless ones. Tick the row and

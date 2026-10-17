@@ -152,12 +152,12 @@ export function registerInventoryResolvers(): void {
   // never mix") broken on the door views/search/AI all read through.
   platform().entities.registerListResolver("inventory:part", (orgId, query) =>
     partsListResolver(orgId, query, "inventory"),
-  );
+  { textOps: true });
   // Instance kinds (`<name>:item`) → this module's parts scoped to the instance.
   // Lets a Wardrobe/Filament/… instance's items flow through views/data/search.
   platform().entities.registerInstanceListResolver("inventory", (orgId, instance, query) =>
     partsListResolver(orgId, query, instance),
-  );
+  { textOps: true });
   // Single-entity twin — a `<name>:item` LOOKUP resolves the part by id scoped to
   // the instance, so instance detail/lookup resolves + gets computed fields the
   // same as the base inventory:part kind.

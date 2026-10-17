@@ -61,6 +61,9 @@ const KNOWN = new Set([
   "fast-light",
   "fast-test",
   "fast-dispatch",
+  // cobblr-recheck-aurora (server-setup #312): the re-check that holds main frozen, alone.
+  "fast-recheck-light",
+  "fast-recheck-test",
   "pr-check",
   "android-kvm",
 ]);
@@ -155,7 +158,7 @@ if (seen.size === 0) {
 // carry it and serve pull requests again).
 const MAIN_LANE_LABELS = new Set(["light-main", "ci-main"]);
 // A copy of main_lane.pr_labels in server-setup forge-ci/fleet-policy.json: change both together.
-const PR_LANE_LABELS = new Set(["ci-test", "pr-check", "image-pr", "fast-dispatch", "fast-light", "fast-test"]);
+const PR_LANE_LABELS = new Set(["ci-test", "pr-check", "image-pr", "fast-dispatch", "fast-light", "fast-test", "fast-recheck-light", "fast-recheck-test"]);
 /** The events a workflow runs on: `on: x`, `on: [x, y]`, or the keys of an `on:` block. */
 function triggers(src: string): string[] {
   const lines = src.split("\n");

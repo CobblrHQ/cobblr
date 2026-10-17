@@ -1,4 +1,5 @@
 import { registerPanelPresence } from "./platform/panel-presence.js";
+import { partIsOn } from "./platform/module-parts.js";
 import { externalMessagingRefusal, sendExternalMessage } from "./platform/external-messages.js";
 import { readEnabledPlaceValues } from "./platform/placement-values.js";
 import { argChoicesFor } from "./platform/action-arg-choices.js";
@@ -54,7 +55,7 @@ import { currentActor, currentVia, perRequest } from "./lib/request-context.js";
 import { endOpenStreams } from "./lib/event-stream.js";
 import { runMigrations } from "./db/migrate.js";
 import { getTenantDb, releaseIdleTenantPool, withTenantDbForSweep } from "./db/tenant.js";
-import { runExclusive } from "./platform/exclusive.js";
+import { runExclusive, runSerialised } from "./platform/exclusive.js";
 import { bakeTestOrgPool, poolEnabled } from "./db/test-org-pool.js";
 import { signAppToken, signSession } from "./auth/jwt.js";
 import { loadAllModules } from "./modules/loader.js";
@@ -114,7 +115,7 @@ import * as wires from "./platform/wires.js";
 import * as health from "./platform/health.js";
 import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
-import { registerDateFieldSource, queryDateField, unreadableDateField } from "./platform/date-field-calendar.js";
+import { registerDateFieldSource, queryDateField, unreadableDateField, registerOverdueSource, overdue } from "./platform/date-field-calendar.js";
 import { registerUsedAddressSource } from "./platform/addresses-used.js";
 import { dayForPerson } from "./platform/person-day.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
@@ -580,6 +581,7 @@ async function boot() {
       serverManagedFields: entities.serverManagedFields,
     },
     panels: { registerPresence: registerPanelPresence },
+    parts: { isOn: partIsOn },
     actions: {
       registerHandler: actions.registerHandler,
       registerPlanner: actions.registerPlanner,
@@ -630,6 +632,8 @@ async function boot() {
       collect: calendarRegistry.collect,
       queryDateField,
       unreadableDateField,
+      registerOverdueSource,
+      overdue,
     },
     addresses: { registerUsedSource: registerUsedAddressSource },
     queue: {
@@ -637,7 +641,7 @@ async function boot() {
       registerWorker: queue.registerWorker,
       hasPendingJob: queue.hasPendingJob,
     },
-    exclusive: { run: runExclusive },
+    exclusive: { run: runExclusive, serial: runSerialised },
     sweeps: tenantSweeps,
     tidy,
     sharedCache: {
@@ -706,6 +710,7 @@ async function boot() {
             args: ctx.args ?? {},
             rendered: ctx.rendered,
             event: ctx.event,
+            idempotencyKey: ctx.idempotencyKey,
           },
           actionId,
         );

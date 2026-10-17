@@ -1061,7 +1061,7 @@ async function sendClaimed(
       try { const review = await sendDriver.getJobReview(approval.fileId); verifyLaserOutput(layout.expected, review); if (review.contentHash !== layout.content_hash) throw new Error("The queued layout file changed. Make a new plan."); } catch (e) { throw new ReviewRequired(e instanceof Error ? e.message : "The generated settings changed."); }
     }
     let cutterMayHaveStarted = false;
-    const checkStartAllowed = sendDriver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? async () => {
+    const checkStartAllowed = reviewRequired || sendDriver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? async () => {
       if (sendDriver.printProcess === "resin" && resinChecks++ > 0) {
         resinAccepted = true;
         await setResinPhase(db, jobId, "started");
@@ -1092,6 +1092,12 @@ async function sendClaimed(
       if (sendDriver.printProcess === "resin") {
         await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
         await checkResinStart(db, orgId, jobId);
+      }
+      // Every other reviewed family (a laser, a reviewed print) asks again
+      // whether its station still holds Start, before the machine is told and
+      // after it answers: a revoke in between must withdraw it.
+      if (reviewRequired && !cnc && !cutter && !["resin", "large-format"].includes(sendDriver.printProcess ?? "")) {
+        await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
       }
     } : undefined;
     ({ up, sub } = await submitReviewedJob(sendDriver, fileBytes, uploadName, { deviceId, tag: job.target_tag, idempotencyKey: token, approval, checkStartAllowed }, stationPermit));

@@ -25,7 +25,7 @@ export interface ArgChoice {
  *  keeps ("print hours"); `people` is the workspace's People list (a
  *  "who" argument). The server resolves it into `choices` when it
  *  lists a kind's actions, so a form never has to know. */
-export type ArgChoicesFrom = "counters" | "people";
+export type ArgChoicesFrom = "counters" | "people" | "recipients";
 
 export interface ActionArgSpec {
   label?: string;

@@ -3,6 +3,7 @@ type: feature
 scope: integrations
 date: 2026-10-16
 docs_target: docs/USER_GUIDE.md#4.3 Wires (connecting events to actions)
+docs_published: 2026-10-17
 ---
 
 A message to Slack, Discord or a webhook that meets a busy or briefly-down service is tried again, sent at the service's pace, and kept with a Send again button if it still fails

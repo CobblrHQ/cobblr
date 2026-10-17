@@ -1,4 +1,5 @@
 import { startRequest } from "./platform/compute-ledger.js";
+import { answerServerError } from "./lib/server-error.js";
 import { appliedBudget, connectionRefusals } from "./db/connection-budget.js";
 import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
@@ -409,8 +410,9 @@ export function createApp(): AppHandles {
     let dbOk = true;
     try {
       await metaPool.query("select 1");
-    } catch {
+    } catch (e) {
       dbOk = false;
+      console.warn(`[readyz] the database did not answer: ${(e as Error).message}`);
     }
     const outbound = await outboundReport();
     const down = outbound.filter((o) => !o.ok);
@@ -656,7 +658,7 @@ export function completeApp(app: Application): void {
   });
 
   app.use(
-    (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    (err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
       // Postgres 22P02 (invalid_text_representation) means a malformed
       // path/query value hit a typed column (e.g. a non-UUID :id). That's
       // a client error, not a server fault — answer 400, and never echo
@@ -680,12 +682,7 @@ export function completeApp(app: Application): void {
         res.status(503).json({ error: { code: err.code, message: WORKSPACE_NOT_CREATED_MESSAGE } });
         return;
       }
-      console.error("[cobblr-api] unhandled", err);
-      res.status(500).json({
-        // Never a blank message: an error thrown without one (a failed
-        // connection's AggregateError) left the person with nothing to read.
-        error: { code: "internal", message: env.NODE_ENV === "production" || !err.message?.trim() ? "Something went wrong on our side, and it did not say what. Try again." : err.message },
-      });
+      answerServerError(err, req, res, env.NODE_ENV === "production");
     },
   );
 }

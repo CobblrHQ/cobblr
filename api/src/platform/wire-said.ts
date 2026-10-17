@@ -12,6 +12,7 @@ import { readWireRecords } from "@cobblr/platform-contract/wire-narrowing";
 import { meta } from "../db/meta.js";
 import { lookupMany } from "./entities.js";
 import { personNamesFor } from "./people.js";
+import { isRecipientRole, recipientRoleSaid } from "@cobblr/platform-contract/recipients";
 
 export interface WireSaid {
   /** The one record the wire is narrowed to: its title, or null when it is gone. */
@@ -37,7 +38,8 @@ export function argValueSaid(value: unknown, spec: ArgSpec, people: ReadonlyMap<
   if (typeof value === "number") return String(value);
   if (typeof value !== "string" || !value.trim()) return null;
   const v = value.trim();
-  if (spec.choicesFrom === "people") return people.get(v) ?? v;
+  if (spec.choicesFrom === "recipients" && isRecipientRole(v)) return recipientRoleSaid(v);
+  if (spec.choicesFrom === "people" || spec.choicesFrom === "recipients") return people.get(v) ?? v;
   return v.length > 80 ? `${v.slice(0, 79)}…` : v;
 }
 
@@ -51,7 +53,7 @@ export async function wiresSaid(orgId: string, wires: readonly WireRow[]): Promi
   const byId = new Map(actions.map((a) => [a.id, a]));
   const needsPeople = wires.some((w) => {
     const schema = (byId.get(w.action_id)?.args_schema ?? {}) as Record<string, ArgSpec>;
-    return Object.entries(schema).some(([k, sp]) => sp.choicesFrom === "people" && (w.args as Record<string, unknown> | null)?.[k] !== undefined);
+    return Object.entries(schema).some(([k, sp]) => (sp.choicesFrom === "people" || sp.choicesFrom === "recipients") && (w.args as Record<string, unknown> | null)?.[k] !== undefined);
   });
   const people = needsPeople ? await personNamesFor(orgId) : new Map<string, string>();
   const narrowed = wires.map((w) => readWireRecords((w.filter as { in?: unknown } | null)?.in)?.record ?? null);

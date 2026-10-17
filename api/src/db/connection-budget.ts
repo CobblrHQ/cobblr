@@ -16,12 +16,21 @@
 // And a refusal is counted, so /healthz can say so and a roll that drew one
 // fails instead of reading clean.
 
+/** How long a pooled connection may sit idle before the pool closes it.
+ *  Every api-side pool uses it, with no minimum kept open: in a roll the old
+ *  api's quiet pools give their connections back within seconds rather than
+ *  holding them beside the new api's (#6928). */
+export const IDLE_RELEASE_MS = 10_000;
+
 /** What the server allows, what this api holds outside workspace pools, and
  *  the configured ceilings. */
 export interface BudgetInputs {
   maxConnections: number;
   reserved: number;
   metaPoolMax: number;
+  /** Connections held for advisory locks on cobblr_meta, outside the meta
+   *  pool: the warm lock pool and the sweep walk's lock session. */
+  lockConnections?: number;
   tenantPoolMax: number;
   configuredTenantPools: number;
   configuredSweepPools: number;
@@ -33,8 +42,14 @@ export interface Budget {
   perApi: number;
   tenantPools: number;
   sweepPools: number;
-  /** True when the configured ceilings already fit, so nothing was lowered. */
+  /** The most this api can hold at once with the sizes chosen: meta pool,
+   *  lock connections and every workspace pool full. */
+  worstCase: number;
+  /** True when that worst case, for every api a roll overlaps, fits what the
+   *  server allows after its reserved slots and the headroom. */
   fits: boolean;
+  /** True when a configured ceiling was lowered to fit. */
+  lowered: boolean;
 }
 
 const HEADROOM = 5;
@@ -42,16 +57,20 @@ const HEADROOM = 5;
 export function connectionBudget(i: BudgetInputs): Budget {
   const apis = Math.max(1, i.apis ?? 2);
   const perApi = Math.max(0, Math.floor((i.maxConnections - i.reserved - HEADROOM) / apis));
-  const room = Math.max(0, perApi - i.metaPoolMax);
+  const outside = i.metaPoolMax + (i.lockConnections ?? 0);
+  const room = Math.max(0, perApi - outside);
   const fitPools = Math.max(2, Math.floor(room / Math.max(1, i.tenantPoolMax)));
   const tenantPools = Math.min(i.configuredTenantPools, fitPools);
   // The sweeps share the workspace pools with people; never more than half.
   const sweepPools = Math.max(1, Math.min(i.configuredSweepPools, Math.floor(tenantPools / 2)));
+  const worstCase = outside + tenantPools * i.tenantPoolMax;
   return {
     perApi,
     tenantPools,
     sweepPools,
-    fits: tenantPools === i.configuredTenantPools && sweepPools === i.configuredSweepPools,
+    worstCase,
+    fits: apis * worstCase <= i.maxConnections - i.reserved - HEADROOM,
+    lowered: tenantPools !== i.configuredTenantPools || sweepPools !== i.configuredSweepPools,
   };
 }
 

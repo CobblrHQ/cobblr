@@ -47,6 +47,10 @@
     "version": "0.5.0",
     "hash": "30df889298fb232c50b7f166b25b565ac24e1fd4416f25f519ae0c2fb91d97cb"
   },
+  "cobblr.community.robot-arms": {
+    "version": "0.1.0",
+    "hash": "08d7c856bc584194d27ec4182e487f883d07d36ca2894081e3d650d8f2400aff"
+  },
   "cobblr.community.sheets": {
     "version": "0.1.3",
     "hash": "b4cb68db0e15a3d28df29312d7dceccab253bb7001d6755bfd29ebf698b145a9"

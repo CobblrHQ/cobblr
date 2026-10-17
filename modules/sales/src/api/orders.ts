@@ -172,6 +172,7 @@ ordersRouter.get(
   }),
 );
 
+// AI-REACH: crud
 ordersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -206,6 +207,7 @@ ordersRouter.post(
   }),
 );
 
+// AI-REACH: crud
 ordersRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -288,6 +290,7 @@ ordersRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 ordersRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

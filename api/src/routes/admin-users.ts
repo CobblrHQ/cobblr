@@ -18,8 +18,11 @@
 // this is the recommended onboarding path for the workshop-server
 // deploy where wiring SMTP is overkill.
 
+import { env } from "../env.js";
+import { isUndeliverableAddress, normalizeUsername, placeholderEmail, usernameProblem } from "../platform/usernames.js";
 import { Router } from "express";
 import { z } from "zod";
+import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { randomBytes } from "node:crypto";
 import { meta } from "../db/meta.js";
 import { createAccount } from "../platform/accounts.js";
@@ -35,7 +38,10 @@ import { MEMBER_PAIR_CODE_TTL_MS, mintPairCode, pairMintRefusal, revokeMemberPai
 export const adminUsersRouter = Router({ mergeParams: true });
 
 const CreateBody = z.object({
-  email: z.string().email().max(254),
+  // Required, unless the operator allows accounts with only a username (#6910).
+  email: optionalField(z.string().email().max(254)),
+  // An optional name to sign in with beside the email (#6910).
+  username: optionalField(z.string().trim().max(64)),
   display_name: z.string().min(1).max(120),
   role: z.enum(ORG_ROLES).default("member"),
 });
@@ -95,7 +101,30 @@ adminUsersRouter.post(
         });
         return;
       }
-      const email = parsed.data.email.toLowerCase().trim();
+      const username = parsed.data.username ? normalizeUsername(parsed.data.username) : null;
+      if (username !== null) {
+        const problem = usernameProblem(username);
+        if (problem) {
+          res.status(400).json({ error: { code: "invalid_username", message: problem } });
+          return;
+        }
+        if (await meta.selectFrom("users").select("id").where("username", "=", username).executeTakeFirst()) {
+          res.status(409).json({ error: { code: "username_taken", message: "That username is taken." } });
+          return;
+        }
+      }
+      if (!parsed.data.email && !(env.COBBLR_USERNAME_ONLY_ACCOUNTS && username)) {
+        res.status(400).json({
+          error: {
+            code: "email_required",
+            message: env.COBBLR_USERNAME_ONLY_ACCOUNTS ? "Give an email or a username." : "Give the person's email. (An account with only a username needs the server's COBBLR_USERNAME_ONLY_ACCOUNTS turned on.)",
+          },
+        });
+        return;
+      }
+      // No email: an address nothing is ever sent to, so a forgotten password
+      // is reset by an admin here (#6910).
+      const email = parsed.data.email ? parsed.data.email.toLowerCase().trim() : placeholderEmail(username!);
 
       // Refuse to re-create an existing user. If the email already
       // exists, the admin should either invite them via /invites or
@@ -127,6 +156,7 @@ adminUsersRouter.post(
             trx,
             {
               email,
+              username,
               password_hash: passwordHash,
               display_name: parsed.data.display_name,
               must_reset_password: true,
@@ -159,14 +189,16 @@ adminUsersRouter.post(
       res.status(201).json({
         user: {
           id: userId,
-          email,
+          email: isUndeliverableAddress(email) ? null : email,
+          username,
           display_name: parsed.data.display_name,
           role: parsed.data.role,
           must_reset_password: true,
         },
         temp_password: tempPassword,
         instructions:
-          "Hand this password to the user verbally or via a secure channel. They'll be forced to reset it on first login. This password is shown ONCE and never stored in plaintext.",
+          "Hand this password to the user verbally or via a secure channel. They'll be forced to reset it on first login. This password is shown ONCE and never stored in plaintext." +
+          (isUndeliverableAddress(email) ? " This account has no email: they sign in with their username, and if they forget the password an admin resets it here." : ""),
       });
     } catch (err) {
       next(err);

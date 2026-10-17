@@ -55,5 +55,5 @@ export function registerPurchasesCalendarSource(): void {
       if (msg.includes("does not exist")) return [];
       throw err;
     }
-  });
+  }, { module: "purchases" });
 }

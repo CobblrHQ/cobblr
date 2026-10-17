@@ -12,6 +12,7 @@ import { withTenant } from "../middleware/tenant.js";
 import { projectFieldScopes } from "../platform/field-scope-projection.js";
 import { meta } from "../db/meta.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
+import { partIsOn, routePart } from "../platform/module-parts.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { describeBlock } from "../platform/approvals.js";
 
@@ -182,6 +183,18 @@ function requireModuleEnabled(moduleName: string) {
         ? `${shown} is not turned on in this workspace. Turn it on in Configuration → Modules.`
         : `${shown} is not turned on in this workspace. Ask a workspace admin to turn it on.`;
       res.status(409).json({ error: { code: "module_not_enabled", message, blocked } });
+      return;
+    }
+    // A route of a part that is off here answers the way a module that is off
+    // does (module-parts.ts): the part's data stays, its doors close.
+    const part = routePart(moduleName, req.path);
+    if (part && !(await partIsOn(orgId, moduleName, part.id))) {
+      const shown = listEntries().find((e) => e.manifest.name === moduleName)?.manifest.displayName ?? moduleName;
+      const role = req.tenant?.role ?? "member";
+      const message = roleSatisfies(role as "owner", ["owner", "admin"])
+        ? `${part.label} in ${shown} is not turned on in this workspace. Turn it on in Configuration → Modules.`
+        : `${part.label} in ${shown} is not turned on in this workspace. Ask a workspace admin to turn it on.`;
+      res.status(409).json({ error: { code: "part_not_enabled", module: moduleName, part: part.id, message } });
       return;
     }
     next();

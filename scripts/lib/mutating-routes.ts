@@ -8,6 +8,7 @@
 import { readOnce } from "./read-once.ts";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { apiDirs, familyMounts } from "./manifest-sources.ts";
 
 export const MODULES = "modules";
 export const KERNEL = join("api", "src", "routes");
@@ -98,12 +99,15 @@ export function moduleRoutes(mod: string, lookback = 6): MutatingRoute[] {
       mounts.set(m[2]!, m[1] ? norm(m[1]) : "");
     }
   }
+  // A family's routers mount where its registration says (manifest-sources.ts).
+  for (const [router, path] of familyMounts(join(MODULES, mod), readOnce)) mounts.set(router, norm(path));
+  const dirs = apiDirs(join(MODULES, mod));
   // Where each router really answers: its own prefix under every router it
   // is mounted inside (`partsRouter.use(holdingsRouter)` puts holdings under
   // /parts). `path` keeps the one-level reading the assistant's lint was
   // built on; `served` is the composed one.
   const edges: Array<{ parent: string; prefix: string; child: string }> = [];
-  for (const f of walk(api)) {
+  for (const f of dirs.flatMap((d) => [...walk(d)])) {
     for (const m of readOnce(f).matchAll(/\b(\w+)\.use\(\s*(?:["'`]([^"'`]+)["'`]\s*,\s*)?(\w+)\s*\)/g)) {
       edges.push({ parent: m[1]!, prefix: m[2] ? norm(m[2]) : "", child: m[3]! });
     }
@@ -112,12 +116,13 @@ export function moduleRoutes(mod: string, lookback = 6): MutatingRoute[] {
   const under = (router: string, seen: Set<string>): string => {
     if (composed.has(router)) return composed.get(router)!;
     const e = edges.find((x) => x.child === router && !seen.has(x.parent));
-    const full = e ? under(e.parent, new Set([...seen, router])) + e.prefix : "";
+    const family = familyMounts(join(MODULES, mod), readOnce).get(router);
+    const full = e ? under(e.parent, new Set([...seen, router])) + e.prefix : family !== undefined ? norm(family) : "";
     composed.set(router, full);
     return full;
   };
   const out: MutatingRoute[] = [];
-  for (const f of walk(api)) {
+  for (const f of dirs.flatMap((d) => [...walk(d)])) {
     for (const r of routesIn(f, lookback)) {
       const prefix = mounts.get(r.varName);
       const tail = r.path === "/" ? "" : r.path;

@@ -5,7 +5,7 @@ import { meta } from "../db/meta.js";
 import type { NotificationPriority } from "../db/schema.js";
 import { isPushServiceEndpoint, isTestPushService } from "./push-endpoints.js";
 import { selfFetch } from "./self-fetch.js";
-import { vapidKeys, vapidSubject } from "./push-keys.js";
+import { vapidKeyState, vapidSubject } from "./push-keys.js";
 import { DEFAULT_PUSH_SETTINGS, pushTtlSec, pushUrgency, type PushPayload, type PushSettings } from "./push-policy.js";
 import { sendPush, type PushSendResult } from "./web-push.js";
 
@@ -68,9 +68,9 @@ export async function pushToDevice(
   priority: NotificationPriority,
   opts: { retries?: number; backoffMs?: number } = {},
 ): Promise<DeviceOutcome> {
-  const vapid = await vapidKeys();
+  const { keys: vapid, unavailable } = await vapidKeyState();
   const base = { deviceId: device.id, label: device.label };
-  if (!vapid) return { ...base, outcome: "failed", reason: "this server has no push keys yet" };
+  if (!vapid) return { ...base, outcome: "failed", reason: unavailable };
   if (!isPushServiceEndpoint(device.endpoint)) {
     await meta.deleteFrom("push_subscriptions").where("id", "=", device.id).execute();
     return { ...base, outcome: "gone", reason: "its address is not a push service" };

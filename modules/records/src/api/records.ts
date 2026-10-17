@@ -72,6 +72,7 @@ recordsRouter.get(
   }),
 );
 
+// AI-REACH: crud
 recordsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -124,6 +125,7 @@ recordsRouter.post(
   }),
 );
 
+// AI-REACH: crud
 recordsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -221,6 +223,7 @@ recordsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 recordsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

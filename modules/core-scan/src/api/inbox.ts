@@ -67,6 +67,7 @@ import {
 import { resolveRequirement, storageRequirementFor } from "../services/storage-requirement.js";
 import { applyReceiptFacts, receiptPackAsks } from "../services/receipt-candidate-facts.js";
 import { alignStorageFields } from "../services/align-storage-fields.js";
+import { FILING_OWED_KEY, filingOwedOf, owedAfterRefusal, resumesOn } from "../services/filing-owed.js";
 import { moveQuantity, scanTargetOf, scanTargetsRegistered, startingCount, type QuantityMove } from "../services/scan-target.js";
 import { enrichmentPollDelays } from "../services/match-poll.js";
 import { RAN_OUT_KEY, ranOut, withdrawRanOut, type RanOutOutcome } from "../services/ran-out.js";
@@ -181,7 +182,7 @@ import { candidatesForNamelessRow, isCuratedBarcodeIdentification, shouldAdoptCa
 import { guardReplayCandidates } from "../services/replay-guard.js";
 import { catalogTitleCorroborated, decodedIsbnOf, lookupBookByTitle } from "../services/book-lookup.js";
 import { CATALOG_TITLE_MATCHED, evidencedFill, photoReadOf, unevidencedIdentifiers } from "@cobblr/platform-contract/scan-evidence";
-import { SCAN_UNDO_ACTIONS, scanDeletedRecovery, scanRestoreRefusal } from "@cobblr/platform-contract/scan-recovery";
+import { SCAN_UNDO_ACTIONS, scanDeletedRecovery, scanFilingRefusal, scanRestoreRefusal } from "@cobblr/platform-contract/scan-recovery";
 import { uncombinePlan, type CombineUndo } from "../services/uncombine.js";
 import { resolvePaintColorFromText } from "../services/paint-code.js";
 import { resolvePaintCodeViaWeb } from "../services/paint-code-websearch.js";
@@ -3759,10 +3760,11 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-    if (row.status === "resolved") {
-      res.status(409).json({
-        error: { code: "already_resolved", message: "This item was already confirmed." },
-      });
+    // Filed, or deleted: a combined or undone-split row's contents live in
+    // another row, and filing it counted them twice (#7144).
+    const filingRefused = scanFilingRefusal(row);
+    if (filingRefused) {
+      res.status(409).json({ error: filingRefused });
       return;
     }
 
@@ -4387,8 +4389,16 @@ inboxRouter.post(
       /* the colour is filed as it came */
     }
 
+    // A filing that made its record and was then refused its lots (#7145)
+    // resumes on that record: Confirm again adds what it owes, never makes a
+    // second one. The record must still be there and of this kind.
+    const owed = filingOwedOf(meta);
+    const owedRecord = owed ? await platform().entities.lookup(ctx.org.id, kindKey, owed.entity_id).catch(() => null) : null;
+    const resumed = resumesOn(owed, kindKey, !!owedRecord) ? owedRecord : null;
     const doCreate = () =>
-      apiFetch(createUrl, {
+      resumed
+        ? Promise.resolve(new Response(JSON.stringify({ id: resumed.id, name: resumed.title }), { status: 201, headers: { "Content-Type": "application/json" } }))
+        : apiFetch(createUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -4498,7 +4508,19 @@ inboxRouter.post(
         door: { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: tok ? { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } : {} },
         current: (qty as number) - lotted,
       });
-      if (!arrived.ok) console.error(`[core-scan] the lots of ${row.id} did not reach ${created.id}:`, arrived.refused);
+      if (!arrived.ok) {
+        // Not filed: its record is made and owes these units. The row stays
+        // pending with what is owed, and Confirm again finishes on the same
+        // record (#7145). It used to say filed, with none of them counted.
+        const owedNow = owedAfterRefusal({ kind: kindKey, entityId: created.id, title: String(created.name ?? created.title ?? "The record"), count: lotted, refused: arrived.refused ?? null });
+        await db
+          .updateTable("core_scan_inbox_items")
+          .set({ status: row.status, suggested_metadata: mergeMeta(owedNow.stamp) as never, updated_at: new Date() })
+          .where("id", "=", id)
+          .execute();
+        res.status(409).json({ error: owedNow.error });
+        return;
+      }
     }
 
     // Ran out (#6526): the one it was filed with is taken as used up, and it
@@ -4711,7 +4733,7 @@ inboxRouter.post(
         target_module: target.module,
         target_kind: target.kind,
         target_entity_id: created.id,
-        suggested_metadata: sql`coalesce(suggested_metadata, '{}'::jsonb) || ${JSON.stringify({ [FILED_INTO_KEY]: filedInto })}::jsonb` as never,
+        suggested_metadata: sql`(coalesce(suggested_metadata, '{}'::jsonb) - ${FILING_OWED_KEY}) || ${JSON.stringify({ [FILED_INTO_KEY]: filedInto })}::jsonb` as never,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
@@ -5022,10 +5044,10 @@ inboxRouter.post(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
-    if (row.status === "resolved") {
-      res.status(409).json({
-        error: { code: "already_resolved", message: "This item was already confirmed." },
-      });
+    // The same rule as Confirm: a deleted scan is not put onto a bin (#7144).
+    const filingRefused = scanFilingRefusal(row);
+    if (filingRefused) {
+      res.status(409).json({ error: filingRefused });
       return;
     }
     // The bin: an explicit body override, else the one the scan was filed into.

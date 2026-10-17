@@ -10,11 +10,14 @@
 //   POST {base}/submit  { fileId, target? } → { jobId, queued? }
 //   GET  {base}/status/{jobId}     → { state, progress? }
 //   POST {base}/command { command, params } → { ok, ref? }   (actuator; optional)
+//   GET/POST {base}/arm/{deviceId}/… → a robot arm, through familyRequest
+//        (families/arms/edge-arm.ts); optional
 //
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
 import { hasKilnPermit, type KilnPermit } from "../kilns/station.js";
+import { familyStationKinds } from "../core/families.js";
 import { createHash, randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -168,9 +171,31 @@ export class EdgeAdapterDriver implements MachineDriver {
     this.tunnelPrefix = instance ? `/${instance}` : "";
   }
 
-  async kilnAtStation(permit: KilnPermit, operation: "start" | "stop", params: Record<string, unknown>): Promise<CommandResult> {
+  /** Start or Stop a kiln at its station. Start asks `checkStartAllowed` just
+   *  before the kiln is told and again once it answers: a station revoked in
+   *  between never starts it, and one revoked while it answered gets Stop.
+   *  A Start with no check is refused; Stop is never held back. */
+  async kilnAtStation(permit: KilnPermit, operation: "start" | "stop", params: Record<string, unknown>, checkStartAllowed?: () => Promise<void>): Promise<CommandResult> {
     if (!hasKilnPermit(permit)) return { ok: false, detail: "Authorize at the kiln's station." };
-    return await this.req("POST", "/command", { body: { command: `kiln_${operation}`, params: { ...params, device_id: permit.deviceId } } }) as CommandResult;
+    const send = (op: "start" | "stop") => this.req("POST", "/command", { body: { command: `kiln_${op}`, params: { ...(op === "start" ? params : {}), device_id: permit.deviceId } } }) as Promise<CommandResult>;
+    if (operation === "stop") return await send("stop");
+    if (!checkStartAllowed) return { ok: false, detail: "Authorize at the kiln's station." };
+    try { await checkStartAllowed(); } catch (e) { return { ok: false, detail: e instanceof Error ? e.message : "Start was withdrawn." }; }
+    const result = await send("start");
+    try {
+      await checkStartAllowed();
+    } catch {
+      await send("stop").catch(() => {});
+      return { ok: false, detail: "The station lost Start while the kiln answered, so Stop was sent. Check the kiln before starting it again." };
+    }
+    return result;
+  }
+
+  /** One call on the bridge contract for a family's own routes (a robot
+   *  arm's /arm/…): the family parses the answer and holds its own rules
+   *  (families/arms/edge-arm.ts). */
+  async familyRequest(method: "GET" | "POST", path: string, opts: { body?: unknown; timeoutMs?: number } = {}): Promise<unknown> {
+    return this.req(method, path, opts);
   }
 
   async productionRequest(operation: string, args: Record<string, unknown>): Promise<unknown> {
@@ -369,7 +394,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       id: String(d.id ?? ""),
       name: String(d.name ?? "device"),
       enabled: d.enabled !== false,
-      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cnc" || d.station_kind === "cutter" ? d.station_kind : undefined,
+      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cnc" || d.station_kind === "cutter" ? d.station_kind : typeof d.station_kind === "string" && familyStationKinds().has(d.station_kind) ? d.station_kind as RemoteDevice["station_kind"] : undefined,
       camera_available: d.camera_available === true,
       state: (d.state as string | undefined) ?? null,
       tags: [],

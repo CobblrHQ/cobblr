@@ -5,6 +5,7 @@ import { Kysely, PostgresDialect } from "kysely";
 import { env } from "../env.js";
 import type { MetaDB } from "./schema.js";
 import { createPool } from "./client-error-guard.js";
+import { IDLE_RELEASE_MS } from "./connection-budget.js";
 import { bootDbWaitMs, waitForDatabase } from "./wait-for-db.js";
 
 // createPool: every client is listening for 'error' from creation, so a
@@ -19,6 +20,9 @@ export const metaPool = createPool({
   // of the runner Postgres's headroom for a handful of helper queries —
   // the ci.yml test step caps them at 3. The api itself keeps the default.
   max: Number(process.env.COBBLR_META_POOL_MAX) || 10,
+  // A quiet pool gives its connections back (connection-budget.ts).
+  min: 0,
+  idleTimeoutMillis: IDLE_RELEASE_MS,
 }, "meta-pool");
 
 export const meta = new Kysely<MetaDB>({

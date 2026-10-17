@@ -12,7 +12,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { tenantDb } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { platform } from "@cobblr/platform-contract";
+import { asyncHandler, badBody, requireMayRun, requireRole } from "./util.js";
 
 export const linksRouter = Router({ mergeParams: true });
 
@@ -54,7 +55,9 @@ linksRouter.get(
 );
 
 // POST /links — create or update a link (idempotent on the device↔entity pair).
-// AI-REACH: binds a device to a record; devices are set up from the Devices page with the thing in hand
+// AI-REACH: exempt — decides which record a physical sensor writes into; only
+// the person with the device in hand can tell which one it is, and a wrong
+// link writes readings into the wrong record from then on
 linksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -62,6 +65,10 @@ linksRouter.post(
     const parsed = LinkCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const d = parsed.data;
+    // From now on a reading performs the record's own action for this mode
+    // (a scale sets stock), so making the link needs that action's grant.
+    const mapped = platform().entities.applyDevice(d.entity_kind, { mode: d.mode, value: 0, entityId: d.entity_id, reason: `device:${d.device}` });
+    if (mapped && !(await requireMayRun(req, res, mapped.actionId))) return;
     const cfg = sql`${JSON.stringify(d.config ?? {})}::jsonb` as never;
     const row = await tenantDb(req)
       .insertInto("core_devices_links")
@@ -85,7 +92,8 @@ linksRouter.post(
 );
 
 // DELETE /links/:id — unlink.
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — cuts a physical sensor off from its record; the link is
+// made by the person with the device in hand (see POST above)
 linksRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

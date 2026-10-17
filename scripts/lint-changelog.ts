@@ -29,7 +29,7 @@ import { lintProse } from "./prose-rules.mjs";
 import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
 // plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
-import { findHeadingLine, headingsAlreadyIn, listHeadings, parseDocsTarget } from "./docs-target.mjs";
+import { findHeadingLine, headingsAlreadyIn, listHeadings, paragraphsAlreadyIn, parseDocsTarget } from "./docs-target.mjs";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 
 // The archive is ~2,000 entries and grows with every change, so reading all of
@@ -161,6 +161,13 @@ function findBase(): string | null {
           `Merge anything new into that section and set docs_target: none (documented directly in ${file}, ${h})`,
       );
     }
+    const copied = paragraphsAlreadyIn(readOnce(file), body);
+    if (copied.length) {
+      bad.push(
+        `  changelog.d/${f}: ${copied.length} paragraph(s) of its ## docs are already in ${file} ("${copied[0]!.slice(0, 60)}…"). ` +
+          `It was published by hand: add docs_published: <today> to its frontmatter, or the flush prints it twice`,
+      );
+    }
   }
   if (bad.length) {
     // List the real headings of each named file ONCE, so the fix is a copy-paste.
@@ -174,7 +181,7 @@ function findBase(): string | null {
       .join("\n");
     console.error(
       `[lint:changelog] ✗ ${bad.length} entr${bad.length === 1 ? "y has a" : "ies have a"} docs_target docs-flush cannot publish cleanly ` +
-        `(a heading that does not exist would mis-file the body; one that already exists would print it twice):\n${bad.join("\n")}` +
+        `(a heading that does not exist would mis-file the body; a heading or paragraph that already exists would print it twice):\n${bad.join("\n")}` +
         (menus ? `\n${menus}` : ""),
     );
     process.exit(1);

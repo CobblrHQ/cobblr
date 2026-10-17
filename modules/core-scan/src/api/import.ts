@@ -40,6 +40,7 @@ import { asyncHandler, requireRole } from "./util.js";
 import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } from "../services/matchmaker.js";
 import { INTERNAL_API } from "./inbox.js";
 import { intakeRow } from "../services/intake.js";
+import { importUndoBlocker, importUndoRefusal, type ImportUndoBlocker } from "../services/import-undo.js";
 import { assertSafeOutboundUrl } from "../services/enrich.js";
 import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "../services/trim-margins.js";
 import {
@@ -996,9 +997,30 @@ importRouter.post(
 
     let removed = 0;
     let restored = 0;
+    let blocked: ImportUndoBlocker | null = null;
+    let raced = false;
     // The reversal is itself one transaction: an undo that half-applied would
     // be strictly worse than the import it was meant to fix.
     await db.transaction().execute(async (trx) => {
+      // Held while it decides (#7150): a second Undo waits and finds this one
+      // done, and no row it touched can be filed between the check and the
+      // write.
+      const runNow = await trx.selectFrom("core_scan_import_runs").select(["undone_at"]).where("id", "=", id).forUpdate().executeTakeFirst();
+      if (runNow?.undone_at) {
+        raced = true;
+        return;
+      }
+      const touched = [...(undo.created_item_ids ?? []), ...(undo.replaced ?? []).map((r) => r.id)];
+      if (touched.length) {
+        const now = await trx
+          .selectFrom("core_scan_inbox_items")
+          .select(["id", "status", "suggested_name", "suggested_metadata"])
+          .where("id", "in", touched)
+          .forUpdate()
+          .execute();
+        blocked = importUndoBlocker(now, run.created_at);
+        if (blocked) return;
+      }
       const createdIds = undo.created_item_ids ?? [];
       if (createdIds.length) {
         const del = await trx
@@ -1032,6 +1054,15 @@ importRouter.post(
         .execute();
     });
 
+    if (raced) {
+      res.status(409).json({ error: { code: "already_undone", message: "this import has already been undone" } });
+      return;
+    }
+    if (blocked) {
+      const b: ImportUndoBlocker = blocked;
+      res.status(409).json({ error: { code: "changed_since", message: importUndoRefusal(b), item_id: b.id } });
+      return;
+    }
     res.json({ undone: true, run_id: id, items_removed: removed, items_restored: restored });
   }),
 );

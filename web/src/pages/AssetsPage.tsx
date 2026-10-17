@@ -842,7 +842,9 @@ export function AssetDetailModal({
                 : null,
               // A VIN carries its decode button and the fill it proposes under
               // it: the row, whatever the width.
-              !fp.hidden("serial_number")
+              // The serial is the anti-theft field: the server leaves the key out for a
+              // viewer without assets:view-serials, and the screen then has no such field.
+              !fp.hidden("serial_number") && "serial_number" in a
                 ? /\bvin\b/i.test(fp.label("serial_number", "Serial number"))
                   ? { need: { key: "serial_number", minPx: 320, full: true }, node: <VinDecodeField a={a} fp={fp} fieldDefs={fieldDefs.data?.items ?? []} slug={activeSlug} onPatch={(patch) => update.mutate(patch)} /> }
                   : editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: a.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) })

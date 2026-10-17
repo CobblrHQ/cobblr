@@ -90,8 +90,12 @@ export function PushNotificationsCard() {
             {turnOn.isPending ? "Trying…" : "Try again"}
           </button>
         </div>
+      ) : q.isError ? (
+        <p className="text-sm text-muted dark:text-slate-400" role="alert" data-testid="push-unchecked">
+          Couldn't check notifications for this device{q.error instanceof Error ? `: ${q.error.message.replace(/[.!?]$/, "")}` : ""}. Reload the page to try again.
+        </p>
       ) : !q.data?.public_key ? (
-        <p className="text-sm text-muted dark:text-slate-400">This server is still making its push key. Reload in a minute.</p>
+        <p className="text-sm text-muted dark:text-slate-400" data-testid="push-unavailable">{q.data?.unavailable ?? "This server is still making its push key. Reload in a minute."}</p>
       ) : (
         <button type="button" className={button} disabled={turnOn.isPending} onClick={() => turnOn.mutate()} data-testid="push-turn-on">
           {turnOn.isPending ? "Turning on…" : "Turn on notifications on this device"}

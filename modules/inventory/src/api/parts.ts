@@ -1259,6 +1259,7 @@ function partWriteNames(req: unknown): ReadonlySet<string> {
   return extra.length ? new Set([...NATIVE_PART_KEYS, ...extra]) : NATIVE_PART_KEYS;
 }
 
+// AI-REACH: crud
 partsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -1514,6 +1515,7 @@ partsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 partsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -1673,6 +1675,7 @@ partsRouter.patch(
   }),
 );
 
+// AI-REACH: crud
 partsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

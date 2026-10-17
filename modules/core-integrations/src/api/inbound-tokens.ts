@@ -23,7 +23,8 @@ function newSlug(): string {
   return randomBytes(24).toString("base64url");
 }
 
-// AI-REACH: mints an inbound webhook token; credentials
+// AI-REACH: exempt — mints an inbound webhook token, a secret URL that lets an
+// outside caller write into the workspace; the assistant never mints a secret
 inboundTokensRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -97,7 +98,8 @@ inboundTokensRouter.get(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — revoking a webhook token cuts off an outside sender with
+// no way back but minting a new secret, which the assistant never does
 inboundTokensRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {
@@ -139,7 +141,8 @@ inboundTokensRouter.post(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — deletes a webhook token and its secret URL for good; see
+// revoke above
 inboundTokensRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

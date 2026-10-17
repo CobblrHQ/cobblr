@@ -8,7 +8,7 @@
 // cutter's page never says "print" (`lint:machine-words` holds the surfaces
 // that must stay kind-neutral; `machine-words.test.ts` holds the words).
 
-export type MachineKind = "3d-printer" | "laser" | "cnc" | "assembly" | "pick-and-place" | "reflow" | "generic";
+export type MachineKind = "3d-printer" | "laser" | "cnc" | "assembly" | "pick-and-place" | "reflow" | "robot-arm" | "generic";
 
 /** The machine collections the stock bundles provision, by instance id. The
  *  instance id is the stable key a bundle owns (its display name and noun are
@@ -19,6 +19,7 @@ export const MACHINE_KIND_BY_INSTANCE: Readonly<Record<string, MachineKind>> = {
   "laser-cutters": "laser",
   "cnc-machines": "cnc",
   "assembly-machines": "assembly",
+  "robot-arms": "robot-arm",
 };
 
 export function machineKindOf(instance: string | null | undefined): MachineKind {
@@ -80,6 +81,9 @@ const WORDS: Record<MachineKind, MachineWords> = {
   },
   "pick-and-place": {
     kind: "pick-and-place", device: "pick-and-place machine", verb: "place", job: "placement job", jobs: "placement jobs", manager: "placement manager", Manager: "Placement Manager", managerExamples: "OpenPnP or the machine controller, through your bridge", familyExample: "",
+  },
+  "robot-arm": {
+    kind: "robot-arm", device: "robot arm", verb: "run", job: "program run", jobs: "program runs", manager: "arm controller", Manager: "Arm Controller", managerExamples: "the arm's controller, through your bridge", familyExample: `e.g. "UR10e", "CRX-10iA"`,
   },
   reflow: {
     kind: "reflow", device: "reflow oven", verb: "reflow", job: "reflow run", jobs: "reflow runs", manager: "reflow manager", Manager: "Reflow Manager", managerExamples: "the oven controller, through your bridge", familyExample: "",

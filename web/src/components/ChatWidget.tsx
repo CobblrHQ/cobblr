@@ -18,6 +18,8 @@ import { withoutValue } from "../lib/proposal-values";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { historyToSend } from "../lib/chat-store";
 import { chatStoreKey, useStoredConversation } from "../lib/use-stored-conversation";
+import { personalChatKey } from "../lib/personal-chat-store";
+import { useAuth } from "../auth/AuthContext";
 import { applyOfferStates, offerIdsToRefresh, offerOutcomeWords, type OfferOutcome } from "../lib/offer-sync";
 import { commandOrigin } from "../lib/command-origin";
 import { growToContent } from "../lib/useAutoGrowTextarea";
@@ -427,6 +429,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   });
   void railOpen;
   const { activeSlug } = useActiveOrg();
+  const me = useAuth().user?.id ?? null;
   const nav = useNavModules(activeSlug);
   const navigate = useNavigate();
   const detailRoute = useDetailRoute(activeSlug ?? "");
@@ -501,12 +504,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       activeSlug
         ? {
             read: async () => (await api.aiChatConversation(activeSlug)).conversation,
-            write: async (msgs: unknown[]) => (await api.aiChatSaveConversation(activeSlug, msgs)).updated_at,
+            write: async (msgs: unknown[], owner: string) => (await api.aiChatSaveConversation(activeSlug, msgs, owner)).updated_at,
           }
         : undefined,
     [activeSlug],
   );
-  const [messages, setMessages] = useStoredConversation<Msg>(activeSlug, CHAT_STORE_MAX, conversationRemote);
+  const [messages, setMessages] = useStoredConversation<Msg>(me, activeSlug, CHAT_STORE_MAX, conversationRemote);
   // The cards are the offers the server keeps: whenever the set of offers the
   // conversation names changes (a load, a reload, another tab's turn), they
   // are read back and redrawn as they now stand.
@@ -630,8 +633,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // history outlives `clear`.
   const [history, setHistory] = useState<HistoryState>(emptyHistory);
   useEffect(() => {
-    setHistory({ entries: loadHistory(activeSlug), index: null, draft: "" });
-  }, [activeSlug]);
+    setHistory({ entries: loadHistory(me, activeSlug), index: null, draft: "" });
+  }, [me, activeSlug]);
 
   /** Put the caret at the end of a recalled message, as a shell does — you are
    *  almost always about to add to it or resend it, never to edit its start.
@@ -662,7 +665,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     // A new conversation starts on nothing in particular. (Sending does NOT do
     // this — the context belongs to the conversation, not to one message.)
     clearChatSelection();
-    const key = chatStoreKey(activeSlug);
+    const key = chatStoreKey(me, activeSlug);
     if (key) {
       try {
         localStorage.removeItem(key);
@@ -984,7 +987,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setPeek(null);
     setHistory((h) => {
       const entries = remember(h.entries, text);
-      saveHistory(activeSlug, entries);
+      saveHistory(me, activeSlug, entries);
       return { entries, index: null, draft: "" };
     });
     const next: Msg[] = [
@@ -1038,7 +1041,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setInput("");
     setHistory((h) => {
       const entries = remember(h.entries, text);
-      saveHistory(activeSlug, entries);
+      saveHistory(me, activeSlug, entries);
       return { entries, index: null, draft: "" };
     });
     setSeedPlaceholder(null);
@@ -1215,11 +1218,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // the `done` event carries the same response the blocking POST used to
   // return and goes through applyResponse, so the final render is identical.
 
-  const openTurnKey = () => `cobblr.chat.turn.${activeSlug}`;
+  const openTurnKey = () => personalChatKey("turn", me, activeSlug);
   function rememberOpenTurn(id: string | null) {
+    const key = openTurnKey();
+    if (!key) return;
     try {
-      if (id) localStorage.setItem(openTurnKey(), id);
-      else localStorage.removeItem(openTurnKey());
+      if (id) localStorage.setItem(key, id);
+      else localStorage.removeItem(key);
     } catch {
       /* private mode */
     }
@@ -1245,10 +1250,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
 
   // A half-written question is work. Reloading the page (or being reloaded by a
   // deploy) threw it away, which is the kind of small loss that teaches people
-  // not to type anything long in the box. Per workspace, on this device.
-  const draftKey = `cobblr.chat.draft.${activeSlug}`;
+  // not to type anything long in the box. Per person and workspace, on this device.
+  const draftKey = personalChatKey("draft", me, activeSlug);
   useEffect(() => {
-    if (!activeSlug) return;
+    if (!draftKey) return;
     try {
       const saved = localStorage.getItem(draftKey);
       if (saved) setInput((cur) => (cur ? cur : saved));
@@ -1256,9 +1261,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       /* private mode */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSlug]);
+  }, [draftKey]);
   useEffect(() => {
-    if (!activeSlug) return;
+    if (!draftKey) return;
     try {
       if (input.trim()) localStorage.setItem(draftKey, input);
       else localStorage.removeItem(draftKey);
@@ -1509,7 +1514,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     (async () => {
       let id: string | null = null;
       try {
-        id = localStorage.getItem(openTurnKey());
+        const key = openTurnKey();
+        id = key ? localStorage.getItem(key) : null;
       } catch {
         /* private mode */
       }
@@ -1571,7 +1577,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       followingRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSlug, aiOff]);
+  }, [me, activeSlug, aiOff]);
 
 
   // Poll an async whole-workspace build until the draft leaves "building",

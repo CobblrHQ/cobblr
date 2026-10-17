@@ -28,6 +28,7 @@ import { meta } from "../db/meta.js";
 import { getTenantDb } from "../db/tenant.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg, premigrateModules } from "../modules/enable.js";
+import { PartRefusal, setPart } from "../platform/module-parts.js";
 import { listInstances, getInstance, createInstance } from "../platform/instances.js";
 import { validateBundle, applyValidatedBundle } from "./bundles.js";
 
@@ -73,7 +74,7 @@ export const BlueprintManifest = z.object({
   description: z.string().optional(),
   author: z.string().optional(),
   readme_md: z.string().optional(),
-  modules: z.array(z.object({ name: z.string() })).default([]),
+  modules: z.array(z.object({ name: z.string(), parts: z.record(z.string(), z.boolean()).optional() })).default([]),
   instances: z
     .array(
       z.object({
@@ -161,9 +162,14 @@ export async function captureBlueprint(orgId: string): Promise<BlueprintManifest
     .select("module_name")
     .where("org_id", "=", orgId)
     .execute();
+  const partRows = await meta.selectFrom("org_module_parts").select(["module_name", "part", "enabled"]).where("org_id", "=", orgId).execute();
   const modules = moduleRows
     .filter((m) => !m.module_name.startsWith("core-"))
-    .map((m) => ({ name: m.module_name }));
+    .map((m) => {
+      // The workspace's own part choices travel; a part it never chose follows its default there too.
+      const parts = Object.fromEntries(partRows.filter((p) => p.module_name === m.module_name).map((p) => [p.part, p.enabled]));
+      return Object.keys(parts).length ? { name: m.module_name, parts } : { name: m.module_name };
+    });
 
   // Non-default instances (the default instance is created by module-enable).
   const allInstances = await listInstances(orgId);
@@ -407,6 +413,11 @@ export async function applyBlueprint(
     } catch (err) {
       console.error(`[blueprint-install] enable module ${mod.name} failed:`, (err as Error).message);
     }
+  }
+
+  // The parts the source workspace chose on or off, for modules that declare them here.
+  for (const mod of m.modules) for (const [part, on] of Object.entries(mod.parts ?? {})) {
+    try { await setPart(orgId, mod.name, part, on, sess.id); } catch (err) { if (!(err instanceof PartRefusal)) throw err; }
   }
 
   // 2. Create non-default instances.

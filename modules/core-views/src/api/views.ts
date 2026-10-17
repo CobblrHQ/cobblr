@@ -47,7 +47,7 @@ const DataQuery = z.object({
  *  route that takes an id reads through this, so another member's private view
  *  answers 404 exactly like a view that does not exist: never "forbidden", which
  *  would say it is there. */
-function visibleTo(userId: string | null) {
+export function visibleTo(userId: string | null) {
   return (eb: ExpressionBuilder<CoreViewsDB, "core_views_views">) =>
     eb.or([eb("owner_user_id", "is", null), ...(userId ? [eb("owner_user_id", "=", userId)] : [])]);
 }
@@ -137,11 +137,11 @@ viewsRouter.get(
   }),
 );
 
-// AI-REACH: authoring of a user-built surface; a whole-workspace build goes through the design flow, and records inside an app are reachable as records
+// AI-ACTION: core-views:edit-view
 viewsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-views:edit-view"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -196,11 +196,11 @@ viewsRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: core-views:delete-view
 viewsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "core-views:delete-view"))) return;
     const id = req.params.id;
     if (!id) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });

@@ -18,11 +18,12 @@ import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import type { Kysely } from "kysely";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { platform } from "@cobblr/platform-contract";
+import { platform, viewQuery, type EntityListResult } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { FrameDocTooLarge, putFrameDoc } from "../platform/frame-docs.js";
 import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
+import { ttlCache } from "../lib/ttl-cache.js";
 import { statKey, statValue } from "@cobblr/platform-contract/stat-value";
 import { readVisibility } from "@cobblr/platform-contract/share-scope";
 import { countLabelScan, labelPublicRecord, pageFrame, pageIsLive, publicPageRecord, publicPageRecords, skinDocument } from "../platform/public-page.js";
@@ -179,6 +180,25 @@ function curateItem(it: unknown, token: string): unknown {
 function curateItems(items: unknown, token: string): unknown {
   return Array.isArray(items) ? items.map((i) => curateItem(i, token)) : items;
 }
+/** The rows a saved view shows to a public reader: the view's own query
+ *  (filter, where and sort) read the one way every surface reads it
+ *  (viewQuery), on the day that has arrived everywhere, since a public
+ *  reader has no zone of their own. A public view used to pass only filter
+ *  and sort, so a "Status is not Draft" view published its drafts (#7126).
+ *  It fails closed: a list that failed, or that could not run one of the
+ *  view's conditions, shows nothing rather than more than the owner chose. */
+export async function publicViewRows(orgId: string, view: { entity_kind: string; config: unknown }, limit: number): Promise<EntityListResult["items"]> {
+  const today = await platform().accounts.dayFor(null);
+  const result = await platform().entities.list(orgId, view.entity_kind, { ...viewQuery((view.config as Record<string, unknown> | null) ?? {}, today), today, limit }, { publicRead: true });
+  return publicRows(result);
+}
+
+/** A public list's rows, or none when the list cannot vouch for them. */
+export function publicRows(result: EntityListResult): EntityListResult["items"] {
+  if (result.failed || (result.unapplied?.length ?? 0) > 0) return [];
+  return result.items;
+}
+
 const UUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g;
 
 // The public twin of POST /frame-docs, for the anonymous page that renders a
@@ -333,230 +353,222 @@ publicRouter.get("/:token/records/:ref", (req, res, next) => {
   })().catch(next);
 });
 
+/** What a surface's link shows right now, built the one way: the data route
+ *  answers with it, and the image route serves a photo only when it names it
+ *  (#7127). Not ok: the status and body to refuse with. */
+async function surfacePayload(token: string | undefined): Promise<
+  | { ok: true; payload: Record<string, unknown>; orgId: string; surface: SurfaceRow; tenantDb: Kysely<{ core_public_surfaces_surfaces: SurfaceRow }> }
+  | { ok: false; status: number; body: unknown }
+> {
+  // 1. Meta-side token lookup (shared with the public file route).
+  const tok = await resolveToken(token);
+  if (!tok.ok) {
+    return { ok: false, status: tok.status, body: { error: { code: tok.code, message: tok.message } } };
+  }
+
+  // 2. Open the tenant DB + read the surface config.
+  const tenantDb = (await platform().tenants.getDb(
+    tok.orgId,
+  )) as Kysely<{
+    core_public_surfaces_surfaces: SurfaceRow;
+    core_views_views: ViewRow;
+    core_apps_apps: AppRow;
+  }>;
+  const surface = await tenantDb
+    .selectFrom("core_public_surfaces_surfaces")
+    .selectAll()
+    .where("id", "=", tok.surfaceId)
+    .executeTakeFirst();
+  if (!surface || surface.revoked_at !== null || !surface.enabled) {
+    return { ok: false, status: 404, body: { error: { code: "not_found", message: "no such surface" } } };
+  }
+
+  // 3. Resolve scope → data.
+  const payload: Record<string, unknown> = {
+    surface: {
+      name: surface.name,
+      scope_type: surface.scope_type,
+      config: surface.config,
+    },
+  };
+
+  if (surface.scope_type === "entity") {
+    // scope_id is "<kind>:<entityId>"
+    const sep = surface.scope_id.indexOf(":");
+    if (sep < 0) {
+      return { ok: false, status: 500, body: { error: { code: "malformed_scope", message: "bad scope_id" } } };
+    }
+    const lastSep = surface.scope_id.lastIndexOf(":");
+    const kind = surface.scope_id.slice(0, lastSep);
+    const entityId = surface.scope_id.slice(lastSep + 1);
+    const entity = await platform().entities.lookup(tok.orgId, kind, entityId, { publicRead: true });
+    payload.entity = curateItem(entity, token!);
+  } else if (surface.scope_type === "view") {
+    // scope_id is a core_views_views row id. Read the view, then
+    // call platform.entities.list with its persisted config.
+    const view = await tenantDb
+      .selectFrom("core_views_views")
+      .selectAll()
+      .where("id", "=", surface.scope_id)
+      .executeTakeFirst();
+    if (!view) {
+      return { ok: false, status: 404, body: { error: { code: "view_missing", message: "surface points at a deleted view" } } };
+    }
+    payload.view = {
+      name: view.name,
+      entity_kind: view.entity_kind,
+      view_type: view.view_type,
+    };
+    payload.items = curateItems(await publicViewRows(tok.orgId, view, 50), token!);
+    } else if (surface.scope_type === "collection") {
+    // scope_id is the entity kind; surface.config.query holds the
+    // EntityListQuery (filter / where / sort / limit). Lets a
+    // builder share an ad-hoc filter without first carving a saved
+    // view out of it.
+    const kind = surface.scope_id;
+    const cfg = (surface.config ?? {}) as Record<string, unknown>;
+    const query = (cfg.query as Record<string, unknown> | undefined) ?? {};
+    const result = await platform().entities.list(tok.orgId,kind, {
+      q: typeof query.q === "string" ? query.q : undefined,
+      filter: (query.filter as Record<string, unknown> | undefined) ?? undefined,
+      where: (query.where as never) ?? undefined,
+      sort: (query.sort as string[] | undefined) ?? undefined,
+      limit: Math.min(Number(query.limit) || 50, 200),
+    }, { publicRead: true });
+    payload.collection = {
+      kind,
+      query,
+    };
+    payload.items = curateItems(publicRows(result), token!);
+  } else if (surface.scope_type === "board") {
+    // Multi-column TV board: config.sections = [{ title, view_id }].
+    // Each column resolves a saved view (same path as scope_type
+    // 'view'), capped small so a wall display stays glanceable. This
+    // is the recently-done / in-progress / coming-up display.
+    const cfg = (surface.config ?? {}) as Record<string, unknown>;
+    const sections = Array.isArray(cfg.sections) ? cfg.sections : [];
+    const perColumn = Math.min(Number(cfg.per_column) || 8, 30);
+    const resolved: Array<Record<string, unknown>> = [];
+    for (const raw of sections) {
+      const s = (raw ?? {}) as Record<string, unknown>;
+      const viewId = typeof s.view_id === "string" ? s.view_id : null;
+      if (!viewId) continue;
+      const view = await tenantDb
+        .selectFrom("core_views_views")
+        .selectAll()
+        .where("id", "=", viewId)
+        .executeTakeFirst();
+      if (!view) continue;
+      resolved.push({
+        title: typeof s.title === "string" && s.title ? s.title : view.name,
+        entity_kind: view.entity_kind,
+        view_type: view.view_type,
+        items: curateItems(await publicViewRows(tok.orgId, view, perColumn), token!),
+      });
+    }
+    payload.sections = resolved;
+  } else if (surface.scope_type === "page") {
+    // scope_id is a public page (core_public_surfaces_pages): its scope and
+    // default visibility; this link's config.visibility overrides it.
+    const page = await (tenantDb as unknown as Kysely<{ core_public_surfaces_pages: PageRow }>)
+      .selectFrom("core_public_surfaces_pages")
+      .selectAll()
+      .where("id", "=", surface.scope_id)
+      .executeTakeFirst();
+    if (!page) {
+      return { ok: false, status: 404, body: { error: { code: "not_found", message: "no such surface" } } };
+    }
+    // Booth mode: past its end, every link to it is ended too.
+    if (!pageIsLive(page)) {
+      return { ok: false, status: 410, body: { error: { code: "expired", message: "this surface has expired" } } };
+    }
+    payload.page = { ...(await pageFrame(tok.orgId, page)), layout: page.layout };
+    payload.items = await publicPageRecords(tok.orgId, surface.id, token!, page.scope, pageLinkVisibility(page, surface), page.show_fields);
+  } else if (surface.scope_type === "app") {
+    // scope_id is a core_apps_apps slug. Render the whole composed app
+    // read-only + no-login: keep markdown / stat / view / custom blocks,
+    // DROP everything that writes or needs a member context (form /
+    // action / scan / record). All data the blocks need is RESOLVED HERE
+    // (curated, identity-less projection) and injected — the public page
+    // never holds a token and never hits a live member endpoint.
+    const appRow = await tenantDb
+      .selectFrom("core_apps_apps")
+      .selectAll()
+      .where("slug", "=", surface.scope_id)
+      .executeTakeFirst();
+    if (!appRow) {
+      return { ok: false, status: 404, body: { error: { code: "app_missing", message: "surface points at a deleted app" } } };
+    }
+    const pages = (Array.isArray(appRow.pages) ? appRow.pages : []) as AppPage[];
+
+    // Build the allowlist of views this app references: structured
+    // view_id on stat/view blocks + any view-id literal embedded in a
+    // custom block's html (the SVG/widget reads it via cobblr.viewData).
+    const allViews = await tenantDb
+      .selectFrom("core_views_views")
+      .selectAll()
+      .execute();
+    const viewById = new Map(allViews.map((v) => [v.id, v]));
+    const wanted = new Set<string>();
+    for (const page of pages) {
+      for (const b of page.blocks ?? []) {
+        if ((b.type === "stat" || b.type === "view") && b.view_id) wanted.add(b.view_id);
+        if (b.type === "custom" && typeof b.html === "string") {
+          for (const id of b.html.match(UUID_RE) ?? []) {
+            if (viewById.has(id)) wanted.add(id);
+          }
+        }
+      }
+    }
+
+    // Resolve each wanted view once (curated), build viewsById +
+    // precomputed stats so the public player needs zero live calls.
+    const viewsById: Record<string, unknown[]> = {};
+    const statsById: Record<string, number> = {};
+    for (const vid of wanted) {
+      const view = viewById.get(vid);
+      if (!view) continue;
+      viewsById[vid] = curateItems(await publicViewRows(tok.orgId, view, 200), token!) as unknown[];
+    }
+    // Precompute every stat block's number (count / sum of a field).
+    for (const page of pages) {
+      for (const b of page.blocks ?? []) {
+        if (b.type !== "stat" || !b.view_id) continue;
+        const rows = (viewsById[b.view_id] ?? []) as Array<{ fields?: Record<string, unknown> }>;
+        // The same number the member's own App Player shows (stat-value.ts).
+        const spec = { agg: b.agg ?? "count", field: b.field, times: b.times } as const;
+        statsById[statKey(b.view_id, spec)] = statValue(rows, spec);
+      }
+    }
+
+    // Strip the page tree to only the public-safe blocks.
+    const PUBLIC_BLOCKS = new Set(["markdown", "stat", "view", "custom"]);
+    const publicPages = pages.map((p) => ({
+      slug: p.slug,
+      title: p.title,
+      blocks: (p.blocks ?? []).filter((b) => PUBLIC_BLOCKS.has(b.type)),
+    }));
+
+    payload.app = { name: appRow.name, theme: appRow.theme ?? null, pages: publicPages };
+    payload.data = { viewsById, statsById };
+  } else {
+    return { ok: false, status: 500, body: { error: { code: "unknown_scope", message: `unsupported scope_type ${surface.scope_type}` } } };
+  }
+
+  return { ok: true, payload, orgId: tok.orgId, surface, tenantDb: tenantDb as unknown as Kysely<{ core_public_surfaces_surfaces: SurfaceRow }> };
+}
+
 publicRouter.get("/:token", (req, res, next) => {
   void (async () => {
     const token = req.params.token;
 
-    // 1. Meta-side token lookup (shared with the public file route).
-    const tok = await resolveToken(token);
-    if (!tok.ok) {
-      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
+    const built = await surfacePayload(token);
+    if (!built.ok) {
+      res.status(built.status).json(built.body);
       return;
     }
-
-    // 2. Open the tenant DB + read the surface config.
-    const tenantDb = (await platform().tenants.getDb(
-      tok.orgId,
-    )) as Kysely<{
-      core_public_surfaces_surfaces: SurfaceRow;
-      core_views_views: ViewRow;
-      core_apps_apps: AppRow;
-    }>;
-    const surface = await tenantDb
-      .selectFrom("core_public_surfaces_surfaces")
-      .selectAll()
-      .where("id", "=", tok.surfaceId)
-      .executeTakeFirst();
-    if (!surface || surface.revoked_at !== null || !surface.enabled) {
-      res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
-      return;
-    }
-
-    // 3. Resolve scope → data.
-    const payload: Record<string, unknown> = {
-      surface: {
-        name: surface.name,
-        scope_type: surface.scope_type,
-        config: surface.config,
-      },
-    };
-
-    if (surface.scope_type === "entity") {
-      // scope_id is "<kind>:<entityId>"
-      const sep = surface.scope_id.indexOf(":");
-      if (sep < 0) {
-        res.status(500).json({ error: { code: "malformed_scope", message: "bad scope_id" } });
-        return;
-      }
-      const lastSep = surface.scope_id.lastIndexOf(":");
-      const kind = surface.scope_id.slice(0, lastSep);
-      const entityId = surface.scope_id.slice(lastSep + 1);
-      const entity = await platform().entities.lookup(tok.orgId, kind, entityId, { publicRead: true });
-      payload.entity = curateItem(entity, token!);
-    } else if (surface.scope_type === "view") {
-      // scope_id is a core_views_views row id. Read the view, then
-      // call platform.entities.list with its persisted config.
-      const view = await tenantDb
-        .selectFrom("core_views_views")
-        .selectAll()
-        .where("id", "=", surface.scope_id)
-        .executeTakeFirst();
-      if (!view) {
-        res.status(404).json({ error: { code: "view_missing", message: "surface points at a deleted view" } });
-        return;
-      }
-      const cfg = (view.config as Record<string, unknown>) ?? {};
-      const result = await platform().entities.list(tok.orgId,view.entity_kind, {
-        filter: (cfg.filter as Record<string, unknown> | undefined) ?? undefined,
-        sort: (cfg.sort as string[] | undefined) ?? undefined,
-        limit: 50,
-      }, { publicRead: true });
-      payload.view = {
-        name: view.name,
-        entity_kind: view.entity_kind,
-        view_type: view.view_type,
-      };
-      payload.items = curateItems(result.items, token!);
-    } else if (surface.scope_type === "collection") {
-      // scope_id is the entity kind; surface.config.query holds the
-      // EntityListQuery (filter / where / sort / limit). Lets a
-      // builder share an ad-hoc filter without first carving a saved
-      // view out of it.
-      const kind = surface.scope_id;
-      const cfg = (surface.config ?? {}) as Record<string, unknown>;
-      const query = (cfg.query as Record<string, unknown> | undefined) ?? {};
-      const result = await platform().entities.list(tok.orgId,kind, {
-        q: typeof query.q === "string" ? query.q : undefined,
-        filter: (query.filter as Record<string, unknown> | undefined) ?? undefined,
-        where: (query.where as never) ?? undefined,
-        sort: (query.sort as string[] | undefined) ?? undefined,
-        limit: Math.min(Number(query.limit) || 50, 200),
-      }, { publicRead: true });
-      payload.collection = {
-        kind,
-        query,
-      };
-      payload.items = curateItems(result.items, token!);
-    } else if (surface.scope_type === "board") {
-      // Multi-column TV board: config.sections = [{ title, view_id }].
-      // Each column resolves a saved view (same path as scope_type
-      // 'view'), capped small so a wall display stays glanceable. This
-      // is the recently-done / in-progress / coming-up display.
-      const cfg = (surface.config ?? {}) as Record<string, unknown>;
-      const sections = Array.isArray(cfg.sections) ? cfg.sections : [];
-      const perColumn = Math.min(Number(cfg.per_column) || 8, 30);
-      const resolved: Array<Record<string, unknown>> = [];
-      for (const raw of sections) {
-        const s = (raw ?? {}) as Record<string, unknown>;
-        const viewId = typeof s.view_id === "string" ? s.view_id : null;
-        if (!viewId) continue;
-        const view = await tenantDb
-          .selectFrom("core_views_views")
-          .selectAll()
-          .where("id", "=", viewId)
-          .executeTakeFirst();
-        if (!view) continue;
-        const vcfg = (view.config as Record<string, unknown>) ?? {};
-        const result = await platform().entities.list(tok.orgId,view.entity_kind, {
-          filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
-          sort: (vcfg.sort as string[] | undefined) ?? undefined,
-          limit: perColumn,
-        }, { publicRead: true });
-        resolved.push({
-          title: typeof s.title === "string" && s.title ? s.title : view.name,
-          entity_kind: view.entity_kind,
-          view_type: view.view_type,
-          items: curateItems(result.items, token!),
-        });
-      }
-      payload.sections = resolved;
-    } else if (surface.scope_type === "page") {
-      // scope_id is a public page (core_public_surfaces_pages): its scope and
-      // default visibility; this link's config.visibility overrides it.
-      const page = await (tenantDb as unknown as Kysely<{ core_public_surfaces_pages: PageRow }>)
-        .selectFrom("core_public_surfaces_pages")
-        .selectAll()
-        .where("id", "=", surface.scope_id)
-        .executeTakeFirst();
-      if (!page) {
-        res.status(404).json({ error: { code: "not_found", message: "no such surface" } });
-        return;
-      }
-      // Booth mode: past its end, every link to it is ended too.
-      if (!pageIsLive(page)) {
-        res.status(410).json({ error: { code: "expired", message: "this surface has expired" } });
-        return;
-      }
-      payload.page = { ...(await pageFrame(tok.orgId, page)), layout: page.layout };
-      payload.items = await publicPageRecords(tok.orgId, surface.id, token!, page.scope, pageLinkVisibility(page, surface), page.show_fields);
-    } else if (surface.scope_type === "app") {
-      // scope_id is a core_apps_apps slug. Render the whole composed app
-      // read-only + no-login: keep markdown / stat / view / custom blocks,
-      // DROP everything that writes or needs a member context (form /
-      // action / scan / record). All data the blocks need is RESOLVED HERE
-      // (curated, identity-less projection) and injected — the public page
-      // never holds a token and never hits a live member endpoint.
-      const appRow = await tenantDb
-        .selectFrom("core_apps_apps")
-        .selectAll()
-        .where("slug", "=", surface.scope_id)
-        .executeTakeFirst();
-      if (!appRow) {
-        res.status(404).json({ error: { code: "app_missing", message: "surface points at a deleted app" } });
-        return;
-      }
-      const pages = (Array.isArray(appRow.pages) ? appRow.pages : []) as AppPage[];
-
-      // Build the allowlist of views this app references: structured
-      // view_id on stat/view blocks + any view-id literal embedded in a
-      // custom block's html (the SVG/widget reads it via cobblr.viewData).
-      const allViews = await tenantDb
-        .selectFrom("core_views_views")
-        .selectAll()
-        .execute();
-      const viewById = new Map(allViews.map((v) => [v.id, v]));
-      const wanted = new Set<string>();
-      for (const page of pages) {
-        for (const b of page.blocks ?? []) {
-          if ((b.type === "stat" || b.type === "view") && b.view_id) wanted.add(b.view_id);
-          if (b.type === "custom" && typeof b.html === "string") {
-            for (const id of b.html.match(UUID_RE) ?? []) {
-              if (viewById.has(id)) wanted.add(id);
-            }
-          }
-        }
-      }
-
-      // Resolve each wanted view once (curated), build viewsById +
-      // precomputed stats so the public player needs zero live calls.
-      const viewsById: Record<string, unknown[]> = {};
-      const statsById: Record<string, number> = {};
-      for (const vid of wanted) {
-        const view = viewById.get(vid);
-        if (!view) continue;
-        const vcfg = (view.config as Record<string, unknown>) ?? {};
-        const result = await platform().entities.list(tok.orgId, view.entity_kind, {
-          filter: (vcfg.filter as Record<string, unknown> | undefined) ?? undefined,
-          sort: (vcfg.sort as string[] | undefined) ?? undefined,
-          limit: 200,
-        }, { publicRead: true });
-        viewsById[vid] = curateItems(result.items, token!) as unknown[];
-      }
-      // Precompute every stat block's number (count / sum of a field).
-      for (const page of pages) {
-        for (const b of page.blocks ?? []) {
-          if (b.type !== "stat" || !b.view_id) continue;
-          const rows = (viewsById[b.view_id] ?? []) as Array<{ fields?: Record<string, unknown> }>;
-          // The same number the member's own App Player shows (stat-value.ts).
-          const spec = { agg: b.agg ?? "count", field: b.field, times: b.times } as const;
-          statsById[statKey(b.view_id, spec)] = statValue(rows, spec);
-        }
-      }
-
-      // Strip the page tree to only the public-safe blocks.
-      const PUBLIC_BLOCKS = new Set(["markdown", "stat", "view", "custom"]);
-      const publicPages = pages.map((p) => ({
-        slug: p.slug,
-        title: p.title,
-        blocks: (p.blocks ?? []).filter((b) => PUBLIC_BLOCKS.has(b.type)),
-      }));
-
-      payload.app = { name: appRow.name, theme: appRow.theme ?? null, pages: publicPages };
-      payload.data = { viewsById, statsById };
-    } else {
-      res.status(500).json({ error: { code: "unknown_scope", message: `unsupported scope_type ${surface.scope_type}` } });
-      return;
-    }
+    const { payload, surface, tenantDb } = built;
+    const tok = { orgId: built.orgId };
 
     // Only an explicit page opening is a visit. Public screens also refresh
     // this data on timers and focus changes without another visitor arriving.
@@ -588,35 +600,50 @@ publicRouter.get("/:token", (req, res, next) => {
 
 // No-auth, token-gated image serve. The public render payload rewrites
 // every image_path to this route so a logged-out page (no Bearer token)
-// can still show photos. Bounded by: a valid surface token (org gate) +
-// images only (no docs/gcode leak) + unguessable file uuid. Bytes come
-// through the platform files seam (org-scoped) — we never touch disk or
-// the core-files router here.
+// can still show photos. It serves a photo only while the link shows it:
+// the surface's payload, built now, must name this file. A valid token used
+// to serve any image of the workspace by its id, so a photo stayed public
+// after its record left the page, was replaced, or the page ended (#7127).
+// Images only (no docs/gcode leak). Bytes come through the platform files
+// seam (org-scoped); we never touch disk or the core-files router here.
 publicRouter.get("/:token/files/:id/raw", (req, res, next) => {
   void (async () => {
-    const tok = await resolveToken(req.params.token);
-    if (!tok.ok) {
-      res.status(tok.status).json({ error: { code: tok.code, message: tok.message } });
+    const id = req.params.id;
+    const built = await shownNow(req.params.token);
+    if (!built.ok) {
+      res.status(built.status).json(built.body);
       return;
     }
-    const id = req.params.id;
-    if (!id) {
-      res.status(404).json({ error: { code: "not_found", message: "no such file" } });
+    if (!id || !showsFile(built.payload, req.params.token, id)) {
+      res.status(404).json({ error: { code: "not_found", message: "no such image" } });
       return;
     }
     const file =
-      (await platform().files.read(tok.orgId, id, "medium")) ??
-      (await platform().files.read(tok.orgId, id, "original"));
+      (await platform().files.read(built.orgId, id, "medium")) ??
+      (await platform().files.read(built.orgId, id, "original"));
     // Images only on the public path — never serve documents / gcode / etc.
     if (!file || !file.mimeType.startsWith("image/")) {
       res.status(404).json({ error: { code: "not_found", message: "no such image" } });
       return;
     }
     res.type(file.mimeType);
-    res.setHeader("Cache-Control", "public, max-age=3600");
+    // As the label's photo: a photo taken off the page stops being served
+    // from a cache within minutes, not an hour.
+    res.setHeader("Cache-Control", "public, max-age=600");
     res.send(Buffer.from(file.bytes));
   })().catch(next);
 });
+
+/** The payload a page's photos are checked against, built at most once per
+ *  link every few seconds: a page of fifty photos asks fifty times in one
+ *  load, and a photo taken off the page stops within those seconds. */
+const shown = ttlCache<Awaited<ReturnType<typeof surfacePayload>>>(10_000);
+const shownNow = (token: string | undefined) => shown.get(token ?? "", () => surfacePayload(token));
+
+/** Does this payload show the file, as this link's own image address? */
+export function showsFile(payload: unknown, token: string, fileId: string): boolean {
+  return JSON.stringify(payload).includes(`/api/v1/public/${token}/files/${fileId}/raw`);
+}
 
 // No-auth, signed-token image serve for scan-inbox EXPORT (cross-instance
 // import). A scan export mints a short-lived org-scoped token and bakes this URL

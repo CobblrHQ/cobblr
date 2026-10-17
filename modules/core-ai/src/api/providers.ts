@@ -135,7 +135,8 @@ providersRouter.get(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — holds an AI provider's credentials; the assistant never
+// handles a secret
 providersRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -214,7 +215,7 @@ providersRouter.post(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — changes an AI provider's credentials; see POST above
 providersRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -291,7 +292,7 @@ providersRouter.patch(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — removes an AI provider's credentials; see POST above
 providersRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -321,7 +322,7 @@ providersRouter.delete(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — calls the provider with its stored credentials; see POST above
 providersRouter.post(
   "/:id/test",
   asyncHandler(async (req, res) => {

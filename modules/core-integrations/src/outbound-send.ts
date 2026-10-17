@@ -2,6 +2,8 @@
 // failures are worth another try, how long to wait, and how fast one connection
 // may send. Pure, so the rules are tested without a network.
 
+import { safeFetch } from "./connectors/safe-fetch.js";
+
 /** A send that failed in a way the connector can classify. A plain Error (a
  *  refused URL, an empty message, a 400) is the request's own fault and is
  *  never retried. */
@@ -9,12 +11,17 @@ export class OutboundSendError extends Error {
   readonly status: number | null;
   readonly retryable: boolean;
   readonly retryAfterMs: number | null;
-  constructor(message: string, info: { status: number | null; retryable: boolean; retryAfterMs?: number | null }) {
+  /** The failure is the kind that passes, but the request may already have been
+   *  taken by the remote and cannot be repeated safely, so it is not retried:
+   *  a person is told and sends it again if it did not arrive. */
+  readonly needsLook: boolean;
+  constructor(message: string, info: { status: number | null; retryable: boolean; retryAfterMs?: number | null; needsLook?: boolean }) {
     super(message);
     this.name = "OutboundSendError";
     this.status = info.status;
     this.retryable = info.retryable;
     this.retryAfterMs = info.retryAfterMs ?? null;
+    this.needsLook = info.needsLook ?? false;
   }
 }
 
@@ -42,31 +49,74 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
   return Math.min(Math.max(at - now, 0), RETRY_AFTER_CAP_MS);
 }
 
-export function failedSend(label: string, res: { status: number; statusText?: string; headers: { get(name: string): string | null } }, text: string): OutboundSendError {
+/** Methods whose repeat does no more than the first did. */
+const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE", "OPTIONS"]);
+
+/** A request can be sent again without risk when repeating it changes nothing
+ *  (its method says so) or it carries the key the remote dedupes by. */
+export function isSafeToRepeat(method: string, headers: Record<string, string>, idempotencyHeader: string | undefined): boolean {
+  if (IDEMPOTENT_METHODS.has(method.toUpperCase())) return true;
+  if (!idempotencyHeader) return false;
+  const want = idempotencyHeader.toLowerCase();
+  return Object.entries(headers).some(([k, v]) => k.toLowerCase() === want && String(v).trim() !== "");
+}
+
+/** An answer that says the remote did not take the request: it was refused for
+ *  being too many or too slow. Anything else with a 5xx may have been half done. */
+const REFUSED_STATUSES = new Set([429, 408]);
+
+/** Failures that happen before a byte of the request is sent: nothing reached
+ *  the remote, so sending again cannot deliver twice. */
+const NEVER_SENT_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ENETUNREACH", "EHOSTUNREACH", "UND_ERR_CONNECT_TIMEOUT",
+  "ERR_TLS_CERT_ALTNAME_INVALID", "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY", "CERT_HAS_EXPIRED", "CERT_NOT_YET_VALID", "ERR_SSL_WRONG_VERSION_NUMBER",
+]);
+
+export function failedSend(label: string, res: { status: number; statusText?: string; headers: { get(name: string): string | null } }, text: string, safeToRepeat = false): OutboundSendError {
+  const transient = isRetryableStatus(res.status);
+  const retryable = transient && (safeToRepeat || REFUSED_STATUSES.has(res.status));
   return new OutboundSendError(`${label}: ${res.status} ${res.statusText ?? ""} ${text.slice(0, 200)}`.replace(/\s+/g, " ").trim(), {
     status: res.status,
-    retryable: isRetryableStatus(res.status),
+    retryable,
+    needsLook: transient && !retryable,
     retryAfterMs: parseRetryAfter(res.headers.get("retry-after")),
   });
 }
 
-export function networkFailure(label: string, err: unknown): OutboundSendError {
+export function networkFailure(label: string, err: unknown, safeToRepeat = false): OutboundSendError {
   const e = err as { name?: string; message?: string; cause?: { code?: string } };
-  const why = e?.name === "TimeoutError" || e?.name === "AbortError" ? "timed out" : (e?.cause?.code ?? e?.message ?? "network error");
-  return new OutboundSendError(`${label}: could not reach it (${why})`, { status: null, retryable: true });
+  const code = e?.cause?.code;
+  const timedOut = e?.name === "TimeoutError" || e?.name === "AbortError";
+  const why = timedOut ? "timed out" : (code ?? e?.message ?? "network error");
+  const neverSent = !timedOut && !!code && NEVER_SENT_CODES.has(code);
+  const retryable = neverSent || safeToRepeat;
+  return new OutboundSendError(`${label}: could not reach it (${why})`, { status: null, retryable, needsLook: !retryable });
 }
 
 /** fetch for a connector: a refused or timed-out call and a non-2xx answer both
  *  come back as an OutboundSendError that says whether to try again. */
-export async function sendFetch(label: string, url: string, init: RequestInit): Promise<Response> {
+export async function sendFetch(label: string, url: string, init: RequestInit, idempotencyHeader?: string): Promise<Response> {
+  const safe = isSafeToRepeat(init.method ?? "GET", (init.headers ?? {}) as Record<string, string>, idempotencyHeader);
   let res: Response;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(10_000), ...init });
+    res = await safeFetch(url, init);
   } catch (err) {
-    throw networkFailure(label, err);
+    throw networkFailure(label, err, safe);
   }
-  if (!res.ok) throw failedSend(label, res, await res.text().catch(() => ""));
+  if (!res.ok) throw failedSend(label, res, await res.text().catch(() => ""), safe);
   return res;
+}
+
+/** The header a connection sends its idempotency key in. Webhook and HTTP
+ *  connections send `Idempotency-Key` unless told otherwise; a person whose
+ *  receiver uses another name sets it, and "none" turns it off. Undefined means
+ *  no key travels, so a POST that fails after it went out is never repeated. */
+export function idempotencyHeaderOf(credentials: Record<string, unknown>): string | undefined {
+  const raw = credentials.idempotency_header;
+  const name = typeof raw === "string" ? raw.trim() : "";
+  if (!name) return "Idempotency-Key";
+  return /^(none|off|no)$/i.test(name) || !/^[A-Za-z0-9-]+$/.test(name) ? undefined : name;
 }
 
 export function isRetryable(err: unknown): boolean {
@@ -92,25 +142,6 @@ export function paceIntervalMs(connectorId: string, credentials: Record<string, 
   if (Number.isFinite(own) && own > 0) return Math.ceil(1000 / own);
   return PACE_MS[connectorId] ?? 0;
 }
-
-/** One send at a time per connection, at least `intervalMs` apart. In memory:
- *  it paces this api process; each connection's queue worker is the same process. */
-export class Pacer {
-  private next = new Map<string, number>();
-
-  /** Book the next slot and say how long to wait for it, or, when that wait is
-   *  longer than `maxWaitMs`, book nothing and say how long until it is free. */
-  take(key: string, intervalMs: number, maxWaitMs: number, now = Date.now()): { waitMs: number } | { deferMs: number } {
-    if (intervalMs <= 0) return { waitMs: 0 };
-    const at = Math.max(this.next.get(key) ?? 0, now);
-    const waitMs = at - now;
-    if (waitMs > maxWaitMs) return { deferMs: waitMs };
-    this.next.set(key, at + intervalMs);
-    return { waitMs };
-  }
-}
-
-export const pacer = new Pacer();
 
 export function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();

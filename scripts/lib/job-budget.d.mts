@@ -19,3 +19,4 @@ export declare function kindOfCommand(cmd: string): "tsc" | null;
 export declare const SUITE_MIN_FORKS: number;
 export declare const SUITE_FULL_WIDTH_MIB: number;
 export declare function suiteForks(o?: { max?: number; cores?: number; memMib?: number | null; capped?: boolean; limitMib?: number | null; env?: Record<string, string | undefined> }): { ok: true; forks: number } | { ok: false; forks: number; message: string };
+export declare function slotCores(cores: number, env?: Record<string, string | undefined>): number;

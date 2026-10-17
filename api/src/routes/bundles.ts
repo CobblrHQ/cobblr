@@ -1871,6 +1871,9 @@ async function applyValidatedBundleUnlocked(
      *  one install never reads "installed ×2" on the dashboard (#4145). The
      *  caller logs what it did instead. */
     logInstall?: boolean;
+    /** Finishing an installation that stopped or part-failed: the same
+     *  version again, so it writes no history entry. */
+    repair?: boolean;
   } = {},
 ): Promise<{
   bundle: { id: string; external_id: string; name: string; version: string };
@@ -1930,7 +1933,7 @@ async function applyValidatedBundleUnlocked(
   // the new set applies cleanly; the user's entities (parts, etc.) stay.
   const existing = await meta
     .selectFrom("bundles")
-    .select(["id", "version", "manifest", "enabled_features"])
+    .select(["id", "name", "version", "manifest", "enabled_features"])
     .where("org_id", "=", orgId)
     .where("external_id", "=", m.id)
     .execute();
@@ -1997,8 +2000,12 @@ async function applyValidatedBundleUnlocked(
   // the bundle first had them. A field still in the section the previous
   // version gave it follows the new version's.
   const keptSections = existing.length > 0 ? await personPlacedSections(orgId, existing) : new Map<string, string | null>();
-  for (const old of existing) {
-    await uninstallBundleId(old.id, { snapshotReason: "replaced" });
+  // The old version is kept in history now, but NOT removed here: it goes in
+  // the same transaction that writes its replacement, so an update that stops
+  // or fails before that commits leaves the old installation whole and the
+  // hourly pass tries it again (#7158).
+  if (!opts.repair) {
+    for (const old of existing) await snapshotBundleRow({ ...old, org_id: orgId, external_id: m.id }, "replaced");
   }
 
   // Set up the places this bundle offers. Find-or-create per CHILD, so a
@@ -2134,6 +2141,7 @@ async function applyValidatedBundleUnlocked(
   // (Field-def collisions are checked inside validateBundle above.)
 
   const inserted = await meta.transaction().execute(async (trx) => {
+    if (existing.length > 0) await deleteBundleMetaRows(trx, existing.map((e) => e.id));
     const bundle = await trx
       .insertInto("bundles")
       .values({
@@ -2149,6 +2157,9 @@ async function applyValidatedBundleUnlocked(
         source_url: null,
         manifest: sql`${JSON.stringify(fullManifest)}::jsonb`,
         enabled_features: enabledFeatures,
+        // Until the workspace-side steps below have run, the row says so: a
+        // stop in between leaves "pending", which the hourly pass finishes.
+        install_status: "pending",
       })
       .returning(["id", "external_id", "name", "version"])
       .executeTakeFirstOrThrow();
@@ -2433,12 +2444,18 @@ async function applyValidatedBundleUnlocked(
   // Keyed for the app-block view references below: a bundle app names the view
   // it wants, and only this insert knows the id that name got in THIS workspace.
   const seededViews: SeededView[] = [];
-  if (allViews.length > 0) {
+  if (allViews.length > 0 || existing.length > 0) {
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      // The old version's views go and the new ones come in one transaction:
+      // a failure keeps the old views rather than leaving the bundle with none.
+      await tdb.transaction().execute(async (ttrx) => {
+      if (existing.length > 0) {
+        await ttrx.deleteFrom("core_views_views").where("bundle_id", "in", existing.map((e) => e.id)).execute();
+      }
       for (const v of allViews) {
         // check-then-insert: applyValidatedBundle holds the workspace's bundle-apply advisory lock.
-        const inserted_view = await tdb
+        const inserted_view = await ttrx
           .insertInto("core_views_views")
           .values({
             entity_kind: v.entity_kind,
@@ -2456,7 +2473,10 @@ async function applyValidatedBundleUnlocked(
         if (inserted_view) seededViews.push(inserted_view as SeededView);
         viewsInstalled++;
       }
+      });
     } catch (err) {
+      seededViews.length = 0;
+      viewsInstalled = 0;
       console.error(
         `[bundle-install] saved_views insert failed for bundle ${inserted.id} (${inserted.external_id}):`,
         err,
@@ -2495,6 +2515,13 @@ async function applyValidatedBundleUnlocked(
    // top-level item with its chosen label + icon. Workspace edits
    // trump these defaults; insertOnly=true means a re-install
    // doesn't clobber a workspace's customisation.
+  if (existing.length > 0) {
+    try {
+      await deleteOverride(orgId, "bundle", m.id);
+    } catch (err) {
+      console.error(`[bundle-install] override cleanup failed for ${m.id}:`, err);
+    }
+  }
   if (m.provides_lens) {
     const lens = m.provides_lens;
     try {
@@ -2614,6 +2641,9 @@ async function applyValidatedBundleUnlocked(
       }
     }
   }
+  // Every workspace-side step has run: no longer in flight. A step that failed
+  // already marked the row "partial", which stays so for the hourly pass.
+  await meta.updateTable("bundles").set({ install_status: "active" }).where("id", "=", inserted.id).where("install_status", "=", "pending").execute();
   // Installed: its collections, fields and views are part of the shape now.
   await bumpWorkspaceShape(orgId);
   // The activity says installed only once it is: written last, so a step
@@ -3371,6 +3401,47 @@ export async function removeBundle(
   };
 }
 
+/** Version history (audit F3): before anything is deleted, keep the FULL
+ *  stored manifest + enabled features so this exact version can be
+ *  re-validated and re-applied later ("revert"). EVERY removal path goes
+ *  through here, update-replace, explicit uninstall, revert-overwrite, so one
+ *  write point covers them all. Best-effort: history must never block an
+ *  uninstall or an update. */
+async function snapshotBundleRow(
+  bundleRow: { org_id: string; external_id: string; name: string; version: string; manifest: unknown; enabled_features: string[] | null },
+  reason: "replaced" | "uninstalled",
+): Promise<string | undefined> {
+  try {
+    const r = await meta
+      .insertInto("bundle_snapshots")
+      .values({
+        org_id: bundleRow.org_id,
+        external_id: bundleRow.external_id,
+        name: bundleRow.name,
+        version: bundleRow.version,
+        reason,
+        manifest: sql`${JSON.stringify(bundleRow.manifest)}::jsonb`,
+        enabled_features: bundleRow.enabled_features ?? [],
+      })
+      .returning("id")
+      .executeTakeFirst();
+    return r?.id;
+  } catch (err) {
+    console.error(`[bundle-uninstall] snapshot failed for ${bundleRow.external_id}:`, err);
+    return undefined;
+  }
+}
+
+/** The meta-side rows a bundle owns, then the bundle. One statement set so an
+ *  uninstall and an update's replacement both take it inside a transaction. */
+async function deleteBundleMetaRows(trx: Kysely<MetaDB>, bundleIds: string[]): Promise<void> {
+  await trx.deleteFrom("entity_action_bindings").where("bundle_id", "in", bundleIds).execute();
+  await trx.deleteFrom("module_field_defs").where("bundle_id", "in", bundleIds).execute();
+  await trx.deleteFrom("native_field_overrides").where("bundle_id", "in", bundleIds).execute();
+  // SHAPE-UNCHANGED: both callers bump the workspace shape once their transaction has committed.
+  await trx.deleteFrom("bundles").where("id", "in", bundleIds).execute();
+}
+
 async function uninstallBundleId(
   bundleId: string,
   opts?: { teardownResources?: boolean; snapshotReason?: "replaced" | "uninstalled" },
@@ -3387,32 +3458,7 @@ async function uninstallBundleId(
     .where("id", "=", bundleId)
     .executeTakeFirst();
   if (bundleRow) {
-    // Version history (audit F3): before anything is deleted, keep the FULL
-    // stored manifest + enabled features so this exact version can be
-    // re-validated and re-applied later ("revert"). EVERY removal path goes
-    // through here — update-replace, explicit uninstall, revert-overwrite —
-    // so one write point covers them all. Best-effort: history must never
-    // block an uninstall.
-    try {
-      await meta
-        .insertInto("bundle_snapshots")
-        .values({
-          org_id: bundleRow.org_id,
-          external_id: bundleRow.external_id,
-          name: bundleRow.name,
-          version: bundleRow.version,
-          reason: opts?.snapshotReason ?? "uninstalled",
-          manifest: sql`${JSON.stringify(bundleRow.manifest)}::jsonb`,
-          enabled_features: bundleRow.enabled_features ?? [],
-        })
-        .returning("id")
-        .executeTakeFirst()
-        .then((r) => {
-          snapshotId = r?.id;
-        });
-    } catch (err) {
-      console.error(`[bundle-uninstall] snapshot failed for ${bundleRow.external_id}:`, err);
-    }
+    snapshotId = await snapshotBundleRow(bundleRow, opts?.snapshotReason ?? "uninstalled");
     try {
       const tdb = (await getTenantDb(bundleRow.org_id)) as unknown as Kysely<BundleTenantDB>;
       await tdb
@@ -3474,24 +3520,7 @@ async function uninstallBundleId(
   // FKs on bindings + field_defs have ON DELETE SET NULL for bundle_id,
   // but we want full uninstall — remove the artifacts the bundle
   // created, then the bundle row.
-  await meta.transaction().execute(async (trx) => {
-    await trx
-      .deleteFrom("entity_action_bindings")
-      .where("bundle_id", "=", bundleId)
-      .execute();
-    await trx
-      .deleteFrom("module_field_defs")
-      .where("bundle_id", "=", bundleId)
-      .execute();
-    await trx
-      .deleteFrom("native_field_overrides")
-      .where("bundle_id", "=", bundleId)
-      .execute();
-    await trx
-      .deleteFrom("bundles")
-      .where("id", "=", bundleId)
-      .execute();
-  });
+  await meta.transaction().execute((trx) => deleteBundleMetaRows(trx, [bundleId]));
 
   // Refcount teardown — ONLY on a real uninstall, NOT the upgrade-path cleanup
   // (applyValidatedBundle calls this to drop a prior version before reinstalling;

@@ -12,6 +12,7 @@ registerDetailPanel(
 );
 
 registerDetailPanel("digifab:kiln", lazy(() => import("../features/digifab/kiln").then(m => ({ default: m.KilnPanel }))));
+registerDetailPanel("digifab:arm", lazy(() => import("../features/digifab/robotArm").then(m => ({ default: m.ArmPanel }))));
 
 registerDetailPanel(
   "digifab:cockpit",

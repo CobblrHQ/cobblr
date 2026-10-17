@@ -255,13 +255,20 @@ function countRefusals(pool: Pool): void {
   };
 }
 
+/** What a connection calls itself in pg_stat_activity: its kind, without the
+ *  workspace or lock it serves ("tenant-pool", "advisory-lock"), so a server
+ *  that runs out of connections can be read by who holds them (#6928). */
+function appName(label: string): string {
+  return `cobblr ${label.split(" ")[0] ?? label}`.slice(0, 63);
+}
+
 /** The one way to open a pool. `label` names it in the log line. */
 export function createPool(config: PoolConfig, label: string): Pool {
   const Base = (config.Client as ClientClass | undefined) ?? Client;
   // `types` on the pool, which hands its options to every client it makes:
   // never re-spread there, because pg-pool keeps the password on them as a
   // hidden property and a copy would arrive without it.
-  const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, ...config, Client: bornGuarded(label, Base) });
+  const pool = new Pool({ connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS, types: DAYS_STAY_DAYS, application_name: appName(label), ...config, Client: bornGuarded(label, Base) });
   traceCheckouts(pool);
   countRefusals(pool);
   // pg-pool re-emits an idle client's error on the pool and, being an
@@ -274,7 +281,7 @@ export function createPool(config: PoolConfig, label: string): Pool {
 /** The one way to open a bare client (superuser work, a maintenance DB). */
 export function createClient(config: ClientConfig | string, label: string): Client {
   const base: ClientConfig = typeof config === "string" ? { connectionString: config } : config;
-  const client = new Client({ ...base, types: base.types ?? DAYS_STAY_DAYS });
+  const client = new Client({ application_name: appName(label), ...base, types: base.types ?? DAYS_STAY_DAYS });
   client.on("error", onClientError(label));
   // A connection opened for one request (a handshake, a password exchange, a
   // disconnect) is counted against it like a statement, so a per-operation

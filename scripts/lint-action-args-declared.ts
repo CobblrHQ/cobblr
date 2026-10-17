@@ -27,6 +27,7 @@
 
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const MODULES = "modules";
 const OPEN_MARK = /ARGS-OPEN:/;
@@ -102,12 +103,12 @@ const findings: Finding[] = [];
 let checked = 0;
 
 for (const mod of readdirSync(MODULES)) {
-  const man = join(MODULES, mod, "src", "module.ts");
+  const mans = manifestSources(join(MODULES, mod));
   const api = join(MODULES, mod, "src");
-  if (!existsSync(man) || !existsSync(api)) continue;
+  if (!mans.length || !existsSync(api)) continue;
   const handlers = handlerBodies(walk(api));
 
-  for (const a of manifestActions(readFileSync(man, "utf8"))) {
+  for (const a of mans.flatMap((man) => manifestActions(readFileSync(man, "utf8")))) {
     if (!a.handler) continue;
     const h = handlers.get(a.handler);
     if (!h) continue; // route-only, or registered elsewhere

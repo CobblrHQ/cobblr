@@ -51,3 +51,20 @@ export function scanCombinedCount(meta: Record<string, unknown> | null | undefin
   const n = Number((meta ?? {}).merged_count);
   return Number.isFinite(n) && n >= 2 ? n : 0;
 }
+
+/** Why a scan row may not be filed (Confirm, File into a bin, the
+ *  dashboard's Add), or null when it may: the ONE rule filing and Restore
+ *  share (#7144). A row already filed is done. A discarded row is not
+ *  filed while discarded: one combined into another scan, or a part of a
+ *  split that was undone, holds nothing of its own (its quantity lives in
+ *  the row that absorbed it, and filing it counted it twice); any other
+ *  deleted scan is restored first, so filing it is a choice made in view. */
+export function scanFilingRefusal(row: { status: string; suggested_metadata?: unknown }): { code: string; message: string } | null {
+  if (row.status === "resolved") return { code: "already_resolved", message: "This item was already confirmed." };
+  if (row.status === "discarded") {
+    const elsewhere = scanRestoreRefusal(scanDeletedRecovery((row.suggested_metadata ?? null) as Record<string, unknown> | null));
+    if (elsewhere) return { code: "contents_elsewhere", message: elsewhere };
+    return { code: "discarded", message: "This scan was deleted. Restore it from Recently deleted to file it." };
+  }
+  return null;
+}

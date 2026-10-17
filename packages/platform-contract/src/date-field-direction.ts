@@ -1,4 +1,5 @@
 // Does this date point forwards or backwards?
+// VOCAB-ENUMERATION OK: which direction each date role points (due, ready-until, ready-from) is this file's data
 //
 // Every `date` custom field becomes a calendar event, which is the right call:
 // a bundle declares "Renew by" and it shows up with no wiring. But the calendar
@@ -162,11 +163,12 @@ export function dateEventTitle(entityName: string, fieldLabel: string): string {
  * nothing about it. A role is what the field means, so it beats reading the
  * label: "Drink from" names no marker and read as a record, "Drink by" read as
  * due by the word "by", and a label in another language reads as neither.
+ *   due          due: a deadline;
  *   ready-until  due: the end of a window is a moment to act by;
  *   ready-from   record: the start of a window that has passed is not late.
  */
 export function directionOfRole(role: string | null | undefined): DateFieldDirection | null {
-  if (role === "ready-until") return "due";
+  if (role === "ready-until" || role === "due") return "due";
   if (role === "ready-from") return "record";
   return null;
 }

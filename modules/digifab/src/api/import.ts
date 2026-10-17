@@ -40,7 +40,9 @@ const Body = z
   })
   .refine((b) => b.connection_id || b.base_url, { message: "connection_id or base_url required" });
 
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — reads a whole FDM Monster farm with typed or stored
+// credentials and makes a machine per printer at once; it takes a secret,
+// and the assistant adds machines one at a time through their own doors
 importRouter.post(
   "/fdm-monster",
   asyncHandler(async (req, res) => {

@@ -1,5 +1,6 @@
 import { wiresSaid } from "../platform/wire-said.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
+import { previewWire, relationshipsInUse } from "../platform/wire-preview.js";
 import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire } from "../platform/wire-ops.js";
 import { isLendable, listOpenLoans } from "../platform/custody.js";
 import { sayLoan } from "@cobblr/platform-contract/loan";
@@ -47,7 +48,7 @@ import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
 import { actionGateOf } from "../platform/action-gates.js";
 import { issueUndos, issuedUndoFor, spendIssuedUndo } from "../platform/issued-undos.js";
-import { actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
+import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
@@ -98,6 +99,19 @@ function secretPresenceQuery(raw: unknown): import("@cobblr/platform-contract").
   if (raw === undefined) return undefined;
   const values = z.record(z.enum(["empty", "has_value"])).parse(raw);
   return Object.entries(values).map(([col, value]) => ({ col, op: value === "empty" ? "empty" : "not_empty" }));
+}
+
+/** A list read's `where`: secret presence (`presence[field]=empty|has_value`)
+ *  and text matches (`contains[field]=…`, `not_contains[field]=…`, #6896), so
+ *  the assistant's list tool asks for exactly what a view can. */
+function listWhereQuery(query: Record<string, unknown>): import("@cobblr/platform-contract").FilterPredicate[] | undefined {
+  const text = z.record(z.string().max(200));
+  const where = [
+    ...(secretPresenceQuery(query.presence) ?? []),
+    ...Object.entries(query.contains === undefined ? {} : text.parse(query.contains)).map(([col, value]) => ({ col, op: "contains" as const, value })),
+    ...Object.entries(query.not_contains === undefined ? {} : text.parse(query.not_contains)).map(([col, value]) => ({ col, op: "not_contains" as const, value })),
+  ];
+  return where.length ? where : undefined;
 }
 
 export const platformOrgRouter = Router({ mergeParams: true });
@@ -253,6 +267,13 @@ platformOrgRouter.get(
       }
       const filter: Record<string, unknown> = {};
       const includeSecrets = req.query.include_secrets === "true" || req.query.include_secrets === "1";
+      // The token door refuses this too (token-access.ts); the export checks again
+      // so a spelling that door does not recognise still reaches no secret. Only
+      // a person's own session or a full-access token may ask for them.
+      if (includeSecrets && req.session?.token_access && req.session.token_access !== "full") {
+        res.status(403).json({ error: { code: "token_access", message: "A token can export secrets only at full access." } });
+        return;
+      }
       if (includeSecrets && readsAsAssistant(req)) {
         res.status(403).json({ error: { code: "secret_hidden", message: "A person must export secrets themselves." } });
         return;
@@ -269,7 +290,7 @@ platformOrgRouter.get(
         {
           q: typeof req.query.q === "string" && req.query.q ? req.query.q : undefined,
           filter: Object.keys(filter).length ? filter : undefined,
-          where: secretPresenceQuery(req.query.presence),
+          where: listWhereQuery(req.query),
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role },
@@ -388,7 +409,7 @@ platformOrgRouter.get(
           limit: Math.min(Number(req.query.limit) || 50, 200),
           offset: Number(req.query.offset) || 0,
           filter: Object.keys(filter).length ? filter : undefined,
-          where: secretPresenceQuery(req.query.presence),
+          where: listWhereQuery(req.query),
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role, ...(readsAsAssistant(req) ? { assistant: true } : {}) },
@@ -1123,6 +1144,54 @@ platformOrgRouter.get(
     }
   },
 );
+
+// How many existing records a wire would fire on (the composer's dry run).
+// The filter rides as JSON in ?filter=: at most ten short conditions.
+// AI-REACH: reads
+platformOrgRouter.get("/:slug/bindings/preview", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    // ROLE: any member (a read, judged as the member sees the records)
+    const q = req.query as Record<string, unknown>;
+    const sourceKind = typeof q.source_kind === "string" ? q.source_kind : "";
+    if (!sourceKind) {
+      res.status(400).json({ error: { code: "missing_source_kind", message: "source_kind is required" } });
+      return;
+    }
+    let filter: unknown = null;
+    if (typeof q.filter === "string" && q.filter) {
+      try {
+        filter = JSON.parse(q.filter);
+      } catch {
+        res.status(400).json({ error: { code: "invalid_filter", message: "filter must be JSON" } });
+        return;
+      }
+    }
+    const out = await previewWire(
+      req.tenant!.org.id,
+      { userId: req.session?.id, role: req.tenant!.role },
+      { source_kind: sourceKind, trigger_type: typeof q.trigger_type === "string" && q.trigger_type ? q.trigger_type : "event", filter },
+    );
+    if (out.error) {
+      res.status(400).json({ error: { code: "invalid_filter", message: out.error } });
+      return;
+    }
+    res.json(out);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The relationship kinds in use in this workspace, most used first, so a
+// wire that runs on linked records picks one instead of typing it. ?kind=
+// keeps those touching one kind and says which way.
+platformOrgRouter.get("/:slug/relationship-kinds", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" && req.query.kind ? req.query.kind : undefined;
+    res.json({ items: await relationshipsInUse(req.tenant!.org.id, kind) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Which presence-declared record panels have something to show on one
 // record (#6337): a machine with a kiln profile shows its firing logs
@@ -2313,7 +2382,7 @@ platformOrgRouter.get(
         // An action that exists only as the way back for another is not listed
         // for anyone who did not ask: every reader the assistant has (the tool,
         // the prompt rail, the argument schemas) comes through here.
-        items: actions.filter((a) => on.has(a.module_name) && (a.internal !== true || req.query.include_internal === "1")).map((a) => {
+        items: actions.filter((a) => on.has(a.module_name) && on.has(actionOwner(a)) && (a.internal !== true || req.query.include_internal === "1")).map((a) => {
           const ovr = overrides.get(a.id);
           const effective = (ovr?.applies_to_override ??
             a.applies_to) as ActionAppliesToDecl;

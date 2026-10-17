@@ -14,7 +14,7 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
 import { migrateConcurrently } from "./migrate-concurrently.js";
-import { describeMigrationFiles, healthVerdict, moduleIsBehind, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
+import { describeMigrationFiles, healthVerdict, unreadableMigrationFiles, moduleIsBehind, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
@@ -296,6 +296,7 @@ export async function enableModuleForOrg(
         trigger_type: w.trigger_type,
         trigger_event: w.trigger_event ?? null,
         template: w.template ?? null,
+        args: w.args ?? null,
         source_module: moduleName,
       })
       .execute();
@@ -454,6 +455,24 @@ async function unprovisionedWorkspaceCount(): Promise<number> {
   return Number(r?.n ?? 0);
 }
 
+/** What a module's declared migrations directory holds on this build. A
+ *  module with no schema has nothing to apply; a declared directory that
+ *  cannot be read is NOT that (#7154): an empty answer let boot skip every
+ *  workspace and health report current for an api whose queries need
+ *  columns the tenants never got. Boot and health both read through here. */
+export function moduleMigrationFiles(moduleName: string): ModuleMigrationFiles {
+  const entry = getEntry(moduleName);
+  if (!entry?.manifest.schema) return describeMigrationFiles([]);
+  const dir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
+  try {
+    return describeMigrationFiles(readdirSync(dir));
+  } catch (err) {
+    const reason = `${moduleName}: cannot read its migrations at ${dir}: ${(err as Error).message}`;
+    console.error(`[migrate] ${reason}`);
+    return unreadableMigrationFiles(reason);
+  }
+}
+
 export async function syncTenantMigrations(): Promise<number> {
   // The version marker first, meta-side and per MODULE, not per workspace: a
   // manifest bump with no new migration left every existing workspace's
@@ -489,16 +508,7 @@ export async function syncTenantMigrations(): Promise<number> {
   const filesFor = (moduleName: string): ModuleMigrationFiles => {
     const cached = filesByModule.get(moduleName);
     if (cached !== undefined) return cached;
-    const entry = getEntry(moduleName);
-    let files: ModuleMigrationFiles = describeMigrationFiles([]);
-    if (entry?.manifest.schema) {
-      try {
-        const dir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
-        files = describeMigrationFiles(readdirSync(dir));
-      } catch {
-        files = describeMigrationFiles([]); // unreadable/empty dir → nothing to apply (same net effect)
-      }
-    }
+    const files = moduleMigrationFiles(moduleName);
     filesByModule.set(moduleName, files);
     return files;
   };
@@ -613,7 +623,7 @@ export interface MigrationSummary {
    *  `causes`: how many pending pairs are each kind (pendingCause), and
    *  `breaking`: a declared peer's breaking migrations as module/file, so the
    *  deploy reader names the cause it has instead of listing three. */
-  pending: { count: number; modules: string[]; unprovisioned_workspaces: number; causes: Record<PendingCause, number>; breaking: string[] };
+  pending: { count: number; modules: string[]; unprovisioned_workspaces: number; causes: Record<PendingCause, number>; breaking: string[]; unreadable: string[] };
   ahead: { count: number; modules: string[]; peer: string | null };
 }
 let pendingCache: { at: number; value: MigrationSummary } | null = null;
@@ -625,15 +635,7 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
   const filesFor = (moduleName: string): ModuleMigrationFiles => {
     const cached = filesByModule.get(moduleName);
     if (cached !== undefined) return cached;
-    const entry = getEntry(moduleName);
-    let files: ModuleMigrationFiles = describeMigrationFiles([]);
-    if (entry?.manifest.schema) {
-      try {
-        files = describeMigrationFiles(readdirSync(resolve(entry.rootPath, entry.manifest.schema.migrationsDir)));
-      } catch {
-        files = describeMigrationFiles([]);
-      }
-    }
+    const files = moduleMigrationFiles(moduleName);
     filesByModule.set(moduleName, files);
     return files;
   };
@@ -643,6 +645,7 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
   const modules = new Set<string>();
   const causes: Record<PendingCause, number> = { own: 0, downgrade: 0, peer_breaking: 0 };
   const breaking = new Set<string>();
+  const unreadable = new Set<string>();
   let aheadCount = 0;
   const aheadModules = new Set<string>();
   for (const row of rows) {
@@ -653,13 +656,15 @@ export async function pendingMigrationSummary(): Promise<MigrationSummary> {
       const cause = pendingCause(row, filesFor(row.module_name), peer);
       if (cause) causes[cause]++;
       if (cause === "peer_breaking" && row.newest_breaking_migration) breaking.add(`${row.module_name}/${row.newest_breaking_migration}`);
+      const why = filesFor(row.module_name).unreadable;
+      if (why) unreadable.add(why);
     } else if (verdict === "ahead") {
       aheadCount++;
       aheadModules.add(row.module_name);
     }
   }
   const value: MigrationSummary = {
-    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned, causes, breaking: [...breaking].sort() },
+    pending: { count, modules: [...modules].sort(), unprovisioned_workspaces: unprovisioned, causes, breaking: [...breaking].sort(), unreadable: [...unreadable].sort() },
     ahead: { count: aheadCount, modules: [...aheadModules].sort(), peer: peer ?? null },
   };
   pendingCache = { at: Date.now(), value };

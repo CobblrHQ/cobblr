@@ -17,7 +17,8 @@ import type { MoneyTotal } from "@cobblr/platform-contract/money";
 import type { ScopeDef, VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import type { AddressSuggestionsBody, FieldValuesUsedBody, TipState } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
-import { noteWorkspaceWrite, primedRead, sharedRead } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, primedRead, resetPrimedReads, sharedRead } from "@cobblr/platform-web";
+import { sessionChanged, sessionIdentityOf } from "./session-identity";
 import type { DashboardSnapshot } from "@cobblr/platform-contract/dashboard-reads";
 import type { CancelResult } from "./digifab-cancel";
 import type { ScanCountReason } from "@cobblr/platform-contract/scan-count";
@@ -72,17 +73,32 @@ export function getToken(): string | null {
   return getShareViewToken() ?? getStationTokenOverride() ?? localStorage.getItem(TOKEN_KEY);
 }
 
+/** Who the page is answering for: the account and any View as grant (session-identity.ts). */
+export function sessionIdentity(): string {
+  return sessionIdentityOf(getToken(), getImpersonationToken());
+}
+
 export function setToken(token: string | null) {
+  const before = sessionIdentity();
   // Signing out of a View as ends the view in this tab, never the account
   // signed in on this browser.
-  if (!token && getShareViewToken()) return setShareViewToken(null);
-  if (token) localStorage.setItem(TOKEN_KEY, token);
+  if (!token && getShareViewToken()) setShareViewToken(null);
+  else if (token) localStorage.setItem(TOKEN_KEY, token);
   else {
     localStorage.removeItem(TOKEN_KEY);
     // What the dashboard kept on this device goes with the session (#6563).
     forgetDashboardCopies();
   }
+  // Someone else now: nothing the last account read answers them (#6970).
+  if (sessionIdentity() !== before) {
+    resetPrimedReads();
+    sessionChanged();
+  }
 }
+
+/** An answer that arrived after the page began answering for someone else:
+ *  it is the earlier account's, so it is never handed over (#6970). */
+export const SESSION_CHANGED = "session_changed";
 
 /** Fetch a binary endpoint with auth → an object URL (for <img>). Caller must
  *  revokeObjectURL when done. Returns null on any error. */
@@ -420,7 +436,12 @@ export { subscribeDeletedRecord } from "@cobblr/platform-web";
 
 /** Every request the app makes, counted while it is in flight (in-flight.ts). */
 function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-  return carryingOn<T>(method, path, body, extraHeaders, null);
+  const askedAs = sessionIdentity();
+  const stale = () => new ApiError(0, SESSION_CHANGED, "Signed in as someone else since this was asked.");
+  return carryingOn<T>(method, path, body, extraHeaders, null).then(
+    (answer) => (sessionIdentity() === askedAs ? answer : Promise.reject(stale())),
+    (e: unknown) => Promise.reject(sessionIdentity() === askedAs ? e : stale()),
+  );
 }
 
 /** A refusal whose switch the person holds waits for them, uncounted (it is
@@ -625,6 +646,10 @@ export interface ChangelogDay {
 export interface SessionUser {
   id: string;
   email: string;
+  /** A name to sign in with beside the email, or null (#6910). */
+  username?: string | null;
+  /** False for an account made with only a username: its address is a placeholder nothing is sent to. */
+  has_email?: boolean;
   display_name: string;
   /** Per-user theme preference — follows you across devices + workspaces.
    *  null/absent = follow the device/OS. */
@@ -1224,7 +1249,9 @@ export interface Asset {
   state: string;
   excitement: number;
   quantity: number;
-  serial_number: string | null;
+  /** Absent (the key is not there) for a viewer without `assets:view-serials`:
+   *  the screen shows the field only when it is present. */
+  serial_number?: string | null;
   purchased_at: string | null;
   /** What it cost, in cents. */
   purchase_price_cents?: number | null;
@@ -1311,6 +1338,9 @@ export interface ContributedPanel {
 }
 
 export interface OrgModuleListItem {
+  /** The module's parts and whether each is on here (module parts): off
+   *  hides its screens, actions and tools, and keeps its data. */
+  parts?: Array<{ id: string; label: string; description: string; default: "on" | "off" | "with-collection"; on: boolean; chosen: boolean }>;
   name: string;
   aliases?: string[];
   retirement?: { reason: string; replacement?: string } | null;
@@ -1945,6 +1975,8 @@ export const api = {
     ),
   disableModule: (slug: string, name: string) =>
     request<void>("POST", `/orgs/${slug}/modules/${name}/disable`),
+  setModulePart: (slug: string, name: string, part: string, enabled: boolean | null) =>
+    request<{ part: { id: string; on: boolean } }>("POST", `/orgs/${slug}/module-parts/${name}/${part}`, { enabled }),
 
   // machines module (instance? scopes to /instances/:name/items)
   /** The machines you have; `gone` lists the ones sold, given away or
@@ -2909,6 +2941,24 @@ export const api = {
       "GET",
       `/orgs/${slug}/wire-events`,
     ),
+  /** How many existing records a wire with this trigger and filter would
+   *  fire on, and what that number means for the trigger. */
+  previewWire: (slug: string, body: { source_kind: string; trigger_type: string; filter: unknown }) =>
+    request<{ count: number | null; of: number | null; complete: boolean; means: string; ignored: string[] }>(
+      "GET",
+      `/orgs/${slug}/bindings/preview?${new URLSearchParams({
+        source_kind: body.source_kind,
+        trigger_type: body.trigger_type,
+        ...(body.filter ? { filter: JSON.stringify(body.filter) } : {}),
+      })}`,
+    ),
+  /** The relationship kinds in use here, most used first; with a kind, those
+   *  touching it and which way. */
+  listRelationshipKinds: (slug: string, kind?: string) =>
+    request<{ items: { relationship: string; count: number; out: number; in: number }[] }>(
+      "GET",
+      `/orgs/${slug}/relationship-kinds${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
   createBinding: (slug: string, body: Partial<PlatformBinding>) =>
     request<PlatformBinding>("POST", `/orgs/${slug}/bindings`, body),
   updateBinding: (slug: string, id: string, body: Partial<PlatformBinding>) =>
@@ -3309,7 +3359,7 @@ export const api = {
   },
 
   // /me/profile (display_name + password change).
-  updateMe: (body: { display_name?: string }) =>
+  updateMe: (body: { display_name?: string; username?: string | null }) =>
     request<{ user: SessionUser }>("PATCH", "/me", body),
   // Changing the password revokes all prior tokens server-side; the response
   // carries a freshly-minted one for THIS session, which we persist so the
@@ -6599,8 +6649,10 @@ export const api = {
    *  opens on the same one. */
   aiChatConversation: (slug: string) =>
     request<{ conversation: { messages: unknown[]; updated_at: string } | null }>("GET", `/orgs/${slug}/modules/core-ai/chat/conversation`),
-  aiChatSaveConversation: (slug: string, messages: unknown[]) =>
-    request<{ updated_at: string }>("PUT", `/orgs/${slug}/modules/core-ai/chat/conversation`, { messages }),
+  /** `owner` is the account the panel read these messages for; the server
+   *  refuses them when it is not the one signed in (#7062). */
+  aiChatSaveConversation: (slug: string, messages: unknown[], owner: string) =>
+    request<{ updated_at: string }>("PUT", `/orgs/${slug}/modules/core-ai/chat/conversation`, { messages, owner }),
   /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
    *  workspace data into prompts, and the write mode (off / ask / auto)?
    *  Enforced server-side; auto still asks for ACTIONS (irreversible). */
@@ -6939,10 +6991,10 @@ export const api = {
   // regen later.
   adminCreateUser: (
     slug: string,
-    body: { email: string; display_name: string; role: OrgRoleName },
+    body: { email?: string; username?: string; display_name: string; role: OrgRoleName },
   ) =>
     request<{
-      user: { id: string; email: string; display_name: string; role: string; must_reset_password: boolean };
+      user: { id: string; email: string | null; username?: string | null; display_name: string; role: string; must_reset_password: boolean };
       temp_password: string;
       instructions: string;
     }>("POST", `/orgs/${slug}/admin/users`, body),
@@ -8089,6 +8141,8 @@ export interface ImportPlanItem {
   changes?: Array<{ field: string; ours: unknown; theirs: unknown; decision: "write" | "keep" | "ask" }>;
   /** For ask: the records here it might be. */
   candidates?: Array<{ id: string; name: string }>;
+  /** How many more places this record will be kept in, beside its own row. */
+  holdings?: number;
 }
 export interface ImportPlan {
   entityType: string;
@@ -11428,6 +11482,8 @@ export interface MePushDevice {
 export interface MePush {
   /** The key a browser subscribes with; null until the server has made it. */
   public_key: string | null;
+  /** Why there is no key to subscribe with, in words to show; null when there is one. */
+  unavailable?: string | null;
   devices: MePushDevice[];
   settings: MePushSettings;
   quiet_now: boolean;

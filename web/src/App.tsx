@@ -150,6 +150,7 @@ const BoardInspectionPage = lazy(() => import("./pages/BoardInspectionPage").the
 const ReflowStationPage = lazy(() => import("./pages/ReflowStationPage").then(m => ({ default: m.ReflowStationPage })));
 const AssemblyStationPage = lazy(() => import("./pages/AssemblyStationPage").then(m => ({ default: m.AssemblyStationPage })));
 const KilnStationPage = lazy(() => import("./pages/KilnStationPage").then(m => ({ default: m.KilnStationPage })));
+const ArmStationPage = lazy(() => import("./pages/ArmStationPage").then(m => ({ default: m.ArmStationPage })));
 const StockStationPage = lazy(() => import("./pages/StockStationPage").then((m) => ({ default: m.StockStationPage })));
 const MachineStationPage = lazy(() => import("./pages/MachineStationPage").then((m) => ({ default: m.MachineStationPage })));
 const MakesPage = lazy(() => import("./pages/MakesPage").then((m) => ({ default: m.MakesPage })));
@@ -736,6 +737,7 @@ function ActiveOrgScopedRoutes() {
           <Route path="/station/inspection/:machineId/:orderId" element={<InspectionStationPage />} />
           <Route path="/station/floor" element={<FloorManagerPage screen />} />
           <Route path="/station/kiln/:machineId" element={<KilnStationPage />} />
+          <Route path="/station/arm/:machineId" element={<ArmStationPage />} />
           <Route path="/station/printer/:machineId" element={<PrinterStationPage />} />
           <Route path="/station/production/:connectionId" element={<ProductionStationPage />} />
           <Route path="/station/machine/:connectionId/:deviceId" element={<MachineStationPage />} />
