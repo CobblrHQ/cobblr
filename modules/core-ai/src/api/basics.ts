@@ -7,6 +7,7 @@
 //
 // See docs/design-decisions/no-ai-chat-training.md.
 
+import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router } from "express";
 import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
@@ -885,6 +886,7 @@ basicsRouter.post(
   "/commands/:id/run",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireAPerson(req, res))) return;
     const body = z
       .object({
         message: z.string().min(1).max(2000),

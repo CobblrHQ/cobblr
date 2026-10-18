@@ -17,7 +17,7 @@ import { settleResinPrint } from "../resin-prints.js";
 // the view of the others).
 
 import { readBridgeConfig } from "../bridge-identity.js";
-import { putBackDrawn } from "../loaded-spools.js";
+import { drawForCompletedJob, putBackDrawn } from "../loaded-spools.js";
 import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
@@ -516,6 +516,8 @@ fleetRouter.post(
 
     // Resolve the print's downstream context from its job, for the wires.
     if (att?.reason === "print-completed" && att.job_id) {
+      try { await drawForCompletedJob(db, orgId, { id: att.job_id }); }
+      catch { return void res.status(409).json({ error: { code: "filament_accounting_pending", message: "Filament accounting is still pending. Try clearing the bed again shortly." } }); }
       // Production runs: the human verdict is what counts a plate — good
       // increments the run (and may close it), scrapped marks the plate
       // non-covering so the assign worker mints a replacement. Idempotent.
@@ -526,7 +528,7 @@ fleetRouter.post(
       await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       const job = await db
         .selectFrom("digifab_jobs")
-        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn", "resin_print"])
+        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn", "material_plan", "resin_print"])
         .where("id", "=", att.job_id)
         .executeTakeFirst();
       if (job) {
@@ -551,7 +553,7 @@ fleetRouter.post(
           await platform().events.emit("digifab.print.reversed", {
             orgId,
             jobId: job.id,
-            ...(!job.resin_print && job.material_part_id && grams && grams > 0
+            ...(!job.material_plan && !job.resin_print && job.material_part_id && grams && grams > 0
               ? { partId: job.material_part_id, delta: grams, unit: "g", once: true, reason: "Scrapped print", sourceKind: "digifab:job", sourceId: job.id }
               : {}),
             linkedMachineId: job.linked_machine_id,
@@ -600,7 +602,9 @@ fleetRouter.post(
 // manager that doesn't report one. Upserts the per-device settings row.
 // ⑦ Pin (or unpin) a device to a floor-grid cell — the fleet arrange mode.
 const PositionBody = z.object({ x: z.number().int().min(0).max(63).nullable(), y: z.number().int().min(0).max(255).nullable() });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — the legacy cell grid for older clients; the assistant
+// arranges the floor through digifab:arrange-floor, which writes the order
+// the page shows now
 // UI-REACH: legacy cell-grid coordinates for older fleet clients; Arrange saves the complete free-form floor through PUT /fleet/layout.
 fleetRouter.put(
   "/:connectionId/:deviceId/position",
@@ -623,7 +627,7 @@ fleetRouter.put(
 // themselves are the layout; rows can be partial). Devices NOT in the list keep
 // their settings row but lose any manual order (they flow in the trailing
 // "unplaced" row). Per-workspace, like every settings row here.
-const LayoutBody = z.object({
+export const LayoutBody = z.object({
   items: z
     .array(
       z.object({
@@ -634,33 +638,51 @@ const LayoutBody = z.object({
     )
     .max(500),
 });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+export type FloorItem = z.infer<typeof LayoutBody>["items"][number];
+
+/** The floor's order as it stands: placed devices first, by their order. */
+export async function readLayout(db: ReturnType<typeof tenantDb>): Promise<FloorItem[]> {
+  const rows = await db
+    .selectFrom("digifab_device_settings")
+    .select(["connection_id", "remote_device_id", "row_break", "sort_order"])
+    .where("sort_order", "is not", null)
+    .orderBy("sort_order")
+    .execute();
+  return rows.map((r) => ({ connection_id: r.connection_id, device_id: r.remote_device_id, row_break: !!r.row_break }));
+}
+
+/** Lay the whole floor out in one go: the route's PUT and digifab:arrange-floor. */
+export async function writeLayout(db: ReturnType<typeof tenantDb>, items: FloorItem[]): Promise<number> {
+  // Clear stale order everywhere first, so a device dropped from the list
+  // reverts to unplaced instead of keeping a phantom slot.
+  await db.updateTable("digifab_device_settings").set({ sort_order: null, row_break: false, updated_at: new Date() }).execute();
+  let i = 0;
+  for (const it of items) {
+    const fields = { sort_order: i * 10, row_break: it.row_break ?? false, updated_at: new Date() };
+    await db
+      .insertInto("digifab_device_settings")
+      .values({ connection_id: it.connection_id, remote_device_id: it.device_id, ...fields })
+      .onConflict((oc) => oc.columns(["connection_id", "remote_device_id"]).doUpdateSet(fields))
+      .execute();
+    i++;
+  }
+  return i;
+}
+
+// AI-ACTION: digifab:arrange-floor
 fleetRouter.put(
   "/layout",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:arrange-floor"))) return;
     const parsed = LayoutBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "items: [{connection_id, device_id, row_break?}] required" } });
-    const db = tenantDb(req);
-    // Clear stale order everywhere first, so a device dropped from the list
-    // reverts to unplaced instead of keeping a phantom slot.
-    await db.updateTable("digifab_device_settings").set({ sort_order: null, row_break: false, updated_at: new Date() }).execute();
-    let i = 0;
-    for (const it of parsed.data.items) {
-      const fields = { sort_order: i * 10, row_break: it.row_break ?? false, updated_at: new Date() };
-      await db
-        .insertInto("digifab_device_settings")
-        .values({ connection_id: it.connection_id, remote_device_id: it.device_id, ...fields })
-        .onConflict((oc) => oc.columns(["connection_id", "remote_device_id"]).doUpdateSet(fields))
-        .execute();
-      i++;
-    }
-    res.json({ ok: true, placed: i });
+    res.json({ ok: true, placed: await writeLayout(tenantDb(req), parsed.data.items) });
   }),
 );
 
 const CameraBody = z.object({ camera_url: z.string().url().max(1000).nullable() });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — an address the server then fetches camera frames from;
+// a chat must never point the server at hosts on someone's network
 fleetRouter.post(
   "/:connectionId/:deviceId/camera",
   asyncHandler(async (req, res) => {
@@ -684,7 +706,8 @@ fleetRouter.post(
 // Snapshot relay — opt-in, OFF by default. Toggle whether the cloud accepts +
 // serves agent-pushed frames for this device (for remote viewing).
 const RelayToggle = z.object({ enabled: z.boolean() });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — opts a camera in to sending its frames to the cloud;
+// pictures leaving the workshop are the owner's call, never a chat's
 fleetRouter.post(
   "/:connectionId/:deviceId/snapshot-relay",
   asyncHandler(async (req, res) => {
@@ -718,7 +741,8 @@ async function resolveSelfConnection(orgId: string, connectionId: string): Promi
 // the workspace owner enabled the relay for this device. Stored in the tenant DB
 // + served back by GET below. The agent dials out, so this is a normal
 // authenticated POST. Use connectionId "self" to auto-resolve (no id to paste).
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — the bridge pushing a camera frame with its own token: the
+// device wire, never something a person or the assistant starts
 // UI-REACH: the machine's agent posts its camera frames here; the fleet screen shows them
 fleetRouter.post(
   "/:connectionId/:deviceId/snapshot",
@@ -840,7 +864,9 @@ fleetRouter.get(
 );
 
 const ControlBody = z.object({ id: z.string().min(1).max(60), params: z.record(z.unknown()).optional() });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — a raw printer control (heat, move, light, resume) runs the
+// machine; the assistant stops and pauses through digifab:stop, and the rest
+// through each machine's own control action, which keep Start at the station
 fleetRouter.post(
   "/:connectionId/:deviceId/control",
   asyncHandler(async (req, res) => {
@@ -896,7 +922,8 @@ fleetRouter.post(
 
 // Start a file ALREADY on the printer's storage (from the file list) — no upload.
 const PrintBody = z.object({ name: z.string().min(1).max(300) });
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — starts a file already on the printer, a physical Start;
+// that stays a person's press at the machine
 fleetRouter.post(
   "/:connectionId/:deviceId/print",
   asyncHandler(async (req, res) => {
@@ -927,7 +954,8 @@ async function readLanMap(orgId: string, connId: string): Promise<{ conn: { id: 
   const creds = conn.credentials_enc ? await platform().integrations.decryptCredentials(orgId, conn.credentials_enc) : {};
   return { conn: { id: conn.id, type: conn.type, credentials_enc: conn.credentials_enc }, map: parseBambuLan(creds) };
 }
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — stores a printer's LAN access code, a credential; the
+// assistant never handles a secret
 fleetRouter.put(
   "/:connectionId/:deviceId/lan",
   asyncHandler(async (req, res) => {
@@ -947,7 +975,8 @@ fleetRouter.put(
     res.json({ ok: true, host, mode: map[req.params.deviceId!]!.mode });
   }),
 );
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — deletes a printer's stored LAN access code for good; no
+// undo can bring a secret back
 fleetRouter.delete(
   "/:connectionId/:deviceId/lan",
   asyncHandler(async (req, res) => {

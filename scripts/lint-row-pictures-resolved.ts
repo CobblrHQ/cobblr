@@ -65,7 +65,7 @@ function* walk(dir: string): Generator<string> {
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
-  if (THE_RESOLVER.test(file) || /web\/src\/lib\/api\.ts$/.test(file)) return out;
+  if (THE_RESOLVER.test(file) || /web\/src\/lib\/api(\.ts|\/[^/]+\.ts)$/.test(file)) return out;
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";

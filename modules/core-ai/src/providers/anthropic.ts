@@ -1,5 +1,6 @@
 // anthropic — Claude provider. Messages API.
 
+// EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";
 import { identifyPromptFor, visionPromptFor } from "./identify-prompt.js";

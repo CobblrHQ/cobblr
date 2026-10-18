@@ -1,3 +1,4 @@
+// EGRESS-FILE: embedded-script - the fetch is inside the bridge's own script, which runs on the edge machine, not here
 // The edge-bridge BOOTSTRAP loader, served at GET /orgs/:slug/edge/release/loader.
 //
 // Closes the "private registry" install gap: the docker command runs a STOCK

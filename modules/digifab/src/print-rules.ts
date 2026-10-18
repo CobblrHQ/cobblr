@@ -10,6 +10,7 @@
 // on every status write), so prints started on the machine are covered — not just
 // jobs queued through Cobblr.
 
+// EGRESS-FILE: vendor-fixed - a Discord webhook, held to the https://discord.com/api/webhooks/ address before the send
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";

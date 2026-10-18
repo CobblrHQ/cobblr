@@ -1,16 +1,4 @@
-// Receiving an order's lines: the one place it happens, whichever door said
-// the order arrived (the status dropdown, "Mark arrived", the "did it turn
-// up?" sweeper, a parcel tracker).
-//
-// Two doors used to do this each their own way. "Mark arrived" emitted the
-// received event with `qty` while the stock wire reads `delta`, so the wire
-// skipped and nothing was added: the order said arrived, the shelf said
-// empty. And nothing remembered a line had been received, so an order set back
-// to ordered and then arrived again added its stock a second time. Here a
-// line is received exactly once: its received_at is stamped in the same
-// statement that picks it, and only lines still unstamped are picked, so a
-// second arrival, a retry, or two doors at once find nothing left to add.
-
+import { ReceiptPending } from "./receipt-pending.js";
 import { sql, type Kysely } from "kysely";
 import { arrivedEverywhere, platform } from "@cobblr/platform-contract";
 import type { PurchasesDB } from "./db.js";
@@ -20,46 +8,43 @@ import { amountOf, centsFromAmount } from "@cobblr/platform-contract/money";
 
 type OrderItemReceived = { orgId: string } & Record<(typeof ORDER_ITEM_RECEIVED_KEYS)[number], unknown>;
 
-/** Receive every line of an order not yet received: stamp it, then tell the
- *  wires (stock bump, spend metrics). Returns how many lines were received
- *  now; lines received before are not counted again.
+/** Stamp each new receipt and its outbox entry together, then deliver the
+ *  stock and spend events. A retry also drains previously claimed entries.
+ *  Returns how many new lines were received.
  *
  *  `addToStock` defaults to the order's own add_to_stock. Off, the lines are
  *  still received and still told (the spend is real), with a stock change of
  *  0, so a past purchase being logged never moves the shelf. */
 export async function receiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, orderId: string, receivedOn: string, addToStock?: boolean): Promise<number> {
   const adds = addToStock ?? (await orderAddsStock(db, orderId));
-  const rows = await sql<{ id: string; part_id: string | null; qty: string | null; unit_cost: string | null; line_amount: string | null; description: string | null }>`
-    update purchases_order_items
-       set received_at = ${receivedOn}
-     where order_id = ${orderId}
-       and received_at is null
-    returning id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(db);
-  let received = 0;
-  for (const it of rows.rows) {
-    received++;
-    // A line for no part has no stock to add; it is still received (dated),
-    // which is what the price history and "is it still coming?" read.
-    if (it.part_id) await tellReceived(orgId, orderId, it as ReceivedLine, adds);
-  }
+  const received = await db.transaction().execute(async trx => {
+    const rows = await sql<ReceivedLine>`
+      update purchases_order_items set received_at = ${receivedOn}
+       where order_id = ${orderId} and received_at is null
+       returning id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(trx);
+    for (const it of rows.rows) {
+      if (it.part_id) await queueReceived(trx, orgId, orderId, it, adds);
+    }
+    return rows.rows.length;
+  });
+  await flushReceipts(db, orgId, { orderId });
   return received;
 }
 
-/** Receive ONE line, claiming it for `partId` when it names none: the same
- *  stamp-then-tell as a whole order, so a line received by scan is never
- *  received again when the order later arrives. Answers whether this call
- *  received it. */
 export async function receiveOrderLine(db: Kysely<PurchasesDB>, orgId: string, lineId: string, receivedOn: string, partId: string | null): Promise<boolean> {
-  const rows = await sql<ReceivedLine & { order_id: string; part_id: string | null }>`
-    update purchases_order_items
-       set received_at = ${receivedOn}, part_id = coalesce(part_id, ${partId}::uuid)
-     where id = ${lineId}
-       and received_at is null
-    returning id, order_id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(db);
-  const it = rows.rows[0];
-  if (!it) return false;
-  if (it.part_id) await tellReceived(orgId, it.order_id, it as ReceivedLine, await orderAddsStock(db, it.order_id));
-  return true;
+  const received = await db.transaction().execute(async trx => {
+    const rows = await sql<ReceivedLine & { order_id: string }>`
+      update purchases_order_items
+         set received_at = ${receivedOn}, part_id = coalesce(part_id, ${partId}::uuid)
+       where id = ${lineId} and received_at is null
+       returning id, order_id, part_id, qty, unit_cost, line_amount, description, stock_withdrawn_at`.execute(trx);
+    const it = rows.rows[0];
+    if (!it) return false;
+    if (it.part_id) await queueReceived(trx, orgId, it.order_id, it, await orderAddsStock(trx, it.order_id));
+    return true;
+  });
+  await flushReceipts(db, orgId, { lineId });
+  return received;
 }
 
 async function orderAddsStock(db: Kysely<PurchasesDB>, orderId: string): Promise<boolean> {
@@ -81,7 +66,8 @@ export async function receiveIfArrived(db: Kysely<PurchasesDB>, orgId: string, o
 
 type ReceivedLine = { id: string; part_id: string; qty: string | null; unit_cost: string | null; line_amount: string | null; description: string | null; stock_withdrawn_at?: Date | string | null };
 
-async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, addsStock = true): Promise<void> {
+async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: string, it: ReceivedLine, addsStock = true): Promise<void> {
+  const operationId = crypto.randomUUID();
   const qty = Number(it.qty ?? 0);
   const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
   // The receipt's own line total wins over qty × unit price (0007).
@@ -91,6 +77,7 @@ async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, ad
   const counted = !!it.stock_withdrawn_at;
   const payload: OrderItemReceived = {
     orgId,
+    operationId,
     orderId,
     orderItemId: it.id,
     partId: it.part_id,
@@ -102,7 +89,10 @@ async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, ad
     reason: `Order arrived (${it.description ?? "item"})`,
     description: it.description,
   };
-  await platform().events.emit("purchases.order_item.received", payload);
+  await db.insertInto("purchases_receive_outbox").values({
+    id: operationId, order_id: orderId, line_id: it.id, payload,
+    completed_at: null, last_error: null,
+  }).execute();
 }
 
 /** A person settles one line whose stock may never have been added: "add"
@@ -110,16 +100,18 @@ async function tellReceived(orgId: string, orderId: string, it: ReceivedLine, ad
  *  cleared in the statement that reads the line, so a double press, or two
  *  people at once, adds it once. Answers whether this call settled it. */
 export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: string, lineId: string, decision: "add" | "counted"): Promise<boolean> {
-  const rows = await sql<ReceivedLine & { order_id: string }>`
-    update purchases_order_items
-       set receipt_unconfirmed = false
-     where id = ${lineId}
-       and receipt_unconfirmed
-    returning id, order_id, part_id, qty, unit_cost, line_amount, description`.execute(db);
-  const it = rows.rows[0];
-  if (!it) return false;
-  if (decision === "add" && it.part_id) await tellReceived(orgId, it.order_id, it);
-  return true;
+  const settled = await db.transaction().execute(async trx => {
+    const rows = await sql<ReceivedLine & { order_id: string }>`
+      update purchases_order_items set receipt_unconfirmed = false
+       where id = ${lineId} and receipt_unconfirmed
+       returning id, order_id, part_id, qty, unit_cost, line_amount, description`.execute(trx);
+    const it = rows.rows[0];
+    if (!it) return false;
+    if (decision === "add" && it.part_id) await queueReceived(trx, orgId, it.order_id, it);
+    return true;
+  });
+  await flushReceipts(db, orgId, { lineId });
+  return settled;
 }
 
 /** Take back the receive of every line of an order that was received with
@@ -130,6 +122,7 @@ export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: stri
  *  and stock_withdrawn_at keeps its cost from being counted again when it
  *  really arrives. Answers how many lines were taken back. */
 export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, orderId: string, reason: string): Promise<number> {
+  await flushReceipts(db, orgId, { orderId });
   const adds = await orderAddsStock(db, orderId);
   const rows = await sql<ReceivedLine & { part_id: string | null }>`
     update purchases_order_items
@@ -142,6 +135,7 @@ export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string
     const qty = Number(it.qty ?? 0);
     const payload: OrderItemReceived = {
       orgId,
+      operationId: crypto.randomUUID(),
       orderId,
       orderItemId: it.id,
       partId: it.part_id,
@@ -170,7 +164,7 @@ export async function setReceivedCount(db: Kysely<PurchasesDB>, orgId: string, l
   const count = Math.max(0, Math.min(Math.round(received), qty));
   await db.updateTable("purchases_order_items").set({ received_qty: count, updated_at: new Date() } as never).where("id", "=", lineId).execute();
   const byCount = (line.metadata as { received_by_count?: unknown } | null)?.received_by_count === true;
-  if (count >= qty && qty > 0 && !line.received_at) {
+  if (count >= qty && qty > 0) {
     if (await receiveOrderLine(db, orgId, lineId, receivedOn, null)) {
       await sql`update purchases_order_items set metadata = coalesce(metadata, '{}'::jsonb) || '{"received_by_count": true}'::jsonb where id = ${lineId}`.execute(db);
     }
@@ -179,4 +173,43 @@ export async function setReceivedCount(db: Kysely<PurchasesDB>, orgId: string, l
   }
   const after = await db.selectFrom("purchases_order_items").select(["received_at"]).where("id", "=", lineId).executeTakeFirst();
   return { received: count, qty, receivedAt: after?.received_at ? new Date(after.received_at as unknown as string).toISOString() : null };
+}
+
+export async function flushReceipts(db: Kysely<PurchasesDB>, orgId: string, scope: { orderId?: string; lineId?: string } = {}): Promise<void> {
+  let query = db.selectFrom("purchases_receive_outbox").select("id").where("completed_at", "is", null).orderBy("next_attempt_at").orderBy("id");
+  if (scope.orderId) query = query.where("order_id", "=", scope.orderId);
+  if (scope.lineId) query = query.where("line_id", "=", scope.lineId);
+  if (!scope.orderId && !scope.lineId) query = query.where("next_attempt_at", "<=", new Date()).limit(50);
+  let failed = false;
+  for (const { id } of await query.execute()) {
+    let deliveryFailed = false;
+    const run = await platform().exclusive.run(`purchases:receipt:${orgId}:${id}`, async () => {
+      const row = await db.selectFrom("purchases_receive_outbox").selectAll().where("id", "=", id).where("completed_at", "is", null).executeTakeFirst();
+      if (!row) return;
+      const completed = [...row.completed_recipients];
+      try {
+        await platform().events.emit("purchases.order_item.received", { ...row.payload, orgId }, {
+          id, completed,
+          acknowledge: async key => {
+            completed.push(key);
+            await db.updateTable("purchases_receive_outbox").set({ completed_recipients: sql`${JSON.stringify(completed)}::jsonb` }).where("id", "=", id).execute();
+          },
+        });
+        await db.updateTable("purchases_receive_outbox").set({ completed_at: new Date(), last_error: null }).where("id", "=", id).execute();
+      // pass-catch: save the failure on the receipt, then throw ReceiptPending after the remaining deliveries.
+      } catch (err) {
+        await db.updateTable("purchases_receive_outbox").set({ last_error: (err as Error).message.slice(0, 1000), next_attempt_at: new Date(Date.now() + 60_000) }).where("id", "=", id).execute();
+        deliveryFailed = true;
+      }
+    });
+    failed ||= !run.ran || deliveryFailed;
+  }
+  if (failed) throw new ReceiptPending();
+}
+
+export function registerReceiptRetries(): void {
+  platform().sweeps.register({
+    name: "purchases.receipt-retries", module: "purchases", everyMs: 60_000,
+    visit: async ({ orgId, db }) => { await flushReceipts(db as Kysely<PurchasesDB>, orgId); },
+  });
 }

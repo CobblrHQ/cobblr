@@ -18,6 +18,7 @@
 // node, before/without the compiled api), so it can't import this module.
 // Keep the two in sync.
 
+// EGRESS-FILE: operator-configured - the module registry's address is the operator's setting
 import { assertSafeUrl } from "../sandbox/ssrf.js";
 
 /** Auth + Accept headers for fetching from GitHub. Token from

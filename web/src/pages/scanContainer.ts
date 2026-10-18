@@ -9,14 +9,6 @@
  *  already applied; kept exported here for the sheet and its tests. */
 export { looksLikeContainer } from "@cobblr/platform-contract/scan-tools";
 
-/** The next free "Bin N" name given the workspace's existing location names —
- *  "Bin 18" when Bin 17 is the highest, "Bin 1" when none exist yet. Matching
- *  is case-insensitive but the offered name uses the canonical spelling. */
-export function nextBinName(existingNames: readonly string[]): string {
-  let max = 0;
-  for (const n of existingNames) {
-    const m = /^\s*bin\s+(\d{1,5})\s*$/i.exec(n);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `Bin ${max + 1}`;
-}
+/** The next free "Bin N" name: the contract's, shared with the server's
+ *  one-tap new bin (#6891). */
+export { nextBinName } from "@cobblr/platform-contract/scan-tools";

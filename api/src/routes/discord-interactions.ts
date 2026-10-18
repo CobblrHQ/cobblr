@@ -38,11 +38,14 @@ import {
   cardOf,
   isComponentsV2Message,
   originalOf,
+  rowActionIds,
+  settledButtons,
   settledMessage,
   settledRow,
   verifySignature,
   type StoredNotification,
 } from "../platform/discord-interaction.js";
+import { customIdFor } from "../platform/channels/discord-card.js";
 
 export const discordInteractionsRouter = Router();
 
@@ -139,8 +142,15 @@ async function handlePress(req: Request, res: Response): Promise<void> {
   // says which it is, and every answer below goes through this one door.
   const pressedId = String(body.data?.custom_id ?? "");
   const v2 = isComponentsV2Message(body.message);
+  // A classic card with a row per item settles the pressed item's buttons and
+  // keeps the rest (#7035); known once the stored notification is read.
+  let rowIds: string[] | null = null;
   const settle = (outcome: string, echo?: string | null, card?: ReturnType<typeof cardOf>) =>
-    v2 ? settledRow(body.message?.components, pressedId, outcome) : settledMessage(original, outcome, echo, card);
+    v2
+      ? settledRow(body.message?.components, pressedId, outcome)
+      : rowIds && ref && !echo
+        ? settledButtons(body.message, rowIds.map((id) => customIdFor(ref.notificationId, id)), outcome)
+        : settledMessage(original, outcome, echo, card);
   const ref = parsePress(pressedId);
   if (!ref) {
     // Someone else's component, or a probe. Say nothing useful.
@@ -155,7 +165,7 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     const [notification, conn] = await Promise.all([
       meta
         .selectFrom("notifications")
-        .select(["id", "org_id", "user_id", "actions", "module_name", "entity_type", "entity_id"])
+        .select(["id", "org_id", "user_id", "actions", "card", "module_name", "entity_type", "entity_id"])
         .where("id", "=", ref.notificationId)
         .executeTakeFirst(),
       discordUserId
@@ -183,6 +193,9 @@ async function handlePress(req: Request, res: Response): Promise<void> {
     // capability-gated (it is the wire/automation entry too), so the gate lives
     // here, mirroring the in-app twin's requireRole("owner","admin","member").
     const notifRow = notification as StoredNotification | undefined;
+    if (notification && !isModalSubmit) {
+      rowIds = rowActionIds(notification.card as { rows?: Array<{ actions?: string[] }> } | null, ref.actionId);
+    }
     const pressRole =
       conn?.user_id && notifRow
         ? (

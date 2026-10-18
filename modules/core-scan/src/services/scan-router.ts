@@ -7,6 +7,7 @@
 // classifyScanCode is a pure function (unit-tested). resolveIsbn / resolveAsin are
 // the type-specific lookups enrich dispatches to.
 
+// EGRESS-FILE: vendor-fixed - lookup hosts written in the code
 import { gtinChecksumOk, hasStoreCodePrefix, isStoreCode, type BarcodeHit } from "./barcode-lookup.js";
 import { hitCassette, replayMiss, writeCatalogCassette } from "./catalog-replay.js";
 import type { ClassifiedCodeType } from "@cobblr/platform-contract/scan-copy";

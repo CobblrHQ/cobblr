@@ -59,7 +59,45 @@ export function componentsFor(
   return rows;
 }
 
+/** A card's answers with one action row per line, in the line's order, when
+ *  every line fits a row of its own; otherwise the packed layout above.
+ *
+ *  A classic message cannot put a button beside its line, so the next best is
+ *  a row per item, each button carrying the item's name ("Used up · Brown
+ *  Eggs"): fifteen captions packed five to a row were the block the owner
+ *  could not match back to the list (#3282). `reserve` keeps rows free for
+ *  what the caller adds after (the "Open" link). */
+export function componentsForRows(
+  notificationId: string,
+  rows: Array<{ actions?: string[] }> | null | undefined,
+  actions: NotificationAction[] | null | undefined,
+  reserve = 0,
+): unknown[] | undefined {
+  if (!actions?.length) return undefined;
+  const byId = new Map(actions.map((a) => [a.id, a]));
+  const lines = (rows ?? [])
+    .map((r) => (r.actions ?? []).map((id) => byId.get(id)).filter((a): a is NotificationAction => !!a))
+    .filter((as) => as.length > 0);
+  const fits = lines.length > 0 && lines.length <= MAX_ROWS - reserve && lines.every((as) => as.length <= PER_ROW);
+  if (!fits) return componentsFor(notificationId, actions);
+  return lines.map((as) => ({
+    type: 1, // action row
+    components: as.map((a) => ({
+      type: 2, // button
+      style: STYLE[a.style ?? "secondary"] ?? 2,
+      label: a.label.slice(0, LABEL_MAX),
+      custom_id: customIdFor(notificationId, a.id),
+    })),
+  }));
+}
+
 // ── Components V2: the button beside the line it is about ──────────────────
+//
+// No DM is sent this way any more (#7035): a V2 message cannot carry text, so
+// the bot sent the push line as a message of its own and then the card, and
+// one expiring thing reached Discord twice. Kept because V2 cards already in
+// people's DMs still come back when pressed (discord-interaction.ts settles
+// them row by row), and this is the shape those messages have.
 //
 // A classic message cannot interleave buttons with its text: they sit in
 // action rows under the embed. A digest of fifteen groceries therefore arrived

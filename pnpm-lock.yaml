@@ -578,6 +578,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@cobblr/platform-net':
+        specifier: workspace:*
+        version: link:../../packages/platform-net
       express:
         specifier: ^4.21.2
         version: 4.22.2
@@ -985,6 +988,9 @@ importers:
       '@cobblr/platform-contract':
         specifier: workspace:*
         version: link:../../packages/platform-contract
+      '@cobblr/platform-net':
+        specifier: workspace:*
+        version: link:../../packages/platform-net
       express:
         specifier: ^4.21.2
         version: 4.22.2

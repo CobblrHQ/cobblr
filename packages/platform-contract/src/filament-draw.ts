@@ -14,13 +14,13 @@ export interface FilamentDraw {
   /** The spool: an inventory record (kind `inventory:part`). */
   part_id: string;
   grams: number;
-  /** The printer slot it was loaded in ("1".."n"). */
-  slot: string;
+  /** The loaded printer slot ("1".."n"), or null for a spool selected directly. */
+  slot: string | null;
 }
 
 /** `digifab_jobs.material_drawn`: exactly what a completed print took off
  *  each loaded spool; a print scrapped at the bed puts back exactly this.
- *  Null until the print completes, and on a job that named its own spool. */
+ *  Null before completion; acknowledged draws during material accounting. */
 export type FilamentDrawn = FilamentDraw[];
 
 /** Read `material_drawn` as stored (jsonb), ignoring anything malformed. */
@@ -28,7 +28,7 @@ export function readFilamentDrawn(raw: unknown): FilamentDrawn {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((d) => {
     const r = d as Partial<FilamentDraw> | null;
-    return r && typeof r.part_id === "string" && typeof r.slot === "string" && Number(r.grams) > 0 ? [{ part_id: r.part_id, grams: Number(r.grams), slot: r.slot }] : [];
+    return r && typeof r.part_id === "string" && (r.slot === null || typeof r.slot === "string") && Number(r.grams) > 0 ? [{ part_id: r.part_id, grams: Number(r.grams), slot: r.slot }] : [];
   });
 }
 

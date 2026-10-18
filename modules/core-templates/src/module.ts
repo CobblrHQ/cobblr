@@ -58,6 +58,7 @@ export default defineModule({
         group: "organise",
         // UI-SCREEN: /configuration/templates
         id: "core-templates:save-template",
+        changes: "records",
         // ADMIN-ONLY: the page's own routes POST and PATCH /templates are owner or admin (templates.ts)
         runBy: "admin",
         examples: ["make a template for PLA spools with colour black and 1 kg", "change the new laptop template to tag it IT"],
@@ -81,6 +82,7 @@ export default defineModule({
         group: "organise",
         // UI-SCREEN: /configuration/templates
         id: "core-templates:delete-template",
+        changes: "records",
         // ADMIN-ONLY: the page's own route DELETE /templates/:id is owner or admin (templates.ts)
         runBy: "admin",
         examples: ["delete the old PETG template"],

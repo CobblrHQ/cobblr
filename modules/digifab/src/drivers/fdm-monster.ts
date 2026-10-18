@@ -21,7 +21,7 @@ import type {
   SubmitResult,
   UploadResult,
 } from "./types.js";
-import { assertSafeMachineUrl } from "./ssrf.js";
+import { machineFetch } from "./machine-fetch.js";
 
 const EP = {
   login: "/api/v2/auth/login",
@@ -93,7 +93,7 @@ export class FdmMonsterDriver implements MachineDriver {
 
   private async login(): Promise<void> {
     if (!this.cfg.username || !this.cfg.password) return;
-    const res = await fetch(this.base + EP.login, {
+    const res = await machineFetch(this.base + EP.login, {
       signal: requestSignal(),
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -118,9 +118,8 @@ export class FdmMonsterDriver implements MachineDriver {
    *  create-time check alone leaves an unbounded TOCTOU window where the
    *  connection's DNS can be re-pointed at internal infrastructure. */
   private async req(path: string, init: RequestInit = {}, retry = true): Promise<Response> {
-    if (/^https?:\/\//i.test(this.base)) await assertSafeMachineUrl(this.base);
     if (!this.token && this.cfg.username && this.cfg.password) await this.login();
-    const res = await fetch(this.base + path, {
+    const res = await machineFetch(this.base + path, {
       ...init,
       signal: init.body instanceof FormData ? uploadSignal() : requestSignal(),
       headers: { ...(init.headers as Record<string, string>), ...this.authHeaders() },
@@ -156,7 +155,7 @@ export class FdmMonsterDriver implements MachineDriver {
   private async probeRouting(): Promise<boolean> {
     if (this.routing !== null) return this.routing;
     try {
-      const res = await fetch(this.base + EP.spec, { signal: requestSignal() });
+      const res = await machineFetch(this.base + EP.spec, { signal: requestSignal() });
       const spec = (await res.json()) as { paths?: Record<string, unknown> };
       const paths = Object.keys(spec.paths ?? {});
       // Matches both /api/v2/routing/resolve/{id} and

@@ -137,6 +137,10 @@ function packSize(it: ScanInboxItem): number | null {
   return ((it.suggested_metadata ?? {}) as { pack_size?: number }).pack_size ?? null;
 }
 
+/** The overlap two rows of one upload need: a quarter of their words, half
+ *  of what two scans made apart need. */
+const SAME_BATCH_JACCARD = 0.25;
+
 /**
  * Would combining these two into ONE record be right?
  *
@@ -203,8 +207,13 @@ export function combinable(
   const product = distinct(productTokens(b.suggested_name, brand));
   let shared = 0;
   for (const w of product) if (seedD.has(w)) shared++;
-  if (jaccard(seedD, product) >= 0.5) return true;
-  return shared >= 2 && oneExtendsTheOther(seedD, product);
+  // Uploaded in one go is evidence too (#6890, one-thing-or-many.md §4): a
+  // listing screenshot and a photo of the printer it sells share a batch and
+  // little else ("printer" of "printer kit fully assembled"). So the same
+  // batch asks for less overlap, after every veto above has had its say.
+  const together = !!a.scan_batch_id && a.scan_batch_id === b.scan_batch_id;
+  if (jaccard(seedD, product) >= (together ? SAME_BATCH_JACCARD : 0.5)) return true;
+  return shared >= (together ? 1 : 2) && oneExtendsTheOther(seedD, product);
 }
 
 /** Cluster pending items that look like the same product, so the inbox can OFFER

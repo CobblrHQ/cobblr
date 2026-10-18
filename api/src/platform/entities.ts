@@ -197,8 +197,11 @@ async function instanceFallbackEntityResolver(
       .executeTakeFirst(),
   );
   if (!row) return null;
+  // A module's instance resolver may answer with its base kind on the row
+  // (inventory's says inventory:part); the row is the requested kind here,
+  // once, for every read path that goes through this (#7153).
   const fn = instanceResolvers.get(row.module_name);
-  if (fn) return (oid, id) => fn(oid, instanceName, id);
+  if (fn) return async (oid, id) => asRequested(await fn(oid, instanceName, id), kind);
   // A module that registered only its kind's resolver still answers for the
   // rows of its instances: read by the module kind, keep only this instance's
   // row. Without it every generic read of a sales instance's order came back
@@ -210,8 +213,13 @@ async function instanceFallbackEntityResolver(
   if (!baseFn) return null;
   return async (oid, id) => {
     const e = await baseFn(oid, id);
-    return e && (e.fields as Record<string, unknown> | undefined)?.instance === instanceName ? e : null;
+    return e && (e.fields as Record<string, unknown> | undefined)?.instance === instanceName ? asRequested(e, kind) : null;
   };
+}
+
+/** A resolved row presented as the kind it was asked for. */
+function asRequested<E extends { kind: string }>(e: E | null, kind: string): E | null {
+  return e && e.kind !== kind ? { ...e, kind } : e;
 }
 
 /** For a `<name>:item` kind with no exact list resolver, find the instance's
@@ -359,6 +367,12 @@ async function getExposableFields(kind: string): Promise<string[] | null> {
  *  tiers." Per-org entries win. The per-org read is one small indexed
  *  query per resolver call (not per row), so it's cheap; not cached, so
  *  admin edits take effect immediately. */
+/** A kind's read scopes in a workspace, for a caller outside this file (the wire
+ *  engine holds an automation's event to them). */
+export function fieldReadScopesOf(kind: string, orgId: string): Promise<Record<string, string> | null> {
+  return getFieldReadScopes(kind, orgId);
+}
+
 async function getFieldReadScopes(
   kind: string,
   orgId?: string,
@@ -829,7 +843,10 @@ export async function lookupMany(
         ids.map(async (id) => {
           try {
             const r = await resolver(orgId, id);
-            return r ? applyExposableProjection(r, whitelist, fieldReadScopes, readScope, viewer?.publicRead, viewer, secretContext) : null;
+            // As the kind it was asked for, as lookup() presents it: a caller
+            // matches results back by `${kind}:${id}`, and a relation to a
+            // named collection's record read null under the base kind (#7153).
+            return r ? { ...applyExposableProjection(r, whitelist, fieldReadScopes, readScope, viewer?.publicRead, viewer, secretContext), kind } : null;
           } catch (err) {
             console.error(`[entities] resolver for ${kind}:${id} failed:`, err);
             return null;
@@ -1108,6 +1125,7 @@ export async function list(
             // instance kind (`<name>:item`) resolve — same override + reasoning as
             // lookup(). No-op for base kinds (resolver already returns them).
             await applyCustomFieldValues(orgId, { ...applyExposableProjection(r, own, fieldReadScopes, readScope, publicRead, viewer), kind }),
+            query.inputs,
           ),
         ), { publicRead })),
       ),

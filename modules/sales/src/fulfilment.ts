@@ -69,6 +69,13 @@ function remaining(l: FulfilLine): number {
   return Math.max(0, l.qty - l.qty_fulfilled);
 }
 
+export async function orderStockComplete(db: Kysely<SalesDB>, orderId: string): Promise<boolean> {
+  const lines = await db.selectFrom("sales_order_items")
+    .select(["part_id", "qty", "qty_fulfilled"])
+    .where("order_id", "=", orderId).execute();
+  return lines.every(l => !l.part_id || Number(l.qty_fulfilled) >= Number(l.qty));
+}
+
 function count(n: number, name: string): string {
   return `${n} ${name}`;
 }

@@ -22,7 +22,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-apps",
-  version: "0.1.4",
+  version: "0.1.5",
   displayName: "Apps",
   description:
     "Simple screens for the people who work with your things: the lists, buttons and forms they need, and nothing more.",

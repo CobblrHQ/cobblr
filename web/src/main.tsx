@@ -1,6 +1,8 @@
 import { configureProductName, productName } from "@cobblr/platform-web/product-name";
 import { listenForInstallPrompt } from "./lib/install-app";
 import { registerServiceWorker } from "./lib/offline";
+// Holds a ⌘K pressed before the palette has loaded; light on purpose.
+import "./components/palette-events";
 
 listenForInstallPrompt();
 registerServiceWorker();

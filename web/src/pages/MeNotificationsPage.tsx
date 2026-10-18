@@ -19,6 +19,7 @@ import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
 import { Code, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
+import { repeatsMessage } from "../lib/notification-lines";
 
 const PAGE = 50;
 
@@ -205,10 +206,13 @@ export function MeNotificationsPage() {
                     }
                   }}
                   className={
-                    "w-full text-left px-4 py-3 transition grid grid-cols-[minmax(0,1fr)_auto] sm:flex items-baseline gap-x-3 gap-y-1 cursor-pointer " +
+                    // Read changes the rail and the line's weight, nothing
+                    // else: a faded read row faded its buttons too, so ones
+                    // that still worked looked disabled (#7077).
+                    "w-full text-left px-4 py-3 transition grid grid-cols-[minmax(0,1fr)_auto] sm:flex items-baseline gap-x-3 gap-y-1 cursor-pointer border-l-2 " +
                     (n.read_at
-                      ? "opacity-60 hover:bg-subtle/50 dark:hover:bg-slate-800/40"
-                      : "hover:bg-subtle dark:hover:bg-slate-800/60")
+                      ? "border-l-transparent hover:bg-subtle/50 dark:hover:bg-slate-800/40"
+                      : "border-l-accent dark:border-l-cobble-400 bg-cobble-50/50 dark:bg-cobble-900/15 hover:bg-subtle dark:hover:bg-slate-800/60")
                   }
                 >
                   <span className="col-span-2 w-fit max-w-full [overflow-wrap:anywhere] px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider bg-cobble-50 dark:bg-cobble-900/30 text-accent dark:text-cobble-300 shrink-0">
@@ -218,10 +222,10 @@ export function MeNotificationsPage() {
                     {/* Wrap to a couple of lines — a single truncated line cut
                         the key phrase off on mobile (the org badge squeezes the
                         row), so "Alex offered to share their…" lost its point. */}
-                    <div className="text-sm text-content dark:text-mortar-100 line-clamp-2">
+                    <div className={"text-sm text-content dark:text-mortar-100 line-clamp-2 " + (n.read_at ? "font-normal" : "font-semibold")}>
                       {n.message}
                     </div>
-                    {n.card?.body && !(n.card.rows?.length && n.actions?.length) && (
+                    {n.card?.body && !(n.card.rows?.length && n.actions?.length) && !repeatsMessage(n.card.body, n.message) && (
                       <div className="mt-0.5 border-l-2 border-line dark:border-slate-700 pl-2 text-xs text-muted dark:text-slate-400 line-clamp-2 break-words">
                         {n.card.body}
                       </div>

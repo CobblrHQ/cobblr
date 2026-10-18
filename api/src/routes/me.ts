@@ -489,6 +489,13 @@ meRouter.post("/me/sign-out-everywhere", requireAuth, async (req, res, next) => 
       .set({ tokens_valid_from: at })
       .where("id", "=", req.session!.id)
       .execute();
+    // Every other browser and phone stops taking this account's notices too:
+    // a lost phone keeps its push subscription after its session ends (#7124).
+    // The browser asking may keep its own.
+    const keep = typeof req.body?.keep_push_endpoint === "string" ? req.body.keep_push_endpoint : null;
+    let gone = meta.deleteFrom("push_subscriptions").where("user_id", "=", req.session!.id);
+    if (keep) gone = gone.where("endpoint", "!=", keep);
+    await gone.execute();
     const freshToken = await signSession(req.session!.id);
     const firstOrg = await meta
       .selectFrom("org_memberships")

@@ -1,4 +1,5 @@
 import { wiresSaid } from "../platform/wire-said.js";
+import { editableFieldsOf } from "../platform/update-record-fields.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { previewWire, relationshipsInUse } from "../platform/wire-preview.js";
 import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire } from "../platform/wire-ops.js";
@@ -31,12 +32,14 @@ import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
+import { accessMessage } from "../auth/token-access.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { labelVia } from "./label-via.js";
 import { actionRefusal, actionSafety } from "../platform/ai-action-door.js";
 import { getTenantDb } from "../db/tenant.js";
+import { fieldsHiddenFromAuthor } from "../platform/wire-event-author.js";
 import { listEntries } from "../modules/registry.js";
 import { LIFECYCLE_TRIGGERS } from "../platform/wire-lifecycle.js";
 import * as activity from "../platform/activity.js";
@@ -46,8 +49,8 @@ import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { actionGateOf } from "../platform/action-gates.js";
-import { issueUndos, issuedUndoFor, spendIssuedUndo } from "../platform/issued-undos.js";
+import { actionChangesWorkspace, actionGateOf } from "../platform/action-gates.js";
+import { issueUndos, issuedUndoFor, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
 import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
@@ -84,7 +87,7 @@ import { addressesUsed, nearestBias } from "../platform/addresses-used.js";
 import { addressLookup, LOOKUP_MIN_CHARS, LOOKUP_TIMEOUT_MS } from "../platform/address-lookup.js";
 import type { AddressValue } from "@cobblr/platform-contract/address";
 import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
-import { currentVia } from "../lib/request-context.js";
+import { currentVia, watchingWrites, type WriteWatch } from "../lib/request-context.js";
 
 /** The person's own assistant reading for them: an MCP client or the relay
  *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
@@ -156,6 +159,22 @@ platformOrgRouter.get(
         const sc = getScannableForModule(k.module_name);
         return sc?.qtyCountsThings && sc.qtyField ? { ...k, count_field: sc.qtyField } : k;
       });
+      // ?readable_by=me: the kinds as the asker may read them, for a screen that
+      // builds something that will read these fields as them (the wire composer).
+      // The fields behind a read scope they lack are left out and named in
+      // hidden_fields, from the same scopes an automation's event is held to
+      // (wire-event-author.ts), so what the composer offers is what the wire is told.
+      const hiddenByKind = new Map<string, string[]>();
+      if (req.query.readable_by === "me") {
+        await Promise.all(items.map(async (k) => {
+          const hidden = await fieldsHiddenFromAuthor(req.tenant!.org.id, k.id, req.session!.id);
+          if (hidden.length) hiddenByKind.set(k.id, hidden);
+        }));
+      }
+      const readable = <T extends { id: string; fields?: Array<{ name: string }> }>(k: T): T =>
+        hiddenByKind.has(k.id)
+          ? { ...k, ...(Array.isArray(k.fields) ? { fields: k.fields.filter((f) => !hiddenByKind.get(k.id)!.includes(f.name)) } : {}), hidden_fields: hiddenByKind.get(k.id) }
+          : k;
       // ?include=custom_fields — merge THIS workspace's user field-defs onto
       // each kind, so a schema-reading consumer (the AI tool registry, the MCP
       // server, form builders) sees the WHOLE shape, not just the manifest's
@@ -233,17 +252,17 @@ platformOrgRouter.get(
           .execute();
         const labelOf = new Map(relabels.map((r) => [`${r.entity_kind} ${r.name}`, r.display_label as string]));
         res.json({
-          items: items.map((k) => ({
+          items: items.map(readable).map((k) => ({
             ...k,
             ...(Array.isArray(k.fields)
               ? { fields: k.fields.map((f) => { const label = labelOf.get(`${k.id} ${f.name}`); return label ? { ...f, label } : f; }) }
               : {}),
-            custom_fields: [...(byKind.get(k.id) ?? []), ...(scopedByKind.get(k.id) ?? [])],
+            custom_fields: [...(byKind.get(k.id) ?? []), ...(scopedByKind.get(k.id) ?? [])].filter((f) => !hiddenByKind.get(k.id)?.includes(String(f.name))),
           })),
         });
         return;
       }
-      res.json({ items });
+      res.json({ items: items.map(readable) });
     } catch (err) {
       next(err);
     }
@@ -830,6 +849,10 @@ platformOrgRouter.post(
     });
   },
   async (req, res, next) => {
+    // An issued undo this press spent, and whether its run may have written:
+    // one that did not is given back however the request ends (#7140).
+    let spentUndo: string | null = null;
+    let undoMayHaveApplied = false;
     try {
       const parsed = InvokeBody.safeParse(req.body);
       if (!parsed.success) {
@@ -851,6 +874,15 @@ platformOrgRouter.post(
               "An app token may not invoke workspace-configuration (platform:*) actions.",
           },
         });
+        return;
+      }
+
+      // A personal token that may change only records (token-access.ts)
+      // never runs an action that changes the workspace itself: a rename, a
+      // feature turned off (#7138), a module's setting or station (#7343).
+      // The path rule cannot see the action id; every action says (#7356).
+      if (req.session?.token_access === "change" && actionChangesWorkspace(parsed.data.actionId)) {
+        res.status(403).json({ error: { code: "token_access", message: accessMessage("change") } });
         return;
       }
 
@@ -891,7 +923,12 @@ platformOrgRouter.post(
       });
       // And what a person started is theirs to answer, cancel or confirm,
       // whatever their role (#5192): the action names who started its target.
-      const asRequester = (ownUndo ? await spendIssuedUndo(ownUndo) : false) || actionGateOf(parsed.data.actionId).runBy === "requester" && await isRequester(parsed.data.actionId, req.session!.id, {
+      if (ownUndo && !(await spendIssuedUndo(ownUndo))) {
+        res.status(409).json({ error: { code: "undo_already_pressed", message: "This Undo was already pressed. It runs once; look at the record to see where it stands." } });
+        return;
+      }
+      spentUndo = ownUndo;
+      const asRequester = !!ownUndo || actionGateOf(parsed.data.actionId).runBy === "requester" && await isRequester(parsed.data.actionId, req.session!.id, {
         orgId: req.tenant!.org.id,
         args: parsed.data.args ?? {},
         ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
@@ -1016,8 +1053,9 @@ platformOrgRouter.post(
       // Only the handler's run is caught; a bug in the route itself is
       // still a 500.
       let result: unknown;
+      const watch: WriteWatch = { wrote: false };
       try {
-        result = await platform().actions.invoke(parsed.data.actionId, {
+        result = await watchingWrites(watch, async () => platform().actions.invoke(parsed.data.actionId, {
         orgId: req.tenant!.org.id,
         userId: req.session!.id,
         origin: requestOrigin(req),
@@ -1043,8 +1081,10 @@ platformOrgRouter.post(
           name: uploadedFile(req)!.originalname,
           mimeType: uploadedFile(req)!.mimetype,
         } } : {}),
-        });
+        }));
+        undoMayHaveApplied = watch.wrote || (result as { ok?: unknown } | null)?.ok !== false;
       } catch (err) {
+        undoMayHaveApplied = watch.wrote;
         // A refusal is a sentence written for the person; it is repeated as
         // written. Anything else is a crash: its message may name a table, a
         // loopback address or a provider's request id, so the person gets a
@@ -1086,6 +1126,8 @@ platformOrgRouter.post(
       });
     } catch (err) {
       next(err);
+    } finally {
+      if (spentUndo && !undoMayHaveApplied) await returnIssuedUndo(spentUndo).catch((e) => console.error("[actions] could not give back an unused undo:", (e as Error).message));
     }
   },
 );
@@ -1374,6 +1416,17 @@ platformOrgRouter.get("/:slug/bulk-field-options", requireAuth, withTenant, asyn
     if (!requireRole(req, res, "owner", "admin")) return;
     const kinds = typeof req.query.kinds === "string" ? req.query.kinds.split(",").filter(Boolean) : [];
     res.json({ items: await commonBulkFields(req.tenant!.org.id, kinds) });
+  } catch (err) { next(err); }
+});
+
+// The fields an edit form for one kind may offer THIS member (the app form's
+// edit mode): what they can see and the kind's updater takes, or nothing.
+// AI-REACH: exempt — a read that tells a form what to draw; the assistant reads the kind's fields and edits through platform:update-fields.
+platformOrgRouter.get("/:slug/editable-fields", requireAuth, withTenant, async (req, res, next) => {
+  try {
+    const kind = typeof req.query.kind === "string" ? req.query.kind : "";
+    if (!kind) return void res.status(400).json({ error: { code: "invalid_query", message: "Say which kind of record." } });
+    res.json(await editableFieldsOf({ orgId: req.tenant!.org.id, userId: req.session!.id, role: req.tenant!.role, kind }));
   } catch (err) { next(err); }
 });
 

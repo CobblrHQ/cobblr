@@ -1,0 +1,21 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "Nutella",
+    "brand": "Nutella, Ferrero",
+    "model": null,
+    "description": "Hazelnut And Cocoa Spread",
+    "category": "Spreads",
+    "image_url": null,
+    "raw": {
+      "code": "3017620422003",
+      "product_name": "Nutella",
+      "brands": "Nutella, Ferrero",
+      "generic_name": "Hazelnut And Cocoa Spread",
+      "categories_tags": ["en:spreads", "en:sweet-spreads", "en:hazelnut-spreads", "en:cocoa-and-hazelnuts-spreads"],
+      "allergens_tags": ["en:milk", "en:nuts", "en:soybeans"],
+      "traces_tags": ["en:gluten", "fr:arachides", "en:sulphur-dioxide-and-sulphites"]
+    }
+  }
+}

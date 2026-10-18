@@ -8,6 +8,7 @@
 // product itself are never sent (filterToFiled), and a lookup sends only words
 // the identify itself put into the product.
 
+// EGRESS-FILE: operator-configured - the shared label database address is the operator's setting
 import type { PhotoIdentity } from "./enrich-photo.js";
 
 const STOP = new Set(["the", "and", "for", "with", "of", "a", "an", "in", "on", "by", "to", "from", "new", "pack", "item"]);

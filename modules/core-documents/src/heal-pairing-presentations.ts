@@ -20,11 +20,12 @@ import type { Db } from "./matching.js";
 import { LIBRARY_ITEM_KIND, LIBRARY_LINK_REL, libraryTargetId } from "@cobblr/platform-contract/library";
 import { libraryPairingPresentation } from "./pairing-presentation.js";
 
-export async function healLibraryPairingPresentations(orgId: string, db: Db, pairings: PlatformPairings = platform().pairings): Promise<number> {
+export async function healLibraryPairingPresentations(orgId: string, db: Db, since: Date, pairings: PlatformPairings = platform().pairings): Promise<number> {
   const rows = await db
     .selectFrom("core_documents_linked")
     .select(["record_kind", "record_id", "connection_id", "ref", "title", "open_url", "open_label"])
     .where("open_url", "is not", null)
+    .where("linked_at", "<", since)
     .execute();
   let updated = 0;
   for (const row of rows) {
@@ -47,8 +48,9 @@ export async function healLibraryPairingPresentations(orgId: string, db: Db, pai
 export function registerLibraryPairingPresentationHeal(): void {
   registerHealPass({
     name: "core-documents.heal-pairing-presentations",
+    since: "2026-10-03T10:11:19Z",
     shim: "modules/core-documents/src/heal-pairing-presentations.ts",
     module: "core-documents",
-    visit: ({ orgId, db }) => healLibraryPairingPresentations(orgId, db as Db),
+    visit: ({ orgId, db, since }) => healLibraryPairingPresentations(orgId, db as Db, since),
   });
 }

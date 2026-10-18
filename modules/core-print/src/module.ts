@@ -64,6 +64,7 @@ export default defineModule({
         group: "label",
         // UI-SCREEN: /configuration/print
         id: "core-print:test-printer",
+        changes: "records",
         runBy: "member",
         examples: ["is the label printer online", "check the Zebra is connected"],
         label: "Check a printer",

@@ -24,12 +24,6 @@ export const exists = async (q: { executeTakeFirst(): Promise<unknown> }) => (aw
 /** Called once when the module's api loads. */
 export function registerPanelPresence(): void {
   const panels = platform().panels;
-  panels.registerPresence("digifab:kiln", (ctx) =>
-    onMachine(ctx, async (db, id) =>
-      (await exists(db.selectFrom("digifab_kiln_profiles").select("machine_id").where("machine_id", "=", id))) ||
-      exists(db.selectFrom("digifab_firings").select("machine_id").where("machine_id", "=", id).limit(1)),
-    ),
-  );
   panels.registerPresence("digifab:instrument", (ctx) =>
     onMachine(ctx, async (db, id) => {
       if (await exists(db.selectFrom("digifab_bench_readings").select("machine_id").where("machine_id", "=", id).limit(1))) return true;

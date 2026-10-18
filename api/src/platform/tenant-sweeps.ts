@@ -279,6 +279,11 @@ async function realDeps(): Promise<WalkDeps> {
          -- A sandbox waiting for its visitor is visited by nothing (sandbox-awaiting.ts).
          where not (o.sandbox and o.trial_expires_at is null)
          ${orgIds ? sql`and o.id = any(${orgIds})` : sql``}
+         -- A pooled test workspace a test has checked out is the test's until
+         -- it ends: a scheduled round writing into it mid-test rewrote rows
+         -- the test had just made (#7282). A test that wants a pass runs it
+         -- by name, which names the workspace and still reaches it.
+         ${orgIds ? sql`` : sql`and not exists (select 1 from test_org_pool p where p.org_id = o.id and p.status = 'taken')`}
          group by o.id, o.created_at, o.kind
          order by o.created_at asc`;
       return (await q.execute(meta)).rows.map((r) => ({ id: r.id, modules: r.modules ?? [], quiet: r.quiet === true }));

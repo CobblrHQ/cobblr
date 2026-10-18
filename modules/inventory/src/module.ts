@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.21.23",
+  version: "0.22.1",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -221,12 +221,14 @@ export default defineModule({
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "inventory:finish-assembly-stock",
+        changes: "records",
         runBy: "member",
         examples: ["finish the tested board transfer"],
         group: "plan", label: "Move inspected boards into tested stock", description: "Settle an immutable native work order inspection transfer once. Only accepted boards move from placed to tested stock.", scope: "workspace", invokeHandler: "inventory.finish-assembly-stock", userInvokable: true, argsSchema: {source_id: {label: "Work order id", type: "text", required: true}, source_kind: {label: "Work order kind", type: "text", required: true}, input_kind: {label: "Placed stock kind", type: "text", required: true}, input_id: {label: "Placed stock id", type: "text", required: true}, output_kind: {label: "Tested stock kind", type: "text", required: true}, output_id: {label: "Tested stock id", type: "text", required: true}, accepted: {label: "Accepted board count", type: "number", required: true}}},
       {
         group: "stock",
         id: "inventory:consume-with-loss",
+        changes: "records",
         grantedAs: "inventory:update-part",
         examples: ["the run placed these components", "record these placements and setup loss"],
         label: "Consume placements",
@@ -238,6 +240,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:receive-package",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /receive-package gates on this action's own id (package-receiving.ts), so a grant of it is the only member door at both
         runBy: "admin",
         examples: ["this bag just arrived", "receive the components from this label"],
@@ -263,6 +266,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:change-storage",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /:id/storage gates on this action's own id (storage.ts)
         runBy: "admin",
         examples: ["this is out of dry storage", "back in the dry cabinet", "start this stock's bake timer"],
@@ -289,6 +293,7 @@ export default defineModule({
       {
         group: "stock", primary: true,
         id: "inventory:use-one",
+        changes: "records",
         stockMove: "use",
         examples: ["used one", "I just took one out"],
         undoable: true,
@@ -306,6 +311,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:mark-opened",
+        changes: "records",
         grantedAs: "inventory:update-part",
         examples: ["opened it", "cracked open the pesto", "started this one"],
         undoable: true,
@@ -327,6 +333,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:use-up",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["used it up", "that is all gone", "ate the last one"],
         undoable: true,
@@ -334,18 +341,22 @@ export default defineModule({
         label: "Used up",
         face: "stock",
         description:
-          "One verb for the end of a thing, whatever kind of thing it is. On something that goes off (a table with an expiry field, lots dated on arrival) it ends the OLDEST lot as used, records how long it lasted as a lower bound on its shelf life, and takes one off the count - the same bookkeeping mark-finished does. On plain stock it empties the count. Args: { partId?, timezone? }.",
+          "One verb for the end of a thing, whatever kind of thing it is. On something that goes off (a table with an expiry field, lots dated on arrival) it ends the OLDEST lot as used (or the one lot a Going-off row names), records how long it lasted as a lower bound on its shelf life, and takes one off the count - the same bookkeeping mark-finished does. On plain stock it empties the count. Args: { partId?, timezone?, lot_received_on?, lot_expires_on?, lot_number? }.",
         appliesTo: { kinds: ["inventory:part"] },
         invokeHandler: "inventory.use-up",
         argsSchema: {
           partId: { label: "Which item, defaults to the record this ran on", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
+          lot_received_on: { label: "The lot to take it from: the day it arrived, from the Going-off list", type: "text" },
+          lot_expires_on: { label: "The lot to take it from: its date, from the Going-off list", type: "text" },
+          lot_number: { label: "The lot to take it from: the number printed on the box", type: "text" },
         },
         userInvokable: true,
       },
       {
         group: "stock",
         id: "inventory:mark-spoiled",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["it went bad", "had to bin it", "this one spoiled before I got to it"],
         undoable: true,
@@ -353,7 +364,7 @@ export default defineModule({
         label: "Threw it out",
         face: "perishable",
         description:
-          "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. Args: { partId?, timezone? }.",
+          "Record that one went bad and was binned. This is the only thing that MEASURES how long something keeps, so it is what teaches the shelf life; it also files a waste event, which is what tells you when you are consistently buying more than you get through. With no lot named it is the oldest one; a Going-off row names its own lot and that one goes. Args: { partId?, timezone?, lot_received_on?, lot_expires_on?, lot_number? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
         // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
         // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
@@ -363,12 +374,16 @@ export default defineModule({
         argsSchema: {
           partId: { label: "Which item", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
+          lot_received_on: { label: "The lot to take it from: the day it arrived, from the Going-off list", type: "text" },
+          lot_expires_on: { label: "The lot to take it from: its date, from the Going-off list", type: "text" },
+          lot_number: { label: "The lot to take it from: the number printed on the box", type: "text" },
         },
       },
       {
         group: "stock",
         id: "inventory:still-good",
-        grantedAs: "inventory:update-part",
+        changes: "records",
+        grantedAs: "inventory:count-stock",
         examples: ["it's still fine", "checked it, still good", "the milk is ok for a few more days"],
         undoable: true,
         finishes: "still-good",
@@ -388,6 +403,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:restock-one",
+        changes: "records",
         stockMove: "add",
         grantedAs: "inventory:count-stock",
         examples: ["another one arrived", "got one more", "add one to the fridge"],
@@ -411,6 +427,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:replaced",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["replaced the filter", "swapped in a new box", "replaced it with a fresh one"],
         undoable: true,
@@ -429,6 +446,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:set-status",
+        changes: "records",
         editor: true,
         grantedAs: "inventory:update-part",
         examples: ["mark it as built", "set that to missing pieces"],
@@ -447,7 +465,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /builds/<revision> reserves, reads and cancels native kits through the assembly work order actions.
-        id: "inventory:assembly-kit", group: "plan", label: "Reserve or check an assembly kit", description: "Atomically reserve count stock for an assembly work order, check fresh storage and quantities, or settle the whole kit once. Individual kit allocations cannot be settled separately.",
+        id: "inventory:assembly-kit", changes: "records", group: "plan", label: "Reserve or check an assembly kit", description: "Atomically reserve count stock for an assembly work order, check fresh storage and quantities, or settle the whole kit once. Individual kit allocations cannot be settled separately.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "inventory.assembly-kit", userInvokable: true,
         argsSchema: {
@@ -463,12 +481,12 @@ export default defineModule({
       {
         // UI-SCREEN: /builds/<revision> invokes this draw through its recorded paste application.
         // NO-PHRASING: the native assembly application supplies its captured lot and stable receipt key.
-        id: "inventory:use-ready-paste", group: "stock", label: "Use applied paste", description: "Draw liquid paste under its stock lock after checking fresh handling and expiry. The application key records one draw and recovers a lost reply.", scope: "workspace" as const, invokeHandler: "inventory.use-ready-paste", userInvokable: false,
+        id: "inventory:use-ready-paste", changes: "records", group: "stock", label: "Use applied paste", description: "Draw liquid paste under its stock lock after checking fresh handling and expiry. The application key records one draw and recovers a lost reply.", scope: "workspace" as const, invokeHandler: "inventory.use-ready-paste", userInvokable: false,
         runBy: "member",
         argsSchema: { partId: { label: "Paste jar id", type: "text", required: true }, amount_ml: { label: "Amount in ml", type: "number", required: true }, sourceId: { label: "Application receipt key", type: "text", required: true }, lot: { label: "Captured paste lot", type: "text", required: true }, revision: { label: "Captured handling revision", type: "number", required: true } },
       },
       {
-        id: "inventory:change-paste", group: "stock", label: "Record paste handling", description: "Record a liquid paste jar's immutable lot and label limits, take it out of refrigeration, open it after warming, or return an unopened jar to cold storage. Clocks cannot be reset by repeated handling.",
+        id: "inventory:change-paste", changes: "records", group: "stock", label: "Record paste handling", description: "Record a liquid paste jar's immutable lot and label limits, take it out of refrigeration, open it after warming, or return an unopened jar to cold storage. Clocks cannot be reset by repeated handling.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "inventory.change-paste", userInvokable: true,
         argsSchema: {
@@ -480,7 +498,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /instances/solder-paste/parts/<id> reads this readiness through the shared GET paste reader.
-        id: "inventory:paste-readiness", group: "stock", label: "Check paste readiness", description: "Read a jar's handling history, warm-up deadline, remaining work life and shelf expiry. Changes nothing.",
+        id: "inventory:paste-readiness", changes: "records", group: "stock", label: "Check paste readiness", description: "Read a jar's handling history, warm-up deadline, remaining work life and shelf expiry. Changes nothing.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "inventory.paste-readiness", userInvokable: true,
         argsSchema: { partId: { label: "Paste jar id", type: "text", required: true } },
@@ -488,6 +506,7 @@ export default defineModule({
       {
         group: "plan",
         id: "inventory:reserve-stock",
+        changes: "records",
         runBy: "member",
         examples: ["set aside four for that project", "reserve some of these"],
         undoable: true,
@@ -510,6 +529,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:split-lot",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["split one off that lot", "I opened one of the pack"],
         label: "Split one off",
@@ -529,6 +549,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:add-holding",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["we also keep saline in ambulance 3", "keep 10 of these in the van too"],
         label: "Keep it somewhere else too",
@@ -547,6 +568,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:combine-holdings",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["the gauze in the closet and in ambulance 2 are the same thing", "combine these into one item"],
         label: "Combine into one item",
@@ -563,6 +585,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:split-holding",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["the stock in the van is its own thing", "split this place out"],
         label: "Split into its own",
@@ -576,6 +599,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:move-all-stock",
+        changes: "records",
         grantedAs: "inventory:update-part",
         examples: ["move all the saline to the van", "everything we have of this goes to the garage"],
         label: "Move it all to one place",
@@ -592,6 +616,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:transfer-stock",
+        changes: "records",
         grantedAs: "inventory:update-part",
         examples: ["restock ambulance 3 from the closet", "move 5 bags of saline to the van"],
         label: "Restock from another place",
@@ -612,6 +637,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:receive-lot",
+        changes: "records",
         grantedAs: "inventory:update-part",
         examples: ["12 bags of saline arrived, expiring 2027-02-25, lot B-220", "we got 20 more, use by March"],
         label: "Stock arrived",
@@ -630,13 +656,14 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:mark-finished",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["ate the last one", "that's the end of the jar", "all gone"],
         undoable: true,
         label: "Finished it",
         face: "perishable",
         description:
-          "Record that you used the last of one up. Counts as a LOWER BOUND on how long it keeps - it lasted at least this long - and never as a measurement, because you ate it rather than testing it. Args: { partId?, timezone? }.",
+          "Record that you used the last of one up. Counts as a LOWER BOUND on how long it keeps - it lasted at least this long - and never as a measurement, because you ate it rather than testing it. Args: { partId?, timezone?, lot_received_on?, lot_expires_on?, lot_number? }.",
         // Only where something CAN go off: a table whose bundle marked a field as
         // the expiry role ("Best before", "Use by"). Scoped to the whole kind,
         // this offered "Threw it out" on a box of screws (audit, 2026-09-08).
@@ -647,11 +674,15 @@ export default defineModule({
         argsSchema: {
           partId: { label: "Which item", type: "text" },
           timezone: { label: "Timezone to date it in", type: "text" },
+          lot_received_on: { label: "The lot to take it from: the day it arrived, from the Going-off list", type: "text" },
+          lot_expires_on: { label: "The lot to take it from: its date, from the Going-off list", type: "text" },
+          lot_number: { label: "The lot to take it from: the number printed on the box", type: "text" },
         },
       },
       {
         group: "stock",
         id: "inventory:swap-fresh",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["swapped in a new box", "finished it and opened the new one", "replaced it with a fresh one"],
         undoable: true,
@@ -673,7 +704,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/stock/:station reads the same stock list through its GET route.
-        group: "stock", id: "inventory:list-stock", label: "List workshop stock",
+        group: "stock", id: "inventory:list-stock", changes: "records", label: "List workshop stock",
         runBy: "member",
         examples: ["show me the spools", "what stock is loaded at the cutter"],
         description: "Read workshop stock across Inventory collections by shape or name. Pass fields with optional shape (sheet, roll, spool, liquid, wearing-tool or count), q, station, limit and offset. Returns remaining amounts, units, thresholds, total and loaded station slots. Continue with offset when complete is false.",
@@ -681,21 +712,21 @@ export default defineModule({
         argsSchema: { fields: { label: "Stock filters", type: "json", required: true } },
       },
       {
-        group: "stock", id: "inventory:configure-stock", grantedAs: "inventory:update-part", label: "Set stock shape",
+        group: "stock", id: "inventory:configure-stock", changes: "records", grantedAs: "inventory:update-part", label: "Set stock shape",
         examples: ["this is a roll of white vinyl", "set this bit's life to ten hours"],
         description: "Set a sheet, roll, spool, liquid, wearing-tool or count shape, its threshold and remaining amount. Pass fields with config (shape, low_threshold and shape fields), revision from the stock field, and optional remaining or used recount. Rolls take width_mm and waste in metres; spools take unit g or m and optional grams_per_m; wearing tools take unit h, uses or m and limit. Sheet dimensions go in sheet. Used stock keeps its shape and unit.",
         appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.configure-stock", userInvokable: false,
         argsSchema: { fields: { label: "Stock shape and recount", type: "json", required: true } },
       },
       {
-        group: "stock", id: "inventory:consume-stock", grantedAs: "inventory:update-part", label: "Record stock use",
+        group: "stock", id: "inventory:consume-stock", changes: "records", grantedAs: "inventory:update-part", label: "Record stock use",
         examples: ["the job used two metres of vinyl", "that scrap used thirty ml of resin"],
         description: "Record stock used by a job, including scrap. Pass fields with a unique source per job and stock draw, verdict good or scrap, amount and unit. Roll waste is added once; override waste in the stock unit if measured. Spools convert g and m only with grams_per_m. Sheet use takes rectangles in mm, kerf_mm and spacing_mm, and the sheet revision it was planned against. Repeating a source never consumes twice; a shortage refuses the write.",
         appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.consume-stock", userInvokable: false,
         argsSchema: { fields: { label: "Job stock use", type: "json", required: true } },
       },
       {
-        group: "stock", id: "inventory:load-stock", grantedAs: "inventory:update-part", label: "Confirm loaded stock",
+        group: "stock", id: "inventory:load-stock", changes: "records", grantedAs: "inventory:update-part", label: "Confirm loaded stock",
         examples: ["this white vinyl is loaded at the cutter", "unload this spool"],
         description: "Confirm stock is physically loaded at a named station and slot, or unload it. Pass fields with station, optional slot (a colour or feed position) and loaded true or false. This records stock placement and grants no permission to start a machine.",
         appliesTo: { kinds: ["inventory:part"] }, invokeHandler: "inventory.load-stock", userInvokable: false,
@@ -704,6 +735,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:change-sheet-area",
+        changes: "records",
         grantedAs: "inventory:update-part",
         label: "Record sheet area",
         description: "Record cut outlines already offset for kerf and spacing, or bounding boxes with kerf and spacing, edit the free rectangles, or undo the latest hand edit. Supply the current revision to prevent stale changes.",
@@ -716,6 +748,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:measure-material",
+        changes: "records",
         // ADMIN-ONLY: the page's own routes POST /:id/material and PUT /spool/:id/use gate on this action's own id (material.ts, spool-native.ts)
         runBy: "admin",
         examples: ["this spool weighs 750 grams", "used 1200 millimetres of filament"],
@@ -733,12 +766,13 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:adjust-stock",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["add 5 to the M3 screws", "take 2 off that spool"],
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots?, once?, reversible?, takeBack?, sourceKind?, sourceId? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -759,6 +793,7 @@ export default defineModule({
           operationKey: { label: "Receipt key for a recoverable stock draw", type: "text" },
           once: { label: "Apply once per source: a repeat for the same thing, source and direction changes nothing", type: "boolean" },
           reversible: { label: "With once: the source can take it back, so a repeat is judged on what it has done net (a shopping line unticked, then ticked again)", type: "boolean" },
+          takeBack: { label: "Take back whatever this source has added, net (a shopping line unticked); delta is ignored", type: "boolean" },
           partId: { label: "Part id", type: "text" },
           delta: { label: "Change in qty (+ adds, − subtracts)", type: "number" },
           restock: { label: "This is stock that arrived: date it today (optional)", type: "boolean" },
@@ -774,6 +809,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:set-stock",
+        changes: "records",
         stockMove: "total",
         grantedAs: "inventory:count-stock",
         examples: ["there are 40 left", "set the count to 12"],
@@ -797,6 +833,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "lifecycle",
         id: "inventory:restore-part",
+        changes: "records",
         grantedAs: "inventory:update-part",
         internal: true,
         label: "Put a part back",
@@ -819,6 +856,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "stock",
         id: "inventory:remove-category",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Remove a category",
@@ -835,6 +873,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "plan",
         id: "inventory:reopen-allocation",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Reopen a reservation",
@@ -851,6 +890,7 @@ export default defineModule({
         // NO-PHRASING: driven by a consumer module's own record, never asked for
         group: "plan",
         id: "inventory:reserve-for-line",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Hold stock for one line of a target",
@@ -872,6 +912,7 @@ export default defineModule({
         // NO-PHRASING: driven by a consumer module's own record, never asked for
         group: "stock",
         id: "inventory:line-usage",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "What each line of a target has used",
@@ -889,6 +930,7 @@ export default defineModule({
         // NO-PHRASING: driven by a consumer module's own record, never asked for
         group: "stock",
         id: "inventory:use-for-line",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Use stock for one line of a target",
@@ -911,6 +953,7 @@ export default defineModule({
         // NO-PHRASING: driven by a consumer module's own record, never asked for
         group: "stock",
         id: "inventory:release-line",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Let one line of a target go",
@@ -929,6 +972,7 @@ export default defineModule({
         // NO-PHRASING: driven by a consumer module's own record, never asked for
         group: "stock",
         id: "inventory:settle-target",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Settle a finished target's reservations",
@@ -947,6 +991,7 @@ export default defineModule({
         group: "plan",
         // UI-SCREEN: /inventory/* (Consume or Release beside a reservation)
         id: "inventory:settle-allocation",
+        changes: "records",
         runBy: "member",
         examples: ["we used the reserved ones", "release that reservation"],
         undoable: true,
@@ -965,6 +1010,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /inventory/* (Categories in list settings)
         id: "inventory:add-category",
+        changes: "records",
         runBy: "member",
         examples: ["add a Fasteners category", "we need a new category"],
         undoable: true,
@@ -982,6 +1028,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:create-item",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["add a box of screws", "I have got a new spool"],
         undoable: true,
@@ -1004,6 +1051,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:create-items",
+        changes: "records",
         grantedAs: "inventory:create-part",
         examples: ["add these five things", "add a batch of items"],
         label: "Add items (bulk)",
@@ -1016,6 +1064,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:stocktake",
+        changes: "records",
         // Taking stock is counting what is there: the member's own stock work.
         grantedAs: "inventory:count-stock",
         examples: ["here's what's left in the fridge: milk, eggs, half the cheddar", "everything else in the pantry is gone", "what's still here?"],
@@ -1031,6 +1080,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:start-recount",
+        changes: "records",
         // Recounting a collection is counting what is there: the member's own stock work.
         grantedAs: "inventory:count-stock",
         examples: ["let's recount my filament", "rescan all my PETG from scratch", "recount everything tagged garage in Tools"],
@@ -1044,6 +1094,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:recount-scan",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["scanned 6970000000011", "that one says Kingroon PETG white", "this is the silver spool"],
         label: "Scan a thing into a recount",
@@ -1056,6 +1107,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:apply-recount",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         // Not declared undoable, though it has one Undo: finishing a recount can
         // mark things gone, so it is shown on a card and confirmed first.
@@ -1070,6 +1122,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:undo-recount",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["undo that recount", "put the filament back as it was"],
         label: "Undo a recount",
@@ -1081,6 +1134,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:recount-remove-scan",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["that scan was wrong", "take that one back out of the recount"],
         label: "Take a scan out of a recount",
@@ -1092,6 +1146,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:undo-stocktake",
+        changes: "records",
         grantedAs: "inventory:count-stock",
         examples: ["undo that stocktake", "bring the fridge back"],
         label: "Undo a stocktake",
@@ -1104,6 +1159,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:update-item",
+        changes: "records",
         editor: true,
         grantedAs: "inventory:update-part",
         examples: ["rename that part", "change its brand"],
@@ -1118,6 +1174,7 @@ export default defineModule({
       {
         group: "stock",
         id: "inventory:lift-to-type",
+        changes: "workspace",
         // ADMIN-ONLY: no page twin: a bundle migration that links every item in an instance to a type
         runBy: "admin",
         examples: ["turn these items into types", "dedupe these into product types"],
@@ -1134,6 +1191,7 @@ export default defineModule({
       {
         group: "organise",
         id: "inventory:field-to-location",
+        changes: "workspace",
         // ADMIN-ONLY: no page twin: a bundle migration that rewrites every item in an instance and makes locations
         runBy: "admin",
         examples: ["move the Room field into Location", "turn that place field into real locations"],
@@ -1149,7 +1207,7 @@ export default defineModule({
     ],
   },
 
-  subscribes: [],
+  subscribes: ["core-placement.placed"],
 
   // The "order arrival auto-bumps part stock" flow is a wire, not
   // hardcoded code. Ship it as a default; users can edit / disable
@@ -1270,6 +1328,10 @@ export default defineModule({
       // What its dashboard tiles read, in the one dashboard request (#6563).
       const { registerInventoryDashboardReads } = await import("./dashboard-reads.js");
       registerInventoryDashboardReads();
+      // Food moved into the fridge or the freezer is re-dated by its cold shelf
+      // life, and by the warm one when it comes out (cold-redate.ts).
+      const { registerColdRedate } = await import("./cold-redate.js");
+      registerColdRedate();
     },
     onShutdown: async () => {
       const { stopBurnRateSweeper } = await import("./burn-rate.js");

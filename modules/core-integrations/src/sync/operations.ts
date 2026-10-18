@@ -8,7 +8,7 @@ import { platform, type SyncEntityType } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { loadConnectionRef } from "./connection.js";
-import { ReconcileBusyError, runReconcile, runStatusOf, type ReconcileResult, type SyncConnectionRef } from "./engine.js";
+import { ReconcileBusyError, fetchCtx, runReconcile, runStatusOf, type ReconcileResult, type SyncConnectionRef } from "./engine.js";
 import { installedSyncConnectors, resolveSyncConnector } from "./resolve.js";
 import { DEFAULT_CADENCE_MIN, ensureSyncScan } from "./worker.js";
 
@@ -192,7 +192,7 @@ export async function testSyncConnection(
   if (!ref) return { found: false };
   const def = await resolveSyncConnector(db, ref.connectorId);
   if (!def?.testConnection) return { found: true, ok: true, note: "connector has no test" };
-  const result = (await def.testConnection({ orgId: ref.orgId, baseUrl: ref.baseUrl, credentials: ref.credentials, fetch })) as {
+  const result = (await def.testConnection(fetchCtx(ref))) as {
     ok: boolean;
     error?: string;
     note?: string;

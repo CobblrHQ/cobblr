@@ -111,12 +111,38 @@ function FamilyOrTable({ family }: { family: { childPath: string; tablePath: str
 }
 
 function Header({ title, hint, listLabel: named }: { title: string; hint?: string | null; listLabel?: string }) {
+  const { entityKind } = useInventory();
+  return (
+    // The default inventory page reads "// parts // settings". On a skinned
+    // instance (Yarn) "parts" is the wrong noun, but settings still has to be
+    // reachable — it's where you edit a list's dropdown options (otherwise
+    // there's no findable "config area"). So keep a settings link either way.
+    <CollectionHeader
+      title={title}
+      hint={hint} kind={entityKind} exportCsv={false}
+      nav={<InventoryTabs listLabel={named} />}
+    />
+  );
+}
+
+/** The collection's own tabs (its list, Going off, Settings) for a page that
+ *  draws its own header: a collection that opens on a saved view (Groceries'
+ *  "What's on hand") would otherwise have no way to Going off or Settings,
+ *  which only the module's own page showed. */
+export function InventoryViewTabs(props: { orgSlug: string; getToken: () => string | null; instance?: string; itemNoun?: string; itemNounPlural?: string }) {
+  return (
+    <InventoryProvider orgSlug={props.orgSlug} getToken={props.getToken} instance={props.instance} itemNoun={props.itemNoun} itemNounPlural={props.itemNounPlural}>
+      <InventoryTabs />
+    </InventoryProvider>
+  );
+}
+
+function InventoryTabs({ listLabel: named }: { listLabel?: string }) {
   // The list tab is named after WHAT IT HOLDS. The noun is already in context
   // (every instance declares it) and the tabs used to throw it away: a base
   // inventory hardcoded "Parts" and a skinned instance fell back to the generic
   // "List", so Yarn's tab read "List" instead of "Skeins" (reported 2026-08-01).
-  const { itemNounPlural, entityKind } = useInventory();
-  // A family page (Filament) is named for itself, not for its types.
+  const { itemNounPlural } = useInventory();
   const listLabel = named
     ? named
     : itemNounPlural
@@ -152,26 +178,16 @@ function Header({ title, hint, listLabel: named }: { title: string; hint?: strin
   const sheets = useQuery({ queryKey: ["inventory-sheet-any"], queryFn: () => api.findSheets({}), staleTime: 60_000 });
   const hasSheets = (sheets.data?.total ?? 0) > 0;
   return (
-    // The default inventory page reads "// parts // settings". On a skinned
-    // instance (Yarn) "parts" is the wrong noun, but settings still has to be
-    // reachable — it's where you edit a list's dropdown options (otherwise
-    // there's no findable "config area"). So keep a settings link either way.
-    <CollectionHeader
-      title={title}
-      hint={hint} kind={entityKind} exportCsv={false}
-      nav={
-        <>
-          <NavLink to={base} end className={cls}>{listLabel}</NavLink>
-          {(goingOff > 0 || onExpiring) && (
-            <NavLink to={`${base}/expiring`} className={cls}>
-              Going off{goingOff > 0 ? ` (${goingOff})` : ""}
-            </NavLink>
-          )}
-          {hasSheets && <SheetSearch />}
-          <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
-        </>
-      }
-    />
+    <>
+      <NavLink to={base} end className={cls}>{listLabel}</NavLink>
+      {(goingOff > 0 || onExpiring) && (
+        <NavLink to={`${base}/expiring`} className={cls}>
+          Going off{goingOff > 0 ? ` (${goingOff})` : ""}
+        </NavLink>
+      )}
+      {hasSheets && <SheetSearch />}
+      <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
+    </>
   );
 }
 

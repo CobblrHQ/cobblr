@@ -14,6 +14,7 @@
 // when the engine says no. Open Food Facts was tried for that half and ruled
 // out: its v1 name search answers 503 as often as 200, and its v2 search
 // ignores `search_terms` and pages the whole database.
+// EGRESS-FILE: vendor-fixed - the image library's host, written in the code
 import type { DdgImageResult } from "./ddg-images.js";
 import { readWebCassette, replayingWeb, writeWebCassette } from "./web-replay.js";
 

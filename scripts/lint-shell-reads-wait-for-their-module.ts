@@ -26,6 +26,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { apiClientFiles } from "./lib/api-client-methods.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -69,11 +70,11 @@ function optInModules(): Set<string> {
   return out;
 }
 
-/** api.ts helper name -> the module whose route it reads. */
+/** api client helper name -> the module whose route it reads. */
 function helperModules(): Map<string, string> {
   const out = new Map<string, string>();
   let current: string | null = null;
-  for (const line of readFileSync("web/src/lib/api.ts", "utf8").split("\n")) {
+  for (const line of apiClientFiles().map((f) => readFileSync(f, "utf8")).join("\n").split("\n")) {
     // The api object's members sit at two spaces; a deeper `if (` is not one.
     const def = /^ {2}(?:async\s+)?([A-Za-z_]\w*)\s*(?:<[^>]*>)?\s*\(/.exec(line) ?? /^ {2}([A-Za-z_]\w*)\s*:\s*(?:async\s*)?(?:<[^>]*>)?\(/.exec(line);
     if (def && !/^(?:if|for|while|switch|return|catch)$/.test(def[1]!)) current = def[1]!;
@@ -91,7 +92,7 @@ function shellFiles(): Set<string> {
   const layout = "web/src/components/AppLayout.tsx";
   for (const m of readFileSync(layout, "utf8").matchAll(/from\s+"(\.\.?\/[^"]+)"/g)) {
     // api.ts defines the helpers; it is the map, not a caller.
-    if (/\/lib\/api$/.test(m[1]!)) continue;
+    if (/\/lib\/api(\/|$)/.test(m[1]!)) continue;
     const base = join("web/src/components", m[1]!);
     for (const ext of [".tsx", ".ts", "/index.tsx", "/index.ts"]) {
       try {

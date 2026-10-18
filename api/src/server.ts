@@ -19,6 +19,7 @@ import { floorplanJsonSchema } from "@cobblr/platform-contract/floorplan-format"
 import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
 import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
 import { SecretFieldError } from "./platform/secret-fields.js";
+import { ListReadError } from "./platform/entity-list-walk.js";
 import { InvalidFieldValueError, UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
 import { failingResolvers } from "./platform/resolver-failures.js";
 import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
@@ -83,6 +84,7 @@ import { outboundEmailRouter } from "./routes/outbound-email.js";
 import { membersRouter, invitesRootRouter } from "./routes/members.js";
 import { peopleRouter } from "./routes/people.js";
 import { notificationAudiencesRouter } from "./routes/notification-audiences.js";
+import { notificationDefaultsRouter } from "./routes/notification-defaults.js";
 import { pairingsRouter } from "./routes/pairings.js";
 import { portalRouter } from "./routes/portal.js";
 import { diagnosticsRouter } from "./routes/diagnostics.js";
@@ -601,6 +603,7 @@ export function createApp(): AppHandles {
   v1.use("/orgs/:slug/people", peopleRouter);
   // Who each kind of workspace notification is for (owner/admin setting).
   v1.use("/orgs/:slug/notification-audiences", notificationAudiencesRouter);
+  v1.use("/orgs/:slug/notification-defaults", notificationDefaultsRouter);
   v1.use("/orgs/:slug/pairings", pairingsRouter);
   // Workspace owner: review + approve members' AI-share offers.
   v1.use("/orgs/:slug", workspaceAiSharesRouter);
@@ -671,7 +674,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError) {
+      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

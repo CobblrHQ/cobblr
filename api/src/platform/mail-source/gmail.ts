@@ -14,6 +14,7 @@
 // so the SSRF guard has nothing to guard and would only fail closed under
 // the hosted strict egress policy.
 
+// EGRESS-FILE: vendor-fixed - Google's mail API; the fetch is injectable for a test
 import { MailSourceGrantError, type MailAttachment, type MailListPage, type MailMessage, type MailSource } from "./types.js";
 
 export const GMAIL_API_BASE = process.env.COBBLR_GMAIL_API_BASE || "https://gmail.googleapis.com";

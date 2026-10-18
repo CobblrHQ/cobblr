@@ -62,7 +62,8 @@ export async function healBundleViewFields(opts: { onlyOrgId?: string } = {}): P
         for (const h of heals) {
           // Guarded in the write: a view edited since the install keeps its edit.
           const r = await sql`
-            update core_views_views set config = ${JSON.stringify(h.config)}::jsonb, updated_at = now()
+            update core_views_views set config = ${JSON.stringify(h.config)}::jsonb, updated_at = now(),
+                   bundle_base = case when bundle_base is null then null else jsonb_set(bundle_base, '{config}', ${JSON.stringify(h.config)}::jsonb) end
              where bundle_id = ${b.id} and entity_kind = ${h.entity_kind} and name = ${h.name}
                and config = ${JSON.stringify(h.from)}::jsonb`.execute(tdb);
           healed += Number(r.numAffectedRows ?? 0);

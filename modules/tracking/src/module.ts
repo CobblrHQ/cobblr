@@ -87,6 +87,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "tracking:remove-measurement",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Remove a measurement",
@@ -102,6 +103,7 @@ export default defineModule({
       {
         group: "more",
         id: "tracking:log-measurement",
+        changes: "records",
         runBy: "member",
         examples: ["weighed in at 82", "record 15 for today"],
         undoable: true,

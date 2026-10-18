@@ -80,6 +80,9 @@ export default defineModule({
       // The undo: a recorded build was reversed (components returned, output
       // credit removed) — a scrapped/failed fabrication run.
       "builds.build.reversed",
+      // A fabrication job's good output is in stock (applied now, or found
+      // applied before): { jobId, buildId, made }. What marks the job credited.
+      "builds.output.credited",
       // Fired when a target build count can't be met — carries the per-component
       // shortfall. Wire it to a purchasing shopping list to auto-restock.
       "builds.shortfall.detected",
@@ -102,6 +105,7 @@ export default defineModule({
       // UI-SCREEN: /builds/inspections/:id displays and edits its additional fields.
       {
         id: "builds:update-inspection-metadata",
+        changes: "records",
         runBy: "member",
         examples: ["change this board inspection field"],
         group: "make", label: "Edit board inspection fields", description: "Edit additional fields while preserving the captured inspection evidence.", scope: "workspace", invokeHandler: "builds.update-inspection-metadata", userInvokable: true, argsSchema: { inspection_id: { label: "Inspection id", type: "text", required: true }, metadata: { label: "Additional fields", type: "json", required: true } },
@@ -109,104 +113,110 @@ export default defineModule({
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:inspection-resources",
+        changes: "records",
         runBy: "member",
         examples: ["inspection resources"],
         group: "make", label: "Read board inspections", description: "Read the native inspection bench, per-board evidence and full batch counts.", scope: "workspace", invokeHandler: "builds.inspection-resources", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, ordinal: {label: "Board number", type: "number"}}},
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:inspection",
+        changes: "records",
         runBy: "member",
         examples: ["inspection"],
         group: "make", label: "Read a board inspection", description: "Read the front and back photos, decisions, rework history and batch material trace.", scope: "workspace", invokeHandler: "builds.inspection", userInvokable: true, argsSchema: {inspection_id: {label: "Inspection id", type: "text", required: true}}},
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:assembly-recall",
+        changes: "records",
         runBy: "member",
         examples: ["assembly recall"],
         group: "make", label: "Find boards by reel or paste lot", description: "Find finished board batches by an exact captured reel id or material lot code.", scope: "workspace", invokeHandler: "builds.assembly-recall", userInvokable: true, argsSchema: {code: {label: "Reel id or lot code", type: "text", required: true}}},
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:prepare-inspection",
+        changes: "records",
         runBy: "member",
         examples: ["prepare inspection"],
         group: "make", label: "Prepare board inspection", description: "Choose an available native inspection bench for a reflowed batch.", scope: "workspace", invokeHandler: "builds.prepare-inspection", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, machine_kind: {label: "Bench collection kind", type: "text", required: true}, machine_id: {label: "Bench id", type: "text", required: true}}},
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:inspect-board",
+        changes: "records",
         runBy: "member",
         examples: ["inspect board"],
         group: "make", label: "Record a board inspection", description: "At the authorized bench, keep front and back photos, pass or fail, defect tags, optional serial and rework notes. Earlier evidence is retained.", scope: "workspace", invokeHandler: "builds.inspect-board", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, ordinal: {label: "Board number", type: "number", required: true}, revision: {label: "Current inspection revision or zero", type: "number", required: true}, status: {label: "pass or fail", type: "text", required: true}, front_file_id: {label: "Front photo file id", type: "text", required: true}, back_file_id: {label: "Back photo file id", type: "text", required: true}, defects: {label: "bridge, tombstone, missing, polarity or other", type: "json", required: true}, notes: {label: "Inspection and rework notes", type: "text"}, serial_code: {label: "Optional board serial", type: "text"}, confirmed_tested: {label: "The board was inspected and tested", type: "boolean", required: true}}},
       // UI-SCREEN: /station/inspection/<machineId>/<orderId> records board evidence and the tested-stock handoff.
       {
         id: "builds:finish-assembly",
+        changes: "records",
         runBy: "member",
         examples: ["finish assembly"],
         group: "make", label: "Finish the inspected batch", description: "Confirm every board was inspected. Only passed boards become tested count stock, once, with their captured material and process trace.", scope: "workspace", invokeHandler: "builds.finish-assembly", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board has an inspection decision", type: "boolean", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:reflow-resources", group: "make", label: "Read ovens and paste profiles", description: "Read native ovens, bridge connections and immutable profiles for the paste used on this work order.", scope: "workspace", invokeHandler: "builds.reflow-resources", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}}},
+      {runBy: "member", id: "builds:reflow-resources", changes: "records", group: "make", label: "Read ovens and paste profiles", description: "Read native ovens, bridge connections and immutable profiles for the paste used on this work order.", scope: "workspace", invokeHandler: "builds.reflow-resources", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:prepare-reflow", group: "make", label: "Prepare a paste reflow run", description: "Bind this placed board batch to its paste profile and native oven. A started run cannot change.", scope: "workspace", invokeHandler: "builds.prepare-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, profile_id: {label: "Paste profile id", type: "text", required: true}, machine_kind: {label: "Machine kind", type: "text", required: true}, machine_id: {label: "Oven id", type: "text", required: true}, model: {label: "manual, controleo3, t962-ue or yarc", type: "text", required: true}, connection_id: {label: "Bridge connection id", type: "text"}, slot: {label: "Verified firmware profile slot", type: "number"}, controller_name: {label: "Exact firmware profile name", type: "text"}, confirmed_profile_matches: {label: "The oven profile matches the paste profile", type: "boolean", required: true}}},
+      {runBy: "member", id: "builds:prepare-reflow", changes: "records", group: "make", label: "Prepare a paste reflow run", description: "Bind this placed board batch to its paste profile and native oven. A started run cannot change.", scope: "workspace", invokeHandler: "builds.prepare-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, profile_id: {label: "Paste profile id", type: "text", required: true}, machine_kind: {label: "Machine kind", type: "text", required: true}, machine_id: {label: "Oven id", type: "text", required: true}, model: {label: "manual, controleo3, t962-ue or yarc", type: "text", required: true}, connection_id: {label: "Bridge connection id", type: "text"}, slot: {label: "Verified firmware profile slot", type: "number"}, controller_name: {label: "Exact firmware profile name", type: "text"}, confirmed_profile_matches: {label: "The oven profile matches the paste profile", type: "boolean", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:send-reflow-profile", group: "make", label: "Send or confirm the oven profile", description: "At the authorized oven station, select the verified T-962 slot, upload YARC data or confirm the local oven profile.", scope: "workspace", invokeHandler: "builds.send-reflow-profile", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}}},
+      {runBy: "member", id: "builds:send-reflow-profile", changes: "records", group: "make", label: "Send or confirm the oven profile", description: "At the authorized oven station, select the verified T-962 slot, upload YARC data or confirm the local oven profile.", scope: "workspace", invokeHandler: "builds.send-reflow-profile", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:start-reflow", group: "make", label: "Start reflow at its station", description: "Record Start once at the authorized oven screen. T-962 receives one heat command; YARC starts physically at the oven with bridge monitoring.", scope: "workspace", invokeHandler: "builds.start-reflow", userInvokable: false, effect: "physical", argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}}},
+      {runBy: "member", id: "builds:start-reflow", changes: "records", group: "make", label: "Start reflow at its station", description: "Record Start once at the authorized oven screen. T-962 receives one heat command; YARC starts physically at the oven with bridge monitoring.", scope: "workspace", invokeHandler: "builds.start-reflow", userInvokable: false, effect: "physical", argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:sample-reflow", group: "make", label: "Record the oven temperature curve", description: "Read the bridge temperature samples for this run and preserve every earlier observation.", scope: "workspace", invokeHandler: "builds.sample-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}}},
+      {runBy: "member", id: "builds:sample-reflow", changes: "records", group: "make", label: "Record the oven temperature curve", description: "Read the bridge temperature samples for this run and preserve every earlier observation.", scope: "workspace", invokeHandler: "builds.sample-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:finish-reflow", group: "make", label: "Record completed reflow", description: "Record the actual temperature curve or manual peak, duration and time above liquidus. Manufacturer limit violations stay flagged for inspection.", scope: "workspace", invokeHandler: "builds.finish-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}, source: {label: "controller, manual or manual-recovery", type: "text", required: true}, peak_c: {label: "Measured peak Celsius", type: "number"}, duration_s: {label: "Measured total seconds", type: "number"}, above_liquidus_s: {label: "Measured seconds above liquidus", type: "number"}, notes: {label: "Run notes or controller recovery explanation", type: "text"}}},
+      {runBy: "member", id: "builds:finish-reflow", changes: "records", group: "make", label: "Record completed reflow", description: "Record the actual temperature curve or manual peak, duration and time above liquidus. Manufacturer limit violations stay flagged for inspection.", scope: "workspace", invokeHandler: "builds.finish-reflow", userInvokable: true, argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}, source: {label: "controller, manual or manual-recovery", type: "text", required: true}, peak_c: {label: "Measured peak Celsius", type: "number"}, duration_s: {label: "Measured total seconds", type: "number"}, above_liquidus_s: {label: "Measured seconds above liquidus", type: "number"}, notes: {label: "Run notes or controller recovery explanation", type: "text"}}},
       // UI-SCREEN: /station/reflow/<machineId>/<orderId> and its work order prepare and record this oven run.
-      {runBy: "member", id: "builds:stop-reflow", group: "make", label: "Stop reflow at its station", description: "Stop the open T-962 controller or confirm the oven was stopped locally. Keep its interrupted run and temperature history.", scope: "workspace", invokeHandler: "builds.stop-reflow", userInvokable: false, effect: "physical", argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}}},
+      {runBy: "member", id: "builds:stop-reflow", changes: "records", group: "make", label: "Stop reflow at its station", description: "Stop the open T-962 controller or confirm the oven was stopped locally. Keep its interrupted run and temperature history.", scope: "workspace", invokeHandler: "builds.stop-reflow", userInvokable: false, effect: "physical", argsSchema: {order_id: {label: "Work order id", type: "text", required: true}, station_token: {label: "Authorized station credential", type: "text", required: true}, confirmed_all_boards: {label: "Every board is loaded or completed at this oven", type: "boolean", required: true}}},
       {
         // UI-SCREEN: /builds/<revision> lists machines and paste jars for assembly.
-        id: "builds:placement-resources", group: "make", label: "Read assembly machines", description: "List native Machines records with their package calibrations and available paste jars.", scope: "workspace" as const, invokeHandler: "builds.placement-resources", userInvokable: true,
+        id: "builds:placement-resources", changes: "records", group: "make", label: "Read assembly machines", description: "List native Machines records with their package calibrations and available paste jars.", scope: "workspace" as const, invokeHandler: "builds.placement-resources", userInvokable: true,
         runBy: "member",
       },
       {
         // UI-SCREEN: /builds/<revision> exports its prepared placement program.
-        id: "builds:placement-program", group: "make", label: "Export a placement program", description: "Read the immutable placement files and feeder map prepared for an assembly work order. Vendor files are loaded and run at the machine.", scope: "workspace" as const, invokeHandler: "builds.placement-program", userInvokable: true,
+        id: "builds:placement-program", changes: "records", group: "make", label: "Export a placement program", description: "Read the immutable placement files and feeder map prepared for an assembly work order. Vendor files are loaded and run at the machine.", scope: "workspace" as const, invokeHandler: "builds.placement-program", userInvokable: true,
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true } },
       },
       {
         // UI-SCREEN: /builds/<revision> saves verified package settings on a native machine.
-        id: "builds:configure-placement-machine", group: "make", label: "Save placement calibration", description: "Save the operator-verified rotation, offsets, height and nozzle settings for each package on a native machine, with its measured work area.", scope: "workspace" as const, invokeHandler: "builds.configure-placement-machine", userInvokable: true,
+        id: "builds:configure-placement-machine", changes: "records", group: "make", label: "Save placement calibration", description: "Save the operator-verified rotation, offsets, height and nozzle settings for each package on a native machine, with its measured work area.", scope: "workspace" as const, invokeHandler: "builds.configure-placement-machine", userInvokable: true,
         // ADMIN-ONLY: calibration is machine setup; a wrong rotation or offset misplaces every later board, and a member has no say over configuration
         runBy: "admin",
         argsSchema: { machine_kind: { label: "Machine kind", type: "text", required: true }, machine_id: { label: "Machine id", type: "text", required: true }, model: { label: "openpnp, neoden4, neoden-yy1, neoden-k1830, charmhigh-t48vb or charmhigh-t36va", type: "text", required: true }, packages: { label: "Verified package calibrations", type: "json", required: true }, work_area_width_mm: { label: "Work area width mm", type: "number", required: true }, work_area_height_mm: { label: "Work area height mm", type: "number", required: true } },
       },
       {
         // UI-SCREEN: /builds/<revision> records a reviewed paste application against the linked stencil.
-        id: "builds:apply-assembly-paste", group: "make", label: "Record paste application", description: "Consume usable liquid paste once for a released work order and capture its jar, lot, amount and linked stencil. A lost reply recovers the original application.", scope: "workspace" as const, invokeHandler: "builds.apply-assembly-paste", userInvokable: true,
+        id: "builds:apply-assembly-paste", changes: "records", group: "make", label: "Record paste application", description: "Consume usable liquid paste once for a released work order and capture its jar, lot, amount and linked stencil. A lost reply recovers the original application.", scope: "workspace" as const, invokeHandler: "builds.apply-assembly-paste", userInvokable: true,
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, part_id: { label: "Paste jar id", type: "text", required: true }, kind: { label: "Paste collection kind", type: "text", required: true }, amount_ml: { label: "Paste applied in ml", type: "number", required: true }, confirmed_applied: { label: "The linked stencil and this jar were used for every board", type: "boolean", required: true } },
       },
       {
         // UI-SCREEN: /builds/<revision> binds calibrated placements and feeder slots to its kit.
-        id: "builds:prepare-placement", group: "make", label: "Prepare a placement job", description: "Snapshot a machine's verified calibration, board geometry and exact reel-to-slot map against a released kit. A started program cannot be replaced.", scope: "workspace" as const, invokeHandler: "builds.prepare-placement", userInvokable: true,
+        id: "builds:prepare-placement", changes: "records", group: "make", label: "Prepare a placement job", description: "Snapshot a machine's verified calibration, board geometry and exact reel-to-slot map against a released kit. A started program cannot be replaced.", scope: "workspace" as const, invokeHandler: "builds.prepare-placement", userInvokable: true,
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, machine_kind: { label: "Machine kind", type: "text", required: true }, machine_id: { label: "Machine id", type: "text", required: true }, geometry: { label: "PCB dimensions, origins and panel layout in mm", type: "json", required: true }, slots: { label: "Reel id to feeder slot map", type: "json", required: true } },
       },
       {
         // UI-SCREEN: /station/assembly/<machineId>/<orderId> scans a reel at its exact feeder slot.
-        id: "builds:verify-feeder", group: "make", label: "Verify a feeder reel", description: "An authorized station scans the exact Cobblr reel QR at a slot in the prepared job. A wrong reel, expired MSL or revoked station is refused.", scope: "workspace" as const, invokeHandler: "builds.verify-feeder", userInvokable: true,
+        id: "builds:verify-feeder", changes: "records", group: "make", label: "Verify a feeder reel", description: "An authorized station scans the exact Cobblr reel QR at a slot in the prepared job. A wrong reel, expired MSL or revoked station is refused.", scope: "workspace" as const, invokeHandler: "builds.verify-feeder", userInvokable: true,
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, slot: { label: "Feeder slot", type: "text", required: true }, code: { label: "Scanned reel QR", type: "text", required: true } },
       },
       {
         // UI-SCREEN: /station/assembly/<machineId>/<orderId> starts a reviewed side at its authorized station.
-        id: "builds:start-placement", group: "make", label: "Start placement", description: "Record the start of a prepared side after station authorization, every feeder scan, fresh MSL and paste readiness. Physically load and run vendor files at the machine; OpenPnP events can report the same start.", scope: "workspace" as const, invokeHandler: "builds.start-placement", userInvokable: false, effect: "physical",
+        id: "builds:start-placement", changes: "records", group: "make", label: "Start placement", description: "Record the start of a prepared side after station authorization, every feeder scan, fresh MSL and paste readiness. Physically load and run vendor files at the machine; OpenPnP events can report the same start.", scope: "workspace" as const, invokeHandler: "builds.start-placement", userInvokable: false, effect: "physical",
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, side: { label: "top or bottom", type: "text", required: true }, source: { label: "manual or openpnp", type: "text", required: true }, coverage_hash: { label: "OpenPnP observed placement and board layout hash", type: "text" }, confirmed_all_boards: { label: "Every board is loaded and the machine is clear", type: "boolean", required: true } },
       },
       {
         // UI-SCREEN: /station/assembly/<machineId>/<orderId> records complete sides and the final physical stock draw.
-        id: "builds:finish-placement", group: "make", label: "Finish placement", description: "Confirm every board completed this side. Once all required sides finish, consume the native kit including attrition and create placed-board stock atomically. OpenPnP completion must match every exported placement.", scope: "workspace" as const, invokeHandler: "builds.finish-placement", userInvokable: true,
+        id: "builds:finish-placement", changes: "records", group: "make", label: "Finish placement", description: "Confirm every board completed this side. Once all required sides finish, consume the native kit including attrition and create placed-board stock atomically. OpenPnP completion must match every exported placement.", scope: "workspace" as const, invokeHandler: "builds.finish-placement", userInvokable: true,
         runBy: "member",
         argsSchema: { order_id: { label: "Work order id", type: "text", required: true }, station_token: { label: "Authorized station credential", type: "text", required: true }, side: { label: "top or bottom", type: "text", required: true }, source: { label: "manual or openpnp", type: "text", required: true }, coverage_hash: { label: "OpenPnP observed completed placement and board layout hash", type: "text" }, confirmed_all_boards: { label: "Every board completed this side", type: "boolean", required: true } },
       },
       {
         // UI-SCREEN: /instances/board-projects/:id reads through GET board-project to avoid refreshing its own query.
-        id: "builds:board-project", group: "make", label: "Board revisions", description: "Read the board revisions belonging to a project. Changes nothing.",
+        id: "builds:board-project", changes: "records", group: "make", label: "Board revisions", description: "Read the board revisions belonging to a project. Changes nothing.",
         runBy: "member",
         examples: ["show this board\u2019s revisions"], scope: "workspace" as const, invokeHandler: "builds.board-project", userInvokable: true,
         argsSchema: {
@@ -215,7 +225,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:save-board-revision", group: "make", label: "Import a board revision", description: "Import populated BOM and centroid CSV or KiCad position data as an immutable board revision. Units and bottom mirroring are confirmed explicitly. A changed file needs a new revision name.",
+        id: "builds:save-board-revision", changes: "records", group: "make", label: "Import a board revision", description: "Import populated BOM and centroid CSV or KiCad position data as an immutable board revision. Units and bottom mirroring are confirmed explicitly. A changed file needs a new revision name.",
         runBy: "member",
         examples: ["import this KiCad board", "add rev B to this board"], scope: "workspace" as const, invokeHandler: "builds.save-board-revision", userInvokable: true,
         argsSchema: {
@@ -232,7 +242,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:create-assembly-order", group: "make", label: "Create assembly work order", description: "Plan a whole board quantity for an immutable revision. A request key makes retries safe. Reserve its kit and check fresh stock and moisture before release.",
+        id: "builds:create-assembly-order", changes: "records", group: "make", label: "Create assembly work order", description: "Plan a whole board quantity for an immutable revision. A request key makes retries safe. Reserve its kit and check fresh stock and moisture before release.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "builds.create-assembly-order", userInvokable: true,
         argsSchema: {
@@ -244,20 +254,20 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /builds/<revision> lists work orders through the shared GET assembly-orders reader.
-        id: "builds:assembly-orders", group: "make", label: "List assembly work orders", description: "List a board revision's native assembly work orders, quantities and current kit states. Changes nothing.",
+        id: "builds:assembly-orders", changes: "records", group: "make", label: "List assembly work orders", description: "List a board revision's native assembly work orders, quantities and current kit states. Changes nothing.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "builds.assembly-orders", userInvokable: true,
         argsSchema: { build_id: { label: "Board revision id", type: "text", required: true } },
       },
       {
         // UI-SCREEN: /builds/<revision> reads this order and its kit through GET assembly-orders/:id.
-        id: "builds:assembly-order", group: "make", label: "Read assembly kit", description: "Read a work order and its kit sorted by location, with fresh quantity and moisture readiness. Changes nothing.",
+        id: "builds:assembly-order", changes: "records", group: "make", label: "Read assembly kit", description: "Read a work order and its kit sorted by location, with fresh quantity and moisture readiness. Changes nothing.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "builds.assembly-order", userInvokable: true,
         argsSchema: { order_id: { label: "Assembly work order id", type: "text", required: true } },
       },
       {
-        id: "builds:change-assembly-order", group: "make", label: "Kit or release assembly order", description: "Reserve the entire component and blank-board kit, recheck stock and moisture before release, or cancel an unused order and return all reservations. Release does not start a machine.",
+        id: "builds:change-assembly-order", changes: "records", group: "make", label: "Kit or release assembly order", description: "Reserve the entire component and blank-board kit, recheck stock and moisture before release, or cancel an unused order and return all reservations. Release does not start a machine.",
         runBy: "member",
         scope: "workspace" as const, invokeHandler: "builds.change-assembly-order", userInvokable: true,
         argsSchema: {
@@ -266,7 +276,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:check-board-stock", group: "make", label: "Check board stock", description: "Check N boards against usable package stock, reservations, moisture clocks and placement attrition. Return a shortage and picks by location. Changes nothing.",
+        id: "builds:check-board-stock", changes: "records", group: "make", label: "Check board stock", description: "Check N boards against usable package stock, reservations, moisture clocks and placement attrition. Return a shortage and picks by location. Changes nothing.",
         runBy: "member",
         examples: ["do we have parts for fifty boards"], scope: "workspace" as const, invokeHandler: "builds.check-board-stock", userInvokable: true,
         argsSchema: {
@@ -275,7 +285,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:board-cart", group: "make", label: "Export shortage cart", description: "Export the current component shortage as a distributor BOM-upload CSV. Upload and confirm the column mapping at the distributor. No order is submitted.",
+        id: "builds:board-cart", changes: "records", group: "make", label: "Export shortage cart", description: "Export the current component shortage as a distributor BOM-upload CSV. Upload and confirm the column mapping at the distributor. No order is submitted.",
         runBy: "member",
         examples: ["export these shortages for Mouser"], scope: "workspace" as const, invokeHandler: "builds.board-cart", userInvokable: true,
         argsSchema: {
@@ -285,7 +295,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:order-blank-boards", group: "make", label: "Track a fabrication order", description: "Record a planned JLCPCB, PCBWay or OSH Park purchase, attached fab zip, expected date and tracking. On arrival the blank board count increases through normal purchase receiving. Place the order on the fab\u2019s site.",
+        id: "builds:order-blank-boards", changes: "records", group: "make", label: "Track a fabrication order", description: "Record a planned JLCPCB, PCBWay or OSH Park purchase, attached fab zip, expected date and tracking. On arrival the blank board count increases through normal purchase receiving. Place the order on the fab\u2019s site.",
         grantedAs: "inventory:create-part",
         examples: ["track this blank PCB order"], scope: "workspace" as const, invokeHandler: "builds.order-blank-boards", userInvokable: true,
         argsSchema: {
@@ -299,7 +309,7 @@ export default defineModule({
         },
       },
       {
-        id: "builds:link-board-stencil", group: "make", label: "Record revision stencil", description: "Link stock of a framed or frameless stencil to a board revision, or create its stock record. Keep its received count on the stock page.",
+        id: "builds:link-board-stencil", changes: "records", group: "make", label: "Record revision stencil", description: "Link stock of a framed or frameless stencil to a board revision, or create its stock record. Keep its received count on the stock page.",
         grantedAs: "inventory:create-part",
         examples: ["link this framed stencil to rev B"], scope: "workspace" as const, invokeHandler: "builds.link-board-stencil", userInvokable: true,
         argsSchema: {
@@ -311,6 +321,7 @@ export default defineModule({
       {
         group: "make",
         id: "builds:build-one",
+        changes: "records",
         runBy: "member",
         examples: ["built one of those", "make two of these"],
         undoable: true,
@@ -329,6 +340,7 @@ export default defineModule({
         // NO-PHRASING: a wire target the good print verdict fires; nobody asks for it by name
         group: "make",
         id: "builds:credit-output",
+        changes: "records",
         runBy: "member",
         label: "Count a build's output as made",
         description:
@@ -345,6 +357,7 @@ export default defineModule({
         // NO-PHRASING: a wire target the print verdict fires; nobody asks for it by name
         group: "make",
         id: "builds:record-yield",
+        changes: "records",
         runBy: "member",
         label: "Record a print's good and scrap",
         description:
@@ -360,6 +373,7 @@ export default defineModule({
         // UI-REACH: a sales order line's "Make this" button plans it (sales POST /orders/:id/items/:itemId/make)
         group: "make",
         id: "builds:plan-for",
+        changes: "records",
         runBy: "member",
         label: "Plan a work order for a part",
         description:
@@ -380,6 +394,7 @@ export default defineModule({
         // UI-REACH: a sales order's lines show what is being made for them and how many are made (sales GET /orders/:id)
         group: "make",
         id: "builds:work-orders-for",
+        changes: "records",
         runBy: "member",
         label: "Work orders made for a record",
         description:
@@ -395,6 +410,7 @@ export default defineModule({
       {
         group: "make",
         id: "builds:reverse-one",
+        changes: "records",
         runBy: "member",
         examples: ["that build failed", "undo the last build"],
         undoable: true,
@@ -413,6 +429,7 @@ export default defineModule({
         // UI-SCREEN: /builds the build's sub-assembly line toggles Use stock first / Always make.
         group: "make",
         id: "builds:set-sub-assembly-source",
+        changes: "records",
         runBy: "member",
         examples: ["Always make the controller boards for the printer build", "Use the stocked harnesses first when building the loom"],
         label: "Use stock first or always make",

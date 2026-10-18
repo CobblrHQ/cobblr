@@ -18,13 +18,14 @@
 //                invoke the action once per discovered target.
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { sourceIdKey, type ActionInvokeActor, type WireEffect } from "@cobblr/platform-contract";
+import { sourceIdKey, type ActionInvokeActor, type WireEffect, type EventDelivery } from "@cobblr/platform-contract";
 import { actionActed } from "@cobblr/platform-contract/action-result";
 import { meta } from "../db/meta.js";
 import { actionLabelOf, invoke } from "./actions.js";
 import { baseKindOf, lookup, resolveKind, walkPairings } from "./entities.js";
 import { lifecycleOf } from "./wire-lifecycle.js";
 import { render } from "./templates.js";
+import { eventForAuthor } from "./wire-event-author.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "./member-fields.js";
 import { log as logActivity } from "./activity.js";
@@ -138,6 +139,7 @@ export async function fireEvent(
   eventName: string,
   orgId: string,
   payload: Record<string, unknown>,
+  delivery?: EventDelivery,
 ): Promise<void> {
   // Pull the bindings whose trigger matches this event. Most of the
   // time it's zero — keep the query cheap.
@@ -153,7 +155,10 @@ export async function fireEvent(
   // "a record is created / updated / deleted" of that kind (wire-lifecycle.ts).
   bindings.push(...(await lifecycleBindings(eventName, orgId, payload)));
   if (bindings.length === 0) return;
-  if (await sandboxAwaitingVisitor(orgId)) return;
+  if (await sandboxAwaitingVisitor(orgId)) {
+    if (delivery) throw new Error("Workspace automations are paused");
+    return;
+  }
 
   const depth = wireDepth.getStore() ?? 0;
   if (depth >= MAX_WIRE_DEPTH) {
@@ -176,9 +181,10 @@ export async function fireEvent(
     } catch {
       /* swallow — guard logging is best-effort */
     }
+    if (delivery) throw new Error("Automation depth exceeded");
     return;
   }
-  await wireDepth.run(depth + 1, () => fireBindings(eventName, orgId, payload, bindings));
+  await wireDepth.run(depth + 1, () => fireBindings(eventName, orgId, payload, bindings, delivery));
 }
 
 /** The on-create / on-update / on-delete wires this event runs: those on its
@@ -224,7 +230,10 @@ async function fireBindings(
     filter: unknown;
     args: unknown;
     target: unknown;
+    /** Who made the automation: what its event data may carry is what they may read. */
+    created_by?: string | null;
   }>,
+  delivery?: EventDelivery,
 ): Promise<void> {
   // Resolve the request actor once per fire — every target of the
   // same firing shares the originating user/token (same audit identity).
@@ -256,6 +265,9 @@ async function fireBindings(
       const idKey = sourceIdKey(baseKind);
       const sourceId =
         typeof payload[idKey] === "string" ? (payload[idKey] as string) : "";
+      // What this automation is told: the event minus the fields its author may
+      // not read (wire-event-scope.ts). The ids above are read from the whole event.
+      const eventData = await eventForAuthor(orgId, b.source_kind, b.created_by ?? null, payload);
 
       // The records the wire is about (#6070, wire-records.ts): judged on the
       // SOURCE record, once, before any target runs. A wire narrowed to
@@ -300,7 +312,7 @@ async function fireBindings(
           ...(ent ? await namePeopleForTemplate(orgId, t.kind, templateDataOf(entityFields)) : templateDataOf(entityFields)),
           _title: ent?.title ?? "",
           event: {
-            ...payload,
+            ...eventData,
             name: eventName,
             actor,
             timestamp: firedAt,
@@ -339,9 +351,10 @@ async function fireBindings(
         // instance wire is the instance kind. Key the record by its BASE
         // kind so the twin on the module's kind is recognised as the same.
         const targetBaseKind = t.kind === b.source_kind ? baseKind : await baseKindOf(orgId, t.kind);
-        if (!ledger.claim({ action_id: b.action_id, target_kind: targetBaseKind, target_id: t.id, args: renderedArgs, template: rendered })) {
-          continue;
-        }
+        const firing = { action_id: b.action_id, target_kind: targetBaseKind, target_id: t.id, args: renderedArgs, template: rendered };
+        if (!ledger.claim(firing)) continue;
+        const deliveryKey = `wire:${firingKey({ ...firing, args: b.args, template: b.template })}`;
+        if (delivery?.completed.includes(deliveryKey)) continue;
         // Everything the action writes is marked as this automation's work, so
         // a record it creates reads "via automation <label>" rather than as a
         // hand edit, or as "someone" when a background event fired it (#3833).
@@ -353,7 +366,7 @@ async function fireBindings(
           wire: { id: b.id },
           event: {
             name: eventName,
-            payload,
+            payload: eventData,
             actor,
             timestamp: firedAt,
             trigger_type: "event",
@@ -361,6 +374,12 @@ async function fireBindings(
           rendered,
           args: renderedArgs,
         }));
+        if (delivery) {
+          const outcome = result as { ok?: boolean; skipped?: boolean; deliverySatisfied?: boolean; error?: unknown } | null;
+          const satisfied = outcome?.skipped === true && outcome.deliverySatisfied === true;
+          if (!satisfied && (outcome?.ok === false || outcome?.error)) throw new Error(String(outcome?.error || "Automation did not complete"));
+          await delivery.acknowledge(deliveryKey);
+        }
         // Log a successful firing so the /wires "recent firings" panel
         // can show what's running, not just what's failing. The user
         // can filter by action=wire_fired on /activity. The row carries
@@ -412,6 +431,7 @@ async function fireBindings(
       } catch {
         /* swallow — already in error path */
       }
+      if (delivery) throw err;
     }
   }
 }

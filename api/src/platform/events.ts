@@ -9,6 +9,7 @@
 // By convention all event payloads include an orgId field. We pull
 // that out so the wire engine knows which tenant to scope to.
 
+import type { EventDelivery } from "@cobblr/platform-contract";
 import { fireEvent } from "./wires.js";
 import { runOutsideRequestScope } from "../lib/request-context.js";
 
@@ -57,8 +58,8 @@ export function on(eventName: string, module: string, handler: EventHandler): vo
  *  later step that assumes the move landed (a cancel that reverses a
  *  commit, an undo that voids a purchase), and a second emit whose wire
  *  touches the same ledger. A handler that MOVES stock, a count or a
- *  ledger row is never a notification. emit never rejects, so awaiting
- *  costs latency and nothing else; a `void` on one of these let a build's
+ *  ledger row is never a notification. Ordinary emits log failures; a durable
+ *  delivery rejects so its outbox can retry. a `void` on one of these let a build's
  *  reversal overtake its commit into the stock floor and leave phantom
  *  output credit (#2826), and let a shopping row answer before the
  *  restock it promised had landed. */
@@ -73,7 +74,7 @@ export function observeEvents(fn: Observer): void {
   observers.push(fn);
 }
 
-export async function emit<T>(eventName: string, payload: T): Promise<void> {
+export async function emit<T>(eventName: string, payload: T, delivery?: EventDelivery): Promise<void> {
   // 1. Direct subscribers, inline and in order. A failure is logged and
   // the next subscriber still runs (matched to the contract: emit never
   // rejects). A void caller is not made to wait; it never was.
@@ -83,22 +84,27 @@ export async function emit<T>(eventName: string, payload: T): Promise<void> {
     if (d && d.event === eventName && (payload as { orgId?: unknown } | null)?.orgId === d.orgId) {
       await new Promise<void>((r) => setTimeout(r, d.ms));
     }
-    for (const s of list) {
+    for (const [index, s] of list.entries()) {
+      const key = `subscriber:${s.module}:${index}`;
+      if (delivery?.completed.includes(key)) continue;
       try {
         await s.handler(payload);
+        await delivery?.acknowledge(key);
       } catch (err) {
         console.error(`[events] handler ${s.module} failed for ${eventName}:`, err);
+        if (delivery) throw err;
       }
     }
   }
-  // 2. User-configured wires, inline, so awaiting callers get
-  // read-after-write for those too. Wire failures are swallowed.
+  // 2. User-configured wires, inline; durable deliveries retain failures.
   const p = payload as { orgId?: unknown };
   if (p && typeof p.orgId === "string") {
     try {
-      await fireEvent(eventName, p.orgId, payload as Record<string, unknown>);
+      if (delivery) await fireEvent(eventName, p.orgId, payload as Record<string, unknown>, delivery);
+      else await fireEvent(eventName, p.orgId, payload as Record<string, unknown>);
     } catch (err) {
       console.error(`[events] wire engine failed for ${eventName}:`, err);
+      if (delivery) throw err;
     }
   }
   if (p && typeof p.orgId === "string" && observers.length) {

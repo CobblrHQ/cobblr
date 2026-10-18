@@ -19,6 +19,7 @@ import { runWithActor } from "../lib/request-context.js";
 import { type ApplyPoint, mirrorApplyHoldReached, setMirrorApplyHoldForTests } from "../platform/share-mirror.js";
 import * as notifications from "../platform/notifications.js";
 import { registerHandler } from "../platform/actions.js";
+import { issueUndos } from "../platform/issued-undos.js";
 import { ActionRefusal, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { meta, metaPool } from "../db/meta.js";
 import { getTenantDb, tenantPoolStats } from "../db/tenant.js";
@@ -243,7 +244,8 @@ testSupportRouter.post("/test-support/legacy-order-arrival", async (req, res, ne
     }
     const db = await getTenantDb(org_id);
     await sql`update purchases_orders set status = ${status === 'ordered' ? 'ordered' : 'arrived'}, arrived_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date, updated_at = to_timestamp(0) where id = ${order_id}`.execute(db);
-    await sql`update purchases_order_items set updated_at = to_timestamp(0) where order_id = ${order_id}`.execute(db);
+    // Lines the old code wrote: made before the heal's fix merged (#7282).
+    await sql`update purchases_order_items set updated_at = to_timestamp(0), created_at = '2026-09-29T00:00:00Z' where order_id = ${order_id}`.execute(db);
     if (flagged) {
       await sql`update purchases_order_items set received_at = ${arrived_at ?? arrivedEverywhere(new Date())}::date, receipt_unconfirmed = true where order_id = ${order_id} and part_id is not null`.execute(db);
     }
@@ -340,8 +342,8 @@ testSupportRouter.post("/test-support/self-fetch", async (req, res, next) => {
 testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next) => {
   try {
     const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
-    if (!slug || !["before-write", "after-write", "owner-pass", "edits-pass"].includes(at ?? "") || typeof ms !== "number") {
-      res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write|owner-pass|edits-pass) + ms required" } });
+    if (!slug || !["before-write", "after-write", "owner-pass", "edits-pass", "owner-edit-write"].includes(at ?? "") || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug + at (before-write|after-write|owner-pass|edits-pass|owner-edit-write) + ms required" } });
       return;
     }
     const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
@@ -351,6 +353,35 @@ testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next)
     }
     setMirrorApplyHoldForTests({ orgId: o.id, at: at as ApplyPoint, ms });
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The next `times` edits a share space queues fail inside their write, after
+// the edit is queued (#7125). Body: { slug, times }; GET ?slug= reads what is
+// left to fail.
+testSupportRouter.post("/test-support/edits-queue-fails", async (req, res, next) => {
+  try {
+    const { slug, times } = (req.body ?? {}) as { slug?: string; times?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + times required" } });
+      return;
+    }
+    const { failEditsQueueForTests } = await import("../platform/share-edits.js");
+    failEditsQueueForTests(o.id, times);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+testSupportRouter.get("/test-support/edits-queue-fails", async (req, res, next) => {
+  try {
+    const slug = typeof req.query.slug === "string" ? req.query.slug : "";
+    const o = await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst();
+    const { editsQueueFailuresLeft } = await import("../platform/share-edits.js");
+    res.json({ left: o ? editsQueueFailuresLeft(o.id) : 0 });
   } catch (err) {
     next(err);
   }
@@ -609,6 +640,69 @@ testSupportRouter.post("/test-support/throwing-action", async (_req, res, next) 
   }
 });
 
+// An undo step whose run a test scripts (#7140), to prove when a failed Undo
+// is still its requester's to press again: only a run that wrote nothing gives
+// the step back. Each `key` counts its runs; `mode` says what run 1 does:
+//   fail-first        crashes after a read, writes nothing
+//   refuse-in-a-transaction  writes inside a transaction, refuses, rolls back
+//   write-then-crash  commits a write, then crashes
+//   slow              takes a moment, then applies
+// Every later run applies. "Applies" is a committed write and a count.
+// /test-support/issue-undo hands a person a step as a run of theirs would.
+export const UNDO_STUB_ACTION_ID = "test-support:undo-stub";
+const undoStubRuns = new Map<string, { runs: number; applied: number }>();
+const touchWorkspace = (orgId: string, db: typeof meta = meta) => db.updateTable("orgs").set({ name: sql`name` }).where("id", "=", orgId).execute();
+testSupportRouter.post("/test-support/undo-stub", async (_req, res, next) => {
+  try {
+    registerHandler("test-support.undo-stub", async (ctx) => {
+      const { key, mode } = (ctx.args ?? {}) as { key?: string; mode?: string };
+      const tally = undoStubRuns.get(String(key)) ?? { runs: 0, applied: 0 };
+      undoStubRuns.set(String(key), tally);
+      tally.runs++;
+      if (tally.runs === 1) {
+        if (mode === "fail-first") {
+          await meta.selectFrom("orgs").select("id").where("id", "=", ctx.orgId).executeTakeFirst();
+          throw new Error(CRASH_MESSAGE);
+        }
+        if (mode === "refuse-in-a-transaction") {
+          await meta.transaction().execute(async (trx) => {
+            await touchWorkspace(ctx.orgId, trx as unknown as typeof meta);
+            throw new ActionRefusal(REFUSAL_SENTENCE);
+          });
+        }
+        if (mode === "write-then-crash") {
+          await touchWorkspace(ctx.orgId);
+          throw new Error(CRASH_MESSAGE);
+        }
+        if (mode === "slow") await new Promise((r) => setTimeout(r, 400));
+      }
+      await touchWorkspace(ctx.orgId);
+      tally.applied++;
+      return { ok: true, applied: tally.applied };
+    });
+    await ensureStubAction(UNDO_STUB_ACTION_ID, "test-support.undo-stub", "Undo stub");
+    res.json({ ok: true, action_id: UNDO_STUB_ACTION_ID });
+  } catch (err) {
+    next(err);
+  }
+});
+testSupportRouter.get("/test-support/undo-stub/:key", (req, res) => {
+  res.json(undoStubRuns.get(req.params.key) ?? { runs: 0, applied: 0 });
+});
+testSupportRouter.post("/test-support/issue-undo", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; action_id?: string; args?: Record<string, unknown>; entity_kind?: string; entity_id?: string };
+    if (!b.org_id || !b.user_id || !b.action_id) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id, user_id and action_id required" } });
+      return;
+    }
+    await issueUndos(b.org_id, b.user_id, [{ action_id: b.action_id, args: b.args ?? {}, entity_kind: b.entity_kind ?? null, entity_id: b.entity_id ?? null }]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // A placement row as it was stored before the kernel keyed every placement by
 // the record's base kind (#3663): a collection's spelling, and a placed_at of
 // the test's choosing, so the heal that folds them has something to fold and
@@ -628,6 +722,39 @@ testSupportRouter.post("/test-support/raw-placement", async (req, res, next) => 
               on conflict (containee_kind, containee_id) do update
                 set container_kind = excluded.container_kind, container_id = excluded.container_id, placed_at = excluded.placed_at`.execute(db as never);
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Every registered heal pass, by name, for the test that runs each one over
+// rows made today and finds none changed (#7282).
+testSupportRouter.get("/test-support/heal-passes", async (_req, res, next) => {
+  try {
+    const { registeredHealPasses } = await import("@cobblr/platform-contract/heal-pass");
+    res.json({ names: registeredHealPasses() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A row as the old code left it: made before a heal's fix merged, so the heal
+// takes it (a heal takes only rows made before its since, #7282). A test
+// plants the old shape through the real doors, then dates it here. Test-only,
+// mounted under the same flag. Body: { org_id, table, ids, at, column? }
+// (column defaults to created_at).
+testSupportRouter.post("/test-support/made-before", async (req, res, next) => {
+  try {
+    const b = (req.body ?? {}) as { org_id?: string; table?: string; ids?: string[]; at?: string; column?: string };
+    const ident = /^[a-z][a-z0-9_]*$/;
+    const column = b.column ?? "created_at";
+    if (!b.org_id || !b.table || !ident.test(b.table) || !ident.test(column) || !Array.isArray(b.ids) || !b.ids.length || !b.at) {
+      res.status(400).json({ error: { code: "bad_body", message: "org_id, table, ids and at required; column optional" } });
+      return;
+    }
+    const db = await getTenantDb(b.org_id);
+    const r = await sql`update ${sql.table(b.table)} set ${sql.ref(column)} = ${b.at}::timestamptz where id::text = any(${b.ids}::text[])`.execute(db as never);
+    res.json({ ok: true, rows: Number(r.numAffectedRows ?? 0) });
   } catch (err) {
     next(err);
   }

@@ -30,6 +30,7 @@ interface HealDB {
     target_kind: string | null;
     target_entity_id: string | null;
     suggested_metadata: unknown;
+    created_at: Date;
   };
 }
 
@@ -63,11 +64,12 @@ export function filedIntoFrom(row: FiledRowLite, recordInstance: string | null, 
 
 /** Heal one workspace: how many filed rows were missing their record, and
  *  whether every one of them was placed. */
-export async function healFiledIntoIn(orgId: string, db: Kysely<HealDB>): Promise<{ found: number; settled: boolean }> {
+export async function healFiledIntoIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<{ found: number; settled: boolean }> {
   // Cheap on the happy path: only rows missing the record are read.
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "target_module", "target_kind", "target_entity_id", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "resolved")
     .where("target_entity_id", "is not", null)
     .where((eb) => eb.or([eb("suggested_metadata", "is", null), eb.not(eb(eb.ref("suggested_metadata"), "?", FILED_INTO_KEY))]))
@@ -104,8 +106,9 @@ export async function healFiledIntoIn(orgId: string, db: Kysely<HealDB>): Promis
 export function registerFiledIntoHeal(): void {
   registerHealPass({
     name: "core-scan.heal-filed-into",
+    since: "2026-09-24T20:38:29Z",
     shim: "modules/core-scan/src/heal-filed-into.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healFiledIntoIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healFiledIntoIn(orgId, db as Kysely<HealDB>, since),
   });
 }

@@ -5,6 +5,7 @@
 //
 // BORN WITH: nothing (process-wide: the scan URL resolver manifests, refreshed for the api, not per workspace)
 
+// EGRESS-FILE: operator-configured - the resolver manifests are the operator's rows and the built-ins; a scanned code only fills a path
 import { platform } from "@cobblr/platform-contract";
 import type { ScanUrlResolution } from "@cobblr/platform-contract";
 import { meta } from "../../db/meta.js";

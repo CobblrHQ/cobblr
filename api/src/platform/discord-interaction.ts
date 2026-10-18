@@ -341,3 +341,47 @@ export function settledRow(
   }
   return { type: RESPONSE.UPDATE_MESSAGE, data: { components: tree, flags: COMPONENTS_V2 } };
 }
+
+// ── A press on a classic card with a row per item settles THAT item ────────
+//
+// DMs are classic cards again (#7035: a V2 card reached Discord as two
+// messages), with one action row per item (discord-card.ts componentsForRows).
+// Replacing the whole card on a press would bring back what #3282 fixed: one
+// "Used up" and every other item's buttons gone. So a press on a card whose
+// stored rows name the pressed action removes that item's buttons only, keeps
+// the rest and the embed, and writes the outcome under the line above the card.
+
+/** The ids that answer the same line as `actionId`, or null when the card has
+ *  no rows naming it (a one-question card, which is replaced whole). */
+export function rowActionIds(
+  card: { rows?: Array<{ actions?: string[] }> } | null | undefined,
+  actionId: string,
+): string[] | null {
+  const row = card?.rows?.find((r) => r.actions?.includes(actionId));
+  return row?.actions?.length ? row.actions : null;
+}
+
+interface ClassicRow {
+  type?: number;
+  components?: Array<{ type?: number; custom_id?: string; [k: string]: unknown }>;
+  [k: string]: unknown;
+}
+
+/** What a classic message becomes after a press that settles `customIds`:
+ *  those buttons gone (and any action row left empty), every other button
+ *  still pressable, the outcome written under the message's own line. */
+export function settledButtons(
+  message: { content?: string | null; components?: unknown[] | null } | null | undefined,
+  customIds: readonly string[],
+  outcome: string,
+): { type: number; data: { content: string; components: unknown[] } } {
+  const drop = new Set(customIds);
+  const rows = (JSON.parse(JSON.stringify(message?.components ?? [])) as ClassicRow[])
+    .map((r) => (Array.isArray(r.components) ? { ...r, components: r.components.filter((c) => !(c.custom_id && drop.has(c.custom_id))) } : r))
+    .filter((r) => !Array.isArray(r.components) || r.components.length > 0);
+  const lead = (message?.content ?? "").trim();
+  return {
+    type: RESPONSE.UPDATE_MESSAGE,
+    data: { content: `${lead ? `${lead}\n` : ""}-# ${outcome}`.slice(0, 2000), components: rows },
+  };
+}

@@ -22,7 +22,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-authoring",
-  version: "0.5.3",
+  version: "0.5.4",
   displayName: "App Builder",
   description:
     "Describe what you want to keep track of and get a ready-made setup, fields and automations included, to review before anything changes.",

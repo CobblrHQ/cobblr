@@ -117,7 +117,8 @@ export interface AutoflushFired {
   fired: true;
   count: number;
   batch_id: string;
-  job_id: string;
+  /** Null when the batch is already sent (another flush scheduled it). */
+  job_id: string | null;
 }
 
 /** Evaluate the user's auto-flush policy after a label is queued. Returns the fire
@@ -180,33 +181,71 @@ export async function evaluateAutoflush(
   // prefixes — unlike a bare preview render, which must not.
   const rendered = await renderRowsToPdf(db, orgId, base, rows as never, cfg.size_key, { markPrinted: true });
 
-  // Snapshot a re-printable batch, clear the flushed rows, stamp the cooldown — one
-  // tenant transaction so a crash can't half-clear the queue.
+  // Snapshot a re-printable batch, clear the flushed rows, stamp the cooldown and
+  // record what the batch still owes the printer (its document): one tenant
+  // transaction, so the labels never leave the queue without a print to send.
+  // A flush that finds its rows already taken (another flush won) stops here.
   const batchId = await db.transaction().execute(async (trx) => {
-    const batch = await trx.insertInto("labels_batches").values({ user_id: userId, printed_at: new Date() } as never).returning("id").executeTakeFirstOrThrow();
+    const batch = await trx.insertInto("labels_batches").values({ user_id: userId, printed_at: new Date(), dispatch_state: "pending", dispatch_printer_id: cfg.printer_id, dispatch_document: rendered.pdf, dispatch_labels: rendered.labels } as never).returning("id").executeTakeFirstOrThrow();
     for (const it of rows) {
       await trx
         .insertInto("labels_prints")
         .values({ batch_id: batch.id, module_name: it.module_name, entity_type: it.entity_type, entity_id: it.entity_id, qr_payload: liveQrUrl(it.qr_payload, base), description: it.description, qty: it.qty } as never)
         .execute();
     }
-    await trx.deleteFrom("labels_queue").where("id", "in", rows.map((r) => r.id)).where("user_id", "=", userId).execute();
+    const taken = await trx.deleteFrom("labels_queue").where("id", "in", rows.map((r) => r.id)).where("user_id", "=", userId).returning("id").execute();
+    if (taken.length !== rows.length) throw new FlushLost();
     await trx.updateTable("labels_autoflush").set({ last_fired_at: new Date() } as never).where("user_id", "=", userId).execute();
     return batch.id as string;
-  });
+  }).catch((e: unknown) => { if (e instanceof FlushLost) return null; throw e; });
+  if (!batchId) return null;
 
-  // Hand the rendered PDF to core-print's durable dispatch queue (retry/backoff free).
-  const jobId = await platform().queue.enqueue({
-    orgId,
-    queue: DISPATCH_QUEUE,
-    payload: {
-      printerId: cfg.printer_id,
-      documentBase64: rendered.pdf.toString("base64"),
-      filename: "labels.pdf",
-      contentType: "application/pdf",
-      jobName: `auto-flush ${rendered.labels} label(s)`,
+  const jobId = await dispatchBatch(db, orgId, batchId);
+  return { fired: true, count: rendered.labels, batch_id: batchId, job_id: jobId };
+}
+
+class FlushLost extends Error {}
+
+/** Hand a pending batch's document to core-print's durable dispatch queue,
+ *  then mark it scheduled. Keyed by the batch, so a retry while the job is
+ *  still queued or running gets that job back rather than a second print.
+ *  Null when the batch is not pending (scheduled already, or printed by hand). */
+export async function dispatchBatch(db: Kysely<LabelsDB>, orgId: string, batchId: string): Promise<string | null> {
+  const batch = await db.selectFrom("labels_batches").select(["dispatch_state", "dispatch_printer_id", "dispatch_document", "dispatch_labels"]).where("id", "=", batchId).executeTakeFirst();
+  if (batch?.dispatch_state !== "pending" || !batch.dispatch_document) return null;
+  try {
+    const jobId = await platform().queue.enqueue({
+      orgId,
+      queue: DISPATCH_QUEUE,
+      idempotencyKey: `labels-batch:${batchId}`,
+      payload: {
+        printerId: batch.dispatch_printer_id,
+        documentBase64: Buffer.from(batch.dispatch_document).toString("base64"),
+        filename: "labels.pdf",
+        contentType: "application/pdf",
+        jobName: `auto-flush ${batch.dispatch_labels ?? 0} label(s)`,
+      },
+    });
+    await db.updateTable("labels_batches").set({ dispatch_state: "scheduled", dispatch_job_id: jobId, dispatch_document: null, dispatch_error: null } as never).where("id", "=", batchId).where("dispatch_state", "=", "pending").execute();
+    return jobId;
+  } catch (e) {
+    await db.updateTable("labels_batches").set({ dispatch_error: e instanceof Error ? e.message.slice(0, 300) : "The print could not be scheduled." } as never).where("id", "=", batchId).execute();
+    throw e;
+  }
+}
+
+/** Sends every auto-printed batch still waiting for its print job: one a
+ *  failure or a restart left between taking the labels and scheduling them. */
+export function registerAutoflushDispatchSweep(): void {
+  platform().sweeps.register({
+    name: "labels.autoflush-dispatch", module: "labels", everyMs: 5 * 60_000, firstAfterMs: 60_000,
+    visit: async ({ orgId, db }) => {
+      const tdb = db as Kysely<LabelsDB>;
+      // Older than a minute: one still being sent by its own flush is left to it.
+      const pending = await tdb.selectFrom("labels_batches").select("id").where("dispatch_state", "=", "pending").where("printed_at", "<", new Date(Date.now() - 60_000))
+        // list-cap-ok: a pass sends at most this many; the rest wait for the next pass
+        .limit(20).execute();
+      for (const b of pending) await dispatchBatch(tdb, orgId, b.id).catch(() => {});
     },
   });
-
-  return { fired: true, count: rendered.labels, batch_id: batchId, job_id: jobId };
 }

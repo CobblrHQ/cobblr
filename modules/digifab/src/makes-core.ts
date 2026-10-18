@@ -198,7 +198,12 @@ export interface DrawnSpool {
   slot: string | null;
 }
 
-export function drawnFromJob(job: Record<string, unknown>): DrawnSpool[] {
+export function spoolsFromJob(job: Record<string, unknown>): DrawnSpool[] {
+  // Provenance is known before accounting: keep the committed spool selection
+  // visible while material_drawn still records only acknowledged stock writes.
+  if (job.material_plan && typeof job.material_plan === "object") {
+    return readFilamentDrawn((job.material_plan as { draws?: unknown }).draws);
+  }
   if (Array.isArray(job.material_drawn)) return readFilamentDrawn(job.material_drawn);
   // A job that named its own spool: that spool, and the slicer's estimate.
   if (typeof job.material_part_id === "string" && job.material_part_id) {
@@ -253,7 +258,7 @@ export async function linkPrint(db: Kysely<DigifabDB>, orgId: string, makeId: st
     await linkOnce(orgId, makeId, "machines:machine", machineId, REL_PRINTED_ON, userId);
     printerName = await platform().entities.titleForEntity(orgId, "machines:machine", machineId);
   }
-  const spools = drawnFromJob(job);
+  const spools = spoolsFromJob(job);
   const materials: string[] = [];
   for (const s of spools) {
     await linkOnce(orgId, makeId, "inventory:part", s.part_id, REL_USED, userId);

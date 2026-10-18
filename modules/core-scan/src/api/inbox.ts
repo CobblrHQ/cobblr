@@ -118,11 +118,12 @@ import {
   type ScanTriageFacet,
   splitUncutWords,
   type ScanTriageRow, type ScanRowStateContext, type ScanResolverTable, DESTINATION_KEY, KEEP_SEPARATE_KEY, scanKeepSeparateStamp, FILED_INTO_KEY, type FiledInto, type StoredDestination, filedIntoOf, isPaperworkRow, scanFitItem, scanMatchTier, scanRebuy, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
-import { scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
+import { nextBinName, scanToolRelevance, type ScanToolHints } from "@cobblr/platform-contract/scan-tools";
 import { bearer, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { liveTablesOf, withResolvedOffers, type LiveTable } from "../services/resolve-offers.js";
 import { resolveNativeIdentity } from "../native-identity.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { brokenMarkOf, markBroken, unmarkBroken } from "../services/mark-broken.js";
 import { noteScanCaptured } from "../services/activation.js";
 import { downloadCatalogImage, enrichBarcodeItem, guardedImageFetch, isJunkName, isUnusablePictureUrl } from "../services/enrich.js";
 import { classifiedCodeOf } from "@cobblr/platform-contract/scan-copy";
@@ -234,6 +235,8 @@ import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { optionalField, optionalText, optionalUuid } from "@cobblr/platform-contract/optional-fields";
+import { bindToCatalogEntry, catalogCandidatesFor } from "../services/catalog-match.js";
+import { wordsOf } from "../services/open-facts-allergens.js";
 
 /** A table's own category word for a row ("Dairy" on Groceries), which says
  *  how a thing keeps when the catalog's word is in another language. */
@@ -3645,6 +3648,9 @@ export const ConfirmBody = z.object({
    *  (the corrected answer is the ground truth). Best-effort; ignored for
    *  non-admins. See docs/operations/ai-prompt-eval-harness.md (P2). */
   save_eval_case: z.boolean().optional(),
+  /** A catalog entry the person picked at confirm (#6888): the record is
+   *  filed bound to it, the `matches` pairing Match to catalog writes. */
+  catalog_entry_id: optionalField(z.string().min(1).max(300)),
   /** Optional note / hard-case label stored on the captured eval case. */
   eval_note: optionalText(200),
   /** "I just ran out of this" (#6526): filed with none on hand. It is added
@@ -3662,6 +3668,8 @@ const FileSelectedBody = z.object({
   instance: optionalField(z.string().min(1)),
   /** File a thing the workspace already tracks as a second record anyway. */
   allow_duplicate: z.boolean().optional(),
+  /** Per item, a catalog entry to file it bound to (#6888), as confirm takes it. */
+  catalog_entries: z.record(z.string().min(1).max(300)).optional(),
 });
 
 // AI-TOOL: file_inbox_items
@@ -3673,7 +3681,7 @@ inboxRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
   if (!token) { res.status(401).json({ error: { code: "no_auth", message: "Bearer token required" } }); return; }
   const ctx = tenantContext(req);
   const baseUrl = (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API;
-  const { ids, allow_duplicate, ...target } = parsed.data;
+  const { ids, allow_duplicate, catalog_entries, ...target } = parsed.data;
   // This door CREATES a record per item. One the workspace already tracks
   // (its card offers "+1 more") or whose match is a choice a person must
   // make is never made a second record here: the dashboard's Add and an
@@ -3697,7 +3705,7 @@ inboxRouter.post("/inbox/file-selected", asyncHandler(async (req, res) => {
     const held = already.get(id);
     if (held) throw new Error(held);
     const response = await apiFetch(`${baseUrl}/api/v1/orgs/${ctx.org.slug}/modules/core-scan/inbox/${encodeURIComponent(id)}/confirm`, {
-      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(target),
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ ...target, ...(catalog_entries?.[id] ? { catalog_entry_id: catalog_entries[id] } : {}) }),
     });
     const body = await response.json() as { error?: { message?: string }; item?: { target_kind?: string | null }; created?: { id?: string; name?: unknown; title?: unknown } };
     if (!response.ok) throw new Error(body.error?.message || "It could not be added");
@@ -3731,6 +3739,35 @@ function resolveTargetKind(
   return { module: module!, kind: kind! };
 }
 
+// The catalog entries a scan could be, for its confirm (#6888): a part
+// number first, then a strong name, and only then the model, among plausible
+// entries. Empty when no catalog binds to where it goes. Writes nothing.
+// `kind` is where it is being filed (the confirm's table); without one, the
+// row's own best destination. `ai=0` never asks the model (an assistant
+// reading the item).
+inboxRouter.get(
+  "/inbox/:id/catalog-candidates",
+  asyncHandler(async (req, res) => {
+    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    const ctx = tenantContext(req);
+    const row = await tenantDb(req).selectFrom("core_scan_inbox_items").selectAll().where("id", "=", String(req.params.id)).executeTakeFirst();
+    if (!row) {
+      res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    const asked = typeof req.query.kind === "string" && req.query.kind.trim() ? req.query.kind.trim() : null;
+    const best = candidateKind(storedCandidateList(row.suggested_candidates)[0]) ?? null;
+    const out = await catalogCandidatesFor({
+      orgId: ctx.org.id,
+      userId: sessionUser(req)?.id ?? null,
+      row,
+      destinationKind: asked ?? best,
+      allowAi: req.query.ai !== "0",
+    });
+    res.json({ candidates: out.candidates, asked_ai: out.askedAi });
+  }),
+);
+
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
   "/inbox/:id/confirm",
@@ -3758,6 +3795,14 @@ inboxRouter.post(
       .executeTakeFirst();
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
+      return;
+    }
+    // A picked catalog entry must still be there: checked before anything is
+    // filed, so a stale pick refuses instead of making a record bound to
+    // nothing (#6888).
+    const pickedEntry = parsed.data.catalog_entry_id ?? null;
+    if (pickedEntry && !(await platform().entities.lookup(ctx.org.id, "core-catalogs:entry", pickedEntry))) {
+      res.status(409).json({ error: { code: "catalog_entry_gone", message: "That catalog entry is no longer in the workspace's catalogs. Pick another, or file it without one." } });
       return;
     }
     // Filed, or deleted: a combined or undone-split row's contents live in
@@ -4149,6 +4194,10 @@ inboxRouter.post(
         scan_source: (meta as { source?: string }).source ?? undefined,
         // Physical annotations the triage captured (scan-parity Epic D).
         pack_size: (meta as { pack_size?: number }).pack_size ?? undefined,
+        // What Open Food Facts lists the food as containing, kept as the
+        // words a field shows and a view filters on.
+        allergens: wordsOf((meta as { allergens?: unknown }).allergens),
+        traces: wordsOf((meta as { traces?: unknown }).traces),
         box_state: (meta as { box_state?: string }).box_state ?? undefined,
         // A titled work's other forms (the original, a translation, a
         // transliteration) ride to the record under the same key the row
@@ -5004,10 +5053,17 @@ inboxRouter.post(
       }
     }
 
+    // The catalog entry picked at confirm (#6888). Checked before anything
+    // was made (below the body parse), bound now the record has an id.
+    if (created?.id && pickedEntry) {
+      await bindToCatalogEntry({ orgId: ctx.org.id, userId: sessionUser(req)?.id ?? null, kind: effectiveKindId, id: created.id, entryId: pickedEntry });
+    }
+
     res.json({
       item: await served(req, resolvedRow),
       created,
       installed: installer.installed,
+      ...(created?.id && pickedEntry ? { catalog_entry_id: pickedEntry } : {}),
       ...(ranOutDone ? { ran_out: { took: ranOutDone.took, on_list: ranOutDone.on_list, needs_list: ranOutDone.needs_list, note: ranOutDone.list_note } } : {}),
     });
   }),
@@ -5022,6 +5078,17 @@ inboxRouter.post(
 // description when none is set. The location's NAME is the user's own label
 // ("Bin 17") and is never overwritten. All writes ride core-locations' HTTP
 // surface with the caller's bearer, so role gating + isolation hold.
+
+const NEW_BIN = "new-bin";
+const INTO_BIN = "into-bin";
+const IntoLocationBody = z.object({
+  location_id: optionalUuid(),
+  /** Make a new container location from this scan (the next free "Bin N",
+   *  or `name`) and put the scan's identity on it. */
+  new_bin: z.boolean().optional(),
+  name: optionalField(z.string().trim().min(1).max(120)),
+  parent_id: optionalUuid(),
+});
 
 // AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
 inboxRouter.post(
@@ -5050,10 +5117,30 @@ inboxRouter.post(
       res.status(409).json({ error: filingRefused });
       return;
     }
-    // The bin: an explicit body override, else the one the scan was filed into.
-    const locId =
-      z.string().uuid().safeParse((req.body as { location_id?: unknown } | undefined)?.location_id)
-        .data ?? row.target_location_id;
+    // The bin: a new one this scan makes (the camera's one-tap Turn into a
+    // bin, #6891), an explicit body override, else the one the scan was
+    // filed into.
+    const body = IntoLocationBody.safeParse(req.body ?? {});
+    if (!body.success) return badBody(res, body.error);
+    const locationKind = "core-locations:location";
+    const writer = await platform().entities.getWriter(ctx.org.id, locationKind);
+    let made: { id: string; name: string } | null = null;
+    if (body.data.new_bin) {
+      if (!writer?.create) {
+        res.status(501).json({ error: { code: "no_location_writer", message: "Locations module is not available." } });
+        return;
+      }
+      const name = body.data.name?.trim() || nextBinName(
+        (await platform().entities.listAll(ctx.org.id, locationKind, { q: "bin" })).items.map((l) => l.title),
+      );
+      try {
+        made = { id: await writer.create(ctx.org.id, { name, kind: "container", ...(body.data.parent_id ? { parent_id: body.data.parent_id } : {}) }), name };
+      } catch (err) {
+        res.status(409).json({ error: { code: "duplicate_sibling", message: (err as Error).message } });
+        return;
+      }
+    }
+    const locId = made?.id ?? body.data.location_id ?? row.target_location_id;
     if (!locId) {
       res.status(400).json({
         error: {
@@ -5067,8 +5154,6 @@ inboxRouter.post(
     // The bin is written through its owning module's registered entity WRITER
     // (the same sanctioned seam the sync engine uses) — module validation +
     // events fire; core-scan never touches another module's table or URL.
-    const locationKind = "core-locations:location";
-    const writer = await platform().entities.getWriter(ctx.org.id, locationKind);
     if (!writer?.read) {
       res.status(501).json({
         error: { code: "no_location_writer", message: "Locations module is not available." },
@@ -5144,6 +5229,13 @@ inboxRouter.post(
         target_module: locModule,
         target_kind: locKind,
         target_entity_id: locId,
+        // What Undo needs (/unconfirm): a bin this scan made goes away with
+        // it; a bin that was already there stays, with what it said before.
+        suggested_metadata: mergeMeta({
+          attached_to: made
+            ? { kind: locationKind, id: locId, mode: NEW_BIN }
+            : { kind: locationKind, id: locId, mode: INTO_BIN, before: { metadata: currentMeta, description: loc.description ?? null, image_path: loc.image_path ?? null } },
+        }) as never,
         resolved_at: new Date(),
         updated_at: new Date(),
       })
@@ -5154,6 +5246,7 @@ inboxRouter.post(
       .where("status", "=", "pending")
       .returningAll()
       .executeTakeFirst();
+    if (!resolvedRow && made && writer?.delete) await writer.delete(ctx.org.id, made.id).catch(() => null);
     if (!resolvedRow) {
       res.status(409).json({
         error: { code: "already_resolved", message: "This item was already confirmed." },
@@ -5169,7 +5262,7 @@ inboxRouter.post(
       entityId: locId,
     });
 
-    res.json({ item: await served(req, resolvedRow), location_id: locId });
+    res.json({ item: await served(req, resolvedRow), location_id: locId, location_name: made?.name ?? String(loc.name ?? "") });
   }),
 );
 
@@ -7567,6 +7660,29 @@ async function restoreAttachedRecord(
   return { title: current.title, ...(refused ? { refused } : {}) };
 }
 
+// ─────────────────────── POST /inbox/:id/broken ─────────────────────
+// The thing this scan matched is broken (#6889): one repair entry in its
+// service log instead of a new thing, and the scan is done. Offered only on a
+// scan that matched one thing by its code (scanBrokenTarget); Undo is
+// /unconfirm, which takes the entry back off.
+const BrokenBody = z.object({ note: optionalField(z.string().trim().max(500)) });
+
+// AI-REACH: action core-scan:mark-broken
+inboxRouter.post(
+  "/inbox/:id/broken",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-scan:mark-broken"))) return;
+    const parsed = BrokenBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
+    const r = await markBroken(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), parsed.data.note || null);
+    if (!r.ok) {
+      res.status(r.status).json({ error: { code: r.code, message: r.message } });
+      return;
+    }
+    res.json({ item: r.item, entry_id: r.entry_id, record: r.record });
+  }),
+);
+
 // ─────────────────────── POST /inbox/:id/unconfirm ─────────────────────
 // REVERT a commit: bring a resolved scan back to the pending inbox so a wrong
 // confirm can be redone (the mirror of restore-from-discarded, for the other
@@ -7632,7 +7748,25 @@ inboxRouter.post(
     let entityDeleted = false;
     let note: string | null = null;
 
-    if (attached?.id && attached.mode === "add-place") {
+    const broken = brokenMarkOf(meta);
+    if (broken) {
+      // A broken mark made no thing: its repair entry comes off, the record stays.
+      note = await unmarkBroken(ctx.org.id, sessionUser(req)?.id ?? null, broken);
+    } else if (attached?.id && (attached.mode === NEW_BIN || attached.mode === INTO_BIN)) {
+      // A bin this scan made goes away with it; a bin that was already there
+      // stays, given back what it said before the scan's identity landed.
+      const writer = await platform().entities.getWriter(ctx.org.id, attached.kind ?? "core-locations:location");
+      const before = (attached as { before?: { metadata?: unknown; description?: unknown; image_path?: unknown } }).before;
+      if (attached.mode === NEW_BIN) {
+        const gone = writer?.delete ? await writer.delete(ctx.org.id, attached.id).then(() => true).catch(() => false) : false;
+        if (gone) entityDeleted = true;
+        else note = "The bin it made couldn't be removed automatically. Delete it from Locations.";
+      } else if (writer && before) {
+        await writer.update(ctx.org.id, attached.id, { metadata: before.metadata ?? {}, description: before.description ?? null, image_path: before.image_path ?? null })
+          .then(() => { note = "The bin stays, as it was before this scan."; })
+          .catch(() => { note = "The bin stays; its product details from this scan couldn't be taken off."; });
+      } else note = "The bin stays.";
+    } else if (attached?.id && attached.mode === "add-place") {
       // Another place of an item: that place's row goes, through its module's
       // own delete (which unhooks it from the item), and the item stays.
       const target = attached.kind ? await scanTargetOf(ctx.org.id, attached.kind, attached.instance ?? undefined).catch(() => null) : null;
@@ -7692,6 +7826,12 @@ inboxRouter.post(
         .catch(() => null);
       if (!existing) {
         note = "The created entry was already deleted.";
+      } else if (row.target_entity_id === row.target_location_id) {
+        // The record is the very place the scan was taken in: a scan put onto
+        // the bin it was scanned into, from before Undo recorded whether the
+        // scan made it. That bin was there first (and may hold things), so it
+        // stays. Nothing a scan creates is ever its own location.
+        note = `${existing.title} stays: it is the place this scan was taken in.`;
       } else {
         const writer = await platform().entities.getWriter(ctx.org.id, kindKey);
         if (!writer?.delete) {

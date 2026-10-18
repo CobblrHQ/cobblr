@@ -24,6 +24,7 @@ import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SidePanel } from "./SidePanel";
 import { notificationKeys } from "../lib/notification-keys";
+import { repeatsMessage } from "../lib/notification-lines";
 import { useNotificationStream } from "../hooks/useNotificationStream";
 import { MutationError } from "@cobblr/platform-web";
 
@@ -267,8 +268,10 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
         {/* Each notification is its own rounded "bubble" card with breathing room
             between them (space-y), not a border-divided wall of text — the
             reported gripe was that runs of notifications blur into one block.
-            Unread cards get an accent tint + left rail so they stand out from
-            the muted, already-read ones. */}
+            Unread cards get an accent tint + left rail and a heavier line;
+            that is ALL reading one changes. Fading the whole read card faded
+            its buttons with it, so a "Used up" that still worked looked
+            disabled (#7077). */}
         <ul className="px-2 py-2 space-y-2">
           {list.data?.items.map((n) => {
             const isUnread = !n.read_at;
@@ -279,7 +282,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   "group flex items-stretch gap-1 rounded-xl border overflow-hidden transition " +
                   (isUnread
                     ? "border-l-2 border-cobble-200 border-l-accent dark:border-slate-700 dark:border-l-cobble-400 bg-cobble-50/50 dark:bg-cobble-900/15 hover:bg-cobble-50 dark:hover:bg-cobble-900/25"
-                    : "border-line dark:border-slate-800 bg-subtle/40 dark:bg-slate-800/30 opacity-70 hover:opacity-100 hover:bg-subtle dark:hover:bg-slate-800/50")
+                    : "border-line dark:border-slate-800 bg-subtle/40 dark:bg-slate-800/30 hover:bg-subtle dark:hover:bg-slate-800/50")
                 }
               >
                 {/* Body click = open it (navigate + mark read). A clickable div, not
@@ -319,14 +322,14 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   </div>
                   {/* Render the message as markdown so a quoted report (Discord-style
                       "> …") shows as a block quote instead of a literal ">". */}
-                  <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words">
+                  <div className={"prose prose-sm dark:prose-invert max-w-none text-sm text-content dark:text-mortar-100 prose-p:my-1 prose-blockquote:my-1 break-words " + (isUnread ? "font-semibold" : "font-normal")}>
                     <MarkdownText>{n.message}</MarkdownText>
                   </div>
                   {/* The substance, when the notification carries any: the
                       comment you were mentioned in, not just the fact of it.
                       The DM got this first, and the bell saying less than a
                       chat app about the app's own conversation was backwards. */}
-                  {n.card?.body && !(n.card.rows?.length && n.actions?.length) && (
+                  {n.card?.body && !(n.card.rows?.length && n.actions?.length) && !repeatsMessage(n.card.body, n.message) && (
                     <div className="mt-1 border-l-2 border-line dark:border-slate-700 pl-2 text-[13px] text-muted dark:text-slate-400 line-clamp-3 break-words">
                       {n.card.body}
                     </div>

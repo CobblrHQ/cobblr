@@ -1249,6 +1249,28 @@ export function scanMergeTarget(row: ScanTriageRow, ctx: ScanDestinationContext 
   return r.kind === "adds" ? r.to : null;
 }
 
+/** The thing a scan may be marked broken on (#6889), or null when the mark
+ *  is not offered. Only a pending scan that matched ONE record exactly (its
+ *  barcode or an identifier such as a serial number): a repair logged on a
+ *  name guess, on one of several equal matches, or on a match only a person
+ *  may settle lands on the wrong thing. The card, the camera sheet, the
+ *  route and the assistant's action all ask this one question. */
+export interface ScanBrokenTarget {
+  kind: string;
+  id: string;
+  instance: string | null;
+  title: string;
+}
+export function scanBrokenTarget(row: ScanTriageRow): ScanBrokenTarget | null {
+  if (!isPending(row)) return null;
+  const t = scanTrackedMatch(row);
+  if (!t || !t.kind || !t.id || t.of > 1 || t.confirm) return null;
+  if (t.matched_by !== "barcode" && t.matched_by !== "identifier") return null;
+  if (isPaperworkMatch(row, t)) return null;
+  if (scanKeptSeparateFrom(row.suggested_metadata) === t.id) return null;
+  return { kind: t.kind, id: t.id, instance: t.instance, title: t.title };
+}
+
 /** What the row's match means for filing, the one answer every door reads:
  *  the card's button, File N, the dashboard and File everything's plan
  *  (#3726: the card offered +1 from the match stamped under the old name

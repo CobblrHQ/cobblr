@@ -3,7 +3,7 @@
 // JSON the user pastes / uploads.
 
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName } from "@cobblr/platform-web";
+import { productName, useSentWords } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Library, Package, Plus, Share2, Trash2, X } from "lucide-react";
@@ -128,6 +128,7 @@ export function BundlesPage() {
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
+  const pasteSent = useSentWords(paste);
   const install = useMutation({
     mutationFn: (manifest: PlatformBundleManifest) =>
       changeWorkspaceShape(qc, slug, () => api.installBundle(slug, manifest)),
@@ -137,7 +138,7 @@ export function BundlesPage() {
       toast.success(
         `Installed ${r.bundle.name} v${r.bundle.version}: ${r.applied.wires} wire(s), ${r.applied.field_defs} field def(s).`,
       );
-      setPaste("");
+      if (pasteSent.landed()) setPaste("");
     },
     onError: (e: unknown) => {
       setOk(null);
@@ -244,6 +245,7 @@ export function BundlesPage() {
       setOk(null);
       return;
     }
+    pasteSent.sending();
     install.mutate(parsed);
   }
 

@@ -6,7 +6,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { api } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
 import type { EntityDetailPanelCtx } from "../../panels/types";
-import { addProgram, commandArm, editProgram, readArm, refreshArm, saveCompatibility, setMaintenance, setupArm, type ArmCompatibility, type ArmProgram, type ArmView } from "./robot-arm-api";
+import { addProgram, approveRun, commandArm, editProgram, endRun, readArm, refreshArm, releaseControl, revokeControl, saveCompatibility, setMaintenance, setTooling, setupArm, startRun, takeControl, type ArmCompatibility, type ArmProgram, type ArmView } from "./robot-arm-api";
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const input = "input w-full min-h-11";
 const WORDS: Record<string, string> = {
@@ -30,7 +30,7 @@ export function ArmRecords({ ctx, station = false }: { ctx: EntityDetailPanelCtx
  async function run(work: () => Promise<unknown>, done?: string) { setBusy(true); try { await work(); if (done) toast.success(done); } catch (e) { toast.error(e instanceof Error ? e.message : "The arm did not accept that."); } finally { setBusy(false); await qc.invalidateQueries({ queryKey: ["robot-arm", slug, machine] }); } }
  if (query.isError) return <QueryError what="The robot arm could not be loaded." onRetry={() => void query.refetch()} />;
  if (!query.data) return <p className="text-sm text-muted">Loading the robot arm…</p>;
- const data = query.data, send = (command: ArmCommand, extra?: { confirmed?: boolean }) => void run(() => commandArm(slug, machine, command, { ...(screen ? { station_token: screen.token } : {}), ...extra }), `Sent ${command.operation} to the arm.`);
+ const data = query.data, send = (command: ArmCommand) => void run(() => commandArm(slug, machine, command, screen ? { station_token: screen.token } : {}), `Sent ${command.operation} to the arm.`);
  if (!unit && !settingUp) return <details className="text-sm"><summary className="min-h-11 cursor-pointer flex items-center">Robot arm</summary><p>Keep this arm's programs, versions and what it is known to work with, and follow its state from its controller.</p>{admin ? <button className={button} onClick={() => setSettingUp(true)}>Set up as a robot arm</button> : <p className="text-muted">An owner or admin sets up a robot arm.</p>}</details>;
  return <section data-testid="robot-arm" className="rounded-lg border border-line p-3 space-y-4 text-content">
   <header className="flex flex-wrap gap-2 items-center"><h3 className="flex-1 text-sm font-semibold">Robot arm</h3>{admin && unit && <button className={button} onClick={() => setSettingUp(!settingUp)}>Controller connection</button>}{!station && unit?.connection_id && <WorkspaceLink className={button} slug={slug} to={`/station/arm/${machine}`}>Open arm station</WorkspaceLink>}</header>
@@ -39,9 +39,11 @@ export function ArmRecords({ ctx, station = false }: { ctx: EntityDetailPanelCtx
    <StatePanel state={data.state} error={data.connection_error} maintenance={unit.maintenance} note={unit.maintenance_note} connected={!!unit.connection_id} />
    {unit.connection_id && <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => send({ operation: "pause" })}>Pause</button><button className={button} disabled={busy} onClick={() => send({ operation: "stop" })}>Stop program</button></div>}
    <p className="text-sm text-muted">Stop here is a program stop through the arm's controller, not an emergency stop. {productName()} never moves the arm, clears a protective or emergency stop, or changes safety settings: do those at the pendant.</p>
-   {station && unit.connection_id && unit.device_id && <StationControls slug={slug} title={ctx.entityTitle} unit={unit as { connection_id: string; device_id: string }} data={data} admin={admin} busy={busy} screen={screen} storageKey={storageKey} setCredential={setCredential} run={run} send={send} />}
+   {station && unit.connection_id && unit.device_id && <StationControls slug={slug} machine={machine} title={ctx.entityTitle} unit={unit as { connection_id: string; device_id: string; tooling: string }} data={data} admin={admin} busy={busy} screen={screen} storageKey={storageKey} setCredential={setCredential} run={run} send={send} />}
+   {unit.connection_id && <RunPanel slug={slug} data={data} busy={busy} run={run} />}
    <InfoPanel data={data} admin={admin} busy={busy} refresh={() => void run(async () => { const r = await refreshArm(slug, machine); if (!r.programs_listed && r.detail) toast.error(r.detail); }, "Read the arm's controller.")} />
    <Programs slug={slug} data={data} admin={admin} busy={busy} run={run} machine={machine} />
+   {admin && <ToolingForm unit={unit} busy={busy} controlled={!!data.ownership} save={t => void run(() => setTooling(slug, machine, t), "Saved the arm's tooling.")} revoke={() => void run(() => revokeControl(slug, machine), "Took control away from the station.")} />}
    {admin && <MaintenanceForm unit={unit} busy={busy} save={value => void run(() => setMaintenance(slug, machine, value), "Saved the arm's service state.")} />}
    <CompatibilityForm data={data} admin={admin} busy={busy} save={value => void run(() => saveCompatibility(slug, machine, value), "Recorded what works on this arm.")} />
    <section aria-label="Commands sent"><h4 className="font-semibold">Commands sent</h4>{data.items.length === 0 ? <p className="text-sm text-muted">No commands sent to this arm yet.</p> : <ol className="space-y-1 text-sm">{data.items.map(c => <li key={c.id} className="break-words">{new Date(c.created_at).toLocaleString()} · {c.operation} from the {c.via} · {c.ok ? "accepted" : `refused: ${c.detail}`}</li>)}</ol>}
@@ -68,25 +70,66 @@ function SetupForm({ slug, current, busy, save }: { slug: string; current: ArmVi
   <button className={button} disabled={busy || !!connection && !device}>Save controller connection</button>
  </form>;
 }
-function StationControls({ slug, title, unit, data, admin, busy, screen, storageKey, setCredential, run, send }: { slug: string; title: string; unit: { connection_id: string; device_id: string }; data: ArmView; admin: boolean; busy: boolean; screen: { id: string; token: string } | null; storageKey: string; setCredential: (c: { id: string; token: string; key: string } | null) => void; run: (w: () => Promise<unknown>, done?: string) => Promise<void>; send: (c: ArmCommand, extra?: { confirmed?: boolean }) => void }) {
- const [program, setProgram] = useState(""), [clear, setClear] = useState(false);
+function StationControls({ slug, machine, title, unit, data, admin, busy, screen, storageKey, setCredential, run, send }: { slug: string; machine: string; title: string; unit: { connection_id: string; device_id: string; tooling: string }; data: ArmView; admin: boolean; busy: boolean; screen: { id: string; token: string } | null; storageKey: string; setCredential: (c: { id: string; token: string; key: string } | null) => void; run: (w: () => Promise<unknown>, done?: string) => Promise<void>; send: (c: ArmCommand) => void }) {
+ const [program, setProgram] = useState(""), [clear, setClear] = useState(false), [tooled, setTooled] = useState(false);
+ const [kind, setKind] = useState("invocation"), [label, setLabel] = useState(""), [ref, setRef] = useState(""), [target, setTarget] = useState("");
  const usable = data.programs.filter(p => !p.missing_since), chosen = usable.find(p => p.id === program), s = data.state;
- const ref = chosen ? { name: chosen.name, revision: chosen.revision } : null;
- const loadedHere = !!ref && !!s?.program && s.program.name === ref.name && s.program.revision === ref.revision;
+ const pref = chosen ? { name: chosen.name, revision: chosen.revision } : null;
+ const loadedHere = !!pref && !!s?.program && s.program.name === pref.name && s.program.revision === pref.revision;
+ const approval = data.approvals.find(a => a.program_id === program);
+ const mine = !!data.ownership && !!screen && data.ownership.station_id === screen.id;
  return <div className="space-y-3 rounded border border-line p-3">
-  <p>Keep this screen beside {title}. Load, Start and Resume need an operator, an owner or an admin and this screen's authorization. The pendant always wins.</p>
+  <p>Keep this screen beside {title}. Taking control, loading, approving and starting a run need an operator, an owner or an admin at this screen. The pendant always wins.</p>
   {screen ? <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button> : <button className={button} disabled={busy || !admin} onClick={() => void run(async () => { const r = await api.registerDigifabStation(slug, unit.connection_id, unit.device_id); const next = { id: r.id, token: r.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); }, "This screen is the arm's station.")}>Authorize this arm station</button>}
   {screen && <>
-   <label className="block">Program<select className={input} value={program} onChange={e => { setProgram(e.target.value); setClear(false); }}><option value="">Choose a program</option>{usable.map(p => <option key={p.id} value={p.id}>{p.name}{p.revision ? ` (revision ${p.revision})` : ""}{p.family ? ` · ${p.family}` : ""}</option>)}</select></label>
-   <div className="flex flex-wrap gap-2">
-    <button className={button} disabled={busy || !ref} onClick={() => ref && send({ operation: "load", program: ref })}>Load program</button>
-    {s?.execution === "paused" && <button className={button} disabled={busy} onClick={() => send({ operation: "resume" })}>Resume</button>}
-   </div>
-   {ref && loadedHere && <div role="group" aria-label="Start" className="space-y-2"><label className="flex items-center gap-2 min-h-11"><input type="checkbox" checked={clear} onChange={e => setClear(e.target.checked)} />I am at the cell: it is clear, guarded and ready for {ref.name}</label><button className={button} disabled={busy || !clear} onClick={() => { send({ operation: "start", program: ref }, { confirmed: true }); setClear(false); }}>Start {ref.name}</button></div>}
-   {ref && !loadedHere && <p className="text-sm text-muted">Load this program first. Start is offered when the controller reports it loaded.</p>}
-   {admin && <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => send({ operation: "power", state: "on" })}>Power on controller</button><button className={button} disabled={busy} onClick={() => send({ operation: "power", state: "off" })}>Power off controller</button></div>}
+   <div className="flex flex-wrap gap-2 items-center">{mine ? <><p className="text-sm">This station has control until {new Date(data.ownership!.expires_at).toLocaleTimeString()}.</p><button className={button} disabled={busy} onClick={() => void run(() => takeControl(slug, machine, screen.token), "Kept control of the arm.")}>Keep control</button><button className={button} disabled={busy} onClick={() => void run(() => releaseControl(slug, machine, screen.token), "Gave back control of the arm.")}>Give back control</button></> : <><p className="text-sm">{data.ownership ? "Another station has control of this arm." : "No station has control of this arm."}</p><button className={button} disabled={busy} onClick={() => void run(() => takeControl(slug, machine, screen.token), "This station has control of the arm.")}>Take control</button></>}</div>
+   {mine && <>
+    <label className="block">Program<select className={input} value={program} onChange={e => { setProgram(e.target.value); setClear(false); setTooled(false); }}><option value="">Choose a program</option>{usable.map(p => <option key={p.id} value={p.id}>{p.name}{p.revision ? ` (revision ${p.revision})` : ""}{p.family ? ` · ${p.family}` : ""}</option>)}</select></label>
+    <div className="flex flex-wrap gap-2">
+     <button className={button} disabled={busy || !pref} onClick={() => pref && send({ operation: "load", program: pref })}>Load program</button>
+     {s?.execution === "paused" && <button className={button} disabled={busy} onClick={() => send({ operation: "resume" })}>Resume</button>}
+    </div>
+    {pref && !loadedHere && <p className="text-sm text-muted">Load this program first. A run is offered when the controller reports it loaded.</p>}
+    {pref && loadedHere && !approval && !data.open_run && <div role="group" aria-label="Approve a run" className="space-y-2">
+     <label className="flex items-center gap-2 min-h-11"><input type="checkbox" checked={tooled} onChange={e => setTooled(e.target.checked)} />The installed tooling is {unit.tooling || "none recorded"}</label>
+     <label className="flex items-center gap-2 min-h-11"><input type="checkbox" checked={clear} onChange={e => setClear(e.target.checked)} />I am at the cell: it is clear, guarded and ready for {pref.name}</label>
+     <button className={button} disabled={busy || !clear || !tooled} onClick={() => void run(async () => { await approveRun(slug, machine, { station_token: screen.token, program_id: program, tooling: unit.tooling, cell_clear: true }); setClear(false); setTooled(false); }, "Approved one run.")}>Approve a run of {pref.name}</button>
+    </div>}
+    {pref && loadedHere && approval && !data.open_run && <form aria-label="Start a run" className="grid grid-cols-1 sm:grid-cols-2 gap-2" onSubmit={e => { e.preventDefault(); void run(() => startRun(slug, machine, { station_token: screen.token, approval_id: approval.id, kind, label, ref, target_cycles: target ? Number(target) : null }), "Sent Start once."); }}>
+     <p className="sm:col-span-2 text-sm">Approved until {new Date(approval.expires_at).toLocaleTimeString()} for revision {approval.revision ?? "none"} with {approval.tooling || "no tooling recorded"}. It starts one run.</p>
+     <label>Run<select className={input} value={kind} onChange={e => setKind(e.target.value)}>{([["invocation", "One run of the program"], ["batch", "A batch of cycles"], ["order", "An order"], ["shift", "A shift"], ["continuous", "Continuous, until the arm says it is done"]] as const).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+     <label>Name<input className={input} maxLength={200} value={label} onChange={e => setLabel(e.target.value)} /></label>
+     {kind === "order" && <label>Order<input className={input} maxLength={200} value={ref} onChange={e => setRef(e.target.value)} /></label>}
+     {kind === "batch" && <label>Cycles<input className={input} inputMode="numeric" value={target} onChange={e => setTarget(e.target.value.replace(/\D/g, ""))} /></label>}
+     <button className={button} disabled={busy}>Start {pref.name}</button>
+    </form>}
+    {admin && <div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => send({ operation: "power", state: "on" })}>Power on controller</button><button className={button} disabled={busy} onClick={() => send({ operation: "power", state: "off" })}>Power off controller</button></div>}
+   </>}
   </>}
  </div>;
+}
+const OUTCOME: Record<string, string> = { completed: "Completed, as the arm reported", aborted: "Aborted", unknown: "Outcome unknown", "not-started": "Did not start" };
+function RunPanel({ slug, data, busy, run }: { slug: string; data: ArmView; busy: boolean; run: (w: () => Promise<unknown>, done?: string) => Promise<void> }) {
+ const open = data.open_run, [note, setNote] = useState("");
+ return <section aria-label="Runs" className="space-y-2"><h4 className="font-semibold">Runs</h4>
+  {open ? <div data-testid="arm-open-run" className="rounded bg-subtle p-3 space-y-1">
+   <p className="font-semibold break-words">{open.label || open.kind} · {open.status === "uncertain" ? "Start sent, not confirmed" : open.status === "starting" ? "Starting" : "Running"}</p>
+   {open.status === "uncertain" && <p role="status">The arm did not confirm Start. {productName()} is reading the arm to find out what happened and will never send Start again.</p>}
+   {open.link_lost && <p role="alert">{open.link_lost === "cloud" ? `${productName()} cannot reach the shop's bridge. The arm may still be running.` : "The bridge cannot reach the arm's controller. Check the arm at the cell."}</p>}
+   <p>{open.cycles}{open.target_cycles ? ` of ${open.target_cycles}` : ""} cycles · {open.good} good · {open.scrap} scrap</p>
+   <div className="flex flex-wrap gap-2 items-end"><label className="flex-1 min-w-0">Note<input className={input} maxLength={1000} value={note} onChange={e => setNote(e.target.value)} /></label>
+    <button className={button} disabled={busy} onClick={() => void run(() => endRun(slug, open.id, { outcome: "unknown", note }), "Recorded the run's outcome as unknown.")}>End: outcome unknown</button>
+    <button className={button} disabled={busy} onClick={() => void run(() => endRun(slug, open.id, { outcome: "aborted", note }), "Recorded the run as aborted.")}>End: aborted</button></div>
+   <p className="text-xs text-muted">A run is completed only when the arm reports it finished. Stopped or idle on the controller is not done.</p>
+  </div> : <p className="text-sm text-muted">No run open.</p>}
+  {data.runs.filter(r => r.status === "ended").length > 0 && <ol className="space-y-1 text-sm">{data.runs.filter(r => r.status === "ended").map(r => <li key={r.id} className="break-words">{new Date(r.started_at).toLocaleString()} · {r.label || r.kind} · {OUTCOME[r.outcome ?? ""] ?? r.outcome} · {r.cycles} cycles, {r.good} good, {r.scrap} scrap</li>)}</ol>}
+ </section>;
+}
+function ToolingForm({ unit, busy, save, revoke, controlled }: { unit: NonNullable<ArmView["unit"]>; busy: boolean; save: (t: string) => void; revoke: () => void; controlled: boolean }) {
+ const [tooling, setValue] = useState(unit.tooling);
+ return <div className="space-y-2"><form className="flex flex-wrap gap-2 items-end" onSubmit={e => { e.preventDefault(); save(tooling); }}><label className="flex-1 min-w-0">Installed tooling<input className={input} maxLength={500} placeholder="vacuum gripper" value={tooling} onChange={e => setValue(e.target.value)} /></label><button className={button} disabled={busy || tooling === unit.tooling}>Save tooling</button></form>
+  <p className="text-xs text-muted">Changing the tooling voids every run approval given before.</p>
+  {controlled && <button className={button} disabled={busy} onClick={revoke}>Take control away from its station</button>}</div>;
 }
 function InfoPanel({ data, admin, busy, refresh }: { data: ArmView; admin: boolean; busy: boolean; refresh: () => void }) {
  const info = data.unit?.last_info;

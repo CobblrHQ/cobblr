@@ -12,7 +12,7 @@
 // notification_subscriptions.config: { webhook_url: "https://discord.com/api/webhooks/<id>/<token>" }.
 
 import { productName } from "../product-name.js";
-import { postJson } from "./http-helpers.js";
+import { notifyFetch, postJson } from "./http-helpers.js";
 import { grabJpegFrame } from "./image-grab.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
@@ -75,12 +75,12 @@ export const discordChannel: Channel = {
           .map((f) => ({ name: String(f.name).slice(0, 256), value: String(f.value).slice(0, 1024), inline: f.inline ?? true }));
       }
       // Try to attach a live snapshot grabbed from the camera URL.
-      const frame = p.embed.image_url ? await grabJpegFrame(p.embed.image_url) : null;
+      const frame = p.embed.image_url ? await grabJpegFrame(event.orgId, p.embed.image_url) : null;
       if (frame) {
         embed.image = { url: "attachment://snapshot.jpg" };
-        return postMultipart(cfg.webhook_url, { content, embeds: [embed] }, frame);
+        return postMultipart(event.orgId, cfg.webhook_url, { content, embeds: [embed] }, frame);
       }
-      return postJson({ url: cfg.webhook_url, body: { content, embeds: [embed] }, channelName: "discord" });
+      return postJson({ orgId: event.orgId, url: cfg.webhook_url, body: { content, embeds: [embed] }, channelName: "discord" });
     }
 
     // A notification with a CARD: the same embed the DM channel draws
@@ -94,25 +94,25 @@ export const discordChannel: Channel = {
       if (event.card.body) embed.description = event.card.body.slice(0, 4000);
       if (event.card.context) embed.footer = { text: event.card.context.slice(0, 2000) };
       if (event.link_url) embed.url = event.link_url;
-      return postJson({ url: cfg.webhook_url, body: { content: desc ?? "", embeds: [embed] }, channelName: "discord" });
+      return postJson({ orgId: event.orgId, url: cfg.webhook_url, body: { content: desc ?? "", embeds: [embed] }, channelName: "discord" });
     }
 
     // Plain notification — content + a link embed (the original behaviour).
     const body: Record<string, unknown> = { content };
     if (desc) body.embeds = [{ description: desc }];
-    return postJson({ url: cfg.webhook_url, body, channelName: "discord" });
+    return postJson({ orgId: event.orgId, url: cfg.webhook_url, body, channelName: "discord" });
   },
 };
 
 /** POST a Discord webhook as multipart so we can attach the snapshot image. */
-async function postMultipart(url: string, payloadJson: unknown, jpeg: Buffer): Promise<boolean> {
+async function postMultipart(orgId: string, url: string, payloadJson: unknown, jpeg: Buffer): Promise<boolean> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 6000);
   try {
     const form = new FormData();
     form.append("payload_json", JSON.stringify(payloadJson));
     form.append("files[0]", new Blob([jpeg], { type: "image/jpeg" }), "snapshot.jpg");
-    const res = await fetch(url, { method: "POST", body: form, signal: controller.signal });
+    const res = await notifyFetch(orgId, url, { method: "POST", body: form, signal: controller.signal });
     if (!res.ok) {
       console.warn(`[notify:discord] ${url} → ${res.status} (multipart)`);
       return false;

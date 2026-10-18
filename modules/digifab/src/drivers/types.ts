@@ -5,9 +5,14 @@ import type { LaserSetup, LaserCommission } from "@cobblr/platform-contract/lase
 // routing (fdm-monster/fdm-monster#5303): submitJob is "place this file"
 // (resolve → queue, or explicit printer) rather than "submit to printer N".
 
+/** The station kinds the shared core serves. A bridge's device list keeps any
+ *  of these, and any kind a registered family declares (core/families.ts). */
+export const CORE_STATION_KINDS = ["laser", "print", "cnc", "cutter", "production-test"] as const;
+export type CoreStationKind = (typeof CORE_STATION_KINDS)[number];
+
 export interface RemoteDevice {
   /** A core kind, or one a family declares (core/families.ts). */
-  station_kind?: "laser" | "print" | "cnc" | "cutter" | "production-test" | (string & {});
+  station_kind?: CoreStationKind | (string & {});
   camera_available?: boolean;
   /** The id inside the farm system (stored locally as remote_device_id). */
   id: string;

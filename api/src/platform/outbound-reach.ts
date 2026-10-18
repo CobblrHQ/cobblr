@@ -18,6 +18,7 @@
 // Cheap on purpose: a DNS lookup and a TCP connect, no request, each bounded
 // by a few seconds, the result kept for a minute so a monitor polling every
 // few seconds asks the network once a minute.
+// EGRESS-FILE: operator-configured - a reachability probe of the dependencies the operator configured; no request is made
 import { lookup } from "node:dns/promises";
 import { connect } from "node:net";
 import { captchaEnabled } from "./captcha.js";

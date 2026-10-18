@@ -107,7 +107,7 @@ integrationsInboundRouter.post(
           inboundRowId: row.id,
           config: row.config ?? {},
           emit: async (eventName, payload) => {
-            await events.emit(eventName, payload);
+            await events.emit(eventName, { ...payload, orgId: lookup.org_id });
           },
         },
       );

@@ -1,4 +1,4 @@
-import { FieldPack, fieldNeed, RecordFormModal, MutationError, useUnits } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, RecordFormModal, MutationError, useUnits, useSentWords } from "@cobblr/platform-web";
 // What this pattern needs: each yarn and each hook or needle, read from the
 // pattern PDF and kept on the pattern (pattern-needs.ts on the server).
 //
@@ -82,11 +82,12 @@ export function PatternNeedsPanel({
     onSuccess: refresh,
   });
   const remove = useMutation({ mutationFn: (id: string) => api.deleteNeed(designId, id), onSuccess: refresh });
+  const textSent = useSentWords(text);
   const paste = useMutation({
     mutationFn: () => api.readPastedMaterials(designId, text),
     onSuccess: (r) => {
       refresh();
-      if (r.ai || r.needs.length) {
+      if ((r.ai || r.needs.length) && textSent.landed()) {
         setPasting(false);
         setText("");
       }
@@ -261,7 +262,10 @@ export function PatternNeedsPanel({
           <button
             type="button"
             disabled={!text.trim() || paste.isPending}
-            onClick={() => paste.mutate()}
+            onClick={() => {
+              textSent.sending();
+              paste.mutate();
+            }}
             className="rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm px-3 py-2 disabled:opacity-40"
           >
             {paste.isPending ? "Reading…" : "Read it"}

@@ -40,7 +40,7 @@ const CAP = /\bFEED_SCROLL[A-Z_]*\b/;
 /** Files allowed to read an endless source without capping, each with a reason.
  *  Keep this empty if you can. */
 const EXEMPT: Record<string, string> = {
-  "lib/api.ts": "the client that DEFINES the calls, it renders nothing",
+  "lib/api.ts": "the client that DEFINES the calls, it renders nothing (and so does each area file under lib/api/)",
 };
 
 const files = globSync("**/*.{ts,tsx}", { cwd: WEB })
@@ -50,7 +50,7 @@ const bad: Array<{ file: string; source: string }> = [];
 
 for (const rel of files) {
   const src = readFileSync(join(WEB, rel), "utf8");
-  if (EXEMPT[rel]) continue;
+  if (EXEMPT[rel] || rel.startsWith("lib/api/")) continue;
   const hit = ENDLESS_SOURCES.find((s) => src.includes(s));
   if (!hit) continue;
   // A file that reads a feed but renders no list is fine (a hook, a loader).

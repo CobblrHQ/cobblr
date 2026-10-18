@@ -51,7 +51,7 @@ export function registerSalesActionHandlers(): void {
     const restocked = readJsonArg<Restocked[]>(args, "restocked") ?? [];
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<SalesDB>;
     const r = await reinstateOrder(db, ctx.orgId, ctx.userId, ctx.entity.id, { from: String(args.from ?? "confirmed") as SalesOrderStatus, restocked });
-    return r.ok ? { ok: true, retaken: r.retaken } : { ok: false, error: r.message };
+    return r.ok ? { ok: true, retaken: r.retaken, status: r.status, complete: r.complete } : { ok: false, error: r.message };
   });
   platform().actions.registerUndo("sales.cancel-order", (result, ctx) => {
     const r = result as { ok?: unknown; from?: unknown; restocked?: unknown } | null;

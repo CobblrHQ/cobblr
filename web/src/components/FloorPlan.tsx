@@ -1871,9 +1871,12 @@ function PlanFor({
           more than under half the screen, scrolling inside, and not docked
           at all on a screen too short to spare it (a phone on its side): it
           covered the plan's own head and its Done on a small phone, so nobody
-          could leave editing ── */}
+          could leave editing. It docks above the home bar, as the corner
+          pieces do: on the screen's edge its last line ("remove from plan")
+          sat under the home bar, and over a bottom bar it overlapped the bar
+          by the same height ── */}
       {edit && (
-      <div className="sticky z-10 shadow-lg rounded-md max-h-[45dvh] overflow-y-auto overscroll-contain [@media(max-height:500px)]:static [@media(max-height:500px)]:max-h-none" style={{ bottom: bare ? 0 : "var(--bottom-chrome-height, 0px)" }} data-testid="plan-panel">
+      <div className="sticky z-10 shadow-lg rounded-md max-h-[45dvh] overflow-y-auto overscroll-contain [@media(max-height:500px)]:static [@media(max-height:500px)]:max-h-none" style={{ bottom: bare ? "var(--inset-bottom)" : "calc(var(--inset-bottom) + var(--bottom-chrome-height, 0px))" }} data-testid="plan-panel">
       {sel?.type === "entity" && (
         <EntityPanel
           ent={occupants.find((o) => o.id === sel.id && o.kind === sel.kind) ?? null}

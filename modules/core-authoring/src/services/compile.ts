@@ -28,6 +28,8 @@ export interface ContextKind {
   displayName: string;
   fields: ContextField[];
   multiInstance?: boolean;
+  /** Records of this kind can be edited from an app (a form in edit mode). */
+  editable?: boolean;
 }
 export interface ContextAction {
   id: string;
@@ -127,7 +129,8 @@ export async function assembleContext(
     chosen = chosen.slice(0, MAX_KINDS);
   }
 
-  const kinds: ContextKind[] = chosen.map((k) => ({
+  const kinds: ContextKind[] = await Promise.all(chosen.map(async (k) => ({
+    editable: await platform().entities.isUpdatable(orgId, k.id),
     id: k.id,
     displayName: k.display_name,
     // "multi" = the owning module supports named instances — the prompt marks
@@ -135,7 +138,7 @@ export async function assembleContext(
     // entry ("track Books" → a bookshelf instance of such a module).
     multiInstance: k.module_instanceability === "multi",
     fields: (k.fields ?? []).map((f) => ({ name: f.name, type: f.type, role: f.role, required: f.required })),
-  }));
+  })));
 
   // Actions wireable to the chosen kinds, deduped by id.
   const actionMap = new Map<string, ContextAction>();
@@ -401,7 +404,7 @@ RULES:
   // blocks that render from scratch (no saved-view / record blocks that need data
   // or pre-existing views, no custom HTML).
   "design-app": (ctx, intent) => {
-    const kinds = ctx.kinds.map((k) => `- ${k.id} (${k.displayName})`).join("\n");
+    const kinds = ctx.kinds.map((k) => `- ${k.id} (${k.displayName})${k.editable ? " [editable]" : ""}`).join("\n");
     const actions = ctx.actions.length
       ? ctx.actions.map((a) => `- ${a.id} — ${a.label}: ${a.description}`).join("\n")
       : "(none — you can still use markdown + scan blocks)";
@@ -431,6 +434,7 @@ OUTPUT — one JSON object, this exact shape:
 BLOCK TYPES you may use (these render from scratch — pick from these only):
 - { "type": "markdown", "body": "<text with headings / lists>" } — intro / instructions.
 - { "type": "form", "kind": "<kind id>", "mode": "create", "fields": ["<field>", ...] } — a create form for a kind (omit "fields" to show all).
+- { "type": "form", "kind": "<kind id>", "mode": "edit", "fields": ["<field>", ...] } — a change form: the member picks an existing record and corrects it. ONLY for kinds marked [editable] above (omit "fields" to offer every field the member can change).
 - { "type": "action", "action_id": "<action id>", "kind": "<kind id>", "label": "<button text>" } — an action button (action_id MUST apply to that kind).
 - { "type": "scan" } — the barcode / photo scanner.
 
@@ -473,7 +477,7 @@ OUTPUT — one JSON object, this exact shape:
 
 RULES:
 - Return the WHOLE revised app, not a diff — unchanged pages/blocks must round-trip verbatim. Keep the same app slug.
-- STRUCTURED blocks you may use: markdown / form (kind, mode:"create", fields?) / action (action_id + kind) / scan. form.kind + action ids must come from the lists above.
+- STRUCTURED blocks you may use: markdown / form (kind, mode:"create" or "edit", fields?; "edit" only on kinds marked [editable]) / action (action_id + kind) / scan. form.kind + action ids must come from the lists above.
 - CUSTOM blocks ({ "type": "custom", "html": ... }) stay self-contained fragments: inline <style>/<script>, no external scripts, no fetch(), data only via the injected window.cobblr bridge (viewData/entity/me/can/invoke/appLoad/appSave), under ~12,000 characters.
 - slugs kebab-case (^[a-z0-9-]+$); 1-3 pages.
 - If the change is impossible with the kinds/actions/blocks above, say so in "interpretation" and return the app unchanged.`;

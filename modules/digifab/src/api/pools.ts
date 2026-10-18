@@ -10,6 +10,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 
 export const poolsRouter = Router({ mergeParams: true });
 
@@ -38,28 +39,28 @@ poolsRouter.get(
 
 const PoolCreate = z.object({ name: z.string().min(1).max(120) });
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+/** An empty pool: the route's POST and digifab:make-pool. */
+export async function makePool(db: ReturnType<typeof tenantDb>, name: string) {
+  return db.insertInto("digifab_pools").values({ name }).returning(["id", "name", "config", "created_at"]).executeTakeFirstOrThrow();
+}
+
+// AI-ACTION: digifab:make-pool
 poolsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:make-pool"))) return;
     const p = PoolCreate.safeParse(req.body);
     if (!p.success) return void badBody(res, p.error);
-    const db = tenantDb(req);
-    const row = await db
-      .insertInto("digifab_pools")
-      .values({ name: p.data.name })
-      .returning(["id", "name", "config", "created_at"])
-      .executeTakeFirstOrThrow();
+    const row = await makePool(tenantDb(req), p.data.name);
     res.status(201).json({ id: row.id, name: row.name, config: row.config, members: [] });
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: digifab:remove-pool
 poolsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:remove-pool"))) return;
     const db = tenantDb(req);
     await db.deleteFrom("digifab_pools").where("id", "=", req.params.id!).execute(); // members cascade
     res.status(204).end();
@@ -71,7 +72,9 @@ const MemberAdd = z.object({
   remote_device_id: z.string().min(1).max(200),
 });
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — puts a printer in reach of the assignment worker, which
+// sends the pool's queued jobs to it on its own; what may start unattended on
+// a machine is decided by a person who can see it is clear
 poolsRouter.post(
   "/:id/members",
   asyncHandler(async (req, res) => {
@@ -88,11 +91,11 @@ poolsRouter.post(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: digifab:remove-from-pool
 poolsRouter.delete(
   "/:id/members/:connectionId/:deviceId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:remove-from-pool"))) return;
     const db = tenantDb(req);
     await db
       .deleteFrom("digifab_pool_members")

@@ -14,6 +14,7 @@
 // miss). The caching itself lives in the endpoint (api/decode.ts) with the
 // tenant db; this file is the pure lookup + classifier, like lookupBarcode.
 
+// EGRESS-FILE: vendor-fixed - the vehicle database's host, written in the code
 import { packageLabelDecoder } from "./package-label.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

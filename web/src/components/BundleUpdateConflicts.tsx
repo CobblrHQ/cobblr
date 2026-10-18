@@ -49,6 +49,15 @@ function Value({ conflict, side }: { conflict: BundleUpgradeConflict; side: "you
   if (conflict.attr === "label") {
     return <span>{typeof v === "string" && v ? `"${v}"` : <span className="italic text-faint dark:text-slate-500">no name</span>}</span>;
   }
+  if (conflict.attr === "view") {
+    return (
+      <ul className="space-y-0.5 break-words">
+        {asList(v).map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    );
+  }
   const mine = asList(conflict.yours);
   const other = side === "yours" ? asList(conflict.theirs) : mine;
   const items = asList(v);
@@ -77,6 +86,7 @@ const WHAT: Record<BundleUpgradeConflict["attr"], string> = {
   label: "You renamed it, and this version renames it too.",
   choices: "You changed its options, and this version changes them too.",
   removed: "You customised it, and this version no longer has it.",
+  view: "You changed these settings of this view, and this version changes them too. Everything else you changed stays.",
 };
 
 export function BundleUpdateConflicts({

@@ -231,6 +231,11 @@ export interface InventoryRecountScansTable {
 }
 
 export interface InventoryDB {
+  inventory_stock_operations: {
+    operation_id: string;
+    part_id: string;
+    created_at: Generated<Date>;
+  };
   inventory_recounts: InventoryRecountsTable;
   inventory_recount_scans: InventoryRecountScansTable;
   inventory_stocktakes: InventoryStocktakesTable;

@@ -11,7 +11,7 @@ import type { ScanCountSessionMode } from "@cobblr/platform-contract/scan-count"
 import { useEffect, useState } from "react";
 import { leadYours, rowPictures, scanFileUrl, yourPictures } from "../lib/rowPictures";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, CheckCircle, Loader2, MapPin, PackageX, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
+import { Box, Camera, Check, CheckCircle, Loader2, MapPin, PackageX, Plus, Printer, ScanLine, Trash2 } from "lucide-react";
 import { useToast, EntityPhoto, WorkspaceLink } from "@cobblr/platform-web";
 import { ApiError, api, type ScanInboxItem, type TrackedMatch } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -62,6 +62,7 @@ export function ScanResultModal({
   countMode,
   sessionMode,
   onAttached,
+  onBinMade,
 }: {
   barcode: string;
   /** The inbox row this sheet is about. The CAMERA PAGE owns the ingest and
@@ -111,6 +112,9 @@ export function ScanResultModal({
    *  in Set total, the number you see being the number on the shelf. */
   countMode?: boolean;
   sessionMode?: ScanCountSessionMode;
+  /** "Turn into a bin" made a new bin from this scan (#6891): the camera arms
+   *  it so the next scans land inside it, and offers the Undo. */
+  onBinMade?: (bin: { id: string; name: string }, item: ScanInboxItem) => void;
   /** Fired after an attach (manual or auto-move) so the camera can offer undo. */
   onAttached?: (
     r: { itemId: string; prevLocationId: string | null; entityTitle: string },
@@ -310,6 +314,17 @@ export function ScanResultModal({
   // Paired-scan: the scanned product IS the active bin. One tap writes the
   // product identity onto the bin's own location record (metadata.container_*,
   // catalog photo, description) — nothing new is created or filed.
+  const makeBin = useMutation({
+    mutationFn: () => api.newBinFromScan(activeSlug, item!.id, scanAreaId ? { parent_id: scanAreaId } : {}),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+      void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+      onBinMade?.({ id: r.location_id, name: r.location_name }, r.item);
+      onClose("handled");
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+  });
   const intoBin = useMutation({
     mutationFn: () => api.confirmScanIntoLocation(activeSlug, item!.id, scanAreaId ?? undefined),
     onSuccess: () => {
@@ -458,7 +473,7 @@ export function ScanResultModal({
   );
   const catalogImg = lead.src;
   const areaLabel = item?.scan_area ?? scanArea ?? null;
-  const busy = commit.isPending || discard.isPending || intoBin.isPending || fileHere.isPending;
+  const busy = commit.isPending || discard.isPending || intoBin.isPending || makeBin.isPending || fileHere.isPending;
 
   return (
     // Deliberately NO onClose: no grip-dismiss, no swipe-down, no ✕. A barcode
@@ -729,6 +744,35 @@ export function ScanResultModal({
           >
             {ranOutHere.pending ? <Loader2 size={15} className="animate-spin" /> : <PackageX size={15} />} {RAN_OUT_LABEL}
           </button>
+        )}
+
+        {/* This scan IS a container (#6891): one tap makes it the next free
+            Bin N with the tote's identity on it, and the camera files the
+            next scans into it. Offered up front when the row looks like a
+            container (the contract's tool rule), quietly otherwise. */}
+        {item && onBinMade && item.status === "pending" && item.suggested_name && !countingWhatYouHave && item.tool_hints?.bin && (
+          item.tool_hints.bin.relevance === "likely" ? (
+            <button
+              type="button"
+              data-testid="sheet-turn-into-bin"
+              disabled={busy || makeBin.isPending}
+              onClick={() => makeBin.mutate()}
+              title="This IS a container: make it a bin and scan things into it"
+              className="w-full min-h-11 inline-flex items-center justify-center gap-2 rounded-lg border border-line dark:border-slate-600 px-3 text-sm text-content dark:text-mortar-100 hover:bg-surface disabled:opacity-50"
+            >
+              {makeBin.isPending ? <Loader2 size={15} className="animate-spin" /> : <Box size={15} />} Turn into a bin
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="sheet-turn-into-bin"
+              disabled={busy || makeBin.isPending}
+              onClick={() => makeBin.mutate()}
+              className="min-h-11 self-start text-xs text-muted underline decoration-dotted underline-offset-2 hover:text-content disabled:opacity-50"
+            >
+              Is this a container? Turn into a bin
+            </button>
+          )
         )}
 
         {/* Paired-scan: the bin's QR said WHICH record; this UPC says WHAT it

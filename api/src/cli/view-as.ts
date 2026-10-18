@@ -32,6 +32,7 @@
 // is prefixed "[agent]" so the operator log distinguishes automation from a
 // person clicking in the console.
 
+// EGRESS-FILE: own-api - the operator's audited read-only view of an instance's own API, at the address the operator names
 import { writeSync } from "node:fs";
 
 import { meta } from "../db/meta.js";

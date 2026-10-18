@@ -43,6 +43,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-notifications:message-someone",
+        changes: "records",
         runBy: "member",
         label: "Message someone",
         description:

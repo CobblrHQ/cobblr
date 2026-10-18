@@ -96,6 +96,7 @@ export default defineModule({
         // after a move, not something anybody asks for
         group: "more",
         id: "core-mobility:recompute-away",
+        changes: "records",
         runBy: "member",
         undoable: true,
         label: "Recompute away-from-home",
@@ -110,6 +111,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "core-mobility:set-away-since",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Set the away stamp",
@@ -128,6 +130,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-mobility:return-home",
+        changes: "records",
         runBy: "member",
         examples: ["it is back home", "put it back where it lives"],
         undoable: true,

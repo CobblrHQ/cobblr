@@ -1,0 +1,10 @@
+{
+  "lint": "lint:user-guide-index",
+  "run": "node scripts/lint-user-guide-index.ts",
+  "rows": [
+    "user-doc"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-18",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

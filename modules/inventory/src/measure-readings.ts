@@ -25,7 +25,7 @@ const REQUEST_BATCH = 2000;
  *  the two keeps its stale mark (the update matches on the key it read). */
 export async function refreshMeasureReadings(
   db: Kysely<InventoryDB>,
-  opts: { instance?: string; limit?: number; neverRead?: boolean } = {},
+  opts: { instance?: string; limit?: number; neverRead?: boolean; madeBefore?: Date } = {},
 ): Promise<number> {
   let q = db
     .selectFrom("inventory_parts")
@@ -33,6 +33,7 @@ export async function refreshMeasureReadings(
     .where(sql<boolean>`measures_for is distinct from measures_key`);
   if (opts.instance) q = q.where("instance", "=", opts.instance);
   if (opts.neverRead) q = q.where(sql<boolean>`measures is null`);
+  if (opts.madeBefore) q = q.where("created_at", "<", opts.madeBefore);
   const rows = await q.limit(opts.limit ?? REQUEST_BATCH).execute();
   if (rows.length === 0) return 0;
   const batch = rows.map((r) => ({

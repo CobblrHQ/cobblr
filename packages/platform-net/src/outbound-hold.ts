@@ -24,6 +24,7 @@
 // be tested (COBBLR_TEST_ORG_POOL). Every hold auto-releases after a cap, so
 // a test that dies mid-hold never wedges a shared api.
 
+// EGRESS-FILE: pinned-door - a response class for the pinning fetch's test hold; makes no request
 import { Response as UndiciResponse } from "undici";
 
 export interface OutboundHoldSpec {

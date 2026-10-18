@@ -56,7 +56,7 @@ function HolderCell({ value, onCommit }: { value: string | null; onCommit: (v: s
   );
 }
 
-export function UnitsPanel({ partId }: { partId: string }) {
+export function UnitsPanel({ partId, partName }: { partId: string; partName?: string }) {
   const { api, basePath, instance } = useInventory();
   const stock = useStockWrites();
   const navigate = useNavigate();
@@ -156,6 +156,21 @@ export function UnitsPanel({ partId }: { partId: string }) {
           title="Scan serials into this item"
         >
           Scan
+        </button>
+        {/* Scan within this item: a serial its units share with another
+            product's goes straight to this item's unit, no picker, until the
+            camera's chip is cleared (#6892). */}
+        <button
+          type="button"
+          onClick={() =>
+            navigate(
+              `/scan/camera?within=${encodeURIComponent(`${!instance || instance === "inventory" ? "inventory:part" : `${instance}:item`}:${partId}`)}&scopeLabel=${encodeURIComponent(partName ?? "this item")}`,
+            )
+          }
+          className="rounded-md border border-line dark:border-slate-600 text-content dark:text-mortar-100 text-xs font-medium px-3 py-1.5 transition hover:bg-subtle dark:hover:bg-slate-800 whitespace-nowrap"
+          title="Scan this item's units: a serial another product shares opens this item's"
+        >
+          Scan within this
         </button>
       </form>
     </div>

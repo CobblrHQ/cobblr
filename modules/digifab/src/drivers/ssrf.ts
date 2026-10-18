@@ -30,16 +30,12 @@ import { isDangerousIp, isPrivateIp } from "@cobblr/platform-contract/private-ip
 
 export { isDangerousIp, isPrivateIp };
 
-/** Throw if `raw` isn't an http(s) URL safe for a server-side fetch to a
- *  machine manager under the current deployment's egress policy. Async because
- *  it resolves DNS. */
-export async function assertSafeMachineUrl(raw: string): Promise<void> {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    throw new Error("invalid URL");
-  }
+/** Check one URL under the current deployment's egress policy and return the
+ *  address to hold the connection to, or null for a name this machine cannot
+ *  resolve (self-host only: a `.lan`/mDNS name the OS resolves). Throws when the
+ *  URL is not one a machine may have. Every resolved address is checked; the
+ *  first is the pin. Async because it resolves DNS. */
+export async function resolveSafeMachineTarget(u: URL): Promise<{ address: string; family: number } | null> {
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("only http(s) URLs are allowed");
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
   // CI/test-only escape: the FDMM-import + webhook tests spin a fake manager on
@@ -57,11 +53,12 @@ export async function assertSafeMachineUrl(raw: string): Promise<void> {
     return strict ? isPrivateIp(ip) : isDangerousIp(ip);
   };
 
-  if (isIP(host)) {
+  const literal = isIP(host);
+  if (literal) {
     if (blocked(host)) throw new Error(`address ${host} is not allowed (${strict ? "strict" : "lan"} egress policy)`);
-    return;
+    return { address: host, family: literal };
   }
-  let records: Array<{ address: string }>;
+  let records: Array<{ address: string; family: number }>;
   try {
     records = await dnsLookup(host, { all: true });
   } catch {
@@ -74,11 +71,25 @@ export async function assertSafeMachineUrl(raw: string): Promise<void> {
     // non-resolving machine URL, and allowing one would re-open a rebind via an
     // NXDOMAIN-at-check host, so refuse it.
     if (strict) throw new Error(`host ${host} does not resolve (strict egress policy)`);
-    return;
+    return null;
   }
   for (const r of records) {
     if (blocked(r.address)) {
       throw new Error(`host ${host} resolves to a blocked address ${r.address} (${strict ? "strict" : "lan"} egress policy)`);
     }
   }
+  return { address: records[0]!.address, family: records[0]!.family };
+}
+
+/** Throw if `raw` isn't an http(s) URL safe for a machine manager under the
+ *  current egress policy. For an early answer when an address is saved; the
+ *  call itself goes through machineFetch, which checks and pins each hop. */
+export async function assertSafeMachineUrl(raw: string): Promise<void> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error("invalid URL");
+  }
+  await resolveSafeMachineTarget(u);
 }

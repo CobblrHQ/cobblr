@@ -6,6 +6,14 @@ import type { Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
 
+export interface BundleViewBase {
+  name: string;
+  view_type: string;
+  config: Record<string, unknown>;
+  is_default: boolean;
+  pinned: boolean;
+}
+
 export interface ViewsTable {
   id: Generated<string>;
   entity_kind: string;
@@ -23,6 +31,11 @@ export interface ViewsTable {
   /** v1.5: module whose `contributes.savedViews` shipped this view,
    *  if any. Cleared on module disable. */
   source_module: string | null;
+  /** v1.7: the view's stable name inside its bundle; a rename does not move it. */
+  bundle_key: string | null;
+  /** v1.7: the view as the bundle last installed it, so what a person changed is
+   *  the difference and "reset to the bundle's version" has something to put back. */
+  bundle_base: Generated<BundleViewBase | null>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }

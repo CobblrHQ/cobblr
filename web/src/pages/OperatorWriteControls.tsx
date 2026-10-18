@@ -1,7 +1,7 @@
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { JsonField, Modal, NumberField, useConfirm, useToast } from "@cobblr/platform-web";
+import { JsonField, Modal, NumberField, useConfirm, useToast, useSentWords } from "@cobblr/platform-web";
 import { api } from "../lib/api";
 
 const field = "input w-full";
@@ -53,15 +53,16 @@ export function AccountNoticeControl({ workspaces = [] }: { workspaces?: Array<{
   const confirm = useConfirm();
   const ids = [...words(orgs), ...words(users)];
   const valid = ids.length > 0 && ids.every((id) => uuid.test(id)) && subject.trim() && message.trim();
+  const noticeSent = useSentWords(`${subject}\n${message}`);
   const send = useMutation({
     mutationFn: () => api.sendAccountNotice({ org_ids: words(orgs), user_ids: words(users), subject: subject.trim(), message: message.trim(), ...(link.trim() ? { link_url: link.trim() } : {}) }),
-    onSuccess: (r) => { toast.success(`Notice sent to ${countOf(r.recipients, "recipient")}; ${r.emailed} emailed.`); setOpen(false); setMessage(""); },
+    onSuccess: (r) => { toast.success(`Notice sent to ${countOf(r.recipients, "recipient")}; ${r.emailed} emailed.`); if (!noticeSent.landed()) return; setOpen(false); setMessage(""); },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't send notice"),
   });
   return <>
     <button type="button" className={secondary} onClick={() => setOpen(true)}>Send account notice</button>
     {open && <Modal open title="Send account notice" onClose={() => setOpen(false)}>
-      <form className="space-y-3" onSubmit={async (e) => { e.preventDefault(); if (valid && await confirm({ title: "Send this account notice?", message: "This emails every selected person and all members of the selected workspaces, including people who opted out of other email.", confirmLabel: "Send notice" })) send.mutate(); }}>
+      <form className="space-y-3" onSubmit={async (e) => { e.preventDefault(); if (valid && await confirm({ title: "Send this account notice?", message: "This emails every selected person and all members of the selected workspaces, including people who opted out of other email.", confirmLabel: "Send notice" })) { noticeSent.sending(); send.mutate(); } }}>
         <p className="text-sm text-muted">For changes that affect access. Choose a workspace or paste recipient IDs, separated by commas. Duplicate recipients receive one notice.</p>
         {workspaces.length > 0 && <label className="block">Add a workspace<select className={field} value="" onChange={(e) => { if (e.target.value) setOrgs((old) => words(`${old},${e.target.value}`).join(", ")); }}>
           <option value="">Choose a workspace</option>{workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}

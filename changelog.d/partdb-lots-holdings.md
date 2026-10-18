@@ -3,6 +3,7 @@ type: feature
 scope: integrations
 date: 2026-10-16
 docs_target: docs/USER_GUIDE.md#4.5g A live sync never overwrites what you changed (`/configuration/integrations`)
+docs_published: 2026-10-17
 ---
 
 A Part-DB part kept in several storage locations imports as one card with a place for each, with the right amount in each

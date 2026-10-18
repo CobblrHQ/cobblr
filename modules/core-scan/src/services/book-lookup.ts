@@ -5,6 +5,7 @@
 // paperback the user actually has, not a random hardcover). Keyless public API;
 // best-effort; in-process cached so a shelf of one series hits it once per title.
 
+// EGRESS-FILE: vendor-fixed - the book catalogue's host, written in the code
 import { userAgent } from "@cobblr/platform-contract/outbound-identity";
 
 interface OlSearchDoc {

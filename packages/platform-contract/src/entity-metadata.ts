@@ -19,6 +19,7 @@ import { readMoney, parseMoney } from "@cobblr/platform-contract/money";
 import { asAddress } from "@cobblr/platform-contract/address";
 import { isListedChoice } from "@cobblr/platform-contract/field-vocabulary";
 import { platform } from "@cobblr/platform-contract/platform-runtime";
+import { castFieldValues } from "@cobblr/platform-contract/field-values";
 
 export function routeUnknownToMetadata<T extends Record<string, unknown>>(
   body: unknown,
@@ -411,6 +412,16 @@ export async function refuseUnknownFields(req: unknown, body: unknown, nativeKey
   const orgId = r.tenant?.org?.id;
   if (!orgId) return;
   const kind = fieldKindOf({ kind: baseKind, instance: r.instance });
+  const q = req as { method?: string; params?: Record<string, string> };
+  const id = q.params?.id;
+  const updating = (q.method === "PATCH" || q.method === "PUT") && !!id;
+  await refuseUnknownFieldsOf(orgId, kind, body, nativeKeys, updating ? id : undefined);
+}
+
+/** The same check without a request: `kind` is the field kind (a
+ *  collection's `<instance>:item`), `updatingId` the record being edited, if
+ *  any. A write that has no HTTP request (platform:update-fields) asks here. */
+export async function refuseUnknownFieldsOf(orgId: string, kind: string, body: unknown, nativeKeys: ReadonlySet<string>, updatingId?: string): Promise<void> {
   const defs = await platform().entities.fieldsFor(orgId, kind);
   const names = defs.map((f) => f.name);
   const { unknown, suggestions } = unknownFieldsOf(body, nativeKeys, names);
@@ -420,16 +431,35 @@ export async function refuseUnknownFields(req: unknown, body: unknown, nativeKey
   }
   // Values: judged against what the record holds now, on an update.
   const judged = defs.filter((d) => d.type !== "computed" && !nativeKeys.has(d.name));
-  const q = req as { method?: string; params?: Record<string, string> };
-  const id = q.params?.id;
-  const updating = (q.method === "PATCH" || q.method === "PUT") && !!id;
-  const stored = updating && judged.length ? ((await platform().entities.lookup(orgId, kind, id!))?.fields ?? {}) : null;
+  const stored = updatingId && judged.length ? ((await platform().entities.lookup(orgId, kind, updatingId))?.fields ?? {}) : null;
   const problems = fieldValueProblemsOf(body, judged, stored);
   if (problems.length > 0) throw new InvalidFieldValueError(kind, problems);
   if (body && typeof body === "object" && !Array.isArray(body)) {
-    const safe = await platform().entities.sealSecretFields(orgId, kind, body as Record<string, unknown>, updating ? id : undefined);
+    const safe = await platform().entities.sealSecretFields(orgId, kind, body as Record<string, unknown>, updatingId);
     if (safe === body) return;
     for (const key of Object.keys(body)) delete (body as Record<string, unknown>)[key];
     Object.assign(body, safe);
   }
+}
+
+/** Split the fields of an edit into the kind's own columns and its custom
+ *  fields: unknown names refused, values judged against the record as it is,
+ *  secrets sealed, custom values cast to their type. The shape every module's
+ *  updater needs before it writes. */
+export async function splitFieldsForUpdate(
+  orgId: string,
+  kind: string,
+  id: string,
+  fields: Record<string, unknown>,
+  nativeKeys: ReadonlySet<string>,
+): Promise<{ native: Record<string, unknown>; custom: Record<string, unknown> }> {
+  const body: Record<string, unknown> = { ...fields };
+  await refuseUnknownFieldsOf(orgId, kind, body, nativeKeys, id);
+  const routed = routeUnknownToMetadata<Record<string, unknown>>(body, nativeKeys);
+  const { metadata, ...native } = routed;
+  const bag = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+  const smNames = await platform().entities.serverManagedFields(orgId, kind);
+  const kept = Object.fromEntries(Object.entries(bag).filter(([k]) => !smNames.includes(k)));
+  const custom = Object.keys(kept).length ? castFieldValues(await platform().entities.fieldsFor(orgId, kind), kept) : kept;
+  return { native, custom };
 }

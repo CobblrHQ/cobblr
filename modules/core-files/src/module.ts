@@ -114,6 +114,7 @@ export default defineModule({
       {
         group: "lifecycle",
         id: "core-files:restore",
+        changes: "records",
         runBy: "member",
         label: "Restore from Recently deleted",
         description:
@@ -130,6 +131,7 @@ export default defineModule({
       {
         group: "organise",
         id: "core-files:attach-file",
+        changes: "records",
         runBy: "member",
         examples: ["attach the drill manual to this one too", "put the receipt on the new laptop"],
         undoable: true,
@@ -147,6 +149,7 @@ export default defineModule({
       {
         group: "organise",
         id: "core-files:detach-file",
+        changes: "records",
         runBy: "member",
         examples: ["take the old manual off this drill"],
         undoable: true,

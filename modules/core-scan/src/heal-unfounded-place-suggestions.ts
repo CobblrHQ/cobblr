@@ -36,6 +36,7 @@ interface HealDB {
     suggested_location_note: string | null;
     suggested_candidates: unknown;
     updated_at: Date;
+    created_at: Date;
   };
 }
 
@@ -49,11 +50,12 @@ const UNFOUNDED = sql<boolean>`status = 'pending'
 
 /** Heal one workspace. Cheap when settled: one indexed update that matches
  *  nothing. */
-export async function healUnfoundedPlaceSuggestionsIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healUnfoundedPlaceSuggestionsIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const res = await db
     .updateTable("core_scan_inbox_items")
     .set({ suggested_location_id: null, suggested_location_note: null, updated_at: new Date() })
     .where(UNFOUNDED)
+    .where("created_at", "<", since)
     .executeTakeFirst();
   const n = Number(res.numUpdatedRows ?? 0);
   if (n) console.log(`[core-scan] org ${orgId}: withdrew ${n} suggested place(s) nothing about the item stood behind`);
@@ -65,8 +67,9 @@ export async function healUnfoundedPlaceSuggestionsIn(orgId: string, db: Kysely<
 export function registerUnfoundedPlaceSuggestionsHeal(): void {
   registerHealPass({
     name: "core-scan.heal-unfounded-place-suggestions",
+    since: "2026-10-06T02:57:33Z",
     shim: "modules/core-scan/src/heal-unfounded-place-suggestions.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healUnfoundedPlaceSuggestionsIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healUnfoundedPlaceSuggestionsIn(orgId, db as Kysely<HealDB>, since),
   });
 }

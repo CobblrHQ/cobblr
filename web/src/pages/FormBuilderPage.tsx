@@ -12,7 +12,7 @@
 
 import { VERTICAL_DRAG } from "../lib/vertical-drag";
 import { kindOptionLabels } from "../lib/kind-option-labels";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -22,9 +22,19 @@ import { api, ApiError, type FieldSection, type PlatformFieldDef } from "../lib/
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast, usePageTitle } from "@cobblr/platform-web";
 
-type Item =
+export type Item =
   | { kind: "section"; id: string; name: string }
   | { kind: "field"; id: string; def: PlatformFieldDef };
+
+/** A dirty working copy after the saved layout changed underneath it (a
+ *  section added or deleted, a refetch): everything still there keeps the
+ *  place the person dragged it to, with the saved version of it; what is
+ *  gone leaves; what is new joins at the end, where a new section is made. */
+export function mergeDraft(draft: readonly Item[], saved: readonly Item[]): Item[] {
+  const byId = new Map(saved.map((i) => [i.id, i]));
+  const had = new Set(draft.map((i) => i.id));
+  return [...draft.filter((i) => byId.has(i.id)).map((i) => byId.get(i.id)!), ...saved.filter((i) => !had.has(i.id))];
+}
 
 function SortableRow({ item, children }: { item: Item; children: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
@@ -85,6 +95,13 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
   // followed by its fields. Local working copy the user drags around.
   const [items, setItems] = useState<Item[]>([]);
   const [dirty, setDirty] = useState(false);
+  // What the working copy was built for, and whether it holds an unsaved
+  // order: a section added or deleted (or any refetch) merges into a dirty
+  // draft instead of replacing it, and only another form starts afresh
+  // (#7152: Add section threw away the order you had dragged).
+  const draftFor = useRef<string | null>(null);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
     if (!defs.data || !sections.data) return;
     const fields = defs.data.items.slice().sort((a, b) => a.position - b.position);
@@ -95,9 +112,15 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
       next.push({ kind: "section", id: `s:${s.id}`, name: s.name });
       for (const f of fields.filter((f) => f.section_id === s.id)) next.push({ kind: "field", id: `f:${f.name}`, def: f });
     }
+    const keep = dirtyRef.current && draftFor.current === kind;
+    draftFor.current = kind;
+    if (keep) {
+      setItems((prev) => mergeDraft(prev, next));
+      return;
+    }
     setItems(next);
     setDirty(false);
-  }, [defs.data, sections.data]);
+  }, [defs.data, sections.data, kind]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
   function onDragEnd(e: DragEndEvent) {

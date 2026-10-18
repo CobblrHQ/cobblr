@@ -26,7 +26,7 @@ import { forwardedSender, isMailTitle, receiptSessionLabel } from "./services/re
 import { detectOrderRef } from "./services/receipt-text.js";
 
 interface HealDB {
-  core_scan_batches: { id: string; origin: string | null; vendor: string | null; label: string | null; order_ref: string | null; source_file_id: string | null };
+  core_scan_batches: { id: string; origin: string | null; vendor: string | null; label: string | null; order_ref: string | null; source_file_id: string | null; created_at: Date };
   core_scan_inbox_items: { id: string; scan_batch_id: string | null; suggested_metadata: unknown };
 }
 
@@ -39,10 +39,11 @@ export function forwardedIdentity(text: string): { vendor: string | null; orderR
 
 /** Heal one workspace; answers how many sessions it renamed or numbered.
  *  `readText` reads a kept file's text, or null when it cannot. */
-export async function healForwardedSessionsIn(db: Kysely<HealDB>, readText: (fileId: string) => Promise<string | null>): Promise<number> {
+export async function healForwardedSessionsIn(db: Kysely<HealDB>, since: Date, readText: (fileId: string) => Promise<string | null>): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_batches")
     .select(["id", "vendor", "label", "order_ref", "source_file_id"])
+    .where("created_at", "<", since)
     .where("origin", "=", "email")
     .where("source_file_id", "is not", null)
     .where((eb) =>
@@ -84,10 +85,11 @@ export async function healForwardedSessionsIn(db: Kysely<HealDB>, readText: (fil
 export function registerForwardedSessionIdentityHeal(): void {
   registerHealPass({
     name: "core-scan.heal-forwarded-session-identity",
+    since: "2026-10-12T16:27:16Z",
     shim: "modules/core-scan/src/heal-forwarded-session-identity.ts",
     module: "core-scan",
-    visit: async ({ orgId, db }) => {
-      const n = await healForwardedSessionsIn(db as Kysely<HealDB>, async (fileId) => {
+    visit: async ({ orgId, db, since }) => {
+      const n = await healForwardedSessionsIn(db as Kysely<HealDB>, since, async (fileId) => {
         const f = await platform().files.read(orgId, fileId, "original").catch(() => null);
         return f ? new TextDecoder().decode(f.bytes) : null;
       });

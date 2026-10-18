@@ -23,7 +23,7 @@ import {
   Eye,
 } from "lucide-react";
 import { Link, Navigate, useParams } from "react-router-dom";
-import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput } from "@cobblr/platform-web";
+import { Code, SegmentedChoice, useConfirm, usePageTitle, usePageWidth, useToast, Modal, SearchInput, useSentWords } from "@cobblr/platform-web";
 import { setImpersonation } from "../lib/impersonation";
 import { displaySlug } from "../lib/workspaceSlug";
 import {
@@ -2014,10 +2014,12 @@ function AnnouncementsTab() {
   const [postCat, setPostCat] = useState("");
   const [postTitle, setPostTitle] = useState("");
   const [postBody, setPostBody] = useState("");
+  const postSent = useSentWords(`${postTitle}\n${postBody}`);
   const post = useMutation({
     mutationFn: () => api.postAnnouncement({ category: effectivePostCat, title: postTitle.trim(), body: postBody.trim() || undefined }),
     onSuccess: () => {
       toast.success("Posted to Discord.");
+      if (!postSent.landed()) return;
       setPostTitle("");
       setPostBody("");
     },
@@ -2042,7 +2044,9 @@ function AnnouncementsTab() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (postTitle.trim()) post.mutate();
+            if (!postTitle.trim()) return;
+            postSent.sending();
+            post.mutate();
           }}
           className="rounded-xl border border-line dark:border-slate-700 bg-subtle/50 dark:bg-slate-800/40 p-3 space-y-2"
         >

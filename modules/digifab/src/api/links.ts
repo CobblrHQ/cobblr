@@ -39,7 +39,9 @@ linksRouter.get(
   }),
 );
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — says which physical printer is which machine, so jobs for
+// the machine go to that printer; only someone looking at the printer can
+// tell, and a wrong link sends a print to the wrong bed
 linksRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -69,7 +71,8 @@ linksRouter.post(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — cuts the link that routes a machine's jobs to its
+// printer; it is made by someone at the printer (see POST above)
 linksRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {

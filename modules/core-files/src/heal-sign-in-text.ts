@@ -24,11 +24,12 @@ export const EMAILED_RECEIPT_TEXT = "emailed-receipt.txt";
 export const SIGN_IN_FOUND = "core-files.file.sign_in_found";
 
 /** Heal one workspace; answers how many files held a sign-in link. */
-export async function healSignInTextIn(orgId: string, db: Kysely<CoreFilesDB>): Promise<number> {
+export async function healSignInTextIn(orgId: string, db: Kysely<CoreFilesDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_files_files")
     .select(["id", "variants", "metadata"])
     .where("filename", "=", EMAILED_RECEIPT_TEXT)
+    .where("created_at", "<", since)
     .where("deleted_at", "is", null)
     .where("same_as", "is", null)
     .where(sql<boolean>`not (metadata ? 'sign_in_checked')`)
@@ -62,8 +63,9 @@ export async function healSignInTextIn(orgId: string, db: Kysely<CoreFilesDB>): 
 export function registerSignInTextHeal(): void {
   registerHealPass({
     name: "core-files.heal-sign-in-text",
+    since: "2026-10-10T01:40:43Z",
     shim: "modules/core-files/src/heal-sign-in-text.ts",
     module: "core-files",
-    visit: ({ orgId, db }) => healSignInTextIn(orgId, db as Kysely<CoreFilesDB>),
+    visit: ({ orgId, db, since }) => healSignInTextIn(orgId, db as Kysely<CoreFilesDB>, since),
   });
 }

@@ -12,7 +12,7 @@
 
 import { roleSatisfies, type OrgRoleName } from "@cobblr/platform-contract/org-roles";
 import { list, listEntries } from "../modules/registry.js";
-import { PLATFORM_ACTIONS } from "./platform-actions.js";
+import { PLATFORM_ACTIONS, platformActionChangesWorkspace } from "./platform-actions.js";
 
 export interface ActionGate {
   /** The lowest role that runs it without a grant, or "requester": the
@@ -59,6 +59,19 @@ export function gatePasses(actionId: string, role: string, held: (capability: st
 export function actionsRunBy(role: string, held: ReadonlySet<string>): string[] {
   if (!gates || gates.size === 0) gates = build();
   return [...gates.keys()].filter((id) => gatePasses(id, role, (c) => held.has(c)));
+}
+
+/** Whether running `actionId` changes the workspace rather than its
+ *  records: a platform action's `changes: "setup"`, a module action's
+ *  `changes: "workspace"` (#7356). A token that may change only records is
+ *  refused one at the invoke route. */
+export function actionChangesWorkspace(actionId: string): boolean {
+  if (platformActionChangesWorkspace(actionId)) return true;
+  for (const e of listEntries()) {
+    const a = (e.manifest.exposes?.actions ?? []).find((x) => x.id === actionId);
+    if (a) return a.changes === "workspace";
+  }
+  return false;
 }
 
 let heldByRole: Map<string, Set<string>> | null = null;

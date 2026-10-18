@@ -15,7 +15,7 @@ import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import { patternTextMatches, snippetsFor } from "./pattern-text.js";
 import { announceUnblocked, releaseDependentsOf } from "./deps.js";
 import { registerPatternNeedsShare } from "./share-children.js";
-import { makeNextOccurrence } from "./repeat.js";
+import { makeNextOccurrence, withdrawUntouchedOccurrence } from "./repeat.js";
 
 let registered = false;
 
@@ -264,8 +264,8 @@ export function registerProjectsHandlers(): void {
     if (!updated) return { ok: true, completed: 0, reason: "missing or already done" };
     platform().events.emit("projects.task.completed", { orgId: ctx.orgId, taskId: updated.id });
     await releaseDependentsOf(ctx.orgId, db, updated.id);
-    await makeNextOccurrence(ctx.orgId, db, updated.id);
-    return { ok: true, completed: 1, taskId: updated.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
+    const next = await makeNextOccurrence(ctx.orgId, db, updated.id);
+    return { ok: true, completed: 1, taskId: updated.id, ...(next ? { nextOccurrenceId: next } : {}), was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
   });
 }
 
@@ -350,7 +350,7 @@ function toResolvedTask(row: {
 
 function registerUndos(): void {
   platform().actions.registerHandler("projects.reopen-task", async (ctx) => {
-    const a = (ctx.args as { task_id?: unknown; status?: unknown; completed_at?: unknown } | null) ?? {};
+    const a = (ctx.args as { task_id?: unknown; status?: unknown; completed_at?: unknown; withdraw_next?: unknown } | null) ?? {};
     const id = String(a.task_id ?? "").trim();
     if (!id) return { ok: false, error: "missing task_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ProjectsDB>;
@@ -366,13 +366,16 @@ function registerUndos(): void {
       .returning(["id", "title"])
       .executeTakeFirst();
     if (!row) return { ok: false, error: `no task with id ${id}` };
-    return { ok: true, summary: `${row.title} is back to how it was.`, taskId: row.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
+    // Undoing the finish takes the next one back with it, unless someone has
+    // already touched it: then it is theirs and stays.
+    const withdrawn = a.withdraw_next === true ? await withdrawUntouchedOccurrence(db, id) : null;
+    return { ok: true, summary: withdrawn ? `${row.title} is back to how it was, and its next one is taken back.` : `${row.title} is back to how it was.`, taskId: row.id, was: { status: before?.status ?? "todo", completed_at: before?.completed_at ?? null } };
   });
   const back = (result: unknown) => {
-    const r = result as { ok?: unknown; taskId?: unknown; was?: { status?: unknown; completed_at?: unknown } } | null;
+    const r = result as { ok?: unknown; taskId?: unknown; nextOccurrenceId?: unknown; was?: { status?: unknown; completed_at?: unknown } } | null;
     if (r?.ok !== true || typeof r.taskId !== "string" || !r.was) return null;
     const at = r.was.completed_at instanceof Date ? r.was.completed_at.toISOString() : typeof r.was.completed_at === "string" ? r.was.completed_at : null;
-    return { action_id: "projects:reopen-task", args: { task_id: r.taskId, status: r.was.status ?? "todo", completed_at: at } };
+    return { action_id: "projects:reopen-task", args: { task_id: r.taskId, status: r.was.status ?? "todo", completed_at: at, ...(typeof r.nextOccurrenceId === "string" ? { withdraw_next: true } : {}) } };
   };
   platform().actions.registerUndo("projects.mark-task-done", back);
   platform().actions.registerUndo("projects.reopen-task", back);

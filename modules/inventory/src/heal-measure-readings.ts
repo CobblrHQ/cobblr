@@ -17,10 +17,10 @@ import { refreshMeasureReadings } from "./measure-readings.js";
 const BATCH = 5000;
 
 /** Heal one workspace; answers how many parts it read. */
-export async function healMeasureReadingsIn(orgId: string, db: Kysely<InventoryDB>): Promise<number> {
+export async function healMeasureReadingsIn(orgId: string, db: Kysely<InventoryDB>, since: Date): Promise<number> {
   let total = 0;
   for (;;) {
-    const n = await refreshMeasureReadings(db, { limit: BATCH, neverRead: true });
+    const n = await refreshMeasureReadings(db, { limit: BATCH, neverRead: true, madeBefore: since });
     total += n;
     if (n < BATCH) break;
   }
@@ -33,8 +33,9 @@ export async function healMeasureReadingsIn(orgId: string, db: Kysely<InventoryD
 export function registerMeasureReadingsHeal(): void {
   registerHealPass({
     name: "inventory.heal-measure-readings",
+    since: "2026-10-02T01:22:17Z",
     shim: "modules/inventory/src/heal-measure-readings.ts",
     module: "inventory",
-    visit: ({ orgId, db }) => healMeasureReadingsIn(orgId, db as Kysely<InventoryDB>),
+    visit: ({ orgId, db, since }) => healMeasureReadingsIn(orgId, db as Kysely<InventoryDB>, since),
   });
 }

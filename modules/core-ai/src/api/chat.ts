@@ -9,6 +9,7 @@
 // ignores the field) degrade to the legacy one-JSON-move protocol below.
 
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
+import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
@@ -960,7 +961,8 @@ async function answerTurn(
         // The escort tool (tier 1.5) rides the read rail — it mutates nothing
         // — but its OUTPUT is for the widget, not only the model: collect the
         // destinations so the response can move the user's screen there.
-        if (name === "take_user_to" && result.ok) {
+        // read_view opens the view it read, its inputs set (#6897).
+        if ((name === "take_user_to" || name === "read_view") && result.ok) {
           const esc = (result.data as { escort?: { path: string; label: string } } | null)?.escort;
           if (esc) escorts.push(esc);
         }
@@ -2061,6 +2063,7 @@ chatRouter.post(
   "/writes/:id/undo",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireAPerson(req, res))) return;
     const c = ctxOf(req);
     const userId = sessionUserId(req);
     if (!userId) {
@@ -2090,6 +2093,7 @@ chatRouter.post(
   "/undo-turn/:turnId",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireAPerson(req, res))) return;
     const userId = sessionUserId(req);
     if (!userId) {
       res.status(401).json({ error: { code: "no_session", message: "Sign in first." } });
@@ -2204,7 +2208,7 @@ const ExecProposal = z.union([
 const ExecBody = z.object({
   // The offer being confirmed. Its stored plan is what runs, never the copy
   // the browser sends back; the copy stays accepted for a panel loaded before
-  // offers were kept, and for callers (the MCP server) that make none.
+  // offers were kept. Only the person reaches this route (requireAPerson).
   offer_id: optionalUuid(),
   // What the user asked, so a CONFIRMED write is a worked example too. The
   // widget knows it; the server cannot, because a proposal arrives on its own
@@ -2219,6 +2223,7 @@ chatRouter.post(
   "/execute",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireAPerson(req, res))) return;
     const parsed = ExecBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const c = ctxOf(req);
@@ -2408,6 +2413,7 @@ chatRouter.post(
   "/offers/:id/cancel",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireAPerson(req, res))) return;
     const id = String(req.params.id ?? "");
     const me = sessionUserId(req) ?? "";
     const done = /^[0-9a-f-]{36}$/i.test(id) && (await answerOffer(tenantDb(req), me, id, "cancelled", { ok: true, message: "Okay, left it alone." }, ["open"]));

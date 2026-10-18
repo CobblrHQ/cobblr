@@ -29,7 +29,8 @@ import { lintProse } from "./prose-rules.mjs";
 import { ALL_ENTRY_TYPES, AUDIENCE_TYPES, isInternalChangelogEntry } from "./publish/changelog-filter.mjs";
 // plain .mjs module, shared with docs-flush so this gate and the
 // release-time splice can never disagree about what "the heading exists" means
-import { findHeadingLine, headingsAlreadyIn, listHeadings, paragraphsAlreadyIn, parseDocsTarget } from "./docs-target.mjs";
+import { findHeadingLine, headingsAlreadyIn, listHeadings, paragraphsAlreadyIn, parseDocsTarget, resolveDocsTarget } from "./docs-target.mjs";
+import { areaForScope, AREAS_FILE, GUIDE_INDEX } from "./lib/user-guide.mjs";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync } from "node:fs";
 
 // The archive is ~2,000 entries and grows with every change, so reading all of
@@ -139,7 +140,20 @@ function findBase(): string | null {
     if (/^docs_published:/m.test(fm)) continue;
     const target = fm.match(/^docs_target:\s*(.+)$/m)?.[1]?.trim();
     if (!target || /^none\s*\(.+\)$/.test(target)) continue;
-    const { file, heading } = parseDocsTarget(target);
+    const { file, heading, legacy } = resolveDocsTarget(target);
+    // The guide is one page per area: an entry still to publish names its
+    // area's page, so two features in different areas never edit one file.
+    if (target.startsWith(`${GUIDE_INDEX}#`) || target === GUIDE_INDEX) {
+      const scope = fm.match(/^scope:\s*(.+)$/m)?.[1]?.trim();
+      const page = areaForScope(scope ?? "") ?? (legacy ? file : null);
+      bad.push(
+        `  changelog.d/${f}: docs_target names ${GUIDE_INDEX}, which is the guide's index. ` +
+          (page
+            ? `Name the area page instead: docs_target: ${page}#${heading || "<Heading>"}`
+            : `Name the page of its area (docs/user-guide/<area>.md#<Heading>); scope "${scope ?? ""}" has no area yet, so add it to ${AREAS_FILE}`),
+      );
+      continue;
+    }
     if (!file.endsWith(".md") || !heading) {
       bad.push(`  changelog.d/${f}: docs_target must be "<path.md>#<Heading>" — got "${target}"`);
       continue;

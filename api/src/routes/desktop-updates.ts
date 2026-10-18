@@ -18,6 +18,7 @@
 // public GitHub release needed. Manifest path: env DESKTOP_UPDATES_FILE
 // (default ./data/desktop-releases.json).
 
+// EGRESS-FILE: operator-configured - the releases repository address is the operator's setting
 import {stationManifest} from "@cobblr/platform-contract/station-manifest";
 import { Router, type Response } from "express";
 import { z } from "zod";

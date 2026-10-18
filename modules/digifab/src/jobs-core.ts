@@ -15,7 +15,8 @@ import { enqueuePoll } from "./poll-worker.js";
 import { extractPlateMetadata } from "./library/extract-metadata.js";
 import { printerMaterialRefusal } from "./material-dispatch.js";
 import { machineOfJob } from "./loaded-spools.js";
-import { drawForCompletedJob } from "./loaded-spools.js";
+import { drawForCompletedJob, planCompletedMaterial } from "./loaded-spools.js";
+import { creditPendingOutput } from "./output-credit.js";
 import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
 import { takeBatchStartPermit, type BatchStartPermit } from "./batch-start-permit.js";
@@ -36,6 +37,7 @@ import { notifyPrint, progressBucket } from "./notify.js";
 // resolves it when the retry fires.
 import { kickAssign } from "./assign-worker.js";
 import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
+import { checkFamilyJobOutcome } from "./core/families.js";
 
 /** The manual camera URL set for a device (for the "Live view" link in print
  *  notifications). Null when none or no device. */
@@ -429,12 +431,16 @@ export async function pollJob(
     .selectAll()
     .where("id", "=", jobId)
     .executeTakeFirst();
-  if (!job || !job.remote_job_id || !job.connection_id) return null;
+  if (!job) return null;
   // A job Cobblr already considers finished is NEVER overwritten by the manager's
   // view. Without this guard a locally-cancelled job (driver has no cancelJob —
   // FDM Monster) was resurrected by its next poll: cancelled → printing → later a
   // spurious print.completed + filament deduction. Local terminal is final.
-  if (TERMINAL.has(job.status)) return { status: job.status, terminal: true, intervalMs: 0 };
+  if (TERMINAL.has(job.status)) {
+    if (job.material_pending) await drawForCompletedJob(db, orgId, job);
+    return { status: job.status, terminal: true, intervalMs: 0 };
+  }
+  if (!job.remote_job_id || !job.connection_id) return null;
   const conn = await platform().devices.connections().getInternal(orgId, job.connection_id);
   const { intervalMs, fast } = pollTuning(conn ?? null);
   const driver = await buildDriverById(db, orgId, job.connection_id);
@@ -533,11 +539,14 @@ export async function pollJob(
   const terminal = TERMINAL.has(status);
   const linkedMachineId = status === "completed" ? await machineOfJob(db, job) : job.linked_machine_id;
   const fields = { ...(status === "completed" ? { linked_machine_id: linkedMachineId } : {}), progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
+  const cutterJob = terminal && (!!await db.selectFrom("digifab_large_prints").select("job_id").where("job_id", "=", jobId).executeTakeFirst() || !!await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst());
+  const materialPlan = status === "completed" && !cutterJob && driver.printProcess !== "resin"
+    ? await planCompletedMaterial(db, orgId, job) : null;
   if (terminal) {
     // Status flip + bed-clear row, one transaction — see markJobTerminal. A
     // concurrent poll that already ended the job wins; this one emits nothing,
     // so a finish is announced, and a spool charged, exactly once.
-    const claimed = await markJobTerminal(db, job as never, status as "completed" | "failed" | "cancelled", fields);
+    const claimed = await markJobTerminal(db, job as never, status as "completed" | "failed" | "cancelled", { ...fields, ...(materialPlan ? { material_plan: JSON.stringify(materialPlan), material_pending: materialPlan.draws.length > 0, material_drawn: JSON.stringify([]) } : {}) });
     if (!claimed) {
       const now = await db.selectFrom("digifab_jobs").select("status").where("id", "=", jobId).executeTakeFirst();
       return { status: now?.status ?? status, terminal: true, intervalMs };
@@ -568,39 +577,16 @@ export async function pollJob(
   }
 
   if (terminal) {
-    const largePrint = !!await db.selectFrom("digifab_large_prints").select("job_id").where("job_id", "=", jobId).executeTakeFirst();
-    const cutterJob = largePrint || !!await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst();
+    if (materialPlan?.unfed.length) console.log(`[digifab] job ${jobId}: unloaded slots ${materialPlan.unfed.map(u => `${u.slot} (${u.grams} g)`).join(", ")}; no spool charged for those slots`);
     // (F-1 bed-clear `needs_attention` was already written atomically with the
     // status flip above — see the transaction — so an assign pass can never see
     // the freed bed without the attention row.)
     // The marquee reactivity hook: a default wire can carry
     // print.completed → projects:set-dep-satisfied / mark task done /
     // bump stock, with neither module importing the other.
-    // Surface the consumed filament as { partId, delta } so a seeded
-    // digifab.print.completed → inventory.adjust-stock wire deducts it (the
-    // adjust-stock handler reads partId/delta straight off the payload). Only
-    // on a clean completion — a failed print didn't consume the spool.
-    const grams = job.material_grams != null ? Number(job.material_grams) : null;
-    const material =
-      status === "completed" && driver.printProcess !== "resin" && job.material_part_id && grams && grams > 0
-        ? {
-            partId: job.material_part_id,
-            delta: -grams,
-            // In grams: the wire converts to the spool's own unit (kg).
-            unit: "g",
-            once: true,
-            reason: `Print: ${job.file_ref}`,
-            // Source attribution for the consumption ledger — "this print drew it down".
-            sourceKind: "digifab:job",
-            sourceId: jobId,
-          }
-        : {};
-    // No spool picked on the job: the spools loaded on its printer pay, each
-    // for its own slot's grams.
-    if (status === "completed" && !cutterJob && driver.printProcess !== "resin") {
-      await drawForCompletedJob(db, orgId, job as never).catch((err: unknown) =>
-        console.error(`[digifab] job ${jobId}: drawing from the loaded spools failed: ${(err as Error).message}`),
-      );
+    if (materialPlan?.draws.length) {
+      try { await drawForCompletedJob(db, orgId, job); }
+      catch (error) { platform().health.notePassFailure("digifab.material-recovery", orgId, error); }
     }
     // A driver-reported `cancelled` (someone stopped it at the printer) is NOT a
     // failure — firing print.failed for it ran failure wires + posted "❌ Print
@@ -616,7 +602,6 @@ export async function pollJob(
           linkedMachineId,
           ...(status === "completed" ? { hours: completedRunHours(elapsedSec, job.sent_at) } : {}),
           linkedTaskId: job.linked_task_id,
-          ...material,
         },
       );
     }
@@ -786,10 +771,7 @@ export async function recordJobOutcome(
     .where("id", "=", jobId)
     .executeTakeFirst();
   if (!job) return { recorded: false };
-  if (job.embroidery_run) {
-    const run = await db.selectFrom("digifab_embroidery_runs").select(["stock_recorded_at", "report"]).where("job_id", "=", jobId).executeTakeFirst();
-    if (!run?.stock_recorded_at || run.report?.verdict !== outcome) throw new ReviewRequired("Record the measured thread use and original verdict at the embroidery station first.");
-  }
+  if (job.embroidery_run) await checkFamilyJobOutcome("embroidery", db, jobId, outcome);
   const whole = Math.max(1, Number(job.build_qty ?? 1) || 1);
   const clean = (n: number) => Math.max(0, Math.floor(Number(n) || 0));
   const good = counts ? clean(counts.good) : outcome === "good" ? whole : 0;
@@ -798,7 +780,9 @@ export async function recordJobOutcome(
   if (job.resin_print) await settleResinPrint(db, orgId, jobId, settled, null);
   const large = await db.selectFrom("digifab_large_prints").select("consumed_at").where("job_id", "=", jobId).executeTakeFirst();
   if (large && !large.consumed_at) throw new ReviewRequired("Record roll and ink use at this printer before clearing the job.");
-  if (job.outcome_at) return { recorded: false };
+  // Already judged: its good output may still be waiting for its credit (a
+  // failed wire, a restart); ask again, which builds applies once per job.
+  if (job.outcome_at) { await creditPendingOutput(db, orgId, jobId); return { recorded: false }; }
 
   const claim = await db
     .updateTable("digifab_jobs")
@@ -816,23 +800,8 @@ export async function recordJobOutcome(
   if (Number(claim.numUpdatedRows ?? 0n) === 0) return { recorded: false };
 
   const committed = !!job.linked_build_id && !!job.build_consumed_at && !job.build_reversed_at;
-  if (committed && job.build_output_deferred && good > 0) {
-    const credit = await db
-      .updateTable("digifab_jobs")
-      .set({ build_output_at: new Date() })
-      .where("id", "=", jobId)
-      .where("build_output_at", "is", null)
-      .executeTakeFirst();
-    // Awaited: whoever gave the verdict re-reads stock the moment it answers.
-    if (Number(credit.numUpdatedRows ?? 0n) > 0) {
-      await platform().events.emit("digifab.job.build_output", {
-        orgId,
-        jobId,
-        buildId: job.linked_build_id,
-        qty: good,
-      });
-    }
-  }
+  // The output is stamped credited only when builds confirms it (output-credit.ts).
+  if (committed && job.build_output_deferred && good > 0) await creditPendingOutput(db, orgId, jobId);
   if (committed && good === 0) {
     await reverseBuildIfCommitted(db, orgId, jobId, source === "print-failed" ? "print failed" : "print scrapped");
   }

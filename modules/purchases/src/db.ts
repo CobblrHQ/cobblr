@@ -139,7 +139,20 @@ export interface PurchasesOrderPagesTable {
   updated_at: Generated<Date>;
 }
 
+export interface PurchasesReceiveOutboxTable {
+  id: string;
+  order_id: string;
+  line_id: string;
+  payload: Record<string, unknown>;
+  completed_recipients: Generated<string[]>;
+  next_attempt_at: Generated<Date>;
+  completed_at: Date | null;
+  last_error: string | null;
+  created_at: Generated<Date>;
+}
+
 export interface PurchasesDB {
+  purchases_receive_outbox: PurchasesReceiveOutboxTable;
   purchases_vendors: PurchasesVendorsTable;
   purchases_order_pages: PurchasesOrderPagesTable;
   purchases_order_shipments: PurchasesOrderShipmentsTable;

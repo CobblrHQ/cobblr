@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/digifab",
-  "version": "0.36.0",
+  "version": "0.37.0",
   "private": true,
   "type": "module",
   "main": "dist/module.js",
@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@cobblr/platform-contract": "workspace:*",
+    "@cobblr/platform-net": "workspace:*",
     "express": "^4.21.2",
     "fflate": "^0.8.3",
     "kysely": "^0.27.5",

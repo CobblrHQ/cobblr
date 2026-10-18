@@ -22,10 +22,11 @@
 // origin/main, not against the main you branched from.
 // Run: npx tsx scripts/lint-migration-ordinals.ts
 
+import { execFileSync } from "node:child_process";
 import { readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ordinalOf } from "./lib/migration-ordinal.mjs";
+import { nextOrdinal, ordinalOf } from "./lib/migration-ordinal.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -85,9 +86,42 @@ for (const dir of migrationDirs()) {
   }
 }
 
+// A NEW MIGRATION BELOW MAIN'S HIGHEST (2026-10-18): a branch added digifab 0073-0077 while main already had 0079,
+// each ordinal free, so the duplicate check above said nothing. Migrations apply in filename order, and a workspace
+// already past 0079 meets 0073 out of order. A migration this tree adds (absent from origin/main) must sort after
+// main's highest in its directory. Without origin/main (a checkout that cannot read it) the check says so and passes.
+const mainRef = (() => {
+  try {
+    return execFileSync("git", ["-C", ROOT, "rev-parse", "--verify", "-q", "origin/main"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return "";
+  }
+})();
+if (!mainRef) console.log("lint:migration-ordinals — origin/main is not readable here: the below-main check is skipped");
+else {
+  for (const dir of migrationDirs()) {
+    const abs = join(ROOT, dir);
+    if (!existsSync(abs)) continue;
+    let onMain: string[] = [];
+    try {
+      onMain = execFileSync("git", ["-C", ROOT, "ls-tree", "--name-only", `${mainRef}:${dir}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 1024 * 1024 * 1024 }).split("\n").filter((f) => f.endsWith(".sql"));
+    } catch {
+      continue; // a directory main does not have yet: everything in it is new, nothing to be below
+    }
+    const mainSet = new Set(onMain);
+    const highest = onMain.map((f) => ordinalOf(f)).filter((o): o is string => !!o).sort().pop();
+    if (!highest) continue;
+    for (const f of readdirSync(abs)) {
+      if (!f.endsWith(".sql") || mainSet.has(f)) continue;
+      const ord = ordinalOf(f);
+      if (ord && ord < highest) problems.push(`${dir}: new migration ${f} is numbered below main's highest (${highest}): take ${nextOrdinal(highest)}`);
+    }
+  }
+}
+
 if (problems.length > 0) {
   console.error(
-    "lint:migration-ordinals — two migrations share an ordinal (YYYYMMDD-NNN, or NNNN_ in a module):\n",
+    "lint:migration-ordinals — migration ordinals out of order (a shared ordinal, or a new one below main's highest):\n",
   );
   for (const p of problems) console.error(`  ✗ ${p}`);
   console.error(

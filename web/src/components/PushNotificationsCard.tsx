@@ -12,6 +12,10 @@ import { api, type MePushSettings, type NotificationPriority } from "../lib/api"
 import { dismissInstall } from "../lib/install-app";
 import { usePushHere } from "../lib/usePushHere";
 import { InstallWalkBody } from "./InstallWalk";
+import { PushHandoffPrompt } from "./PushHandoffPrompt";
+
+const PRIORITY_LABEL: Record<NotificationPriority, string> = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
+const PUSH_SAYS = { pushed: "pushed here", held: "held for quiet hours", "bell only": "bell only" } as const;
 
 const THRESHOLDS: Array<{ value: NotificationPriority; label: string }> = [
   { value: "urgent", label: "Urgent only" },
@@ -38,6 +42,11 @@ export function PushNotificationsCard() {
     mutationFn: (body: Partial<MePushSettings>) => api.setMePushSettings(body),
     onSuccess: refresh,
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save"),
+  });
+  const turnBackOn = useMutation({
+    mutationFn: (channel: string) => api.setChannelOff(channel, false),
+    onSuccess: refresh,
+    onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't turn that back on"),
   });
 
   const settings = q.data?.settings;
@@ -117,7 +126,7 @@ export function PushNotificationsCard() {
                     ? `Last try failed: ${d.last_failure}`
                     : d.last_success_at
                       ? `Last delivered ${relativeTime(d.last_success_at)}`
-                      : "Nothing sent yet"}
+                      : "Never delivered yet: send a test to check it"}
                 </div>
               </div>
               <button type="button" className={quiet} disabled={test.isPending} onClick={() => test.mutate(d.id)}>
@@ -181,6 +190,36 @@ export function PushNotificationsCard() {
           )}
         </div>
       )}
+
+      {/* Where each kind of update goes, so "bell only" is never a surprise (#7070). */}
+      {devices.length > 0 && q.data?.by_priority && (
+        <div className="space-y-1 text-sm" data-testid="push-routes">
+          <div className="text-content dark:text-mortar-200">Where your workspace updates go</div>
+          <ul className="space-y-0.5 text-xs text-muted dark:text-slate-400">
+            {q.data.by_priority.map((r) => (
+              <li key={r.priority} data-testid={`push-route-${r.priority}`}>
+                <span className="text-content dark:text-mortar-200">{PRIORITY_LABEL[r.priority]}:</span> {PUSH_SAYS[r.push]}
+                {r.also.length > 0 ? `, and ${r.also.join(", ")}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {(q.data?.channels_off?.length ?? 0) > 0 && (
+        <ul className="space-y-1 text-sm" data-testid="push-channels-off">
+          {q.data!.channels_off!.map((c) => (
+            <li key={c.channel} className="flex flex-wrap items-center gap-2">
+              <span className="text-muted dark:text-slate-400">{c.label} is off for your workspace updates.</span>
+              <button type="button" className={quiet} disabled={turnBackOn.isPending} onClick={() => turnBackOn.mutate(c.channel)}>
+                Turn back on
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {q.data?.handoff?.due && <PushHandoffPrompt handoff={q.data.handoff} onDone={refresh} />}
 
       {walking && (
         <Modal open onClose={() => setWalking(false)} size="sm">

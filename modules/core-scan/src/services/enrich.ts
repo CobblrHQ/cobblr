@@ -34,6 +34,7 @@ import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFi
 import { readScanFrameLot } from "./scan-frame-label.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName, type PendingReplaced } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
+import { allergenMeta } from "./open-facts-allergens.js";
 import { nameFromAmazonLabel } from "./fnsku-label.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
 import { trimCatalogMarginsWithVerdict } from "./trim-margins.js";
@@ -1176,6 +1177,7 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
         description: hit.description,
         raw: hit.raw,
         low_trust: lowTrust || undefined,
+        ...allergenMeta(hit.raw),
         // `decoded` is the role-fill's bag (title included, for a field that
         // declares decode:title); `fields` is the by-name bag the commit lands
         // on the record's metadata, so the title stays out of it: the name

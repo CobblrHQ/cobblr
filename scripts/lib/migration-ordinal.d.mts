@@ -7,3 +7,6 @@ export declare function ordinalOf(filename: string): string | null;
 
 /** Is this repo path a directory of ordered migrations? */
 export declare function isMigrationDir(dir: string): boolean;
+
+/** The next free ordinal after `highest`, in its own shape. */
+export declare function nextOrdinal(highest: string, today?: Date): string;

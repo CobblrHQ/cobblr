@@ -2,6 +2,7 @@
 // embed / classify-image / extract-text. Cost is per model from the one
 // price table in openai-models.ts.
 
+// EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import { sendDroppingRefused } from "./refused-params.js";
 import { platform, type AiCapability, isChatTurn } from "@cobblr/platform-contract";
 import { providerError, providerSentence, reasonFromResponse, reasonFromTransportError, redactSecrets, retryAfterSecOf } from "@cobblr/platform-contract/provider-reason";

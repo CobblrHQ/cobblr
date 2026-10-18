@@ -9,6 +9,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { readFailureConfig, detectOnce, ewmUpdate, crossed } from "../failure-detect.js";
 import type { DetectorManifest } from "../detectors/manifest.js";
 import { detectorCatalog, resolveDetector } from "../detectors/registry.js";
@@ -37,7 +38,7 @@ failureRouter.get(
   }),
 );
 
-const ConfigBody = z.object({
+export const ConfigBody = z.object({
   enabled: z.boolean().optional(),
   threshold: z.number().min(0.1).max(0.99).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   sample_interval_sec: z.number().int().min(5).max(600).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
@@ -45,21 +46,25 @@ const ConfigBody = z.object({
   backend: z.enum(["auto", "edge", "llm", "detector"]).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   detector_id: z.string().uuid().nullable().optional(),
 });
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+/** The one write of the failure-detection config, for the route and digifab:set-failure-detection. */
+export async function writeFailureConfig(db: ReturnType<typeof tenantDb>, change: z.infer<typeof ConfigBody>) {
+  const patch = { ...change, updated_at: new Date() };
+  await db
+    .insertInto("digifab_failure_config")
+    .values({ id: true, ...patch })
+    .onConflict((oc) => oc.column("id").doUpdateSet(patch))
+    .execute();
+  return readFailureConfig(db);
+}
+
+// AI-ACTION: digifab:set-failure-detection
 failureRouter.put(
   "/config",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:set-failure-detection"))) return;
     const parsed = ConfigBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "invalid failure-detection config" } });
-    const db = tenantDb(req);
-    const patch = { ...parsed.data, updated_at: new Date() };
-    await db
-      .insertInto("digifab_failure_config")
-      .values({ id: true, ...patch })
-      .onConflict((oc) => oc.column("id").doUpdateSet(patch))
-      .execute();
-    res.json(await readFailureConfig(db));
+    res.json(await writeFailureConfig(tenantDb(req), parsed.data));
   }),
 );
 
@@ -88,19 +93,21 @@ failureRouter.get(
 );
 
 // ── manual "check now" — one sample, no state change ─────────────────────────
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+/** One sample, no state change: the route's "check now" and digifab:check-for-failure. */
+export async function checkForFailureOnce(db: ReturnType<typeof tenantDb>, orgId: string, connectionId: string, deviceId: string) {
+  const cfg = await readFailureConfig(db);
+  const r = await detectOnce(db, orgId, connectionId, deviceId, cfg);
+  if (!r) return { available: false as const, reason: "no reading (no camera frame, or no model / AI provider)" };
+  // Show how this single reading would move a fresh score against the threshold.
+  return { available: true as const, probability: r.probability, source: r.source, would_trip: crossed(r.probability, cfg.threshold), projected_score: ewmUpdate(0, r.probability) };
+}
+
+// AI-ACTION: digifab:check-for-failure
 failureRouter.post(
   "/:connectionId/:deviceId/check",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const db = tenantDb(req);
-    const orgId = tenantContext(req).org.id;
-    const cfg = await readFailureConfig(db);
-    const r = await detectOnce(db, orgId, req.params.connectionId!, req.params.deviceId!, cfg);
-    if (!r) return void res.status(200).json({ available: false, reason: "no reading (no camera frame, or no model / AI provider)" });
-    // Show how this single reading would move a fresh score against the threshold.
-    const projected = ewmUpdate(0, r.probability);
-    res.json({ available: true, probability: r.probability, source: r.source, would_trip: crossed(r.probability, cfg.threshold), projected_score: projected });
+    if (!(await requireCapability(req, res, "digifab:check-for-failure"))) return;
+    res.json(await checkForFailureOnce(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!));
   }),
 );
 
@@ -164,7 +171,9 @@ async function safeBaseUrl(res: import("express").Response, url: string): Promis
 }
 
 /** Create a detector. `key` must be a known external detector package. */
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+// AI-REACH: exempt — takes an outside detector's API key and the address the
+// printers' camera frames are sent to; the assistant never handles a secret
+// or redirects where images go
 failureRouter.post(
   "/detectors",
   asyncHandler(async (req, res) => {
@@ -213,7 +222,8 @@ const DetectorPatch = z.object({
   enabled: z.boolean().optional(),
 });
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+// AI-REACH: exempt — can replace a detector's key or the address frames go
+// to; see POST above
 failureRouter.patch(
   "/detectors/:id",
   asyncHandler(async (req, res) => {
@@ -249,7 +259,8 @@ failureRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — deletes a detector's stored key for good and stops its
+// watch; no undo can bring a secret back
 failureRouter.delete(
   "/detectors/:id",
   asyncHandler(async (req, res) => {
@@ -284,7 +295,7 @@ failureRouter.get(
  *  A detector that moved to an adapter connection (service_connection_id)
  *  takes its address and key from THAT connection, the one place they live
  *  now; the row's old copies are never read again. */
-async function detectorConn(db: ReturnType<typeof tenantDb>, orgId: string, id: string) {
+export async function detectorConn(db: ReturnType<typeof tenantDb>, orgId: string, id: string) {
   const row = await db
     .selectFrom("digifab_detectors")
     .select(["key", "base_url", "credentials_enc", "service_connection_id"])
@@ -377,7 +388,9 @@ const RegisterPrinterBody = z.object({
 
 /** Register a printer in the detector service (which auto-registers its webcam),
  *  then optionally bind a monitor so it watches — the "Add to PrintGuard" flow. */
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — registers a printer, with its address and access code,
+// in an outside detector service; a secret leaving for another service is
+// the owner's call
 failureRouter.post(
   "/detectors/:id/printers",
   asyncHandler(async (req, res) => {
@@ -412,7 +425,9 @@ const MirrorBody = z.object({
  *  the detector using the manifest's connectionMappings — the credential stays
  *  server-side (never sent to the client). Generic: any connection type with a
  *  mapping works; perDevice types (Bambu) need a device_id. */
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — copies a connection's stored credentials into an outside
+// detector service and can switch Cobblr's own connection off; a secret
+// leaving for another service is the owner's call
 failureRouter.post(
   "/detectors/:id/printers/from-connection",
   asyncHandler(async (req, res) => {
@@ -490,11 +505,11 @@ failureRouter.get(
 );
 
 /** Reachability check — hit the detector's health endpoint (or its base URL). */
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-ACTION: digifab:test-detector
 failureRouter.post(
   "/detectors/:id/test",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:test-detector"))) return;
     const d = await detectorConn(tenantDb(req), tenantContext(req).org.id, req.params.id!);
     if (!d) return void res.status(404).json({ error: { code: "not_found", message: "detector not found" } });
     res.json(await testDetectorManifest(d.manifest, d.conn.baseUrl, d.conn.apiKey));

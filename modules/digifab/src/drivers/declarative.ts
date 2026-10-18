@@ -34,7 +34,7 @@ const KNOWN_CONTROLS: Record<string, ControlDef> = {
   light_off: { id: "light_off", label: "Light off", kind: "action", group: "accessory" },
 };
 import type { DriverManifest } from "./manifest.js";
-import { assertSafeMachineUrl } from "./ssrf.js";
+import { machineFetch } from "./machine-fetch.js";
 
 const JOB_STATES = new Set<JobState>([
   "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
@@ -109,8 +109,7 @@ export class DeclarativeDriver implements MachineDriver {
   }
 
   protected async req(method: string, path: string, init: RequestInit = {}): Promise<Response> {
-    await assertSafeMachineUrl(path);
-    return fetch(path, {
+    return machineFetch(path, {
       ...init,
       method,
       headers: { ...(init.headers as Record<string, string>), ...this.authHeaders() },

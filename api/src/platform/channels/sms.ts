@@ -57,6 +57,7 @@ export const smsChannel: Channel = {
     const basic = Buffer.from(`${cfg.account_sid}:${cfg.auth_token}`).toString("base64");
     const body = `[${event.eventType}] ${event.message}`.slice(0, 1000);
     return postJson({
+      orgId: event.orgId,
       url,
       formEncoded: true,
       body: {

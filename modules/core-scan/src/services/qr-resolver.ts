@@ -14,7 +14,7 @@
 //
 // See docs/design-decisions/external-qr-resolver.md.
 
-import type { Kysely } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { ResolveOutcome as RegistryOutcome, ResolveCandidate as RegistryCandidate } from "@cobblr/platform-contract/resolvables";
 import type { CoreScanDB } from "../db.js";
@@ -65,6 +65,9 @@ export interface ResolveCandidate {
   /** Which rule produced it: one key can match several rules across kinds. */
   rule_id: string;
   rule_name: string;
+  /** The picker's "only this from now on" (scan-scope.ts): the record this
+   *  candidate is a unit of, when it is one. */
+  scope?: { within?: { kind: string; id: string; title: string } };
 }
 
 /** Cap on candidates carried back for disambiguation. A key matching more than
@@ -324,6 +327,7 @@ export async function resolveExternalScan(
   const rules = await loadEnabledRules(db);
 
   const bareLists: ResolveCandidate[][] = [];
+  const bareRules: string[] = [];
   let truncated = false;
   let firstBare: { rule: QrRule; key: string; kind: string } | null = null;
 
@@ -335,6 +339,7 @@ export async function resolveExternalScan(
     if (rule.match.type !== "bare") {
       // Structural match: this rule owns the scan either way.
       const first = resolved.candidates[0];
+      tallyRules(db, [rule.id], resolved.candidates.length > 1);
       if (first) {
         if (resolved.candidates.length === 1) {
           return { outcome: "resolved", ...first };
@@ -358,6 +363,7 @@ export async function resolveExternalScan(
     if (!firstBare) firstBare = { rule, key: matched.key, kind: resolved.kind };
     truncated = truncated || resolved.truncated;
     bareLists.push(resolved.candidates);
+    bareRules.push(rule.id);
   }
 
   const ruleOutcome = decideOutcome(mergeCandidates(bareLists), {
@@ -372,6 +378,8 @@ export async function resolveExternalScan(
         }
       : null,
   });
+
+  if (bareRules.length) tallyRules(db, bareRules, ruleOutcome.outcome === "ambiguous");
 
   // The workspace's own rules had nothing to say. Before giving up, ask the
   // resolvable registry: a value can be a DECLARED identifier (a part's serial,
@@ -417,4 +425,37 @@ function mapRegistryOutcome(reg: RegistryOutcome, value: string): ResolveOutcome
     };
   }
   return { outcome: "no_rule" };
+}
+
+/** Count a scan against each rule that matched it, and whether it named more
+ *  than one thing (#6892, D6): the rules page's "matched more than one thing
+ *  in 14 of 212 scans". Counted workspace-wide, before any scan scope, since
+ *  it measures the numbering, not the pass. Never holds up the scan. */
+function tallyRules(db: Kysely<CoreScanDB>, ruleIds: string[], ambiguous: boolean): void {
+  // DETACHED: a count for the rules page; the scan's answer never waits on it
+  void db
+    .insertInto("core_scan_qr_rule_tallies")
+    // The database's day, as the 30-day read below counts it: a tally is
+    // nobody's calendar, only a window the two sides must agree on.
+    .values(ruleIds.map((rule_id) => ({ rule_id, day: sql<string>`current_date`, scans: 1, ambiguous: ambiguous ? 1 : 0 })))
+    .onConflict((oc) =>
+      oc.columns(["rule_id", "day"]).doUpdateSet({
+        scans: sql`core_scan_qr_rule_tallies.scans + 1`,
+        ambiguous: sql`core_scan_qr_rule_tallies.ambiguous + excluded.ambiguous`,
+      }),
+    )
+    .execute()
+    .catch((err: Error) => console.warn(`[core-scan] resolver tally not counted: ${err.message}`));
+}
+
+/** Each rule's last 30 days: scans it matched, and how many of those named
+ *  more than one thing. */
+export async function ruleTallies(db: Kysely<CoreScanDB>): Promise<Map<string, { scans: number; ambiguous: number }>> {
+  const rows = await db
+    .selectFrom("core_scan_qr_rule_tallies")
+    .select(["rule_id", sql<number>`sum(scans)::int`.as("scans"), sql<number>`sum(ambiguous)::int`.as("ambiguous")])
+    .where("day", ">=", sql<string>`current_date - 30`)
+    .groupBy("rule_id")
+    .execute();
+  return new Map(rows.map((r) => [r.rule_id, { scans: Number(r.scans), ambiguous: Number(r.ambiguous) }]));
 }

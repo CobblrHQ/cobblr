@@ -128,6 +128,7 @@ export default defineModule({
         // NO-PHRASING: offered by the notification and order sheet after an automatic close
         group: "more",
         id: "sales:undo-delivery-close",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Undo delivery close", icon: "undo",
@@ -139,6 +140,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "more",
         id: "sales:remove-line",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Remove an order line",
@@ -154,6 +156,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:add-line",
+        changes: "records",
         runBy: "member",
         examples: ["add a line to that order", "they want two more"],
         undoable: true,
@@ -173,12 +176,13 @@ export default defineModule({
       {
         group: "more",
         id: "sales:cancel-order",
+        changes: "records",
         runBy: "member",
         examples: ["cancel that order", "they cancelled"],
         undoable: true,
         label: "Cancel order",
         description:
-          "Cancel a sales order. One that has not shipped puts back on the shelf what Fulfill took from it. One that has shipped needs returned: true (it came back, so its stock goes back) or false (cancel it, stock stays as it is); without it the answer asks. Undo takes the stock again and restores the status. Args: { returned? }.",
+          "Cancel a sales order. One that has not shipped puts back on the shelf what Fulfill took from it. One that has shipped needs returned: true (it came back, so its stock goes back) or false (cancel it, stock stays as it is); without it the answer asks. Undo takes the stock again; if any is missing, the order stays open for the rest. Args: { returned? }.",
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.cancel-order",
         userInvokable: true,
@@ -190,10 +194,11 @@ export default defineModule({
         // NO-PHRASING: the way back for a cancel, run only from Undo
         group: "more",
         id: "sales:reinstate-order",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Reinstate a cancelled order",
-        description: "Internal, the inverse of cancelling a sales order: restores its status and takes again what the cancel put back. Runs from Undo; not for direct use.",
+        description: "Internal, the inverse of cancelling a sales order: takes again what the cancel put back, restoring its former status only when its stock is covered. Missing stock leaves the order open for fulfilment. Runs from Undo; not for direct use.",
         icon: "undo",
         appliesTo: { kinds: ["sales:order"] },
         userInvokable: false,
@@ -206,6 +211,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:fulfill-order",
+        changes: "records",
         runBy: "member",
         examples: ["that order went out", "mark it shipped"],
         label: "Fulfill order",
@@ -222,6 +228,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:make-line",
+        changes: "records",
         runBy: "member",
         examples: ["make the brackets for that order", "put 5 of those in to be made"],
         label: "Make this for the order",
@@ -239,6 +246,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:ship-order",
+        changes: "records",
         runBy: "member",
         examples: ["that order went out with UPS", "it shipped, here is the tracking number"],
         label: "Ship order",
@@ -257,6 +265,7 @@ export default defineModule({
         // UI-REACH: inbound mail creates a draft; the Sales order sheet offers review and confirmation.
         group: "more",
         id: "sales:read-order-email",
+        changes: "records",
         runBy: "member",
         examples: ["read this order email"],
         label: "Read an order email",
@@ -274,6 +283,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /sales (New order creates through the orders route rather than this import action)
         id: "sales:create-order",
+        changes: "records",
         runBy: "member",
         examples: ["a new order came in", "record an order from the shop"],
         label: "Create order",
@@ -300,6 +310,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:prepare-document",
+        changes: "records",
         runBy: "member",
         examples: ["Make a quote for this order", "Issue an invoice for this order"],
         label: "Prepare a quote or invoice",
@@ -317,6 +328,7 @@ export default defineModule({
       {
         group: "more",
         id: "sales:send-document",
+        changes: "records",
         userInvokable: false,
         undoable: false,
         effect: "spends",

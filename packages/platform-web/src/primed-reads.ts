@@ -23,6 +23,9 @@ export const PRIMED_FOR_MS = 10_000;
 
 let entries = new Map<string, SnapshotEntry>();
 let until = 0;
+// Moved on by every clear (a write, the page leaving, another account), so a
+// snapshot asked for before it cannot put its older answers back (#7142).
+let generation = 0;
 let held: { prefix: string; except: string; done: Promise<void> } | null = null;
 
 /** "/orgs/…" for a request's path, with or without the "/api/v1" base. */
@@ -32,16 +35,28 @@ function pathOf(input: string): string {
   return snapshotKey(path);
 }
 
-/** The snapshot's answers, good for `forMs`. Replaces any before them. */
-export function primeReads(snapshot: Record<string, SnapshotEntry>, forMs = PRIMED_FOR_MS, now = Date.now()): void {
+/** Taken when a snapshot is asked for, and handed to primeReads with its
+ *  answer: a write or a page change in between makes it stale. */
+export function primeTicket(): number {
+  return generation;
+}
+
+/** The snapshot's answers, good for `forMs`. Replaces any before them, unless
+ *  something cleared the primed reads after the snapshot was asked for
+ *  (`ticket` from primeTicket then): a write in between would otherwise be
+ *  undone by the older answers for another ten seconds (#7142). */
+export function primeReads(snapshot: Record<string, SnapshotEntry>, ticket: number, forMs = PRIMED_FOR_MS, now = Date.now()): boolean {
+  if (ticket !== generation) return false;
   entries = new Map(Object.entries(snapshot).map(([k, v]) => [snapshotKey(k), v]));
   until = now + forMs;
+  return true;
 }
 
 /** Drop every primed answer: a write happened, or the page went away. */
 export function clearPrimedReads(): void {
   entries = new Map();
   until = 0;
+  generation++;
 }
 
 /** Until `done` settles, a GET under `/orgs/<slug>/` waits for it: all but

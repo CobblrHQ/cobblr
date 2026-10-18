@@ -1,3 +1,4 @@
+// EGRESS-FILE: vendor-fixed - the printer maker's dashboard host, written in the code
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MachineDriver, ManagerConfig, RemoteDevice, JobStatus, UploadResult, SubmitResult } from "./types.js";

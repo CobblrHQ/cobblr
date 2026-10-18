@@ -116,6 +116,51 @@ export function consumeOldest(
   return { batches: out.filter((b) => b.qty > 0), consumed };
 }
 
+/** Which lot a row named: the three things that make a lot itself. A date a
+ *  record never had (a bare expiry date with no arrival) leaves received_on
+ *  empty, and then only the other two decide. */
+export interface LotPick {
+  received_on?: string;
+  expires_on?: string;
+  lot?: string;
+}
+
+const isPick = (pick: LotPick | undefined): pick is LotPick => !!pick && !!(pick.received_on || pick.expires_on || pick.lot);
+
+/** Does this lot answer to what the row named? */
+export function lotIs(b: Batch, pick: LotPick): boolean {
+  return (
+    (!pick.received_on || b.received_on === pick.received_on) &&
+    (!pick.expires_on || b.expires_on === pick.expires_on) &&
+    (!pick.lot || (b.lot ?? "") === pick.lot.trim())
+  );
+}
+
+/**
+ * Eat one from the lot a row named, not from the oldest. A lot that is not
+ * there any more (the row was stale) is refused rather than answered from
+ * another lot: the person would see the wrong carton leave.
+ */
+export function consumeLot(
+  batches: Batch[],
+  pick: LotPick,
+  count = 1,
+): { batches: Batch[]; lot: Batch } | { refused: "no_such_lot" } {
+  const out = sortBatches(batches).map((b) => ({ ...b }));
+  const target = out.find((b) => b.qty > 0 && lotIs(b, pick));
+  if (!target) return { refused: "no_such_lot" };
+  const lot = { ...target };
+  target.qty -= Math.min(target.qty, Math.max(1, Math.trunc(count)));
+  return { batches: out.filter((b) => b.qty > 0), lot };
+}
+
+/** The lot a request names, from its args; undefined when it names none. */
+export function lotPickOf(args: { lot_received_on?: unknown; lot_expires_on?: unknown; lot_number?: unknown } | null | undefined): LotPick | undefined {
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+  const pick: LotPick = { received_on: text(args?.lot_received_on), expires_on: text(args?.lot_expires_on), lot: text(args?.lot_number) };
+  return isPick(pick) ? pick : undefined;
+}
+
 /**
  * Take `count` out of these lots to move somewhere else, keeping what each
  * piece IS: its expiry, when it arrived, its lot number. The soonest-expiring

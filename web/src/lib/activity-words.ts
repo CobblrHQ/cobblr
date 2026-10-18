@@ -179,6 +179,7 @@ export const FEED_VERBS: Readonly<Record<string, string>> = {
   part_removed: "took a part out of",
   // One-tap stock changes (a button, or a scanned action label).
   part_used: "took one of",
+  part_redated: "re-dated",
   part_restocked: "restocked",
   stock_consumed: "used components from",
   part_storage_changed: "changed storage for",

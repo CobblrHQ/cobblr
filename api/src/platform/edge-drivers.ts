@@ -17,6 +17,7 @@
 //
 // See docs/design-decisions/managed-edge-bridge.md.
 
+// EGRESS-FILE: operator-configured - the driver bundle source is listed by the operator, never typed by a workspace; the fetch is injectable for a test
 import { createHash } from "node:crypto";
 
 export interface EdgeDriverEntry {

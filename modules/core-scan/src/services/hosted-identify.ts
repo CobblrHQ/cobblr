@@ -17,6 +17,7 @@
 //
 // Operator-configured internal service ⇒ plain fetch, strict-egress-safe
 // (the env-set-URL convention, docs/architecture/platform-spec.md §14.1).
+// EGRESS-FILE: operator-configured - the hosted identify address is the operator's setting
 import { nameReadsAsProse } from "./item-name.js";
 import { parseProductRegion } from "./image-ops.js";
 import { parseListing } from "./listing-evidence.js";

@@ -9,6 +9,7 @@
 // The DM itself goes through the bot (sendDiscordDm); this module only resolves
 // WHO. `||` not `??` for env defaults (core docs/architecture/platform-spec.md §14.6).
 
+// EGRESS-FILE: vendor-fixed - Discord's OAuth endpoints, written in the code
 import { SignJWT, jwtVerify } from "jose";
 import { env } from "../env.js";
 import { publicBaseUrl } from "./public-url.js";

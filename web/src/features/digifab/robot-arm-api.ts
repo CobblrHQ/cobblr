@@ -4,8 +4,11 @@ export interface ArmProgram { id: string; machine_id: string; name: string; revi
 export interface Evidence { tested_on: string; by: string; setup: string; notes: string }
 export interface ArmCompatibility { controller_generation: string; firmware: string; options: string[]; interfaces: Array<{ name: string; enabled: boolean; read: boolean; write: boolean }>; simulator_evidence: Evidence | null; hardware_evidence: Evidence | null }
 export interface ArmCommandRow { id: string; operation: string; params: Record<string, unknown>; via: "page" | "station" | "assistant"; ok: boolean; detail: string; created_at: string; user_id: string | null }
+export interface ArmRun { id: string; kind: string; label: string; ref: string; target_cycles: number | null; status: "starting" | "uncertain" | "running" | "ended"; outcome: "completed" | "aborted" | "unknown" | "not-started" | null; controller_run_id: string | null; cycles: number; good: number; scrap: number; link_lost: "cloud" | "controller" | null; started_at: string; ended_at: string | null; evidence: Record<string, unknown> }
+export interface ArmApproval { id: string; program_id: string; revision: string | null; tooling: string; expires_at: string }
 export interface ArmView {
- unit: null | { machine_id: string; connection_id: string | null; device_id: string | null; maintenance: "in-service" | "down-for-repair"; maintenance_note: string; last_info: ArmInfo | null; info_seen_at: string | null };
+ unit: null | { machine_id: string; connection_id: string | null; device_id: string | null; maintenance: "in-service" | "down-for-repair"; maintenance_note: string; last_info: ArmInfo | null; info_seen_at: string | null; tooling: string };
+ link_lost: "cloud" | "controller" | null; ownership: { station_id: string; expires_at: string } | null; approvals: ArmApproval[]; open_run: ArmRun | null; runs: ArmRun[];
  state: ArmState | null; connection_error: string | null; programs: ArmProgram[]; families: Array<{ family: string | null; programs: ArmProgram[] }>;
  compatibility: ArmCompatibility | null; support: "untested" | "simulator" | "hardware"; items: ArmCommandRow[]; total: number;
 }
@@ -16,4 +19,11 @@ export const addProgram = (slug: string, machine: string, body: { name: string; 
 export const editProgram = (slug: string, id: string, body: { family?: string | null; tool?: string; installation?: string }) => api.request("PATCH", `/orgs/${slug}/modules/digifab/arms/programs/${id}`, body);
 export const saveCompatibility = (slug: string, machine: string, body: ArmCompatibility) => api.request("PATCH", `/orgs/${slug}/modules/digifab/arms/${machine}/compatibility`, body);
 export const setMaintenance = (slug: string, machine: string, body: { maintenance: "in-service" | "down-for-repair"; note: string }) => api.request("PATCH", `/orgs/${slug}/modules/digifab/arms/${machine}/maintenance`, body);
-export const commandArm = (slug: string, machine: string, command: ArmCommand, extra: { station_token?: string; confirmed?: boolean } = {}) => api.request<{ ok: boolean; detail?: string }>("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/command`, { command, ...extra });
+export const commandArm = (slug: string, machine: string, command: ArmCommand, extra: { station_token?: string } = {}) => api.request<{ ok: boolean; detail?: string }>("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/command`, { command, ...extra });
+export const setTooling = (slug: string, machine: string, tooling: string) => api.request("PATCH", `/orgs/${slug}/modules/digifab/arms/${machine}/tooling`, { tooling });
+export const takeControl = (slug: string, machine: string, station_token: string) => api.request<{ expires_at: string }>("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/control`, { station_token });
+export const releaseControl = (slug: string, machine: string, station_token: string) => api.request("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/control/release`, { station_token });
+export const revokeControl = (slug: string, machine: string) => api.request("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/control/revoke`, {});
+export const approveRun = (slug: string, machine: string, body: { station_token: string; program_id: string; tooling: string; cell_clear: true }) => api.request<ArmApproval>("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/approvals`, body);
+export const startRun = (slug: string, machine: string, body: { station_token: string; approval_id: string; kind: string; label: string; ref: string; target_cycles: number | null }) => api.request<ArmRun>("POST", `/orgs/${slug}/modules/digifab/arms/${machine}/runs`, body);
+export const endRun = (slug: string, run: string, body: { outcome: "unknown" | "aborted"; note: string }) => api.request<ArmRun>("POST", `/orgs/${slug}/modules/digifab/arms/runs/${run}/end`, body);

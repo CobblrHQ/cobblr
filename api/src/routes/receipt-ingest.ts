@@ -755,22 +755,3 @@ receiptAddressRouter.post("/:slug/receipt-address/email-me", requireAuth, withTe
     next(err);
   }
 });
-
-/** Hand a store's order page link to Purchases for one person's workspace,
- *  as that person, the way a live order email does (#5461). Purchases seals it
- *  and attaches it to the order with that number. The answer says whether it
- *  landed, and whether trying again could help; it never echoes the link. */
-export async function handOrderPageLink(input: { orgId: string; userId: string; link: string; orderNumber: string | null }): Promise<{ ok: boolean; retry: boolean }> {
-  const org = await meta.selectFrom("orgs").select("slug").where("id", "=", input.orgId).executeTakeFirst();
-  if (!org) return { ok: false, retry: false };
-  try {
-    const r = await apiFetch(`${INTERNAL_API}/api/v1/orgs/${org.slug}/modules/purchases/order-pages`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${await signSession(input.userId)}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ link: input.link, order_number: input.orderNumber }),
-    });
-    return { ok: r.ok, retry: r.status >= 500 };
-  } catch {
-    return { ok: false, retry: true };
-  }
-}

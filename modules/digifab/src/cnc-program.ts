@@ -87,7 +87,7 @@ export function parseCncProgram(code: string, rapidFeed = 3000): CncProgram {
      if(values.I!==undefined||values.J!==undefined)fail("Use either R or I/J for an arc.");
      const dx=next.x-position.x,dy=next.y-position.y,chord=Math.hypot(dx,dy),r=values.R*scale;
      if(!chord||chord>2*Math.abs(r)+1e-6)fail("The arc radius does not match its endpoints.");
-     const h=Math.sqrt(Math.max(0,r*r-chord*chord)),side=(cw?-1:1)*(r<0?-1:1);
+     const h=Math.sqrt(Math.max(0,r*r-chord*chord/4)),side=(cw?-1:1)*(r<0?-1:1);
      cx=(position.x+next.x)/2-side*dy/chord*h;cy=(position.y+next.y)/2+side*dx/chord*h;
     } else {
      if(values.I===undefined&&values.J===undefined)fail("An arc needs an explicit centre or radius.");

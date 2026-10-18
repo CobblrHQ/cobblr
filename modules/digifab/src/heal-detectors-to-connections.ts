@@ -89,8 +89,8 @@ export async function moveDetectorToConnection(orgId: string, db: Db, rowId: str
 }
 
 /** Heal one workspace: every unmoved row. */
-export async function healDetectorsIn(orgId: string, db: Db, deps: MoveDeps = REAL()): Promise<number | { found: number; settled: boolean }> {
-  const rows = await db.selectFrom("digifab_detectors").select(["id"]).where("service_connection_id", "is", null).execute();
+export async function healDetectorsIn(orgId: string, db: Db, since: Date, deps: MoveDeps = REAL()): Promise<number | { found: number; settled: boolean }> {
+  const rows = await db.selectFrom("digifab_detectors").select(["id"]).where("service_connection_id", "is", null).where("created_at", "<", since).execute();
   if (rows.length === 0) return 0;
   let moved = 0;
   let unhealable = 0;
@@ -115,8 +115,9 @@ export async function healDetectorsIn(orgId: string, db: Db, deps: MoveDeps = RE
 export function registerDetectorsToConnectionsHeal(): void {
   registerHealPass({
     name: "digifab.heal-detectors-to-connections",
+    since: "2026-09-30T23:13:35Z",
     shim: "modules/digifab/src/heal-detectors-to-connections.ts",
     module: "digifab",
-    visit: ({ orgId, db }) => healDetectorsIn(orgId, db as Db),
+    visit: ({ orgId, db, since }) => healDetectorsIn(orgId, db as Db, since),
   });
 }

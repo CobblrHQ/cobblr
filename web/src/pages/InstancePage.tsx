@@ -15,7 +15,7 @@ import { addressesInstanceItem } from "@cobblr/platform-contract/instance-detail
 import { nounOptions, type NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Camera, Plus, X } from "lucide-react";
-import { InventoryUI } from "@cobblr/inventory/ui";
+import { InventoryUI, InventoryViewTabs } from "@cobblr/inventory/ui";
 import { ProjectsUI } from "@cobblr/projects/ui";
 import { MachinesPage } from "./MachinesPage";
 import { AssetsPage } from "./AssetsPage";
@@ -318,10 +318,19 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       {shownView && !showsOneThing ? (
         <div className="space-y-3">
           {/* The collection's own header on every tab, so what it offers (the
-              floor plan's place mode for physical things) is not only on the
-              Table: Groceries opens on its cards, and the door was missing
-              there (#4147). */}
-          <CollectionHeader title={displayName} kind={shownView.entity_kind || undefined} selectionList={shownView.id} />
+              floor plan's place mode for physical things, an inventory's Going
+              off and Settings) is not only on the Table: Groceries opens on its
+              cards, and the door was missing there (#4147). */}
+          <CollectionHeader
+            title={displayName}
+            kind={shownView.entity_kind || undefined}
+            selectionList={shownView.id}
+            nav={
+              inst.module_name === "inventory" ? (
+                <InventoryViewTabs orgSlug={activeSlug} getToken={getToken} instance={inst.instance_name} itemNoun={cfg.item_noun} itemNounPlural={cfg.item_noun_plural} />
+              ) : undefined
+            }
+          />
           <SavedViewPage viewId={shownView.id} embedded />
         </div>
       ) : (

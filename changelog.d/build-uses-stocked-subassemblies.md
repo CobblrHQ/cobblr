@@ -3,6 +3,7 @@ type: feature
 scope: builds
 date: 2026-10-17
 docs_target: docs/USER_GUIDE.md#3.25 Builds (light bill-of-materials)
+docs_published: 2026-10-18
 ---
 
 A build takes sub-assemblies from stock before making more

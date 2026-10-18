@@ -8,6 +8,7 @@
 // docs/architecture/core-devices-extraction.md §4.
 
 import { platform, sourceIdKey } from "@cobblr/platform-contract";
+import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { Kysely } from "kysely";
 import type { CoreDevicesDB } from "../db.js";
 
@@ -92,31 +93,37 @@ export async function applyToLinkedEntity(
       if (userId && !(await platform().auth.userMayRun({ orgId, userId, actionId: mapped.actionId }))) {
         return { ok: false, refused: mapped.actionId, entityId: link.entity_id, reason: `You may not run ${mapped.actionId} here, so the reading changed nothing.` };
       }
-      await invoke(mapped.actionId, mapped.args);
-      return { ok: true, applied: mapped.actionId, entityId: link.entity_id, args: mapped.args };
+      const result = normaliseActionResult(await invoke(mapped.actionId, mapped.args), mapped.actionId);
+      if (!result.ok) return { ...result, refused: mapped.actionId, entityId: link.entity_id };
+      return { ...result, applied: mapped.actionId, entityId: link.entity_id, args: mapped.args };
     }
     return { ok: true, skipped: true, reason: `mode '${link.mode}' on '${link.entity_kind}' not yet supported` };
   };
 
+  const results: Awaited<ReturnType<typeof applyAction>>[] = [];
+  let records = 0;
   const measured = links.filter(item => item.mode === "log");
   if (measured.length) {
     if (typeof payload.value !== "number" || !Number.isFinite(payload.value)) return { ok: false, reason: "A reading needs a finite value." };
     const at = payload.at ? new Date(payload.at) : new Date();
     if (!Number.isFinite(at.getTime())) return { ok: false, reason: "A reading needs a valid sample time." };
-    let applied = 0;
     for (const link of measured) {
       const reading = { link_id: link.id, value: payload.value, unit: payload.unit ?? null, sampled_at: at };
       const stored = await db.insertInto("core_devices_readings").values(reading).onConflict(oc => oc.column("link_id").doUpdateSet(reading).where("core_devices_readings.sampled_at", "<", at)).returning("link_id").executeTakeFirst();
       if (!stored) continue;
-      applied++;
+      records++;
       const baseKind = await platform().entities.baseKindOf(orgId, link.entity_kind);
       await platform().events.emit("core-devices.record.reading", { orgId, [sourceIdKey(baseKind)]: link.entity_id, connection, device, entityKind: link.entity_kind, entityId: link.entity_id, value: payload.value, unit: payload.unit ?? null, at: at.toISOString() });
     }
-    for (const link of links.filter(item => item.mode !== "log")) await applyAction(link);
-    return applied ? { ok: true, applied: "reading", records: applied } : { ok: true, skipped: true, reason: "An equal or newer reading is already stored." };
   }
 
-  return applyAction(link);
+  for (const link of links.filter(item => item.mode !== "log")) results.push(await applyAction(link));
+  if (!measured.length && results.length === 1) return results[0]!;
+  const failed = results.find(result => !result.ok);
+  if (failed) return { ok: false, error: "error" in failed ? failed.error : failed.reason, partial: records > 0 || results.some(result => result.ok && !result.skipped), records, results };
+  if (records) return { ok: true, applied: "reading", records, results };
+  if (results.some(result => result.ok && !result.skipped)) return { ok: true, results };
+  return { ok: true, skipped: true, reason: measured.length ? "An equal or newer reading is already stored." : "No linked action changed anything.", results };
 }
 
 let registered = false;

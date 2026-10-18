@@ -13,6 +13,7 @@
 // Both sides on one Cobblr is the same path with the network taken out: the
 // flush hands the batch straight to the apply function the route would.
 
+// EGRESS-FILE: operator-configured - plain fetch only for an origin in COBBLR_SHARE_TRUSTED_PEERS; an address a person typed takes the egress guard on the next line
 import { productName } from "./product-name.js";
 import { trustedPeers } from "./cloud.js";
 import { randomBytes } from "node:crypto";
@@ -70,12 +71,18 @@ export const REVOKED_OP = "link.revoked";
 /** Put a change in the link's outbox and try to send it now. `key` makes a
  *  repeat enqueue of the same change a no-op. */
 export async function enqueueShareOp(linkId: string, op: string, payload: Record<string, unknown>, key: string = newOpKey()): Promise<void> {
-  await meta
+  await queueShareOpIn(meta, linkId, op, payload, key);
+  void flushShareLink(linkId).catch((err) => console.error(`[share] flush of ${linkId} failed:`, err));
+}
+
+/** Queue an op inside a caller's transaction, so it is queued only if what
+ *  the caller writes beside it is too; the caller flushes after commit. */
+export async function queueShareOpIn(db: Pick<typeof meta, "insertInto">, linkId: string, op: string, payload: Record<string, unknown>, key: string = newOpKey()): Promise<void> {
+  await db
     .insertInto("share_outbox")
     .values({ link_id: linkId, key, op, payload: JSON.stringify(payload) as never })
     .onConflict((oc) => oc.columns(["link_id", "key"]).doNothing())
     .execute();
-  void flushShareLink(linkId).catch((err) => console.error(`[share] flush of ${linkId} failed:`, err));
 }
 
 const linkCols = [

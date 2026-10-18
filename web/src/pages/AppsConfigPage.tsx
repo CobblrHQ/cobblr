@@ -442,7 +442,13 @@ function BlockEditor({
         </div>
       )}
       {block.type === "form" && (
-        <KindSelect value={block.kind} onPick={(v) => onChange({ ...block, kind: v })} />
+        <div className="space-y-1">
+          <KindSelect value={block.kind} onPick={(v) => onChange({ ...block, kind: v })} />
+          <select aria-label="What the form does" value={block.mode} onChange={(e) => onChange({ ...block, mode: e.target.value === "edit" ? "edit" : "create" })} className={inputCls}>
+            <option value="create">Add a new record</option>
+            <option value="edit">Change an existing record</option>
+          </select>
+        </div>
       )}
       {block.type === "action" && (
         <input value={block.action_id} onChange={(e) => onChange({ ...block, action_id: e.target.value })} placeholder="action_id (e.g. purchases:receive-order)" className={inputCls} />

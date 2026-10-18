@@ -304,7 +304,6 @@ export async function receiveShipment(
     .select(["id", "part_id"])
     .where("order_id", "=", orderId)
     .where("shipment_id", "=", shipmentId)
-    .where("received_at", "is", null)
     .execute();
   let received = 0;
   for (const l of lines) if (await receiveOrderLine(db, orgId, l.id, receivedOn, l.part_id)) received++;

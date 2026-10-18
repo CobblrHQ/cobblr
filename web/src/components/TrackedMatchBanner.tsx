@@ -37,6 +37,7 @@ import { scanAddCount, type ScanCountMode, type ScanCountSessionMode } from "@co
 import { EntityThumb } from "@cobblr/platform-web";
 import { useHandheld } from "../lib/useHandheld";
 import { TrackedMatchNudges } from "./TrackedMatchNudges";
+import { ScanBrokenMark } from "./ScanBrokenMark";
 import { PaperworkThisOne, isPaperworkMatch } from "./PaperworkThisOne";
 import { scanPurpose, scanPurposeReview, scanRowState, scanTrackedMatch } from "@cobblr/platform-contract/scan-triage";
 import { evidencedFill } from "@cobblr/platform-contract/scan-evidence";
@@ -139,6 +140,7 @@ export function TrackedMatchLine({
         </div>
       </div>
       {match && !possible && <TrackedMatchNudges item={item} match={match} />}
+      {!possible && <ScanBrokenMark item={item} />}
       {match && isPaperworkMatch(item, match) ? (
         <PaperworkThisOne item={item} match={match} />
       ) : counted && !possible && newPlaceOf(item) ? (
@@ -461,6 +463,7 @@ export function TrackedMatchBanner({
         </div>
       )}
       <TrackedMatchNudges item={item} match={best} />
+      <ScanBrokenMark item={item} />
       {isPaperworkMatch(item, best) && <PaperworkThisOne item={item} match={best} />}
       {/* Counting into one of several places waits for the place. */}
       {best.qty != null && newPlaceOf(item) && !isPaperworkMatch(item, best) && (

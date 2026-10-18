@@ -118,27 +118,58 @@ export function PlanLayoutPage() {
   const draft = list.find((d) => d.id === draftId) ?? null;
   const other = list.find((d) => d.id === compareId) ?? null;
 
-  // The body being edited: changed here at once, saved behind.
+  // The body being edited: changed here at once, saved behind. Each change
+  // is a numbered revision, saved one at a time, newest last: Apply waits
+  // until the revision shown is the one saved. A failed save left the page
+  // drawing one layout while Apply made the older saved one real (#7156).
   const [body, setBody] = useState<PlanDraftBody | null>(null);
+  const [rev, setRev] = useState(0);
+  const [savedRev, setSavedRev] = useState(0);
+  const [saveFailed, setSaveFailed] = useState(false);
   const loadedFor = useRef<string | null>(null);
+  const latest = useRef<{ rev: number; body: PlanDraftBody } | null>(null);
   useEffect(() => {
     if (!draft) {
       loadedFor.current = null;
       setBody(null);
     } else if (loadedFor.current !== draft.id) {
       loadedFor.current = draft.id;
+      latest.current = null;
       setBody(draft.body);
+      setRev(0);
+      setSavedRev(0);
+      setSaveFailed(false);
     }
   }, [draft]);
   const save = useMutation({
-    mutationFn: (b: PlanDraftBody) => api.planDraftUpdate(slug, draft!.id, { body: b }),
-    onSettled: () => void qc.invalidateQueries({ queryKey: ["plan-drafts", slug, roomId] }),
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
+    mutationFn: (v: { rev: number; body: PlanDraftBody }) => api.planDraftUpdate(slug, draft!.id, { body: v.body }),
+    onSuccess: (_r, v) => {
+      setSavedRev((s) => Math.max(s, v.rev));
+      setSaveFailed(false);
+    },
+    onError: (e) => {
+      setSaveFailed(true);
+      toast.error(e instanceof ApiError ? e.message : String(e));
+    },
+    onSettled: (_r, _e, v) => {
+      // A newer change waited for this save: send it now, so an older body
+      // can never land after a newer one.
+      const next = latest.current;
+      if (next && next.rev > v.rev) save.mutate(next);
+      else void qc.invalidateQueries({ queryKey: ["plan-drafts", slug, roomId] });
+    },
   });
   const change = (b: PlanDraftBody) => {
+    const next = { rev: rev + 1, body: b };
+    latest.current = next;
     setBody(b);
-    save.mutate(b);
+    setRev(next.rev);
+    if (!save.isPending) save.mutate(next);
   };
+  const retrySave = () => {
+    if (latest.current && !save.isPending) save.mutate(latest.current);
+  };
+  const unsaved = rev !== savedRev;
 
   const editable = !!draft && !draft.applied_at;
   const faceH = other ? 220 : 320;
@@ -214,8 +245,10 @@ export function PlanLayoutPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const apply = useMutation({
-    mutationFn: (id: string) => api.planDraftApply(slug, id),
-    onSuccess: (r, id) => {
+    // The body confirmed goes with it: the server applies it only if it is
+    // the one it has saved.
+    mutationFn: (v: { id: string; body: PlanDraftBody }) => api.planDraftApply(slug, v.id, v.body),
+    onSuccess: (r, { id }) => {
       refreshRoom();
       toast.action(r.note, { actionLabel: "Undo", onAction: () => undo.mutate(id) });
     },
@@ -260,7 +293,7 @@ export function PlanLayoutPage() {
 
   const summary = body ? draftSummary(body) : null;
   const askApply = async () => {
-    if (!draft || !summary || save.isPending) return;
+    if (!draft || !summary || save.isPending || unsaved) return;
     const parts = [
       summary.things ? `move ${countOf(summary.things, "thing", "things")}` : null,
       summary.places ? `move ${countOf(summary.places, "rack or shelf", "racks and shelves")}` : null,
@@ -271,7 +304,7 @@ export function PlanLayoutPage() {
       message: parts.length ? `This will ${parts.join(", ")}, as one step you can undo.` : "Nothing in this layout differs from the room.",
       confirmLabel: `Apply ${draft.name}`,
     });
-    if (ok) apply.mutate(draft.id);
+    if (ok) apply.mutate({ id: draft.id, body: body! });
   };
   // What cannot stand in the room keeps the layout from being applied (#5809).
   const notInRoom = board?.flags.filter((f) => f.kind === "room") ?? [];
@@ -385,12 +418,20 @@ export function PlanLayoutPage() {
                 <button
                   type="button"
                   onClick={() => void askApply()}
-                  disabled={apply.isPending || save.isPending || notInRoom.length > 0}
+                  disabled={apply.isPending || save.isPending || unsaved || notInRoom.length > 0}
                   title={notInRoom.length ? "Something in this layout does not fit the room" : undefined}
                   className="rounded bg-cobble-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
                 >
                   Apply {draft.name}
                 </button>
+                {saveFailed && unsaved && (
+                  <span data-testid="layout-not-saved" className="inline-flex items-center gap-2 text-sm font-medium text-ember-700 dark:text-ember-300">
+                    Not saved
+                    <button type="button" onClick={retrySave} disabled={save.isPending} className="text-accent underline underline-offset-2 disabled:opacity-50">
+                      Try again
+                    </button>
+                  </span>
+                )}
                 {notInRoom.length > 0 && (
                   <span data-testid="apply-blocked" className="basis-full text-sm font-medium text-ember-700 dark:text-ember-300">
                     {notInRoom.map((f) => f.text).join(". ")}. Make it smaller, turn it or take it out of {draft.name} to apply it.

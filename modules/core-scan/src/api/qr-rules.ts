@@ -18,7 +18,8 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { resolveExternalScan } from "../services/qr-resolver.js";
+import { resolveExternalScan, ruleTallies } from "../services/qr-resolver.js";
+import { applyScanScope, withScopeOffers } from "../services/scan-scope.js";
 
 export const qrRulesRouter = Router({ mergeParams: true });
 
@@ -61,6 +62,17 @@ const RuleBody = z.object({
 
 const RulePatch = RuleBody.partial();
 
+/** A scanned value, and the scope the person is scanning within, if any. */
+const ResolveBody = z.object({
+  value: z.string().min(1).max(2000),
+  scope: z
+    .object({
+      kind: z.string().min(1).max(120).nullish(),
+      within: z.object({ kind: z.string().min(1).max(120), id: z.string().uuid() }).nullish(),
+    })
+    .nullish(),
+});
+
 interface RuleRow {
   id: string;
   name: string;
@@ -102,7 +114,9 @@ qrRulesRouter.get(
       .orderBy("position", "asc")
       .orderBy("created_at", "asc")
       .execute();
-    res.json({ rules: rows.map((r) => serialize(r as unknown as RuleRow)) });
+    // Each rule's 30-day line on the rules page (#6892, D6).
+    const tallies = await ruleTallies(db);
+    res.json({ rules: rows.map((r) => ({ ...serialize(r as unknown as RuleRow), stats_30d: tallies.get(r.id) ?? { scans: 0, ambiguous: 0 } })) });
   }),
 );
 
@@ -208,11 +222,14 @@ qrRulesRouter.post(
   "/resolve-external",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const parsed = z.object({ value: z.string().min(1).max(2000) }).safeParse(req.body);
+    const parsed = ResolveBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const outcome = await resolveExternalScan(db, ctx.org.id, parsed.data.value);
-    res.json(outcome);
+    // The person's scan scope, held by their session, decides among the
+    // matches before the outcome is (scan-scope.ts, #6892).
+    const scoped = await applyScanScope(ctx.org.id, outcome, parsed.data.scope);
+    res.json(await withScopeOffers(ctx.org.id, scoped));
   }),
 );

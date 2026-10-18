@@ -1,0 +1,10 @@
+{
+  "lint": "lint:workflow-step-tests-run-outside-ci",
+  "run": "node scripts/lint-workflow-step-tests-run-outside-ci.ts",
+  "rows": [
+    "unit-test"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-18",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

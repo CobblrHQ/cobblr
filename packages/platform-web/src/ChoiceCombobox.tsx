@@ -421,7 +421,10 @@ function ChoiceSheet({ label, value, options, onCommit, detail, placeholder, cla
       {step !== "closed" &&
         typeof document !== "undefined" &&
         createPortal(
-          <OverlayLayer role="dialog" aria-modal="true" aria-label={label} className="z-[70] flex flex-col bg-surface dark:bg-slate-900">
+          // The sheet covers the whole screen, so it keeps the status bar and
+          // the home bar clear itself: its search and Cancel sat under the
+          // clock on an iPhone.
+          <OverlayLayer role="dialog" aria-modal="true" aria-label={label} className="z-[70] flex flex-col bg-surface dark:bg-slate-900" style={{ paddingTop: "var(--safe-top)", paddingBottom: "var(--inset-bottom)" }}>
             <div className="flex items-center gap-2 border-b border-line dark:border-slate-700 p-3">
               <div className="relative flex-1">
                 <input

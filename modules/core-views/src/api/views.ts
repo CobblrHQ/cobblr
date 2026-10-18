@@ -8,8 +8,10 @@ import { z } from "zod";
 import { sql, type ExpressionBuilder } from "kysely";
 import { platform, viewQuery } from "@cobblr/platform-contract";
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
+import { ViewInputsSchema, resolveViewInputs, type ViewInput } from "@cobblr/platform-contract/view-inputs";
 import { sessionUser, tenantContext, tenantDb, type CoreViewsDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { resetViewToBundle } from "./reset-bundle-view.js";
 
 export const viewsRouter = Router({ mergeParams: true });
 
@@ -20,7 +22,17 @@ export const ViewCreate = z.object({
   entity_kind: z.string().min(1).max(120),
   name: z.string().min(1).max(160),
   view_type: z.string().min(1).max(40),
-  config: z.record(z.unknown()).optional(),
+  // A view's inputs (#6897) are checked here, the one door a view is saved
+  // through: a page cannot render, nor a template read, an input that is not
+  // typed and bounded.
+  config: z
+    .record(z.unknown())
+    .superRefine((c, ctx) => {
+      if (c.inputs === undefined) return;
+      const r = ViewInputsSchema.safeParse(c.inputs);
+      if (!r.success) ctx.addIssue({ code: "custom", path: ["inputs"], message: r.error.issues[0]?.message ?? "the inputs are not valid" });
+    })
+    .optional(),
   is_default: z.boolean().optional(),
   /** v0.3: pin to the dashboard's pinned-views section. */
   pinned: z.boolean().optional(),
@@ -41,7 +53,30 @@ const DataQuery = z.object({
   /** The reader's calendar day, for a view that compares a date with
    *  "today" (a "Ready to drink" window). */
   today: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /** What the viewer set the view's inputs to, as JSON (`{"scale":"2"}`):
+   *  bounded by the view before a computed field reads them (#6897). */
+  inputs: z
+    .string()
+    .max(4000)
+    .transform((s, ctx) => {
+      try {
+        const v = JSON.parse(s) as unknown;
+        if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+      } catch {
+        /* said below */
+      }
+      ctx.addIssue({ code: "custom", message: "inputs must be a JSON object of name to value" });
+      return z.NEVER;
+    })
+    .optional(),
 });
+
+/** The inputs a saved view declares, or none: a view saved before inputs were
+ *  checked, with ones that no longer parse, shows as having none. */
+function declaredInputs(config: unknown): ViewInput[] {
+  const r = ViewInputsSchema.safeParse((config as { inputs?: unknown } | null)?.inputs);
+  return r.success ? r.data : [];
+}
 
 /** A view is someone's to see when it is shared (no owner) or theirs. Every
  *  route that takes an id reads through this, so another member's private view
@@ -196,6 +231,30 @@ viewsRouter.patch(
   }),
 );
 
+// AI-ACTION: core-views:reset-view
+viewsRouter.post(
+  "/:id/reset",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "core-views:reset-view"))) return;
+    const id = req.params.id;
+    const db = tenantDb(req);
+    const view = await db
+      .selectFrom("core_views_views")
+      .selectAll()
+      .where("id", "=", id ?? "")
+      .where(visibleTo(sessionUser(req)?.id ?? null))
+      .executeTakeFirst();
+    if (!view) return notFound(res);
+    const out = await resetViewToBundle(db, view);
+    if (!out.ok) {
+      res.status(409).json({ error: { code: "not_a_bundle_view", message: out.error } });
+      return;
+    }
+    if (out.changed) await platform().events.emit("core-views.view.updated", { orgId: tenantContext(req).org.id, viewId: out.row.id });
+    res.json(out.row);
+  }),
+);
+
 // AI-ACTION: core-views:delete-view
 viewsRouter.delete(
   "/:id",
@@ -251,6 +310,10 @@ viewsRouter.get(
     // else the person's (their zone, else the day that has arrived
     // everywhere). Never the server's UTC day.
     const today = await platform().accounts.dayFor(sessionUser(req)?.id ?? null, { said: parsedQuery.data.today });
+    // The view's inputs, bounded by what it declares; a value it had to change
+    // comes back as a note, said on the page rather than shown as asked (#6897).
+    const declared = declaredInputs(view.config);
+    const inputs = resolveViewInputs(declared, parsedQuery.data.inputs);
     const query = {
       ...(view.view_type === "table" && (view.config as Record<string, unknown>)?.group_by ? { group_by: (view.config as { group_by: string }).group_by, group_offset: parsedQuery.data.group_offset, group_limit: parsedQuery.data.group_limit, group_keys: parsedQuery.data.group_keys } : {}),
       q: parsedQuery.data.q,
@@ -259,6 +322,7 @@ viewsRouter.get(
       // surface reads it. Resolvers ignore what they cannot honour, so a
       // request-level override layered on top is safe.
       ...viewQuery(view.config as Record<string, unknown>, today),
+      ...(declared.length ? { inputs: inputs.values } : {}),
     };
     // H2 — viewer identity so the kernel applies per-field read-scope:
     // a member sees only the fields their capabilities permit (e.g.
@@ -304,6 +368,7 @@ viewsRouter.get(
       ...result,
       collection_empty: collectionEmpty,
       ...(ungrouped ? { ungrouped } : {}),
+      ...(declared.length ? { inputs: { declared, values: inputs.values, notes: inputs.notes } } : {}),
     });
   }),
 );
@@ -333,10 +398,14 @@ viewsRouter.get(
       said: typeof req.query.today === "string" ? req.query.today : undefined,
     });
     const only = Array.isArray(config.visible_fields) ? config.visible_fields.filter((f): f is string => typeof f === "string") : undefined;
+    // The file says what the page shows: a doubled recipe exports doubled (#6897).
+    const declared = declaredInputs(config);
+    const asked = DataQuery.shape.inputs.safeParse(req.query.inputs);
+    const inputs = declared.length ? { inputs: resolveViewInputs(declared, asked.success ? asked.data : undefined).values } : {};
     const out = await platform().entities.exportCsv(
       ctx.org.id,
       view.entity_kind,
-      { today, ...viewQuery(config, today), ...(req.query.subtotals === "true" && config.group_by ? { group_by: config.group_by as string, group_subtotals: true } : {}) },
+      { today, ...viewQuery(config, today), ...inputs, ...(req.query.subtotals === "true" && config.group_by ? { group_by: config.group_by as string, group_subtotals: true } : {}) },
       { userId: sessionUser(req)?.id, role: ctx.role },
       only,
     );

@@ -48,12 +48,13 @@ export function restoredName(created: string, current: string): string | null {
   return built;
 }
 
-export async function healRecordNamesIn(db: Kysely<InventoryDB>): Promise<number> {
+export async function healRecordNamesIn(db: Kysely<InventoryDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("inventory_parts")
     .select(["id", "name"])
     // A label behind a name has a colon: the one cheap thing every such name holds.
     .where(sql<boolean>`name like '%:%'`)
+    .where("created_at", "<", since)
     .execute();
   let healed = 0;
   for (const r of rows) {
@@ -67,10 +68,10 @@ export async function healRecordNamesIn(db: Kysely<InventoryDB>): Promise<number
 }
 
 /** Put back the names the first cleanup cut words out of (#6303). */
-export async function restoreDamagedNamesIn(orgId: string, db: Kysely<InventoryDB>): Promise<number> {
+export async function restoreDamagedNamesIn(orgId: string, db: Kysely<InventoryDB>, since: Date): Promise<number> {
   const made = await platform().activity.createdNamesMatching(orgId, { module: "inventory", entityType: "part", pattern: "(^|[^a-z0-9])(none|null|undefined|nan)([^a-z0-9]|$)" });
   if (!made.length) return 0;
-  const now = await db.selectFrom("inventory_parts").select(["id", "name"]).where("id", "in", made.map((m) => m.entityId)).execute();
+  const now = await db.selectFrom("inventory_parts").select(["id", "name"]).where("id", "in", made.map((m) => m.entityId)).where("created_at", "<", since).execute();
   const byId = new Map(now.map((r) => [r.id, r.name]));
   let restored = 0;
   for (const m of made) {
@@ -87,8 +88,9 @@ export async function restoreDamagedNamesIn(orgId: string, db: Kysely<InventoryD
 export function registerRecordNamesHeal() {
   registerHealPass({
     name: "inventory.heal-record-names",
+    since: "2026-10-13T21:44:02Z",
     shim: "modules/inventory/src/heal-record-names.ts",
     module: "inventory",
-    visit: async ({ orgId, db }) => (await healRecordNamesIn(db as Kysely<InventoryDB>)) + (await restoreDamagedNamesIn(orgId, db as Kysely<InventoryDB>)),
+    visit: async ({ orgId, db, since }) => (await healRecordNamesIn(db as Kysely<InventoryDB>, since)) + (await restoreDamagedNamesIn(orgId, db as Kysely<InventoryDB>, since)),
   });
 }

@@ -15,6 +15,19 @@ import { isPushServiceEndpoint } from "../platform/push-endpoints.js";
 import { vapidKeyState } from "../platform/push-keys.js";
 import { pushSettingsFor, pushToDevice, unreadCountFor } from "../platform/push-delivery.js";
 import { buildPushPayload, inQuietHours, worthAPush } from "../platform/push-policy.js";
+import {
+  activeOtherChannels,
+  adoptDeviceTimezone,
+  applyHandoff,
+  channelsOffFor,
+  CHANNEL_LABEL,
+  handoffFor,
+  HANDOFF_CHANNELS,
+  isHandoffChannel,
+  routesByPriority,
+  setChannelOff,
+  skipHandoff,
+} from "../platform/push-handoff.js";
 import type { NotificationPriority } from "../db/schema.js";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -31,7 +44,28 @@ const Subscribe = z.object({
   user_agent: z.string().max(400).optional(),
   /** Only this workspace; omitted, every workspace the person is in. */
   org_id: z.string().uuid().nullable().optional(),
+  /** The device's own timezone; taken while the account has the UTC default. */
+  timezone: z.string().min(1).max(64).optional(),
 });
+
+const Timezone = z.string().min(1).max(64).refine((tz) => {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}, "unknown timezone");
+
+const HandoffBody = z
+  .object({
+    turn_off: z.array(z.enum(HANDOFF_CHANNELS)).max(HANDOFF_CHANNELS.length),
+    normal_here: z.boolean(),
+    timezone: Timezone.optional(),
+  })
+  .strict();
+
+const Forget = z.object({ endpoint: z.string().url().max(2048) });
 
 const Settings = z
   .object({
@@ -76,14 +110,18 @@ mePushRouter.get("/me/push", requireAuth, async (req, res, next) => {
         .where("channel", "=", "browser_push")
         .executeTakeFirst(),
     ]);
+    const [handoff, channels, off] = await Promise.all([handoffFor(userId), activeOtherChannels(userId), channelsOffFor(userId)]);
     res.json({
       public_key: keys.keys?.publicKey ?? null,
       // Why there is no key to subscribe with, for the page to say.
       unavailable: keys.unavailable,
-      devices,
+      devices: devices.map((d) => ({ ...d, never_delivered: !d.last_success_at })),
       settings,
       quiet_now: inQuietHours(settings, new Date()),
       held: Number(held?.n ?? 0),
+      handoff,
+      channels_off: [...off].filter(isHandoffChannel).map((channel) => ({ channel, label: CHANNEL_LABEL[channel] })),
+      by_priority: routesByPriority(settings, channels, devices.length > 0, new Date()),
     });
   } catch (err) {
     next(err);
@@ -127,6 +165,7 @@ mePushRouter.post("/me/push/devices", requireAuth, async (req, res, next) => {
       )
       .returning(["id", "label"])
       .executeTakeFirstOrThrow();
+    if (b.timezone && Timezone.safeParse(b.timezone).success) await adoptDeviceTimezone(userId, b.timezone);
     res.status(201).json(row);
   } catch (err) {
     next(err);
@@ -142,6 +181,22 @@ mePushRouter.delete("/me/push/devices/:id", requireAuth, async (req, res, next) 
       .where("user_id", "=", req.session!.id)
       .executeTakeFirst();
     if (!Number(gone.numDeletedRows)) return bad(res, 404, "not_found", "No such device");
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: exempt — a browser signing out lets go of its own pushes; only
+// the browser knows its endpoint, and an assistant never signs a person out.
+// Signing out leaves the browser with whoever uses it next, so the account's
+// notices stop coming to it (#7124). Idempotent: a browser that was never
+// subscribed for this person is already let go.
+mePushRouter.post("/me/push/devices/forget", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = Forget.safeParse(req.body);
+    if (!parsed.success) return bad(res, 400, "invalid_body", "endpoint is required");
+    await meta.deleteFrom("push_subscriptions").where("endpoint", "=", parsed.data.endpoint).where("user_id", "=", req.session!.id).execute();
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -206,6 +261,45 @@ mePushRouter.put("/me/push/settings", requireAuth, async (req, res, next) => {
   }
 });
 
+// AI-REACH: exempt — answering the person's own "turn the others off?" prompt
+// after they turned push on: which of their channels to silence is theirs.
+mePushRouter.post("/me/push/handoff", requireAuth, async (req, res, next) => {
+  try {
+    const parsed = HandoffBody.safeParse(req.body);
+    if (!parsed.success) return bad(res, 400, "invalid_body", parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
+    const userId = req.session!.id;
+    await applyHandoff(userId, parsed.data);
+    res.json({ handoff: await handoffFor(userId), settings: await pushSettingsFor(userId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: exempt — the person skipping that prompt; nothing else changes.
+mePushRouter.post("/me/push/handoff/skip", requireAuth, async (req, res, next) => {
+  try {
+    await skipHandoff(req.session!.id);
+    res.json({ handoff: await handoffFor(req.session!.id) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// AI-REACH: exempt — a personal delivery preference: one of the person's own
+// channels off, or back on, for their workspace updates.
+mePushRouter.put("/me/channels-off/:channel", requireAuth, async (req, res, next) => {
+  try {
+    const channel = String(req.params.channel);
+    if (!isHandoffChannel(channel)) return bad(res, 400, "bad_channel", "Unknown channel.");
+    const parsed = z.object({ off: z.boolean() }).strict().safeParse(req.body);
+    if (!parsed.success) return bad(res, 400, "invalid_body", "Say off: true or off: false.");
+    await setChannelOff(req.session!.id, channel, parsed.data.off);
+    res.json({ channel, off: parsed.data.off });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /** For a person's settings page: would this priority buzz their phone now? */
 export function pushVerdict(priority: NotificationPriority, settings: Awaited<ReturnType<typeof pushSettingsFor>>, now: Date): "pushed" | "held" | "bell only" {
   if (!worthAPush(priority, settings)) return "bell only";
@@ -255,10 +349,15 @@ mePushOrgRouter.get("/:slug/my-push", requireAuth, withTenant, async (req, res, 
         .limit(10)
         .execute(),
     ]);
+    const [handoff, off] = await Promise.all([handoffFor(userId), channelsOffFor(userId)]);
     res.json({
       push_ready_on_server: !!keys.keys,
       push_unavailable: keys.unavailable,
-      devices,
+      // A device that has never had a push delivered is said so: "on" is not "working".
+      devices: devices.map((d) => ({ ...d, never_delivered: !d.last_success_at })),
+      handoff,
+      channels_off: [...off],
+      by_priority: routesByPriority(settings, handoff.channels, devices.length > 0, new Date()),
       settings,
       quiet_now: inQuietHours(settings, new Date()),
       held: Number(held?.n ?? 0),

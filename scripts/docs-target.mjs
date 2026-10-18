@@ -7,17 +7,32 @@
 // sections piled up in USER_GUIDE.md that way (audit H5). One source of truth for
 // the parse and the lookup keeps the two from drifting.
 
+import { areaHolding, GUIDE_INDEX, stubTarget } from "./lib/user-guide.mjs";
+
 const HEADING_RE = /^(#{1,6})\s+(.*?)\s*$/;
 
 /** Split "<path.md>#<Heading text>" → { file, heading }. No "#" → the whole
  *  string is the file and heading is "". Only the FIRST "#" splits (heading text
- *  may itself contain "#"). */
+ *  may itself contain "#"). PURE: reads nothing. */
 export function parseDocsTarget(target) {
   const t = String(target).trim();
   const hash = t.indexOf("#");
   const file = hash > 0 ? t.slice(0, hash) : t;
   const heading = hash > 0 ? t.slice(hash + 1).trim() : "";
   return { file, heading };
+}
+
+/** parseDocsTarget, then a target on the user guide's index ("docs/USER_GUIDE.md#3.19
+ *  Digital Fabrication …") is followed to the area page that now holds that
+ *  heading, so an entry written before the guide was split still lands in the
+ *  right section instead of under a moved-section stub (#7321). `legacy` says so. */
+export function resolveDocsTarget(target, root = "") {
+  const { file, heading } = parseDocsTarget(target);
+  if (file === GUIDE_INDEX && heading) {
+    const moved = stubTarget(heading, root) ?? areaHolding(heading, root);
+    if (moved) return { file: moved, heading, legacy: true };
+  }
+  return { file, heading, legacy: false };
 }
 
 /** Every real heading in a markdown doc: a `#` line inside a fenced code

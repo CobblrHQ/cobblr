@@ -23,9 +23,25 @@ function internalAllowed(): boolean {
   );
 }
 
+/** The address a request is to connect to, as checked: the one a connection
+ *  must be pinned to, so the name is not looked up a second time (a name that
+ *  answers public to the check and private to the connect is DNS rebinding). */
+export interface CheckedAddress {
+  address: string;
+  family: number;
+}
+
 /** Validate an outbound connector URL. Async because it resolves DNS to
  *  catch hostnames pointing at internal addresses. Throws on a blocked URL. */
 export async function assertSafeOutboundUrl(raw: string): Promise<void> {
+  await resolveSafeOutboundTarget(raw);
+}
+
+/** The same check, and the address it checked: resolve once, refuse the URL if
+ *  ANY answer is internal, and hand back the first answer to connect to. Null
+ *  only where the internal-network hatch is on (nothing is checked, so nothing
+ *  is pinned). */
+export async function resolveSafeOutboundTarget(raw: string): Promise<CheckedAddress | null> {
   let u: URL;
   try {
     u = new URL(raw);
@@ -35,19 +51,21 @@ export async function assertSafeOutboundUrl(raw: string): Promise<void> {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error("connector: only http(s) URLs are allowed");
   }
-  if (internalAllowed()) return;
+  if (internalAllowed()) return null;
 
   const host = u.hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
     throw new Error("connector: internal host blocked");
   }
   // Literal IP — check directly.
-  if (net.isIP(host)) {
-    if (isPrivateIp(host)) throw new Error("connector: private/loopback address blocked");
-    return;
+  const literal = net.isIP(host.replace(/^\[|\]$/g, ""));
+  if (literal) {
+    const bare = host.replace(/^\[|\]$/g, "");
+    if (isPrivateIp(bare)) throw new Error("connector: private/loopback address blocked");
+    return { address: bare, family: literal };
   }
   // Hostname — resolve and reject if ANY address is internal (DNS-rebind safe).
-  let addrs: Array<{ address: string }>;
+  let addrs: Array<{ address: string; family?: number }>;
   try {
     addrs = await lookup(host, { all: true });
   } catch {
@@ -56,4 +74,7 @@ export async function assertSafeOutboundUrl(raw: string): Promise<void> {
   if (addrs.some((a) => isPrivateIp(a.address))) {
     throw new Error("connector: host resolves to a private/loopback address");
   }
+  const first = addrs[0];
+  if (!first) throw new Error("connector: host did not resolve");
+  return { address: first.address, family: first.family ?? (net.isIP(first.address) || 4) };
 }

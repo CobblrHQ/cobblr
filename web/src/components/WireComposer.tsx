@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
-import { useToast, NumberField, SegmentedChoice } from "@cobblr/platform-web";
+import { useToast, NumberField, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
 import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
   STOCK_CHANGED_EVENT,
@@ -26,6 +26,7 @@ import {
   buildRRule,
   parseRRule,
   describeWire,
+  hiddenFieldsNamed,
   insertToken,
   RECORDLESS_TRIGGERS,
   SERVICE_EVENT_TOKENS,
@@ -72,7 +73,7 @@ export function WireComposer({
   const toast = useToast();
   const ed = editing ?? null;
 
-  const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
+  const kinds = useQuery({ queryKey: ["entity-kinds-readable", slug], queryFn: () => api.listEntityKindsReadable(slug), enabled: !!slug });
   const wireEvents = useQuery({ queryKey: ["wire-events", slug], queryFn: () => api.listWireEvents(slug), enabled: !!slug });
 
   const pre = ed ? null : prefill ?? null;
@@ -200,6 +201,7 @@ export function WireComposer({
   };
 
   const kind = kinds.data?.items.find((k) => k.id === sourceKind);
+  const unreadable = hiddenFieldsNamed([template, ...Object.values(args), ...conditions.map((c) => c.path)], kind?.hidden_fields ?? []);
   const action = actionChoices?.find((a) => a.id === actionId);
   const needs = TRIGGER_OPTIONS.find((t) => t.value === triggerType)?.needs ?? "none";
   const eventTokens = recordless && triggerType === "event" && triggerEvent.startsWith("services.job.") ? SERVICE_EVENT_TOKENS : [];
@@ -257,6 +259,7 @@ export function WireComposer({
     return Object.keys(out).length > 0 ? out : undefined;
   };
 
+  const formSent = useSentWords(JSON.stringify([actionId, args, serviceValues, triggerEvent, template, target]));
   const create = useMutation({
     mutationFn: () => {
       const payload = {
@@ -288,13 +291,16 @@ export function WireComposer({
         onCancel?.();
         return;
       }
-      setActionId("");
-      setArgs({});
-      setServiceValues({});
-      setTriggerEvent("");
-      setTemplate("");
-      setTarget("self");
-      setShowTarget(false);
+      // A wire changed while it was being created is the next one (#7167).
+      if (formSent.landed()) {
+        setActionId("");
+        setArgs({});
+        setServiceValues({});
+        setTriggerEvent("");
+        setTemplate("");
+        setTarget("self");
+        setShowTarget(false);
+      }
       onCreated();
     },
     onError: (e: unknown) => setErr(e instanceof ApiError ? e.message : ed ? "Couldn't save" : "Couldn't create"),
@@ -314,7 +320,9 @@ export function WireComposer({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (ready) create.mutate();
+        if (!ready) return;
+        formSent.sending();
+        create.mutate();
       }}
       className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4"
     >
@@ -580,6 +588,11 @@ export function WireComposer({
             rows={2}
             className="input font-mono text-xs"
           />
+          {unreadable.length > 0 && (
+            <p className="mt-1 text-xs text-amber-700 dark:text-amber-300" role="alert" data-testid="wire-unreadable-fields">
+              You can't see {unreadable.map((f) => `"${f}"`).join(", ")}, so this wire would send it empty. Take {unreadable.length === 1 ? "it" : "them"} out, or ask someone who can see {unreadable.length === 1 ? "it" : "them"} to make the wire.
+            </p>
+          )}
         </div>
         )}
         {eventTokens.length > 0 && (

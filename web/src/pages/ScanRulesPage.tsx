@@ -30,6 +30,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Plus, Pencil, Trash2, ArrowRight, ClipboardPaste } from "lucide-react";
 import { FieldPack, Modal, fieldNeed, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { ApiError, api, type ScanQrRule, type ScanResolveOutcome } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -337,6 +338,15 @@ function RuleCard({
           )}
         </div>
       </div>
+      {/* How often this rule's key named more than one thing (#6892): the
+          sign that a workspace's serials are outgrowing their length. */}
+      {rule.stats_30d && rule.stats_30d.scans > 0 && (
+        <p data-testid="rule-ambiguity" className={`px-2 pt-1.5 text-xs ${rule.stats_30d.ambiguous > 0 ? "text-amber-700 dark:text-amber-300" : "text-muted"}`}>
+          {rule.stats_30d.ambiguous > 0
+            ? `Matched more than one thing in ${rule.stats_30d.ambiguous} of ${countOf(rule.stats_30d.scans, "scan")} (30 days)`
+            : `Matched ${countOf(rule.stats_30d.scans, "scan")}, each to one thing (30 days)`}
+        </p>
+      )}
       {/* nested sub-boxes: match → resolve */}
       <div className="flex flex-wrap items-center gap-2 p-2 text-xs">
         <SubBox label="match">
@@ -368,7 +378,7 @@ function TestBox({ slug, hasRules }: { slug: string; hasRules: boolean }) {
   const [value, setValue] = useState("");
   const [result, setResult] = useState<ScanResolveOutcome | null>(null);
   const test = useMutation({
-    mutationFn: () => api.scanResolveExternal(slug, value.trim()),
+    mutationFn: () => api.scanResolveExternal(slug, value.trim(), { unscoped: true }),
     onSuccess: (out) => setResult(out),
     onError: () => setResult(null),
   });

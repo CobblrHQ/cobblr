@@ -35,7 +35,8 @@ libraryRouter.get(
 );
 
 // POST / — upload a 3MF/gcode (multipart `file`). Stores bytes + extracts thumb.
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — a multipart upload of the file's bytes; the assistant
+// holds no file (a design it makes arrives through digifab:print-this)
 libraryRouter.post(
   "/",
   upload,
@@ -87,40 +88,57 @@ libraryRouter.post(
   }),
 );
 
-const Rename = z.object({ name: z.string().min(1).max(300).optional(), notes: z.string().max(2000).nullable().optional(), laser_material: LaserMaterialSchema.optional() });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+export const Rename = z.object({ name: z.string().min(1).max(300).optional(), notes: z.string().max(2000).nullable().optional(), laser_material: LaserMaterialSchema.optional() });
+
+type Reply = { status: number; body: Record<string, unknown> };
+
+/** Rename a library file or change its notes (or a drawing's laser material):
+ *  the route's PATCH and, without the material, digifab:rename-print-file. */
+export async function editLibraryItem(db: ReturnType<typeof tenantDb>, id: string, change: z.infer<typeof Rename>): Promise<Reply> {
+  const patch: Record<string, unknown> = { updated_at: new Date() };
+  if (change.name != null) patch.name = change.name;
+  if (change.notes !== undefined) patch.notes = change.notes;
+  if (change.laser_material) {
+    const before = await db.selectFrom("digifab_library").select("metadata").where("id", "=", id).executeTakeFirst();
+    if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return { status: 409, body: { error: { code: "generated_material", message: "This layout keeps the material chosen in its plan. Make a new plan to change it." } } };
+    patch.metadata = platform().db.mergeJsonb("metadata", { laser_material: change.laser_material });
+  }
+  const row = await db.updateTable("digifab_library").set(patch).where("id", "=", id).returning(ROW).executeTakeFirst();
+  if (!row) return { status: 404, body: { error: { code: "not_found", message: "no such library item" } } };
+  return { status: 200, body: row as unknown as Record<string, unknown> };
+}
+
+// AI-ACTION: digifab:rename-print-file
 libraryRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:rename-print-file"))) return;
     const parsed = Rename.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const patch: Record<string, unknown> = { updated_at: new Date() };
-    if (parsed.data.name != null) patch.name = parsed.data.name;
-    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
-    if (parsed.data.laser_material) {
-      const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
-      if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return void res.status(409).json({ error: { code: "generated_material", message: "This layout keeps the material chosen in its plan. Make a new plan to change it." } });
-      patch.metadata = platform().db.mergeJsonb("metadata", { laser_material: parsed.data.laser_material });
-    }
-    const row = await tenantDb(req).updateTable("digifab_library").set(patch).where("id", "=", req.params.id!).returning(ROW).executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such library item" } });
-    res.json(row);
+    const r = await editLibraryItem(tenantDb(req), req.params.id!, parsed.data);
+    res.status(r.status).json(r.body);
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+/** Delete a library file, never a layout's generated project or a drawing a
+ *  saved layout uses: the route's DELETE and digifab:delete-print-file. */
+export async function deleteLibraryItem(db: ReturnType<typeof tenantDb>, id: string): Promise<Reply> {
+  const before = await db.selectFrom("digifab_library").select("metadata").where("id", "=", id).executeTakeFirst();
+  if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return { status: 409, body: { error: { code: "generated_layout", message: "Keep this run's generated project. Cancel the run to discard its queued jobs." } } };
+  const plan = await db.selectFrom("digifab_laser_plans").select("id").where("library_id", "=", id).executeTakeFirst();
+  if (plan) return { status: 409, body: { error: { code: "laser_plan_exists", message: "This drawing belongs to a saved laser layout. Discard unqueued layouts before deleting it. Keep a queued run's source drawing." } } };
+  const row = await db.deleteFrom("digifab_library").where("id", "=", id).returning(["id"]).executeTakeFirst();
+  if (!row) return { status: 404, body: { error: { code: "not_found", message: "no such library item" } } };
+  return { status: 200, body: { ok: true } };
+}
+
+// AI-ACTION: digifab:delete-print-file
 libraryRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const before = await tenantDb(req).selectFrom("digifab_library").select("metadata").where("id", "=", req.params.id!).executeTakeFirst();
-    if ((before?.metadata.laser_layout || before?.metadata.cutter_plan)) return void res.status(409).json({ error: { code: "generated_layout", message: "Keep this run's generated project. Cancel the run to discard its queued jobs." } });
-    const plan = await tenantDb(req).selectFrom("digifab_laser_plans").select("id").where("library_id", "=", req.params.id!).executeTakeFirst();
-    if (plan) return void res.status(409).json({ error: { code: "laser_plan_exists", message: "This drawing belongs to a saved laser layout. Discard unqueued layouts before deleting it. Keep a queued run's source drawing." } });
-    const row = await tenantDb(req).deleteFrom("digifab_library").where("id", "=", req.params.id!).returning(["id"]).executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such library item" } });
-    res.json({ ok: true });
+    if (!(await requireCapability(req, res, "digifab:delete-print-file"))) return;
+    const r = await deleteLibraryItem(tenantDb(req), req.params.id!);
+    res.status(r.status).json(r.body);
   }),
 );
 
@@ -131,7 +149,8 @@ const Send = z.object({
   target_device: z.string().max(200).nullable().optional(),
   target_pool: z.string().uuid().nullable().optional(),
 });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — queues a library file onto a printer or a pool, which the
+// worker may start on its own; the assistant queues through digifab:print-this
 libraryRouter.post(
   "/:id/send",
   asyncHandler(async (req, res) => {

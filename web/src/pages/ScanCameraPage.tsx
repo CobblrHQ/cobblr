@@ -85,6 +85,8 @@ import { ScanDiagPanel } from "./ScanDiagPanel";
 import { recordDecode, recordOrientation, recordStreamRecovery, recordTorchEvent, recordTorchSample, recordZoom, scanDiagEnabled } from "../lib/scanDiag";
 import { BinAdjustModal } from "../components/BinAdjustModal";
 import { ScanAmbiguityModal } from "../components/ScanAmbiguityModal";
+import { ScanScopeChip } from "../components/ScanScopeChip";
+import { setScanScope } from "../lib/scanScope";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { clearScanSession, isSessionFresh, readScanSession, writeScanSession, type ScanSession } from "../lib/scanSession";
 
@@ -581,6 +583,42 @@ export function ScanCameraPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [binParam, locations.data]);
+  // "Turn into a bin" on the sheet made a new bin from this scan (#6891): it
+  // becomes where the next scans land, and the note under the top chrome
+  // carries the way back (the bin goes, the scan returns, the area too).
+  const armNewBin = useCallback((bin: { id: string; name: string }, made: ScanInboxItem) => {
+    const prevArea = areaIdRef.current;
+    const prevContainer = containerBinRef.current;
+    setContainerBin(null);
+    setAreaId(bin.id);
+    showFilingNote(`${bin.name} made: scans go into it`, "ok", {
+      label: "Undo",
+      onClick: () => {
+        void api
+          .unconfirmScanItem(activeSlug, made.id)
+          .then(() => {
+            setAreaId(prevArea);
+            setContainerBin(prevContainer);
+            void qc.invalidateQueries({ queryKey: ["core-locations", activeSlug] });
+            void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
+            showFilingNote(`${bin.name} is gone`);
+          })
+          .catch((e: unknown) => showFilingNote(e instanceof ApiError ? e.message : String(e), "warn"));
+      },
+    });
+  }, [activeSlug, qc, showFilingNote]);
+  // "Scan within this" from a record or a table (#6892): ?within=<kind>:<id>
+  // or ?scopeKind=<kind>, named by &scopeLabel. Held for the session, so the
+  // camera's next opening in this tab keeps it until the chip clears it.
+  const withinParam = params.get("within");
+  const scopeKindParam = params.get("scopeKind");
+  const scopeLabelParam = params.get("scopeLabel");
+  useEffect(() => {
+    if (!activeSlug || (!withinParam && !scopeKindParam)) return;
+    const cut = withinParam ? withinParam.lastIndexOf(":") : -1;
+    const within = withinParam && cut > 0 ? { kind: withinParam.slice(0, cut), id: withinParam.slice(cut + 1) } : null;
+    setScanScope(activeSlug, { ...(within ? { within } : {}), ...(scopeKindParam ? { kind: scopeKindParam } : {}), label: scopeLabelParam || "this" });
+  }, [activeSlug, withinParam, scopeKindParam, scopeLabelParam]);
   // Name of the active container bin, for the chip.
   const containerName = useQuery({
     queryKey: ["container-bin-name", activeSlug, containerBin?.kind, containerBin?.id],
@@ -2408,7 +2446,7 @@ export function ScanCameraPage() {
         ref={topChromeRef}
         data-testid="camera-top-chrome"
         className="absolute top-0 inset-x-0 flex items-center gap-1.5 p-4"
-        style={{ paddingTop: "max(1rem, var(--safe-top))" }}
+        style={{ paddingTop: "max(1rem, var(--safe-top))", paddingLeft: "max(1rem, var(--inset-left))", paddingRight: "max(1rem, var(--inset-right))" }}
       >
         {running && hasTorch ? (
           <button
@@ -2734,6 +2772,7 @@ export function ScanCameraPage() {
               // + flow, where it is the armed working surface.
               rearm();
             }}
+            onBinMade={armNewBin}
             moveMode={moveMode}
             countMode={countMode}
             sessionMode={params.get("mode") === "use" ? "use" : params.get("mode") === "kitchen" ? "kitchen" : undefined}
@@ -2786,6 +2825,7 @@ export function ScanCameraPage() {
                 setDrawerItem(current);
               }
             }}
+            onBinMade={armNewBin}
             moveMode={moveMode}
             countMode={countMode}
             sessionMode={params.get("mode") === "use" ? "use" : params.get("mode") === "kitchen" ? "kitchen" : undefined}
@@ -2918,6 +2958,11 @@ export function ScanCameraPage() {
             onOpenPath={(path) => navigate(path)}
           />
         )}
+
+        {/* The scope this pass scans within, one tap to clear (#6892). */}
+        <div className="flex justify-center px-2 empty:hidden">
+          <ScanScopeChip slug={activeSlug} tone="camera" />
+        </div>
 
         {/* Assign · SHUTTER · Done — the bottom bar. The shutter is the
             photo path for items with no barcode; barcodes never need it. */}

@@ -10,6 +10,7 @@
 // this file ignored the response entirely. Sandbox proves auth and wire-up and
 // nothing else; the mapping is tested against recorded responses instead.
 
+// EGRESS-FILE: vendor-fixed - the carrier's API host (sandbox or production), chosen by the operator's configuration and never by a request
 import {
   CarrierError,
   type CarrierDriver,

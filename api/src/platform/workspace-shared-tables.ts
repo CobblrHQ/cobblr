@@ -123,6 +123,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   notification_subscriptions: { travels: "never", why: PERSONAL },
   notification_deferred: { travels: "never", why: PERSONAL },
   notification_audiences: { travels: "never", why: PERSONAL },
+  workspace_notification_defaults: { travels: "never", why: "how members hear urgent and high events, a row naming the admin who set it; a restored workspace's admin sets it again in one choice on Who gets told" },
   share_links: { travels: "never", why: "a pairing with another workspace, holding the keys both sides sign with; a restored workspace shares again by inviting again" },
   share_view_sessions: { travels: "never", why: "read-only View as grants through a share's pairing, minutes long; a restored workspace has no pairing until it shares again" },
   share_additions: { travels: "never", why: "things a friend added through a share, which belong to that share's pairing; a restored workspace has no pairing until it shares again" },

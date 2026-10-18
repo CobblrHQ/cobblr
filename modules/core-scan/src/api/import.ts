@@ -41,7 +41,7 @@ import { assembleScanMenu, heuristicMatch, perceiveRow, type ScanMenuEntry } fro
 import { INTERNAL_API } from "./inbox.js";
 import { intakeRow } from "../services/intake.js";
 import { importUndoBlocker, importUndoRefusal, type ImportUndoBlocker } from "../services/import-undo.js";
-import { assertSafeOutboundUrl } from "../services/enrich.js";
+import { fetchImportPhoto, PHOTO_MAX_BYTES } from "../services/import-photo-fetch.js";
 import { trimCatalogMarginsWithVerdict, type TrimVerdict } from "../services/trim-margins.js";
 import {
   parseCsvImport,
@@ -55,8 +55,6 @@ import {
 
 export const importRouter = Router({ mergeParams: true });
 
-const PHOTO_TIMEOUT_MS = 10_000;
-const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 // Each stored photo takes a tenant DB connection for its metadata row, so a
 // wide fan-out here competes with the rest of the instance for Postgres slots.
 // At 4, a real 69-item import lost 4-6 photos per run to "remaining connection
@@ -339,25 +337,8 @@ async function upsertBatches(
  *  platform files seam (in-process), NOT the HTTP upload route — a fetched photo
  *  is not a user upload, so it must bypass any gate on that route. */
 async function fetchPhotoToFile(orgId: string, url: string, role: PhotoRole): Promise<StoredPhoto> {
-  // CI/test escape, same convention as the webhook + machine guards: the test
-  // suite spins a loopback photo server and CI sets COBBLR_TEST_CALLBACK_HOST.
-  const testHost = process.env.COBBLR_TEST_CALLBACK_HOST;
-  if (!(testHost && new URL(url).hostname === testHost)) await assertSafeOutboundUrl(url);
-  let res: Response;
-  try {
-    res = await fetch(url, { headers: { "user-agent": "cobblr-core-scan-import/1" }, signal: AbortSignal.timeout(PHOTO_TIMEOUT_MS) });
-  } catch (e) {
-    const msg = (e as Error).name === "TimeoutError" ? "timed out" : (e as Error).message;
-    const tailnet = /\.ts\.net(\/|:|$)/.test(url) ? " (a *.ts.net tailnet URL — reachable only if this Cobblr is on the same tailnet; rehost the photos or re-run the import from a tailnet-connected instance)" : "";
-    throw new Error(`fetch failed: ${msg}${tailnet}`);
-  }
-  if (!res.ok) throw new Error(`source returned HTTP ${res.status}`);
-  const len = Number(res.headers.get("content-length") ?? 0);
-  if (len > PHOTO_MAX_BYTES) throw new Error(`photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
-  const blob = await res.blob();
-  if (blob.size > PHOTO_MAX_BYTES) throw new Error(`photo larger than ${PHOTO_MAX_BYTES / 1024 / 1024}MB cap`);
-  const contentType = res.headers.get("content-type") ?? "";
-  return storePhoto(orgId, new Uint8Array(await blob.arrayBuffer()), blob.type || contentType || "image/jpeg", role);
+  const photo = await fetchImportPhoto(url);
+  return storePhoto(orgId, photo.bytes, photo.mime, role);
 }
 
 /** A photo's two roles take two treatments. The IDENTIFY photo is the

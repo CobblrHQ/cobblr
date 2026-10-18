@@ -32,8 +32,12 @@ import { registerAddThingsFromPhotoAction } from "./add-things-from-photo-action
 import { registerUndoSplitAction } from "./undo-split-action.js";
 import { registerRedoSplitAction } from "./redo-split-action.js";
 import { registerRanOutAction } from "./ran-out-action.js";
+import { registerMarkBrokenAction } from "./mark-broken-action.js";
+import { registerUnmarkBrokenAction } from "./unmark-broken-action.js";
 
 registerRanOutAction();
+registerMarkBrokenAction();
+registerUnmarkBrokenAction();
 
 registerUndoSplitAction();
 registerRedoSplitAction();

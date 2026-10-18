@@ -12,6 +12,7 @@
 // The Connections half's real port takes precedence for every connection it
 // knows; these add to it, they never replace it.
 
+// EGRESS-FILE: operator-configured - a test door exists only on a deployment whose job is to be tested, and a test hands it the base address
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";

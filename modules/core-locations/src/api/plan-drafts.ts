@@ -230,15 +230,29 @@ async function setFloorplan(db: Db, id: string, fp: Record<string, unknown> | nu
     .execute();
 }
 
+/** JSON with object keys in one order, so two equal bodies compare equal
+ *  however each was built. */
+function stableJson(v: unknown): string {
+  return JSON.stringify(v, (_k, x: unknown) =>
+    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))) : x,
+  );
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** Make the draft real, as one step. Refused, with nothing changed, when a
  *  place it names is gone or a planned place's parent cannot be made. */
-export async function applyDraft(orgId: string, id: string, userId: string | null): Promise<ApplyResult> {
+export async function applyDraft(orgId: string, id: string, userId: string | null, confirmed?: unknown): Promise<ApplyResult> {
   const db = await dbOf(orgId);
   const draft = await getDraft(orgId, id);
   if (!draft) throw new DraftRefused("There is no such layout.");
   if (draft.applied_at) throw new DraftRefused(`${draft.name} has already been applied.`);
+  // The layout the person confirmed, when the page sends it, must be the one
+  // saved: a save that failed left the page showing a newer layout than the
+  // one this would have made real (#7156).
+  if (confirmed !== undefined && stableJson(confirmed) !== stableJson(draft.body)) {
+    throw new DraftRefused(`${draft.name} has changes that are not saved yet. Save them, then apply.`);
+  }
   const room = await db.selectFrom("core_locations_locations").select(["id", "name"]).where("id", "=", draft.location_id).executeTakeFirst();
   if (!room) throw new DraftRefused("The place this layout is for is not there any more.");
   const body = draft.body;
@@ -682,7 +696,8 @@ planDraftsRouter.post(
   asyncHandler(async (req, res) => {
     if (!(await requireCapability(req, res, "core-locations:plan-apply"))) return;
     try {
-      res.json(await applyDraft(tenantContext(req).org.id, req.params.draftId!, sessionUser(req).id));
+      const confirmed = (req.body as { body?: unknown } | undefined)?.body;
+      res.json(await applyDraft(tenantContext(req).org.id, req.params.draftId!, sessionUser(req).id, confirmed === undefined ? undefined : confirmed));
     } catch (e) {
       refused(res, e);
     }

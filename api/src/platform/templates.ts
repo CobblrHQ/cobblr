@@ -36,12 +36,74 @@ export interface RenderOptions {
   relative?: boolean;
 }
 
+// Arithmetic over numbers and keys, for a view's inputs (#6897):
+//   {{ qty * inputs.scale }}   {{ (cost + shipping) / qty }}
+// A block counts as arithmetic only when it holds an operator, so every
+// existing {{ key }} renders as before. Parsed by hand (numbers, dotted keys,
+// + - * /, unary minus, parentheses), never evaluated as code: a bundle's
+// template cannot run anything. A key that is missing or not a number, or a
+// division by zero, renders empty rather than NaN.
+const EXPR_PATTERN = /\{\{\s*([a-z0-9_.\s+\-*/()]*[+\-*/][a-z0-9_.\s+\-*/()]*)\s*\}\}/gi;
+
+/** The value of an arithmetic block, or null when it cannot be worked out. */
+export function evaluateArithmetic(expr: string, data: Record<string, unknown>): number | null {
+  const tokens = expr.match(/\d+(?:\.\d+)?|[a-z_][a-z0-9_.]*|[+\-*/()]/gi);
+  if (!tokens || tokens.join("") !== expr.replace(/\s+/g, "")) return null;
+  let i = 0;
+  const peek = () => tokens[i];
+  const num = (v: unknown): number => {
+    if (typeof v === "number") return v;
+    if (typeof v === "string" && /^\s*-?\d+(?:\.\d+)?\s*$/.test(v)) return Number(v);
+    return NaN;
+  };
+  const factor = (): number => {
+    const t = tokens[i++];
+    if (t === undefined) return NaN;
+    if (t === "-") return -factor();
+    if (t === "(") {
+      const v = sum();
+      return tokens[i++] === ")" ? v : NaN;
+    }
+    if (/^\d/.test(t)) return Number(t);
+    if (/^[a-z_]/i.test(t)) return num(resolvePath(data, t));
+    return NaN;
+  };
+  const product = (): number => {
+    let v = factor();
+    while (peek() === "*" || peek() === "/") {
+      const op = tokens[i++];
+      const r = factor();
+      v = op === "*" ? v * r : r === 0 ? NaN : v / r;
+    }
+    return v;
+  };
+  const sum = (): number => {
+    let v = product();
+    while (peek() === "+" || peek() === "-") {
+      const op = tokens[i++];
+      const r = product();
+      v = op === "+" ? v + r : v - r;
+    }
+    return v;
+  };
+  const v = sum();
+  return i === tokens.length && Number.isFinite(v) ? v : null;
+}
+
+/** A number as a person reads an amount: at most two decimals, no trailing zeros. */
+function formatAmount(n: number): string {
+  return String(Number(n.toFixed(2)));
+}
+
 export function render(
   template: string,
   data: Record<string, unknown>,
   opts?: RenderOptions,
 ): string {
-  return template.replace(
+  return template.replace(EXPR_PATTERN, (_m, expr: string) => {
+    const v = evaluateArithmetic(expr, data);
+    return v === null ? "" : formatAmount(v);
+  }).replace(
     VAR_PATTERN,
     (_match, key: string, fallback: string | undefined, filter: string | undefined) => {
       const v = resolvePath(data, key);

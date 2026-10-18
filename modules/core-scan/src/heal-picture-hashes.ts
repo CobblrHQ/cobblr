@@ -26,15 +26,17 @@ interface HealDB {
     status: string;
     image_file_id: string | null;
     suggested_metadata: unknown;
+    created_at: Date;
   };
 }
 
 /** Heal one workspace, a page at a time. A picture that cannot be read is
  *  stamped empty so it is not read again. */
-export async function healPictureHashesIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healPictureHashesIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "image_file_id"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where("image_file_id", "is not", null)
     .where(sql<boolean>`suggested_metadata->>'image_sha256' is null`)
@@ -56,8 +58,9 @@ export async function healPictureHashesIn(orgId: string, db: Kysely<HealDB>): Pr
 export function registerPictureHashHeal(): void {
   registerHealPass({
     name: "core-scan.heal-picture-hashes",
+    since: "2026-09-28T20:21:07Z",
     shim: "modules/core-scan/src/heal-picture-hashes.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healPictureHashesIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healPictureHashesIn(orgId, db as Kysely<HealDB>, since),
   });
 }

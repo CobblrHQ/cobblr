@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the bridge's relay address is the workspace owner's setting on their own machine; the fetch is injectable
 // The edge-bridge protocol, written once.
 //
 // The bridge serves a fixed surface per configured instance:

@@ -4,6 +4,8 @@
 // server a person runs on their own machine (which offers only the tools its
 // token can run), so none of them can disagree with the server.
 
+import { moduleWriteChanges } from "@cobblr/platform-contract/module-write-changes";
+
 export const TOKEN_ACCESS = ["look", "change", "full"] as const;
 export type TokenAccess = (typeof TOKEN_ACCESS)[number];
 
@@ -19,7 +21,7 @@ export const TOKEN_ACCESS_LABEL: Record<TokenAccess, string> = {
 
 export const TOKEN_ACCESS_MEANS: Record<TokenAccess, string> = {
   look: "Reads records. Changes nothing.",
-  change: "Reads, adds, edits and moves records, and runs actions. Never touches settings, members, connections or other tokens. When an AI assistant uses it, deletes and anything that cannot be undone always ask you first.",
+  change: "Reads, adds, edits and moves records, and runs actions on them. Never touches the workspace itself (its name, settings, features, lists, fields or automations), members, connections, devices and stations, public links or other tokens. When an AI assistant uses it, deletes and anything that cannot be undone always ask you first.",
   full: "Everything you can do yourself, including settings and minting other tokens. When an AI assistant uses it, deletes and anything that cannot be undone always ask you first.",
 };
 
@@ -37,9 +39,11 @@ export const DEFAULT_TOKEN_ACCESS: TokenAccess = "change";
 // does.
 //
 //   look    read only. GET, and nothing that carries a credential.
-//   change  look, plus changing RECORDS: a module or instance route, or
+//   change  look, plus changing RECORDS: a module route its module calls a
+//           record write (module-write-changes.ts), an instance's records, or
 //           running an action. Never the workspace's settings, members,
-//           modules or credentials, and never minting another token.
+//           modules, connections or public links, and never minting another
+//           token.
 //   full    everything the owner can do, within the workspace if it names one.
 //
 // A token with neither column set (every token minted before this) is full
@@ -50,26 +54,11 @@ export const DEFAULT_TOKEN_ACCESS: TokenAccess = "change";
  *  connection's settings or the member list is a token that can leak them. */
 const GUARDED = /\/(connections|api-tokens|integrations|members|invites|roles|permissions|ai-settings|settings)(\/|$)/;
 
-/** Module routes that write a credential, or say where one is sent. A module
- *  route's path carries the module's name, not the word "connections", so
- *  GUARDED cannot see these and the generic "a module route is a record write"
- *  allowance would let a `change` token replace them. Each is named. The first
- *  is the whole integrations module, reads included: its settings and call log
- *  name the workspace's connections. */
+/** Module routes a token below `full` never reaches, even to read: the whole
+ *  integrations module, whose settings and call log name the workspace's
+ *  connections. What a module's writes may reach is module-write-changes.ts. */
 const CREDENTIAL_MODULE_ROUTES: RegExp[] = [
   /^\/modules\/core-integrations(\/|$)/,
-];
-
-/** Module routes whose WRITES (never their reads, never an action on one such as
- *  /test or /print) carry a credential. The method and the exact shape are part
- *  of the match: a collection POST, or an item PATCH/PUT/DELETE. */
-const CREDENTIAL_MODULE_WRITES: RegExp[] = [
-  /^\/modules\/core-ai\/providers(\/[^/]+)?$/,
-  /^\/modules\/core-print\/printers(\/[^/]+)?$/,
-  /^\/modules\/digifab\/connections(\/[^/]+)?$/,
-  /^\/modules\/digifab\/print-rules\/channels(\/[^/]+)?$/,
-  /^\/modules\/digifab\/failure\/detectors(\/[^/]+)?$/,
-  /^\/modules\/inventory\/spoolman\/connections(\/[^/]+)?$/,
 ];
 
 /** Every module API file that encrypts or stores a credential, and the route a
@@ -120,7 +109,18 @@ function routedPath(rawPath: string): string | null {
   }
 }
 
-/** The one platform write a `change` token may make beside record routes. */
+/** The kernel's own routes under a module's or a list's path. They change
+ *  the workspace (its features, its lists), not its records, so the "a module
+ *  or instance route is a record write" allowance must not reach them (#7138).
+ *  A test holds every kernel write under those paths to a decision: each names
+ *  its platform action, whose `changes` says which it is. */
+const KERNEL_WORKSPACE_WRITES: RegExp[] = [
+  /^\/modules\/[^/]+\/(enable|disable)$/,
+  /^\/instances\/[^/]+\/(promote-category|demote-to-category|scan-fallback)$/,
+];
+
+/** The one platform write a `change` token may make beside record routes. The
+ *  invoke route refuses it the actions that change the workspace itself. */
 const CHANGE_PLATFORM_WRITES = new Set(["/actions/invoke"]);
 
 export type TokenAccessVerdict = { ok: true } | { ok: false; code: string; message: string };
@@ -164,17 +164,22 @@ export function tokenAccessAllows(
   if (rel.includes("..") || GUARDED.test(rel) || wantsSecrets(query) || CREDENTIAL_MODULE_ROUTES.some((r) => r.test(rel))) {
     return { ok: false, code: "token_access", message: accessMessage(access) };
   }
-  if (!read && CREDENTIAL_MODULE_WRITES.some((r) => r.test(rel))) {
-    return { ok: false, code: "token_access", message: accessMessage(access) };
-  }
   if (read) return { ok: true };
+  if (KERNEL_WORKSPACE_WRITES.some((r) => r.test(rel))) return { ok: false, code: "token_access", message: accessMessage(access) };
   if (access === "look") return { ok: false, code: "token_access", message: accessMessage(access) };
   if (CHANGE_PLATFORM_WRITES.has(rel)) return { ok: true };
-  if (/^\/(modules|instances)\/[a-z0-9_-]+\/.+/i.test(rel)) return { ok: true };
+  // A module's route is a record write only where its module says so
+  // (module-write-changes.ts); one nothing names is refused.
+  const mod = /^\/modules\/([a-z0-9_-]+)(\/.+)$/.exec(rel);
+  if (mod) {
+    return moduleWriteChanges(mod[1] ?? "", method, mod[2] ?? "") === "records" ? { ok: true } : { ok: false, code: "token_access", message: accessMessage(access) };
+  }
+  if (/^\/instances\/[a-z0-9_-]+\/.+/i.test(rel)) return { ok: true };
   return { ok: false, code: "token_access", message: accessMessage(access) };
 }
 
-function accessMessage(access: TokenAccess): string {
+/** What a token below full is told when it is refused. */
+export function accessMessage(access: TokenAccess): string {
   return access === "look"
     ? "This token can look but not change anything."
     : "This token can change records and run actions, not the workspace's settings, members or credentials.";

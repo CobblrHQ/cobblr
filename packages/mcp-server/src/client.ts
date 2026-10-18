@@ -4,6 +4,7 @@
 // /api/v1 endpoint. This client just attaches the bearer token, resolves the
 // workspace slug, and normalises errors into a shape the tools can surface.
 
+// EGRESS-FILE: operator-configured - the MCP server calls the instance address it was started with
 import type { Config } from "./config.js";
 import { workspaceLinks, type WorkspaceApi } from "@cobblr/workspace-tools";
 

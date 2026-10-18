@@ -6,7 +6,7 @@
 // person and are they still active."
 
 import { isMcpProxyCall } from "./mcp-proxy.js";
-import { isSelfCall } from "../platform/self-fetch.js";
+import { isSelfCall, selfCallAssistant } from "../platform/self-fetch.js";
 import type { NextFunction, Request, Response } from "express";
 import { meta } from "../db/meta.js";
 import { TokenRefused, verifySession } from "./jwt.js";
@@ -129,8 +129,15 @@ function appTokenPathAllowed(method: string, rel: string, appScope: string): boo
 // in browser JS and is bypassable; this is its server-side twin. An app token
 // may invoke a capability-gated MODULE action but never a `platform:*` one.
 // Enforced at the invoke route, where the actionId (request body) is known.
+//
+// The one kernel verb an app may fire is platform:update-fields: it is how a
+// form block in edit mode corrects a record. It carries no workspace config; it
+// refuses a kind with no registered updater, withholds any field the member
+// cannot see, and asks the kind's own capability, so it is no wider than the
+// member's own screen.
+export const APP_SAFE_KERNEL_ACTIONS: ReadonlySet<string> = new Set(["platform:update-fields"]);
 export function appTokenMayInvoke(actionId: string): boolean {
-  return !actionId.startsWith("platform:");
+  return APP_SAFE_KERNEL_ACTIONS.has(actionId) || !actionId.startsWith("platform:");
 }
 
 // MCP read-grant clamp (Ask Cobb over the subscription bridge). A JWT with
@@ -208,6 +215,9 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   "/bindings/preview",
   "/relationship-kinds",
   "/modules/core-views/views",
+  // One view's rows as shown, its inputs set (read_view, #6897); the route
+  // applies the view's own sharing, and an input never writes.
+  /^\/modules\/core-views\/views\/[A-Za-z0-9-]+\/data$/,
   "/modules/core-apps/apps",
   "/modules/core-templates/templates",
   "/modules/core-units/units",
@@ -299,6 +309,11 @@ export function shareViewPathAllowed(method: string, originalUrl: string, slug: 
   return path === "/api/v1/me" || path === `/api/v1/orgs/${safe}` || path.startsWith(`/api/v1/orgs/${safe}/`);
 }
 
+/** Reads that ask a model unless told `ai=0`: the grant admits them only
+ *  with it, so a read token never spends a model call (get_scan_item's
+ *  catalog_candidates, #6888). */
+const MCP_READS_THAT_COULD_ASK_A_MODEL: RegExp[] = [/^\/modules\/core-scan\/inbox\/[A-Za-z0-9-]+\/catalog-candidates$/];
+
 export function mcpReadPathAllowed(method: string, originalUrl: string, slug: string): boolean {
   if (method === "POST") {
     const safe = slug.replace(/[^a-z0-9-]/gi, "");
@@ -313,6 +328,9 @@ export function mcpReadPathAllowed(method: string, originalUrl: string, slug: st
   if (!path.startsWith(prefix + "/")) return false; // pinned to THIS workspace
   const rel = path.slice(prefix.length); // e.g. "/entity-kinds", "/entities/<kind>/<id>"
   if (rel.includes("..")) return false;
+  if (MCP_READS_THAT_COULD_ASK_A_MODEL.some((p) => p.test(rel))) {
+    return new URLSearchParams(originalUrl.split("?")[1] ?? "").get("ai") === "0";
+  }
   return MCP_READ_PATHS.some((p) => (typeof p === "string" ? rel === p : p.test(rel)));
 }
 
@@ -576,8 +594,9 @@ export async function requireAuth(
           : tokenScopes?.some((k) => isStationScope(k) || isStationQrScope(k))
             ? { kind: "surface", label: tokenName }
             : null;
+    const assistant = req.session.ai_door ?? (via?.kind === "assistant" || via?.kind === "mcp" ? via.kind : null) ?? selfCallAssistant(req);
     runWithActor(
-      { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null, linkOrigin: linkOrigin(req) },
+      { userId: user.id, authMethod, apiTokenId, titlePref: user.title_pref ?? null, linkOrigin: linkOrigin(req), assistant },
       () => (via ? runVia(via, () => next()) : next()),
     );
   } catch (err) {

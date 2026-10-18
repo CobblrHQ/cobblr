@@ -13,6 +13,7 @@ import { Modal } from "@cobblr/platform-web";
 import { useKindLabels } from "../lib/useKindLabels";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import type { ScanResolveCandidate } from "../lib/api";
+import { setScanScope } from "../lib/scanScope";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 export function ScanAmbiguityModal({
@@ -28,7 +29,8 @@ export function ScanAmbiguityModal({
   onPick: (c: ScanResolveCandidate) => void;
   onClose: () => void;
 }) {
-  const labels = useKindLabels(useActiveOrg().activeSlug);
+  const { activeSlug } = useActiveOrg();
+  const labels = useKindLabels(activeSlug);
   return (
     <Modal open onClose={onClose} title={`“${scanKey}” matches ${countOf(candidates.length, "thing")}`}>
       <div className="space-y-3">
@@ -57,6 +59,22 @@ export function ScanAmbiguityModal({
                   {c.rule_name ? ` · via ${c.rule_name}` : ""}
                 </div>
               </button>
+              {/* A pass over one product's units: the next scans of a shared
+                  serial go straight to this product's (#6892). */}
+              {c.scope?.within && (
+                <button
+                  type="button"
+                  data-testid="scan-scope-offer"
+                  onClick={() => {
+                    const within = c.scope!.within!;
+                    setScanScope(activeSlug, { within: { kind: within.kind, id: within.id }, label: within.title });
+                    onPick(c);
+                  }}
+                  className="mt-1 min-h-11 px-1 text-xs text-accent underline decoration-dotted underline-offset-2"
+                >
+                  This one, and only {c.scope.within.title} from now on
+                </button>
+              )}
             </li>
           ))}
         </ul>

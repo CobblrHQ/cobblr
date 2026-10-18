@@ -47,6 +47,8 @@ export const CORNER_STACK = {
   feedback: 10,
   live: 20,
   labels: 30,
+  /** The scan scope a scanner is scanning within (#6892). */
+  scanScope: 35,
   quickAccess: 40,
   backToTop: 50,
   /** The bar of actions for a selection, centred across the bottom: its own

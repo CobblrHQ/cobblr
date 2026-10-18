@@ -29,7 +29,7 @@ import {
 } from "@cobblr/platform-contract/holdings";
 import { instanceOf, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { isLowStock } from "../on-hand.js";
-import { batchesFrom, expiryFor, putLots, takeLots, addBatch, servedLots, type Batch } from "../batches.js";
+import { expiryFor, putLots, takeLots, addBatch, servedLots, type Batch } from "../batches.js";
 import { withBatches } from "./action-handlers.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";

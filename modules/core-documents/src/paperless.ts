@@ -9,6 +9,7 @@
 // a bridge. The token rides the Authorization header of each request and
 // nowhere else: not in a job's input or output, not in an error, not in a log.
 
+// EGRESS-FILE: guarded-elsewhere - the fetch is the one the service connection hands in, which is the egress guard
 import type { AdapterFetch, AdapterResponse, BuiltInConnectionDef, BuiltInServiceContext, BuiltInServiceDef } from "@cobblr/platform-contract/services";
 import { ADAPTER_TRANSIT_PROPERTY } from "@cobblr/platform-contract/services";
 import { platform } from "@cobblr/platform-contract";

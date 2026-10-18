@@ -26,7 +26,7 @@ import { listAdditions } from "../platform/share-additions.js";
 import { publicPageFieldChoices, recordPublicPages } from "../platform/public-page.js";
 import { copyNotes } from "../platform/share-edits.js";
 import { endShareView, mintShareView, renewShareView, requestShareView } from "../platform/share-view.js";
-import { decideShareEdit, describeShareEdits, listShareEdits, readEditMode } from "../platform/share-edits.js";
+import { decideShareEdit, describeShareEdits, listShareEdits, readEditMode, sendCopyEdits } from "../platform/share-edits.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { makeIpLimiter, overLimit, rateLimited } from "../platform/ip-limiter.js";
@@ -136,6 +136,9 @@ shareLinksOrgRouter.post("/:slug/share-links/:id/sync", requireAuth, withTenant,
     // Sync now sends what the owner has now: a mirror pass first (waiting
     // out one already running), then the outbox, rather than only what an
     // earlier pass already queued.
+    // On the friend's side it looks for their edits first, so one a failed
+    // pass never queued is sent now, not only what is already waiting (#7125).
+    if (link.side === "share" && link.status === "active") await sendCopyEdits(link.id);
     const r = link.side === "owner" && !isOwnLink(link) ? await mirrorAndDeliverNow(link.id) : await flushShareLinkNow(link.id);
     const left = await meta.selectFrom("share_outbox").select((eb) => eb.fn.countAll<string>().as("n")).where("link_id", "=", link.id).where("sent_at", "is", null).executeTakeFirst();
     res.json({ sent: r.sent, error: r.error, waiting: Number(left?.n ?? 0) });

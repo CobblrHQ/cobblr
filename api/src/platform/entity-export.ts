@@ -21,6 +21,7 @@ import { currentVia } from "../lib/request-context.js";
 import { SecretFieldError, secretValuesForExport } from "./secret-fields.js";
 import { meta } from "../db/meta.js";
 import { hiddenFieldsFor, list, listAll, listKindsForOrg } from "./entities.js";
+import { ListReadError } from "./entity-list-walk.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { addressText } from "@cobblr/platform-contract/address";
 import { formatMoney, centsFromAmount, readMoney, fieldCurrency, formatMoneyPlain, moneyStorageOf, storedCents, type MoneyStorage } from "@cobblr/platform-contract/money";
@@ -175,6 +176,7 @@ export async function exportEntitiesCsv(
     });
     while (rowCount < cap) {
       const page = await list(orgId, kind, { ...query, group_offset: groupOffset, limit: 50 }, readViewer);
+      if (page.failed) throw new ListReadError();
       grand = page.totals ?? {};
       weighted = page.weighted_by ?? {};
       const depth = Math.max(0, ...(page.groups ?? []).map((g) => g.keys.length));
@@ -202,6 +204,7 @@ export async function exportEntitiesCsv(
           offset += items.length;
           if (offset >= group.count || rowCount >= cap) break;
           const next = await list(orgId, kind, { ...query, group_keys: group.keys, offset, limit: 50 }, readViewer);
+          if (next.failed) throw new ListReadError();
           items = next.items;
         }
         rows.push(subtotal(`Subtotal: ${labels.join(" / ")} (${group.count})`, group.totals));
@@ -215,6 +218,7 @@ export async function exportEntitiesCsv(
     rows.push(subtotal("Grand total", grand));
   } else {
     const got = await listAll(orgId, kind, query, readViewer);
+    if (got.failed) throw new ListReadError();
     rows.push(...(await values(got.items)).map((row) => columns.map((c) => c.cell(row))));
     complete = got.complete;
   }

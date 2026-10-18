@@ -14,6 +14,7 @@ import { COPY_BOOKKEEPING, ORIGIN_REF_KEY, isReference } from "./share-mirror.js
 import { noteShare } from "./share-notices.js";
 import { shareRecords } from "./share-picks.js";
 import { enqueueShareOp, getShareLink, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { runExclusive } from "./exclusive.js";
 
 const plain = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([k, v]) => !COPY_BOOKKEEPING.has(k) && !k.startsWith("_") && !k.endsWith("_label") && !isReference(k) && v !== null && v !== undefined && typeof v !== "object"));
 
@@ -61,30 +62,67 @@ export async function listAdditions(orgId: string, open = true): Promise<ShareAd
     .execute();
 }
 
+/** On the owner's record a Take made, which addition it was made from: so a
+ *  Take that died after making it, and is pressed again, finds that record
+ *  instead of making a second (#7131). Underscored, so it never travels. */
+export const TAKEN_FROM_KEY = "_share_addition";
+
+/** Decide one addition at a time, whichever tab, process or door asks: two
+ *  Takes read "pending" together and each made a record (#7131). */
+async function deciding<T>(additionId: string, decide: () => Promise<T>): Promise<T | { ok: false; error: string }> {
+  let out: T | undefined;
+  const run = await runExclusive(`share.addition.${additionId}`, async () => {
+    out = await decide();
+  });
+  return run.ran ? out! : { ok: false, error: "Someone is deciding that right now." };
+}
+
+/** The record an earlier Take of this addition made, if one did. */
+async function madeFrom(orgId: string, kind: string, additionId: string): Promise<string | null> {
+  const w = await platform().entities.getWriter(orgId, kind);
+  if (w?.findByKey) return w.findByKey(orgId, { field: TAKEN_FROM_KEY, metadata: true }, additionId);
+  const all = await platform().entities.listAll(orgId, kind, { filter: { [TAKEN_FROM_KEY]: additionId }, include_retired: true }, undefined, { cap: 2 });
+  return all.items[0]?.id ?? null;
+}
+
 /** Take what the friend added into the owner's own collection. */
 export async function takeAddition(orgId: string, additionId: string): Promise<{ ok: true; id: string; title: string } | { ok: false; error: string }> {
-  const a = await meta.selectFrom("share_additions").selectAll().where("id", "=", additionId).where("org_id", "=", orgId).executeTakeFirst();
-  if (!a) return { ok: false, error: "That is not here any more." };
-  if (a.status !== "pending") return { ok: false, error: "That was already taken or left." };
-  const w = await platform().entities.getWriter(orgId, a.entity_kind);
-  if (!w) return { ok: false, error: "This workspace has nowhere to keep that kind of thing." };
-  // NOT-A-COPY: the owner's own new record, made from what the friend added; the friend's becomes its copy
-  const id = await w.create(orgId, { ...(a.fields as Record<string, unknown>), name: a.title, metadata: a.metadata });
-  await meta.updateTable("share_additions").set({ status: "taken", taken_id: id, decided_at: new Date() }).where("id", "=", a.id).execute();
-  // Their record becomes the copy before the mirror sends one, so it is one thing, not two.
-  await enqueueShareOp(a.link_id, "added.taken", { copy_id: a.peer_copy_id, origin: { kind: a.entity_kind, id } });
-  const shared = await shareRecords(a.link_id, [{ entity_kind: a.entity_kind, id }]);
-  if ("error" in shared) console.error(`[share] taken ${id} not shared back:`, shared.error);
-  return { ok: true, id, title: a.title };
+  return deciding(additionId, async () => {
+    const a = await meta.selectFrom("share_additions").selectAll().where("id", "=", additionId).where("org_id", "=", orgId).executeTakeFirst();
+    if (!a) return { ok: false as const, error: "That is not here any more." };
+    if (a.status !== "pending") return { ok: false as const, error: "That was already taken or left." };
+    const w = await platform().entities.getWriter(orgId, a.entity_kind);
+    if (!w) return { ok: false as const, error: "This workspace has nowhere to keep that kind of thing." };
+    const id =
+      (await madeFrom(orgId, a.entity_kind, a.id)) ??
+      // NOT-A-COPY: the owner's own new record, made from what the friend added; the friend's becomes its copy
+      (await w.create(orgId, { ...(a.fields as Record<string, unknown>), name: a.title, metadata: { ...(a.metadata as Record<string, unknown>), [TAKEN_FROM_KEY]: a.id } }));
+    const claimed = await meta
+      .updateTable("share_additions")
+      .set({ status: "taken", taken_id: id, decided_at: new Date() })
+      .where("id", "=", a.id)
+      .where("status", "=", "pending")
+      .executeTakeFirst();
+    if (Number(claimed.numUpdatedRows) === 0) return { ok: false as const, error: "That was already taken or left." };
+    // Their record becomes the copy before the mirror sends one, so it is one
+    // thing, not two. Keyed by the addition, so it is told once.
+    await enqueueShareOp(a.link_id, "added.taken", { copy_id: a.peer_copy_id, origin: { kind: a.entity_kind, id } }, `added.taken.${a.id}`);
+    const shared = await shareRecords(a.link_id, [{ entity_kind: a.entity_kind, id }]);
+    if ("error" in shared) console.error(`[share] taken ${id} not shared back:`, shared.error);
+    return { ok: true as const, id, title: a.title };
+  });
 }
 
 /** Leave what the friend added in their share space, and not take it. */
 export async function leaveAddition(orgId: string, additionId: string): Promise<{ ok: true; title: string } | { ok: false; error: string }> {
-  const a = await meta.selectFrom("share_additions").select(["id", "status", "title"]).where("id", "=", additionId).where("org_id", "=", orgId).executeTakeFirst();
-  if (!a) return { ok: false, error: "That is not here any more." };
-  if (a.status !== "pending") return { ok: false, error: "That was already taken or left." };
-  await meta.updateTable("share_additions").set({ status: "left", decided_at: new Date() }).where("id", "=", a.id).execute();
-  return { ok: true, title: a.title };
+  return deciding(additionId, async () => {
+    const a = await meta.selectFrom("share_additions").select(["id", "status", "title"]).where("id", "=", additionId).where("org_id", "=", orgId).executeTakeFirst();
+    if (!a) return { ok: false as const, error: "That is not here any more." };
+    if (a.status !== "pending") return { ok: false as const, error: "That was already taken or left." };
+    const left = await meta.updateTable("share_additions").set({ status: "left", decided_at: new Date() }).where("id", "=", a.id).where("status", "=", "pending").executeTakeFirst();
+    if (Number(left.numUpdatedRows) === 0) return { ok: false as const, error: "That was already taken or left." };
+    return { ok: true as const, title: a.title };
+  });
 }
 
 export function registerShareAdditionOps(): void {

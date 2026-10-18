@@ -118,6 +118,11 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "arm_compatibility_recorded": "recorded what works on",
   "arm_maintenance_changed": "changed the service state of",
   "arm_command": "sent a command to",
+  "arm_tooling_changed": "changed the tooling on",
+  "arm_control_revoked": "took station control away from",
+  "arm_run_approved": "approved a run on",
+  "arm_run_started": "started a run on",
+  "arm_run_ended": "ended a run on",
   "test-run_created": "prepared",
   "personal_documents_reader_changed": "changed who reads personal documents:",
   "production-test_finished": "finished testing",
@@ -170,6 +175,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "part_deleted": "deleted",
   "part_installed": "installed a part in",
   "part_removed": "took a part out of",
+  "part_redated": "re-dated",
   "part_restocked": "restocked",
   "part_storage_changed": "changed storage for",
   "stock_consumed": "used components from",
@@ -403,6 +409,9 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
     const collection = text(d.collection) ?? "inventory";
     const base = collection === "inventory" ? "inventory" : `instances/${encodeURIComponent(collection)}`;
     if (!resolved) subject = { ...subject, kind: null, href: `/w/${encodeURIComponent(slug)}/${base}/recounts/${encodeURIComponent(e.entity_id)}` };
+  } else if (e.action === "part_redated" && text(d.said)) {
+    // Why a date moved, in the row itself: "Strawberries moved to the fridge: good until 2026-10-24".
+    summary = `${title} ${text(d.said)}`;
   } else if (e.action === "record_sent") {
     verb = "sent";
     summary = `Sent from ${text(d.from) ?? "another workspace"} by ${actor}: ${title}`;

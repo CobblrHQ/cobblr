@@ -578,28 +578,47 @@ export function WhatToDoPanel({
   // The hero is the whole compact panel: type it, or scan it. Under it, one
   // quiet line of ready-made setups and the "more ways" fold; the AI builder,
   // the full catalog and the blank kinds all live behind that fold.
+  // The setups are their own section, a grid, with "More ways to start" as
+  // its last cell: a strip of chips wrapping round an inline "or start from a
+  // ready-made setup:" label read as a sentence that broke apart (#7199).
+  const startRow = "flex min-h-11 w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-subtle dark:hover:bg-slate-800/60 disabled:opacity-50";
+  const moreWays = (
+    <button
+      type="button"
+      data-tour="more-ways"
+      onClick={() => setMoreOpen((v) => !v)}
+      className="col-span-2 sm:col-span-1 flex min-h-11 w-full items-center justify-between gap-1 rounded-lg border border-dashed border-line dark:border-slate-700 px-3 py-2 text-left text-sm font-medium text-accent hover:border-accent"
+    >
+      {moreOpen ? (<>Fewer ways to start <ChevronUp size={14} /></>) : (<>More ways to start <ChevronDown size={14} /></>)}
+    </button>
+  );
+  const setupChip = "flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition ";
   const readyMadeStrip = (
-    <div data-strip="ready-made" className="flex flex-wrap items-center gap-1.5">
-      <span className="text-[11px] text-faint dark:text-slate-500">or start from a ready-made setup:</span>
-      {skins
-        .filter((b) => (b.manifest.catalog ?? "core") === "core")
-        .slice(0, 4)
-        .map((b) => (
-        <button
-          key={b.manifest.id}
-          type="button"
-          onClick={() => pickRecipe(b)}
-          className={
-            "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition " +
-            (selectedRecipe?.manifest.id === b.manifest.id
-              ? "border-accent text-accent bg-accent/5"
-              : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-muted dark:text-slate-300 hover:border-accent hover:text-accent")
-          }
-        >
-          <span aria-hidden>{b.glyph}</span> {b.manifest.name}
-        </button>
-      ))}
-    </div>
+    <section data-strip="ready-made" aria-labelledby="start-from-a-setup" className="space-y-2">
+      <h3 id="start-from-a-setup" className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">Start from a setup</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {skins
+          .filter((b) => (b.manifest.catalog ?? "core") === "core")
+          .slice(0, 4)
+          .map((b) => (
+          <button
+            key={b.manifest.id}
+            type="button"
+            onClick={() => pickRecipe(b)}
+            className={
+              setupChip +
+              (selectedRecipe?.manifest.id === b.manifest.id
+                ? "border-accent text-accent bg-accent/5"
+                : "border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-content dark:text-slate-200 hover:border-accent hover:text-accent")
+            }
+          >
+            <span aria-hidden>{b.glyph}</span>
+            <span className="min-w-0 truncate">{b.manifest.name}</span>
+          </button>
+        ))}
+        {moreWays}
+      </div>
+    </section>
   );
 
   const describeCard = (
@@ -714,30 +733,11 @@ export function WhatToDoPanel({
           with the guided flow. */}
       {isSandboxSession() && <FirstScanCard />}
 
-      <AiOffNotice status={aiStatus} compact>
-        {/* Situation, then the ask. Two earlier versions failed differently: the
-            original opened on "AI isn't connected, matching runs in basic mode", which
-            reads as a broken install; the replacement was accurate but four sentences of
-            reassurance nobody finishes. Reassure in the first clause, ask in the second,
-            and keep "free" in the sentence because it is the fact most likely to change
-            someone's mind. */}
-        {aiStatus?.identify_available ? (
-          <>
-            {/* Identification is already wired here, so the old line ("scanning
-                already works without AI") both answered a question nobody asked
-                and undersold what they had just been handed. Say what is
-                missing instead. */}
-            <strong>Scanning and identifying already work here.</strong>{" "}
-            Connect a free model to use the builder below, and to ask Cobb about
-            your workspace.{" "}
-          </>
-        ) : (
-          <>
-            <strong>Scanning already works without AI.</strong>{" "}
-            Connect a free model to identify anything from a photo, and to use the builder
-            below.{" "}
-          </>
-        )}
+      {/* One line, and it can be put away: four lines of it led the first
+          screen, before anything to do (#7199). A reason with its own
+          sentence (no AI on this plan, switched off) still says it whole. */}
+      <AiOffNotice status={aiStatus} compact dismissible={`cobblr:ai-notice-hidden:${slug}`} ctaLabel={"Connect AI for the builder and Cobb \u2192"}>
+        <strong>{aiStatus?.identify_available ? "Scanning and identifying work now" : "Scanning works now"}</strong>{" · "}
       </AiOffNotice>
       {showBody && (<>
       {/* Capture-first: the reactive add/capture surface is the hero and the
@@ -836,65 +836,58 @@ export function WhatToDoPanel({
             <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">or just add an item</div>
           )}
           <FreeformAdd slug={slug} placeholder={`e.g. ${itemPlaceholder}`} add={noteMut} />
-          <p className="text-[11px] text-faint dark:text-slate-500 mt-2">
-            {isTouch
-              ? "Scan barcodes or snap photos with your camera and they file themselves. Nothing to hand? "
-              : "No camera here? Pair your phone and scan with it; the items land in this workspace. Or "}
-            <button
-              type="button"
-              data-tour="sample-scan"
-              data-testid="sample-scan"
-              disabled={sampleScanMut.isPending}
-              onClick={() => sampleScanMut.mutate()}
-              className="inline-flex items-center gap-1 text-accent hover:underline font-medium disabled:opacity-50"
-            >
-              {sampleScanMut.isPending ? <Loader2 size={11} className="animate-spin" /> : <ScanLine size={11} />}
-              {isTouch ? "try a sample scan" : "try a sample scan without one"}
-            </button>
-            {isTouch ? " and watch it land." : "."}
-          </p>
-          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
-            Already keep a list somewhere?{" "}
-            <button
-              type="button"
-              data-testid="bring-your-spreadsheet"
-              onClick={() => openSheetImport()}
-              className="inline-flex items-center gap-1 text-accent hover:underline font-medium"
-            >
-              <FileSpreadsheet size={11} /> Bring your spreadsheet
-            </button>
-            , see where everything goes, and undo it whole if it is not right.
-          </p>
-          <p className="text-[11px] text-faint dark:text-slate-500 mt-1">
-            Want to see where things live?{" "}
-            <Link
-              data-testid="draw-your-rooms"
-              to="/locations?view=plan&new=room"
-              className="inline-flex items-center gap-1 text-accent hover:underline font-medium"
-            >
-              <MapIcon size={11} /> Draw your rooms
-            </Link>
-            , then drag each thing to its shelf or drawer.
-          </p>
 
-          {/* Starter chips — a fresh panel demos the magic in one tap. Only when
-              there's nothing captured yet and no funnel selection. */}
+          {/* Starter chips: one row under the input that scrolls sideways
+              rather than wrapping, so the examples never stack into a block.
+              Only when nothing is captured yet and nothing is chosen. */}
           {items.length === 0 && !selectedRecipe && !selectedModuleObj && (
-            <div className="mt-2 flex flex-wrap gap-1.5 items-center">
-              <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">try:</span>
+            <div data-testid="starter-chips" className="-mx-3 mt-2 flex items-center gap-1.5 overflow-x-auto px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <span className="shrink-0 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">try:</span>
               {STARTER_CHIPS.map((c) => (
                 <button
                   key={c}
                   type="button"
                   disabled={noteMut.isPending}
                   onClick={() => noteMut.mutate(c)}
-                  className="rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-0.5 text-[11px] text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition disabled:opacity-50"
+                  className="shrink-0 whitespace-nowrap rounded-full border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-0.5 text-[11px] text-muted dark:text-slate-300 hover:border-accent hover:text-accent transition disabled:opacity-50"
                 >
                   {c}
                 </button>
               ))}
             </div>
           )}
+
+          {/* Three other ways in, each a row of its own: an icon, a bold
+              label and a one-line hint, the whole row the target. They were
+              links inside sentences, whose chips stretched their lines apart
+              and left ", see where everything goes" alone on a line (#7199). */}
+          <ul data-testid="start-rows" className="mt-3 divide-y divide-line/70 dark:divide-slate-800 rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900">
+            <li>
+              <button
+                type="button"
+                data-tour="sample-scan"
+                data-testid="sample-scan"
+                disabled={sampleScanMut.isPending}
+                onClick={() => sampleScanMut.mutate()}
+                className={startRow}
+              >
+                {sampleScanMut.isPending ? <Loader2 size={16} className="shrink-0 animate-spin text-accent" /> : <ScanLine size={16} className="shrink-0 text-accent" />}
+                <span className="min-w-0 leading-snug"><span className="font-medium text-content dark:text-mortar-100">Try a sample scan</span><span className="text-faint dark:text-slate-500"> · {isTouch ? "watch one file itself" : "no camera needed"}</span></span>
+              </button>
+            </li>
+            <li>
+              <button type="button" data-testid="bring-your-spreadsheet" onClick={() => openSheetImport()} className={startRow}>
+                <FileSpreadsheet size={16} className="shrink-0 text-accent" />
+                <span className="min-w-0 leading-snug"><span className="font-medium text-content dark:text-mortar-100">Bring your spreadsheet</span><span className="text-faint dark:text-slate-500"> · undo it whole if it's wrong</span></span>
+              </button>
+            </li>
+            <li>
+              <Link data-testid="draw-your-rooms" to="/locations?view=plan&new=room" className={startRow}>
+                <MapIcon size={16} className="shrink-0 text-accent" />
+                <span className="min-w-0 leading-snug"><span className="font-medium text-content dark:text-mortar-100">Draw your rooms</span><span className="text-faint dark:text-slate-500"> · then drag things to their shelf</span></span>
+              </Link>
+            </li>
+          </ul>
 
           {/* What you've added — each capture, its match, and a one-tap CTA to
               give it a home. This is the funnel's payoff: col 3 fills in. */}
@@ -932,21 +925,9 @@ export function WhatToDoPanel({
         </div>
       </div>
 
-      {/* One quiet line under the hero: a few ready-made setups, and the fold
-          that holds every other way to start. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {skins.length > 0 && !moreOpen && readyMadeStrip}
-        <button
-          type="button"
-          data-tour="more-ways"
-          onClick={() => setMoreOpen((v) => !v)}
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-accent hover:underline"
-        >
-          {moreOpen
-            ? (<>Fewer ways to start <ChevronUp size={12} /></>)
-            : (<>More ways to start <ChevronDown size={12} /></>)}
-        </button>
-      </div>
+      {/* Under the hero: the ready-made setups, ending in the fold that holds
+          every other way to start. */}
+      {skins.length > 0 && !moreOpen ? readyMadeStrip : <div className="sm:w-64">{moreWays}</div>}
 
       {moreOpen && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface/60 dark:bg-slate-900/40 p-3 space-y-4">

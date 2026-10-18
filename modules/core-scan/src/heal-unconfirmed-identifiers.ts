@@ -35,6 +35,7 @@ interface HealDB {
     suggested_name: string | null;
     suggested_candidates: unknown;
     suggested_metadata: unknown;
+    created_at: Date;
   };
 }
 
@@ -43,10 +44,11 @@ interface HealDB {
 const IDENT_KEY_SQL = `"(${IDENTIFIER_FIELD_NAMES.source.replace(/^\^\(|\)\$$/g, "")})"\\s*:`;
 
 /** Heal one workspace; answers how many drafts needed it. */
-export async function healUnconfirmedIdentifiersIn(db: Kysely<HealDB>): Promise<number> {
+export async function healUnconfirmedIdentifiersIn(db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "status", "barcode_text", "image_file_id", "suggested_name", "suggested_candidates", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where(sql<boolean>`suggested_candidates::text ~* ${IDENT_KEY_SQL}`)
     .execute();
@@ -73,10 +75,11 @@ export async function healUnconfirmedIdentifiersIn(db: Kysely<HealDB>): Promise<
 export function registerUnconfirmedIdentifiersHeal(): void {
   registerHealPass({
     name: "core-scan.heal-unconfirmed-identifiers",
+    since: "2026-09-24T21:29:24Z",
     shim: "modules/core-scan/src/heal-unconfirmed-identifiers.ts",
     module: "core-scan",
-    visit: async ({ orgId, db }) => {
-      const n = await healUnconfirmedIdentifiersIn(db as Kysely<HealDB>);
+    visit: async ({ orgId, db, since }) => {
+      const n = await healUnconfirmedIdentifiersIn(db as Kysely<HealDB>, since);
       if (n > 0) console.log(`[core-scan] org ${orgId}: marked unsupported identifiers unconfirmed on ${n} draft(s)`);
       return n;
     },

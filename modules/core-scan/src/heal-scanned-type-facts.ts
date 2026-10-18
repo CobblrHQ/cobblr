@@ -42,6 +42,7 @@ interface HealDB {
     target_kind: string | null;
     target_entity_id: string | null;
     suggested_metadata: unknown;
+    created_at: Date;
   };
 }
 
@@ -136,10 +137,11 @@ export function planTypeTopUp(a: {
 /** Heal one workspace; answers how many filed records needed it. A claimed
  *  tag that could not be re-read counts, so the workspace is visited again
  *  (an unreachable maker is not a tag with nothing to say). */
-export async function healScannedTypeFactsIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healScannedTypeFactsIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "barcode_text", "source_url", "target_module", "target_kind", "target_entity_id", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "resolved")
     .where("target_entity_id", "is not", null)
     .where(sql<boolean>`suggested_metadata->'filed_into'->>'instance' is not null`)
@@ -223,10 +225,11 @@ export async function healScannedTypeFactsIn(orgId: string, db: Kysely<HealDB>):
 export function registerScannedTypeFactsHeal(): void {
   registerHealPass({
     name: "core-scan.heal-scanned-type-facts",
+    since: "2026-09-29T14:59:51Z",
     shim: "modules/core-scan/src/heal-scanned-type-facts.ts",
     module: "core-scan",
-    visit: async ({ orgId, db }) => {
-      const n = await healScannedTypeFactsIn(orgId, db as Kysely<HealDB>);
+    visit: async ({ orgId, db, since }) => {
+      const n = await healScannedTypeFactsIn(orgId, db as Kysely<HealDB>, since);
       if (n > 0) console.log(`[core-scan] org ${orgId}: filled what the scan knew on ${n} filed record(s)`);
       return n;
     },

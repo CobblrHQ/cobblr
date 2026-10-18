@@ -4,6 +4,7 @@
 // bot is the only thing that holds a Discord connection; the API never talks to
 // Discord directly. `||` not `??` for the env default (core docs/architecture/platform-spec.md §14.6).
 
+// EGRESS-FILE: operator-configured - the support bot's address is set in the environment
 import { dmSummary } from "./channels/discord-card.js";
 const BOT_URL = process.env.COBBLR_DISCORD_BOT_URL || "";
 
@@ -77,13 +78,9 @@ export async function sendDiscordDm(args: {
   /** Already in Discord's embed shape — the channel owns the rendering, this
    *  is a pipe. Same reasoning as `components`. */
   embeds?: unknown[];
-  /** The same message as Components V2 (each card row a section with its
-   *  button beside it), with the IS_COMPONENTS_V2 flag. Offered BESIDE the
-   *  classic embed + components: a bot that knows V2 sends this and falls
-   *  back to the classic shape if Discord refuses it; an older bot ignores
-   *  both keys. So a deploy of either side never loses a message (#3282). */
-  components_v2?: unknown[];
-  flags?: number;
+  // No Components V2 here, on purpose (#7035): a V2 message cannot carry
+  // text, so the bot sends the push line as a message of its own before it,
+  // and a notice reaches Discord twice. A classic card is one message.
   /** The plain form (message + app link) the bot falls back to when Discord
    *  rejects the rich payload. The degraded shape still leads somewhere. */
   fallback_text?: string;

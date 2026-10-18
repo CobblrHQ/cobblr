@@ -195,7 +195,12 @@ export function registerPurchasesActionHandlers(): void {
     if (!before) return { ok: false, error: "order not found" };
     // Idempotent: answering twice (two devices, or a stale notification) must
     // not re-emit the arrival and double-bump stock.
-    if (before.status === "arrived") return { ok: true, skipped: "already arrived" };
+    if (before.status === "arrived") {
+      const at = before.arrived_at as Date | string | null;
+      const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
+      await receiveOrderLines(db, ctx.orgId, orderId, on);
+      return { ok: true, skipped: "already arrived" };
+    }
 
     // NOT the UTC day: pressing "Yes, it turned up" at 8pm US Eastern stamped
     // TOMORROW's date. arrivedEverywhere lags, never leads.

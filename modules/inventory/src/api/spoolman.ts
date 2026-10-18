@@ -31,22 +31,24 @@ interface SpoolmanSpool {
   };
 }
 
-/** Block the cloud-metadata address; everything else (incl. LAN) is allowed —
- *  Spoolman is a self-hosted LAN service by design. */
+/** The address as a URL, or a plain refusal. Where it may point is the
+ *  workspace's egress policy (platform().egress.guardedFetch): Spoolman is a
+ *  self-hosted LAN service by design, so a self-hosted instance reaches its own
+ *  LAN and the hosted one does not. */
 export function assertSafeUrl(raw: string): URL {
-  const u = new URL(raw);
-  if (u.hostname === "169.254.169.254" || u.hostname === "metadata.google.internal") {
-    throw new Error("blocked host");
+  try {
+    return new URL(raw);
+  } catch {
+    throw new Error("not a web address");
   }
-  return u;
 }
 
-async function fetchSpools(baseUrl: string, apiKey: string | null): Promise<SpoolmanSpool[]> {
+export async function fetchSpools(orgId: string, baseUrl: string, apiKey: string | null): Promise<SpoolmanSpool[]> {
   const base = assertSafeUrl(baseUrl);
   const url = `${base.origin}${base.pathname.replace(/\/$/, "")}/api/v1/spool`;
   const headers: Record<string, string> = {};
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  const res = await platform().egress.guardedFetch(orgId, url, { headers, signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`Spoolman responded ${res.status}`);
   const body = (await res.json()) as SpoolmanSpool[];
   return Array.isArray(body) ? body : [];
@@ -115,7 +117,7 @@ spoolmanRouter.post(
 
     let spools: SpoolmanSpool[];
     try {
-      spools = await fetchSpools(conn.base_url, apiKey);
+      spools = await fetchSpools(ctx.org.id, conn.base_url, apiKey);
     } catch (err) {
       await store().setProbe(ctx.org.id, conn.id, {}, (err as Error).message.slice(0, 120)).catch(() => {});
       return void res.status(502).json({ error: { code: "spoolman_unreachable", message: (err as Error).message } });
@@ -217,7 +219,7 @@ async function publishLatestSpool(orgId: string, db: Kysely<InventoryDB>, id: st
   const location = (paths.get(`inventory:part:${id}`) ?? []).map((p) => p.name).join(" / ") || String(md.spoolman_location ?? "");
   const base = assertSafeUrl(conn.base_url);
   const url = `${base.origin}${base.pathname.replace(/\/$/, "")}/api/v1/spool/${md.spoolman_id}`;
-  const reply = await fetch(url, {
+  const reply = await platform().egress.guardedFetch(orgId, url, {
     method: "PATCH", headers: { "content-type": "application/json", ...(creds.apiKey ? { authorization: `Bearer ${creds.apiKey}` } : {}) },
     body: JSON.stringify({ remaining_weight: remaining, location }), signal: AbortSignal.timeout(15000),
   });

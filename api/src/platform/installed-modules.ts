@@ -21,6 +21,7 @@ import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { RUNTIME_INSTALL_DIR } from "../sandbox/loader.js";
 import { sql } from "kysely";
+import { anyColumnChanges } from "../db/upsert-only-changes.js";
 
 // RUNTIME_INSTALL_DIR is owned by sandbox/loader (it's the same path
 // the sandbox loader scans for installed modules + the volume bind
@@ -84,6 +85,15 @@ export async function syncInstalledModules(): Promise<number> {
         ? "registry"
         : "image"
       : deriveSource(entry.rootPath);
+    const set = {
+      version: entry.manifest.version,
+      band: entry.manifest.band ?? "user",
+      source,
+      source_url: buildEntry?.source_url ?? null,
+      source_sha256: buildEntry?.source_sha256 ?? null,
+      signed_by: buildEntry?.signed_by ?? null,
+      manifest: sql`${JSON.stringify(entry.manifest)}::jsonb` as never,
+    };
     await meta
       .insertInto("installed_modules")
       .values({
@@ -97,17 +107,8 @@ export async function syncInstalledModules(): Promise<number> {
         manifest: sql`${JSON.stringify(entry.manifest)}::jsonb` as never,
         installed_by: null,
       })
-      .onConflict((c) =>
-        c.column("name").doUpdateSet({
-          version: entry.manifest.version,
-          band: entry.manifest.band ?? "user",
-          source,
-          source_url: buildEntry?.source_url ?? null,
-          source_sha256: buildEntry?.source_sha256 ?? null,
-          signed_by: buildEntry?.signed_by ?? null,
-          manifest: sql`${JSON.stringify(entry.manifest)}::jsonb` as never,
-        }),
-      )
+      // A settled module (the same version, source and manifest) is not rewritten (#7345).
+      .onConflict((c) => c.column("name").doUpdateSet(set).where(anyColumnChanges("installed_modules", Object.keys(set))))
       .execute();
     upserted++;
   }

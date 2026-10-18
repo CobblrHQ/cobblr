@@ -38,11 +38,12 @@ interface HealDB {
 }
 
 /** Heal one workspace; answers how many rows it folded or dropped. */
-export async function healPlacementKindsIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healPlacementKindsIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const stray = await db
     .selectFrom("core_placement_placements")
     .select(["containee_kind", "container_kind"])
     .distinct()
+    .where("placed_at", "<", since)
     .where((eb) => eb.or([eb("containee_kind", "like", "%:item"), eb("container_kind", "like", "%:item")]))
     .execute();
   if (stray.length === 0) return 0; // the happy path: one query, no writes
@@ -56,13 +57,13 @@ export async function healPlacementKindsIn(orgId: string, db: Kysely<HealDB>): P
       const olderInstance = await sql`
         delete from core_placement_placements a using core_placement_placements b
          where a.containee_kind = ${kind} and b.containee_kind = ${base}
-           and a.containee_id = b.containee_id and a.placed_at <= b.placed_at`.execute(trx);
+           and a.containee_id = b.containee_id and a.placed_at <= b.placed_at and a.placed_at < ${since}`.execute(trx);
       const olderBase = await sql`
         delete from core_placement_placements b using core_placement_placements a
          where a.containee_kind = ${kind} and b.containee_kind = ${base}
-           and a.containee_id = b.containee_id and a.placed_at > b.placed_at`.execute(trx);
-      const folded = await trx.updateTable("core_placement_placements").set({ containee_kind: base }).where("containee_kind", "=", kind).executeTakeFirst();
-      const asContainer = await trx.updateTable("core_placement_placements").set({ container_kind: base }).where("container_kind", "=", kind).executeTakeFirst();
+           and a.containee_id = b.containee_id and a.placed_at > b.placed_at and a.placed_at < ${since}`.execute(trx);
+      const folded = await trx.updateTable("core_placement_placements").set({ containee_kind: base }).where("containee_kind", "=", kind).where("placed_at", "<", since).executeTakeFirst();
+      const asContainer = await trx.updateTable("core_placement_placements").set({ container_kind: base }).where("container_kind", "=", kind).where("placed_at", "<", since).executeTakeFirst();
       const n =
         Number(olderInstance.numAffectedRows ?? 0) +
         Number(olderBase.numAffectedRows ?? 0) +
@@ -80,8 +81,9 @@ export async function healPlacementKindsIn(orgId: string, db: Kysely<HealDB>): P
 export function registerPlacementKindsHeal(): void {
   registerHealPass({
     name: "core-placement.heal-instance-kinds",
+    since: "2026-09-24T22:50:06Z",
     shim: "modules/core-placement/src/heal-instance-kinds.ts",
     module: "core-placement",
-    visit: ({ orgId, db }) => healPlacementKindsIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healPlacementKindsIn(orgId, db as Kysely<HealDB>, since),
   });
 }

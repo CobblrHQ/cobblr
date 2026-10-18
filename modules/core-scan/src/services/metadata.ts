@@ -49,6 +49,10 @@ export const IDENTIFY_OWNED_KEYS = [
   "raw",
   "low_trust",
   "pack_size",
+  // What the catalog lists a food as containing: a fact about THIS read of the
+  // catalog, so a read that lists none clears what an earlier one kept.
+  "allergens",
+  "traces",
   "decoded",
   "enriched_from",
   "rate_limited",

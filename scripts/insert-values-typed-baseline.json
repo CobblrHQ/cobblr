@@ -8,7 +8,7 @@
   "api/src/platform/user-credentials.ts": 1,
   "api/src/routes/backup.ts": 2,
   "api/src/routes/blueprint.ts": 2,
-  "api/src/routes/bundles.ts": 2,
+  "api/src/routes/bundles.ts": 1,
   "api/src/routes/public.ts": 1,
   "modules/assets/src/api/assets.ts": 1,
   "modules/assets/src/api/sync-writer.ts": 1,

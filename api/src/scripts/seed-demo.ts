@@ -1,3 +1,4 @@
+// EGRESS-FILE: own-api - a dev seed script calling the instance's own API
 // Seed a demo tenant against a running cobblr-api. Drives the public
 // HTTP API so it exercises the same code path users do, including
 // signup → default-binding seeding → module CRUD.

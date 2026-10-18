@@ -148,8 +148,15 @@ export function registerCatalogsResolvers(): void {
       const filterEarly = query.filter ?? {};
       const hostedCatalogId =
         typeof filterEarly.catalog_id === "string" ? filterEarly.catalog_id : null;
+      // An exact catalog id (a part number a scan read off the thing): the
+      // entry that id names, or nothing; never a fuzzy search (#6888).
+      const exactId = typeof filterEarly.external_id === "string" && filterEarly.external_id.trim() ? filterEarly.external_id.trim() : null;
       if (hostedCatalogId) {
         const meta = await hostedCatalogMeta(orgId, hostedCatalogId);
+        if (meta && exactId) {
+          const r = await hostedLookup(orgId, meta.dataset, meta.kind, exactId);
+          return { items: r?.entry ? [hostedResolvedEntity(hostedCatalogId, exactId, r.entry)] : [] };
+        }
         if (meta) {
           const qtext = (query.q ?? "").trim();
           if (!qtext) return { items: [] };
@@ -187,6 +194,7 @@ export function registerCatalogsResolvers(): void {
       if (typeof filter.catalog_id === "string") {
         q = q.where("e.catalog_id", "=", filter.catalog_id);
       }
+      if (exactId) q = q.where(sql<boolean>`lower(e.external_id) = ${exactId.toLowerCase()}`);
       // The whole payload as text, so a catalog whose title column is not
       // `name` still matches on it, and so does any other column.
       if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: [], json: ["e.payload"] })!);
@@ -217,6 +225,12 @@ function toCatalog(row: {
       source_url: row.source_url,
       puller_id: row.puller_id,
       entry_count: row.entry_count,
+      // The kinds this catalog's entries describe (Rebrickable's parts bind to
+      // inventory:part): what another module reads to offer a match only where
+      // one can apply (#6888, a scan's confirm). Null: it says nothing.
+      bindable_to_kinds: Array.isArray((row.schema as { bindable_to_kinds?: unknown } | null)?.bindable_to_kinds)
+        ? ((row.schema as { bindable_to_kinds: unknown[] }).bindable_to_kinds.filter((k) => typeof k === "string") as string[])
+        : null,
     },
   };
 }

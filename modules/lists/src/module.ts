@@ -117,6 +117,7 @@ export default defineModule({
       {
         group: "buy",
         id: "lists:clear-done",
+        changes: "records",
         runBy: "member",
         examples: ["clear the ticked ones", "tidy up this list"],
         label: "Clear done items",
@@ -129,6 +130,7 @@ export default defineModule({
       {
         group: "buy",
         id: "lists:add-item",
+        changes: "records",
         runBy: "member",
         examples: ["put milk on the shopping list", "add that to my list"],
         undoable: true,
@@ -158,6 +160,7 @@ export default defineModule({
         // NO-PHRASING: a module taking back a line it put on a list itself
         group: "buy",
         id: "lists:withdraw-item",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Take back a line a module added",
@@ -176,6 +179,7 @@ export default defineModule({
         // NO-PHRASING: a module linking a line to the record its title names
         group: "buy",
         id: "lists:link-item",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Link a typed line to the record it names",

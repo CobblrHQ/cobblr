@@ -18,6 +18,7 @@
 // its calls log no cost rather than $0; a test fails on any model the
 // recorded listing has that the table does not mention.
 
+// EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import type { AiCapability } from "@cobblr/platform-contract";
 import type { AiListedModel, AiModelCatalog } from "@cobblr/platform-contract/ai-models";
 

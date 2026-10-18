@@ -18,6 +18,7 @@
 // possible, but it is unverified for vision + tools on the free tier, so this ships
 // the path that demonstrably works.
 
+// EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import { platform } from "@cobblr/platform-contract";
 import { authHeadersFor, buildCompatProvider } from "./openai-compat.js";
 import type { AiCapability } from "@cobblr/platform-contract";

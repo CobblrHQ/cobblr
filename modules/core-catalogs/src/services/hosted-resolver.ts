@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the hosted resolver is the operator's setting
 // Client for the operator-hosted shared reference-catalog service (the cloud
 // shared-catalog mode — docs/architecture/shared-reference-catalogs.md). When
 // COBBLR_CATALOG_RESOLVER_URL is set, a catalog whose `source = "hosted"`

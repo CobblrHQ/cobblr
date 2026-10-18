@@ -1,0 +1,10 @@
+{
+  "lint": "lint:walk-kinds-in-their-files",
+  "run": "node scripts/lint-walk-kinds-in-their-files.ts",
+  "rows": [
+    "e2e"
+  ],
+  "ms": 524,
+  "recorded": "2026-10-19",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

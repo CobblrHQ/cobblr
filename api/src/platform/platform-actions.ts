@@ -72,6 +72,12 @@ export interface PlatformActionDecl {
    * owner-only action whose prose omits "owner only" can no longer slip through.
    */
   min_role: OrgRoleName | "grantable";
+  /** What running it changes: the workspace's data (its records), or its
+   *  setup (its settings, fields, lists, features, automations, people and
+   *  shares). A token that may only change records (`change`, token-access.ts)
+   *  runs the first and never the second (#7138). Required, so a new action
+   *  is classified when it is written. */
+  changes: "data" | "setup";
   /** Who runs it without a grant, when a route does the same thing for them
    *  (#5170, action-gates.ts). min_role stays the floor below which nobody may. */
   run_by?: Exclude<OrgRoleName, "guest"> | "requester";
@@ -100,20 +106,34 @@ export interface PlatformActionDecl {
 export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/record-actions
-    id: "platform:edit-record-actions", group: "organise", label: "Arrange record actions", description: "Rename or reorder action groups, move actions, hide them or choose primaries on a kind of record. Changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.edit-record-actions", user_invokable: true, undoable: true,
+    id: "platform:edit-record-actions", changes: "setup", group: "organise", label: "Arrange record actions", description: "Rename or reorder action groups, move actions, hide them or choose primaries on a kind of record. Changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.edit-record-actions", user_invokable: true, undoable: true,
     examples: ["put Log service and Set a schedule under Vehicle care on printers", "hide Print label on parts"],
     args_schema: { kind: { label: "Kind of record", type: "text", required: true }, group: { label: "Group", type: "text" }, label: { label: "Group name", type: "text" }, actions: { label: "Actions to move", type: "list" }, order: { label: "Group order", type: "number" }, hidden: { label: "Hidden", type: "boolean" }, primary: { label: "Primary", type: "boolean" }, layout: { label: "Complete layout", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
   },
   {
     // UI-SCREEN: /configuration/record-actions
-    id: "platform:arrange-record-panels", group: "organise", label: "Arrange record panels", description: "Hide the panels a kind of record does not need, or put them in another order: Loaded filament above Service schedule on 3D printers, say. Hidden panels can be shown again, and changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.arrange-record-panels", user_invokable: true, undoable: true,
+    id: "platform:arrange-record-panels", changes: "setup", group: "organise", label: "Arrange record panels", description: "Hide the panels a kind of record does not need, or put them in another order: Loaded filament above Service schedule on 3D printers, say. Hidden panels can be shown again, and changes can be undone.", icon: "sliders", scope: "workspace", min_role: "admin", invoke_handler: "platform.arrange-record-panels", user_invokable: true, undoable: true,
     examples: ["hide Bench instrument on 3D printers", "put Loaded filament first on printers"],
     args_schema: { kind: { label: "Kind of record", type: "text", required: true }, panels: { label: "Panels to hide or show", type: "list" }, hidden: { label: "Hidden", type: "boolean" }, order: { label: "Panels in order, top first", type: "list" }, layout: { label: "Complete arrangement", type: "json" }, expected_revision: { label: "Version being edited", type: "number" } }, version: "0.1.0",
   },
   {
+    // UI-SCREEN: /apps (an app's edit form)
+    group: "organise",
+    id: "platform:update-fields", changes: "data", run_by: "member", label: "Change a record's fields", icon: "pencil",
+    description: "Correct fields on one record: a part's name or where it is kept, a project's status. Only fields you can see change, and only on kinds of record that can be edited this way. The record's history shows the change.",
+    examples: ["rename part M3 bolt to M3 x 8 bolt", "move the soldering iron to the top shelf"],
+    scope: "workspace", min_role: "member", invoke_handler: "platform.update-fields", user_invokable: true, undoable: false,
+    args_schema: {
+      kind: { label: "Kind of record", type: "text", required: true },
+      id: { label: "Record id", type: "text", required: true },
+      fields: { label: "Fields to change, by name", type: "json", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /configuration/people
     group: "more",
-    id: "platform:add-person", run_by: "member", label: "Add a person", icon: "user-plus",
+    id: "platform:add-person", changes: "setup", run_by: "member", label: "Add a person", icon: "user-plus",
     description: "Put someone on the workspace's People list by name, so records can belong to them and automations can message them: a partner, a neighbour, a shop. Optional email, and phone in international form (+1 555 010 0123) for a text. Adding someone does not invite them; they are not a member.",
     examples: ["add Alex to the people list", "add Sam, sam@example.com, +1 555 010 0123"],
     scope: "workspace", min_role: "member", invoke_handler: "platform.add-person", user_invokable: true, undoable: false,
@@ -127,7 +147,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/people
     group: "more",
-    id: "platform:edit-person", run_by: "member", label: "Change a person's details", icon: "pencil",
+    id: "platform:edit-person", changes: "setup", run_by: "member", label: "Change a person's details", icon: "pencil",
     description: "Change the name, email or phone of someone on the People list, found by name or id. A blank email or phone clears it. A member's name is their account's and is not changed here. The phone is in international form (+1 555 010 0123).",
     examples: ["Alex's phone is +1 555 010 0123", "change Sam's email to sam@example.com"],
     scope: "workspace", min_role: "member", invoke_handler: "platform.edit-person", user_invokable: true, undoable: false,
@@ -142,7 +162,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/recently-deleted
     group: "lifecycle",
-    id: "platform:restore-deleted-record", run_by: "member", label: "Restore a deleted record", icon: "history",
+    id: "platform:restore-deleted-record", changes: "data", run_by: "member", label: "Restore a deleted record", icon: "history",
     description: "Bring a record from Recently deleted back with its original id and contents. Deleted records are kept for 30 days. Args: kind and entity_id.",
     scope: "workspace", min_role: "member", invoke_handler: "platform.restore-deleted-record", user_invokable: true, undoable: false,
     args_schema: { kind: { label: "Record kind", type: "text", required: true }, entity_id: { label: "Record id", type: "text", required: true } },
@@ -151,7 +171,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-REACH: Restore this version in every record's History panel
     group: "lifecycle",
-    id: "platform:restore-record-version",
+    id: "platform:restore-record-version", changes: "data",
     label: "Restore a record version",
     description: "Restore the values from before a saved edit, replacing later edits and recording a restorable change. Read the record's activity first; entry_id selects the edit and expected_latest_id is its newest history entry. Runs on the workspace. Fields you cannot read stay unchanged.",
     examples: ["put this record back to before that edit", "restore the previous version of this item"],
@@ -172,7 +192,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /inventory, /assets, /machines, /views
     group: "organise",
-    id: "platform:set-field-on-records",
+    id: "platform:set-field-on-records", changes: "data",
     label: "Set field on selected records",
     description: "Set or clear one writable built-in or custom field on up to 500 records. Pass records as [{kind,id}], the exact field name and value (null clears it). Only fields shared by every selected kind are accepted. Failed rows are listed and skipped. One Undo restores the successful rows. Runs on the workspace.",
     examples: ["set Brand to Hakko on these parts", "clear the warranty date on the selected items"],
@@ -193,7 +213,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // NO-PHRASING: the undo of a batch field edit, returned on its card
     // UI-REACH: Undo in the Set field toast
     group: "lifecycle",
-    id: "platform:restore-batch-field",
+    id: "platform:restore-batch-field", changes: "data",
     label: "Undo setting a field",
     description: "Restore the previous field values from a bulk field edit. A row changed since the batch keeps its newer value and is listed as skipped.",
     icon: "undo-2",
@@ -212,7 +232,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:add-field",
+    id: "platform:add-field", changes: "setup",
     min_role: "grantable",
     label: "Add a field",
     description:
@@ -238,7 +258,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:track-sellers",
+    id: "platform:track-sellers", changes: "setup",
     label: "Track sellers as their own field",
     icon: "store",
     version: "0.1.0",
@@ -259,7 +279,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // NO-PHRASING: the undo step of track-sellers, handed back on its card
     // UI-REACH: an undo step; the toast after Track sellers runs it
     group: "more",
-    id: "platform:untrack-sellers",
+    id: "platform:untrack-sellers", changes: "setup",
     label: "Put sellers back as notes",
     icon: "undo-2",
     version: "0.1.0",
@@ -277,7 +297,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "organise",
-    id: "platform:decline-seller-field",
+    id: "platform:decline-seller-field", changes: "setup",
     label: "Keep sellers as notes",
     icon: "x",
     version: "0.1.0",
@@ -295,7 +315,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:settle-same-meaning",
+    id: "platform:settle-same-meaning", changes: "setup",
     label: "Settle two fields that mean one thing",
     icon: "merge",
     version: "0.1.0",
@@ -318,7 +338,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // NO-PHRASING: the undo step of settle-same-meaning, handed back on its card
     // UI-REACH: an undo step; the toast after Keep runs it
     group: "more",
-    id: "platform:unsettle-same-meaning",
+    id: "platform:unsettle-same-meaning", changes: "setup",
     label: "Put two fields back as they were",
     icon: "undo-2",
     version: "0.1.0",
@@ -339,7 +359,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:edit-field",
+    id: "platform:edit-field", changes: "setup",
     min_role: "grantable",
     // The label is all an unfiltered list_actions shows, and "Change a field"
     // read as rename-only: "make Purchase Date required" was answered "that
@@ -379,7 +399,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (any record's choice field: typing a new value)
     group: "more",
-    id: "platform:learn-choice", run_by: "member",
+    id: "platform:learn-choice", changes: "data", run_by: "member",
     min_role: "member",
     label: "Remember a new choice",
     description:
@@ -401,7 +421,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (the Undo on "remembered as a choice")
     group: "more",
-    id: "platform:forget-choice", run_by: "member",
+    id: "platform:forget-choice", changes: "data", run_by: "member",
     min_role: "member",
     label: "Forget a choice",
     description: "Take a value back off a field's choices: the undo of remembering one. Values already recorded stay as they are.",
@@ -421,7 +441,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:remove-field",
+    id: "platform:remove-field", changes: "setup",
     min_role: "grantable",
     label: "Remove a field",
     description:
@@ -443,7 +463,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:group-fields",
+    id: "platform:group-fields", changes: "setup",
     min_role: "grantable",
     label: "Group fields under a heading",
     description:
@@ -470,7 +490,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:ungroup-fields",
+    id: "platform:ungroup-fields", changes: "setup",
     min_role: "grantable",
     label: "Take fields out of a heading",
     description:
@@ -490,7 +510,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "organise",
-    id: "platform:create-instance",
+    id: "platform:create-instance", changes: "setup",
     min_role: "grantable",
     label: "Create a list (instance)",
     description:
@@ -512,7 +532,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:remove-list",
+    id: "platform:remove-list", changes: "setup",
     min_role: "grantable",
     label: "Remove an empty list",
     description:
@@ -533,7 +553,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/modules
     group: "more",
-    id: "platform:enable-module",
+    id: "platform:enable-module", changes: "setup",
     min_role: "grantable",
     label: "Turn on a feature",
     description:
@@ -554,7 +574,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/modules
     group: "more",
-    id: "platform:set-module-part",
+    id: "platform:set-module-part", changes: "setup",
     min_role: "grantable",
     label: "Turn part of a feature on or off",
     description:
@@ -577,7 +597,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /settings/connections (Who answers for you)
     group: "more",
-    id: "platform:set-my-default-ai", run_by: "member",
+    id: "platform:set-my-default-ai", changes: "setup", run_by: "member",
     min_role: "member",
     label: "Choose your own AI for a kind of work",
     description:
@@ -603,7 +623,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     // plain copy; no tool reads a vault document out or lists a folder, so a
     // personal document never reaches a model through the assistant.
     group: "more",
-    id: "platform:file-into-vault", run_by: "member",
+    id: "platform:file-into-vault", changes: "data", run_by: "member",
     min_role: "member",
     label: "File a document in your Vault",
     description:
@@ -627,7 +647,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: / (the dashboard's offer to move records into the collection they belong in)
     group: "more",
-    id: "platform:move-records",
+    id: "platform:move-records", changes: "data",
     min_role: "grantable",
     label: "Move records into another list",
       // The boundary sentence is load-bearing, and its absence was measurable. This
@@ -674,7 +694,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (and every record page: "No longer mine…" under its actions)
     group: "lifecycle",
-    id: "platform:mark-gone",
+    id: "platform:mark-gone", changes: "data",
     min_role: "grantable",
     label: "Mark as sold or given away",
     description:
@@ -700,7 +720,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /assets (and every record page: Bring back, on the line of a thing that left)
     group: "lifecycle",
-    id: "platform:bring-back",
+    id: "platform:bring-back", changes: "data",
     min_role: "grantable",
     label: "Bring back",
     description:
@@ -721,7 +741,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: "+ Link" on its Links panel)
     group: "organise",
-    id: "platform:link-records",
+    id: "platform:link-records", changes: "data",
     min_role: "member",
     run_by: "member",
     label: "Link two records",
@@ -747,7 +767,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: a link's note on its Links panel)
     group: "organise",
-    id: "platform:edit-link",
+    id: "platform:edit-link", changes: "data",
     min_role: "member",
     run_by: "member",
     label: "Change a link's note",
@@ -769,7 +789,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: Unlink on its Links panel)
     group: "organise",
-    id: "platform:unlink-records",
+    id: "platform:unlink-records", changes: "data",
     min_role: "member",
     run_by: "member",
     label: "Unlink two records",
@@ -790,7 +810,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/automations
     group: "organise",
-    id: "platform:add-wire",
+    id: "platform:add-wire", changes: "setup",
     min_role: "admin",
     label: "Set up an automation",
     description:
@@ -821,7 +841,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/automations
     group: "organise",
-    id: "platform:edit-wire",
+    id: "platform:edit-wire", changes: "setup",
     min_role: "admin",
     label: "Change an automation",
     description:
@@ -852,7 +872,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/automations
     group: "organise",
-    id: "platform:remove-wire",
+    id: "platform:remove-wire", changes: "setup",
     min_role: "admin",
     label: "Remove an automation",
     description:
@@ -870,9 +890,33 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     version: "0.1.0",
   },
   {
+    // UI-SCREEN: /configuration/notification-audiences
+    group: "more",
+    id: "platform:set-notification-default",
+    changes: "setup",
+    // min_role "admin" is the rank floor; how a workspace's members hear its
+    // urgent and high events is the owners' and admins' to set, as on the screen.
+    min_role: "admin",
+    label: "Set how members hear urgent or high events",
+    description:
+      "Choose the channel a workspace's members hear its urgent (or high) events on until they choose for themselves: email, Discord (for those who connected it) or phone and computer notifications, or none for the bell alone. A member who has set any channel in this workspace keeps their own choice. Owners and admins only.",
+    icon: "bell",
+    scope: "workspace",
+    invoke_handler: "platform.set-notification-default",
+    user_invokable: true,
+    // Undo is setting it back: the answer names what it was.
+    undoable: false,
+    examples: ["send everyone urgent alerts by email", "members should get high priority notices on Discord", "stop emailing members urgent events by default"],
+    args_schema: {
+      priority: { label: "Which events: urgent or high", type: "text", required: true },
+      channel: { label: "How members hear them: email, discord_dm, browser_push, or none for the bell alone", type: "text", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
     // UI-SCREEN: /configuration/email
     group: "more",
-    id: "platform:test-outbound-email",
+    id: "platform:test-outbound-email", changes: "setup",
     // min_role "admin" is the rank floor; the handler applies the exact rule,
     // as the Email screen does.
     min_role: "admin",
@@ -894,7 +938,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: "Lend…" in its actions, RecordLoan)
     group: "lifecycle",
-    id: "platform:lend",
+    id: "platform:lend", changes: "data",
     min_role: "grantable",
     label: "Lend it out",
     description:
@@ -921,7 +965,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: "It's back" on the line of a thing lent out)
     group: "lifecycle",
-    id: "platform:return",
+    id: "platform:return", changes: "data",
     min_role: "grantable",
     label: "It's back",
     description:
@@ -943,7 +987,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines
-    group: "share", id: "platform:send-records", run_by: "member", min_role: "guest",
+    group: "share", id: "platform:send-records", changes: "data", run_by: "member", min_role: "guest",
     label: "Send to another workspace", description: "Copy or move records into another workspace of your own. Preview the mapping first; complete items file directly and items needing a decision wait in the inbox. Read the records and send their real ids.",
     icon: "send", scope: "workspace", invoke_handler: "platform.send-records", user_invokable: true, undoable: false,
     args_schema: {
@@ -966,14 +1010,14 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /machines
-    group: "share", id: "platform:undo-send", run_by: "member", min_role: "guest", label: "Undo a workspace send",
+    group: "share", id: "platform:undo-send", changes: "data", run_by: "member", min_role: "guest", label: "Undo a workspace send",
     description: `Undo your workspace send. Across ${productName()} servers, undo the import there first, then restore the source here with restore_source.`,
     icon: "undo", scope: "workspace", invoke_handler: "platform.undo-send", user_invokable: true, undoable: false,
     args_schema: { id: { label: "Send id, from list_actions send_targets (sends)", type: "text", required: true }, restore_source: { label: "Restore the source here after connected import Undo", type: "boolean" } }, version: "0.1.1",
   },
   {
     // UI-SCREEN: /scan
-    group: "share", id: "platform:export-send-file", run_by: "member", min_role: "guest",
+    group: "share", id: "platform:export-send-file", changes: "data", run_by: "member", min_role: "guest",
     label: 'Download a send file', description: `Prepare a versioned send file with original documents for another ${productName()}. Download the returned link. A Move keeps its source until import confirmation.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.export-send-file", user_invokable: true, undoable: false,
     args_schema: {
@@ -986,7 +1030,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /scan
-    group: "share", id: "platform:import-send-file", run_by: "member", min_role: "member",
+    group: "share", id: "platform:import-send-file", changes: "data", run_by: "member", min_role: "member",
     label: 'Import a send file', description: 'Preview the receiving collection and every field before importing an uploaded send file. Complete items file directly; decisions stay in the scan inbox. Returns a confirmation file.',
     icon: "send", scope: "workspace", invoke_handler: "platform.import-send-file", user_invokable: true, undoable: false,
     args_schema: {
@@ -1004,7 +1048,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /scan
-    group: "share", id: "platform:confirm-send-file", run_by: "member", min_role: "guest",
+    group: "share", id: "platform:confirm-send-file", changes: "data", run_by: "member", min_role: "guest",
     label: 'Confirm an imported send file', description: `Apply an import confirmation on the source ${productName()}. A Move removes only unchanged source items after the complete import is confirmed.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.confirm-send-file", user_invokable: true, undoable: false,
     args_schema: {
@@ -1014,7 +1058,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /scan
-    group: "share", id: "platform:undo-send-file-import", run_by: "member", min_role: "member",
+    group: "share", id: "platform:undo-send-file-import", changes: "data", run_by: "member", min_role: "member",
     label: 'Undo a send file import', description: 'Remove imported items here, keeping later edits safe. Returns a return file offering a separate source restore for a Move.',
     icon: "send", scope: "workspace", invoke_handler: "platform.undo-send-file-import", user_invokable: true, undoable: false,
     args_schema: {
@@ -1024,7 +1068,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     // UI-SCREEN: /scan
-    group: "share", id: "platform:restore-send-file-source", run_by: "member", min_role: "member",
+    group: "share", id: "platform:restore-send-file-source", changes: "data", run_by: "member", min_role: "member",
     label: 'Restore the source of a file Move', description: `Apply a return file on the source ${productName()} after the target import was undone. Restores only the source of that confirmed Move.`,
     icon: "send", scope: "workspace", invoke_handler: "platform.restore-send-file-source", user_invokable: true, undoable: false,
     args_schema: {
@@ -1035,7 +1079,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/sharing (and every record page: "Give to…")
     group: "share",
-    id: "platform:offer-to",
+    id: "platform:offer-to", changes: "setup",
     min_role: "grantable",
     label: "Give to someone you share with",
     description:
@@ -1057,7 +1101,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: "Share with…", and a list's selection bar)
     group: "share",
-    id: "platform:share-with",
+    id: "platform:share-with", changes: "setup",
     min_role: "grantable",
     label: "Share with someone",
     description:
@@ -1081,7 +1125,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /machines (and every record page: "Shared with <them>", Stop)
     group: "more",
-    id: "platform:stop-sharing",
+    id: "platform:stop-sharing", changes: "setup",
     min_role: "grantable",
     label: "Stop sharing with someone",
     description:
@@ -1105,7 +1149,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/communication (the device list's Send a test)
     group: "more",
-    id: "platform:test-push-device",
+    id: "platform:test-push-device", changes: "setup",
     // Anyone, on their own device only: the handler finds the device by the caller.
     min_role: "guest",
     label: "Send a test notification to a device",
@@ -1128,7 +1172,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/communication (the device list's Remove)
     group: "more",
-    id: "platform:remove-push-device",
+    id: "platform:remove-push-device", changes: "setup",
     min_role: "guest",
     label: "Stop notifications on a device",
     description:
@@ -1150,7 +1194,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /suggestions (and every record page: "2 suggested edits by Vince")
     group: "more",
-    id: "platform:accept-suggestions",
+    id: "platform:accept-suggestions", changes: "data",
     min_role: "grantable",
     label: "Accept suggested edits",
     description:
@@ -1173,7 +1217,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /suggestions (and every record page: Reject on a suggested edit)
     group: "more",
-    id: "platform:reject-suggestions",
+    id: "platform:reject-suggestions", changes: "data",
     min_role: "grantable",
     label: "Reject suggested edits",
     description:
@@ -1196,7 +1240,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /suggestions (the Undo after Accept or Reject)
     group: "more",
-    id: "platform:reopen-suggestions",
+    id: "platform:reopen-suggestions", changes: "data",
     min_role: "grantable",
     label: "Put suggested edits back to waiting",
     description:
@@ -1216,7 +1260,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /suggestions ("Added to the share": Take)
     group: "more",
-    id: "platform:take-additions",
+    id: "platform:take-additions", changes: "data",
     min_role: "grantable",
     label: "Take what someone added to a share",
     description:
@@ -1234,7 +1278,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /suggestions ("Added to the share": Leave)
     group: "more",
-    id: "platform:leave-additions",
+    id: "platform:leave-additions", changes: "data",
     min_role: "grantable",
     label: "Leave what someone added to a share",
     description: "Leave things someone you share with added to the shared workspace where they are, without taking them into your collection. Pass the additions' ids from the suggestions read.",
@@ -1251,7 +1295,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/modules
     group: "more",
-    id: "platform:disable-module",
+    id: "platform:disable-module", changes: "setup",
     min_role: "grantable",
     label: "Turn off a feature",
     description:
@@ -1272,7 +1316,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /bundles (Remove, on an installed bundle)
     group: "organise",
-    id: "platform:remove-bundle",
+    id: "platform:remove-bundle", changes: "setup",
     min_role: "admin",
     label: "Remove a bundle",
     description:
@@ -1294,7 +1338,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /bundles (Install, on a bundle in the catalog)
     group: "organise",
-    id: "platform:install-bundle",
+    id: "platform:install-bundle", changes: "setup",
     min_role: "admin",
     label: "Install a bundle",
     description:
@@ -1317,7 +1361,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /bundles (the optional parts of an installed bundle)
     group: "organise",
-    id: "platform:set-bundle-features",
+    id: "platform:set-bundle-features", changes: "setup",
     min_role: "admin",
     label: "Turn a bundle's optional parts on or off",
     description:
@@ -1339,7 +1383,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /bundles (History, on an installed bundle)
     group: "organise",
-    id: "platform:revert-bundle",
+    id: "platform:revert-bundle", changes: "setup",
     min_role: "admin",
     label: "Put a bundle back to an earlier version",
     description:
@@ -1359,7 +1403,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/presentation (a list's settings: "Scans that fit no list land here")
     group: "organise",
-    id: "platform:set-scan-fallback",
+    id: "platform:set-scan-fallback", changes: "setup",
     min_role: "admin",
     label: "Choose where scans that fit no list land",
     description:
@@ -1379,7 +1423,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: / (the dashboard's Arrange)
     group: "organise",
-    id: "platform:arrange-dashboard",
+    id: "platform:arrange-dashboard", changes: "setup",
     min_role: "admin",
     label: "Arrange the dashboard",
     description:
@@ -1404,7 +1448,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/backup (Install a blueprint)
     group: "organise",
-    id: "platform:install-blueprint",
+    id: "platform:install-blueprint", changes: "setup",
     min_role: "admin",
     label: "Install a blueprint",
     description:
@@ -1424,7 +1468,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: / (an app's account menu: Do more with Cobblr, bring my records over)
     group: "organise",
-    id: "platform:import-app",
+    id: "platform:import-app", changes: "setup",
     min_role: "admin",
     label: "Copy an app's records into this workspace",
     description:
@@ -1444,7 +1488,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // UI-SCREEN: /configuration/presentation (and the pencil on every record's Contents heading)
   {
     group: "organise",
-    id: "platform:rename-contents",
+    id: "platform:rename-contents", changes: "setup",
     min_role: "grantable",
     label: "Rename what a list calls the things inside its records",
     description:
@@ -1465,7 +1509,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // ACTION-TEMPLATE: kernel actions live in this registry, outside the module scaffolder.
   {
     group: "organise",
-    id: "platform:set-list-presentation",
+    id: "platform:set-list-presentation", changes: "setup",
     min_role: "grantable",
     label: "Change how a list is presented",
     description: "Change how a list is shown: its icon, visibility in navigation, navigation order, grouping heading, and whether it appears at the top level. It also sets the word for one record and for several (item_noun); to rename the list itself, use platform:rename-thing. Name the list as it is called now or give its kind ID. Omitted settings stay as they are. Empty text or null restores a default, and null navigation order restores default ordering. Undo puts the changed settings back. Runs on the workspace.",
@@ -1491,7 +1535,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     group: "organise",
     // UI-SCREEN: /configuration/presentation (edit the singular and plural labels)
-    id: "platform:rename-thing",
+    id: "platform:rename-thing", changes: "setup",
     min_role: "grantable",
     label: "Rename what a list is called",
     description:
@@ -1513,7 +1557,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/presentation (and every record page: "+ Lending", "+ Stock" under its details)
     group: "organise",
-    id: "platform:set-faces",
+    id: "platform:set-faces", changes: "setup",
     min_role: "grantable",
     label: "Turn a section on or off for a list",
     description:
@@ -1536,7 +1580,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:promote-category",
+    id: "platform:promote-category", changes: "setup",
     min_role: "grantable",
     label: "Give a category its own list",
     description:
@@ -1559,7 +1603,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:demote-category",
+    id: "platform:demote-category", changes: "setup",
     min_role: "grantable",
     label: "Fold a list back into another",
     description:
@@ -1581,7 +1625,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: / (the workspace switcher's Rename, in the header of every screen)
     group: "organise",
-    id: "platform:rename-workspace",
+    id: "platform:rename-workspace", changes: "setup",
     label: "Rename this workspace",
     description:
       "Change what this workspace is called. The name only: its web address stays as it is, so links, bookmarks and printed labels keep working. Owner only. Runs on the workspace, not a record.",
@@ -1604,7 +1648,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     group: "more",
     // UI-SCREEN: /configuration/general (Simple mode toggle)
-    id: "platform:set-simple-mode",
+    id: "platform:set-simple-mode", changes: "setup",
     min_role: "grantable",
     label: "Turn simple mode on or off",
     description:
@@ -1624,7 +1668,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /fields
     group: "organise",
-    id: "platform:set-field-preset",
+    id: "platform:set-field-preset", changes: "setup",
     min_role: "grantable",
     label: "Switch a set of fields on or off",
     description:
@@ -1645,7 +1689,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /wires
     group: "more",
-    id: "platform:set-wire-enabled",
+    id: "platform:set-wire-enabled", changes: "setup",
     min_role: "grantable",
     label: "Turn an automation on or off",
     description:
@@ -1675,7 +1719,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /wires (the wire composer's "No record" list, read from /wire-actions)
     group: "more",
-    id: "platform:invoke-service",
+    id: "platform:invoke-service", changes: "data",
     min_role: "admin",
     label: "Run a service",
     description:
@@ -1696,7 +1740,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the job's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:confirm-service-job", run_by: "requester",
+    id: "platform:confirm-service-job", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Start a service job",
     description:
@@ -1717,7 +1761,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   // for a run an automation started. Never the assistant's to press.
   {
     group: "more",
-    id: "platform:retry-service-job", run_by: "requester",
+    id: "platform:retry-service-job", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Retry a service step",
     description:
@@ -1733,7 +1777,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:skip-service-job", run_by: "requester",
+    id: "platform:skip-service-job", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Skip a service step",
     description:
@@ -1749,7 +1793,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   },
   {
     group: "more",
-    id: "platform:cancel-service-run", run_by: "requester",
+    id: "platform:cancel-service-run", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Cancel a service run",
     description: "Stop a service run: every step still waiting or running is cancelled, and nothing more starts from it.",
@@ -1773,7 +1817,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/permissions
     group: "more",
-    id: "platform:approve-request",
+    id: "platform:approve-request", changes: "setup",
     min_role: "admin",
     label: "Approve a request",
     description:
@@ -1795,7 +1839,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /configuration/permissions
     group: "more",
-    id: "platform:deny-request",
+    id: "platform:deny-request", changes: "setup",
     min_role: "admin",
     label: "Decline a request",
     description:
@@ -1818,7 +1862,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:confirm-held-change", run_by: "requester",
+    id: "platform:confirm-held-change", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Delete what an assistant asked to delete",
     description:
@@ -1835,7 +1879,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
   {
     // UI-SCREEN: /me/notifications   the held change's card, and the bell; a missed one waits there
     group: "more",
-    id: "platform:keep-held-change", run_by: "requester",
+    id: "platform:keep-held-change", changes: "data", run_by: "requester",
     min_role: "member",
     label: "Keep what an assistant asked to delete",
     description: "Say no to a delete an assistant asked for over MCP. Nothing is deleted and the card stops asking.",
@@ -1860,6 +1904,12 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
  * own "platform:*" actions can carry a floor today (a module manifest has no
  * `min_role` field), so a non-platform id is always null.
  */
+/** Whether this platform action changes the workspace's setup rather than
+ *  its records (`changes`). False for an action that is not the platform's. */
+export function platformActionChangesWorkspace(actionId: string): boolean {
+  return PLATFORM_ACTIONS.find((a) => a.id === actionId)?.changes === "setup";
+}
+
 export function platformActionMinRole(actionId: string): OrgRoleName | null {
   const floor = PLATFORM_ACTIONS.find((a) => a.id === actionId)?.min_role;
   // "grantable" is an explicit "no hard floor" — the invoke route's

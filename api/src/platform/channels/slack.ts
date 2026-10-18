@@ -59,6 +59,7 @@ export const slackChannel: Channel = {
       ];
     }
     return postJson({
+      orgId: event.orgId,
       url: cfg.webhook_url,
       body,
       channelName: "slack",

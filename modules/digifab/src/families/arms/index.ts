@@ -5,6 +5,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { DigifabFamily } from "../../core/families.js";
 import { exists, onMachine } from "../../panel-presence.js";
 import { armsRouter } from "./api/routes.js";
+import { registerArmMonitor } from "./runs.js";
 import { registerArmRecordAction } from "./api/arm-record-action.js";
 import { registerArmStopAction } from "./api/arm-stop-action.js";
 
@@ -12,6 +13,7 @@ export const armsFamily: DigifabFamily = {
   part: "arms",
   stationKinds: ["robot-arm"],
   routes: [{ path: "/arms", router: armsRouter }],
+  onBoot: registerArmMonitor,
   register() {
     registerArmRecordAction();
     registerArmStopAction();

@@ -23,6 +23,11 @@ export interface RequestActor {
   /** Where a link this request makes starts (link-origin.ts), for a deep
    *  helper with no request to hand: an invite Cobb makes through an action. */
   linkOrigin?: string;
+  /** The assistant this request comes from, if any: its own door (an MCP
+   *  client, the relay grant, Cobb's own calls) or, for the api calling
+   *  itself, the door of the request that made the call. A person's own
+   *  confirmation is only ever answered with this null (person-door.ts). */
+  assistant?: "mcp" | "relay" | "assistant" | null;
 }
 
 const storage = new AsyncLocalStorage<RequestActor>();
@@ -167,4 +172,27 @@ export function noteMetaStatement(text: string): void {
   if (!scope) return;
   const key = text.replace(/\s+/g, " ").trim().slice(0, 160);
   scope.meta.set(key, (scope.meta.get(key) ?? 0) + 1);
+}
+
+// WHAT A RUN WROTE (#7140). An undo the platform issued is spent by running it,
+// and a run that failed before it changed anything must leave it unspent, or
+// a member's retry of their own Undo is refused for a grant they never used.
+// Whether it changed anything is read from the database, not from the error:
+// every statement passes the pool guard (client-error-guard.ts), which notes a
+// committed write against the watch of the flow that sent it. A transaction
+// rolled back writes nothing; a statement that is not a plain read counts.
+export interface WriteWatch {
+  wrote: boolean;
+}
+const writeWatchStorage = new AsyncLocalStorage<WriteWatch>();
+
+/** Run fn with `watch.wrote` set if anything it does commits a write. */
+export function watchingWrites<T>(watch: WriteWatch, fn: () => T): T {
+  return writeWatchStorage.run(watch, fn);
+}
+
+/** The pool guard's note that the current flow committed a write. */
+export function noteCommittedWrite(): void {
+  const watch = writeWatchStorage.getStore();
+  if (watch) watch.wrote = true;
 }

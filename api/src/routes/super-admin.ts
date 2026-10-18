@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - an operator-only console: the barcode resolver is the operator's setting and an image is held to Discord's CDN by the line above its fetch
 import { productName } from "../platform/product-name.js";
 import { DESIGN_OUTPUT_SCHEMA } from "@cobblr/platform-contract/ai-output-schemas";
 // Super-admin surface — cross-workspace dashboards for the person

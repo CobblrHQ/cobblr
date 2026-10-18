@@ -1,3 +1,4 @@
+import { receiptPending } from "../receipt-pending.js";
 import { orderFigures, combineOrderTotals } from "../order-money.js";
 // /vendors — purchasing-depth: vendors as a managed entity (was free text on
 // each order). CRUD + a per-vendor order-count + total-spend rollup, and the
@@ -53,7 +54,7 @@ vendorsRouter.get(
       .orderBy("v.name")
       .execute();
     const orgId = tenantContext(req).org.id;
-    const orders = items.length ? await orderFigures(orgId, db, await db.selectFrom("purchases_orders").selectAll().where("instance", "=", instanceOf(req)).where("vendor_id", "in", items.map((v) => v.id)).execute()) : [];
+    const orders = items.length ? await orderFigures(orgId, db, await db.selectFrom("purchases_orders").selectAll().select(receiptPending().as("stock_pending")).where("instance", "=", instanceOf(req)).where("vendor_id", "in", items.map((v) => v.id)).execute()) : [];
     const currency = await platform().money.currency(orgId);
     res.json({
       items: items.map((v) => ({
@@ -84,6 +85,7 @@ vendorsRouter.get(
     const orders = await db
       .selectFrom("purchases_orders as o")
       .selectAll("o")
+      .select(receiptPending("o.id").as("stock_pending"))
       .where("o.vendor_id", "=", id)
       .where("o.instance", "=", instanceOf(req))
       .orderBy("o.ordered_at", "desc")

@@ -48,6 +48,7 @@ const ACTION_WORDS: Record<string, string> = {
   split: "Split into separate items",
   unsplit: "Put the split items back together",
   attached: "Filed",
+  broken: "Marked broken: a repair is in its service log",
   unconfirm: "Unfiled",
   "undo-rerun": "Undid the lookup",
   "put-back": "Put back",

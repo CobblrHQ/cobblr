@@ -1,3 +1,4 @@
+// EGRESS-FILE: vendor-fixed - the European Central Bank's published rates, written in the code
 import { sql } from "kysely";
 import { platform, type DatedMoney, type PlatformMoney } from "@cobblr/platform-contract";
 import { totalMoney, type ExchangeRates } from "@cobblr/platform-contract/money";

@@ -57,7 +57,7 @@ export function planSameBytesFolds(rows: readonly FileRowForFold[]): Array<{ cop
 }
 
 /** Heal one workspace; answers how many copies it folded. */
-export async function healSameBytesIn(orgId: string, db: Kysely<CoreFilesDB>): Promise<number> {
+export async function healSameBytesIn(orgId: string, db: Kysely<CoreFilesDB>, since: Date): Promise<number> {
   // The happy path: one grouped query over the index, no rows read.
   const dupes = await db
     .selectFrom("core_files_files")
@@ -77,7 +77,9 @@ export async function healSameBytesIn(orgId: string, db: Kysely<CoreFilesDB>): P
       .where("size_bytes", "=", d.size_bytes)
       .where("deleted_at", "is", null)
       .execute();
-    for (const { copy, keep } of planSameBytesFolds(rows)) {
+    // A copy written since the fix was written by fixed code: left as it is.
+    const before = new Set(rows.filter((r) => r.created_at < since).map((r) => r.id));
+    for (const { copy, keep } of planSameBytesFolds(rows).filter((f) => before.has(f.copy))) {
       await db.transaction().execute(async (tx) => {
         // Its attachments move to the file it repeats; one the kept file
         // already has (same record, same role) is dropped rather than doubled.
@@ -109,8 +111,9 @@ export async function healSameBytesIn(orgId: string, db: Kysely<CoreFilesDB>): P
 export function registerSameBytesHeal(): void {
   registerHealPass({
     name: "core-files.heal-same-bytes",
+    since: "2026-09-28T21:28:34Z",
     shim: "modules/core-files/src/heal-same-bytes.ts",
     module: "core-files",
-    visit: ({ orgId, db }) => healSameBytesIn(orgId, db as Kysely<CoreFilesDB>),
+    visit: ({ orgId, db, since }) => healSameBytesIn(orgId, db as Kysely<CoreFilesDB>, since),
   });
 }

@@ -10,7 +10,6 @@
 // the restock and this steps aside, so one check-off restocks once.
 import { platform } from "@cobblr/platform-contract";
 import { actionActed } from "@cobblr/platform-contract/action-result";
-import { appliedBySource } from "./action-handlers.js";
 import { sql, type Kysely } from "kysely";
 import type { InventoryDB } from "../db.js";
 
@@ -73,14 +72,15 @@ export function registerListRestock(): void {
     const ev = raw as CheckedPayload;
     if (!ev.orgId || !ev.partId || !ev.itemId) return;
     try {
-      const applied = await appliedBySource(ev.orgId, ev.partId, "lists:item", ev.itemId);
-      if (applied <= 0) return;
+      // Whether there is anything to take back is decided on the stock write's
+      // own transaction (`takeBack`), never read here first: a tick that is
+      // still being recorded would be missed.
       const r = await platform().actions.invoke("inventory:adjust-stock", {
         orgId: ev.orgId,
         userId: ev.actorId ?? null,
         scope: "entity",
         entity: { kind: ev.sourceRef?.kind ?? "inventory:part", id: ev.partId },
-        args: { partId: ev.partId, delta: -applied, reason: "Unticked, taken back off the list", sourceKind: "lists:item", sourceId: ev.itemId },
+        args: { partId: ev.partId, takeBack: true, reason: "Unticked, taken back off the list", sourceKind: "lists:item", sourceId: ev.itemId },
         event: {
           name: "lists.item.unchecked",
           payload: raw as Record<string, unknown>,
@@ -89,7 +89,8 @@ export function registerListRestock(): void {
           trigger_type: "event",
         },
       });
-      if (!actionActed(r)) console.info(`[inventory] an unticked line was not taken back off the stock: ${JSON.stringify(r).slice(0, 200)}`);
+      // Nothing to take back (a line that never restocked) is declined, not a miss.
+      if (!actionActed(r) && (r as { skipped?: unknown }).skipped !== true) console.info(`[inventory] an unticked line was not taken back off the stock: ${JSON.stringify(r).slice(0, 200)}`);
     } catch (err) {
       platform().health.notePassFailure("inventory.list-unrestock", ev.orgId, err);
       console.error("[inventory] an unticked line was not taken back off the stock:", (err as Error).message);

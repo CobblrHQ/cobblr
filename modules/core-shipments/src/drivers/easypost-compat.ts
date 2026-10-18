@@ -23,6 +23,7 @@
 //
 // A second format is a second file plus a row in AGGREGATORS — see index.ts.
 
+// EGRESS-FILE: operator-configured - the plain branch is the operator's own environment address; an address a person typed takes the guardedFetch branch above it
 import {
   CarrierError,
   type CarrierDriver,

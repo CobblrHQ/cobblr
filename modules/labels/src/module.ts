@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.26.10",
+  version: "0.26.11",
   displayName: "Labels",
   description:
     "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",
@@ -71,6 +71,7 @@ export default defineModule({
       {
         group: "label",
         id: "labels:print",
+        changes: "records",
         runBy: "member",
         examples: ["print a label for this", "sticker it"],
         label: "Print label",
@@ -95,6 +96,7 @@ export default defineModule({
         group: "label",
         // UI-SCREEN: /labels (Codes panel prefix and code-in-QR controls)
         id: "labels:set-code",
+        changes: "workspace",
         runBy: "member",
         examples: ["change the code prefix", "stop printing codes on those labels"],
         label: "Change label codes",
@@ -119,6 +121,9 @@ export default defineModule({
       // What its dashboard tile reads, in the one dashboard request (#6563).
       const { registerLabelsDashboardReads } = await import("./dashboard-reads.js");
       registerLabelsDashboardReads();
+      // An auto-print the queue gave up but the printer never got is sent again.
+      const { registerAutoflushDispatchSweep } = await import("./api/autoflush.js");
+      registerAutoflushDispatchSweep();
     },
   },
 });

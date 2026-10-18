@@ -440,7 +440,7 @@ export function PurchasesPage() {
             rows={rows.map((o) => ({
               id: o.id,
               name: o.vendor || o.order_number || "Order",
-              state: o.status,
+              state: o.stock_pending ? "Stock update pending" : o.status,
               identity: [o.vendor ? o.order_number : null],
               fields: [
                 { label: "Ordered", value: fmtOrderDate(o.ordered_at) },
@@ -497,7 +497,7 @@ export function PurchasesPage() {
                   </span>
                 </td>
                 <td className="px-3 py-2">
-                  <StatusPill status={o.status} />
+                  <StatusPill status={o.status} stockPending={o.stock_pending} />
                 </td>
                 <td className="px-3 py-2 text-muted dark:text-slate-400 text-xs whitespace-nowrap">
                   {fmtOrderDate(o.ordered_at) ?? "—"}
@@ -579,7 +579,7 @@ export function PurchasesPage() {
   );
 }
 
-function StatusPill({ status }: { status: Order["status"] }) {
+function StatusPill({ status, stockPending }: { status: Order["status"]; stockPending?: boolean }) {
   const palette: Record<Order["status"], string> = {
     planned: "bg-subtle text-content dark:bg-slate-800 dark:text-slate-300",
     ordered: "bg-cobble-100 text-accent dark:bg-cobble-700/40 dark:text-cobble-200",
@@ -589,7 +589,7 @@ function StatusPill({ status }: { status: Order["status"] }) {
   };
   return (
     <span className={"inline-block px-1.5 py-0.5 rounded uppercase tracking-widest text-[9px] " + palette[status]}>
-      {status}
+      {stockPending ? "Stock update pending" : status}
     </span>
   );
 }
@@ -771,7 +771,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
         o ? (
           <span className="inline-flex items-center gap-2 flex-wrap">
             {fmtOrderDate(o.ordered_at) && <span>{fmtOrderDate(o.ordered_at)}</span>}
-            <StatusPill status={o.status} />
+            <StatusPill status={o.status} stockPending={o.stock_pending} />
             {money(o.total, o.currency) && (
               <span className="font-mono text-content dark:text-mortar-100 font-semibold">
                 {money(o.total, o.currency)}
@@ -785,6 +785,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
       {o ? (
         <div className="space-y-4">
           <EntityActionsBar entityKind="purchases:order" entityId={o.id} />
+          {o.stock_pending && <p role="status" className="text-sm text-muted">Delivery recorded. Stock updates are pending and will be retried automatically.</p>}
           {receiptFileId && (
             <button
               type="button"
@@ -1475,7 +1476,7 @@ function VendorDetailPane({
                       className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg border border-line dark:border-slate-700 hover:border-accent hover:bg-subtle dark:hover:bg-slate-800/50 transition text-left"
                     >
                       <span className="font-mono text-xs text-muted w-24 shrink-0 truncate">{o.order_number || "—"}</span>
-                      <StatusPill status={o.status} />
+                      <StatusPill status={o.status} stockPending={o.stock_pending} />
                       <span className="text-xs text-muted flex-1 whitespace-nowrap">{fmtOrderDate(o.ordered_at) ?? ""}</span>
                       <span className="font-mono text-xs text-content dark:text-mortar-100">{money(o.total, o.currency) ?? "—"}</span>
                     </button>

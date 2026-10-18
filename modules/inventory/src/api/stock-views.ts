@@ -189,7 +189,7 @@ stockRouter.get(
     // The collection it is asked from: Bookshelf's tab is Bookshelf's lots.
     const rows = await readRows(orgId, tenantDb(req), { instance: parsed.data.collection ?? instanceOf(req) }, null, tree);
     const day = await today(req);
-    type Line = { part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; expires_on: string; days: number };
+    type Line = { part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; received_on: string; expires_on: string; days: number };
     const groups = new Map<string, { location_id: string | null; location_name: string | null; lots: Line[] }>();
     for (const r of rows) {
       const lots = r.lots.length ? r.lots : r.expires_on ? [{ received_on: "", expires_on: r.expires_on, qty: r.qty }] : [];
@@ -199,7 +199,7 @@ stockRouter.get(
         if (days > parsed.data.within) continue;
         const key = r.location_id ?? "";
         const g = groups.get(key) ?? { location_id: r.location_id, location_name: r.location_name, lots: [] };
-        g.lots.push({ part_id: r.id, card_id: r.card_id, name: r.name, instance: r.instance, kind: r.kind, detail_path: r.detail_path, qty: l.qty, unit: r.unit, lot: l.lot ?? null, expires_on: l.expires_on, days });
+        g.lots.push({ part_id: r.id, card_id: r.card_id, name: r.name, instance: r.instance, kind: r.kind, detail_path: r.detail_path, qty: l.qty, unit: r.unit, lot: l.lot ?? null, received_on: l.received_on, expires_on: l.expires_on, days });
         groups.set(key, g);
       }
     }

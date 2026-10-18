@@ -17,6 +17,7 @@ import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
 import { IDLE_RELEASE_MS } from "./connection-budget.js";
 import { poolCounts, type PoolCounts } from "./pool-stats.js";
+import { createConnectionLimit } from "./tenant-connection-limit.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -134,6 +135,26 @@ export const CONFIGURED_TENANT_POOLS = Math.max(4, Number(process.env.COBBLR_MAX
 export const TENANT_POOL_MAX = Number(process.env.COBBLR_TENANT_POOL_MAX) || 5;
 let MAX_TENANT_POOLS = CONFIGURED_TENANT_POOLS;
 
+// Orgs whose raw Pool was handed out (getTenantPool: the migration runner, the
+// sandbox). Their holders call the Pool itself, not the re-acquiring shim, so
+// the connection limit never ends such a pool inside the grace window.
+const rawAt = new Map<string, number>();
+
+let lastOverrunLog = 0;
+// The api's workspace connections, held to its share of the server: the cap
+// above bounds pools, this bounds what they hold together (tenant-connection-limit.ts).
+const tenantConnections = createConnectionLimit({
+  limit: () => MAX_TENANT_POOLS * TENANT_POOL_MAX,
+  pools: () => [...livePools.entries()].sort((a, b) => (lastAccess.get(a[0]) ?? 0) - (lastAccess.get(b[0]) ?? 0)),
+  evictable: (orgId) => Date.now() - (rawAt.get(orgId) ?? 0) >= RELEASE_GRACE_MS,
+  evict: (orgId) => evictTenantPool(orgId),
+  onOverrun: (open, limit) => {
+    if (Date.now() - lastOverrunLog < 60_000) return;
+    lastOverrunLog = Date.now();
+    console.warn(`[tenant] ${open} workspace connections open at the limit of ${limit}, none free for 15 s: opening one past it`);
+  },
+});
+
 /** Lower the cap to what the server can hold (connection-budget.ts, at boot). */
 export function setTenantPoolCap(n: number): void {
   MAX_TENANT_POOLS = Math.max(2, Math.min(CONFIGURED_TENANT_POOLS, Math.floor(n)));
@@ -203,6 +224,7 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
     min: 0,
     idleTimeoutMillis: IDLE_RELEASE_MS,
   }, `tenant-pool ${orgId}`);
+  tenantConnections.gate(orgId, pool);
   // The Kysely handed to callers talks to the pool through this shim rather than
   // holding the Pool directly. If the pool it was built on has been ended (an
   // evictor, the LRU cap, or a sweep racing this caller), the shim transparently
@@ -256,6 +278,7 @@ export async function getTenantDb(orgId: string): Promise<Kysely<TenantDB>> {
 /** Pool accessor for callers that need raw pg (e.g. migration runner).
  *  Lazily opens the pool by going through getTenantDb. */
 export async function getTenantPool(orgId: string): Promise<Pool> {
+  rawAt.set(orgId, Date.now());
   await getTenantDb(orgId);
   return (await cache.get(orgId)!).pool;
 }
@@ -314,6 +337,7 @@ export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Pr
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
   handouts.delete(orgId);
+  rawAt.delete(orgId);
   const pending = pendingRelease.get(orgId);
   if (pending) {
     clearTimeout(pending);
@@ -395,6 +419,7 @@ export async function evictTenantPool(
   lastAccess.delete(orgId);
   accessSeq.delete(orgId);
   handouts.delete(orgId);
+  rawAt.delete(orgId);
   const pending = pendingRelease.get(orgId);
   if (pending) {
     clearTimeout(pending);

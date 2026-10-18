@@ -13,6 +13,7 @@ import { platform } from "@cobblr/platform-contract";
 import { readSnapshot } from "@cobblr/platform-contract/torn-reads";
 import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { kickAssign } from "../assign-worker.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
@@ -81,7 +82,9 @@ const RunCreate = z.object({
   priority: z.number().int().min(0).max(100).default(0),
 });
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — a new run mints plates and the assignment worker sends them
+// to the pool's printers at once, starting machines; the assistant queues a
+// print through digifab:print-this, where only Start moves a machine
 runsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -145,67 +148,69 @@ const RunPatch = z.object({
   priority: z.number().int().min(0).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
 });
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+type RunReply = { status: number; body: Record<string, unknown> };
+
+/** Change a run's status, priority or completed count: the route's PATCH and,
+ *  for pause and cancel only, digifab:hold-run. */
+export async function updateRun(db: ReturnType<typeof tenantDb>, orgId: string, id: string, b: z.infer<typeof RunPatch>): Promise<RunReply> {
+  // state-flips-last: a writer reading the run it is about to change, not a status answer
+  const run = await db.selectFrom("digifab_production_runs").selectAll().where("id", "=", id).executeTakeFirst();
+  if (!run) return { status: 404, body: { error: { code: "not_found", message: "No such run." } } };
+
+  const set: Record<string, unknown> = { updated_at: new Date() };
+  if (b.priority != null) set.priority = b.priority;
+
+  if (b.completed_qty != null) {
+    // Operator override with the PFM guardrail semantics: raising it past
+    // target closes the run; lowering a completed run's count REOPENS it
+    // (status flips back to active so minting resumes) — both explicit here,
+    // no hidden state. The UI confirms before either.
+    set.completed_qty = b.completed_qty;
+    if (b.completed_qty >= run.target_qty) set.status = "completed";
+    else if (run.status === "completed") set.status = "active";
+  }
+  if (b.status) {
+    const effectiveCompleted = typeof set.completed_qty === "number" ? set.completed_qty : run.completed_qty;
+    if (run.status === "completed" && b.status === "active" && effectiveCompleted >= run.target_qty) {
+      return { status: 409, body: { error: { code: "already_complete", message: "Run already hit its target, lower completed_qty to reopen." } } };
+    }
+    set.status = b.status;
+  }
+
+  await db.updateTable("digifab_production_runs").set(set).where("id", "=", run.id).execute();
+
+  // Cancelling (or completing via override) sweeps still-queued plates; a
+  // resume kicks the worker so paused jobs dispatch again.
+  const finalStatus = (set.status as string | undefined) ?? run.status;
+  if (finalStatus === "cancelled" || finalStatus === "completed") {
+    // Queued-only, so nothing is on a bed — but it still goes through the
+    // one gate, so this stays correct if the filter ever widens.
+    const sweep = await db
+      .selectFrom("digifab_jobs")
+      .select(["id", "status", "connection_id", "target_device"])
+      .where("run_id", "=", run.id)
+      .where("status", "=", "queued")
+      .execute();
+    for (const j of sweep) {
+      await markJobTerminal(db, j, "cancelled", { error: `production run ${finalStatus}` });
+    }
+  }
+  if (finalStatus === "active") await kickAssign(orgId);
+  if (["cancelled", "completed"].includes(finalStatus) && run.laser_plan_id) {
+    const neverStarted = await db.selectFrom("digifab_jobs").select("laser_layout").where("run_id", "=", run.id).where("status", "=", "cancelled").where("sent_at", "is", null).where("remote_job_id", "is", null).execute();
+    for (const job of neverStarted) if (job.laser_layout) await db.deleteFrom("digifab_laser_sheet_claims").where("plan_id", "=", job.laser_layout.plan_id).where("part_id", "=", job.laser_layout.sheet_id).execute();
+  }
+  return { status: 200, body: { id: run.id, name: run.name, status: finalStatus, completed_qty: set.completed_qty ?? run.completed_qty } };
+}
+
+// AI-ACTION: digifab:hold-run
 runsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:hold-run"))) return;
     const parsed = RunPatch.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
-    const b = parsed.data;
-    const orgId = tenantContext(req).org.id;
-    const db = tenantDb(req);
-    // state-flips-last: a writer reading the run it is about to change, not a status answer
-    const run = await db.selectFrom("digifab_production_runs").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    if (!run) {
-      res.status(404).json({ error: { code: "not_found", message: "No such run." } });
-      return;
-    }
-
-    const set: Record<string, unknown> = { updated_at: new Date() };
-    if (b.priority != null) set.priority = b.priority;
-
-    if (b.completed_qty != null) {
-      // Operator override with the PFM guardrail semantics: raising it past
-      // target closes the run; lowering a completed run's count REOPENS it
-      // (status flips back to active so minting resumes) — both explicit here,
-      // no hidden state. The UI confirms before either.
-      set.completed_qty = b.completed_qty;
-      if (b.completed_qty >= run.target_qty) set.status = "completed";
-      else if (run.status === "completed") set.status = "active";
-    }
-    if (b.status) {
-      const effectiveCompleted = typeof set.completed_qty === "number" ? set.completed_qty : run.completed_qty;
-      if (run.status === "completed" && b.status === "active" && effectiveCompleted >= run.target_qty) {
-        res.status(409).json({ error: { code: "already_complete", message: "Run already hit its target, lower completed_qty to reopen." } });
-        return;
-      }
-      set.status = b.status;
-    }
-
-    await db.updateTable("digifab_production_runs").set(set).where("id", "=", run.id).execute();
-
-    // Cancelling (or completing via override) sweeps still-queued plates; a
-    // resume kicks the worker so paused jobs dispatch again.
-    const finalStatus = (set.status as string | undefined) ?? run.status;
-    if (finalStatus === "cancelled" || finalStatus === "completed") {
-      // Queued-only, so nothing is on a bed — but it still goes through the
-      // one gate, so this stays correct if the filter ever widens.
-      const sweep = await db
-        .selectFrom("digifab_jobs")
-        .select(["id", "status", "connection_id", "target_device"])
-        .where("run_id", "=", run.id)
-        .where("status", "=", "queued")
-        .execute();
-      for (const j of sweep) {
-        await markJobTerminal(db, j, "cancelled", { error: `production run ${finalStatus}` });
-      }
-    }
-    if (finalStatus === "active") await kickAssign(orgId);
-    if (["cancelled", "completed"].includes(finalStatus) && run.laser_plan_id) {
-      const neverStarted = await db.selectFrom("digifab_jobs").select("laser_layout").where("run_id", "=", run.id).where("status", "=", "cancelled").where("sent_at", "is", null).where("remote_job_id", "is", null).execute();
-      for (const job of neverStarted) if (job.laser_layout) await db.deleteFrom("digifab_laser_sheet_claims").where("plan_id", "=", job.laser_layout.plan_id).where("part_id", "=", job.laser_layout.sheet_id).execute();
-    }
-    res.json({ id: run.id, status: finalStatus, completed_qty: set.completed_qty ?? run.completed_qty });
+    const r = await updateRun(tenantDb(req), tenantContext(req).org.id, req.params.id!, parsed.data);
+    res.status(r.status).json(r.body);
   }),
 );

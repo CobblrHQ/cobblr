@@ -15,6 +15,7 @@ import { PaperworkConflicts, paperworkNoun, useAnnouncePaperwork } from "./Paper
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, useToast, useConfirm, EntityPhoto, usePasteImage, SelectableTile, PhotoSourceBadge } from "@cobblr/platform-web";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
+import { isImageAttachment, recordPhotos } from "@cobblr/platform-contract/record-photos";
 import { FilePreview, DocThumb, canPreviewFile, useFilePreviewRegistry } from "@cobblr/platform-web";
 import { ImageLightbox } from "./ImageLightbox";
 import { DiscussionPreview } from "./DiscussionTab";
@@ -512,28 +513,12 @@ export function FilesSection({
   // first (starred, outlined), even one set before photos were kept and so
   // never attached; then every other picture; then the files, which wrap to
   // a row of their own only when the photos fill this one.
-  type Photo = { key: string; fileId: string | null; src: string; filename: string; source: PhotoSource | null; attachmentId: string | null; isMain: boolean };
-  const imageAtts = items.filter((a) => a.kind === "image");
-  const mainAtt = main?.file_id ? imageAtts.find((a) => a.file_id === main.file_id) : undefined;
-  const photos: Photo[] = [
-    ...(main
-      ? [
-          {
-            key: "main",
-            fileId: main.file_id,
-            src: main.file_id ? api.fileRawUrl(activeSlug, main.file_id, "thumb") : main.image_path,
-            filename: mainAtt?.filename ?? main.filename ?? "Main photo",
-            source: mainAtt?.photo_source ?? main.photo_source ?? null,
-            attachmentId: mainAtt?.id ?? null,
-            isMain: true,
-          },
-        ]
-      : []),
-    ...imageAtts
-      .filter((a) => a !== mainAtt)
-      .map((a) => ({ key: a.id, fileId: a.file_id, src: api.fileRawUrl(activeSlug, a.file_id, "thumb"), filename: a.filename, source: a.photo_source ?? null, attachmentId: a.id, isMain: false })),
-  ];
-  const otherFiles = items.filter((a) => a.kind !== "image");
+  const photos = recordPhotos(list.data).map((p) => ({
+    ...p,
+    src: p.fileId ? api.fileRawUrl(activeSlug, p.fileId, "thumb") : (p.imagePath ?? ""),
+    attachmentId: p.attachment?.id ?? null,
+  }));
+  const otherFiles = items.filter((a) => !isImageAttachment(a));
   const [lightbox, setLightbox] = useState<number | null>(null);
   const makeMain = useMutation({
     mutationFn: (fileId: string) => api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: fileId }),

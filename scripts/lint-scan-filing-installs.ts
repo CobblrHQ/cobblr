@@ -33,7 +33,9 @@ const offenders: string[] = [];
 
 for (const f of globSync("web/src/**/*.{ts,tsx}")) {
   const s = readFileSync(f, "utf8");
-  if (!/confirmScanItem\s*\(/.test(s)) continue;
+  // \b: unconfirmScanItem (Undo) files nothing, and read as a confirm it
+  // flagged the camera page the day its Undo first called it (#6891).
+  if (!/\bconfirmScanItem\s*\(/.test(s)) continue;
   // Keyed on reading candidates, not on mentioning bundle_external_id: the
   // Sorting plan's broken version never mentioned the field at all - it filed
   // cand.instance blind, which is the worst case, and a mention-based trigger

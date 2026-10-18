@@ -125,11 +125,24 @@ To take one by hand:
 docker compose exec db sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip > cobblr-$(date +%F).sql.gz
 ```
 
-Restore one:
+Restore one, onto a new box or in place of a broken install. Start from the
+same `.env` the dump came from (`TENANT_CREDS_ENCRYPTION_KEY` above all: without
+it, stored integration credentials cannot be opened) and an empty `data/db`:
 
 ```bash
-gunzip -c data/backups/daily/cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr
+docker compose up -d db                                   # the database alone, first
+docker compose exec db pg_isready -U cobblr -d cobblr_meta  # repeat until "accepting connections"
+gunzip -c cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr -d postgres
+cp -a /path/to/the/old/data/files ./data/                 # a dump holds rows, not uploaded files
+docker compose up -d                                      # then everything else
 ```
+
+The dump makes and fills every database itself, which is why it goes in before
+the api starts and why psql is pointed at `postgres`. Two lines saying
+`role "cobblr" already exists` and `database "cobblr_meta" already exists` are
+the new database's own and harmless; any other `ERROR` means the restore is
+incomplete. Uploaded files (photos, attachments) live in `data/files`, not in
+the dump, so copy that folder from the old install or its backup too.
 
 **These dumps live on the same disk as the database.** Copy them somewhere else
 — that is the part this stack cannot do for you.

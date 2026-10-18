@@ -16,6 +16,7 @@
 // and status is inferred from the printer's PrintInfo — same approach as the
 // other single-printer paths.
 
+// EGRESS: workspace-lan-device - UDP discovery to the printer, at the address guard() checked
 import { createSocket } from "node:dgram";
 import { createHash, randomBytes } from "node:crypto";
 import type {
@@ -29,7 +30,8 @@ import type {
   SubmitResult,
   UploadResult,
 } from "./types.js";
-import { assertSafeMachineUrl } from "./ssrf.js";
+import { resolveSafeMachineTarget } from "./ssrf.js";
+import { machineFetch } from "./machine-fetch.js";
 import { uploadSignal } from "./timeouts.js";
 
 const DISCOVER_PORT = 3000;
@@ -108,17 +110,21 @@ export class ElegooSdcpDriver implements MachineDriver {
     return code === 6 ? "paused" : code === 8 ? "cancelled" : code === 9 ? "completed" : code === 0 ? "idle" : "unknown";
   }
 
-  private async guard(): Promise<void> {
-    await assertSafeMachineUrl(`http://${this.host}:${WS_PORT}/`);
+  /** Check the printer's address under the egress policy and answer the address
+   *  that was checked, so the socket goes to it and the name is not looked up
+   *  again (a rebinding name could otherwise answer public here and private there). */
+  private async guard(): Promise<{ address: string; family: 4 | 6 }> {
+    const t = await resolveSafeMachineTarget(new URL(`http://${this.host}:${WS_PORT}/`));
+    return t ? { address: t.address, family: t.family === 6 ? 6 : 4 } : { address: this.host, family: 4 };
   }
 
   /** UDP discovery: "M99999" to :3000 → JSON { Id, Data: { MainboardID, Name … } }.
    *  This is how SDCP clients learn the ids every WS request must carry. */
   private async discover(): Promise<{ id: string; mainboardId: string; name: string }> {
     if (this.board) return this.board;
-    await this.guard();
+    const to = await this.guard();
     const found = await new Promise<{ id: string; mainboardId: string; name: string }>((resolve, reject) => {
-      const sock = createSocket("udp4");
+      const sock = createSocket(to.family === 6 ? "udp6" : "udp4");
       const timer = setTimeout(() => {
         sock.close();
         reject(new Error(`no SDCP discovery reply from ${this.host}:${DISCOVER_PORT}`));
@@ -143,7 +149,7 @@ export class ElegooSdcpDriver implements MachineDriver {
         sock.close();
         reject(e);
       });
-      sock.send("M99999", DISCOVER_PORT, this.host);
+      sock.send("M99999", DISCOVER_PORT, to.address);
     });
     this.board = found;
     return found;
@@ -154,6 +160,7 @@ export class ElegooSdcpDriver implements MachineDriver {
    *  calls this every ~30s and a persistent socket buys nothing but state. */
   private async wsCommand(cmd: number, data: Record<string, unknown> = {}): Promise<{ ack: number | undefined; status: SdcpStatus | null; raw: unknown }> {
     const board = await this.discover();
+    const to = await this.guard();
     const requestId = randomBytes(16).toString("hex");
     const envelope = {
       Id: board.id,
@@ -168,7 +175,8 @@ export class ElegooSdcpDriver implements MachineDriver {
       Topic: `sdcp/request/${board.mainboardId}`,
     };
     return await new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://${this.host}:${WS_PORT}/websocket`);
+      // EGRESS: pinned-door - the address guard() just checked, so the name is not looked up again
+      const ws = new WebSocket(`ws://${to.family === 6 ? `[${to.address}]` : to.address}:${WS_PORT}/websocket`);
       let lastStatus: SdcpStatus | null = null;
       const timer = setTimeout(() => {
         ws.close();
@@ -275,7 +283,7 @@ export class ElegooSdcpDriver implements MachineDriver {
       form.append("Check", "1");
       form.append("S-File-MD5", md5);
       form.append("File", new Blob([chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength) as ArrayBuffer]), filename);
-      const res = await fetch(`http://${this.host}:${WS_PORT}/uploadFile/upload`, { method: "POST", body: form, signal: uploadSignal() });
+      const res = await machineFetch(`http://${this.host}:${WS_PORT}/uploadFile/upload`, { method: "POST", body: form, signal: uploadSignal() });
       if (!res.ok) {
         const detail = await res.text().catch(() => "");
         throw new Error(`SDCP upload failed at offset ${offset}: HTTP ${res.status} ${detail.slice(0, 200)}`);

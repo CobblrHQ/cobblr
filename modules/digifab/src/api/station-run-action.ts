@@ -10,7 +10,7 @@ import type { DigifabDB } from "../db.js";
 import { ReviewRequired } from "../drivers/job-review.js";
 import { recordCutterOutcome } from "../cutter-actions.js";
 import { recordLargePrintOutcome } from "../large-format/actions.js";
-import { embroideryMutation } from "../embroidery-actions.js";
+import { familyStationRun } from "../core/families.js";
 
 export const STATION_RUN_OPERATIONS = ["cutter_outcome", "large_format_outcome", "embroidery_start", "embroidery_interrupt", "embroidery_outcome"] as const;
 
@@ -28,7 +28,9 @@ export function registerStationRunAction(): void {
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<DigifabDB>;
       if (operation === "cutter_outcome") return await recordCutterOutcome(db, ctx.orgId, id, ctx.userId, fields);
       if (operation === "large_format_outcome") return await recordLargePrintOutcome(db, ctx.orgId, id, ctx.userId, fields);
-      return await embroideryMutation(db, ctx.orgId, ctx.userId, operation.slice("embroidery_".length), id, fields);
+      const family = familyStationRun(operation);
+      if (!family) return { ok: false, error: `No machine family answers ${operation} here.` };
+      return await family.family.stationRun!.run(db, ctx.orgId, ctx.userId, family.operation, id, fields);
     } catch (error) {
       if (error instanceof ReviewRequired || error instanceof z.ZodError) return { ok: false, error: error.message };
       throw error;

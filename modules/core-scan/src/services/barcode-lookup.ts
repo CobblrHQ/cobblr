@@ -17,6 +17,7 @@
 // retail/craft coverage but can return junk or wrong listings) > Open Products
 // Facts (food/household-leaning, almost no craft coverage).
 
+// EGRESS-FILE: vendor-fixed - lookup providers' hosts, written in the code
 import { learnedAttributesOf } from "@cobblr/platform-contract/learned-route";
 import { gtinChecksumOk, isbn10ChecksumOk } from "@cobblr/platform-contract/identifier-check";
 import { STORE_CODE_NOTE } from "@cobblr/platform-contract/scan-copy";

@@ -6,8 +6,11 @@
 // Reachability: the server must be able to REACH the camera, so a LAN webcam
 // only works from a self-hosted / same-network Cobblr (a cloud instance can't
 // dial a home camera — the same NAT boundary the edge tunnel addresses).
-// SSRF: http/https only + timeout + size cap; the URL is OPERATOR-set (the
-// printer's camera URL, owner/admin-only), not arbitrary end-user input.
+// SSRF: http/https only + timeout + size cap, and the fetch goes through the
+// workspace's egress guard (notifyFetch): the camera URL is a person's setting,
+// so each hop is resolved, checked and pinned.
+
+import { notifyFetch } from "./http-helpers.js";
 
 const TIMEOUT_MS = 4000;
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -20,12 +23,12 @@ function extractJpeg(buf: Buffer): Buffer | null {
   return buf.subarray(soi, eoi + 2);
 }
 
-export async function grabJpegFrame(url: string): Promise<Buffer | null> {
+export async function grabJpegFrame(orgId: string, url: string): Promise<Buffer | null> {
   if (!/^https?:\/\//i.test(url)) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "cobblr-notifications/1" } });
+    const res = await notifyFetch(orgId, url, { signal: controller.signal, headers: { "User-Agent": "cobblr-notifications/1" } });
     if (!res.ok || !res.body) return null;
     const reader = res.body.getReader();
     let buf = Buffer.alloc(0);

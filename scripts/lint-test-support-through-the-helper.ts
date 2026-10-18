@@ -20,6 +20,7 @@
 //   npx tsx scripts/lint-test-support-through-the-helper.ts   (pnpm lint test-support-through-the-helper)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { onlyChanged } from "./lib/lint-only-files.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
@@ -50,13 +51,15 @@ function* walk(dir: string): Generator<string> {
 }
 
 /** The check. Return every violation in one file; an empty array is a pass. */
-function check(file: string, src: string): Violation[] {
+export function check(file: string, src: string): Violation[] {
   if (EXEMPT.has(file)) return [];
   const out: Violation[] = [];
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    const code = line.replace(/^\s*(\/\/|\*|\/\*).*$/, "").replace(/\/\/ .*$/, "");
+    // An import specifier is a module on disk (a module's own test-support
+    // folder), never a door the api answers.
+    const code = line.replace(/^\s*(\/\/|\*|\/\*).*$/, "").replace(/\/\/ .*$/, "").replace(/\b(from|import)\s*\(?\s*(["'])\.{1,2}\/[^"']*\2/g, "");
     if (/["'`][^"'`]*\/test-support\//.test(code)) {
       out.push({ file, line: i + 1, what: "reaches a test-support door without testSupport() (api/tests/test-support.ts)" });
     }
@@ -64,6 +67,9 @@ function check(file: string, src: string): Violation[] {
   return out;
 }
 
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) main();
+
+function main() {
 const violations: Violation[] = [];
 for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
 
@@ -74,3 +80,4 @@ if (violations.length) {
   process.exit(1);
 }
 console.log(`lint:test-support-through-the-helper OK`);
+}

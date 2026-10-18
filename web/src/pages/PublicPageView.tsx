@@ -194,11 +194,17 @@ export function PublicRecordCard({ record, frame, skinFrom }: { record: PublicRe
   );
 }
 
+let skinMounts = 0;
+
 /** The page's own look (Tier B): the owner's HTML in a sandboxed document
  *  with no network, handed only the record as the page shows it. */
 function PublicSkin({ from, footer }: { from: string; footer?: boolean }) {
+  // The document link is spent by the frame that opens it, so each frame asks
+  // for its own: one kept in the cache opened nothing the second time the
+  // record was opened (#7134). Keyed by this mount and never kept after it.
+  const [mount] = useState(() => ++skinMounts);
   const q = useQuery({
-    queryKey: ["public-skin", from],
+    queryKey: ["public-skin", from, mount],
     queryFn: async () => {
       const r = await fetch(from);
       if (!r.ok) throw new Error("This could not be shown.");
@@ -206,6 +212,9 @@ function PublicSkin({ from, footer }: { from: string; footer?: boolean }) {
     },
     retry: false,
     staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   return (
     <div className="space-y-3">

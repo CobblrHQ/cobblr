@@ -7,6 +7,7 @@
 // JWKS (not a shared secret) is the portability keystone: rotating keys or moving the
 // identity host republishes the JWKS; this surface needs no redeploy.
 
+// EGRESS-FILE: operator-configured - the instance's identity service, an address the operator sets in the environment
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { timingSafeEqual } from "node:crypto";
 import { env } from "../env.js";

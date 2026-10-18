@@ -33,7 +33,7 @@ import { ORG_ROLES } from "../packages/platform-contract/src/org-roles.js";
 const HOME = "packages/platform-contract/src/org-roles.ts";
 
 /** Where the manual explains them to a person. */
-const GUIDE = "docs/USER_GUIDE.md";
+const GUIDE = "docs/user-guide/people.md";
 const GUIDE_SECTION = "**Roles right now:**";
 
 const ROLES: readonly string[] = ORG_ROLES;

@@ -12,6 +12,8 @@ export interface AddedShared {
   /** Why the last one that failed failed, kept so a failure is never a
    *  green "Added 0". */
   lastError: string | null;
+  /** The products that were not added, so a retry adds only those. */
+  failed: SharedProduct[];
 }
 
 export async function addSharedProducts(
@@ -21,6 +23,7 @@ export async function addSharedProducts(
 ): Promise<AddedShared> {
   let ok = 0;
   let lastError: string | null = null;
+  const failed: SharedProduct[] = [];
   for (const p of products.slice(0, 50)) {
     try {
       await api.scanBarcode(slug, {
@@ -33,9 +36,10 @@ export async function addSharedProducts(
       ok++;
     } catch (e) {
       lastError = e instanceof ApiError ? e.message : String(e);
+      failed.push(p);
     }
   }
-  return { ok, of: Math.min(products.length, 50), lastError };
+  return { ok, of: Math.min(products.length, 50), lastError, failed };
 }
 
 /** The sentence a person reads after adding: zero is a failure whatever the

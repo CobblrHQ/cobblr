@@ -5,6 +5,7 @@
 // in-process (platform().selfFetch); any other address is an ordinary fetch.
 // Before the platform is set (a unit test, a CLI) it is plain fetch, so a
 // test that stubs fetch sees the same URL it always did.
+// EGRESS-FILE: own-api - the instance calling its own API
 import { isPlatformSet, platform } from "@cobblr/platform-contract/platform-runtime";
 
 /** This api's own origin, "http://127.0.0.1:<API_PORT>": a base to build URLs

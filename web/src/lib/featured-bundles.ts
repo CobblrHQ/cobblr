@@ -1397,8 +1397,8 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
       "Track the fridge/pantry with expiry + storage, and auto-build a shopping list when something runs low or is about to expire. Check an item off → it restocks.",
     manifest: {
       id: "cobblr.flagship.groceries",
-      version: "0.13.7",
-      releases: [{ version: "0.13.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
+      version: "0.14.0",
+      releases: [{ version: "0.13.8", released_at: "2026-10-17", notes: "A food scanned from Open Food Facts keeps the allergens and traces the catalog lists, shown as warning pills on the scan and on the pantry item, and a view can filter on a word in them." }, { version: "0.14.0", released_at: "2026-10-17", notes: "Food moved into the fridge or the freezer is re-dated by its cold shelf life, and by its warm one when it comes out; the record's history says why. Each item can state a fridge and a freezer number beside the existing two." }, { version: "0.13.7", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }, { version: "0.13.5", released_at: "2026-10-03", notes: "A scanned bottle of water now goes to Groceries: the barcode catalog calls it water, and Groceries now knows the word." }, { version: "0.13.1", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." }],
       // What its items are actually CALLED. A bundle's suggestion has to be
       // corroborated by the capture's own text before it is trusted, and a
       // category whose members never share its name can never corroborate:
@@ -1760,6 +1760,24 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                               },
                               {
                                       "entity_kind": "groceries:item",
+                                      "name": "shelf_life_refrigerated_days",
+                                      "display_label": "In the fridge, good for (days)",
+                                      "type": "number",
+                                      "aggregate": "none",
+                                      "position": 2,
+                                      "help": "How long this keeps unopened in the fridge. Moving it into the fridge dates its lot by this, and moving it out puts the warm clock back. Leave blank and a move changes nothing."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "shelf_life_frozen_days",
+                                      "display_label": "In the freezer, good for (days)",
+                                      "type": "number",
+                                      "aggregate": "none",
+                                      "position": 2,
+                                      "help": "How long this keeps unopened in the freezer. Moving it into the freezer dates its lot by this; with none given the fridge number is used. Leave both blank and a move changes nothing."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
                                       "name": "grace_days",
                                       "display_label": "Still fine for (days past)",
                                       "type": "number",
@@ -1821,6 +1839,24 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
                                               "Beverages",
                                               "Snacks"
                                       ]
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "allergens",
+                                      "display_label": "Contains",
+                                      "type": "text",
+                                      "position": 5,
+                                      "learns": false,
+                                      "help": "What the food says it contains, as the catalog lists it (milk, nuts, soybeans). Filled in from Open Food Facts when you scan it, and left blank when the catalog lists none. Blank means not listed, not that there are none."
+                              },
+                              {
+                                      "entity_kind": "groceries:item",
+                                      "name": "traces",
+                                      "display_label": "May contain",
+                                      "type": "text",
+                                      "position": 6,
+                                      "learns": false,
+                                      "help": "What the food may carry traces of, as the catalog lists it. Filled in from Open Food Facts when you scan it. Blank means not listed."
                               }
                       ],
                       "saved_views": [

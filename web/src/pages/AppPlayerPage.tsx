@@ -29,6 +29,7 @@ import { createCapabilityForKind } from "@cobblr/platform-contract/create-capabi
 import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
 import { statValue } from "@cobblr/platform-contract/stat-value";
 import { AskForItButton } from "../components/AskForItButton";
+import { AppEditForm } from "../components/AppEditForm";
 // Per-surface theme → CSS variables. Shared with the member portal so the
 // launcher can wear the same brand. See web/src/lib/appTheme.ts.
 import {
@@ -334,7 +335,7 @@ function BlockRenderer({
         </div>
       );
     case "form":
-      return <FormBlock slug={slug} kind={block.kind} mode={block.mode} caps={caps} theme={theme} />;
+      return <FormBlock slug={slug} kind={block.kind} mode={block.mode} only={block.fields} caps={caps} theme={theme} />;
     case "action":
       return (
         <ActionBlock
@@ -466,19 +467,21 @@ function FormBlock({
   slug,
   kind,
   mode,
+  only,
   caps,
   theme,
 }: {
   slug: string;
   kind: string;
   mode: "create" | "edit";
+  only?: string[];
   caps?: Caps;
   theme?: AppTheme | null;
 }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const createCap = createCapabilityForKind(kind) ?? undefined;
-  if (mode !== "create") return null;
+  if (mode === "edit") return <AppEditForm slug={slug} kind={kind} only={only} theme={theme} />;
   const label = kind.split(":")[1] ?? kind;
   // A create the member may not do yet is offered as an ask, in the block's
   // place, rather than the block vanishing (#3073).

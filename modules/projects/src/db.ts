@@ -42,6 +42,8 @@ export interface ProjectsTasksTable {
   checklist: Generated<ChecklistItem[]>;
   /** Comes round again: {every_n, every_unit}, or null (0008). */
   repeat: { every_n: number; every_unit: "day" | "week" | "month" | "year" } | null;
+  /** The finished task this is the next occurrence of; at most one per task (0011). */
+  occurrence_of: string | null;
   instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;

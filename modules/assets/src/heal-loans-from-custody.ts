@@ -15,11 +15,12 @@ import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import type { AssetsDB } from "./db.js";
 
-export async function healLoansFromCustody(orgId: string, db: Kysely<AssetsDB>): Promise<number> {
+export async function healLoansFromCustody(orgId: string, db: Kysely<AssetsDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("assets_assets")
     .select(["id", "metadata", "updated_at"])
     .where(sql<boolean>`metadata ->> 'assigned_to' is not null and jsonb_typeof(metadata -> 'loan') is distinct from 'object'`)
+    .where("created_at", "<", since)
     .execute();
   let healed = 0;
   for (const row of rows) {
@@ -46,8 +47,9 @@ export async function healLoansFromCustody(orgId: string, db: Kysely<AssetsDB>):
 export function registerLoansFromCustodyHeal(): void {
   registerHealPass({
     name: "assets.loans-from-custody",
+    since: "2026-10-14T06:49:45Z",
     shim: "modules/assets/src/heal-loans-from-custody.ts",
     module: "assets",
-    visit: ({ orgId, db }) => healLoansFromCustody(orgId, db as Kysely<AssetsDB>),
+    visit: ({ orgId, db, since }) => healLoansFromCustody(orgId, db as Kysely<AssetsDB>, since),
   });
 }

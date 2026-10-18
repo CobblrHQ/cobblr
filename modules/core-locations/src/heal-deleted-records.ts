@@ -6,9 +6,9 @@ import type { Kysely } from "kysely";
 import type { CoreLocationsDB } from "./db.js";
 
 export function registerDeletedPlacesHeal(): void {
-  registerHealPass({ name: "core-locations.deleted-records", shim: "modules/core-locations/src/heal-deleted-records.ts", module: "core-locations", visit: async ({ orgId, db }) => {
+  registerHealPass({ name: "core-locations.deleted-records", since: "2026-10-04T02:41:07Z", shim: "modules/core-locations/src/heal-deleted-records.ts", module: "core-locations", visit: async ({ orgId, db, since }) => {
     const own = db as Kysely<CoreLocationsDB>;
-    const rows = await own.selectFrom("core_locations_deleted").selectAll().execute();
+    const rows = await own.selectFrom("core_locations_deleted").selectAll().where("deleted_at", "<", since).execute();
     for (const kept of rows) {
       const rows = (typeof kept.rows === "string" ? JSON.parse(kept.rows) : kept.rows) as Record<string, unknown>[];
       const root = rows.find((r) => r.id === kept.id);

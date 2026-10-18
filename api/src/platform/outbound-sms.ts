@@ -11,6 +11,7 @@
 // cannot receive a text by definition, so a send to one is logged as sent
 // and never leaves the box: what the tests and walks use.
 
+// EGRESS-FILE: vendor-fixed - the SMS provider's API host, written in the code
 import { meta } from "../db/meta.js";
 import { normalisePhone } from "../lib/phone.js";
 import { decryptCredentials, encryptCredentials } from "./integrations.js";

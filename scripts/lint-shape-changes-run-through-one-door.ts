@@ -24,6 +24,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { isApiClientFile } from "./lib/api-client-methods.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -76,7 +77,6 @@ const DOOR_CALL = /\b(changeWorkspaceShape|changeShape)\s*\(/g;
 const ALLOWED = new Set([
   "packages/platform-web/src/workspace-shape.ts",
   "packages/platform-web/src/types.ts",
-  "web/src/lib/api.ts",
   "web/src/App.tsx",
   // The workspace's platform context hands the door to the package (#4640).
   "web/src/WorkspacePlatformWeb.tsx",
@@ -151,7 +151,8 @@ function matchingBrace(src: string, open: number): number {
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
-  if (ALLOWED.has(file)) return [];
+  // The web client defines the calls (web/src/lib/api.ts and its area files).
+  if (ALLOWED.has(file) || isApiClientFile(file)) return [];
   if (!/\/src\/ui\/|^web\/src\/|^packages\/platform-web\/src\//.test(file)) return [];
   if (/^modules\/[^/]+\/src\/ui\/api\.ts$/.test(file)) return [];
   const ranges = doorRanges(src);

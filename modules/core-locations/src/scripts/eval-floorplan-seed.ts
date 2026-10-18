@@ -1,3 +1,4 @@
+// EGRESS-FILE: own-api - a dev script calling the instance's own API
 // Eval for the floor-plan describe-to-seed (docs/design-decisions/location-floor-plan.md).
 //   npx tsx modules/core-locations/src/scripts/eval-floorplan-seed.ts
 //

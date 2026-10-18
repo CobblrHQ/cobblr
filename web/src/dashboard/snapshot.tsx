@@ -16,7 +16,7 @@
 // never kept while viewing as someone else, and signing out forgets it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { dehydrate, hydrate, useIsFetching, useQueryClient } from "@tanstack/react-query";
-import { clearPrimedReads, holdPrimedReads, primeReads } from "@cobblr/platform-web";
+import { clearPrimedReads, holdPrimedReads, primeReads, primeTicket } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { api } from "../lib/api";
 import { getImpersonationToken } from "../lib/impersonation";
@@ -79,6 +79,7 @@ export function startPageCode(load: () => Promise<unknown>): PageCode {
 let asking: { slug: string; at: number; primed: Promise<void> } | null = null;
 function askSnapshot(slug: string): Promise<void> {
   if (asking && asking.slug === slug && Date.now() - asking.at < 1_000) return asking.primed;
+  const ticket = primeTicket();
   const ask = api.getDashboardSnapshot(slug, { today: dayHere(), ...upNextWindow(new Date()) });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
@@ -86,7 +87,7 @@ function askSnapshot(slug: string): Promise<void> {
   });
   // Primed before anything held is let go, so a held read finds its answer.
   const primed = Promise.race([ask, late])
-    .then((s) => primeReads(s.entries))
+    .then((s) => void primeReads(s.entries, ticket))
     .finally(() => clearTimeout(timer));
   holdPrimedReads(slug, primed);
   asking = { slug, at: Date.now(), primed };

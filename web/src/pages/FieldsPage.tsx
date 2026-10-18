@@ -15,7 +15,7 @@ import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetail } from "../components/FieldDefDetail";
-import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
+import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
 import { FieldMeaningNotices } from "../components/FieldMeaningNotices";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
@@ -169,6 +169,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
     }
   };
 
+  const formSent = useSentWords(JSON.stringify([mode, entityKind, scopeTraits, name, label, type, renderer, template, refKind, unit, choices, learns, fieldRole, withoutMeaning]));
   const create = useMutation({
     mutationFn: () =>
       changeWorkspaceShape(qc, slug, () => api.createFieldDef(slug, {
@@ -201,6 +202,9 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       // Shadowing a trait-scoped field is legal and easy to do by accident -
       // the server says what just changed hands, so say it here too.
       if (created.warning) toast.info(created.warning);
+      setErr(null);
+      // A field changed while it was being added is the next one (#7167).
+      if (!formSent.landed()) return;
       setEntityKind("");
       setScopeTraits([]);
       setName("");
@@ -213,7 +217,6 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       setRenderer("text");
       setTemplate("");
       setUnit("");
-      setErr(null);
     },
     onError: (e: unknown) => {
       const msg = e instanceof ApiError ? e.message : "Couldn't create";
@@ -255,6 +258,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
       setErr(readiness.reason);
       return;
     }
+    formSent.sending();
     create.mutate();
   }
 

@@ -25,6 +25,12 @@
 // on every boot after their work was done: about four minutes of each staging
 // boot before the api could listen (#6707).
 //
+// Fourth: a registered heal takes only rows made before its fix (#7282). The
+// contract makes `since` required; this holds the visit to using it, so a
+// heal cannot pick rows by shape alone and rewrite what fixed code made
+// today. A heal whose rows carry a marker only the old code set says so with
+// `// SINCE BY MARKER: <why>`.
+//
 // Run: npx tsx scripts/lint-heal-shims.ts
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -57,13 +63,21 @@ for (const m of readdirSync(MODULES, { withFileTypes: true })) {
   moduleFiles.push(...files.splice(before));
 }
 
+// Each file is read once; every check below asks this, never the disk.
+const sources = new Map<string, string>();
+const sourceOf = (f: string): string => {
+  let src = sources.get(f);
+  if (src === undefined) sources.set(f, (src = readFileSync(f, "utf8")));
+  return src;
+};
+
 const failures: string[] = [];
 for (const f of files) {
   const rel = relative(ROOT, f);
   const base = f.split("/").pop() ?? "";
   const isShimByName =
     rel.startsWith("api/src/platform/") && /^(migrate|backfill)-.+\.ts$/.test(base);
-  const src = readFileSync(f, "utf8");
+  const src = sourceOf(f);
   const isShimByMarker = src.includes("HISTORICAL DATA MIGRATION");
   if (!isShimByName && !isShimByMarker) continue;
   if (src.includes("DONE WHEN:") || src.includes("PERMANENT RECONCILE")) continue;
@@ -82,7 +96,7 @@ const HEAL_PASS = /registerHealPass\(\{[^}]*?\bshim:\s*"([^"]+)"/g;
 for (const f of [...files, ...moduleFiles]) {
   const rel = relative(ROOT, f);
   if (rel.endsWith(".test.ts")) continue;
-  const src = readFileSync(f, "utf8");
+  const src = sourceOf(f);
   for (const m of src.matchAll(NOTE_CALL)) {
     let key = m[1];
     if (!key && m[2]) key = new RegExp(`const ${m[2]} = "([^"]+)"`).exec(src)?.[1];
@@ -93,7 +107,7 @@ for (const f of [...files, ...moduleFiles]) {
 for (const f of [...files, ...moduleFiles]) {
   const rel = relative(ROOT, f);
   if (rel.endsWith(".test.ts")) continue;
-  const src = readFileSync(f, "utf8");
+  const src = sourceOf(f);
   if (!headerStates(src)) continue;
   if (/^\/\/ NOT RECORDED: \S/m.test(src)) continue;
   if (recordedKeys.get(rel) === rel) continue;
@@ -105,7 +119,7 @@ const OPENS_TENANT = /\bgetTenant(?:Db|Pool)\(/;
 for (const f of files) {
   const rel = relative(ROOT, f);
   if (rel.endsWith(".test.ts")) continue;
-  const src = readFileSync(f, "utf8");
+  const src = sourceOf(f);
   if (!headerStates(src) && !src.includes("PERMANENT RECONCILE")) continue;
   if (!OPENS_TENANT.test(src)) continue;
   if (/\bsweptClean\(/.test(src) || /^\/\/ SWEEPS EVERY BOOT: \S/m.test(src)) continue;
@@ -114,10 +128,22 @@ for (const f of files) {
   );
 }
 
+const VISIT_TAKES_SINCE = /visit:\s*(?:async\s*)?\(\{[^}]*\bsince\b[^}]*\}\)/;
+for (const f of [...files, ...moduleFiles]) {
+  const rel = relative(ROOT, f);
+  if (rel.endsWith(".test.ts")) continue;
+  const src = sourceOf(f);
+  if (!/\bregisterHealPass\(\{/.test(src)) continue;
+  if (VISIT_TAKES_SINCE.test(src) || /^\/\/ SINCE BY MARKER: \S/m.test(src)) continue;
+  failures.push(
+    `${rel}: a heal pass whose visit never takes its since — read { since } in the visit and take only rows made before it (created_at < since, or the table's own made-at column), so the heal cannot rewrite a row fixed code made today (#7282); or say "// SINCE BY MARKER: <why>" when only the old code ever set what it selects on`,
+  );
+}
+
 for (const [key, by] of recordedKeys) {
   let states = false;
   try {
-    states = headerStates(readFileSync(join(ROOT, key), "utf8"));
+    states = headerStates(sourceOf(join(ROOT, key)));
   } catch {
     /* no such file */
   }

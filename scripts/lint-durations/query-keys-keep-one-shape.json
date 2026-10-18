@@ -1,0 +1,10 @@
+{
+  "lint": "lint:query-keys-keep-one-shape",
+  "run": "node scripts/lint-query-keys-keep-one-shape.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-17",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

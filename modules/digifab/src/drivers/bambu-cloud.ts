@@ -12,6 +12,7 @@
 // pybambu uses browser-TLS impersonation. We send the same agent User-Agent and
 // detect a Cloudflare block so the wizard can show a clear error rather than a
 // mystery 403. Whether Node's TLS clears Cloudflare is the key live-verify risk.
+// EGRESS-FILE: vendor-fixed - the printer maker's cloud host, written in the code
 import { requestSignal } from "./timeouts.js";
 
 // ── Regions ──────────────────────────────────────────────────────────────────

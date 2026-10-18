@@ -6,7 +6,8 @@
 // later), and only when the person taps to allow it. So the readiness rule
 // below is pure, and the page shows exactly one thing for each state.
 import { productName } from "@cobblr/platform-web";
-import { api } from "./api";
+import { accountToken, api } from "./api";
+import { tokenSubject } from "./session-identity";
 import type { InstallRoute } from "./install-app";
 
 export interface PushEnv {
@@ -77,8 +78,19 @@ export function readPushEnv(route: InstallRoute): PushEnv {
   };
 }
 
+/** This device's own timezone, or undefined when the browser will not say. */
+export function deviceTimezone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The id this device was saved under, so the list can say "this device". */
 export const THIS_DEVICE_KEY = "cobblr.push.this-device";
+/** The account this browser's subscription was saved for (#7124). */
+export const THIS_DEVICE_OWNER_KEY = "cobblr.push.this-device-owner";
 export function thisDeviceId(): string | null {
   try {
     return localStorage.getItem(THIS_DEVICE_KEY);
@@ -111,7 +123,9 @@ export type PushTurnOnFailure =
    *  permission denied" when the computer's own settings block it). */
   | "refused"
   /** Subscribed, but the server would not save it. */
-  | "not-saved";
+  | "not-saved"
+  /** The person signed out before it finished, so it was let go (#7124). */
+  | "signed-out";
 
 export type PushTurnOnResult = { ok: true; id: string } | { ok: false; why: PushTurnOnFailure; message?: string };
 
@@ -123,6 +137,12 @@ const errorText = (err: unknown) => (err instanceof Error ? (err.name && err.nam
 /** Ask (this must run from a tap: iOS refuses otherwise), subscribe this
  *  browser, and save it for this person. Returns the device's id, or why not. */
 export async function turnOnPushHere(publicKey: string | null | undefined, env: PushEnv, waitMs = WORKER_WAIT_MS): Promise<PushTurnOnResult> {
+  // The account that pressed Turn on. A sign-out while the browser's question
+  // is open, or while it subscribes, must not leave this browser taking that
+  // account's pushes for whoever uses it next (#7124).
+  const epoch = signOuts;
+  const askedAs = accountToken();
+  const signedOutSince = () => signOuts !== epoch;
   if (!env.canPush) return { ok: false, why: "unsupported" };
   if (!publicKey) return { ok: false, why: "no-key" };
   const answer = await Notification.requestPermission();
@@ -144,6 +164,12 @@ export async function turnOnPushHere(publicKey: string | null | undefined, env: 
   } catch (err) {
     return { ok: false, why: "refused", message: errorText(err) };
   }
+  const letGo = async (endpoint?: string) => {
+    await sub.unsubscribe().catch(() => false);
+    if (endpoint && askedAs) await api.forgetMePushDeviceAs(endpoint, askedAs);
+    return { ok: false as const, why: "signed-out" as const };
+  };
+  if (signedOutSince()) return letGo();
   const json = sub.toJSON() as { endpoint?: string; keys?: { p256dh?: string; auth?: string } };
   if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return { ok: false, why: "refused", message: "The browser gave no subscription to save." };
   try {
@@ -152,14 +178,19 @@ export async function turnOnPushHere(publicKey: string | null | undefined, env: 
       keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
       label: thisDeviceLabel(env),
       user_agent: env.userAgent.slice(0, 400),
+      // The account's quiet hours read in this zone until the person sets one (#7070).
+      timezone: deviceTimezone(),
     });
+    if (signedOutSince()) return letGo(json.endpoint);
     try {
       localStorage.setItem(THIS_DEVICE_KEY, saved.id);
+      if (askedAs) localStorage.setItem(THIS_DEVICE_OWNER_KEY, tokenSubject(askedAs));
     } catch {
       /* the list just will not mark it */
     }
     return { ok: true, id: saved.id };
   } catch (err) {
+    if (signedOutSince()) return letGo(json.endpoint);
     return { ok: false, why: "not-saved", message: errorText(err) };
   }
 }
@@ -180,6 +211,7 @@ export function pushTurnOnProblem(failure: { why: PushTurnOnFailure; message?: s
     "no-worker": { says: "This page's background worker did not start, and notifications need it.", next: `Reload the page and press Try again. If it keeps happening, open ${productName()} in another browser.` },
     refused: { says: `The browser allowed notifications but would not sign this device up for them.${detail}`, next: "Check that your computer or phone lets this browser show notifications (its system notification settings), then press Try again. A private window can't take them." },
     "not-saved": { says: `This device signed up, but ${productName()} could not save it.${detail}`, next: "Press Try again." },
+    "signed-out": { says: "You signed out before this device finished turning on, so it was left off.", next: "Sign in and press Turn on again." },
   };
   return words[failure.why];
 }
@@ -193,9 +225,75 @@ export async function turnOffPushHere(): Promise<void> {
   } catch {
     /* the server side is what matters; a browser that kept it gets a 410 later */
   }
+  forgetThisDevice();
+}
+
+/** Sign-outs so far on this page: a Turn on still running when one happens
+ *  lets go of what it made instead of saving it for the departed account. */
+let signOuts = 0;
+
+/** The endpoint this browser takes pushes on, if it is subscribed. */
+export async function thisPushEndpoint(): Promise<string | null> {
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    return (await reg?.pushManager.getSubscription())?.endpoint ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Signing out: this browser stops taking the account's pushes, whoever uses
+ *  it next (#7124). The server forgets it under the departing account's own
+ *  token, passed in because sign-out clears the page's at once; the browser
+ *  unsubscribes, which alone stops delivery when the server cannot be told
+ *  (offline): the next send finds the endpoint gone and drops the row. */
+export async function retirePushHere(departingToken: string | null): Promise<void> {
+  signOuts++;
+  let sub: PushSubscription | null = null;
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    sub = (await reg?.pushManager.getSubscription()) ?? null;
+  } catch {
+    /* no worker, nothing subscribed here */
+  }
+  forgetThisDevice();
+  if (!sub) return;
+  await Promise.all([
+    departingToken ? api.forgetMePushDeviceAs(sub.endpoint, departingToken) : Promise.resolve(false),
+    sub.unsubscribe().catch(() => false),
+  ]);
+}
+
+function forgetThisDevice(): void {
   try {
     localStorage.removeItem(THIS_DEVICE_KEY);
+    localStorage.removeItem(THIS_DEVICE_OWNER_KEY);
   } catch {
     /* nothing to forget */
   }
+}
+
+/** Someone else signed in on a browser still subscribed for an account that
+ *  never signed out here (its session ran out): the browser unsubscribes, so
+ *  the earlier account's notices stop coming to it (#7124). Their token is
+ *  gone, so the server learns at its next send, which finds the endpoint
+ *  gone and drops the row. */
+export async function letGoOfAnotherAccountsPush(): Promise<boolean> {
+  let owner: string | null = null;
+  try {
+    owner = localStorage.getItem(THIS_DEVICE_OWNER_KEY);
+  } catch {
+    return false;
+  }
+  const now = tokenSubject(accountToken());
+  if (!owner || !now || owner === now) return false;
+  signOuts++;
+  forgetThisDevice();
+  try {
+    const reg = await navigator.serviceWorker?.getRegistration();
+    await (await reg?.pushManager.getSubscription())?.unsubscribe();
+  } catch {
+    /* nothing subscribed here */
+  }
+  return true;
 }

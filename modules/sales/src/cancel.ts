@@ -17,6 +17,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
 import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
+import { orderStockComplete } from "./fulfilment.js";
 
 const SHIPPED: readonly SalesOrderStatus[] = ["shipped", "closed"];
 
@@ -103,15 +104,14 @@ export async function cancelOrder(
   });
 }
 
-/** Take a cancel back: the order returns to the status it had, and what the
- *  cancel put back on the shelf is taken again (as much as is there now). */
+/** Retake what is still on the shelf. An incomplete sale stays open for the rest. */
 export async function reinstateOrder(
   db: Kysely<SalesDB>,
   orgId: string,
   userId: string | null,
   orderId: string,
   undo: { from: SalesOrderStatus; restocked: Restocked[] },
-): Promise<{ ok: true; retaken: Restocked[] } | { ok: false; code: "not_found" | "not_cancelled"; message: string }> {
+): Promise<{ ok: true; retaken: Restocked[]; status: SalesOrderStatus; complete: boolean } | { ok: false; code: "not_found" | "not_cancelled"; message: string }> {
   return withOrderLock(db, orgId, userId, orderId, async () => {
     const order = await db.selectFrom("sales_orders").select(["id", "status"]).where("id", "=", orderId).executeTakeFirst();
     if (!order) return { ok: false, code: "not_found", message: "That order is not here any more." };
@@ -130,11 +130,15 @@ export async function reinstateOrder(
       }
       retaken.push({ ...r, qty: took });
     }
-    await db.updateTable("sales_orders").set({ status: undo.from, updated_at: new Date() }).where("id", "=", orderId).execute();
+    const complete = await orderStockComplete(db, orderId);
+    const status = !complete && ["fulfilled", "shipped", "closed"].includes(undo.from) ? "confirmed" : undo.from;
+    await db.updateTable("sales_orders")
+      .set({ status, ...(!complete ? { fulfilled_at: null, shipped_at: null } : {}), updated_at: new Date() })
+      .where("id", "=", orderId).execute();
     if (retaken.length > 0) {
       await orderHappened(db, orgId, orderId, { kind: "stock", detail: { taken: retaken.map((r) => ({ part_id: r.part_id, qty: r.qty })), because: "the cancel was undone" }, by_user: userId });
     }
-    await orderHappened(db, orgId, orderId, { kind: "status", from_status: "cancelled", to_status: undo.from, by_user: userId });
-    return { ok: true, retaken };
+    await orderHappened(db, orgId, orderId, { kind: "status", from_status: "cancelled", to_status: status, by_user: userId });
+    return { ok: true, retaken, status, complete };
   });
 }

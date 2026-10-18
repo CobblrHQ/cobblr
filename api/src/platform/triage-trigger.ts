@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the trigger address is set in the environment
 // Fire-and-forget poke to the host-side feedback-triage analyzer. The analyzer
 // (a `claude -p` daemon on the box; operator infra, source in the private cloud
 // ops repo at ops/feedback-triage/) exposes a

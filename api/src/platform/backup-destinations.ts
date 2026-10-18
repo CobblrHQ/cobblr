@@ -15,6 +15,7 @@
 //                   operator registers a Google Cloud OAuth app); the OAuth
 //                   connect flow lives in routes/backup.ts.
 
+// EGRESS-FILE: vendor-fixed - Google's token and Drive endpoints, written in the code
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName } from "./product-name.js";
 import { writeFile, mkdir, readdir, stat, unlink } from "node:fs/promises";

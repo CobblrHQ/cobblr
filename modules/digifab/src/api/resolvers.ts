@@ -72,10 +72,10 @@ export function registerFarmResolvers(): void {
   });
 }
 
-const JOB_COLUMNS = ["id", "file_ref", "status", "target_device", "progress", "remote_job_id"] as const;
+const JOB_COLUMNS = ["id", "file_ref", "status", "target_device", "progress", "remote_job_id", "material_pending"] as const;
 
 function jobToResolved(row: {
-  id: string; file_ref: string; status: string; target_device: string | null; progress: number | null; remote_job_id: string | null;
+  id: string; file_ref: string; status: string; target_device: string | null; progress: number | null; remote_job_id: string | null; material_pending: boolean;
 }): ResolvedEntity {
   return {
     kind: "digifab:job",
@@ -89,6 +89,7 @@ function jobToResolved(row: {
       target_device: row.target_device,
       progress: row.progress,
       remote_job_id: row.remote_job_id,
+      material_pending: row.material_pending,
     },
   };
 }

@@ -458,11 +458,12 @@ function MoreMenu({
           measured, after the page is up, and a bar arriving at the top then
           pushed the whole page down under the reader on every load (#6635).
           Both answers write a layout to the account, so the dismissal is the
-          record and nothing new is stored. */}
+          record and nothing new is stored. It yields to an open sheet or modal
+          (the default): held over one it sat across the foot of a phone held
+          sideways and hid the sheet's Keep button (#7289). */}
       {offerSidebar && (
         <FloatingChrome
           anchor="bottom"
-          yields={false}
           role="region"
           aria-label="Switch to the sidebar?"
           data-nav-graduation-offer

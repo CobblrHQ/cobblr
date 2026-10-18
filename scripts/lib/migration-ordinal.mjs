@@ -19,3 +19,15 @@ export function ordinalOf(filename) {
 export function isMigrationDir(dir) {
   return /^api\/migrations\/(platform|tenant-base)$/.test(dir) || /^modules\/[^/]+\/migrations$/.test(dir);
 }
+
+/** The next free ordinal after `highest`, in its own shape: a module's `NNNN` + 1, or a platform set's
+ *  `YYYYMMDD-NNN` with today's date (never earlier than highest's) and NNN + 1.
+ *  @param {string} highest @param {Date} [today] @returns {string} */
+export function nextOrdinal(highest, today = new Date()) {
+  const platform = /^(\d{8})-(\d+)$/.exec(highest);
+  if (platform) {
+    const day = today.toISOString().slice(0, 10).replaceAll("-", "");
+    return `${day > platform[1] ? day : platform[1]}-${String(Number(platform[2]) + 1).padStart(platform[2].length, "0")}`;
+  }
+  return String(Number(highest) + 1).padStart(highest.length, "0");
+}

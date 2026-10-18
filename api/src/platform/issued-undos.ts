@@ -7,7 +7,8 @@
 // member's Undo of their own tap was refused. Each step is kept here as it was
 // issued, to the person who ran the run; that person running exactly that
 // step is admitted as its requester, once. A step a person writes themselves
-// matches nothing here and asks for the grant as before.
+// matches nothing here and asks for the grant as before. A run that failed
+// before it wrote anything gives the step back for a retry (#7140).
 
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -58,10 +59,18 @@ export async function issuedUndoFor(orgId: string, userId: string, step: IssuedS
   return row?.id ?? null;
 }
 
-/** Spend it: an undo is run once. False when another press spent it first. */
+/** Spend it before it runs: an undo is run once, and a second press while
+ *  the first runs finds it spent. False when another press spent it first. */
 export async function spendIssuedUndo(id: string): Promise<boolean> {
   const r = await meta.updateTable("issued_undos").set({ used_at: new Date() }).where("id", "=", id).where("used_at", "is", null).executeTakeFirst();
   return Number(r.numUpdatedRows) > 0;
+}
+
+/** Give it back: its run failed before it wrote anything, so it is still the
+ *  requester's to retry (#7140). Never called for a run that may have written,
+ *  since running that step again could apply it twice. */
+export async function returnIssuedUndo(id: string): Promise<void> {
+  await meta.updateTable("issued_undos").set({ used_at: null }).where("id", "=", id).execute();
 }
 
 export function registerIssuedUndosSweep(): void {

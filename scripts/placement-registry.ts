@@ -360,7 +360,8 @@ export const PLACEMENT: PlacementRow[] = [
     lints: ["lint:route-shadowing", "lint:announce-routes-home", "lint:api-client-reachable", "lint:scan-triage-columns", "lint:scan-door-intake", "lint:refusal-carries-blocked", "lint:capability-gates-grantable", "lint:test-doors-gated", "lint:declared-endpoints-served"],
     notes: [
       "Register literal paths (/inbox/session-theme) ABOVE parameter paths (/inbox/:id) in the same router.",
-      "A route's client method in web/src/lib/api.ts is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
+      "A route's web client method goes in its area file under web/src/lib/api/ (scan.ts, digifab.ts …), never in the web/src/lib/api.ts barrel or client.ts: lint:api-client-by-area names the file (#7364).",
+      "A route's client method is not a feature until something on screen calls it: lint:api-client-reachable refuses a method with no caller (the catalog crop sat reachable-by-curl-only for a month).",
       "A route that announce()s about somebody's ticket passes `originGuildId` from the ticket's origin_ref, or the notice lands in the operator's own server where the people in that conversation cannot see it. A DM has no guild: say so with `// no-origin-guild: <reason>`.",
     ],
   },
@@ -493,6 +494,7 @@ export const PLACEMENT: PlacementRow[] = [
     lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category", "lint:materialize-reads-its-answer", "lint:e2e-visible-probe-filters-first", "lint:shot-guard"],
     notes: [
       "Checking a UI change before a pull request needs no new script: `node scripts/walk.mjs` (one-off flags, or a JSON spec with steps) asserts a page at 390 and 1440 px and prints a pass/fail table. Write an e2e/ script only for a check that must stay and gate.",
+      "A new kind of walk check or action is a new file, scripts/walk/checks/<key>.mjs (export key and judge) or scripts/walk/actions/<key>.mjs (export key and act), found by a directory read; never a branch in scripts/walk.mjs (lint:walk-kinds-in-their-files, #7384). `node scripts/walk.mjs --kinds` lists them.",
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
       "Reach a control by a hook the product declares (data-testid, a placeholder), never by its tag or styling: the hook is checked against the source at PR time, the tag is not.",

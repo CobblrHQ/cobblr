@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the accepted trial source, the OAuth broker and Google's token endpoint are the operator's settings or written in the code
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName } from "../platform/product-name.js";
 import { captureBackupSecrets, rebindBackupSecrets } from "../platform/secret-backup.js";

@@ -55,8 +55,8 @@ export interface DigifabJobsTable {
   target_tag: string | null;
   /** A Cobblr pool to drip this job onto a free member (queue mode). */
   target_pool: string | null;
-  /** Filament the print consumes — an inventory part + grams. On completion a
-   *  seeded wire deducts `material_grams` from `material_part_id`'s stock.
+  /** Filament the print consumes — an inventory part + grams. Completion saves
+   *  a durable plan to deduct `material_grams` from `material_part_id`'s stock.
    *  `material_type` records the slicer's filament token (PLA/PETG/…) even when
    *  no spool is matched — a record + display field, not part of the deduction. */
   material_part_id: string | null;
@@ -66,6 +66,8 @@ export interface DigifabJobsTable {
   material_grams_by_tool: ColumnType<number[] | null, string | null, string | null>;
   /** What a completed print took off which loaded spool (0036). */
   material_drawn: unknown | null;
+  material_plan: ColumnType<import("./loaded-spools.js").MaterialPlan | null, string | null, string | null>;
+  material_pending: Generated<boolean>;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
    *  builds:build-one to consume the build's components from inventory; the
    *  output part is credited only when the plate is judged good (#4050).
@@ -340,30 +342,10 @@ export interface DigifabLaserPlansTable {
   id: Generated<string>; connection_id: string; remote_device_id: string; library_id: string;
   plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
 }
-export interface DigifabReflowProfilesTable {
-  id: Generated<string>; paste_kind: string; paste_id: string; fingerprint: string;
-  profile: import("@cobblr/platform-contract/reflow-profile").ReflowProfile;
-  created_by: string | null; created_at: Generated<Date>;
-}
 export interface DigifabDB {
-  digifab_reflow_profiles: DigifabReflowProfilesTable;
-  digifab_test_numbering: import("./production-store.js").TestNumbering;
-  digifab_test_delivery: import("./production-store.js").TestDelivery;
-  digifab_test_plans: import("./production-store.js").TestPlanHead;
-  digifab_test_plan_versions: import("./production-store.js").TestPlanVersion;
-  digifab_test_units: import("./production-store.js").TestUnit;
-  digifab_test_jigs: import("./production-store.js").TestJig;
-  digifab_test_runs: import("./production-store.js").TestRun;
-  digifab_test_dispositions: import("./production-store.js").TestDisposition;
-  digifab_kiln_profiles: { machine_id: string; connection_id: string | null; device_id: string | null; schedules: ColumnType<Array<{ name: string; segments: import("./kilns/model.js").Firing["schedule"] }>, string, string>; components: ColumnType<import("./kilns/model.js").Component[], string, string> };
-  digifab_firings: { id: string; machine_id: string; name: string; recipe: ColumnType<import("./kilns/model.js").Firing, string, string>; status: Generated<string>; connection_id: string | null; device_id: string | null; peak_c: number | null; duration_hours: number | null; started_at: Date | null; ended_at: Date | null; created_at: Generated<Date> };
   digifab_large_prints: {job_id:string;connection_id:string;device_id:string;plan:import("./large-format/service.js").LargePrintPlan;started_at:Generated<Date|null>;report:Generated<import("./large-format/service.js").PrintOutcome|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
   digifab_printer_supplies: {connection_id:string;device_id:string;supply_id:string;reading:import("./large-format/supplies.js").SupplyReading;low:Generated<boolean>;updated_at:Generated<Date>};
   digifab_bench_readings: { id: Generated<string>; connection_id:string; device_id:string; machine_id:string; record_kind:string; record_id:string; report:import("./bench-model.js").BenchReport; screenshot_file_id:string|null; capture_file_id:Generated<string|null>; created_at:Generated<Date> };
-  digifab_embroidery_machines: {id:Generated<string>;config:import("./embroidery-runs.js").EmbroideryMachine;created_at:Generated<Date>;updated_at:Generated<Date>};
-  digifab_embroidery_designs: {id:Generated<string>;name:string;file_id:string;source_hash:string;design:import("./embroidery-design.js").EmbroideryDesign;summary:import("./embroidery-design.js").EmbroiderySummary;created_at:Generated<Date>};
-  digifab_embroidery_runs: {job_id:string;machine_id:string;design_id:string;plan:import("./embroidery-runs.js").EmbroideryPlan;started_at:Generated<Date|null>;interrupted:Generated<boolean>;report:Generated<import("./embroidery-runs.js").EmbroideryReport|null>;stock_recorded_at:Generated<Date|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
-  digifab_embroidery_thread_claims: {part_id:string;job_id:string};
   digifab_resin_prints: {
     job_id: string; connection_id: string; device_id: string; review_file_id: string;
     phase: Generated<string>; snapshot: import("./resin-prints.js").ResinSnapshot;

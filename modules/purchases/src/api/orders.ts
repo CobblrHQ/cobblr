@@ -1,5 +1,6 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { fieldCurrency, isCurrency } from "@cobblr/platform-contract/money";
+import { receiptPending } from "../receipt-pending.js";
 import { orderFigures, combineOrderTotals } from "../order-money.js";
 // /orders — REST for purchases orders + the nested /items collection.
 // A 'status' transition to 'arrived' emits purchases.order.arrived
@@ -187,6 +188,7 @@ ordersRouter.get(
     let rows = q
       .selectAll("o")
       .select(orderTotal("o").as("total"))
+      .select(receiptPending("o.id").as("stock_pending"))
       .select(sql<string>`to_char(${orderDay}, 'YYYY-MM-DD')`.as("sort_day"))
       // Full precision: a JS Date keeps milliseconds, the column keeps
       // microseconds, and a cursor rounded down skips the rows in between.
@@ -274,6 +276,7 @@ ordersRouter.get(
       .selectFrom("purchases_orders as o")
       .selectAll("o")
       .select(orderTotal("o").as("total"))
+      .select(receiptPending("o.id").as("stock_pending"))
       .where("o.id", "=", id)
       .where("o.instance", "=", instanceOf(req))
       .executeTakeFirst();
@@ -506,12 +509,12 @@ ordersRouter.patch(
           orgId: ctx.org.id,
           orderId: id,
         });
-        // The lines not yet received are received now: stamped once, then
-        // told to the stock and spend wires (receive.ts, the one door).
-        const at = updated.arrived_at as Date | string | null;
-        const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
-        await receiveOrderLines(db, ctx.org.id, id, on);
       }
+    }
+    if (parsed.data.status === "arrived") {
+      const at = updated.arrived_at as Date | string | null;
+      const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
+      await receiveOrderLines(db, ctx.org.id, id, on);
     }
     res.json(updated);
   }),

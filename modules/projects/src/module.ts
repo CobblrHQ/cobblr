@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.40",
+  version: "0.3.41",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -123,6 +123,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:blocked-by",
+        changes: "records",
         runBy: "member",
         examples: ["this is waiting on that", "cannot start until the part arrives"],
         undoable: true,
@@ -142,6 +143,7 @@ export default defineModule({
         group: "plan",
         // UI-SCREEN: /projects (the task sheet offers Stop waiting on this for each dependency)
         id: "projects:unblock",
+        changes: "records",
         runBy: "member",
         examples: ["it is not waiting on that any more", "remove that dependency"],
         undoable: true,
@@ -156,6 +158,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:move-task",
+        changes: "records",
         runBy: "member",
         examples: ["put this task first", "move that one down", "do this one last"],
         undoable: true,
@@ -184,6 +187,7 @@ export default defineModule({
         // NO-PHRASING: flips flags for whatever entity triggered it, so without an event there is nothing to act on
         group: "plan",
         id: "projects:set-dep-satisfied",
+        changes: "records",
         runBy: "member",
         label: "Mark task dependencies satisfied",
         description:
@@ -202,10 +206,11 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "plan",
         id: "projects:reopen-task",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Put a task back",
-        description: "Internal, the inverse of marking a task done: puts its status and completion back to what they were. Runs from Undo on the card; not for direct use.",
+        description: "Internal, the inverse of marking a task done: puts its status and completion back to what they were, and takes back the next occurrence the finish made if it is untouched. Runs from Undo on the card; not for direct use.",
         icon: "undo",
         scope: "workspace" as const,
         userInvokable: false,
@@ -214,12 +219,14 @@ export default defineModule({
           task_id: { label: "The task's id", type: "text" },
           status: { label: "The status to put back", type: "text" },
           completed_at: { label: "When it said it was completed, or blank", type: "text" },
+          withdraw_next: { label: "Also take back the next occurrence the finish made, if nobody has touched it", type: "boolean" },
         },
       },
       {
         // NO-PHRASING: acts on the task named by the event; asked without one there is no task to mark
         group: "plan",
         id: "projects:mark-task-done",
+        changes: "records",
         runBy: "member",
         undoable: true,
         wireOnly: true,
@@ -236,6 +243,7 @@ export default defineModule({
       {
         group: "plan",
         id: "projects:copy-project",
+        changes: "records",
         runBy: "member",
         examples: ["do this job again for the next order", "copy this project with its steps", "start another one like this"],
         label: "Do it again from this project",

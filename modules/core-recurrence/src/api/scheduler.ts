@@ -12,9 +12,10 @@
 // returns at least one occurrence" — restart-safe.
 
 // rrule is published as CJS; named-export via default-package import.
-// sweep-pools: deferred-release ok — the background tick enumerates only
-// ACTIVE orgs (created <5min ago or carrying recurrence state), a small
-// bounded set; the 15s deferred pool close in tenant.ts covers it.
+// sweep-pools: deferred-release ok — the background tick visits the
+// workspaces that have a recurrence-owning module on, one at a time, and
+// each visit releases its pool (releaseIdleDb); the 15s deferred pool close
+// in tenant.ts covers the rest.
 import rrulePkg from "rrule";
 import { platform } from "@cobblr/platform-contract";
 const { rrulestr } = rrulePkg;
@@ -160,6 +161,28 @@ export async function tick(
   return { evaluated: wires.length, fired: fired + entityFired };
 }
 
+/** How many workspaces one background tick scans. Every eligible workspace is
+ *  scanned, a slice at a time, so a database of thousands of workspaces (a dev
+ *  database's leftovers) never fans scanners across all of them in one minute
+ *  and exhausts the connection pool: a small install is scanned whole every
+ *  tick, a large one in rotation. */
+export const WORKSPACES_PER_TICK = 300;
+let rotation = 0;
+export function nextSlice<T>(all: T[], cursor: { at: number } = { get at() { return rotation; }, set at(v: number) { rotation = v; } }): T[] {
+  if (all.length <= WORKSPACES_PER_TICK) return all;
+  const start = cursor.at % all.length;
+  cursor.at = (start + WORKSPACES_PER_TICK) % all.length;
+  return Array.from({ length: WORKSPACES_PER_TICK }, (_, i) => all[(start + i) % all.length]!);
+}
+
+/** The workspaces a background tick scans: not disabled, and with a module on
+ *  that owns a scanner. Sorted, so the rotation is stable. */
+export function scannableWorkspaces(live: Array<{ id: string }>, enabledByOrg: Map<string, Set<string>>, owningModules: Set<string>): Array<{ id: string }> {
+  return live
+    .filter((o) => [...(enabledByOrg.get(o.id) ?? [])].some((m) => owningModules.has(m)))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
 /** D3 per-entity recurrence: each scanner (registered by its owning
  *  module via platform.recurrence.registerScanner) returns rows of
  *  {entityId, rrule, title?, event} per tenant. We iterate every org
@@ -174,35 +197,6 @@ async function tickEntityRecurrence(
   if (scanners.length === 0) return 0;
 
   const meta = platform().db.meta as unknown as MetaDbLike;
-  let orgs: Array<{ id: string }>;
-  if (onlyOrg) {
-    // Tick called with a tenant scope (e.g. via the org-scoped
-    // /tick HTTP endpoint). Skip the cross-tenant enumeration.
-    orgs = [{ id: onlyOrg }];
-  } else {
-    // Background tick: scan "active" orgs only — those created in
-    // the last 5 minutes OR already carrying recurrence state.
-    // Avoids fanning scanners across thousands of dev-DB leftover
-    // tenants and exhausting the pg connection pool. New tenants
-    // get a 5-minute window to be picked up; after that, they need
-    // at least one HTTP-triggered /tick to seed state (which then
-    // keeps them in the recurring scan thereafter).
-    const recentCutoff = new Date(Date.now() - 5 * 60 * 1000);
-    const recentOrgs = (await meta
-      .selectFrom("orgs")
-      .select(["id"])
-      .where("plan", "!=", "disabled")
-      .where("created_at", ">", recentCutoff)
-      .execute()) as unknown as Array<{ id: string }>;
-    const statefulOrgs = (await meta
-      .selectFrom("core_recurrence_entity_state")
-      .select(["org_id"])
-      .execute()) as unknown as Array<{ org_id: string }>;
-    const orgIds = new Set<string>();
-    for (const r of recentOrgs) orgIds.add(r.id);
-    for (const r of statefulOrgs) orgIds.add(r.org_id);
-    orgs = Array.from(orgIds).map((id) => ({ id }));
-  }
 
   // Only run a kind's scanner where its owning module is actually enabled —
   // a scanner against an org that never enabled the module probes tables
@@ -218,6 +212,28 @@ async function tickEntityRecurrence(
     let set = enabledByOrg.get(r.org_id);
     if (!set) enabledByOrg.set(r.org_id, (set = new Set()));
     set.add(r.module_name);
+  }
+
+  let orgs: Array<{ id: string }>;
+  if (onlyOrg) {
+    // Tick called with a tenant scope (e.g. via the org-scoped
+    // /tick HTTP endpoint). Skip the cross-tenant enumeration.
+    orgs = [{ id: onlyOrg }];
+  } else {
+    // Background tick: every workspace that is not disabled and has a module
+    // enabled that owns a scanner. The set used to be "created in the last
+    // five minutes, or already carrying recurrence state", and state is only
+    // written after a scanner has fired once, so a workspace older than five
+    // minutes whose first rule came later was never scanned: its first
+    // watering or filter change never came due (#7120). A workspace with no
+    // such module is skipped without opening its database.
+    const owning = new Set(scanners.map(({ kind }) => kind.split(":")[0] ?? ""));
+    const live = (await meta
+      .selectFrom("orgs")
+      .select(["id"])
+      .where("plan", "!=", "disabled")
+      .execute()) as unknown as Array<{ id: string }>;
+    orgs = nextSlice(scannableWorkspaces(live, enabledByOrg, owning));
   }
 
   let fired = 0;

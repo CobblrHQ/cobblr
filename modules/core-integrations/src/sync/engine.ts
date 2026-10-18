@@ -188,7 +188,8 @@ async function policyOf(db: Kysely<CoreIntegrationsDB>, ref: SyncConnectionRef, 
   return conflictPolicyOf(row?.conflict_policy);
 }
 
-function fetchCtx(ref: SyncConnectionRef): SyncFetchContext {
+/** What a connector is given to reach its source: the workspace's relay or its egress guard, never the plain fetch. */
+export function fetchCtx(ref: SyncConnectionRef): SyncFetchContext {
   return {
     orgId: ref.orgId,
     baseUrl: ref.baseUrl,

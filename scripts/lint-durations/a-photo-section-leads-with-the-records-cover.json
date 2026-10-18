@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-photo-section-leads-with-the-records-cover",
+  "run": "node scripts/lint-a-photo-section-leads-with-the-records-cover.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-18",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

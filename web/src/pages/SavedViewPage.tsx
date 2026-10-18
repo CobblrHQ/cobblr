@@ -4,7 +4,7 @@
 // list (reported: the modal-on-config-page read as broken). The config page
 // keeps its modal for in-place previewing.
 
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft } from "lucide-react";
 import { usePageTitle } from "@cobblr/platform-web";
@@ -12,6 +12,8 @@ import { api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { SavedViewBody } from "./ViewsPage";
 import { useViewData } from "../lib/useViewData";
+import { viewInputsFromSearch } from "@cobblr/platform-contract/view-inputs";
+import { ViewInputsBar } from "../components/ViewInputsBar";
 
 /** A saved view as a page. Also hosted WHOLE by the instance page as a tab
  *  (`viewId` + `embedded`): the instance owns the heading then, and this
@@ -29,7 +31,12 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
   // The view's kind rides in the key, so an action on one of its records
   // refreshes this page wherever it is embedded (platform-web run-action):
   // Groceries → What's on hand kept ×1 after Use until a reload (#2969).
-  const data = useViewData(activeSlug, viewId, view?.entity_kind ?? "", { enabled: !!view });
+  // The view's inputs ride in the URL (`?in.scale=2`), so a scaled view is a
+  // link that reopens scaled (#6897).
+  const [search] = useSearchParams();
+  const inputs = viewInputsFromSearch(search);
+  const data = useViewData(activeSlug, viewId, view?.entity_kind ?? "", { enabled: !!view, inputs });
+  const bar = data.inputs ? <ViewInputsBar declared={data.inputs.declared} values={data.inputs.values} notes={data.inputs.notes} /> : null;
   usePageTitle(view?.name ?? "View");
 
   if (views.isLoading) {
@@ -46,7 +53,12 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
     );
   }
   if (embedded) {
-    return <SavedViewBody view={view} data={data} />;
+    return (
+      <div className="space-y-3">
+        {bar}
+        <SavedViewBody view={view} data={data} />
+      </div>
+    );
   }
   return (
     <div className="space-y-4">
@@ -61,6 +73,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
           {view.name}
         </h1>
       </div>
+      {bar}
       <SavedViewBody view={view} data={data} />
     </div>
   );

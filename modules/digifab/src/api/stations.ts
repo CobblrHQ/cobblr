@@ -1,5 +1,4 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { TelemetrySchema } from "../kilns/model.js";
 import { planResinPrint, readLoadedResinStock, resinStationKey } from "../resin-stock.js";
 import { reservedResin } from "../resin-prints.js";
 import { sql } from "kysely";
@@ -17,7 +16,7 @@ import { LaserMaterialSchema, materialFromFields } from "../laser-material.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 import { machineStationsRouter } from "./machine-stations.js";
-import { familyOfStationKind } from "../core/families.js";
+import { familyOfStationKind, familyStartingAtStation } from "../core/families.js";
 
 export const stationsRouter = Router({ mergeParams: true });
 stationsRouter.use("/machines", machineStationsRouter);
@@ -45,9 +44,9 @@ stationsRouter.post("/", asyncHandler(async (req, res) => {
   const driver = await buildDriverById(db, orgId, parsed.data.connection_id);
   const devices = await driver?.listDevices();
   const device = devices?.find(d => d.id === parsed.data.device_id);
-  const family = familyOfStationKind(device?.station_kind);
+  const family = familyOfStationKind(device?.station_kind) ?? familyStartingAtStation(device?.raw);
   if (family && !(await platform().parts.isOn(orgId, "digifab", family.part))) return void res.status(409).json({ error: { code: "part_not_enabled", module: "digifab", part: family.part, message: "This kind of machine is turned off in this workspace." } });
-  if (!device || (!await driver?.jobReviewRequired?.() && !TelemetrySchema.safeParse(device.raw?.kiln).success && !family)) return void res.status(409).json({ error: { code: "not_station_machine", message: "Choose a connected machine that starts at a station." } });
+  if (!device || (!await driver?.jobReviewRequired?.() && !family)) return void res.status(409).json({ error: { code: "not_station_machine", message: "Choose a connected machine that starts at a station." } });
   const token = randomBytes(32).toString("base64url");
   const row = await db.insertInto("digifab_stations").values({ connection_id: parsed.data.connection_id, remote_device_id: device.id, label: device.name, token_hash: stationTokenHash(token), revoked_at: null }).returning(["id", "label"]).executeTakeFirstOrThrow();
   await platform().activity.log({ orgId, userId: sessionUser(req)?.id ?? null, action: "station_created", ref: { module: "digifab", entityType: "station", entityId: row.id }, diff: { label: row.label } });

@@ -6,6 +6,7 @@ import { linkWords } from "./record-kind-spellings.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { BindingCreate, BindingPatch, createWire, deleteWire, readWire, updateWire } from "./wire-ops.js";
 import { isOwnerOrAdmin } from "./people-ops.js";
+import { registerNotificationDefaultAction } from "./notification-defaults-action.js";
 import { DASHBOARD_SECTION_IDS, DASHBOARD_SECTION_TITLE } from "@cobblr/platform-contract/dashboard-sections";
 import { DashboardLayoutShape, readDashboardLayout, saveDashboardLayout } from "./dashboard-layout.js";
 import { sendOutboundTest } from "./outbound-email.js";
@@ -25,6 +26,7 @@ import { restore as restoreDeletedRecord } from "./deleted-records.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { restoreHistoryVersion } from "./history-restore.js";
 import { createPerson, findPerson, updatePerson } from "./people.js";
+import { updateRecordFields } from "./update-record-fields.js";
 import { z } from "zod";
 import { setBulkField, restoreBulkField, type BulkFieldResult } from "./bulk-set-field.js";
 // Handlers for the kernel's own actions (platform-actions.ts) — wired at boot,
@@ -437,6 +439,17 @@ export function registerPlatformActionHandlers(): void {
     return parsed.success ? { action_id: "platform:edit-record-actions", args: { kind: parsed.data.kind, layout: parsed.data.before, expected_revision: parsed.data.revision } } : null;
   });
 
+  registerHandler("platform.update-fields", async (ctx) => {
+    const parsed = z.object({ kind: z.string().min(1), id: z.string().min(1), fields: z.record(z.unknown()) }).safeParse(ctx.args);
+    if (!parsed.success) return { ok: false, error: "Name the record and the fields to change." };
+    if (!ctx.userId) return { ok: false, error: "Sign in to change a record." };
+    const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", ctx.orgId).where("user_id", "=", ctx.userId).executeTakeFirst();
+    if (!membership) return { ok: false, error: "You are not a member of this workspace." };
+    const r = await updateRecordFields({ orgId: ctx.orgId, userId: ctx.userId, role: membership.role, ...parsed.data });
+    if (!r.ok) return { ok: false, error: r.error, data: { code: r.code } };
+    const withheld = r.withheld.length ? ` ${r.withheld.join(", ")} was left alone: you cannot see it.` : "";
+    return { ok: true, summary: `${r.summary}${withheld}`, data: { kind: parsed.data.kind, id: parsed.data.id, changed: r.changed, withheld: r.withheld } };
+  });
   registerHandler("platform.add-person", async (ctx) => {
     const args = (ctx.args ?? {}) as Record<string, unknown>;
     if (!ctx.userId) return { ok: false, error: "A person adds someone to the list." };
@@ -2645,6 +2658,8 @@ export function registerPlatformActionHandlers(): void {
   // with its exact owner/admin rule. Inviting someone and handing on their
   // things are a person's own steps (human-only.ts), not actions.
   const notAdmin = "Only a workspace owner or admin can do that.";
+  registerNotificationDefaultAction();
+
   registerHandler("platform.test-outbound-email", async (ctx: ActionInvokeContext) => {
     if (!(await isOwnerOrAdmin(ctx.orgId, ctx.userId))) return { ok: false, error: notAdmin };
     const org = await meta.selectFrom("orgs").select("name").where("id", "=", ctx.orgId).executeTakeFirst();

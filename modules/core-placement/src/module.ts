@@ -56,6 +56,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:place",
+        changes: "records",
         runBy: "member",
         examples: ["put this in bin 4", "it lives in the Garage now"],
         undoable: true,
@@ -76,6 +77,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:contents-worth",
+        changes: "records",
         runBy: "member",
         examples: ["what's the garage worth?", "what did everything in the toolbox cost?"],
         label: "Contents worth",
@@ -87,6 +89,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:built-from",
+        changes: "records",
         runBy: "member",
         examples: ["what's inside the Gaming PC?", "what is the server worth with its parts?"],
         label: "What it is built from",
@@ -99,6 +102,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:return-home",
+        changes: "records",
         runBy: "member",
         examples: ["take the spool off the printer", "put it back where it was"],
         undoable: true,
@@ -112,6 +116,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-placement:remove",
+        changes: "records",
         runBy: "member",
         examples: ["take it out of the bin", "it is not in there any more"],
         undoable: true,

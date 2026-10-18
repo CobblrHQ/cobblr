@@ -11,6 +11,7 @@
 // (COBBLR_FEEDBACK_DISCORD_WEBHOOK). Posting is fire-and-forget — an event is
 // never blocked or failed by Discord being down.
 
+// EGRESS-FILE: operator-configured - the Discord webhook is the operator's setting (environment or the instance's own category overrides)
 import { meta } from "../db/meta.js";
 import { read as readFile } from "./files.js";
 import { announceEditUrl, announceWebhookUrl } from "./announce-url.js";

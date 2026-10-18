@@ -2,7 +2,7 @@
 // two constants in front (BUILD, PRECACHE) and sw-logic.js inlined; see the
 // rules there. Served from the root so its scope is the whole app, and never
 // cached by the browser itself (nginx: /sw.js is no-cache).
-/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer, sharePayload, SHARE_CACHE, SHARE_PAYLOAD, notificationFor, tapTarget */
+/* global BUILD, PRECACHE, routeOf, keepable, asOfflineCopy, offlineAnswer, sharePayload, withLeftover, SHARE_CACHE, SHARE_PAYLOAD, notificationFor, tapTarget */
 
 const SHELL = `cobblr-shell-${BUILD}`;
 const STATIC = "cobblr-static-v1";
@@ -168,14 +168,20 @@ async function apiRead(req) {
 }
 
 // Another app shared to Cobblr: keep the form for the page (it alone holds the
-// person's token), replacing any share not yet read, and open the page that
-// adds it. A redirect after the POST, so a reload never posts it twice.
+// person's token), with whatever an earlier share left unsaved, and open the
+// page that adds it. A redirect after the POST, so a reload never posts it twice.
 async function takeShare(req) {
   const form = await req.formData();
   const entries = [...form.entries()];
-  const payload = sharePayload(entries);
+  const before = await caches.open(SHARE_CACHE);
+  const leftRes = await before.match(SHARE_PAYLOAD);
+  const left = leftRes ? await leftRes.json().catch(() => null) : null;
+  const { payload, moves } = withLeftover(sharePayload(entries), left);
+  const carried = [];
+  for (const m of moves) carried.push([m.to, await before.match(m.from)]);
   await caches.delete(SHARE_CACHE);
   const cache = await caches.open(SHARE_CACHE);
+  for (const [key, res] of carried) if (res) await cache.put(key, res);
   let i = 0;
   for (const [name, value] of entries) {
     if (name !== "files" || typeof value === "string" || !String(value.type).startsWith("image/")) continue;

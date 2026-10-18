@@ -113,6 +113,7 @@ export default defineModule({
       {
         group: "service",
         id: "machines:record-usage",
+        changes: "records",
         runBy: "member",
         examples: ["that machine ran four hours", "log the usage on it"],
         undoable: true,
@@ -134,6 +135,7 @@ export default defineModule({
       {
         group: "service",
         id: "machines:name-unit",
+        changes: "records",
         runBy: "member",
         examples: ["the second Replicator is the one with the new hotend", "give one of these its own name"],
         label: "Name one of these",
@@ -150,6 +152,7 @@ export default defineModule({
       {
         group: "service",
         id: "machines:split-unit",
+        changes: "records",
         runBy: "member",
         examples: ["unit 2 is its own machine now", "split this one out"],
         undoable: true,
@@ -163,6 +166,7 @@ export default defineModule({
       {
         group: "service",
         id: "machines:split-one",
+        changes: "records",
         runBy: "member",
         examples: ["one of the five printers is going to the other shop, track it on its own"],
         undoable: true,
@@ -177,6 +181,7 @@ export default defineModule({
       {
         group: "service",
         id: "machines:make-unit-of",
+        changes: "records",
         runBy: "member",
         examples: ["this printer is one of the three Replicators", "merge it back into the group"],
         undoable: true,

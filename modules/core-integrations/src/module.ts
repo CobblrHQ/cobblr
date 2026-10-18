@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-integrations",
-  version: "0.2.2",
+  version: "0.2.4",
   displayName: "Integrations",
   description:
     "Connect your workspace to Slack, Discord, email and other services, sending and receiving updates as things happen.",
@@ -56,12 +56,14 @@ export default defineModule({
       "core-integrations.inbound.token.created",
       "core-integrations.inbound.token.revoked",
       "core-integrations.inbound.received",
+      "core-integrations.sync.received",
     ],
     actions: [
       {
         group: "more",
         // UI-SCREEN: /configuration/integrations
         id: "core-integrations:sync-now",
+        changes: "records",
         runBy: "member",
         examples: ["sync my shop now", "pull the latest orders from the store"],
         label: "Sync now",
@@ -84,6 +86,7 @@ export default defineModule({
         examples: ["stop syncing the shop's products", "sync the orders every 15 minutes"],
         // Not undoable: switching a sync on starts writes from outside that an Undo could not take back, so it always asks first.
         label: "Turn a sync on or off",
+        changes: "workspace",
         description:
           "Turn live sync for one section of a connected source on or off, and how often it runs. Live sync starts only after the section's first import has been approved.",
         scope: "workspace",
@@ -100,6 +103,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/integrations
         id: "core-integrations:archive-sync-connection",
+        changes: "workspace",
         // ADMIN-ONLY: the page's own route POST /sync/connections/:id/archive is owner or admin (sync.ts)
         runBy: "admin",
         examples: ["archive the old shop connection"],
@@ -118,6 +122,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/integrations
         id: "core-integrations:unarchive-sync-connection",
+        changes: "workspace",
         // ADMIN-ONLY: the page's own route POST /sync/connections/:id/unarchive is owner or admin (sync.ts)
         runBy: "admin",
         examples: ["bring the old shop connection back"],
@@ -135,6 +140,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/integrations
         id: "core-integrations:test-sync-connection",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /sync/connections/:id/test is owner or admin (sync.ts)
         runBy: "admin",
         examples: ["is the shop connection still working"],
@@ -152,6 +158,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/integrations
         id: "core-integrations:test-connection",
+        changes: "records",
         runBy: "member",
         examples: ["check the Slack connection works"],
         label: "Test a connector",

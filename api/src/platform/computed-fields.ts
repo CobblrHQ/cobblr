@@ -122,6 +122,9 @@ async function loadComputedDefsFor(orgId: string, kind: string): Promise<Compute
 export async function applyComputedFields(
   orgId: string,
   resolved: ResolvedEntity,
+  /** A view's inputs, bounded already (#6897): templates read {{ inputs.<name> }}.
+   *  Absent outside a view, where an input-reading template renders empty. */
+  inputs?: Record<string, string | number>,
 ): Promise<ResolvedEntity> {
   const defs = await computedDefsFor(orgId, resolved.kind);
   if (defs.length === 0) return resolved;
@@ -131,6 +134,9 @@ export async function applyComputedFields(
 
   // Tier-1 context: the one rule every template reads a record by.
   const ctx: Record<string, unknown> = templateDataOf(fields);
+  // `inputs` is the view's, never a field: it is set last, so a field that
+  // happens to be called "inputs" cannot stand in for what the viewer chose.
+  ctx.inputs = inputs ?? {};
 
   // Tier-2: invoke each registered provider whose namespace is referenced
   // by at least one computed template on this kind, once per entity.

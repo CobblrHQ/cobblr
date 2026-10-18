@@ -45,6 +45,7 @@ import { partCandidates } from "./services/row-parts.js";
 export async function healForwardedStoreHostIn(
   orgId: string,
   db: Kysely<CoreScanDB>,
+  since: Date,
   refreshPicture?: (orgId: string, itemId: string, name: string) => Promise<unknown>,
   matchOwn?: (db: Kysely<CoreScanDB>, orgId: string, id: string) => Promise<unknown>,
 ): Promise<number> {
@@ -52,6 +53,7 @@ export async function healForwardedStoreHostIn(
     .selectFrom("core_scan_inbox_items as i")
     .innerJoin("core_scan_batches as b", "b.id", "i.scan_batch_id")
     .select(["i.id", "i.scan_batch_id", "i.created_by_user_id", "i.suggested_name", "i.suggested_candidates", "i.suggested_metadata", "b.source_file_id", "b.origin_from"])
+    .where("i.created_at", "<", since)
     .where("i.status", "=", "pending")
     .where("i.source_kind", "=", "receipt")
     .where("b.origin", "=", "email")
@@ -107,6 +109,9 @@ export async function healForwardedStoreHostIn(
     .where("status", "=", "pending")
     .where("source_kind", "=", "receipt")
     .where(sql<boolean>`suggested_metadata->'split_from' is not null`)
+    // A part of a line made before the fix (an earlier round of this heal
+    // makes such parts now); a split made since was asked by the fixed code.
+    .where(sql<boolean>`exists (select 1 from core_scan_inbox_items l where l.id::text = core_scan_inbox_items.suggested_metadata->>'split_from' and l.created_at < ${since})`)
     .where(sql<boolean>`suggested_metadata->'store_product'->>'status' = 'read'`)
     // Never asked, or asked under the looser rule (own_match_checked true),
     // which stamped one shared word as a match: asked again, and a stamp it
@@ -132,8 +137,9 @@ export async function healForwardedStoreHostIn(
 export function registerForwardedStoreHostHeal(): void {
   registerHealPass({
     name: "core-scan.heal-forwarded-store-host",
+    since: "2026-10-12T19:15:48Z",
     shim: "modules/core-scan/src/heal-forwarded-store-host.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healForwardedStoreHostIn(orgId, db as Kysely<CoreScanDB>),
+    visit: ({ orgId, db, since }) => healForwardedStoreHostIn(orgId, db as Kysely<CoreScanDB>, since),
   });
 }

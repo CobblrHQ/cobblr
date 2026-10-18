@@ -21,12 +21,12 @@ import type { Db } from "./matching.js";
 
 const FIXED_ON = new Date("2026-10-12T00:00:00Z");
 
-export async function healCopiesOnTheirRecords(orgId: string, db: Db): Promise<number> {
+export async function healCopiesOnTheirRecords(orgId: string, db: Db, since: Date = FIXED_ON): Promise<number> {
   const rows = await db
     .selectFrom("core_documents_linked")
     .select(["record_kind", "record_id", "copied_file_id"])
     .where("copied_file_id", "is not", null)
-    .where("copied_at", "<", FIXED_ON)
+    .where("copied_at", "<", since)
     .execute();
   let healed = 0;
   for (const row of rows) {
@@ -46,8 +46,9 @@ export async function healCopiesOnTheirRecords(orgId: string, db: Db): Promise<n
 export function registerCopiesOnTheirRecordsHeal(): void {
   registerHealPass({
     name: "core-documents.heal-copies-on-their-records",
+    since: FIXED_ON.toISOString(),
     shim: "modules/core-documents/src/heal-copies-on-their-records.ts",
     module: "core-documents",
-    visit: ({ orgId, db }) => healCopiesOnTheirRecords(orgId, db as Db),
+    visit: ({ orgId, db, since }) => healCopiesOnTheirRecords(orgId, db as Db, since),
   });
 }

@@ -99,6 +99,9 @@ const COUNT_PAGE = 200;
 const COUNT_SCAN_MAX = 5000;
 /** search_records: rows of EACH kind per page (the search route's own default). */
 const SEARCH_PER_KIND = 10;
+/** How many pages of a multiword search's one-word results are read in one
+ *  call while none of them holds every word; past that the cursor carries on. */
+const SEARCH_FALLBACK_PAGES = 4;
 /** list_scan_inbox with a text filter reads up to this many 200-row pages. */
 const SCAN_INBOX_TEXT_PAGES = 10;
 
@@ -836,6 +839,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       "platform:add-field",
       "platform:edit-field",
       "platform:set-field-on-records",
+      "platform:update-fields",
       "platform:restore-batch-field",
       "platform:remove-field",
       "platform:group-fields",
@@ -851,6 +855,14 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
     ],
   },
 ];
+
+/** The workspace does not have this module, or this part of it, turned on
+ *  (mount.ts answers 409 with one of these codes): an absence, unlike any
+ *  other failed read. */
+export function moduleIsOff(res: { status: number; body?: Record<string, unknown> | null }): boolean {
+  const code = (res.body?.error as { code?: unknown } | undefined)?.code;
+  return res.status === 409 && (code === "module_not_enabled" || code === "part_not_enabled");
+}
 
 /** The relationship list_related reports a placement under: a thing points at the container it is in. */
 export const PLACED_IN = "placed_in";
@@ -1020,7 +1032,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       "ESCORT to configuration you cannot operate (prefill, never submit). An action: list_actions, never an escort. Destinations: " +
       ESCORT_DESTINATIONS.map(
         (d) =>
-          `${d.id} (${d.why}${d.covered_by?.length ? `; but ${d.covered_by.join(", ")} are actions` : ""})`,
+          `${d.id} (${d.why}${d.covered_by?.length ? `; actions: ${d.covered_by.join(", ")}` : ""})`,
       ).join("; ") +
       ".",
     mode: "read",
@@ -1178,6 +1190,57 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     },
   },
   {
+    name: "read_view",
+    // A saved view read as the person would see it, its inputs set (#6897):
+    // "show the bread recipe for 12" reads the recipe view with Servings × 12
+    // and opens it so. The inputs are bounded by the view; a value it had to
+    // change comes back as a note to say.
+    description:
+      "Read a saved view's rows as shown, setting its inputs (a recipe's Servings ×, a batch size) when it has them, and open it on the person's screen. Inputs never change a record.",
+    mode: "read",
+    module: "core-views",
+    paging: { by: "one-call", why: "one view's rows as shown, capped by limit; the person sees the whole view on the screen it opens" },
+    params: {
+      view: z.string().describe("The view's name as said, or its id (get_workspace_setup lists views)"),
+      inputs: z.record(z.union([z.string(), z.number()])).optional().describe("The view's inputs by name, e.g. { scale: 12 }"),
+      limit: z.number().optional().describe("Max rows (default 30, max 100)"),
+    },
+    execute: async (api, args) => {
+      const said = String(args.view ?? "").trim();
+      if (!said) return toolFail("say which view: its name or id");
+      const listed = await api.request("GET", "/modules/core-views/views");
+      if (listed.status >= 400) return toolFail(apiErrorMessage(listed, "couldn't list the views"));
+      const views = ((listed.body?.items as Array<{ id: string; name: string; entity_kind: string }> | undefined) ?? []);
+      const exact = views.filter((v) => v.id === said || v.name.toLowerCase() === said.toLowerCase());
+      const found = exact.length ? exact : views.filter((v) => v.name.toLowerCase().includes(said.toLowerCase()));
+      if (found.length !== 1) {
+        return toolFail(found.length ? `"${said}" could be ${found.map((v) => v.name).join(", ")}: which one?` : `there is no view called "${said}"; the views are ${views.map((v) => v.name).join(", ") || "none yet"}`);
+      }
+      const view = found[0]!;
+      const inputs = Object.fromEntries(Object.entries((args.inputs ?? {}) as Record<string, string | number>).map(([k, v]) => [k, String(v)]));
+      const limit = Math.min(Number(args.limit) || 30, 100);
+      const qs = new URLSearchParams({ limit: String(limit) });
+      if (Object.keys(inputs).length) qs.set("inputs", JSON.stringify(inputs));
+      const read = await api.request("GET", `/modules/core-views/views/${encodeURIComponent(view.id)}/data?${qs}`);
+      if (read.status >= 400) return toolFail(apiErrorMessage(read, `couldn't read ${view.name}`));
+      const body = read.body as { items?: unknown[]; total?: number; inputs?: { values: Record<string, unknown>; notes: Array<{ message: string }> } };
+      // The page keeps the inputs in its address, so the screen opens scaled.
+      const page = new URLSearchParams();
+      for (const [k, v] of Object.entries(body.inputs?.values ?? {})) page.set(`in.${k}`, String(v));
+      const path = `/views/${encodeURIComponent(view.id)}${page.size ? `?${page}` : ""}`;
+      const items = Array.isArray(body.items) ? body.items : [];
+      return toolOk({
+        view: { name: view.name, of: view.entity_kind },
+        ...(body.inputs ? { inputs: body.inputs.values, ...(body.inputs.notes.length ? { inputs_changed: body.inputs.notes.map((n) => n.message) } : {}) } : {}),
+        items,
+        shown: items.length,
+        ...(typeof body.total === "number" ? { total: body.total } : {}),
+        escort: { path, label: view.name },
+        link: api.link?.({ app: path }) ?? null,
+      });
+    },
+  },
+  {
     name: "things_of_person",
     // By name as said: the route resolves it on the People list (members and
     // anyone added by name), "me" is the asker, and a name matching two people
@@ -1309,7 +1372,9 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       cursor: CURSOR_PARAM,
     },
     execute: async (api, args) => {
-      const cur = decodeCursor<{ q: string; k?: string; o: number }>("search_records", args.cursor);
+      // `w`: the one word a multiword search fell back to, carried so the
+      // next page goes on through that word's results (#7147).
+      const cur = decodeCursor<{ q: string; k?: string; o: number; w?: string }>("search_records", args.cursor);
       if (!cur.ok) return toolFail(cur.error);
       const q = cur.state?.q ?? String(args.q ?? "").trim();
       if (!q) return toolFail("q is required");
@@ -1317,6 +1382,41 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const offset = cur.state?.o ?? 0;
       const perKind = SEARCH_PER_KIND;
       const kinds = kindList ? `&kinds=${encodeURIComponent(kindList)}` : "";
+      const words = significantWords(q);
+      // The routes match a query as one phrase. When the phrase finds nothing
+      // and it has two or more words, ask again by its longest word and keep
+      // only what holds EVERY word, so "my PLA offcuts" finds the offcuts and
+      // not the spool (#4038). That word's results page like any search, and
+      // a page of them can hold none of the others: the pages are followed
+      // (a few at a time) and where they stopped goes in the cursor, so a
+      // match on a later page is never cut off behind "no more" (#7147).
+      const byEveryWord = async (word: string, from: number) => {
+        let at = from;
+        let every: unknown[] = [];
+        let wide: Record<string, unknown> = {};
+        let more = false;
+        for (let pages = 0; pages < SEARCH_FALLBACK_PAGES; pages++) {
+          const again = await api.request(
+            "GET",
+            `/modules/core-search/search?q=${encodeURIComponent(word)}${kinds}&per_kind=${perKind}&offset=${at}`,
+          );
+          if (again.status >= 400) return toolFail(apiErrorMessage(again, "search failed"));
+          const { has_more: h, ...rest } = again.body as Record<string, unknown>;
+          wide = rest;
+          more = h === true;
+          at += perKind;
+          every = [...every, ...(Array.isArray(rest.items) ? (rest.items as unknown[]) : []).filter((it) => recordMatchesText(it, q))];
+          if (every.length || !more) break;
+        }
+        return toolOk({
+          ...(explainRecords({ ...wide, q, items: every }, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
+          matched_by: `every word of "${q}" (${words.join(", ")}); nothing held the words as one phrase`,
+          ...(every.length === 0 && !more && from === 0 ? noneFound(wide, q) : {}),
+          ...severalMatch(every, q),
+          ...pageEnd("search_records", more ? { q, ...(kindList ? { k: kindList } : {}), o: at, w: word } : null),
+        });
+      };
+      if (cur.state?.w) return byEveryWord(cur.state.w, offset);
       const res = await api.request(
         "GET",
         `/modules/core-search/search?q=${encodeURIComponent(q)}${kinds}&per_kind=${perKind}&offset=${offset}`,
@@ -1325,28 +1425,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const more = (res.body as { has_more?: unknown }).has_more === true;
       const { has_more: _h, ...body } = res.body as Record<string, unknown>;
       const found = Array.isArray(body.items) ? (body.items as unknown[]) : [];
-      // The routes match a query as one phrase. When the phrase finds nothing
-      // and it has two or more words, ask again by its longest word and keep
-      // only what holds EVERY word, so "my PLA offcuts" finds the offcuts and
-      // not the spool (#4038).
-      const words = significantWords(q);
       if (found.length === 0 && offset === 0 && words.length >= 2) {
-        const longest = [...words].sort((a, b) => b.length - a.length)[0]!;
-        const again = await api.request(
-          "GET",
-          `/modules/core-search/search?q=${encodeURIComponent(longest)}${kinds}&per_kind=${perKind}&offset=0`,
-        );
-        if (again.status < 400) {
-          const { has_more: _h2, ...wide } = again.body as Record<string, unknown>;
-          const every = (Array.isArray(wide.items) ? (wide.items as unknown[]) : []).filter((it) => recordMatchesText(it, q));
-          return toolOk({
-            ...(explainRecords({ ...wide, q, items: every }, await fetchKinds(api).catch(() => [])) as Record<string, unknown>),
-            matched_by: `every word of "${q}" (${words.join(", ")}); nothing held the words as one phrase`,
-            ...(every.length === 0 ? noneFound(wide, q) : {}),
-            ...severalMatch(every, q),
-            ...pageEnd("search_records", null),
-          });
-        }
+        return byEveryWord([...words].sort((a, b) => b.length - a.length)[0]!, 0);
       }
       const none = found.length === 0 && offset === 0 ? noneFound(body, q) : {};
       return toolOk({
@@ -1424,12 +1504,22 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         id: e.id,
         ...(typeof e.title === "string" && e.title ? { title: e.title } : {}),
       });
+      // A workspace without placement (or locations) has nothing inside
+      // anything: that module being off is the one failure that is an empty
+      // answer. Any other (a 500, a refusal, a lost connection) is a read that
+      // did not happen, and "nothing there" would describe a full bin as
+      // empty (#7146).
+      const unread = (res: { status: number; body: Record<string, unknown> }, what: string) => {
+        if (res.status < 400 || moduleIsOff(res)) return null;
+        return new Error(apiErrorMessage(res, `couldn't read ${what}`));
+      };
       const contents = async () => {
         const res = await api.request(
           "GET",
           `/modules/core-placement/contents?container_kind=${encodeURIComponent(kind)}&container_id=${encodeURIComponent(id)}`,
         );
-        // A workspace without placement has nothing inside anything.
+        const failed = unread(res, "what is inside it");
+        if (failed) throw failed;
         if (res.status >= 400) return [];
         return ((res.body?.items as Placed[] | undefined) ?? []).map((e) => placedRow("in", e));
       };
@@ -1438,6 +1528,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
           "GET",
           `/modules/core-placement/of?containee_kind=${encodeURIComponent(kind)}&containee_id=${encodeURIComponent(id)}`,
         );
+        const failed = unread(res, "where it is");
+        if (failed) throw failed;
         if (res.status >= 400) return [];
         const c = res.body?.container as Placed | null | undefined;
         return c ? [placedRow("out", c)] : [];
@@ -1450,6 +1542,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const tree = async (): Promise<Array<ReturnType<typeof placedRow>>> => {
         if (kind !== LOCATION_KIND) return [];
         const res = await api.request("GET", "/modules/core-locations/locations");
+        const failed = unread(res, "the locations inside it");
+        if (failed) throw failed;
         if (res.status >= 400) return [];
         type Loc = { id: string; name?: string; parent_id?: string | null };
         const rows = (res.body?.items as Loc[] | undefined) ?? [];
@@ -2061,7 +2155,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "get_scan_item",
     description:
-      "All the scan found on ONE inbox item: each field and its source, confidence, why flagged, where it goes, pictures as links, history.",
+      "ONE inbox item: fields, source, confidence, why flagged, destination, catalog_candidates, pictures, history.",
     mode: "read",
     paging: { by: "one-call", why: "one item, whole; its history is capped at the last few steps" },
     params: {
@@ -2073,7 +2167,11 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
       const res = await api.request("GET", `/modules/core-scan/inbox/${encodeURIComponent(id)}`);
       if (res.status === 404) return toolFail(`no scan inbox item ${id}: list_scan_inbox gives the ids that exist`);
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "couldn't read that scan item"));
-      return toolOk(scanItemDetail(res.body as ScanItemRow, api));
+      // The catalog entries it could be (#6888), by part number or a strong
+      // name, never by asking a model from a read. Absent when none applies.
+      const cat = await api.request("GET", `/modules/core-scan/inbox/${encodeURIComponent(id)}/catalog-candidates?ai=0`);
+      const catalog = cat.status < 400 ? ((cat.body as { candidates?: unknown[] }).candidates ?? []) : [];
+      return toolOk({ ...scanItemDetail(res.body as ScanItemRow, api), ...(catalog.length ? { catalog_candidates: catalog } : {}) });
     },
   },
   {
@@ -2390,11 +2488,12 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
     name: "file_inbox_items",
     description:
-      "File scan inbox items into ONE list (\"file these in Mugs\": the ticked ones). The list may be one a create-instance call earlier in the same plan makes. Undo returns them to the inbox.",
+      "File scan inbox items into ONE list (\"file these in Mugs\"), maybe one a create-instance call earlier in the plan makes. Undo returns them.",
     mode: "write",
     params: {
       ids: z.array(z.string()).min(1).max(200),
       list: z.string().describe("e.g. Mugs"),
+      catalog_candidates: z.record(z.string()).optional(),
     },
     execute: async (api, args) => {
       const ids = Array.isArray(args.ids) ? (args.ids as unknown[]).map(String).filter(Boolean) : [];
@@ -2407,6 +2506,8 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
         target_module: target.module,
         target_kind: target.kind,
         ...(target.instance ? { instance: target.instance } : {}),
+        // item id -> the catalog_candidates id get_scan_item offered it (#6888)
+        ...(args.catalog_candidates && typeof args.catalog_candidates === "object" ? { catalog_entries: args.catalog_candidates } : {}),
       });
       if (res.status >= 400) return toolFail(apiErrorMessage(res, "the items could not be filed"));
       const { filed, failed } = res.body as {

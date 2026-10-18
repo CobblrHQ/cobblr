@@ -7,6 +7,7 @@
 //
 // Pure apart from sendPush: the encryption and its inverse are here together,
 // so a test (and the CI mock push service) reads what a phone would read.
+// EGRESS-FILE: vendor-fixed - the endpoint is a browser vendor's push service, held to the known hosts when the subscription was saved (push-endpoints.ts)
 import { createCipheriv, createDecipheriv, createECDH, createPrivateKey, hkdfSync, randomBytes, sign } from "node:crypto";
 
 export interface VapidKeys {

@@ -228,6 +228,106 @@ export function FieldSelect({
   );
 }
 
+/** One input row in the builder (#6897): text as typed, turned into a
+ *  declared input only when the view is saved. */
+export interface InputRow {
+  label: string;
+  name: string;
+  type: "number" | "text" | "date" | "choice";
+  default: string;
+  min: string;
+  max: string;
+  choices: string;
+}
+
+/** A name a template can use, from a label: "Servings ×" → "servings". */
+export function inputNameOf(label: string): string {
+  const n = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^[^a-z]+/, "");
+  return n.slice(0, 40) || "input";
+}
+
+export function configToInputRows(cfg: Record<string, unknown>): InputRow[] {
+  const list = Array.isArray(cfg.inputs) ? (cfg.inputs as Array<Record<string, unknown>>) : [];
+  return list.map((i) => ({
+    label: String(i.label ?? ""),
+    name: String(i.name ?? ""),
+    type: (["number", "text", "date", "choice"].includes(String(i.type)) ? i.type : "number") as InputRow["type"],
+    default: i.default == null ? "" : String(i.default),
+    min: i.min == null ? "" : String(i.min),
+    max: i.max == null ? "" : String(i.max),
+    choices: Array.isArray(i.choices) ? (i.choices as unknown[]).map(String).join(", ") : "",
+  }));
+}
+
+/** input rows → the view's `inputs`; a row with no label is dropped. */
+export function inputRowsToConfig(rows: InputRow[]): Array<Record<string, unknown>> {
+  const num = (v: string) => (/^\s*-?\d+(?:\.\d+)?\s*$/.test(v) ? Number(v) : undefined);
+  return rows
+    .filter((r) => r.label.trim())
+    .map((r) => {
+      const name = r.name.trim() || inputNameOf(r.label);
+      const base: Record<string, unknown> = { name, label: r.label.trim(), type: r.type };
+      if (r.type === "number") {
+        const d = num(r.default), lo = num(r.min), hi = num(r.max);
+        if (d !== undefined) base.default = d;
+        if (lo !== undefined) base.min = lo;
+        if (hi !== undefined) base.max = hi;
+      } else if (r.default.trim()) base.default = r.default.trim();
+      if (r.type === "choice") base.choices = r.choices.split(",").map((c) => c.trim()).filter(Boolean);
+      return base;
+    });
+}
+
+/** The values a viewer sets on the view (a recipe's "Servings ×"), which its
+ *  computed fields read as {{ inputs.<name> }}. Read-only: an input never
+ *  changes a record. */
+export function InputsBuilder({ rows, onChange }: { rows: InputRow[]; onChange: (rows: InputRow[]) => void }) {
+  const set = (i: number, patch: Partial<InputRow>) => onChange(rows.map((r, j) => (i === j ? { ...r, ...patch } : r)));
+  return (
+    <div className="space-y-2">
+      {rows.map((r, i) => (
+        <div key={i} className="flex flex-wrap items-start gap-1.5" data-testid="view-input-row">
+          <input className={smallCls} aria-label="Input label" placeholder="Servings ×" value={r.label} onChange={(e) => set(i, { label: e.target.value })} />
+          <input className={smallCls} aria-label="Name in formulas" placeholder={inputNameOf(r.label || "scale")} value={r.name} onChange={(e) => set(i, { name: e.target.value })} />
+          <select className={smallCls} aria-label="Input type" value={r.type} onChange={(e) => set(i, { type: e.target.value as InputRow["type"] })}>
+            <option value="number">number</option>
+            <option value="text">text</option>
+            <option value="date">date</option>
+            <option value="choice">choice</option>
+          </select>
+          <input className={smallCls} aria-label="Default" placeholder="default" value={r.default} onChange={(e) => set(i, { default: e.target.value })} />
+          {r.type === "number" && (
+            <>
+              <input className={`${smallCls} w-20`} aria-label="Least" placeholder="least" inputMode="decimal" value={r.min} onChange={(e) => set(i, { min: e.target.value })} />
+              <input className={`${smallCls} w-20`} aria-label="Most" placeholder="most" inputMode="decimal" value={r.max} onChange={(e) => set(i, { max: e.target.value })} />
+            </>
+          )}
+          {r.type === "choice" && (
+            <input className={smallCls} aria-label="Choices" placeholder="small, medium, large" value={r.choices} onChange={(e) => set(i, { choices: e.target.value })} />
+          )}
+          <button type="button" aria-label="Remove input" title="Remove input" className="min-h-11 min-w-11 text-faint hover:text-accent" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { label: "", name: "", type: "number", default: "1", min: "", max: "", choices: "" }])}
+        className="text-xs text-accent hover:underline"
+        data-testid="add-view-input"
+      >
+        + Add input
+      </button>
+      {rows.some((r) => r.label.trim()) && (
+        <p className="text-xs text-muted">
+          A computed field reads it as <code>{"{{ inputs." + (rows.find((r) => r.label.trim())!.name.trim() || inputNameOf(rows.find((r) => r.label.trim())!.label)) + " }}"}</code>, e.g.{" "}
+          <code>{"{{ amount * inputs." + (rows.find((r) => r.label.trim())!.name.trim() || inputNameOf(rows.find((r) => r.label.trim())!.label)) + " }}"}</code>.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SortBuilder({
   fields,
   rows,

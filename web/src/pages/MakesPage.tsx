@@ -243,7 +243,7 @@ export function MakePage() {
     refetchInterval: (query) => {
       const d = query.state.data;
       if (d?.steps.some((st) => st.step !== "print" && (st.status === "running" || st.status === "needs_input"))) return 3_000;
-      return d?.print && ["sent", "printing", "queued", "assigning"].includes(d.print.status) ? 10_000 : false;
+      return d?.print && (d.print.material_pending || ["sent", "printing", "queued", "assigning"].includes(d.print.status)) ? 10_000 : false;
     },
   });
   usePageTitle(one.data?.make.name ?? "Make");
@@ -558,6 +558,7 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
       const rows: Array<[string, string]> = [];
       if (p.machine) rows.push(["Printer", p.machine.title ?? "a printer"]);
       rows.push(["State", p.status + (p.progress != null && p.status === "printing" ? ` · ${Math.round(Number(p.progress) * 100)}%` : "")]);
+      if (p.material_pending) rows.push(["Filament accounting", "Pending. Stock use will be retried automatically."]);
       for (const s of p.spools) rows.push([s.slot ? `Spool, slot ${s.slot}` : "Spool", `${s.title ?? "a spool"}${s.grams ? ` · ${s.grams} g${p.grams_measured ? "" : " (the slicer's estimate)"}` : ""}`]);
       return (
         <>

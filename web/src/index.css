@@ -82,9 +82,17 @@
   html.dark { color-scheme: dark; @apply bg-slate-800; }
 
   html, body, #root {
-    @apply h-full bg-canvas text-content font-sans antialiased
+    @apply bg-canvas text-content font-sans antialiased
            dark:bg-slate-800 dark:text-mortar-100;
   }
+  /* The page grows past the screen and the body grows with it, so the
+     padding bottom-dock.ts gives the body (the bars and the corner pieces
+     the last row must clear) lies under the content. With the body held to
+     the screen's height, the content overflowed it and that padding sat
+     inside the first screen: the last control of a page could not be
+     scrolled out from under a toast or a bottom bar (#7290). */
+  html { @apply h-full; }
+  body, #root { @apply min-h-full; }
   /* Native form controls default to the UA `fieldtext` colour, NOT the
      inherited page colour — so a raw <input> that sets only a dark
      background (no text-* class) renders dark-on-dark in dark mode.
@@ -377,6 +385,13 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
      and on a phone it may not win. */
   :where(button, a[href], [role="button"], summary) {
     min-height: 44px !important;
+  }
+  /* A control that asks to be as wide as its words (min-w-min, min-w-fit,
+     min-w-max) keeps that floor: 44 px in its place let the scan row's
+     "+1 more" shrink to 44 px and draw "more" past its edge (#7338). CSS
+     cannot say max(44px, min-content); a word-wide control is wider than a
+     finger anyway, and the walk's tapTargets check holds the rest. */
+  :where(button, a[href], [role="button"], summary):not(.min-w-min, .min-w-fit, .min-w-max) {
     min-width: 44px !important;
   }
   /* A checkbox's label is the box a finger presses: as wide as it is tall. */

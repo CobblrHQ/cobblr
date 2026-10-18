@@ -1272,6 +1272,16 @@ const EntityAction = z.object({
   // operation becomes AI-reachable (Cobb / MCP) WITHOUT a bespoke per-op tool.
   // See docs/architecture/wires-and-bundles.md and the AI-reachability lint.
   scope: z.enum(["entity", "workspace"]).default("entity"),
+  /** What running it changes: `records` (adds, edits, moves or reads the
+   *  workspace's things) or `workspace` (its settings and defaults, its
+   *  fields and navigation, its connections, devices and stations, its
+   *  public links). A token that may change only records is refused a
+   *  `workspace` action at the invoke route, the twin of a platform action's
+   *  `changes: "setup"` (#7356). Required, so no action is left undecided;
+   *  an action that does what one of its module's routes does says what
+   *  module-write-changes.ts says of that route. Not `scope`: a workspace-
+   *  scoped action adds records all the time. */
+  changes: z.enum(["records", "workspace"]),
   // Whether this action renders as a clickable button on entity-
   // detail pages. Default true. Set false for wire-only actions
   // (event reactions) — they're still targetable by wires, just
@@ -2397,6 +2407,13 @@ export interface PlatformActivity {
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;
 
+export interface EventDelivery {
+  /** Stable operation identity; consumers that move stock deduplicate it. */
+  id: string;
+  completed: readonly string[];
+  acknowledge(key: string): Promise<void>;
+}
+
 export interface PlatformEvents {
   /** Emit an event. Returns a Promise that resolves once every direct
    *  subscriber registered via on() has run, in order, and then any
@@ -2408,8 +2425,11 @@ export interface PlatformEvents {
    *      ledger row an undo will void, a count a page will refetch.
    *    • `emit(...)` (no await) — fire-and-forget; both still run, the
    *      caller just doesn't wait. For notifications only.
-   *  Never rejects: a handler that throws is logged and the rest run. */
-  emit(eventName: string, payload: unknown): Promise<void>;
+   *  Normally failures are logged. With a durable delivery, failures reject,
+   *  completed recipients are skipped and successes are acknowledged. The
+   *  caller persists the delivery with its business change and retries it;
+   *  recipients must tolerate replay after a commit before acknowledgement. */
+  emit(eventName: string, payload: unknown, delivery?: EventDelivery): Promise<void>;
   /** Subscribe a handler to an event. The module name is captured
    *  for diagnostics — failures get logged with which module's
    *  handler threw. Handlers run inline when the event is emitted, so
@@ -2668,6 +2688,11 @@ export interface EntityListQuery {
    *  (accounts.dayFor). Absent, a resolver uses the day that has arrived
    *  everywhere, which is late for somebody rather than early for anybody. */
   today?: string;
+  /** A view's inputs as the viewer set them, already bounded by the view
+   *  (`resolveViewInputs`, @cobblr/platform-contract/view-inputs): computed
+   *  fields read them as {{ inputs.<name> }} (#6897). Read-only, never
+   *  stored; a resolver passes them by, only the computed layer reads them. */
+  inputs?: Record<string, string | number>;
 }
 
 /** The query a saved view asks for, read off its config the ONE way every
@@ -2879,6 +2904,27 @@ export interface DeviceApplyContext {
 export type DeviceApplyProvider = (
   ctx: DeviceApplyContext,
 ) => { actionId: string; args: Record<string, unknown> } | null;
+
+/** What the kernel hands a kind's updater: the record, the fields to change
+ *  (already limited to what the member may see), and who is changing it. */
+export interface EntityUpdateContext {
+  orgId: string;
+  userId: string | null;
+  role: string;
+  kind: string;
+  id: string;
+  fields: Record<string, unknown>;
+}
+
+/** The updater's answer. A refusal is a sentence the member can act on. */
+export type EntityUpdateResult =
+  | { ok: true; summary?: string; changed?: string[] }
+  | { ok: false; error: string };
+
+/** How one kind applies a member's edit: column-versus-metadata routing, type
+ *  coercion, validation, its own `<noun>_updated` history line and event. The
+ *  module owns all of it; the kernel never touches the module's tables. */
+export type EntityUpdater = (ctx: EntityUpdateContext) => Promise<EntityUpdateResult>;
 
 /** What an entity-owning module declares so core-scan can treat its kind as a
  *  scan target — WITHOUT core-scan hardcoding a per-kind allowlist / endpoint /
@@ -3225,6 +3271,25 @@ export interface PlatformEntities {
     kind: string,
     ctx: DeviceApplyContext,
   ): { actionId: string; args: Record<string, unknown> } | null;
+  /** Opt a kind in to `platform:update-fields`, the one verb an app form, the
+   *  API and the assistant edit a record through. `capability` is the grant
+   *  the module already asks for on its own PATCH (a member needs it; an
+   *  owner or admin passes), so this door is never wider than that one. A
+   *  module whose PATCH asks only for a member (no grant) omits it.
+   *  `nativeFields` names the kind's own columns the updater takes, so an
+   *  edit form offers no field the updater would then refuse.
+   *  Example (in modules/inventory):
+   *    platform().entities.registerUpdater("inventory:part", updatePartFields,
+   *      { capability: "inventory:update-part" }); */
+  registerUpdater(kind: string, updater: EntityUpdater, opts?: { capability?: string; nativeFields?: readonly string[] }): void;
+  /** The updater registered for a kind, or null when the kind is not
+   *  updatable this way. */
+  updaterFor(kind: string): { update: EntityUpdater; capability: string | null; nativeFields: ReadonlySet<string> | null } | null;
+  /** Every kind that registered an updater. */
+  updatableKinds(): string[];
+  /** Can records of `kind` (a collection's `<instance>:item` included) be
+   *  edited through `platform:update-fields` in this workspace? */
+  isUpdatable(orgId: string, kind: string): Promise<boolean>;
   /** Declare a kind as a scan target (core-scan reads this instead of a
    *  hardcoded allowlist). Called at boot by the owning module, e.g.
    *  platform().entities.registerScannable("inventory:part",
@@ -4469,6 +4534,15 @@ export interface ImportPlan {
   items: ImportPlanItem[];
 }
 
+export interface InboundHandlerContext {
+  orgId: string;
+  inboundRowId: string;
+  config: Record<string, unknown>;
+  /** Emits in the token's workspace. The platform supplies orgId, overriding
+   *  any orgId in the handler's event fields. */
+  emit: (eventName: string, payload: Record<string, unknown>) => Promise<void>;
+}
+
 export interface PlatformIntegrations {
   /** Register an outbound connector. */
   registerConnector(c: {
@@ -4507,12 +4581,7 @@ export interface PlatformIntegrations {
     emits: string[];
     handle: (
       req: { headers: Record<string, string | string[] | undefined>; body: unknown; rawBody?: string },
-      ctx: {
-        orgId: string;
-        inboundRowId: string;
-        config: Record<string, unknown>;
-        emit: (eventName: string, payload: unknown) => Promise<void>;
-      },
+      ctx: InboundHandlerContext,
     ) => Promise<{ status: number; body?: unknown }>;
   }): void;
   /** Register a SYNC connector — mirrors external records into a Cobblr
@@ -5812,7 +5881,14 @@ export interface PlatformAuth {
    *  in-app assistant, an assistant over MCP) and the API token's name. For a
    *  door that records who added a thing (the inbox's "Added by Claude").
    *  Null outside a request. */
-  requestSource(): Promise<{ auth_method: "session" | "api_token" | "system"; via: string | null; token_name: string | null } | null>;
+  requestSource(): Promise<{
+    auth_method: "session" | "api_token" | "system";
+    via: string | null;
+    token_name: string | null;
+    /** The assistant the request comes from, through any door, including the
+     *  api calling itself on its behalf; null for a person's own request. */
+    assistant?: string | null;
+  } | null>;
   /** Register the platform-level auth-email sender (verify / reset / magic
    *  link). A self-hoster wires their own; the overlay injects a managed
    *  sender. Open core registers none — magic-link falls back to the inline

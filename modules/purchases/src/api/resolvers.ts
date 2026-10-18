@@ -1,3 +1,4 @@
+import { receiptPending } from "../receipt-pending.js";
 import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Platform entity-kind resolvers for purchases. Lets other modules /
 // the platform's EntityActionsBar look up an order or order_item by
@@ -53,6 +54,7 @@ export function registerPurchasesResolvers(): void {
       const row = await db
         .selectFrom("purchases_orders")
         .selectAll()
+        .select(receiptPending().as("stock_pending"))
         .where("id", "=", id)
         .executeTakeFirst();
       if (!row) return null;
@@ -172,7 +174,7 @@ export function registerPurchasesResolvers(): void {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
-    let q = db.selectFrom("purchases_orders").selectAll();
+    let q = db.selectFrom("purchases_orders").selectAll().select(receiptPending().as("stock_pending"));
     if (instance) q = q.where("instance", "=", instance as never);
     if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["vendor", "order_number", "notes", "tracking_number"], json: ["metadata"] })!);
     if (query.filter) {
@@ -260,6 +262,7 @@ export function registerPurchasesResolvers(): void {
     const row = await db
       .selectFrom("purchases_orders")
       .selectAll()
+      .select(receiptPending().as("stock_pending"))
       .where("id", "=", id)
       .where("instance", "=", instance as never)
       .executeTakeFirst();

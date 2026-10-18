@@ -19,6 +19,7 @@
 //     returns a plain object; egress/image hand back a streamable Response).
 // This function owns only the loop those three share.
 
+// EGRESS-FILE: pinned-door - this is the pinning fetch: it checks each hop through the caller's policy and connects to the address that passed
 import {
   fetch as undiciFetch,
   Agent,

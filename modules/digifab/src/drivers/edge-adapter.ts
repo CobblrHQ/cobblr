@@ -16,7 +16,6 @@
 // `edge_adapter` is a BUILT-IN driver key (always available); no install
 // needed — just create a connection pointing base_url at your bridge.
 
-import { hasKilnPermit, type KilnPermit } from "../kilns/station.js";
 import { familyStationKinds } from "../core/families.js";
 import { createHash, randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
@@ -45,7 +44,8 @@ import type {
   SubmitResult,
   UploadResult,
 } from "./types.js";
-import { assertSafeMachineUrl } from "./ssrf.js";
+import { CORE_STATION_KINDS } from "./types.js";
+import { machineFetch } from "./machine-fetch.js";
 import { edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
 
 /** A relay transport — when present, the driver routes its edge-adapter calls
@@ -169,26 +169,6 @@ export class EdgeAdapterDriver implements MachineDriver {
     this.relay = relay ?? null;
     const instance = edgeInstanceOf(this.base);
     this.tunnelPrefix = instance ? `/${instance}` : "";
-  }
-
-  /** Start or Stop a kiln at its station. Start asks `checkStartAllowed` just
-   *  before the kiln is told and again once it answers: a station revoked in
-   *  between never starts it, and one revoked while it answered gets Stop.
-   *  A Start with no check is refused; Stop is never held back. */
-  async kilnAtStation(permit: KilnPermit, operation: "start" | "stop", params: Record<string, unknown>, checkStartAllowed?: () => Promise<void>): Promise<CommandResult> {
-    if (!hasKilnPermit(permit)) return { ok: false, detail: "Authorize at the kiln's station." };
-    const send = (op: "start" | "stop") => this.req("POST", "/command", { body: { command: `kiln_${op}`, params: { ...(op === "start" ? params : {}), device_id: permit.deviceId } } }) as Promise<CommandResult>;
-    if (operation === "stop") return await send("stop");
-    if (!checkStartAllowed) return { ok: false, detail: "Authorize at the kiln's station." };
-    try { await checkStartAllowed(); } catch (e) { return { ok: false, detail: e instanceof Error ? e.message : "Start was withdrawn." }; }
-    const result = await send("start");
-    try {
-      await checkStartAllowed();
-    } catch {
-      await send("stop").catch(() => {});
-      return { ok: false, detail: "The station lost Start while the kiln answered, so Stop was sent. Check the kiln before starting it again." };
-    }
-    return result;
   }
 
   /** One call on the bridge contract for a family's own routes (a robot
@@ -360,7 +340,6 @@ export class EdgeAdapterDriver implements MachineDriver {
       }
       return r.body ?? null;
     }
-    await assertSafeMachineUrl(this.base + path);
     let fetchBody: FormData | string | undefined;
     const headers = this.headers();
     if (opts.file) {
@@ -371,7 +350,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       fetchBody = JSON.stringify(opts.body);
       headers["content-type"] = "application/json";
     }
-    const res = await fetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
+    const res = await machineFetch(this.base + path, { method, headers, body: fetchBody, signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000) });
     if (!res.ok) {
       const body = await res.json().catch(() => null);
       throw new DriverSaid(res.status, sentenceIn(body) || `The bridge refused the request (HTTP ${res.status}).`);
@@ -394,7 +373,7 @@ export class EdgeAdapterDriver implements MachineDriver {
       id: String(d.id ?? ""),
       name: String(d.name ?? "device"),
       enabled: d.enabled !== false,
-      station_kind: d.station_kind === "print" || d.station_kind === "laser" || d.station_kind === "cnc" || d.station_kind === "cutter" ? d.station_kind : typeof d.station_kind === "string" && familyStationKinds().has(d.station_kind) ? d.station_kind as RemoteDevice["station_kind"] : undefined,
+      station_kind: typeof d.station_kind === "string" && ((CORE_STATION_KINDS as readonly string[]).includes(d.station_kind) || familyStationKinds().has(d.station_kind)) ? d.station_kind : undefined,
       camera_available: d.camera_available === true,
       state: (d.state as string | undefined) ?? null,
       tags: [],

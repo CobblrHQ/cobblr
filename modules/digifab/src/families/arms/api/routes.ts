@@ -6,9 +6,10 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { ArmCommandSchema } from "@cobblr/platform-contract/robot-arm";
 import { tenantDb, tenantContext, sessionUser } from "../../../db.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { approveRun, endRunByPerson, releaseControl, releaseOwnControl, startRun, takeControl } from "../runs.js";
 import { asyncHandler, badBody, requireRole } from "../../../api/util.js";
 import { ArmRefusal } from "../station.js";
-import { addTypedProgram, editProgram, readArm, readFamily, refreshArm, saveCompatibility, setMaintenance, setupArm } from "../store.js";
+import { addTypedProgram, editProgram, readArm, readFamily, refreshArm, saveCompatibility, setMaintenance, setTooling, setupArm } from "../store.js";
 import { sendArmCommand } from "../control.js";
 export const armsRouter = Router({ mergeParams: true });
 const Id = z.string().uuid();
@@ -78,4 +79,42 @@ armsRouter.post("/:machineId/command", asyncHandler(async (req, res) => {
    operate: op !== "pause" && op !== "stop", admin: roleSatisfies(role, ["admin"]),
   }));
  } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.patch("/:machineId/tooling", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: an arm's controller, programs, compatibility and service state are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await setTooling(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, Id.parse(req.params.machineId), req.body)); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/:machineId/control/revoke", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: taking a station's control of an arm away is the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await releaseControl(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), "revoked", sessionUser(req)?.id ?? null)); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt control of an arm is taken by a person at its authorized station, never an assistant or a wire.
+armsRouter.post("/:machineId/control", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ try { res.json(await takeControl(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body, sessionUser(req)!.id)); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt the station gives back its own control of the arm; an admin revokes it through digifab:arm-record.
+armsRouter.post("/:machineId/control/release", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ try { res.json(await releaseOwnControl(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body)); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt approving a run is a person's check at the cell, bound to that screen, never an assistant or a wire.
+armsRouter.post("/:machineId/approvals", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ try { res.status(201).json(await approveRun(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body, sessionUser(req)!.id)); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt starting a run moves an arm: only a person at its authorized station, never an assistant or a wire.
+armsRouter.post("/:machineId/runs", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ const role = (req as unknown as { tenant?: { role: string } }).tenant?.role;
+ try { res.status(201).json(await startRun(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body, { userId: sessionUser(req)!.id, via: "station", operate: true, admin: roleSatisfies(role, ["admin"]) })); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt how a run ended is said by a person who saw the cell; a completion only ever comes from the arm.
+armsRouter.post("/runs/:id/end", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ try { res.json(await endRunByPerson(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.id), req.body, sessionUser(req)?.id ?? null)); } catch (e) { refuse(res, e); }
 }));

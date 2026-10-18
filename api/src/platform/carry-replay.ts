@@ -11,6 +11,7 @@
 // back from the workspace rather than assumed from the call that was made: a
 // done line is one the workspace now shows. A step that cannot be taken is
 // skipped and named, never silent.
+// EGRESS-FILE: operator-configured - the source is one of the trial sources the operator lists, never a visitor's choice
 import { bundleCarryNote } from "./carry-note.js";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";

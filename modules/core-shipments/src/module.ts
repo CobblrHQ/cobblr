@@ -75,6 +75,7 @@ export default defineModule({
         // UI-REACH: a sales order's Ship dialog names the carrier and the tracking link from it (sales ship preview and notice)
         group: "more",
         id: "core-shipments:identify",
+        changes: "records",
         runBy: "member",
         label: "Name a tracking number's carrier",
         description:
@@ -98,6 +99,7 @@ export default defineModule({
         group: "more",
         // UI-REACH: internal carrier query used by parcel refresh; people check the stored parcel on Purchases or Sales instead of supplying polling state.
         id: "core-shipments:track",
+        changes: "records",
         runBy: "member",
         examples: ["where is my parcel", "track this number"],
         label: "Check a tracking number",

@@ -21,7 +21,7 @@ import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
 import { JobApprovalSchema, ReviewRequired } from "../drivers/job-review.js";
@@ -57,6 +57,7 @@ const JOB_COLS = [
   "material_type",
   "material_grams_by_tool",
   "material_drawn",
+  "material_pending",
   "remote_file_id",
   "remote_job_id",
   "status",
@@ -154,7 +155,7 @@ jobsRouter.get(
       const ext = obs.map((o) => ({
         embroidery_run: false, id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
         target_device: o.serial, target_tag: null, target_pool: null,
-        material_part_id: null, material_grams: null, material_type: null, material_grams_by_tool: null, material_drawn: null, remote_file_id: null, remote_job_id: null,
+        material_part_id: null, material_grams: null, material_type: null, material_grams_by_tool: null, material_drawn: null, material_pending: false, remote_file_id: null, remote_job_id: null,
         status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null, eta_sec: null,
         error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
         linked_build_id: null, build_qty: 1, build_consumed_at: null, build_reversed_at: null,
@@ -182,7 +183,9 @@ jobsRouter.get(
   }),
 );
 
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — a pool job is sent to a free printer by the assignment
+// worker on its own, so creating one can start a machine; the assistant
+// queues a print through digifab:print-this, where only Start moves a machine
 jobsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -254,28 +257,35 @@ jobsRouter.get(
 
 // PATCH — re-prioritize or change the retry cap of a job (e.g. bump a queued job
 // to the front). Re-kicks assignment so a freshly-prioritized pool job re-sorts now.
-const JobPatch = z.object({
+export const JobPatch = z.object({
   priority: z.number().int().min(0).max(100).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   max_attempts: z.number().int().min(1).max(10).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   metadata: z.record(z.unknown()).optional(),
 });
+/** Re-prioritise a job or change its retry cap: the route's PATCH and digifab:prioritize-job. */
+export async function patchJob(db: ReturnType<typeof tenantDb>, orgId: string, id: string, change: z.infer<typeof JobPatch>) {
+  const patch: Record<string, unknown> = { updated_at: new Date() };
+  if (change.priority != null) patch.priority = change.priority;
+  if (change.max_attempts != null) patch.max_attempts = change.max_attempts;
+  // A custom field saved on its own merges into what the job holds.
+  if (change.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", change.metadata);
+  const row = await db.updateTable("digifab_jobs").set(patch).where("id", "=", id).returning(JOB_COLS).executeTakeFirst();
+  if (row && change.priority != null && row.target_pool && row.status === "queued") {
+    const { kickAssign } = await import("../assign-worker.js");
+    await kickAssign(orgId);
+  }
+  return row ?? null;
+}
+
+// AI-ACTION: digifab:prioritize-job
 jobsRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:prioritize-job"))) return;
     const parsed = JobPatch.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const patch: Record<string, unknown> = { updated_at: new Date() };
-    if (parsed.data.priority != null) patch.priority = parsed.data.priority;
-    if (parsed.data.max_attempts != null) patch.max_attempts = parsed.data.max_attempts;
-    // A custom field saved on its own merges into what the job holds.
-    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata);
-    const row = await tenantDb(req).updateTable("digifab_jobs").set(patch).where("id", "=", req.params.id!).returning(JOB_COLS).executeTakeFirst();
+    const row = await patchJob(tenantDb(req), tenantContext(req).org.id, req.params.id!, parsed.data);
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    if (parsed.data.priority != null && row.target_pool && row.status === "queued") {
-      const { kickAssign } = await import("../assign-worker.js");
-      await kickAssign(tenantContext(req).org.id);
-    }
     res.json(row);
   }),
 );
@@ -398,7 +408,8 @@ export function registerSendAction(): void {
 // The job's already uploaded; this re-submits it to an explicit, validated
 // device so a stuck job recovers in place instead of delete-and-recreate.
 const AssignBody = z.object({ device_id: z.string().min(1).max(200) });
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — re-submits an uploaded job to a printer, which starts it;
+// Start stays a person's press (digifab:send always asks first)
 jobsRouter.post(
   "/:id/assign",
   asyncHandler(async (req, res) => {
@@ -437,7 +448,8 @@ jobsRouter.post(
 // machinery. A pool job goes back to the pool. The build link's consumed/reversed
 // stamps reset together: the fail/cancel already reversed the commit, so the
 // fresh send commits the materials again — one net commit per successful run.
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — sends a failed job to a printer again, which starts it;
+// Start stays a person's press (digifab:send always asks first)
 jobsRouter.post(
   "/:id/retry",
   asyncHandler(async (req, res) => {
@@ -510,7 +522,8 @@ const REPRINT_AGAIN_MS = 10_000;
 // terminal-failed row in place): the source job's history stays untouched, and
 // the clone carries everything that made the print reproducible — file, routing,
 // material draw, build link (fresh commit stamps), priority, retry cap.
-// AI-REACH: sends work to a physical machine through its manager; run-command is the one deliberate door
+// AI-REACH: exempt — clones a job and sends it, which starts a printer; the
+// assistant queues the same print through digifab:print-this
 jobsRouter.post(
   "/:id/reprint",
   asyncHandler(async (req, res) => {
@@ -592,10 +605,11 @@ jobsRouter.post(
 // ── manual poll (a "refresh status" button; the worker does this too) ──
 // Mutates job state (status/progress/attention), so it takes the same roles as
 // the other job mutations — it was unauthenticated-role before the audit.
+// AI-ACTION: digifab:refresh-job
 jobsRouter.post(
   "/:id/poll",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!(await requireCapability(req, res, "digifab:refresh-job"))) return;
     const ctx = tenantContext(req);
     const result = await pollJob(tenantDb(req), ctx.org.id, req.params.id!);
     if (!result) return void res.status(409).json({ error: { code: "not_pollable", message: "job has no farm job id yet" } });
@@ -741,22 +755,30 @@ jobsRouter.post("/:id/resume", asyncHandler((req, res) => controlJob(req, res, "
 // ── F-4 delete — remove a job from Cobblr's queue. Refuses an active job (sent/
 // printing) unless it's been cancelled first, so you can't lose track of a live
 // print by deleting it.
+/** Remove a job from the queue, never one that may still be on a printer:
+ *  the route's DELETE and digifab:delete-job. */
+export async function deleteQueuedJob(db: ReturnType<typeof tenantDb>, id: string): Promise<JobReply> {
+  const job = await db.selectFrom("digifab_jobs").select(["id", "status", "file_ref", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run"]).where("id", "=", id).executeTakeFirst();
+  if (!job) return reply(404, { error: { code: "not_found", message: "no such job" } });
+  if (job.cnc_setup && !job.cnc_usage_recorded_at) return reply(409, { error: { code: "stock_use_pending", message: "Record this CNC attempt's stock use and outcome at the station first." } });
+  if (job.embroidery_run) return reply(409, { error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
+  // `paused` is physically mid-print too, and an `unknown`-status job may be —
+  // anything that isn't locally terminal or pre-send must be cancelled first,
+  // so a live print can't silently vanish from tracking.
+  if (!["queued", "awaiting-assignment", "completed", "failed", "cancelled"].includes(job.status)) {
+    return reply(409, { error: { code: "active", message: "cancel the job before deleting (it may still be on a printer)" } });
+  }
+  await db.deleteFrom("digifab_jobs").where("id", "=", job.id).execute();
+  return reply(204, { file_ref: job.file_ref });
+}
+
+// AI-ACTION: digifab:delete-job
 jobsRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run"]).where("id", "=", req.params.id!).executeTakeFirst();
-    if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
-    if(job.cnc_setup&&!job.cnc_usage_recorded_at)return void res.status(409).json({error:{code:"stock_use_pending",message:"Record this CNC attempt's stock use and outcome at the station first."}});
-    if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
-    // `paused` is physically mid-print too, and an `unknown`-status job may be —
-    // anything that isn't locally terminal or pre-send must be cancelled first,
-    // so a live print can't silently vanish from tracking.
-    if (!["queued", "awaiting-assignment", "completed", "failed", "cancelled"].includes(job.status)) {
-      return void res.status(409).json({ error: { code: "active", message: "cancel the job before deleting (it may still be on a printer)" } });
-    }
-    await db.deleteFrom("digifab_jobs").where("id", "=", job.id).execute();
-    res.status(204).end();
+    if (!(await requireCapability(req, res, "digifab:delete-job"))) return;
+    const r = await deleteQueuedJob(tenantDb(req), req.params.id!);
+    if (r.status === 204) return void res.status(204).end();
+    res.status(r.status).json(r.body);
   }),
 );

@@ -137,10 +137,11 @@ const readLabelOfFiles: ReadLabel = (orgId, fileIds) =>
   });
 
 /** Heal one workspace. Answers how many rows it found. */
-export async function healProseNamesIn(orgId: string, db: Kysely<CoreScanDB>, readLabel: ReadLabel = readLabelOfFiles): Promise<number> {
+export async function healProseNamesIn(orgId: string, db: Kysely<CoreScanDB>, since: Date, readLabel: ReadLabel = readLabelOfFiles): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .selectAll()
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where(sql<boolean>`not (suggested_metadata ? ${LABEL_READ_KEY})`)
     .where(
@@ -189,8 +190,9 @@ export async function healProseNamesIn(orgId: string, db: Kysely<CoreScanDB>, re
 export function registerProseNameHeal(): void {
   registerHealPass({
     name: "core-scan.heal-prose-names",
+    since: "2026-10-13T17:49:40Z",
     shim: "modules/core-scan/src/heal-prose-names.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healProseNamesIn(orgId, db as Kysely<CoreScanDB>),
+    visit: ({ orgId, db, since }) => healProseNamesIn(orgId, db as Kysely<CoreScanDB>, since),
   });
 }

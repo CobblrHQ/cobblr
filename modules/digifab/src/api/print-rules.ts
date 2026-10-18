@@ -58,7 +58,8 @@ printRulesRouter.get(
   }),
 );
 
-// AI-REACH: configures a notification channel, which can hold a webhook secret; configuration stays a person's
+// AI-REACH: exempt — stores a Discord webhook, a secret URL anyone can post
+// with; the assistant never handles a secret
 printRulesRouter.post(
   "/channels",
   asyncHandler(async (req, res) => {
@@ -76,7 +77,7 @@ printRulesRouter.post(
   }),
 );
 
-// AI-REACH: edits a notification channel's config (see POST)
+// AI-REACH: exempt — can replace a channel's webhook secret; see POST above
 printRulesRouter.patch(
   "/channels/:id",
   asyncHandler(async (req, res) => {
@@ -99,7 +100,8 @@ printRulesRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — deletes a channel's webhook secret for good and silences
+// every rule that posts there; no undo can bring a secret back
 printRulesRouter.delete(
   "/channels/:id",
   asyncHandler(async (req, res) => {
@@ -110,7 +112,8 @@ printRulesRouter.delete(
 );
 
 // Send a test post to a channel — confirms the webhook works.
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — posts a real message to an outside channel people read;
+// sending to a public channel is a person's press, never a chat's
 printRulesRouter.post(
   "/channels/:id/test",
   asyncHandler(async (req, res) => {
@@ -173,7 +176,9 @@ printRulesRouter.get(
 // pump stringifies its `report` for the same reason.
 const jb = <T>(v: T): T => JSON.stringify(v) as unknown as T;
 
-// AI-REACH: authors an automation rule; a rule is a small program with side effects the user should read before enabling
+// AI-REACH: exempt — a rule runs machine controls on its own (lights, waits)
+// and posts printer camera photos to an outside channel; what a machine does
+// unattended and what leaves the workshop is the owner's to write
 printRulesRouter.post(
   "/rules",
   asyncHandler(async (req, res) => {
@@ -194,7 +199,8 @@ printRulesRouter.post(
   }),
 );
 
-// AI-REACH: edits an automation rule (see POST)
+// AI-REACH: exempt — can change a rule's machine steps and where its photos
+// go; see POST above
 printRulesRouter.patch(
   "/rules/:id",
   asyncHandler(async (req, res) => {
@@ -212,7 +218,8 @@ printRulesRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — removes a rule a person wrote, steps and all, with no
+// way to put it back; the owner's call like writing it
 printRulesRouter.delete(
   "/rules/:id",
   asyncHandler(async (req, res) => {
@@ -228,7 +235,8 @@ const SAMPLE: PrintFacts = {
   printer: "Bambi", model: "Cherry Blossom Crossbody Bag", event: "progress",
   percent: 90, remaining_min: 13, elapsed_min: 117, layer: 184, total_layers: 205, nozzle: 220, bed: 65,
 };
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — writes nothing; renders a message template against
+// sample facts for the rule editor's live preview
 printRulesRouter.post(
   "/preview",
   asyncHandler(async (req, res) => {
@@ -250,7 +258,8 @@ const TestFire = z.object({
   pre_actions: z.array(Step).max(8).optional(),
   post_actions: z.array(Step).max(8).optional(),
 });
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — runs a rule's machine steps now and posts a live photo
+// to an outside channel; a person presses it while watching the printer
 printRulesRouter.post(
   "/test-fire",
   asyncHandler(async (req, res) => {

@@ -39,6 +39,10 @@ import {
   FieldSelect,
   SortBuilder,
   FilterBuilder,
+  InputsBuilder,
+  configToInputRows,
+  inputRowsToConfig,
+  type InputRow,
   ColumnPicker,
   configToFilterRows,
   filterRowsToConfig,
@@ -1892,6 +1896,13 @@ function LayoutPicker({ value, onChange }: { value: ViewLayout; onChange: (t: Vi
   );
 }
 
+/** Whether a person has changed a bundle's view since the bundle installed it. */
+function changedFromBundle(v: SavedView): boolean {
+  const b = v.bundle_base;
+  if (!b) return false;
+  return JSON.stringify([v.name, v.view_type, v.pinned, v.config]) !== JSON.stringify([b.name, b.view_type, b.pinned, b.config]);
+}
+
 function CreateViewModal({
   slug,
   onClose,
@@ -1922,6 +1933,7 @@ function CreateViewModal({
   const [titleField, setTitleField] = useState("");
   const [expectRrule, setExpectRrule] = useState("");
   const [filterRows, setFilterRows] = useState<FilterRow[]>([]);
+  const [inputRows, setInputRows] = useState<InputRow[]>([]);
   const [sortRows, setSortRows] = useState<SortRow[]>([]);
   const [shared, setShared] = useState(true);
   const toast = useToast();
@@ -1991,6 +2003,9 @@ function CreateViewModal({
           Object.assign(config, filterRowsToConfig(filterRows));
           const sort = rowsToSort(sortRows);
           if (sort.length) config.sort = sort;
+          // The values a viewer sets (#6897).
+          const inputs = inputRowsToConfig(inputRows);
+          if (inputs.length) config.inputs = inputs;
           create.mutate({
               entity_kind: entityKind,
               name: name.trim(),
@@ -2143,6 +2158,8 @@ function CreateViewModal({
         <div>
           <div className="text-xs text-muted mb-1">Filter</div>
           <FilterBuilder fields={fields} rows={filterRows} onChange={setFilterRows} />
+          <div className="text-xs text-muted mt-3 mb-1">Inputs the viewer sets</div>
+          <InputsBuilder rows={inputRows} onChange={setInputRows} />
         </div>
         <div>
           <div className="text-xs text-muted mb-1">Sort</div>
@@ -2214,10 +2231,14 @@ export function EditViewModal({
   const [titleField, setTitleField] = useState((cfg.title_field as string) ?? "");
   const [expectRrule, setExpectRrule] = useState((cfg.expect_rrule as string) ?? "");
   const [filterRows, setFilterRows] = useState<FilterRow[]>(() => configToFilterRows(cfg));
+  const [inputRows, setInputRows] = useState<InputRow[]>(() => configToInputRows(cfg));
   const [sortRows, setSortRows] = useState<SortRow[]>(() => sortToRows(cfg.sort));
   const [shared, setShared] = useState(view.owner_user_id === null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const confirmReset = useConfirm();
+  const askToReset = (viewName: string) =>
+    confirmReset({ title: "Put this view back?", message: `${viewName} goes back to the columns, filters and name the bundle gave it. What you changed on it is lost.`, confirmLabel: "Put back", destructive: true });
 
   return (
     <Modal open onClose={onClose} title={`Edit view: ${view.name}`}>
@@ -2257,6 +2278,10 @@ export function EditViewModal({
           const sort = rowsToSort(sortRows);
           if (sort.length) config.sort = sort;
           else delete config.sort;
+          // The values a viewer sets (#6897).
+          const inputs = inputRowsToConfig(inputRows);
+          if (inputs.length) config.inputs = inputs;
+          else delete config.inputs;
 
           try {
             await api.updateSavedView(slug, view.id, {
@@ -2289,6 +2314,31 @@ export function EditViewModal({
           Collection: <span>{editLabels.collection(view.entity_kind)}</span>{" "}
           (locked)
         </div>
+        {view.bundle_id && view.bundle_base && changedFromBundle(view) && (
+          <div data-testid="view-reset-to-bundle" className="rounded border border-line dark:border-slate-700 px-3 py-2 text-xs text-muted dark:text-slate-400 space-y-1.5">
+            <div>This view came with a bundle, and you have changed it. An update keeps your changes.</div>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={async () => {
+                if (!(await askToReset(view.name))) return;
+                setBusy(true);
+                try {
+                  await api.resetSavedView(slug, view.id);
+                  toast.success("Back as the bundle made it.");
+                  onSaved();
+                } catch (err) {
+                  toast.error(err instanceof ApiError ? err.message : String(err));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+              className="inline-flex min-h-11 items-center rounded border border-line dark:border-slate-600 px-3 text-sm font-medium text-content dark:text-mortar-100 hover:border-accent"
+            >
+              Put back as the bundle made it
+            </button>
+          </div>
+        )}
         <div>
           <div className="text-xs text-muted mb-1">Layout</div>
           <LayoutPicker value={viewType} onChange={setViewType} />
@@ -2396,6 +2446,8 @@ export function EditViewModal({
         <div>
           <div className="text-xs text-muted mb-1">Filter</div>
           <FilterBuilder fields={fields} rows={filterRows} onChange={setFilterRows} />
+          <div className="text-xs text-muted mt-3 mb-1">Inputs the viewer sets</div>
+          <InputsBuilder rows={inputRows} onChange={setInputRows} />
         </div>
         <div>
           <div className="text-xs text-muted mb-1">Sort</div>

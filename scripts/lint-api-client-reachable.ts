@@ -15,7 +15,7 @@
 // never grow it.
 //
 //   npx tsx scripts/lint-api-client-reachable.ts
-import { API_CLIENT as API, apiClientMethods, callerCorpus, isCalled } from "./lib/api-client-methods.ts";
+import { API_CLIENT_DIR, apiClientMethods, callerCorpus, isCalled } from "./lib/api-client-methods.ts";
 
 /** Unreachable on 2026-09-08. Each is a surface still owed or a method to
  *  delete; either way, wiring one REMOVES it from here. */
@@ -36,7 +36,7 @@ if (healed.length || gone.length) {
 }
 if (orphans.length) {
   console.error("lint:api-client-reachable: api client methods with no caller in the web (a capability nobody can reach):");
-  for (const m of orphans) console.error(`  api.${m}  (${API})`);
+  for (const m of orphans) console.error(`  api.${m}  (${API_CLIENT_DIR}/)`);
   console.error("Wire a surface that calls it, or delete the method. Do not add it to BASELINE.");
   process.exit(1);
 }

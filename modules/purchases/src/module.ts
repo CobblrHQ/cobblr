@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.18.2",
+  version: "0.18.3",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -36,6 +36,8 @@ export default defineModule({
       registerPurchasesDashboardReads();
       const { registerUnreceivedArrivalsHeal } = await import("./heal-unreceived-arrivals.js");
       registerUnreceivedArrivalsHeal();
+      const { registerReceiptRetries } = await import("./receive.js");
+      registerReceiptRetries();
     },
   },
   schema: {
@@ -61,6 +63,7 @@ export default defineModule({
           { name: "vendor", type: "text", role: "title", required: false },
           { name: "order_number", type: "text", role: "summary" },
           { name: "status", type: "text" },
+          { name: "stock_pending", type: "boolean", readOnly: true },
           { name: "ordered_at", type: "date" },
           { name: "expected_arrival", type: "date" },
           { name: "arrived_at", type: "date" },
@@ -77,6 +80,7 @@ export default defineModule({
           "vendor",
           "order_number",
           "status",
+          "stock_pending",
           "ordered_at",
           "expected_arrival",
           "arrived_at",
@@ -166,7 +170,7 @@ export default defineModule({
     ],
     actions: [
       {
-        id: "purchases:start-return", group: "buy", label: "Start a return", examples: ["return two of those", "I'm sending this back"],
+        id: "purchases:start-return", changes: "records", group: "buy", label: "Start a return", examples: ["return two of those", "I'm sending this back"],
         runBy: "member",
         description: "Start a return on an order that arrived: which line (line_id) or item, how many (qty, default 1) and why. One open return per line; a second start on the same line answers with the open one. The stock comes off the shelf when the store has it, the refund off the order's spend when it is refunded.",
         appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.start-return", userInvokable: true, undoable: true,
@@ -180,7 +184,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /purchases/:id (the stage pills on each return)
-        id: "purchases:advance-return", group: "buy", label: "Move a return along", examples: ["I dropped the return off", "the refund came through"],
+        id: "purchases:advance-return", changes: "records", group: "buy", label: "Move a return along", examples: ["I dropped the return off", "the refund came through"],
         runBy: "member",
         description: "Move a return to its next stage: dropped_off, received (its count comes off the shelf, once), refunded (with refund_amount, default the line's cost; it comes off the order's spend once) or cancelled (only before the store has it). Stages only move forward.",
         scope: "workspace" as const, invokeHandler: "purchases.advance-return", userInvokable: false, undoable: true,
@@ -193,7 +197,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /purchases/:id (Add a parcel, and a line's "Shipped in" chip)
-        id: "purchases:add-shipment", group: "buy", label: "Add a parcel", examples: ["the black spool shipped, tracking TBA335321582286", "add tracking for part of this order"],
+        id: "purchases:add-shipment", changes: "records", group: "buy", label: "Add a parcel", examples: ["the black spool shipped, tracking TBA335321582286", "add tracking for part of this order"],
         runBy: "member",
         description: "Record one parcel of an order: its tracking number, and which lines are in it, by line_ids or by items (the store's words for what is in the box, matched to the order's lines). A parcel that carries every line still to come goes on the order itself. The same number twice updates the parcel.",
         appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.add-shipment", userInvokable: true,
@@ -206,7 +210,7 @@ export default defineModule({
         },
       },
       {
-        id: "purchases:plan-order", group: "buy", label: "Plan an order", examples: ["plan an order for these parts", "track this fabrication order"],
+        id: "purchases:plan-order", changes: "records", group: "buy", label: "Plan an order", examples: ["plan an order for these parts", "track this fabrication order"],
         runBy: "member",
         description: "Create a planned purchase with lines, expected arrival, tracking and an optional source file. request_key makes retries safe. add_to_stock is false for scanned component receiving and true for blank board stock. No supplier order is submitted.",
         scope: "workspace" as const, invokeHandler: "purchases.plan-order", userInvokable: true,
@@ -222,6 +226,7 @@ export default defineModule({
         // NO-PHRASING: the way back for another action, run only from Undo
         group: "buy",
         id: "purchases:remove-line",
+        changes: "records",
         runBy: "member",
         internal: true,
         label: "Remove an order line",
@@ -237,6 +242,7 @@ export default defineModule({
       {
         group: "buy",
         id: "purchases:add-line",
+        changes: "records",
         runBy: "member",
         examples: ["add another line to that order", "put two more on the order"],
         undoable: true,
@@ -261,6 +267,7 @@ export default defineModule({
         // UI-REACH: plumbing for the paperwork door, which every screen reaches through core-scan's record Files and inbox
         group: "buy",
         id: "purchases:record-paperwork",
+        changes: "records",
         runBy: "member",
         label: "Record the purchase a document shows",
         description:
@@ -283,6 +290,7 @@ export default defineModule({
       {
         group: "buy",
         id: "purchases:edit-line",
+        changes: "records",
         runBy: "member",
         examples: ["that line was 5, not 3", "the screws were 12 cents each"],
         undoable: true,
@@ -310,6 +318,7 @@ export default defineModule({
         // button on any part.
         group: "buy",
         id: "purchases:draft-po",
+        changes: "records",
         runBy: "member",
         examples: ["order more of these", "put that on a purchase order"],
         undoable: true,
@@ -338,6 +347,7 @@ export default defineModule({
         // twice cannot double-count.
         group: "buy",
         id: "purchases:mark-arrived",
+        changes: "records",
         runBy: "member",
         examples: ["that order turned up", "the parcel arrived"],
         label: "Mark arrived",

@@ -84,7 +84,7 @@ in the same PR while the feature is fresh
 type: feature
 scope: locations
 date: 2026-07-09
-docs_target: docs/USER_GUIDE.md#Floor plan   # where the docs publish
+docs_target: docs/user-guide/locations.md#Floor plan   # where the docs publish
 ---
 One user-facing changelog line (as before).
 
@@ -96,7 +96,10 @@ surface, then stamps `docs_published:`.
 ```
 
 - `docs_target: <path.md>#<heading>`: the path must exist, and the flush appends
-  the prose at the end of that heading's section (creates it if missing).
+  the prose at the end of that heading's section. For the user guide the path
+  is the area's page, `docs/user-guide/<area>.md`, never the index
+  `docs/USER_GUIDE.md`: `docs/user-guide/areas.json` maps each scope to its page,
+  and `lint:changelog` names the page when an entry points at the index.
 - Contributor-facing / internal features opt out explicitly:
   `docs_target: none (<reason>)`.
 - **`## docs` and a real `docs_target` belong to `type: feature` only.** The
@@ -106,7 +109,7 @@ surface, then stamps `docs_published:`.
   `USER_GUIDE` section, none of the prose ever having reached the manual, and
   `docs-flush --dry-run` reporting "nothing to publish" the whole time. For a
   non-feature, write the docs **in the same commit** and say so:
-  `docs_target: none (documented directly in USER_GUIDE.md <section>)`.
+  `docs_target: none (documented directly in docs/user-guide/<area>.md <section>)`.
   `lint:staged-docs-reachable` enforces it.
 - **Updating an unshipped feature? Edit its staged entry's `## docs` in the
   same PR**. That is the point, because the docs stay fresh when they live in the
@@ -126,7 +129,7 @@ surface, then stamps `docs_published:`.
 
 ## The PUBLIC docs site is tracked separately
 
-`docs_target` and the flush only touch **this repo's** `USER_GUIDE.md`. The public
+`docs_target` and the flush only touch **this repo's** user guide (`docs/user-guide/`). The public
 Docusaurus site (`CobblrHQ/docs`) has **no automatic wire to the changelog**, so a
 feature here does not update a public page on its own. That site reconciles
 against the changelog with its own report (`npm run docs:debt` there, which reads

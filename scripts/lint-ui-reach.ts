@@ -73,7 +73,7 @@
 import { readOnce } from "./lib/read-once.ts";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { API_CLIENT, METHOD_LINE, apiClientMethods, callerCorpus, isCalled } from "./lib/api-client-methods.ts";
+import { METHOD_LINE, apiClientMethods, callerCorpus, isApiClientFile, isCalled } from "./lib/api-client-methods.ts";
 import { DEVICE_WIRE_PATH, MODULES, kernelRoutes, moduleRoutes, routedModules, type MutatingRoute } from "./lib/mutating-routes.ts";
 
 const BASELINE_FILE = process.env.COBBLR_UI_REACH_BASELINE || join("scripts", "ui-reach-baseline.json");
@@ -169,7 +169,7 @@ function readCalls(): Call[] {
       const line = lines[i]!
         .replace(/\$\{primaryBase\(\s*\w+\s*,\s*["'`]([^"'`]+)["'`][^)]*\)\}/g, "/orgs/${slug}/modules/$1")
         .replace(/\bprimaryBase\(\s*\w+\s*,\s*["'`]([^"'`]+)["'`][^)]*\)/g, "`/orgs/${slug}/modules/$1`");
-      if (f === API_CLIENT) {
+      if (isApiClientFile(f)) {
         method = line.match(METHOD_LINE)?.[1] ?? method;
         if (method && uncalled.has(method)) continue;
       }

@@ -215,3 +215,16 @@ export function scanToolRelevance(row: ScanToolRow, ctx: ScanToolContext = {}): 
 export function likelyTools(hints: ScanToolHints): ScanTool[] {
   return SCAN_TOOLS.filter((t) => hints[t].relevance === "likely");
 }
+
+/** The next free "Bin N" given the workspace's location names: "Bin 18" when
+ *  Bin 17 is the highest, "Bin 1" when there is none. Case-blind match, the
+ *  canonical spelling offered. The inbox's Turn into a bin sheet and the
+ *  server's one-tap new bin (#6891) name it the same way. */
+export function nextBinName(existingNames: readonly string[]): string {
+  let max = 0;
+  for (const n of existingNames) {
+    const m = /^\s*bin\s+(\d{1,5})\s*$/i.exec(n);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `Bin ${max + 1}`;
+}

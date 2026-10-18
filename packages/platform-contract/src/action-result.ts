@@ -38,6 +38,10 @@ export interface ActionActed {
 export interface ActionDeclined {
   ok: false;
   skipped: true;
+  /** A durable delivery may acknowledge this decline: the requested state
+   *  already holds, or the request deliberately changes nothing. Never set
+   *  for missing inputs, missing records or a refused stock write. */
+  deliverySatisfied?: true;
   /** Why nothing applied, for a person. */
   error: string;
   [k: string]: unknown;

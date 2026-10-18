@@ -1,3 +1,4 @@
+// EGRESS-FILE: own-api - a dev script calling the instance's own API
 // Eval harness for hosted match-template (Phase 2).
 //   npx tsx modules/core-authoring/src/scripts/test-match-template.ts
 //

@@ -31,6 +31,8 @@ export interface HealVisit {
   orgId: string;
   /** The workspace's db, open for this visit (cast to the module's schema). */
   db: unknown;
+  /** The pass's `since`: the visit takes only rows made before it. */
+  since: Date;
 }
 
 export interface HealPass {
@@ -40,6 +42,15 @@ export interface HealPass {
   shim: string;
   /** Only workspaces with this module enabled. */
   module?: string;
+  /** When the fix merged, as an ISO instant. A row made after it was made by
+   *  fixed code, so the visit takes only rows made before it (`since` on the
+   *  visit), whatever their shape (#7282). Choosing rows by shape alone
+   *  rewrote rows a test, an import or a restore had just made in the shape
+   *  the heal was written for: five of fifty-five freshly imported scans were
+   *  renamed mid-test and main went red (be2d28370). Required, so a heal
+   *  cannot be written without it; lint:heal-shims holds each visit to using
+   *  it. */
+  since: string;
   /** Heal one workspace; answer how many rows needed it (0 = clean). A
    *  visit that found rows it cannot heal answers `{ found, settled: true }`:
    *  they still count toward the shim's DONE WHEN, and the workspace is not
@@ -47,7 +58,17 @@ export interface HealPass {
   visit: (v: HealVisit) => Promise<number | { found: number; settled: boolean }>;
 }
 
+/** Every heal registered in this process, by name: a test runs each by name
+ *  (a heal never touches a row made after its fix). */
+const healNames = new Set<string>();
+export function registeredHealPasses(): string[] {
+  return [...healNames].sort();
+}
+
 export function registerHealPass(pass: HealPass): void {
+  const since = new Date(pass.since);
+  if (Number.isNaN(since.getTime())) throw new Error(`[heal] ${pass.name}: since "${pass.since}" is not a date`);
+  healNames.add(pass.name);
   /** Workspaces not reopened, with the rows each still holds that no visit
    *  can heal: carried into every report, so a skipped workspace never reads
    *  as a clean one. */
@@ -82,7 +103,7 @@ export function registerHealPass(pass: HealPass): void {
     visit: async ({ orgId, db }) => {
       const mine = round;
       try {
-        const out = await pass.visit({ orgId, db });
+        const out = await pass.visit({ orgId, db, since });
         const found = typeof out === "number" ? out : out.found;
         if (found === 0) settled.set(orgId, 0);
         else if (typeof out === "object" && out.settled) settled.set(orgId, found);

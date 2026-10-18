@@ -3,11 +3,12 @@
 // path — never silently degrade. Extracted from ScanPage (which pioneered it);
 // the scan page, the homepage funnel, and /build all render this now.
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { mayRead } from "../lib/acting-role";
 import { Link } from "react-router-dom";
 import { CobbHead } from "./CobbHead";
+import { X } from "lucide-react";
 import { api, type AiStatus } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -140,10 +141,19 @@ export function AiOffNotice({
   compact,
   children,
   needs = "chat",
+  ctaLabel,
+  dismissible,
 }: {
   status: AiStatus | null;
   compact?: boolean;
   children?: ReactNode;
+  /** The link's words when nothing is connected yet, said for this surface
+   *  ("Connect AI for the builder and Cobb"); a reason with its own sentence
+   *  keeps its own link. */
+  ctaLabel?: string;
+  /** A key this browser remembers the notice was put away under: a first
+   *  screen that says it once lets the person close it (#7199). */
+  dismissible?: string;
   /** What this SURFACE actually needs. A scan surface needs identification,
    *  which a deployment can provide through the hosted service with no chat
    *  provider connected at all - so "AI isn't connected" is simply false there,
@@ -154,7 +164,15 @@ export function AiOffNotice({
 }) {
   const line = aiStatusLine(status, needs);
   const given = useContext(AiNoticeGivenContext);
-  if (!line) return null;
+  const [hidden, setHidden] = useState(() => {
+    if (!dismissible) return false;
+    try {
+      return localStorage.getItem(dismissible) === "1";
+    } catch {
+      return false;
+    }
+  });
+  if (!line || hidden) return null;
   // Said once already on this screen: keep only what is particular to this
   // surface, as a quiet line, never a second banner (#4146: the scan page and
   // the put-away plan inside it both showed "plan doesn't include AI").
@@ -190,10 +208,28 @@ export function AiOffNotice({
         )}
         {line.cta && (
           <Link to={line.cta.to} className="text-accent underline underline-offset-2 hover:no-underline">
-            {line.cta.label}
+            {!line.text && ctaLabel ? ctaLabel : line.cta.label}
           </Link>
         )}
       </div>
+      {dismissible && (
+        <button
+          type="button"
+          aria-label="Hide this notice"
+          title="Hide this notice"
+          onClick={() => {
+            setHidden(true);
+            try {
+              localStorage.setItem(dismissible, "1");
+            } catch {
+              /* a private window keeps it closed for this visit only */
+            }
+          }}
+          className="ml-auto shrink-0 rounded p-0.5 text-faint hover:text-content"
+        >
+          <X size={14} />
+        </button>
+      )}
     </div>
   );
 }

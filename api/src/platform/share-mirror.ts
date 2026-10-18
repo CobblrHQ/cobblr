@@ -555,7 +555,7 @@ async function recordCopyBase(
  *  a single hold for the whole api was replaced, and its count reset, by
  *  another test file setting its own while CI ran them side by side, so a
  *  test's pass never reached a hold that was no longer there (#5396). */
-export type ApplyPoint = "before-write" | "after-write" | "owner-pass" | "edits-pass";
+export type ApplyPoint = "before-write" | "after-write" | "owner-pass" | "edits-pass" | "owner-edit-write";
 const applyHolds = new Map<string, { at: ApplyPoint; ms: number }>();
 const holdsReached = new Map<string, number>();
 export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {

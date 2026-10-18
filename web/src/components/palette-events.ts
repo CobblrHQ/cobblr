@@ -1,4 +1,4 @@
-import { isShortcut } from "@cobblr/platform-web";
+import { isShortcut } from "@cobblr/platform-web/shortcuts";
 
 // The palette's and the quick-add sheet's openers, apart from the components
 // themselves: the shell's buttons fire these at first paint, and the palette
@@ -53,5 +53,8 @@ export function hostGone(name: string): void {
 // Held from the moment the shell's script runs, not from the shell's first
 // render: an effect started holding only after React had drawn, so a ⌘K
 // pressed as the page appeared reached nothing (#5999). Like the chat's
-// buffer (lib/open-chat-buffer.ts), this listens at load.
+// buffer (lib/open-chat-buffer.ts), this listens at load. The entry
+// (main.tsx) imports this file before it waits on the branding read, so the
+// hold starts with the first script, not when the shell's chunk arrives: a
+// ⌘K pressed while branding loaded reached nothing (#6881).
 if (typeof window !== "undefined") holdEarlyOpeners((e) => isShortcut(e, "palette"));

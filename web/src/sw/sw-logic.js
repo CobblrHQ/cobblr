@@ -92,6 +92,19 @@ export function sharePayload(entries) {
   return out;
 }
 
+/** A new share with what an earlier one left unsaved (#7162): the page keeps
+ *  only the products and photos that failed, and a new share must not wipe
+ *  them. The earlier photos move to `/__share/left/<n>` (`moves` says from
+ *  where), ahead of the new ones; its products stay owed beside the new
+ *  title, text and url. Pure. */
+export function withLeftover(fresh, left) {
+  if (!left) return { payload: fresh, moves: [] };
+  const moves = (left.files ?? []).map((f, i) => ({ from: f.key, to: `/__share/left/${i}` }));
+  const files = [...(left.files ?? []).map((f, i) => ({ ...f, key: moves[i].to })), ...fresh.files];
+  const products = left.products ?? [];
+  return { payload: { ...fresh, files, ...(products.length ? { products } : {}) }, moves };
+}
+
 /** What a push from Cobblr becomes on the device (#5267): a title, one line,
  *  the app's icon, a tag that collapses a repeat of the same notification, the
  *  Home Screen badge, and where a tap goes. Only these fields are read. A push

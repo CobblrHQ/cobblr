@@ -1089,7 +1089,7 @@ export interface StockExpiring {
   places: Array<{
     location_id: string | null;
     location_name: string | null;
-    lots: Array<{ part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; expires_on: string; days: number }>;
+    lots: Array<{ part_id: string; card_id: string | null; name: string; instance: string; kind: string; detail_path: string; qty: number; unit: string; lot: string | null; received_on: string; expires_on: string; days: number }>;
   }>;
 }
 

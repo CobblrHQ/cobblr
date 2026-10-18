@@ -1,4 +1,4 @@
-import { productName } from "@cobblr/platform-web";
+import { productName, AllergenPills } from "@cobblr/platform-web";
 import { sessionSaidPlace, sessionSaidVendor, type SessionSays } from "../lib/sessionSays";
 import { NumberStepper, RecordFormModal, NewFromTemplateButton, useLater, useImageSrc, EntityPhoto, useToast, colorSwatch, wantsSwatch, ColourInput, valueFromInput, FieldPack, fieldNeed, fieldControl, fieldPackControlClass, type FieldType, relativeTime, SearchInput, ChoiceCombobox, ChoiceField, offersClarifier, noteKey, WorkspaceLink } from "@cobblr/platform-web";
 import { RAN_OUT_HINT, RAN_OUT_LABEL, useRanOut } from "./scanRanOut";
@@ -46,6 +46,7 @@ import { } from "../components/SessionLocationModal";
 import { } from "../components/OrganizeWalkSheet";
 import { } from "../components/LiveSortSheet";
 import { ImageSearchPicker } from "../components/ImageSearchPicker";
+import { ScanCatalogMatch } from "./ScanCatalogMatch";
 import { CropPhotoModal } from "../components/CropPhotoModal";
 import { SplitByNamesSheet } from "../components/SplitByNamesSheet";
 import { imageUrlFrom } from "../components/pastedImage";
@@ -318,14 +319,11 @@ function MakeBinSheet({
     }
   }, [locs.data, suggested]);
   const create = useMutation({
+    // One call makes the bin and puts the scan on it, so the scan's Undo
+    // knows this bin is its own and takes it away (#6891).
     mutationFn: async (arm: boolean) => {
-      const loc = await api.createLocation(activeSlug, {
-        name: name.trim(),
-        kind: "container",
-        ...(parent ? { parent_id: parent } : {}),
-      });
-      await api.confirmScanIntoLocation(activeSlug, item.id, loc.id);
-      return { loc, arm };
+      const r = await api.newBinFromScan(activeSlug, item.id, { name: name.trim(), ...(parent ? { parent_id: parent } : {}) });
+      return { loc: { id: r.location_id, name: r.location_name }, arm };
     },
     onSuccess: ({ loc, arm }) => {
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
@@ -2763,6 +2761,10 @@ export function InboxCard({
             warning={phoneRowWarning}
             extra={
               <>
+                <AllergenPills
+                  contains={(item.suggested_metadata as { allergens?: unknown } | null)?.allergens}
+                  mayContain={(item.suggested_metadata as { traces?: unknown } | null)?.traces}
+                />
                 {packNote && (
                   <p className="text-xs text-amber-700 dark:text-amber-300" data-testid="pack-note" title={packNote.why || undefined}>
                     {packNote.sentence}
@@ -3466,6 +3468,13 @@ export function InboxCard({
               match shows + a "+N" to expand; desktop shows them all. Field chips
               skip anything already in the subtitle (author, publisher/brand,
               ISBN) so there's no echo. */}
+          {/* What the catalog says the food contains, as warning pills. Only
+              where the catalog listed some: no pill is not "contains nothing". */}
+          <AllergenPills
+            className="mt-1.5"
+            contains={(item.suggested_metadata as { allergens?: unknown } | null)?.allergens}
+            mayContain={(item.suggested_metadata as { traces?: unknown } | null)?.traces}
+          />
           {!planContext && (seriesOf(item) || candidates.length > 0) && (
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
               {seriesOf(item) && (
@@ -5097,6 +5106,10 @@ function ConfirmForm({
   }, [hintedKey]);
   const entry =
     entries.find((m) => entryKey(m.module, m.instance) === selKey) ?? entries[0]!;
+  // The catalog entry the person tapped beside the form (#6888); a new
+  // destination is a new question, so it starts unpicked there.
+  const [catalogPick, setCatalogPick] = useState<string | null>(null);
+  useEffect(() => setCatalogPick(null), [selKey]);
 
   // The matchmaker candidate for the initial selection: its extraction seeds
   // the fields and its cleaned `name` (retailer noise stripped) beats the raw
@@ -5371,6 +5384,7 @@ function ConfirmForm({
         ...(isAdmin && saveEvalCase
           ? { save_eval_case: true, eval_note: evalNote.trim() || undefined }
           : {}),
+        ...(catalogPick ? { catalog_entry_id: catalogPick } : {}),
       });
       return confirmed;
     },
@@ -5916,6 +5930,9 @@ function ConfirmForm({
           <div className="flex-1 min-w-[18rem]">{fieldChips(false)}</div>
         </div>
       )}
+      {/* The catalog entry it matches (#6888): loaded beside the form, never
+          before it; nothing when no catalog binds to where it is going. */}
+      <ScanCatalogMatch slug={activeSlug} itemId={item.id} kind={entry.instance ? `${entry.instance}:item` : `${entry.module}:${baseKind(entry.module)}`} picked={catalogPick} onPick={setCatalogPick} />
       {/* The location DRAWER stays exactly as it was: its chip above is only the
           trigger. A picker is not a text box and forcing it into one would lose
           the rooms-and-bins grid the bulk bar and camera also use. */}

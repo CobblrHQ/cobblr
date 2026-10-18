@@ -45,6 +45,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/units
         id: "core-units:remove-unit",
+        changes: "records",
         // ADMIN-ONLY: the page's own route DELETE /units/:code is owner or admin (units.ts)
         runBy: "admin",
         examples: ["remove the fathom unit", "we don't measure in balls any more"],
@@ -68,6 +69,7 @@ export default defineModule({
         // UI-SCREEN: /configuration/units
         group: "more",
         id: "core-units:add-unit",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /units gates on this action's own id, owner or admin (units.ts)
         runBy: "admin",
         examples: ["we measure yarn in balls", "add a fathom unit"],
@@ -90,6 +92,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /configuration/units
         id: "core-units:set-display-mode",
+        changes: "workspace",
         // ADMIN-ONLY: the page's own route PUT /units/settings is owner or admin (units.ts)
         runBy: "admin",
         examples: ["show units as full names", "use unit symbols"],

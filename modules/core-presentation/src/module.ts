@@ -33,6 +33,7 @@ export default defineModule({
       // NO-PHRASING: the way back for another action, run only from Undo
       group: "more",
       id: "core-presentation:remove-heading",
+      changes: "workspace",
       // ADMIN-ONLY: the tail of undoing group-nav, which is admin
       runBy: "admin",
       internal: true,
@@ -50,6 +51,7 @@ export default defineModule({
       // UI-SCREEN: /configuration/presentation
       group: "organise",
       id: "core-presentation:group-nav",
+      changes: "workspace",
       // ADMIN-ONLY: the page's own route POST /nav-headings gates on this action's own id, owner or admin (nav-headings.ts)
       runBy: "admin",
       label: "Group nav sections",
@@ -75,6 +77,7 @@ export default defineModule({
       // UI-SCREEN: /configuration/presentation
       group: "organise",
       id: "core-presentation:ungroup-nav",
+      changes: "workspace",
       // ADMIN-ONLY: DELETE /nav-headings/members gates on this action's own id, owner or admin
       runBy: "admin",
       label: "Ungroup nav sections",

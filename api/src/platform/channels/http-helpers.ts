@@ -4,9 +4,28 @@
 // failure rather than throw (so the dispatcher can fan out cleanly
 // to other channels even when one is down).
 
+import { guardedFetch } from "../egress.js";
+
+/** The send every webhook-style channel uses: the workspace's egress guard, so a
+ *  person's URL is resolved once, checked and pinned, and a redirect is checked
+ *  on its own hop. The one escape is the dev/test one the integrations connector
+ *  honors too (COBBLR_WEBHOOK_ALLOW_INTERNAL, ignored in production), so the
+ *  test suite's loopback fixture can be the receiver. */
+export function notifyFetch(orgId: string, url: string, init: RequestInit): Promise<Response> {
+  if (process.env.COBBLR_WEBHOOK_ALLOW_INTERNAL === "1" && process.env.NODE_ENV !== "production") {
+    // EGRESS: operator-configured - the dev/test escape the deployment's environment sets; never honored in production
+    return fetch(url, init);
+  }
+  return guardedFetch(orgId, url, init);
+}
+
 const DEFAULT_TIMEOUT_MS = 5000;
 
 export interface PostOptions {
+  /** The workspace the notice belongs to. The URL is a person's own setting,
+   *  so the send goes through the workspace's egress policy: each hop is
+   *  resolved, checked and pinned, and a redirect is checked on its own. */
+  orgId: string;
   url: string;
   body: unknown;
   headers?: Record<string, string>;
@@ -46,7 +65,7 @@ export async function postJson(opts: PostOptions): Promise<boolean> {
       body = JSON.stringify(opts.body);
       headers["Content-Type"] = "application/json";
     }
-    const res = await fetch(opts.url, {
+    const res = await notifyFetch(opts.orgId, opts.url, {
       method: "POST",
       headers,
       body,

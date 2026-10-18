@@ -36,7 +36,8 @@ function unionOf(file: string, typeName: string): Set<string> {
 }
 
 const server = unionOf("api/src/db/schema.ts", "NotificationChannel");
-const web = unionOf("web/src/lib/api.ts", "NotificationChannelName");
+const WEB_CLIENT = "web/src/lib/api/notifications.ts";
+const web = unionOf(WEB_CLIENT, "NotificationChannelName");
 
 /** Channels the settings page can actually offer, from its spec table. */
 const page = new Set(
@@ -64,13 +65,13 @@ const offeredDead = [...page].filter((c) => notOffered.has(c));
 const problems: string[] = [];
 if (missingFromWeb.length) {
   problems.push(
-    `  web/src/lib/api.ts is missing: ${missingFromWeb.join(", ")}\n` +
+    `  ${WEB_CLIENT} is missing: ${missingFromWeb.join(", ")}\n` +
       `      The server can deliver on these and the UI cannot name them.`,
   );
 }
 if (extraInWeb.length) {
   problems.push(
-    `  web/src/lib/api.ts invents: ${extraInWeb.join(", ")}\n` +
+    `  ${WEB_CLIENT} invents: ${extraInWeb.join(", ")}\n` +
       `      Nothing delivers these; offering them creates a dead subscription.`,
   );
 }

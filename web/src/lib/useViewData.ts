@@ -29,6 +29,8 @@ export interface ViewData {
   collectionEmpty?: boolean;
   unapplied?: ViewDataResponse["unapplied"];
   ungrouped?: ViewDataResponse["ungrouped"];
+  /** The view's inputs as the server read them (#6897). */
+  inputs?: ViewDataResponse["inputs"];
   /** Load the next page, when there is one. */
   loadMore?: () => void;
   loadingMore: boolean;
@@ -43,22 +45,23 @@ export function useViewData(
   slug: string | null | undefined,
   viewId: string | null | undefined,
   kind: string | null,
-  opts: { enabled?: boolean; q?: string } = {},
+  opts: { enabled?: boolean; q?: string; inputs?: Record<string, string> } = {},
 ): ViewData {
   const qc = useQueryClient();
   const [loadingGroup, setLoadingGroup] = useState<string>();
   const [groupError, setGroupError] = useState(false);
   const enabled = opts.enabled ?? true;
   const text = opts.q?.trim() || undefined;
+  const inputs = opts.inputs && Object.keys(opts.inputs).length ? opts.inputs : undefined;
   const q = useInfiniteQuery({
     // The view's kind rides in the key, so an action on one of its records
     // refreshes it wherever it is shown (platform-web run-action).
-    queryKey: ["view-data", slug, viewId, kind ?? "", text ?? ""],
+    queryKey: ["view-data", slug, viewId, kind ?? "", text ?? "", ...(inputs ? [JSON.stringify(inputs)] : [])],
     ...(kind === null ? { meta: { kinds: "*" as const } } : {}),
     queryFn: ({ pageParam }) =>
       pageParam.offset === 0 && pageParam.group_offset === 0
-        ? api.viewData(slug!, viewId!, { q: text })
-        : api.viewData(slug!, viewId!, { q: text, offset: pageParam.offset, group_offset: pageParam.group_offset, limit: MORE_PAGE }),
+        ? api.viewData(slug!, viewId!, { q: text, inputs })
+        : api.viewData(slug!, viewId!, { q: text, inputs, offset: pageParam.offset, group_offset: pageParam.group_offset, limit: MORE_PAGE }),
     initialPageParam: { offset: 0, group_offset: 0 },
     getNextPageParam: (last, pages) => {
       const first = pages[0];
@@ -97,7 +100,7 @@ export function useViewData(
       setLoadingGroup(JSON.stringify(keys));
       setGroupError(false);
       try {
-        const page = await api.viewData(slug!, viewId!, { q: text, group_keys: keys, offset, limit: 50 });
+        const page = await api.viewData(slug!, viewId!, { q: text, inputs, group_keys: keys, offset, limit: 50 });
         qc.setQueryData<typeof q.data>(["view-data", slug, viewId, kind ?? "", text ?? ""], (previous) => previous ? { ...previous, pages: [...previous.pages, page], pageParams: [...previous.pageParams, { offset, group_offset: 0 }] } : previous);
       } catch { setGroupError(true); } finally { setLoadingGroup(undefined); }
     } : undefined,
@@ -109,6 +112,7 @@ export function useViewData(
     collectionEmpty: first?.collection_empty,
     unapplied: first?.unapplied,
     ungrouped: first?.ungrouped,
+    inputs: first?.inputs,
     loadMore: q.hasNextPage ? () => void q.fetchNextPage() : undefined,
     loadingMore: q.isFetchingNextPage,
     view: first?.view,

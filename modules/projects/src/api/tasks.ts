@@ -194,6 +194,7 @@ tasksRouter.post(
           .where("project_id", "=", parsed.data.project_id)
           .executeTakeFirst()
       : undefined;
+    // check-then-insert: the read only picks the list position or the source tasks; the insert leaves occurrence_of null, the only unique key.
     const inserted = await db
       .insertInto("projects_tasks")
       .values({

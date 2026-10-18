@@ -17,9 +17,11 @@
 // own Authorization says. So the request runs inside a snapshot taken at boot,
 // outside any request, and sets every store itself, as on the HTTP path.
 
+// EGRESS-FILE: own-api - the instance calling its own API
 import { AsyncLocalStorage } from "node:async_hooks";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Duplex } from "node:stream";
+import { currentActor } from "../lib/request-context.js";
 
 type Handler = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -33,6 +35,10 @@ export function setSelfHandler(h: Handler | null): void {
 }
 
 class LoopbackSocket extends Duplex {
+  /** The assistant the calling request came from (request-context.ts), so a
+   *  call it makes through the api's own routes is still the assistant's,
+   *  whatever headers it carries (#7157). */
+  assistant: "mcp" | "relay" | "assistant" | null = null;
   readonly remoteAddress = "127.0.0.1";
   readonly remotePort = 0;
   readonly remoteFamily = "IPv4";
@@ -66,6 +72,11 @@ class LoopbackSocket extends Duplex {
  *  it (a header could be sent by anyone). */
 export function isSelfCall(req: { socket?: unknown }): boolean {
   return req.socket instanceof LoopbackSocket;
+}
+
+/** The assistant behind the request that made this self-call, or null. */
+export function selfCallAssistant(req: { socket?: unknown }): "mcp" | "relay" | "assistant" | null {
+  return req.socket instanceof LoopbackSocket ? req.socket.assistant : null;
 }
 
 /** A raw HTTP/1.1 response, as written to the socket, as a fetch Response. */
@@ -123,6 +134,7 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   // loopback-ok: the fallback before the app is built, or outside the api process
   if (!handler) return fetch(`http://127.0.0.1:${process.env.API_PORT || "4000"}${path}`, init);
   const h = handler;
+  const assistant = currentActor()?.assistant ?? null;
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {};
   new Headers(init.headers).forEach((v, k) => (headers[k] = v));
@@ -145,6 +157,7 @@ export async function selfFetch(input: string | URL | Request, init: RequestInit
   return new Promise<Response>((resolve, reject) => {
     outsideAnyRequest(() => {
       const socket = new LoopbackSocket();
+      socket.assistant = assistant;
       const req = new IncomingMessage(socket as never);
       req.method = method;
       req.url = path;

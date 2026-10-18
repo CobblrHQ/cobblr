@@ -91,4 +91,10 @@ export interface DashboardSnapshot {
   at: string;
   /** By snapshotKey(path). */
   entries: Record<string, SnapshotEntry>;
+  /** A read left out of `entries`, by snapshotKey(path), and why: `timeout`
+   *  when it ran past the snapshot's limit (slow, so its section asks on its
+   *  own), `failed` when it never answered or answered something unreadable. */
+  missed?: Record<string, SnapshotMiss>;
 }
+
+export type SnapshotMiss = "timeout" | "failed";

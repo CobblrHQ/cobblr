@@ -387,7 +387,10 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   };
 
   const menu = useQuery({ queryKey: ["station-menu", slug], queryFn: () => api.scanMenu(slug).then((r) => r.items), staleTime: 5 * 60_000 });
-  const places = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug).then((r) => r.items), staleTime: 60_000 });
+  // The whole answer is what this key keeps, as every other reader of it
+  // (the Move picker among them) expects; the list is derived here. Keeping
+  // just the items made the picker say "No locations yet" (#7165).
+  const places = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug), select: (r) => r.items, staleTime: 60_000 });
 
   useWakeLock();
   useStationTheme(settings.theme);
@@ -1313,7 +1316,7 @@ function Overlay({ children, onCancel, label, wide }: { children: ReactNode; onC
   useEscapeToClose(true, ref, onCancel);
   return (
     <OverlayLayer ref={ref} className="z-50 flex items-end justify-center bg-black/40 sm:items-center" role="dialog" aria-modal="true" aria-label={label} onClick={onCancel}>
-      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} rounded-t-2xl bg-surface p-5 shadow-xl dark:bg-slate-900 sm:rounded-2xl`} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} rounded-t-2xl bg-surface p-5 pb-[max(1.25rem,var(--inset-bottom))] shadow-xl dark:bg-slate-900 sm:rounded-2xl`} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </OverlayLayer>

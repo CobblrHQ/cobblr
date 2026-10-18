@@ -257,20 +257,13 @@ export function EmbroideryPage() {
     refetchInterval: 10000,
   });
   const [stationOffset, setStationOffset] = useState(0);
+  // This screen's own credential, checked for anyone who may run a prepared
+  // job at its station: an operator runs the work an admin prepared (#7173).
   const currentStation = useQuery({
-    queryKey: [
-      "embroidery-current-station",
-      slug,
-      machineId,
-      station?.id,
-      stationVersion,
-    ],
-    queryFn: () =>
-      api.embroideryList<Page<{ id: string; revoked_at: string | null }>>(
-        slug,
-        `machines/${machineId}/stations?limit=20&offset=0&q=${encodeURIComponent(station!.id)}`,
-      ),
-    enabled: !!machineId && !!station && admin,
+    queryKey: ["embroidery-current-station", slug, machineId, station?.id, stationVersion],
+    queryFn: () => api.embroideryStationCheck(slug, machineId!, { station_id: station!.id, token: station!.token }),
+    enabled: !!machineId && !!station,
+    retry: false,
   });
   const stations = useQuery({
     queryKey: [
@@ -306,11 +299,10 @@ export function EmbroideryPage() {
       ),
     enabled: !!machine?.config.asset_ref,
   });
-  const authorized =
-    !!station &&
-    !!currentStation.data?.items.some(
-      (s) => s.id === station?.id && !s.revoked_at,
-    );
+  const authorized = !!station && !!currentStation.data?.authorized;
+  // Start, interruption and the outcome are the station's: an admin, or anyone
+  // the station check admits (it refuses those who may not run jobs at a station).
+  const runsAtStation = admin || !!currentStation.data;
   const selectedHoop = machine?.config.hoops.find((h) => h.name === hoop),
     tooLarge =
       !!design &&
@@ -360,6 +352,12 @@ export function EmbroideryPage() {
     runAction({
       actionId: "digifab:embroidery-job",
       args: { operation, id, fields },
+    });
+  // A prepared run's start, interruption and outcome go through the station's own action, which an operator may run.
+  const atStation = (operation: "start" | "interrupt" | "outcome", id: string | undefined, fields: unknown) =>
+    runAction({
+      actionId: "digifab:station-run",
+      args: { operation: `embroidery_${operation}`, id, fields },
     });
   const chooseThread = (index: number, id: string) => {
     setMapping((v) => ({ ...v, [index]: id }));
@@ -994,7 +992,7 @@ export function EmbroideryPage() {
           >
             Download {pending.plan.filename}
           </button>
-          {!pending.started_at && !pending.report && admin && (
+          {!pending.started_at && !pending.report && runsAtStation && (
             <div className="space-y-2">
               {[
                 ["file_copied", "File copied to USB and stick safely ejected"],
@@ -1027,7 +1025,7 @@ export function EmbroideryPage() {
                 onClick={() =>
                   void perform(
                     () =>
-                      mutate("start", pending.job_id, {
+                      atStation("start", pending.job_id, {
                         ...checks,
                         station_token: station?.token,
                       }),
@@ -1040,13 +1038,13 @@ export function EmbroideryPage() {
               </button>
             </div>
           )}
-          {pending.started_at && !pending.report && admin && (
+          {pending.started_at && !pending.report && runsAtStation && (
             <button
               className={button}
               disabled={busy || pending.interrupted}
               onClick={() =>
                 void perform(
-                  () => mutate("interrupt", pending.job_id, {}),
+                  () => atStation("interrupt", pending.job_id, {}),
                   "Interruption recorded. Use the physical machine's Stop control, then record thread use.",
                 )
               }
@@ -1054,7 +1052,7 @@ export function EmbroideryPage() {
               Record interruption
             </button>
           )}
-          {admin && (
+          {runsAtStation && (
             <form
               className="space-y-3"
               onSubmit={(e) => {
@@ -1077,7 +1075,7 @@ export function EmbroideryPage() {
                 };
                 void perform(
                   () =>
-                    mutate("outcome", pending.job_id, {
+                    atStation("outcome", pending.job_id, {
                       ...report,
                       station_token: station?.token,
                     }),

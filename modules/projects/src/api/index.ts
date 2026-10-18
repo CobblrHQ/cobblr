@@ -2,6 +2,7 @@
 // Side effect on import: registers projects' action handlers +
 // entity-kind resolvers with the platform.
 
+import { PROJECT_EDITABLE_KEYS, updateProjectFields } from "./update-fields.js";
 import { Router } from "express";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -16,6 +17,7 @@ import { registerPatternNeedsSubscriber } from "./pattern-needs.js";
 registerProjectsCalendarSource();
 registerProjectsOverdueSource();
 registerProjectsHandlers();
+platform().entities.registerUpdater("projects:project", updateProjectFields, { nativeFields: [...PROJECT_EDITABLE_KEYS] });
 registerProjectsNotificationMappers();
 // A pattern PDF attached to a design pulls its own photo out (issue #2402).
 registerPatternPhotoSubscriber();

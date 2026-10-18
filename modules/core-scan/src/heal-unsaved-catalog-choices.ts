@@ -32,6 +32,7 @@ interface HealDB {
     status: string;
     catalog_image_url: string | null;
     catalog_image_file_id: string | null;
+    created_at: Date;
   };
   core_scan_record_photo_suggestions: {
     entity_kind: string;
@@ -44,10 +45,11 @@ interface HealDB {
 }
 
 /** Heal one workspace. Cheap on the happy path: two indexed counts. */
-export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "catalog_image_url"])
+    .where("created_at", "<", since)
     .where("status", "in", ["pending", "enriching"])
     .where("catalog_image_url", "is not", null)
     .where("catalog_image_file_id", "is", null)
@@ -85,8 +87,9 @@ export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<Heal
 export function registerUnsavedCatalogChoicesHeal(): void {
   registerHealPass({
     name: "core-scan.heal-unsaved-catalog-choices",
+    since: "2026-10-03T03:44:25Z",
     shim: "modules/core-scan/src/heal-unsaved-catalog-choices.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healUnsavedCatalogChoicesIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healUnsavedCatalogChoicesIn(orgId, db as Kysely<HealDB>, since),
   });
 }

@@ -1,13 +1,15 @@
-// The web's api client (web/src/lib/api.ts) and whether anything calls each
+// The web's api client (web/src/lib/api/*.ts, one file per area behind the
+// web/src/lib/api.ts barrel, #7364) and whether anything calls each
 // of its methods. One reading of "called", for the lint that fails an
 // uncalled method (lint-api-client-reachable) and the one that asks whether a
 // screen offers a route (lint-ui-reach): a method nothing calls is a door no
 // screen opens, and the two must not disagree about which those are.
 import { readOnce } from "./read-once.ts";
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export const API_CLIENT = "web/src/lib/api.ts";
+export const API_CLIENT_DIR = "web/src/lib/api";
 const ROOTS = ["web/src", "packages/platform-web/src", "modules"];
 
 function* walk(dir: string): Generator<string> {
@@ -22,14 +24,23 @@ function* walk(dir: string): Generator<string> {
 /** A method's line: two spaces, its name, a colon, then its function. */
 export const METHOD_LINE = /^ {2}([a-zA-Z0-9_]+): (?:\(|async \(|<)/;
 
-export function apiClientMethods(src = readOnce(API_CLIENT)): string[] {
+/** The client's files: the barrel and every area file under it. */
+export function apiClientFiles(): string[] {
+  // A tree from before the split (a test fixture) has the barrel alone.
+  if (!existsSync(API_CLIENT_DIR)) return [API_CLIENT];
+  return [API_CLIENT, ...readdirSync(API_CLIENT_DIR).filter((n) => /\.ts$/.test(n) && !/\.test\.ts$/.test(n)).sort().map((n) => `${API_CLIENT_DIR}/${n}`)];
+}
+
+export const isApiClientFile = (f: string): boolean => f === API_CLIENT || (f.startsWith(`${API_CLIENT_DIR}/`) && !f.slice(API_CLIENT_DIR.length + 1).includes("/"));
+
+export function apiClientMethods(src = apiClientFiles().map((f) => readOnce(f)).join("\n")): string[] {
   return src.split("\n").flatMap((l) => l.match(METHOD_LINE)?.[1] ?? []);
 }
 
 /** Every source that could call the client, the client itself excepted. */
 export function callerCorpus(): string {
   let corpus = "";
-  for (const root of ROOTS) for (const f of walk(root)) if (!f.endsWith(API_CLIENT)) corpus += readOnce(f) + "\n";
+  for (const root of ROOTS) for (const f of walk(root)) if (!isApiClientFile(f)) corpus += readOnce(f) + "\n";
   return corpus;
 }
 

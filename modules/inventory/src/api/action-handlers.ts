@@ -1,4 +1,5 @@
 import { assertStorageReady } from "./storage.js";
+import { PART_EDITABLE_KEYS, updatePartFields } from "./update-fields.js";
 import { recordName } from "@cobblr/platform-contract/record-name";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { stockTrackerAllows } from "../stock-tracker.js";
@@ -34,6 +35,10 @@ import {
   arrivingLotsOf,
   type ArrivingLot,
   consumeOldest,
+  consumeLot,
+  lotIs,
+  lotPickOf,
+  type LotPick,
   reconcileToQty,
   visibleFrom,
   expiryFor,
@@ -117,6 +122,7 @@ interface StockDraw {
 }
 
 interface AdjustStockPayload {
+  operationId?: string;
   operationKey?: string;
   /** All required draws succeed together, or none of the stock moves. */
   draws?: StockDraw[];
@@ -149,6 +155,9 @@ interface AdjustStockPayload {
    *  reversal is a fresh application, where a print's refund is never made
    *  twice. */
   reversible?: boolean;
+  /** Take back what this source has added, net, whatever it was: a shopping
+   *  line unticked. Judged on the ledger inside the same transaction. */
+  takeBack?: boolean;
   /** The delta sets the count to what is actually there (a recount): the
    *  ledger line is a correction, never consumption or a purchase. */
   correction?: boolean;
@@ -170,8 +179,8 @@ async function refuseOneOfMeasured(orgId: string, partId: string): Promise<void>
 
 /** Has this source already moved this thing in this direction? */
 /** What this source has already done to the count, net. */
-export async function appliedBySource(orgId: string, partId: string, sourceKind: string, sourceId: string): Promise<number> {
-  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+export async function appliedBySource(orgId: string, partId: string, sourceKind: string, sourceId: string, on?: Kysely<InventoryDB>): Promise<number> {
+  const db = on ?? ((await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>);
   const row = await db
     .selectFrom("inventory_consumption")
     .select(sql<string>`coalesce(sum(delta::numeric), 0)`.as("net"))
@@ -182,9 +191,9 @@ export async function appliedBySource(orgId: string, partId: string, sourceKind:
   return Number(row?.net ?? 0);
 }
 
-async function alreadyApplied(orgId: string, partId: string, sourceKind: string, sourceId: string, delta: number, reversible: boolean): Promise<boolean> {
-  if (reversible) return Math.sign(await appliedBySource(orgId, partId, sourceKind, sourceId)) === Math.sign(delta);
-  const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
+async function alreadyApplied(orgId: string, partId: string, sourceKind: string, sourceId: string, delta: number, reversible: boolean, on?: Kysely<InventoryDB>): Promise<boolean> {
+  if (reversible) return Math.sign(await appliedBySource(orgId, partId, sourceKind, sourceId, on)) === Math.sign(delta);
+  const db = on ?? ((await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>);
   const row = await db
     .selectFrom("inventory_consumption")
     .select(["part_id"])
@@ -224,6 +233,8 @@ export function goneStockRefusal(name: string | null | undefined): string {
   return `${name || "This record"} is marked gone, so it has nothing on hand. Bring it back before changing its stock.`;
 }
 
+const NO_SUCH_LOT = "That lot is not there any more. Refresh the list and try again.";
+
 /** The core stock-delta path, shared by adjust-stock (wire/HTTP) and the
  *  one-tap consume actions (use-one/use-up). Applies the delta, writes the
  *  consumption ledger, re-emits stock.changed, and fires stock.low on a
@@ -232,19 +243,28 @@ export function goneStockRefusal(name: string | null | undefined): string {
  *  opt-out. A non-zero `delta` is assumed (callers guard). */
 export async function applyStockDelta(
   orgId: string,
-  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware"; operationKey?: string },
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware"; operationKey?: string; operationId?: string },
 ): Promise<Record<string, unknown>> {
-  if (p.operationKey !== undefined && (typeof p.operationKey !== "string" || !p.operationKey.trim() || p.operationKey.length > 200 || p.delta >= 0)) {
+  const { delta } = p;
+  if (p.operationKey !== undefined && (typeof p.operationKey !== "string" || !p.operationKey.trim() || p.operationKey.length > 200 || delta >= 0)) {
     throw new ActionRefusal("A stock draw receipt needs a key of at most 200 characters and a negative quantity.");
   }
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-  const movement = await db.transaction().execute(trx => moveStock(trx, orgId, p));
-  return announceStockMove(db, orgId, p, movement);
+  const movement = await db.transaction().execute((trx) => stockDeltaIn(trx, orgId, p));
+  return afterStockDelta(db, orgId, p.reason, movement);
 }
 
-type StockDelta = Parameters<typeof applyStockDelta>[1];
+type StockMovement = Record<string, unknown> & { updated?: { id: string; name: string; qty: unknown; min_qty: unknown }; applied?: number; requested?: number; verdict?: { kind: string; note?: string } };
 
-async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockDelta & { exact?: boolean; optional?: boolean }) {
+/** The stock write itself, on the caller's transaction: the row lock, the
+ *  floor, the new count and its ledger line. Nothing here may reach for a
+ *  second connection: a caller holding this transaction and waiting on the
+ *  pool is how a small pool deadlocks. */
+export async function stockDeltaIn(
+  trx: Transaction<InventoryDB>,
+  orgId: string,
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware"; operationKey?: string; operationId?: string; exact?: boolean; optional?: boolean },
+): Promise<StockMovement> {
   const { partId, delta, reason } = p;
   // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
   // external system counts usage and Cobblr mirrors it on sync — mutating here
@@ -255,6 +275,11 @@ async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockD
     .where("id", "=", partId)
     .forUpdate().executeTakeFirst();
   if (!ext) return { ok: false, error: "part_not_found" };
+  if (p.operationId) {
+    const already = await trx.selectFrom("inventory_stock_operations").select("operation_id")
+      .where("operation_id", "=", p.operationId).where("part_id", "=", partId).executeTakeFirst();
+    if (already) return { ok: true, skipped: true, deliverySatisfied: true, reason: "operation already applied", newQty: Number(ext.qty) };
+  }
   if (p.operationKey) {
     const prior = await trx.selectFrom("inventory_consumption").select(["delta", "source_kind", "source_id"])
       .where("part_id", "=", partId).where("operation_key", "=", p.operationKey).executeTakeFirst();
@@ -265,7 +290,7 @@ async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockD
   }
   if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name) };
   if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
-    return { ok: true, skipped: true, reason: `externally tracked by ${ext.tracked_by}` };
+    return { ok: true, skipped: true, deliverySatisfied: true, reason: `externally tracked by ${ext.tracked_by}` };
   }
 
   if (delta < 0 && !p.correction) {
@@ -290,6 +315,10 @@ async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockD
   }
   const applied = verdict.applied;
 
+  if (p.operationId) {
+    // check-then-insert: the part row is locked before the operation lookup, serializing writers for this stock.
+    await trx.insertInto("inventory_stock_operations").values({ operation_id: p.operationId, part_id: partId }).execute();
+  }
   const updated = await trx
     .updateTable("inventory_parts")
     .set({ qty: sql<string>`greatest(0, qty + ${applied}::numeric)`, updated_at: new Date() })
@@ -300,15 +329,16 @@ async function moveStock(trx: Transaction<InventoryDB>, orgId: string, p: StockD
   if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
 
   await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null, operationKey: p.operationKey });
-  return { updated, applied, verdict };
+  return { updated, applied, verdict, requested: delta };
 }
 
-async function announceStockMove(
-  db: Kysely<InventoryDB>, orgId: string, p: StockDelta,
-  movement: Awaited<ReturnType<typeof moveStock>>,
-): Promise<Record<string, unknown>> {
+/** What follows a committed count change: the statement line's event, the
+ *  running-low wire. Run it after the transaction that wrote the count. */
+export async function afterStockDelta(db: Kysely<InventoryDB>, orgId: string, reason: string, movement: StockMovement): Promise<Record<string, unknown>> {
   if (!movement.updated) return movement;
-  const { updated, applied, verdict } = movement;
+  const { updated, verdict } = movement as { updated: NonNullable<StockMovement["updated"]>; verdict: NonNullable<StockMovement["verdict"]> };
+  const applied = movement.applied as number;
+  const requested = movement.requested as number;
 
   // The statement line (WHAT drew it down, HOW MUCH: also what the burn-rate
   // predictor reads), stock.changed, and low stock on a decrease, the one
@@ -321,7 +351,7 @@ async function announceStockMove(
     delta: applied,
     newQty,
     minQty,
-    reason: p.reason,
+    reason,
     ledger: false,
   });
   // `delta` is what actually moved (the inverse of this is +delta); a clamp
@@ -336,7 +366,7 @@ async function announceStockMove(
     // took one off can offer the shopping list there and then (#3897).
     minQty,
     low,
-    ...(verdict.kind === "clamp" ? { clamped: true, requested: p.delta, note: verdict.note } : {}),
+    ...(verdict.kind === "clamp" ? { clamped: true, requested, note: verdict.note } : {}),
   };
 }
 
@@ -356,9 +386,9 @@ async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string
     const out = [];
     for (const d of [...grouped.values()].sort((a, b) => a.partId.localeCompare(b.partId))) {
       const p = { partId: d.partId, delta: -d.quantity, reason, exact: !d.optional, optional: d.optional };
-      const movement = await moveStock(trx, orgId, p);
+      const movement = await stockDeltaIn(trx, orgId, p);
       if (!movement.updated && !d.optional) {
-        throw new ActionRefusal(movement.error === "part_not_found" ? "A required component is no longer available." : movement.error || "A required component could not be drawn from stock.");
+        throw new ActionRefusal(movement.error === "part_not_found" ? "A required component is no longer available." : String(movement.error || "A required component could not be drawn from stock."));
       }
       out.push({ p, movement });
     }
@@ -366,8 +396,8 @@ async function applyStockDraws(orgId: string, draws: StockDraw[], reason: string
   });
   const consumed = [];
   for (const { p, movement } of movements) {
-    await announceStockMove(db, orgId, p, movement);
-    if (movement.updated) consumed.push({ part_id: p.partId, quantity: -movement.applied });
+    await afterStockDelta(db, orgId, p.reason, movement);
+    if (movement.updated) consumed.push({ part_id: p.partId, quantity: -(movement.applied as number) });
   }
   return { ok: true, consumed };
 }
@@ -513,22 +543,6 @@ async function restorePart(ctx: ActionInvokeContext): Promise<Record<string, unk
   return { ok: true, summary: `Put ${current.name} back the way it was.`, partId };
 }
 
-/** An item dated in a field the workspace declared as its expiry but not
- *  named `expires_on` (a "Best before" added on /fields): its lots read that
- *  date, by the role, instead of treating the item as undated. */
-async function roleExpiry(orgId: string, partId: string, md: Record<string, unknown>): Promise<string | null> {
-  try {
-    const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
-    const name = (await platform().entities.roledFieldsFor(orgId, kind)).find((f) => f.field_role === "expiry")?.name;
-    const v = name ? md[name] : undefined;
-    return typeof v === "string" && v ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-
-
 /**
  * Change stock while keeping the lots underneath honest.
  *
@@ -564,34 +578,97 @@ export function arrivingLots(delta: number, restock: boolean, lots: readonly Arr
   };
 }
 
+/** Reads that need a connection of their own, made before a transaction takes
+ *  one: the day where the person is, and which fields of this record play the
+ *  expiry and acquired-on roles. */
+interface BatchPrep {
+  today: string;
+  roles: { acquiredOn: string | null; expiry: string | null } | null;
+}
+
+async function prepareBatches(orgId: string, partId: string, opts: { timezone?: string; userId?: string | null }): Promise<BatchPrep> {
+  const today = await personToday(opts.userId, opts.timezone);
+  let roles: BatchPrep["roles"] = null;
+  try {
+    const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
+    const roled = await platform().entities.roledFieldsFor(orgId, kind);
+    roles = {
+      acquiredOn: roled.find((f) => f.field_role === "acquired-on")?.name ?? null,
+      expiry: roled.find((f) => f.field_role === "expiry")?.name ?? null,
+    };
+  } catch (err) {
+    console.warn(`[inventory] field roles skipped for ${partId}:`, (err as Error).message);
+  }
+  return { today, roles };
+}
+
+/** A stock change through the lots, not yet finished: its answer so far, and
+ *  the count movement whose events still wait for the commit. */
+export interface BatchRun {
+  out: Record<string, unknown>;
+  movement?: StockMovement;
+  reason: string;
+  extra?: Record<string, unknown>;
+}
+
+/** What follows the commit of a `withBatchesIn`. */
+export async function finishBatches(db: Kysely<InventoryDB>, orgId: string, run: BatchRun): Promise<Record<string, unknown>> {
+  if (!run.extra) return run.out;
+  const applied = run.movement ? await afterStockDelta(db, orgId, run.reason, run.movement) : { ok: true, skipped: true, deliverySatisfied: true, reason: "no quantity change" };
+  return { ...applied, ...run.extra };
+}
+
 export async function withBatches(
   orgId: string,
   partId: string,
   reason: string,
   delta: number,
   mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean } = {},
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; operationId?: string } = {},
 ): Promise<Record<string, unknown>> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
-  if (delta < 0 && !opts.correction) await assertStorageReady(db, orgId, partId);
-  const row = await db
+  const prep = await prepareBatches(orgId, partId, opts);
+  const run = await db.transaction().execute((trx) => withBatchesIn(trx, orgId, partId, reason, delta, mutate, opts, prep));
+  return finishBatches(db, orgId, run);
+}
+
+/** The lots and the count of one record, changed together on the caller's
+ *  transaction. The record's row is locked first, so two taps at once (two
+ *  people, two tabs) change it one after the other, each reading what the
+ *  last left: before this, both read the same lots, and the count went to 0
+ *  while the lots still held the stock. Nothing in here may need a second
+ *  connection (`prepareBatches` is what does, beforehand). */
+export async function withBatchesIn(
+  trx: Transaction<InventoryDB>,
+  orgId: string,
+  partId: string,
+  reason: string,
+  delta: number,
+  mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; operationId?: string },
+  prep: BatchPrep,
+): Promise<BatchRun> {
+  if (delta < 0 && !opts.correction) await assertStorageReady(trx, orgId, partId);
+  const row = await trx
     .selectFrom("inventory_parts")
     .select(["id", "qty", "metadata", "name"])
     .where("id", "=", partId)
+    .forUpdate()
     .executeTakeFirst();
-  if (!row) return { ok: false, error: "missing_part" };
-  if (isGone(row.metadata)) return { ok: false, error: goneStockRefusal(row.name) };
+  if (!row) return { out: { ok: false, error: "missing_part" }, reason };
+  if (isGone(row.metadata)) return { out: { ok: false, error: goneStockRefusal(row.name) }, reason };
 
   const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
   const qtyNow = Number(row.qty);
-  const expiresOn = typeof md.expires_on === "string" && md.expires_on ? md.expires_on : await roleExpiry(orgId, partId, md);
+  const roleDate = prep.roles?.expiry ? md[prep.roles.expiry] : undefined;
+  const expiresOn = typeof md.expires_on === "string" && md.expires_on ? md.expires_on : typeof roleDate === "string" && roleDate ? roleDate : null;
 
   const current = reconcileToQty(batchesFrom(md, qtyNow, expiresOn), qtyNow);
   // Through the one reader the shopping row uses too (fresh-lot.ts): a
   // number field typed on a form arrives as "10", and a `typeof` check here
   // dated no lot while the row promised one.
   const shelfLifeDays = shelfLifeDaysOf(md.shelf_life_days);
-  const today = await personToday(opts.userId, opts.timezone);
+  const today = prep.today;
 
   // The CALLER decides how much stock moves; the lots only describe it. This
   // used to run the other way - the delta was read back out of the mutated
@@ -609,39 +686,45 @@ export async function withBatches(
   // the same rule again; this keeps the lots from being rewritten for nothing.
   const verdict = floorDelta(qtyNow, delta);
   if (verdict.kind === "refuse") {
-    return { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, qtyNow), qty: Math.max(0, qtyNow) };
+    return { out: { ok: false, error: verdict.error, partId, delta: 0, newQty: Math.max(0, qtyNow), qty: Math.max(0, qtyNow) }, reason };
   }
   const qtyAfter = Math.max(0, qtyNow + verdict.applied);
   const next = reconcileToQty(mutate(current, { today, shelfLifeDays, qtyBefore: qtyNow }), qtyAfter);
   const visible = visibleFrom(next);
 
   // A lot dated today grew: stock arrived. The record's own role fields say
-  // so, by the workspace's declarations rather than by name. Read through the
-  // entities door so an instance row (a Groceries table's milk) answers with
-  // its own fields. A use-one, or a bare correction (reconcile files those as
-  // an undated lot), never rewrites a bought-on date.
-  let stamps: Record<string, string | null> = {};
-  if (arrivedToday(current, next, today)) {
-    try {
-      const kind = await platform().entities.resolvedKindForEntity(orgId, "inventory:part", partId);
-      const roled = await platform().entities.roledFieldsFor(orgId, kind);
-      stamps = freshLotStamps({
+  // so, by the workspace's declarations rather than by name. A use-one, or a
+  // bare correction (reconcile files those as an undated lot), never rewrites
+  // a bought-on date.
+  const stamps: Record<string, string | null> = arrivedToday(current, next, today) && prep.roles
+    ? freshLotStamps({
         today,
         visibleExpiry: visible.expires_on,
         qtyBefore: qtyNow,
-        roles: {
-          acquiredOn: roled.find((f) => f.field_role === "acquired-on")?.name ?? null,
-          expiry: roled.find((f) => f.field_role === "expiry")?.name ?? null,
-        },
-      });
-    } catch (err) {
-      console.warn(`[inventory] arrival stamps skipped for ${partId}:`, (err as Error).message);
-    }
-  }
+        roles: { acquiredOn: prep.roles.acquiredOn, expiry: prep.roles.expiry },
+      })
+    : {};
 
-  // Metadata first, so a failure in the stock write leaves the lots describing
-  // what is really there rather than what we hoped to do.
-  await db
+  // The count first, then the lots, on the one transaction: a stock write that
+  // is refused (an externally tracked record, a usage tracker that is not the
+  // caller) changes nothing, so the lots must not be rewritten either, or the
+  // next reconcile finds fewer units than the lots claim and drops the oldest
+  // lot's real dates (#7116). The events that follow wait for the commit.
+  const movement =
+    verdict.applied === 0
+      ? undefined
+      : await stockDeltaIn(trx, orgId, {
+          partId,
+          delta: verdict.applied,
+          reason,
+          sourceKind: opts.sourceKind ?? null,
+          sourceId: opts.sourceId ?? null,
+          operationId: opts.operationId,
+          ...(opts.correction ? { correction: true } : {}),
+        });
+  if (movement && !movement.updated) return { out: movement, reason };
+
+  await trx
     .updateTable("inventory_parts")
     .set({
       metadata: sql`coalesce(metadata, '{}'::jsonb) || ${JSON.stringify({
@@ -653,26 +736,16 @@ export async function withBatches(
     .where("id", "=", partId)
     .execute();
 
-  // Through the normal path, so the consumption ledger, stock.changed and the
-  // running-low wire all fire exactly as they do for any other stock move.
-  const applied =
-    verdict.applied === 0
-      ? { ok: true, skipped: true, reason: "no quantity change" }
-      : await applyStockDelta(orgId, {
-          partId,
-          delta: verdict.applied,
-          reason,
-          sourceKind: opts.sourceKind ?? null,
-          sourceId: opts.sourceId ?? null,
-          ...(opts.correction ? { correction: true } : {}),
-        });
-
-  return { ...applied, batches: next, expires_on: visible.expires_on, qty: qtyAfter };
+  return { out: {}, movement, reason, extra: { batches: next, expires_on: visible.expires_on, qty: qtyAfter } };
 }
 
 export function registerInventoryActionHandlers(): void {
   if (registered) return;
   registered = true;
+
+  // Parts are editable through platform:update-fields (an app's edit form, the
+  // API, Cobb), with the same grant the part page asks for.
+  platform().entities.registerUpdater("inventory:part", updatePartFields, { capability: "inventory:update-part", nativeFields: [...PART_EDITABLE_KEYS] });
 
   // How a device reading maps to inventory's own stock actions — so
   // core-devices can apply a scale/counter reading to a part WITHOUT knowing
@@ -779,54 +852,86 @@ export function registerInventoryActionHandlers(): void {
       // button targets the entity and sends no partId, and the invoke used to
       // answer "skipped: missing partId" while claiming ok.
       const partId = args.partId ?? ev.partId ?? ctx.entity?.id;
-      const stated = statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta;
+      const takeBack = (args as { takeBack?: unknown }).takeBack === true;
+      const stated = takeBack ? -1 : (statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta);
       const reason = args.reason ?? ev.reason ?? "wire-driven adjustment";
-      if (!partId || typeof stated !== "number" || stated === 0) {
+      if (!partId || typeof stated !== "number") {
         return { ok: true, skipped: true, reason: "missing partId or delta" };
       }
-      const inUnit = await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
-      if (!inUnit.ok) return { ok: true, skipped: true, reason: inUnit.reason };
-      const delta = inUnit.delta;
-      if (args.operationKey !== undefined) {
-        return applyStockDelta(ctx.orgId, { partId, delta, reason, sourceKind: args.sourceKind, sourceId: args.sourceId, operationKey: args.operationKey });
-      }
+      if (stated === 0) return { ok: true, skipped: true, deliverySatisfied: true, reason: "no stock change requested" };
       const sourceKind = args.sourceKind ?? ev.sourceKind;
       const sourceId = args.sourceId ?? ev.sourceId;
-      if ((args.once ?? ev.once) === true && sourceKind && sourceId && (await alreadyApplied(ctx.orgId, partId, sourceKind, sourceId, delta, (args.reversible ?? ev.reversible) === true))) {
-        return { ok: true, skipped: true, reason: "already applied for this source" };
+      if (takeBack && !(sourceKind && sourceId)) return { ok: true, skipped: true, reason: "nothing to take back without a source" };
+      const inUnit = takeBack ? { ok: true as const, delta: stated } : await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
+      if (!inUnit.ok) return { ok: true, skipped: true, reason: inUnit.reason };
+      if (args.operationKey !== undefined) {
+        return applyStockDelta(ctx.orgId, { partId, delta: inUnit.delta, reason, sourceKind: args.sourceKind, sourceId: args.sourceId, operationKey: args.operationKey });
       }
-      // Stock arriving goes through the lots, so a restock (the wire says
-      // `restock: true`) or anything landing on an empty shelf is a fresh lot
-      // dated today, good until today plus the item's shelf life, and the
-      // record's bought-on and expiry role fields say so. Before this, the
-      // check-off wire's +1 was a bare count and the fresh milk inherited the
-      // old lot's dates (fresh-lot.ts). A correction on a stocked record stays
-      // a bare count: reconcile files it as an undated lot, as it always did.
-      if (delta > 0) {
-        const restock = (args as { restock?: unknown }).restock === true;
-        return withBatches(
-          ctx.orgId,
+      const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
+      const once = (args.once ?? ev.once) === true && !!sourceKind && !!sourceId;
+      const restock = (args as { restock?: unknown }).restock === true;
+      // What other connections have to say (the day, the field roles) is read
+      // before the transaction takes its own, so a small pool is never asked
+      // for a second connection by one that is holding the first.
+      const prep = await prepareBatches(ctx.orgId, partId, { timezone: typeof args.timezone === "string" ? args.timezone : undefined, userId: ctx.userId });
+
+      // The whole of one source's say about this record, on ONE transaction:
+      // the record's row is locked first, so the "has this source already
+      // done it?" read below sees what the request before it committed, and
+      // its write cannot be slipped between (#7115: two ticks of one shopping
+      // line each read "not yet" and each added the purchase). The events
+      // that follow a count change wait for the commit.
+      const settled = await db.transaction().execute(async (trx): Promise<{ skipped: Record<string, unknown> } | { after: () => Promise<Record<string, unknown>> }> => {
+        await trx.selectFrom("inventory_parts").select("id").where("id", "=", partId).forUpdate().execute();
+        let delta = inUnit.delta;
+        if (takeBack) {
+          // What this source has added, net: all of it goes, and a line that
+          // added nothing (never ticked, or already taken back) takes nothing.
+          const net = await appliedBySource(ctx.orgId, partId, sourceKind!, sourceId!, trx);
+          if (net <= 0) return { skipped: { ok: true, skipped: true, reason: "nothing applied for this source" } };
+          delta = -net;
+        } else if (once && (await alreadyApplied(ctx.orgId, partId, sourceKind!, sourceId!, delta, (args.reversible ?? ev.reversible) === true, trx))) {
+          return { skipped: { ok: true, skipped: true, deliverySatisfied: true, reason: "already applied for this source" } };
+        }
+        // Stock arriving goes through the lots, so a restock (the wire says
+        // `restock: true`) or anything landing on an empty shelf is a fresh lot
+        // dated today, good until today plus the item's shelf life, and the
+        // record's bought-on and expiry role fields say so. Before this, the
+        // check-off wire's +1 was a bare count and the fresh milk inherited the
+        // old lot's dates (fresh-lot.ts). A correction on a stocked record stays
+        // a bare count: reconcile files it as an undated lot, as it always did.
+        if (delta > 0) {
+          const run = await withBatchesIn(
+            trx,
+            ctx.orgId,
+            partId,
+            reason,
+            delta,
+            arrivingLots(delta, restock, arrivingLotsOf(args.lots, delta)),
+            {
+              ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
+              userId: ctx.userId,
+              operationId: ev.operationId,
+              sourceKind: sourceKind ?? null,
+              sourceId: sourceId ?? null,
+              ...(args.correction === true ? { correction: true } : {}),
+            },
+            prep,
+          );
+          return { after: () => finishBatches(db, ctx.orgId, run) };
+        }
+        const movement = await stockDeltaIn(trx, ctx.orgId, {
           partId,
-          reason,
           delta,
-          arrivingLots(delta, restock, arrivingLotsOf(args.lots, delta)),
-          {
-            ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
-            userId: ctx.userId,
-            sourceKind: args.sourceKind ?? ev.sourceKind ?? null,
-            sourceId: args.sourceId ?? ev.sourceId ?? null,
-            ...(args.correction === true ? { correction: true } : {}),
-          },
-        );
-      }
-      return applyStockDelta(ctx.orgId, {
-        partId,
-        delta,
-        reason,
-        sourceKind: args.sourceKind ?? ev.sourceKind,
-        sourceId: args.sourceId ?? ev.sourceId,
-        ...(args.correction === true ? { correction: true } : {}),
+          reason,
+          sourceKind,
+          sourceId,
+          operationId: ev.operationId,
+          ...(args.correction === true ? { correction: true } : {}),
+        });
+        return { after: () => afterStockDelta(db, ctx.orgId, reason, movement) };
       });
+      return "skipped" in settled ? settled.skipped : settled.after();
     });
   });
 
@@ -989,6 +1094,7 @@ export function registerInventoryActionHandlers(): void {
     timezone: string | undefined,
     reason: string,
     userId: string | null | undefined,
+    pick?: LotPick,
   ): Promise<Record<string, unknown>> {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<InventoryDB>;
     const row = await db
@@ -1003,12 +1109,28 @@ export function registerInventoryActionHandlers(): void {
       batchesFrom(md, Number(row.qty), typeof md.expires_on === "string" ? md.expires_on : null),
       Number(row.qty),
     );
-    const oldest = lots[0];
+    // The lot a row named, or the oldest when none was (the record's own buttons).
+    const oldest = pick ? lots.find((l) => l.qty > 0 && lotIs(l, pick)) : lots[0];
+    if (pick && !oldest) return { ok: false, error: NO_SUCH_LOT };
 
-    const result = await withBatches(orgId, partId, reason, -1, (batches) => consumeOldest(batches, 1).batches, {
-      ...(timezone ? { timezone } : {}),
-      userId,
-    });
+    let vanished = false;
+    const result = await withBatches(
+      orgId,
+      partId,
+      reason,
+      -1,
+      (batches) => {
+        if (!pick) return consumeOldest(batches, 1).batches;
+        const taken = consumeLot(batches, pick, 1);
+        if ("refused" in taken) {
+          vanished = true;
+          return batches;
+        }
+        return taken.batches;
+      },
+      { ...(timezone ? { timezone } : {}), userId },
+    );
+    if (vanished) return { ok: false, error: NO_SUCH_LOT };
     // Nothing ended: nothing to learn from. A refused decrement (the record
     // was empty) must not teach a shelf life it never measured.
     if (result.ok !== true) return result;
@@ -1081,6 +1203,9 @@ export function registerInventoryActionHandlers(): void {
         .where("id", "=", partId)
         .executeTakeFirst();
       if (!row) return { ok: false, error: "missing_part" };
+      // Nothing to open: stamping an opened date on an empty record made the
+      // next one restocked read as already open.
+      if (!(Number(row.qty) > 0)) return { ok: false, error: "Nothing on hand to open", partId, qty: Math.max(0, Number(row.qty)) };
       const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
       const today = await personToday(ctx.userId, args.timezone);
       const openedDays = shelfLifeDaysOf(md.shelf_life_opened_days);
@@ -1105,10 +1230,10 @@ export function registerInventoryActionHandlers(): void {
   // Used up: finished it. A LOWER BOUND on the shelf life, never a measurement.
   platform().actions.registerHandler("inventory.mark-finished", (ctx) =>
     withPartUndo(ctx, async () => {
-      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const args = (ctx.args as { partId?: string; timezone?: string; lot_received_on?: string; lot_expires_on?: string; lot_number?: string } | null) ?? {};
       const partId = ctx.entity?.id ?? args.partId;
       if (!partId) return { ok: false, error: "missing_part" };
-      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it", ctx.userId);
+      const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "finished it", ctx.userId, lotPickOf(args));
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
       return applied;
     }),
@@ -1119,10 +1244,10 @@ export function registerInventoryActionHandlers(): void {
   // buy-less advice - the signal that says somebody is over-buying.
   platform().actions.registerHandler("inventory.mark-spoiled", (ctx) =>
     withPartUndo(ctx, async () => {
-      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const args = (ctx.args as { partId?: string; timezone?: string; lot_received_on?: string; lot_expires_on?: string; lot_number?: string } | null) ?? {};
       const partId = ctx.entity?.id ?? args.partId;
       if (!partId) return { ok: false, error: "missing_part" };
-      const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out", ctx.userId);
+      const applied = await endOldestLot(ctx.orgId, partId, "spoiled", args.timezone, "threw it out", ctx.userId, lotPickOf(args));
       await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "discard", -1)]);
       return applied;
     }),
@@ -1165,7 +1290,7 @@ export function registerInventoryActionHandlers(): void {
   // ledger + low-stock path stay uniform; a no-op if already 0.
   platform().actions.registerHandler("inventory.use-up", (ctx) =>
     withPartUndo(ctx, async () => {
-      const args = (ctx.args as { partId?: string; timezone?: string } | null) ?? {};
+      const args = (ctx.args as { partId?: string; timezone?: string; lot_received_on?: string; lot_expires_on?: string; lot_number?: string } | null) ?? {};
       const partId = ctx.entity?.id ?? args.partId;
       if (!partId) return { ok: false, error: "missing_part" };
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
@@ -1180,7 +1305,7 @@ export function registerInventoryActionHandlers(): void {
       // RECORD (does it go off?), so the record decides. A perishable ends its
       // oldest lot and learns from how long it lasted; plain stock just empties.
       if (isPerishable(row.metadata)) {
-        const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up", ctx.userId);
+        const applied = await endOldestLot(ctx.orgId, partId, "used", args.timezone, "used up", ctx.userId, lotPickOf(args));
         await announce(ctx.orgId, ctx.userId, applied, [observation(partId, "consume", -1)]);
         return applied;
       }

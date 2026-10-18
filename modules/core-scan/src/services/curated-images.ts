@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the manifest address is the operator's setting
 // Curated-first image lookup. The on-the-fly DDG image search guesses a real but
 // often WRONG model (a Prusa MK4 photo for a Prusa Mini). For known machines we'd
 // rather hand-pick the image. This reads a small manifest — `{ entries: [{

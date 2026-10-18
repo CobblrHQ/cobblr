@@ -20,6 +20,7 @@ import { KeyRound, Languages, Lock, Monitor, Moon, Sun, Unlock, UserCog , PanelL
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError } from "../lib/api";
+import { thisPushEndpoint } from "../lib/push-device";
 import { accountSections } from "../lib/account-nav";
 import { useTheme } from "../theme/ThemeContext";
 import { rovingRadio, useToast, usePageTitle, PasswordInput } from "@cobblr/platform-web";
@@ -542,7 +543,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const signOutAll = useMutation({
-    mutationFn: () => api.signOutEverywhere(),
+    mutationFn: async () => api.signOutEverywhere(await thisPushEndpoint()),
     onSuccess: () => toast.success("Signed out of all other devices. This one stays signed in."),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });

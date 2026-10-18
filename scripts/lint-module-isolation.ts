@@ -134,8 +134,10 @@ function checkTableRefs(file: string, rawSrc: string): void {
 function checkModuleNaming(file: string, rawSrc: string): void {
   // A module's manifest LEGITIMATELY names other modules — `dependencies`,
   // event `subscribes`, exposed-API references. The rule is about code reaching
-  // into another module, not declaring a relationship. Skip module.ts.
-  if (/\/module\.ts$/.test(file.replace(/\\/g, "/"))) return;
+  // into another module, not declaring a relationship. Skip module.ts, and a
+  // family's manifest.ts, which is spread into it (scripts/lib/manifest-sources.ts):
+  // an action's `changes: "records"` read there as naming the records module (#7356).
+  if (/\/module\.ts$|\/src\/families\/[a-z0-9-]+\/manifest\.ts$/.test(file.replace(/\\/g, "/"))) return;
   const ownMod = /modules\/([a-z0-9-]+)\//.exec(file.replace(/\\/g, "/"))?.[1];
   const src = stripComments(rawSrc);
   src.split("\n").forEach((ln, i) => {

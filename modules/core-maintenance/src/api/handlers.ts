@@ -2,6 +2,7 @@ import { asAddress } from "@cobblr/platform-contract/address";
 import { ensureBoundRenewal, RenewalFields } from "../bound-renewal.js";
 import { ensureUsageSchedule } from "../usage-schedule.js";
 import { z } from "zod";
+import { registerNeedsRepairAction } from "./needs-repair-action.js";
 // core-maintenance action handlers — the AI-reachable form of the service log.
 //
 // This module had NO entity kind (entries hang off the entity they service, so
@@ -43,6 +44,7 @@ function when(v: unknown): Date | null {
 
 export function registerMaintenanceHandlers(): void {
   registerUndos();
+  registerNeedsRepairAction();
   platform().actions.registerHandler("core-maintenance.ensure-renewal", async ctx => {
     if (!ctx.entity) return { ok: false, error: "Choose the record that renews." };
     const parsed = RenewalFields.safeParse(ctx.args);

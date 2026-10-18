@@ -18,6 +18,7 @@
 //              stays "lan" so a fresh self-host works unconfigured
 //              (fail-safe by image, not by a forgettable env).
 
+// EGRESS-FILE: pinned-door - this is the pinning request for AI provider endpoints: it resolves once, checks, and connects to the checked address
 import { lookup as dnsLookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";

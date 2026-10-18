@@ -1,11 +1,13 @@
 import "./db.js";
 import { sql, type Kysely, type Selectable } from "kysely";
+import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import type { ArmInfo, ArmState } from "@cobblr/platform-contract/robot-arm";
 import type { DigifabDB } from "../../db.js";
 import { buildDriverById } from "../../jobs-core.js";
 import { EdgeAdapterDriver } from "../../drivers/edge-adapter.js";
 import { ArmRefusal } from "./station.js";
+import { LINK_WORDS, linkLost } from "./rules.js";
 import { EdgeArm } from "./edge-arm.js";
 import { CompatibilitySchema, MaintenanceSchema, ProgramEditSchema, SetupSchema, TypedProgramSchema, supportOf } from "./model.js";
 type Unit = Selectable<DigifabDB["digifab_arm_units"]>;
@@ -98,6 +100,16 @@ export async function setMaintenance(db: Kysely<DigifabDB>, orgId: string, userI
  await platform().activity.log({ orgId, userId, action: "arm_maintenance_changed", ref: machineRef(machineId), diff: { from: unit.maintenance, to: m.maintenance, note: m.note } });
  return { ok: true };
 }
+/** What is installed on the arm (gripper, suction cup, tool changer slot).
+ *  An approval binds to it, so changing it voids every approval given before. */
+export async function setTooling(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
+ const { tooling } = z.object({ tooling: z.string().trim().max(500) }).parse(value);
+ const unit = await requireUnit(db, machineId);
+ if (unit.tooling === tooling) return { ok: true };
+ await db.updateTable("digifab_arm_units").set({ tooling, updated_at: new Date() }).where("machine_id", "=", machineId).execute();
+ await platform().activity.log({ orgId, userId, action: "arm_tooling_changed", ref: machineRef(machineId), diff: { tooling, before: { tooling: unit.tooling } } });
+ return { ok: true };
+}
 /** Programs by family. A family names the job ("unload CNC 3"); each unit's
  *  program in it is still its own record, bound to that arm and revision. */
 export function byFamily(programs: Program[]) {
@@ -107,7 +119,7 @@ export function byFamily(programs: Program[]) {
 }
 export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: string) {
  const unit = await db.selectFrom("digifab_arm_units").selectAll().where("machine_id", "=", machineId).executeTakeFirst();
- if (!unit) return { unit: null, state: null, connection_error: null, programs: [], families: [], compatibility: null, support: "untested" as const };
+ if (!unit) return { unit: null, state: null, connection_error: null, link_lost: null, programs: [], families: [], compatibility: null, support: "untested" as const, ownership: null, approvals: [], open_run: null, runs: [] };
  let state: ArmState | null = null, connection_error: string | null = null;
  if (unit.connection_id && unit.device_id) {
   try { state = await (await armDriver(db, orgId, unit.connection_id)).state(unit.device_id); }
@@ -115,7 +127,12 @@ export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: s
  }
  const programs = await db.selectFrom("digifab_arm_programs").selectAll().where("machine_id", "=", machineId).orderBy("name").orderBy("first_seen_at").execute();
  const compatibility = CompatibilitySchema.parse(unit.compatibility ?? {});
- return { unit, state, connection_error, programs, families: byFamily(programs), compatibility, support: supportOf(compatibility) };
+ const now = new Date();
+ const ownership = await db.selectFrom("digifab_arm_ownership").selectAll().where("machine_id", "=", machineId).where("released_at", "is", null).where("expires_at", ">", now).executeTakeFirst();
+ const approvals = await db.selectFrom("digifab_arm_approvals").selectAll().where("machine_id", "=", machineId).where("used_at", "is", null).where("revoked_at", "is", null).where("expires_at", ">", now).orderBy("approved_at", "desc").limit(20).execute();
+ const runs = await db.selectFrom("digifab_arm_runs").selectAll().where("machine_id", "=", machineId).orderBy("started_at", "desc").limit(20).execute();
+ const link = !unit.connection_id ? null : linkLost(!connection_error, state);
+ return { unit, state, connection_error: link ? LINK_WORDS[link] : null, link_lost: link, programs, families: byFamily(programs), compatibility, support: supportOf(compatibility), ownership: ownership ?? null, approvals, open_run: runs.find(r => r.status !== "ended") ?? null, runs };
 }
 /** Every unit's program in one family, across arms: the same family is a
  *  different program on two identical arms. */

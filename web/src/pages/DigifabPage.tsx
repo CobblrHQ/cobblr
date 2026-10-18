@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName } from "@cobblr/platform-web";
+import { productName, useSentWords } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
@@ -546,11 +546,13 @@ function DriversModal({ onClose }: { onClose: () => void }) {
     void qc.invalidateQueries({ queryKey: ["digifab-connections", activeSlug] });
   };
   // Generic install — used by both the one-click catalog and the paste box.
+  const manifestSent = useSentWords(manifest);
   const installManifest = useMutation({
     mutationFn: (m: unknown) => api.installDigifabDriver(activeSlug, m),
     onSuccess: (d) => {
       toast.success(`Installed "${d.name}"`);
-      setManifest("");
+      // A one-click catalog install never marked the paste box, so it keeps it.
+      if (manifestSent.landed()) setManifest("");
       invalidate();
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
@@ -563,6 +565,7 @@ function DriversModal({ onClose }: { onClose: () => void }) {
       toast.error("Manifest isn't valid JSON");
       return;
     }
+    manifestSent.sending();
     installManifest.mutate(parsed);
   };
   const remove = useMutation({
@@ -1376,7 +1379,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
     enabled: !!activeSlug,
     refetchInterval: (q) => {
       const its = q.state.data?.pages.flatMap((p) => p.items) ?? [];
-      return its.some((j) => !TERMINAL_JOB(j.status)) ? 5000 : false;
+      return its.some((j) => j.material_pending || !TERMINAL_JOB(j.status)) ? 5000 : false;
     },
   });
   const invalidate = () => {
@@ -1746,7 +1749,7 @@ function JobDetailModal({
     queryKey: ["digifab-job", activeSlug, jobId],
     queryFn: () => api.getDigifabJob(activeSlug, jobId),
     enabled: !!activeSlug,
-    refetchInterval: (query) => (query.state.data && !TERMINAL_JOB(query.state.data.status) ? 5000 : false),
+    refetchInterval: (query) => (query.state.data && (query.state.data.material_pending || !TERMINAL_JOB(query.state.data.status)) ? 5000 : false),
   });
   const j = q.data;
   const conn = j?.connection_id ? connections.find((c) => c.id === j.connection_id) : undefined;
@@ -1804,6 +1807,7 @@ function JobDetailModal({
               </span>
             )) : null}
             {j.material_part_id ? row("Filament", `${j.material_grams ?? "?"} g`) : null}
+            {j.material_pending ? row("Filament accounting", "Pending. Stock use will be retried automatically.") : null}
             {row("Priority", (
               <select aria-label="Priority"
                 value={j.priority}

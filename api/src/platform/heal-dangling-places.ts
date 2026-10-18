@@ -58,7 +58,7 @@ export async function healDanglingPlacesIn(store: DanglingPlacesStore): Promise<
 const exists = async (db: Kysely<unknown>, table: string) =>
   ((await sql<{ ok: boolean }>`select to_regclass(${`public.${table}`}) is not null as ok`.execute(db)).rows[0]?.ok ?? false);
 
-export function kyselyDanglingPlacesStore(orgId: string, db: Kysely<unknown>): DanglingPlacesStore {
+export function kyselyDanglingPlacesStore(orgId: string, db: Kysely<unknown>, since: Date): DanglingPlacesStore {
   return {
     strandedByLocationId: async () => {
       if (!(await exists(db, "core_locations_locations"))) return [];
@@ -68,6 +68,7 @@ export function kyselyDanglingPlacesStore(orgId: string, db: Kysely<unknown>): D
         const rows = await sql<{ id: string }>`
           select r.id::text as id from ${sql.table(t.table)} r
            where r.location_id is not null
+             and r.created_at < ${since}
              and not exists (select 1 from core_locations_locations l where l.id::text = r.location_id::text)`.execute(db);
         out.push(...rows.rows.map((r) => ({ kind: t.kind, id: r.id })));
       }
@@ -78,6 +79,7 @@ export function kyselyDanglingPlacesStore(orgId: string, db: Kysely<unknown>): D
       const rows = await sql<{ kind: string; id: string }>`
         select p.containee_kind as kind, p.containee_id as id from core_placement_placements p
          where p.container_kind = ${LOCATION}
+           and p.placed_at < ${since}
            and not exists (select 1 from core_locations_locations l where l.id::text = p.container_id)`.execute(db);
       return rows.rows;
     },
@@ -93,9 +95,10 @@ export function kyselyDanglingPlacesStore(orgId: string, db: Kysely<unknown>): D
 export function registerDanglingPlacesHeal(): void {
   registerHealPass({
     name: "placement.heal-dangling-places",
+    since: "2026-09-30T13:29:02Z",
     shim: "api/src/platform/heal-dangling-places.ts",
-    visit: async ({ orgId, db }) => {
-      const n = await healDanglingPlacesIn(kyselyDanglingPlacesStore(orgId, db as Kysely<unknown>));
+    visit: async ({ orgId, db, since }) => {
+      const n = await healDanglingPlacesIn(kyselyDanglingPlacesStore(orgId, db as Kysely<unknown>, since));
       if (n) console.log(`[placement] org ${orgId}: took ${n} thing${n === 1 ? "" : "s"} out of places that no longer exist`);
       return n;
     },

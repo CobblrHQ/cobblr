@@ -167,7 +167,7 @@ export function FilesPage() {
     const ok = await confirm({ title: "Delete this file?", message: `${f.filename} goes to Recently deleted for 30 days, where you can restore it.`, confirmLabel: "Delete", destructive: true });
     if (ok) deleteFile.mutate({ id: f.id, filename: f.filename });
   };
-  const moveMenu = (f: FileRecord) => (
+  const moveMenu = (f: FileRecord, width = "shrink-0 max-w-[9rem]") => (
     <select
       aria-label={`Move ${f.filename}`}
       value=""
@@ -175,7 +175,7 @@ export function FilesPage() {
         const to = e.target.value;
         if (to) updateFile.mutate({ id: f.id, folder_id: to === TOP ? null : to });
       }}
-      className="shrink-0 max-w-[9rem] rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-xs text-muted px-1 py-1"
+      className={`${width} min-w-0 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-xs text-muted px-1 py-1`}
     >
       <option value="">Move to…</option>
       {(f.folder_id ?? null) !== null && <option value={TOP}>Top level</option>}
@@ -318,6 +318,8 @@ export function FilesPage() {
             {images.map((f, i) => (
               <div key={f.id} className="space-y-1">
                 <ImageTile file={f} slug={activeSlug} onOpen={() => setViewing(i)} onDelete={() => void askDelete(f)} />
+                {/* Two lines: half a phone is too narrow for a name, Details and
+                    Move to… side by side, and the select ran into the next card. */}
                 <div className="flex items-center gap-1">
                   {renaming?.kind === "file" && renaming.id === f.id ? (
                     renameInput
@@ -329,8 +331,8 @@ export function FilesPage() {
                   <Link to={`/files/${f.id}`} title="Details" aria-label={`Details of ${f.filename}`} className="shrink-0 text-faint hover:text-accent p-1">
                     <Info size={13} />
                   </Link>
-                  {moveMenu(f)}
                 </div>
+                {moveMenu(f, "w-full")}
               </div>
             ))}
           </div>

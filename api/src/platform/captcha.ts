@@ -6,6 +6,7 @@
 // (which don't set it) are unaffected; the trial box turns it on. The public
 // SITE key is a build-time web var (VITE_CAPTCHA_SITE_KEY), never needed here.
 
+// EGRESS-FILE: vendor-fixed - the verify address comes from a table of known providers in this file, never from the request
 import { timingSafeEqual } from "node:crypto";
 
 const SITEVERIFY: Record<string, string> = {

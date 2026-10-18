@@ -19,7 +19,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-catalogs",
-  version: "0.1.6",
+  version: "0.1.7",
   displayName: "Catalogs",
   description:
     "Bring in reference lists (a parts catalog, an ingredient list) and match your own things to them.",
@@ -54,6 +54,11 @@ export default defineModule({
           // caller setting it is overwritten without being told. Found by the
           // no-silent-field-drop probe.
           { name: "entry_count", type: "number", role: "quantity", readOnly: true },
+          // The kinds this catalog's entries describe, from its schema. Exposed
+          // so another module reading the catalog through the platform sees
+          // it: unexposed, every read said "binds to anything" and a colour
+          // table was offered as a brick's part at a scan's confirm (#6888).
+          { name: "bindable_to_kinds", type: "object", readOnly: true },
         ],
         getEndpoint: "/catalogs/{id}",
         detailRoute: "/configuration/catalogs/{id}",
@@ -64,6 +69,7 @@ export default defineModule({
           "source_url",
           "puller_id",
           "entry_count",
+          "bindable_to_kinds",
         ],
       },
       {
@@ -112,6 +118,7 @@ export default defineModule({
       {
         group: "service",
         id: "core-catalogs:refresh",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /catalogs/:id/pull gates on this action's own id, owner or admin (catalogs.ts)
         runBy: "admin",
         examples: ["refresh this catalog", "pull the latest from the source"],
@@ -125,6 +132,7 @@ export default defineModule({
       {
         group: "service",
         id: "core-catalogs:match-to-catalog",
+        changes: "records",
         examples: ["match this to the catalog", "which catalogue entry is this"],
         label: "Match to catalog",
         description:

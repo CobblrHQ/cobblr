@@ -10,7 +10,7 @@ import { FAMILY_ACTIONS, FAMILY_PANELS, FAMILY_PARTS } from "./families/manifest
 
 export default defineModule({
   name: "digifab",
-  version: "0.40.5",
+  version: "0.41.2",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -42,10 +42,11 @@ export default defineModule({
   // until done (no cron). Same dynamic-import shape as `api`.
   lifecycle: {
     onBoot: async () => {
-      const { registerKilnMonitor } = await import("./kilns/monitor.js");
-      registerKilnMonitor();
+      // Each family's own boot work (core/families.ts).
+      for (const family of (await import("./families/index.js")).FAMILIES) await family.onBoot?.();
       const { registerPollWorker } = await import("./poll-worker.js");
       registerPollWorker();
+      (await import("./loaded-spools.js")).registerMaterialRecovery();
     (await import("./large-format/supplies.js")).registerSupplyPolling();
       // One-shot heal: detectors onto adapter connections (see
       // heal-detectors-to-connections.ts for the retirement condition).
@@ -61,6 +62,9 @@ export default defineModule({
       registerFarmWatchdog();
       const { registerMakeRecovery } = await import("./make-recovery.js");
       registerMakeRecovery();
+      // A good build output is stamped credited only on builds' word, and asked again until it is.
+      const { registerOutputCredit } = await import("./output-credit.js");
+      registerOutputCredit();
       // Background warmer for the printer file cache — a self-perpetuating queue
       // loop that keeps each printer's file list + thumbnails warm in the DB, so
       // the UI reads warm data and the machine is never hit on a modal open.
@@ -120,9 +124,10 @@ export default defineModule({
           { name: "target_device", type: "text" },
           { name: "progress", type: "number" },
           { name: "remote_job_id", type: "text" },
+          { name: "material_pending", type: "boolean" },
           { name: "metadata", type: "object" },
         ],
-        exposableFields: ["file_ref", "status", "target_device", "progress", "remote_job_id"],
+        exposableFields: ["file_ref", "status", "target_device", "progress", "remote_job_id", "material_pending"],
         detailRoute: "/configuration/devices?tab=machines",
       },
       {
@@ -163,7 +168,6 @@ export default defineModule({
       // other machine only where that machine already has its data
       // (panel-presence.ts): a kiln's firing logs on every 3D printer was the
       // growth the owner named (#6337).
-      { id: "digifab:kiln", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Firing logs", collections: ["kilns"], presence: true },
       { id: "digifab:instrument", surface: "entity-detail-panel" as const, target: "machines:machine", title: "Bench instrument", presence: true },
       // "Just my 3D printers, live" — the scoped fleet floor as a page tab
       // on every machines collection (3D Printers, Laser Cutters, …).
@@ -267,59 +271,9 @@ export default defineModule({
       { eventType: "digifab.make.ready", label: "A print is ready to start", description: "Print this has sliced a model for a printer; the print waits on its Make for someone to start it." },
     ],
     actions: [
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {runBy: "member", id: "digifab:reflow-profiles", group: "make", label: "Read paste profiles", description: "List saved immutable reflow profiles for this paste jar.", scope: "workspace", invokeHandler: "digifab.reflow-profiles", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {runBy: "member", id: "digifab:reflow-profile", group: "make", label: "Read a paste profile", description: "Read one saved paste profile and its manufacturer limits.", scope: "workspace", invokeHandler: "digifab.reflow-profile", userInvokable: true, argsSchema: {profile_id: {label: "Paste profile id", type: "text", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      // ADMIN-ONLY: a paste's reflow profile is the recipe every later batch is baked with; saving one is process setup, and a member has no say over configuration
-      {runBy: "admin", id: "digifab:save-reflow-profile", group: "make", label: "Save a paste reflow profile", description: "Save the four phases and manufacturer limits as a new immutable version for a liquid paste jar.", scope: "workspace", invokeHandler: "digifab.save-reflow-profile", userInvokable: true, argsSchema: {paste_kind: {label: "Paste collection kind", type: "text", required: true}, paste_id: {label: "Paste jar id", type: "text", required: true}, profile: {label: "Four phases and manufacturer limits", type: "json", required: true}}},
-      // UI-SCREEN: /builds/<revision> saves paste profiles and downloads the oven bridge package.
-      {runBy: "member", id: "digifab:reflow-bridge-package", group: "make", label: "Download the reflow bridge driver", description: "Read the installable bridge driver package for T-962 open firmware and YARC controllers.", scope: "workspace", invokeHandler: "digifab.reflow-bridge-package", userInvokable: true, argsSchema: {}},
-      {
-        // UI-SCREEN: /digifab/production
-        id: "digifab:production-test", label: "Manage production tests", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,
-        runBy: "member",
-        description: "Save a new immutable test-plan version; register a native jig asset with its fixture pins (pins: name, gpio, direction input or output, pull) and maintenance interval; mint a quantity-one inventory unit without changing its model quantity; prepare an exact unit/plan_version/jig_id/station/bridge_connection_id attempt; sync offline evidence; record reworked or scrapped dispositions; export unit or filtered product/customer/lot PDF or JSON certificates through Files. Admin required for save_plan, save_jig and mint_unit. Other operations require a member. fields is the operation's JSON object.",
-        invokeHandler: "digifab.production-test", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["save_plan", "save_jig", "mint_unit", "prepare", "sync", "disposition", "export"].map(value => ({ value, label: value })) }, fields: { label: "Production fields", type: "json", required: true } },
-      },
-      {
-        // UI-SCREEN: /station/production/:connectionId
-        id: "digifab:production-control", label: "Run a production test", scope: "workspace", group: "more", userInvokable: false, effect: "physical", undoable: false,
-        // ADMIN-ONLY: starting an attempt powers the board on its jig and answering a prompt moves it on, so it runs the station: the admin tier, or an operator (#6785); aborting stays every member's (digifab:production-abort)
-        runBy: "admin",
-        grantedAs: "digifab:operate",
-        description: "Start a prepared production attempt with fields id, confirmed:true and the scanned jig_id, or answer its current operator prompt with id, step_id, value and optional photo. Requires an admin or an operator. Uses the exact saved plan and approved bridge. All controlled supplies must be owner-enabled. Abort is the separate production-abort stop action, which any member may use.",
-        invokeHandler: "digifab.production-control", argsSchema: { operation: { label: "Operation", type: "text", required: true, choices: ["start", "answer"].map(value => ({ value, label: value })) }, fields: { label: "Run or answer fields", type: "json", required: true } },
-      },
-      {
-        // UI-SCREEN: /station/production/:connectionId
-        id: "digifab:production-abort", label: "Abort a production test", scope: "workspace", group: "more", userInvokable: false, effect: "stops", undoable: false,
-        runBy: "member",
-        description: "Stop the prepared or active attempt immediately and turn every declared supply off. Requires a member; no confirmation is needed.", invokeHandler: "digifab.production-abort", argsSchema: { id: { label: "Attempt id", type: "text", required: true } },
-      },
-      {
-        // UI-SCREEN: /digifab/production
-        id: "digifab:production-read", label: "Read production test evidence", scope: "workspace", group: "more", userInvokable: false, effect: "none", undoable: false,
-        runBy: "member",
-        description: "Read a serialized unit's full history (fields kind/id), product/customer/lot statistics (fields product_id/customer_id/lot), or a production bridge's cached attempts (fields connection_id). Reports first-pass yield, step failures, measured spreads and drift, and operator/jig failure rates. Requires a workspace member.", invokeHandler: "digifab.production-read", argsSchema: { operation: { label: "Read", type: "text", required: true, choices: ["history", "report", "artifact", "bridge"].map(value => ({ value, label: value })) }, fields: { label: "Scope", type: "json", required: true } },
-      },
-      {
-        // UI-SCREEN: /machines
-        id: "digifab:kiln-log", label: "Record kiln firings", scope: "workspace", group: "more", userInvokable: false, effect: "writes", undoable: false,
-        // ADMIN-ONLY: the page's kiln routes POST /kilns/:machineId/profile, /firings and /firings/:id/finish gate on this action, owner or admin (kilns.ts)
-        runBy: "admin",
-        description: "Save a kiln profile, create a firing log with schedule and every piece, or finish a log with measured hours and peak temperature. Requires an admin. Never starts or stops a kiln. Profile id is machine id, fields: connection_id, device_id, components (name, interval_hours, replaced_at_hours). Create id is a new UUID, fields: machine_id, firing (name, cone, schedule of ramp_c_per_hour/target_c/hold_minutes, pieces of kind/id, glazes of part_id/ml and optional kind for an Inventory collection (must be liquid workshop stock), notes). Finish id is firing id, fields: duration_hours, peak_c, outcome completed/failed/stopped.",
-        examples: ["log this glaze firing and all its pieces", "replace the kiln elements after 200 firing hours"], invokeHandler: "digifab.kiln-log",
-        argsSchema: {
-          operation: { label: "Operation", type: "text", required: true, choices: ["profile", "create", "finish"].map(value => ({ value, label: value })) },
-          id: { label: "Machine or firing id", type: "text", required: true },
-          fields: { label: "Profile or log fields", type: "json", required: true },
-        },
-      },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id:"digifab:large-format",label:"Prepare and account for a large-format print",scope:"workspace",group:"more",userInvokable:false,
+        id:"digifab:large-format", changes: "records",label:"Prepare and account for a large-format print",scope:"workspace",group:"more",userInvokable:false,
         // ADMIN-ONLY: the page's large-format routes POST /plans, /refresh and /jobs/:id/outcome gate on this action, owner or admin (large-format.ts)
         runBy: "admin",
         description:"Plan PDF/image prints on loaded Roll stock; refresh IPP/SNMP supplies; record roll and Liquid ink use. Admin required; members Stop through digifab:stop. Plan fields: connection_id, device_id, library_id, roll_id, copies, margin_mm, media_type, image width_mm and height_mm. Outcome id is the job; fields: station_token, verdict, used_length_m, idle_confirmed:true, ink [{stock_id,kind,amount_ml,estimated:true}]. Start requires station review through digifab:send. Read via read_laser_batch large_format_station or large_format_jobs.",
@@ -332,7 +286,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /digifab/manager
-        id: "digifab:dispatch-material", label: "Dispatch a laser batch by material", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:dispatch-material", changes: "records", label: "Dispatch a laser batch by material", scope: "workspace", group: "more", userInvokable: false,
         // ADMIN-ONLY: plans a laser or cutter job from a design; its page twin POST /laser/plans gates on digifab:laser-batch, admin tier (laser.ts)
         runBy: "admin",
         description: "Spread an SVG/DXF quantity across idle lasers with matching profiles and available sheet area. Plan previews layouts; queue verifies saved layouts and queues sheet jobs without Start; cancel withdraws an unqueued batch. Returns a saved blocked batch when stock is short; plan again by id after restocking. Requires an admin. Request fields: library_id, quantity, material, thickness_mm, operations (drawing layer to cut/score/engrave), spacing_mm, kerf_mm, rotate, dxf_units.",
@@ -345,7 +299,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /machines/:id
-        id: "digifab:instrument",label:"Read a bench instrument",scope:"workspace",group:"more",userInvokable:false,
+        id: "digifab:instrument", changes: "records",label:"Read a bench instrument",scope:"workspace",group:"more",userInvokable:false,
         runBy: "member",
         description:"Identify or read a bench instrument, log fresh Riden readings, capture or import sigrok sessions with protocol decodes, or configure owner-enabled supply control. Log and capture need record_kind and record_id. Output on and set points require confirmed:true and control enabled by the owner. Output off uses instrument-stop without confirmation.",
         invokeHandler:"digifab.instrument",effect:"writes",undoable:false,
@@ -362,7 +316,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /configuration/devices
-        id:"digifab:discover-esphome",label:"Find ESPHome bench devices",scope:"workspace",group:"more",userInvokable:false,
+        id:"digifab:discover-esphome", changes: "records",label:"Find ESPHome bench devices",scope:"workspace",group:"more",userInvokable:false,
         // ADMIN-ONLY: the page's GET /bench/discover is owner or admin (bench.ts): finding devices on the network is setting up a station
         runBy: "admin",
         description:"Discover ESPHome devices through the selected bridge's mDNS without returning device credentials.",invokeHandler:"digifab.discover-esphome",effect:"none",undoable:false,
@@ -370,7 +324,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /machines/:id
-        id:"digifab:instrument-control",label:"Change a bench supply",scope:"workspace",group:"more",userInvokable:false,
+        id:"digifab:instrument-control", changes: "records",label:"Change a bench supply",scope:"workspace",group:"more",userInvokable:false,
         runBy: "member",
         description:"Confirmed output-on or set-point change for a Riden supply whose owner enabled control. Every request and result is logged; require device read-back.",invokeHandler:"digifab.instrument-control",effect:"physical",undoable:false,
         argsSchema: {
@@ -382,14 +336,14 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /machines/:id
-        id:"digifab:instrument-stop",label:"Turn instrument output off",scope:"workspace",group:"more",userInvokable:false,
+        id:"digifab:instrument-stop", changes: "records",label:"Turn instrument output off",scope:"workspace",group:"more",userInvokable:false,
         runBy: "member",
         description:"Turn the supply output off and require read-back. Never waits for confirmation.",invokeHandler:"digifab.instrument-stop",effect:"stops",undoable:false,
         argsSchema:{machine_id:{label:"Machine",type:"text",required:true}},
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:laser-setup", label: "Set up a laser at its station", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:laser-setup", changes: "records", label: "Set up a laser at its station", scope: "workspace", group: "more", userInvokable: false,
         // ADMIN-ONLY: the page's own route POST /laser/setup gates on this action's own id, owner or admin
         runBy: "admin",
         description: "Read G-code laser configuration, explicitly home it or confirm its firmware build settings. Home and confirmation require an admin and the authorized station credential. Never changes firmware or starts a cut.",
@@ -403,7 +357,7 @@ export default defineModule({
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
         // Stop is its own action, and it never waits for a yes (#5091).
-        group: "more", id: "digifab:stop", label: "Stop a machine", scope: "workspace", userInvokable: false,
+        group: "more", id: "digifab:stop", changes: "records", label: "Stop a machine", scope: "workspace", userInvokable: false,
         runBy: "member",
         description: "Stop or pause what a machine is doing: the job it is running by job_id, or a laser, cutter, resin or large-format machine by connection_id and device_id. Runs at once, with no confirm: it only brings a machine toward stopped and never starts or resumes anything. Workspace members may stop a machine. Use the machine's physical Stop in an emergency too.",
         examples: ["stop the laser", "stop that print", "pause the resin printer"],
@@ -419,7 +373,7 @@ export default defineModule({
         // UI-SCREEN: /digifab
         // Revoking only removes access, so it is not a security exception;
         // minting or showing a station credential stays the page's alone (#5091).
-        group: "more", id: "digifab:revoke-station", label: "Take a station's Start away", scope: "workspace", userInvokable: false,
+        group: "more", id: "digifab:revoke-station", changes: "workspace", label: "Take a station's Start away", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: the page's own routes gate on this action's own id, owner or admin (stations.ts, embroidery.ts)
         runBy: "admin",
         description: "Take a station screen's permission to start jobs away, by the station's name. The screen can no longer start a job; nothing already running is stopped. Requires an admin. Asks the person first.",
@@ -429,7 +383,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:laser-control", label: "Control a direct laser", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:laser-control", changes: "records", label: "Control a direct laser", scope: "workspace", group: "more", userInvokable: false,
         runBy: "member",
         description: "Stop, pause or resume a direct laser, or frame its reviewed file with the cutting laser off. Any member may stop or pause a laser; resuming and framing need an admin or an operator. This action cannot start a new cutting job.",
         invokeHandler: "digifab.laser-control", effect: "physical", undoable: false,
@@ -442,21 +396,8 @@ export default defineModule({
         },
       },
       {
-        // UI-SCREEN: /digifab/embroidery
-        id:"digifab:embroidery-job",label:"Prepare and record embroidery",scope:"workspace",group:"more",userInvokable:false,
-        // ADMIN-ONLY: the page's own route POST /embroidery/actions gates on this action's own id, owner or admin
-        runBy: "admin",
-        description:"Create or update a machine (label, hoops with name/width_mm/height_mm, formats, stitches_per_minute, filename_prefix, asset_ref), import a design (file_id, name), prepare a USB run (machine_id, design_id, hoop, format, threads mapping colour-stop indices to native spool ids), start tracking at its authorized station (station_token and file_copied/file_confirmed/hoop_mounted/colours_loaded/origin_clear all true), record interruption, or record outcome (station_token, verdict good/scrap, finished, idle_confirmed and needle_up_confirmed true, usage array of index/metres for every colour stop). Requires admin. Never operates a physical machine. Unstarted discards require scrap and zero use. Read with read_laser_batch embroidery operations. Download the prepared machine file with /embroidery/runs/{job_id}/export.",
-        invokeHandler:"digifab.embroidery-job",effect:"writes",undoable:false,
-        argsSchema: {
-          operation: {label:"Operation",type:"text",required:true,choices:["create_machine","update_machine","import_design","prepare","start","interrupt","outcome"].map(value=>({value,label:value.replaceAll("_"," ")}))},
-          id: {label:"Machine or job id",type:"text"},
-          fields: {label:"Fields",type:"json"},
-        },
-      },
-      {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:machine-control", label: "Control a machine", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:machine-control", changes: "records", label: "Control a machine", scope: "workspace", group: "more", userInvokable: false,
         // A member at the station may stop, pause, resume or frame: the page's own control route POST /fleet/:connectionId/:deviceId/control admits members (fleet.ts)
         runBy: "member",
         description: "Stop, pause or resume a machine that uses station review, or frame its reviewed queued program with the spindle or cutting laser off. Any member may stop or pause; resuming and framing need an admin or an operator. This action cannot start a new job.",
@@ -471,7 +412,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:machine-outcome", label: "Record a CNC outcome", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:machine-outcome", changes: "records", label: "Record a CNC outcome", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: recording an outcome consumes stock and bit hours; the page's route POST /fleet/:connectionId/:deviceId/ready gates on this action's own id: the admin tier, or an operator (#6672)
         runBy: "admin",
         grantedAs: "digifab:operate",
@@ -487,7 +428,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:station-run", label: "Record a station job's run", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:station-run", changes: "records", label: "Record a station job's run", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: running a prepared job at its station consumes stock; the page's outcome routes (cutter.ts, large-format.ts) and the embroidery run's start, interrupt and outcome gate on this action's own id: the admin tier, or an operator (#6672)
         runBy: "admin",
         grantedAs: "digifab:operate",
@@ -502,7 +443,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /digifab
-        id: "digifab:place-program", label: "Find free CNC sheet area", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:place-program", changes: "records", label: "Find free CNC sheet area", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: placing a program on stock is setting up the machine; the page's route POST /jobs/:id/place gates on this action's own id, owner or admin (jobs.ts)
         runBy: "admin",
         description: "Find a free region for one queued posted CNC program using the existing rectangle nesting planner. Choose sheet stock and every matching library bit. The footprint includes the widest bit's radius, never rotates or rewrites the program, and returns the G54 origin to set and confirm at the machine. Requires an owner or admin; never starts or frames a machine.",
@@ -515,7 +456,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:cutter-batch", label: "Prepare a cutter job", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:cutter-batch", changes: "records", label: "Prepare a cutter job", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: the page's own cutter routes gate on this action's own id, owner or admin (cutter.ts)
         runBy: "admin",
         description: "Create or update machine-bound vinyl, HTV and cardstock profiles and prepare SVG/DXF cuts on a native roll. Requires an admin. Never starts a machine. Profile fields: connection_id, device_id, profile (material, material_type, speed, force, blade_depth, passes, blade_offset_mm). Plan fields: connection_id, device_id, library_id, roll_id, mapping (layer to profile id), quantity, length_mm, spacing_mm, mirror, weed_box_mm, weed_line_spacing_mm, dxf_units. Outcome requires the authorized station token, measured used_length_m, good or scrap verdict, idle_confirmed and blade_up_confirmed. Interrupted cuts are scrap. Read profiles and station state with read_laser_batch (cutter_profiles or cutter_station).",
@@ -527,7 +468,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:cutter-control", runBy: "member", label: "Control a cutter", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:cutter-control", changes: "records", runBy: "member", label: "Control a cutter", group: "more", scope: "workspace", userInvokable: false,
         description: "Stop, pause or resume cutter streaming. Any member may stop or pause a cutter without a station credential; resuming, framing and confirming idle need an admin or an operator. Frame requires its reviewed queued job, loaded roll and authorized station token. Confirm idle requires that token and physical idle and blade-up confirmation. Never starts a new cut. Use the machine's physical Stop in an emergency.",
         invokeHandler: "digifab.cutter-control", effect: "physical", undoable: false,
         argsSchema: {
@@ -537,7 +478,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:resin-control", label: "Control a resin printer", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:resin-control", changes: "records", label: "Control a resin printer", scope: "workspace", group: "more", userInvokable: false,
         runBy: "member",
         description: "Stop, pause or resume a resin printer. Stop also prevents an uploading job from starting. Any member may stop or pause; resuming needs an admin or an operator; starting a print requires its authorized station and reviewed file.",
         invokeHandler: "digifab.resin-control", effect: "physical", undoable: false,
@@ -549,7 +490,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /station/machine/:connectionId/:deviceId
-        id: "digifab:resin-postprocess", runBy: "member", label: "Record resin print washing and curing", scope: "workspace", group: "more", userInvokable: false,
+        id: "digifab:resin-postprocess", changes: "records", runBy: "member", label: "Record resin print washing and curing", scope: "workspace", group: "more", userInvokable: false,
         description: "Mark a good resin print washed or cured after its stock use is recorded. Washing comes before curing. This records the physical checklist and does not operate a wash or cure machine.",
         invokeHandler: "digifab.resin-postprocess", effect: "writes", undoable: false,
         argsSchema: {
@@ -559,7 +500,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /digifab
-        id: "digifab:laser-batch", label: "Prepare a laser batch", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:laser-batch", changes: "records", label: "Prepare a laser batch", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: the page's own laser routes gate on this action's own id, owner or admin (laser.ts)
         runBy: "admin",
         description: "Create, import or update material profiles, plan SVG/DXF batches on chosen sheets, queue reviewed plans or discard unqueued plans. Nest outlines for laser, CNC or cutter previews with operation nest, without a machine or profiles. Requires an admin. Never starts a machine. Create fields: connection_id, device_id, profile. Import fields: connection_id, device_id. Update fields: profile from read_laser_batch. Plan fields: connection_id, device_id, library_id, quantity, sheet_ids, mapping (layer to profile id), spacing_mm, kerf_mm, rotate, rotation_step, budget_ms (3000 default, up to 30000), seed, dxf_units. Nest fields: the same without connection_id, device_id or mapping. Plan also accepts allow_flip. Adjust: saved plan id and fields.operation pick (alternative 0-2), lock (parts, locked), clear_locks, avoid (sheet_id, rectangle, permanent), clear_avoid, renest (budget_ms), move or check_move (part, sheet_id, x, y, angle, mirrored), limit (sheet_id, maximum), fill (sheet_id), export (sheet_id, format svg/dxf/lightburn), import (sheet_id, filename, content, extras review/keep/drop, assignments mapping reported shape names to missing part numbers). Layout coordinates are millimetres from the lower-left. Imports match names first, then geometry and position. New, changed or ambiguous shapes need an explicit assignment or extra-shape decision. Requested part counts stay intact. Queue/discard: saved plan id.",
@@ -573,7 +514,7 @@ export default defineModule({
       },
       {
         // UI-SCREEN: /digifab
-        id: "digifab:discover-snapmakers", label: "Find Snapmakers", group: "more", scope: "workspace", userInvokable: false,
+        id: "digifab:discover-snapmakers", changes: "records", label: "Find Snapmakers", group: "more", scope: "workspace", userInvokable: false,
         // ADMIN-ONLY: finds machines on the network; adding a connection, POST /connections, is owner or admin (bulk.ts)
         runBy: "admin",
         description: "Find Snapmakers on one LAN bridge and report which transport each machine advertises. Requires an admin. Does not pair or start a machine.",
@@ -587,6 +528,7 @@ export default defineModule({
         // every door, not only the page's dialog (Services §9, §14.3).
         group: "more",
         id: "digifab:send",
+        changes: "records",
         // ADMIN-ONLY: sends a file to a printer; POST /jobs/:id/send gates on this action's own id: the admin tier, or an operator (#6672)
         runBy: "admin",
         grantedAs: "digifab:operate",
@@ -608,6 +550,7 @@ export default defineModule({
         // act for another module (an order line, a work order) and the assistant.
         group: "more",
         id: "digifab:start-make",
+        changes: "records",
         runBy: "member",
         label: "Start a make",
         description:
@@ -630,6 +573,7 @@ export default defineModule({
         // UI-SCREEN: /files/:id, where Print this shows the printer it picked.
         group: "more",
         id: "digifab:pick-printer",
+        changes: "records",
         runBy: "member",
         label: "Pick a printer for a print",
         description:
@@ -655,6 +599,7 @@ export default defineModule({
         // UI-SCREEN: /files/:id, the Print this panel on a model file's page.
         group: "more",
         id: "digifab:print-this",
+        changes: "records",
         runBy: "member",
         label: "Print this",
         description:
@@ -682,7 +627,7 @@ export default defineModule({
         // UI-SCREEN: /makes/:id, the approved batch card.
         userInvokable: false,
         group: "more",
-        id: "digifab:start-next-print", label: "Bed is clear, start the next one", effect: "physical",
+        id: "digifab:start-next-print", changes: "records", label: "Bed is clear, start the next one", effect: "physical",
         // ADMIN-ONLY: starts a physical printer; its page route POST /makes/:id/print/next gates on this action: the admin tier, or an operator (#6672)
         runBy: "admin",
         grantedAs: "digifab:operate",
@@ -694,7 +639,7 @@ export default defineModule({
         // UI-SCREEN: /makes/:id, the batch review controls.
         userInvokable: false,
         group: "more",
-        id: "digifab:review-print-batch", label: "Review the changed print batch", effect: "writes",
+        id: "digifab:review-print-batch", changes: "records", label: "Review the changed print batch", effect: "writes",
         // ADMIN-ONLY: re-approves what a batch will print; its page route POST /makes/:id/print/review gates on this action, owner or admin (makes.ts)
         runBy: "admin",
         scope: "workspace", appliesTo: { kinds: ["digifab:make"] }, invokeHandler: "digifab.review-print-batch",
@@ -705,7 +650,7 @@ export default defineModule({
         // UI-SCREEN: /makes/:id, the remaining prints control.
         userInvokable: false,
         group: "more",
-        id: "digifab:cancel-print-batch", label: "Cancel the remaining prints", effect: "stops",
+        id: "digifab:cancel-print-batch", changes: "records", label: "Cancel the remaining prints", effect: "stops",
         runBy: "member",
         scope: "workspace", appliesTo: { kinds: ["digifab:make"] }, invokeHandler: "digifab.cancel-print-batch",
         description: "Cancels a Make batch's remaining jobs immediately. Never starts a machine. An active job finishes.",
@@ -719,6 +664,7 @@ export default defineModule({
         // NO-PHRASING: a deprecated alias kept so installed wires keep working; phrasings here would compete with core-devices:run-command
         group: "more",
         id: "digifab:run-command",
+        changes: "records",
         // ADMIN-ONLY: sends a command to a physical machine; no page route admits a member to do that
         runBy: "admin",
         label: "Run a device command (deprecated → core-devices:run-command)",
@@ -729,9 +675,250 @@ export default defineModule({
         userInvokable: false,
       },
       {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:set-failure-detection",
+        changes: "workspace",
+        // ADMIN-ONLY: the page's own route PUT /failure/config is owner or admin (failure.ts)
+        runBy: "admin",
+        examples: ["turn on spaghetti detection", "make failure detection less jumpy"],
+        undoable: true,
+        label: "Set print failure detection",
+        description:
+          "Turn print failure detection on or off, how sure it must be before it calls a failure (10 to 99 percent), how often it looks (5 to 600 seconds), and whether it pauses the printer itself. Where camera frames are sent is not changed here.",
+        scope: "workspace",
+        invokeHandler: "digifab.set-failure-detection",
+        userInvokable: true,
+        argsSchema: {
+          enabled: { label: "On (true) or off (false)", type: "boolean" },
+          threshold: { label: "How sure before it calls a failure, in percent", type: "number" },
+          sample_interval_sec: { label: "How often it looks, in seconds", type: "number" },
+          auto_pause: { label: "Pause the printer itself on a failure", type: "boolean" },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:check-for-failure",
+        changes: "records",
+        runBy: "member",
+        examples: ["is the print on the Mk4 failing", "check the Bambu for spaghetti"],
+        label: "Check a print for failure",
+        description:
+          "Look at a printer's camera once now and say how likely its print is failing, without pausing anything or changing the watch. Takes the printer's connection and device as read_fabrication_floor lists them.",
+        scope: "workspace",
+        invokeHandler: "digifab.check-for-failure",
+        userInvokable: true,
+        argsSchema: {
+          connection_id: { label: "Connection", type: "text", required: true },
+          device_id: { label: "Device", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:test-detector",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route POST /failure/detectors/:id/test is owner or admin (failure.ts)
+        runBy: "admin",
+        examples: ["is PrintGuard reachable"],
+        label: "Test a failure detector",
+        description: "Check that an outside failure detector (Obico, PrintGuard) answers at its address, and say what it said. Its key is never shown.",
+        scope: "workspace",
+        invokeHandler: "digifab.test-detector",
+        userInvokable: true,
+        argsSchema: {
+          detector: { label: "Which detector (its name; empty: the only one)", type: "text" },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:prioritize-job",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route PATCH /jobs/:id is owner or admin
+        runBy: "admin",
+        undoable: true,
+        examples: ["put the bracket job first", "let the spacer job retry three times"],
+        label: "Move a job up or down the queue",
+        description: "Change a queued job's priority (0 to 100, higher goes first) or how many times it may be tried. A pool job is re-sorted at once. Nothing is sent to a machine.",
+        scope: "workspace",
+        invokeHandler: "digifab.prioritize-job",
+        userInvokable: true,
+        argsSchema: {
+          job: { label: "Which job (its file name or id)", type: "text", required: true },
+          priority: { label: "Priority, 0 to 100 (higher goes first)", type: "number" },
+          max_attempts: { label: "How many tries, 1 to 10", type: "number" },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:refresh-job",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route POST /jobs/:id/poll is owner or admin
+        runBy: "admin",
+        examples: ["what is the Mk4 job doing now"],
+        label: "Refresh a job's status",
+        description: "Ask the printer for a sent job's state now instead of waiting for the next check. Reads only; it never starts or stops anything.",
+        scope: "workspace",
+        invokeHandler: "digifab.refresh-job",
+        userInvokable: true,
+        argsSchema: {
+          job: { label: "Which job (its file name or id)", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:delete-job",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route DELETE /jobs/:id is owner or admin
+        runBy: "admin",
+        examples: ["clear the failed spacer job"],
+        label: "Delete a job",
+        description: "Remove a queued, finished, failed or cancelled job from the queue. A job that may still be on a printer has to be stopped first.",
+        scope: "workspace",
+        invokeHandler: "digifab.delete-job",
+        userInvokable: true,
+        argsSchema: {
+          job: { label: "Which job (its file name or id)", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:rename-print-file",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route PATCH /library/:id is owner or admin
+        runBy: "admin",
+        undoable: true,
+        examples: ["rename bracket_v3.3mf to Shelf bracket"],
+        label: "Rename a print file",
+        description: "Rename a file in the print library or change its notes. A laser layout's material is changed in its plan, not here.",
+        scope: "workspace",
+        invokeHandler: "digifab.rename-print-file",
+        userInvokable: true,
+        argsSchema: {
+          file: { label: "Which file (its name)", type: "text", required: true },
+          name: { label: "Its new name", type: "text" },
+          notes: { label: "Notes", type: "text" },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:delete-print-file",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route DELETE /library/:id is owner or admin
+        runBy: "admin",
+        examples: ["delete the old bracket file from the library"],
+        label: "Delete a print file",
+        description: "Delete a file from the print library. A laser layout's generated project, or a drawing a saved layout uses, is kept.",
+        scope: "workspace",
+        invokeHandler: "digifab.delete-print-file",
+        userInvokable: true,
+        argsSchema: {
+          file: { label: "Which file (its name)", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:make-pool",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route POST /pools is owner or admin
+        runBy: "admin",
+        undoable: true,
+        examples: ["make a pool called PLA farm"],
+        label: "Make a printer pool",
+        description: "Make an empty printer pool by name, to queue jobs onto later. Adding printers to it stays at the pool's page, because the queue then sends jobs to them by itself.",
+        scope: "workspace",
+        invokeHandler: "digifab.make-pool",
+        userInvokable: true,
+        argsSchema: {
+          name: { label: "What to call the pool", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:remove-pool",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route DELETE /pools/:id is owner or admin
+        runBy: "admin",
+        examples: ["remove the old PETG pool"],
+        label: "Remove a printer pool",
+        description: "Remove a printer pool. Its printers stay; jobs still queued on it wait until a person sends them elsewhere.",
+        scope: "workspace",
+        invokeHandler: "digifab.remove-pool",
+        userInvokable: true,
+        argsSchema: {
+          pool: { label: "Which pool (its name)", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:remove-from-pool",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route DELETE /pools/:id/members/… is owner or admin
+        runBy: "admin",
+        examples: ["take the Mk4 out of the PLA farm pool"],
+        label: "Take a printer out of a pool",
+        description: "Take one printer out of a pool, so the queue stops sending that pool's jobs to it.",
+        scope: "workspace",
+        invokeHandler: "digifab.remove-from-pool",
+        userInvokable: true,
+        argsSchema: {
+          pool: { label: "Which pool (its name)", type: "text", required: true },
+          connection_id: { label: "Connection", type: "text", required: true },
+          device_id: { label: "Device", type: "text", required: true },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:hold-run",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route PATCH /runs/:id is owner or admin
+        runBy: "admin",
+        effect: "stops",
+        examples: ["pause the bracket run", "cancel the spacer run"],
+        label: "Pause or cancel a production run",
+        description: "Pause a production run so no new plates go out, or cancel it and its queued plates. A plate already on a printer finishes. It never resumes a run.",
+        scope: "workspace",
+        invokeHandler: "digifab.hold-run",
+        userInvokable: true,
+        argsSchema: {
+          run: { label: "Which run (its name)", type: "text", required: true },
+          operation: { label: "Pause or cancel", type: "text", required: true, choices: ["pause", "cancel"].map((value) => ({ value, label: value })) },
+        },
+      },
+      {
+        group: "make",
+        // UI-SCREEN: /digifab
+        id: "digifab:arrange-floor",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route PUT /fleet/layout is owner or admin
+        runBy: "admin",
+        undoable: true,
+        examples: ["put the Bambus in the first row"],
+        label: "Arrange the machine floor",
+        description: "Set the order the machines show on the floor, and where each row starts. Only how the floor page lays them out; nothing is sent to a machine.",
+        scope: "workspace",
+        invokeHandler: "digifab.arrange-floor",
+        userInvokable: true,
+        argsSchema: {
+          items: { label: "The machines in order: [{ connection_id, device_id, row_break }]", type: "json", required: true },
+          reset: { label: "Clear the order instead (true), as Undo does for a floor that had none", type: "boolean" },
+        },
+      },
+      {
         group: "more",
         // UI-SCREEN: /digifab
         id: "digifab:test-connection",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /connections/:id/test is owner or admin (connections.ts)
         runBy: "admin",
         examples: ["is the OctoPrint connection still working", "check the Duet link"],
@@ -748,5 +935,5 @@ export default defineModule({
     ],
   },
 
-  subscribes: ["services.job.done", "services.job.failed"],
+  subscribes: ["services.job.done", "services.job.failed", "builds.output.credited"],
 });

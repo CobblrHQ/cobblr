@@ -27,6 +27,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY web/package.json ./web/
 COPY api/package.json ./api/
 COPY packages/platform-contract/package.json ./packages/platform-contract/
+COPY packages/platform-net/package.json ./packages/platform-net/
 COPY packages/platform-web/package.json ./packages/platform-web/
 COPY packages/thermal-print/package.json ./packages/thermal-print/
 COPY modules/digifab/package.json ./modules/digifab/
@@ -49,6 +50,7 @@ RUN --mount=type=cache,sharing=shared,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 COPY packages/platform-contract ./packages/platform-contract
+COPY packages/platform-net ./packages/platform-net
 COPY packages/platform-web ./packages/platform-web
 COPY packages/thermal-print ./packages/thermal-print
 # Module UI sources — Vite resolves @cobblr/<name>/ui to the TSX

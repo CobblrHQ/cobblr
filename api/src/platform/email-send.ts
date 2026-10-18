@@ -19,6 +19,7 @@
 // Body is always plain text — no HTML — which keeps every provider's payload
 // trivial and dodges email-client rendering quirks.
 
+// EGRESS-FILE: operator-configured - the mail provider (and its base address) is the operator's setting
 import nodemailer from "nodemailer";
 
 export type EmailProvider = "smtp" | "mailgun" | "resend" | "postmark" | "gmail";

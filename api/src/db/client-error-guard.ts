@@ -1,7 +1,7 @@
 import { Client, Pool, types } from "pg";
 import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
 import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
-import { currentRequestScope, noteMetaStatement } from "../lib/request-context.js";
+import { currentRequestScope, noteCommittedWrite, noteMetaStatement } from "../lib/request-context.js";
 
 /**
  * Every pg client this process opens listens for 'error' from the moment it
@@ -97,10 +97,42 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
         LAST.set(this, { text, at: Date.now() });
         // Counted against the request that asked, for the per-request bound (#4876).
         if (label === "meta-pool") noteMetaStatement(text);
+        noteWriteOf(this, text);
         return query(...a);
       };
     }
   };
+}
+
+export type StatementEffect = "begin" | "commit" | "rollback" | "read" | "write";
+
+/** What a statement does to the data, for the write watch (#7140). Anything
+ *  this cannot place as a read counts as a write: a run that may have changed
+ *  something must never read as one that did not. */
+export function statementEffect(text: string): StatementEffect {
+  const t = text.replace(/^(\s|--[^\n]*\n|\/\*[\s\S]*?\*\/)+/, "").toLowerCase();
+  if (/^(begin|start\s+transaction)\b/.test(t)) return "begin";
+  if (/^(commit|end)\b/.test(t)) return "commit";
+  if (/^rollback\b/.test(t)) return /^rollback\s+(work\s+|transaction\s+)?to\b/.test(t) ? "read" : "rollback";
+  if (/^(select|show|explain|values|savepoint|release|set)\b/.test(t)) return "read";
+  if (/^with\b/.test(t)) return /\b(insert|update|delete|merge)\b/.test(t) ? "write" : "read";
+  return "write";
+}
+
+// A write inside a transaction counts when the transaction commits, against
+// the flow that commits it; one rolled back never happened.
+const OPEN_TX_WROTE = new WeakMap<object, boolean>();
+export function noteWriteOf(client: object, text: string): void {
+  const effect = statementEffect(text);
+  if (effect === "begin") OPEN_TX_WROTE.set(client, false);
+  else if (effect === "commit") {
+    if (OPEN_TX_WROTE.get(client)) noteCommittedWrite();
+    OPEN_TX_WROTE.delete(client);
+  } else if (effect === "rollback") OPEN_TX_WROTE.delete(client);
+  else if (effect === "write") {
+    if (OPEN_TX_WROTE.has(client)) OPEN_TX_WROTE.set(client, true);
+    else noteCommittedWrite();
+  }
 }
 
 // WHO HOLDS THE POOL. A starved pool used to say only that it was starved:

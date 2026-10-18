@@ -1,7 +1,6 @@
-// Part-page photo gallery. Lists every core-files attachment with
-// role='gallery' for (inventory, part, id) plus a drop zone for new
-// uploads. The first image doubles as the cover unless image_path is
-// explicitly set.
+// Part-page photo gallery. Lists the part's photos (its cover first, attached
+// or not, then every image attached to (inventory, part, id)) plus a drop
+// zone for new uploads.
 //
 // Self-contained (no extra shared component needed) — it reaches
 // core-files directly via the inventory module's orgSlug + getToken.
@@ -13,6 +12,7 @@ import { SELECTED_TILE, useConfirm, useImageSrc, usePhotoPick, useToast, EntityP
 import { useInventory } from "./context";
 import { cutoutPlainBackground } from "./remove-background";
 import { isCoverFile } from "./gallery-cover";
+import { recordPhotos, recordPhotoUrl, type RecordMainPhoto, type RecordPhoto } from "@cobblr/platform-contract/record-photos";
 
 interface AttachmentRow {
   id: string;
@@ -55,8 +55,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
         { headers: auth() },
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { items: AttachmentRow[] };
-      return data.items.filter((a) => a.kind === "image");
+      return (await res.json()) as { main?: RecordMainPhoto | null; items: AttachmentRow[] };
     },
     enabled: !!orgSlug,
   });
@@ -104,10 +103,10 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   // (zero-dep canvas chroma key), upload the transparent PNG as a new gallery
   // photo, and make it the cover. Great for garment/product shots on white.
   const [cutting, setCutting] = useState<string | null>(null);
-  async function handleCutout(att: AttachmentRow) {
-    setCutting(att.id);
+  async function handleCutout(att: RecordPhoto<AttachmentRow> & { fileId: string }) {
+    setCutting(att.key);
     try {
-      const r = await workspaceFetch(fullUrl(att.file_id), { headers: auth() });
+      const r = await workspaceFetch(fullUrl(att.fileId), { headers: auth() });
       const blob = await r.blob();
       const out = await cutoutPlainBackground(blob);
       if (!out) {
@@ -146,14 +145,13 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
   }
   const photo = usePhotoPick((files) => void handleFiles(files), { multiple: true, title: "Photo of this item", label: "Choose photos" });
 
-  function thumbUrl(fileId: string): string {
-    return `${base}/files/${fileId}/raw?variant=thumb`;
-  }
   function fullUrl(fileId: string): string {
     return `${base}/files/${fileId}/raw`;
   }
 
-  const items = list.data ?? [];
+  // The part's cover leads, attached or not: a cover from a catalog match or
+  // set before photos were kept is still this part's photo (#7335).
+  const items = recordPhotos(list.data);
 
   return (
     <section
@@ -216,10 +214,11 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       {items.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
           {items.map((att, i) => {
-            const isCover = isCoverFile(coverImagePath, att.file_id);
+            const isCover = att.fileId ? isCoverFile(coverImagePath, att.fileId) : !!coverImagePath && att.imagePath === coverImagePath;
+            const fileId = att.fileId;
             return (
               <div
-                key={att.id}
+                key={att.key}
                 className={
                   "group rounded-md overflow-hidden border border-line dark:border-slate-700 flex flex-col " +
                   // The cover is the chosen one: the same outline every chosen tile has.
@@ -227,7 +226,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                 }
               >
                 <div className="relative">
-                  <GalleryImg thumb={thumbUrl(att.file_id)} alt={att.filename} onOpen={() => setViewing(i)} />
+                  <GalleryImg thumb={recordPhotoUrl(base, att, "thumb")} alt={att.filename} onOpen={() => setViewing(i)} />
                   {isCover && (
                     <div className="absolute top-1 left-1 text-[9px] uppercase tracking-widest bg-cobble-600 text-white rounded px-1.5 py-0.5">
                       cover
@@ -242,26 +241,29 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                     enough for that blackens every photo's bottom on every touch
                     screen; a row of its own depends on nothing in the photo. */}
                 <div className="flex items-center gap-1 px-1 py-1 border-t border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-[10px] leading-none text-muted dark:text-slate-400 whitespace-nowrap">
-                  {!isCover && (
+                  {!isCover && fileId && (
                     <button
                       type="button"
-                      onClick={() => onSetCover(fullUrl(att.file_id))}
+                      onClick={() => onSetCover(fullUrl(fileId))}
                       className="inline-flex items-center gap-0.5 hover:text-accent dark:hover:text-cobble-300"
                       title="Set as cover"
                     >
                       <Star size={10} /> cover
                     </button>
                   )}
+                  {fileId && (
                   <button
                     type="button"
-                    onClick={() => void handleCutout(att)}
-                    disabled={cutting === att.id}
+                    onClick={() => void handleCutout({ ...att, fileId })}
+                    disabled={cutting === att.key}
                     className="inline-flex items-center gap-0.5 hover:text-accent dark:hover:text-cobble-300 disabled:opacity-60"
                     title="Remove background (cut out the item)"
                   >
-                    <Scissors size={10} className={cutting === att.id ? "animate-pulse" : ""} />
-                    {cutting === att.id ? "…" : "cut out"}
+                    <Scissors size={10} className={cutting === att.key ? "animate-pulse" : ""} />
+                    {cutting === att.key ? "…" : "cut out"}
                   </button>
+                  )}
+                  {att.attachment && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -271,7 +273,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                         confirmLabel: "Remove",
                         destructive: true,
                       });
-                      if (ok) detach.mutate(att.id);
+                      if (ok && att.attachment) detach.mutate(att.attachment.id);
                     }}
                     className="inline-flex items-center gap-0.5 ml-auto hover:text-red-600 dark:hover:text-red-400"
                     title="Remove"
@@ -279,6 +281,7 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
                   >
                     <Trash2 size={10} />
                   </button>
+                  )}
                 </div>
               </div>
             );
@@ -288,11 +291,11 @@ export function PartGallery({ partId, coverImagePath, onSetCover }: Props) {
       {viewing !== null && items[viewing] && (
         <Lightbox
           items={items.map((att) => ({
-            key: att.id,
+            key: att.key,
             caption: att.filename,
-            src: `${base}/files/${att.file_id}/raw?variant=medium`,
-            original: fullUrl(att.file_id),
-            thumb: thumbUrl(att.file_id),
+            src: recordPhotoUrl(base, att, "medium"),
+            original: recordPhotoUrl(base, att),
+            thumb: recordPhotoUrl(base, att, "thumb"),
           }))}
           index={viewing}
           onIndex={setViewing}

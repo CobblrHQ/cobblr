@@ -1,3 +1,4 @@
+import { ReceiptPending } from "../receipt-pending.js";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { tenantContext, type OrgRole } from "../db.js";
@@ -7,7 +8,13 @@ export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req as R, res, next).catch(next);
+    void handler(req as R, res, next).catch(err => {
+      if (err instanceof ReceiptPending) {
+        res.status(503).json({ error: { code: "receipt_pending", message: err.message } });
+        return;
+      }
+      next(err);
+    });
   };
 }
 

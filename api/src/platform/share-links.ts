@@ -32,7 +32,9 @@ import { hasAuthEmailSender } from "./hosted-seams.js";
 import { currentActor } from "../lib/request-context.js";
 import {
   SHARE_ENVELOPE_VERSION,
+  addShareSyncPass,
   enqueueShareOp,
+  flushShareLinkNow,
   getShareLink,
   peerFetch,
   registerShareOp,
@@ -451,30 +453,63 @@ export async function listShareLinks(orgId: string): Promise<ShareLinkView[]> {
 }
 
 /** End a share from this side. The other side is told (best effort, at
- *  once, since after this nothing more is sent); a share space goes with it. */
+ *  once, since after this nothing more is sent); a share space goes with it.
+ *
+ *  A share space that leaves goes only once the owner has heard (#7130):
+ *  its link row, and the notice queued on it, are the space's own rows, so
+ *  deleting the space first took the notice with it and the owner's link
+ *  never ended. Its people lose it at once; the space itself waits for the
+ *  notice to be delivered, retried with the sync loop's other changes. */
 export async function revokeShareLink(orgId: string, linkId: string): Promise<boolean> {
   const link = await getShareLink(linkId);
   if (!link || link.org_id !== orgId || link.status === "revoked") return false;
   const wasActive = link.status === "active";
-  await endLink(link);
+  await endLink(link, { keepSpaceToTell: wasActive });
   // The other side hears it as soon as it can be reached: the notice stays
   // queued (the one change a revoked link still sends) until it arrives.
-  if (wasActive) await enqueueShareOp(linkId, REVOKED_OP, {});
+  if (wasActive) {
+    await enqueueShareOp(linkId, REVOKED_OP, {});
+    if (link.side === "share") void flushShareLinkNow(linkId).then(() => retireToldShareSpaces(link.org_id)).catch((err) => console.error(`[share] could not retire share space ${link.org_id}:`, err));
+  }
   return true;
 }
 
-async function endLink(link: ShareLinkRow): Promise<void> {
+async function endLink(link: ShareLinkRow, opts: { keepSpaceToTell?: boolean } = {}): Promise<void> {
   await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date(), invite_code_hash: null }).where("id", "=", link.id).execute();
   // Nothing else is said over an ended share.
   await meta.deleteFrom("share_outbox").where("link_id", "=", link.id).where("sent_at", "is", null).where("op", "!=", REVOKED_OP).execute();
   if (link.side === "share") {
     const org = await orgOf(link.org_id);
-    if (org?.kind === "share") await hardDeleteOrg(org.id).catch((err) => console.error(`[share] could not remove share space ${org.id}:`, err));
+    if (org?.kind !== "share") return;
+    if (opts.keepSpaceToTell) await meta.deleteFrom("org_memberships").where("org_id", "=", org.id).execute();
+    else await hardDeleteOrg(org.id).catch((err) => console.error(`[share] could not remove share space ${org.id}:`, err));
   }
+}
+
+/** Delete each share space whose ended link has nothing left to say: the
+ *  notice that it ended was delivered, or the other side was already gone.
+ *  One space when `orgId` is given (right after Leave), every one otherwise
+ *  (the sync loop, for a notice that waited on an unreachable owner). */
+export async function retireToldShareSpaces(orgId?: string): Promise<number> {
+  const told = await meta
+    .selectFrom("share_links as l")
+    .innerJoin("orgs as o", "o.id", "l.org_id")
+    .select("o.id")
+    .distinct()
+    .where("l.side", "=", "share")
+    .where("l.status", "=", "revoked")
+    .where("o.kind", "=", "share")
+    .$if(!!orgId, (q) => q.where("o.id", "=", orgId!))
+    .where((eb) => eb.not(eb.exists(eb.selectFrom("share_outbox as b").select("b.id").whereRef("b.link_id", "=", "l.id").where("b.sent_at", "is", null))))
+    .where((eb) => eb.not(eb.exists(eb.selectFrom("share_links as a").select("a.id").whereRef("a.org_id", "=", "o.id").where("a.status", "!=", "revoked"))))
+    .execute();
+  for (const { id } of told) await hardDeleteOrg(id).catch((err) => console.error(`[share] could not remove share space ${id}:`, err));
+  return told.length;
 }
 
 /** The changes every link understands, whatever is shared over it. */
 export function registerShareLinkOps(): void {
+  addShareSyncPass(async () => void (await retireToldShareSpaces()));
   // The other side says who it is now (a rename, a first hello).
   registerShareOp("link.hello", async (link, payload) => {
     const name = typeof payload.name === "string" ? payload.name.slice(0, 200) : null;

@@ -17,6 +17,7 @@ import { canPreviewFile, FilePreview, Lightbox, Modal, SelectableTile, usePasteI
 import { useProjects } from "./context";
 import type { PatternPhotoState } from "./api";
 import { patternNeedsKey } from "./PatternNeeds";
+import { isImageAttachment, recordPhotos, recordPhotoUrl, type RecordMainPhoto } from "@cobblr/platform-contract/record-photos";
 
 interface AttachmentRow {
   id: string;
@@ -68,14 +69,15 @@ export function DesignFiles({ designId }: { designId: string }) {
         { headers: auth() },
       );
       if (!res.ok) throw await refusal(res, "Couldn't take that file off");
-      return ((await res.json()) as { items: AttachmentRow[] }).items;
+      return (await res.json()) as { main?: RecordMainPhoto | null; items: AttachmentRow[] };
     },
     enabled: !!orgSlug,
   });
 
-  const items = list.data ?? [];
-  const images = items.filter((a) => a.kind === "image" || a.mime_type.startsWith("image/"));
-  const files = items.filter((a) => !(a.kind === "image" || a.mime_type.startsWith("image/")));
+  const items = list.data?.items ?? [];
+  // The design's main photo leads, attached or not (#7335).
+  const images = recordPhotos(list.data);
+  const files = items.filter((a) => !isImageAttachment(a));
   const hasPattern = files.some((a) => a.role === "pattern" || a.mime_type === "application/pdf");
 
   // The pull's result. Polls while a pull is running (a fresh upload, or a
@@ -224,7 +226,7 @@ export function DesignFiles({ designId }: { designId: string }) {
           <span className="truncate">Adding {upload.variables.name}…</span>
         </p>
       )}
-      {items.length === 0 && !list.isLoading && !upload.isPending && (
+      {items.length === 0 && images.length === 0 && !list.isLoading && !upload.isPending && (
         <p className="text-xs text-faint dark:text-slate-500 italic">
           No pattern or photos yet - upload the pattern PDF or a photo of the make.
         </p>
@@ -302,10 +304,10 @@ export function DesignFiles({ designId }: { designId: string }) {
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
           {images.map((a, i) => (
             <DesignThumb
-              key={a.id}
-              thumb={`${base}/files/${a.file_id}/raw?variant=thumb`}
+              key={a.key}
+              thumb={recordPhotoUrl(base, a, "thumb")}
               alt={a.filename}
-              fromPattern={a.role === "photo" && a.file_id === state?.photo_file_id}
+              fromPattern={a.attachment?.role === "photo" && a.fileId === state?.photo_file_id}
               onOpen={() => setViewing(i)}
             />
           ))}
@@ -314,11 +316,11 @@ export function DesignFiles({ designId }: { designId: string }) {
       {viewing !== null && images[viewing] && (
         <Lightbox
           items={images.map((a) => ({
-            key: a.id,
+            key: a.key,
             caption: a.filename,
-            src: `${base}/files/${a.file_id}/raw?variant=medium`,
-            original: `${base}/files/${a.file_id}/raw`,
-            thumb: `${base}/files/${a.file_id}/raw?variant=thumb`,
+            src: recordPhotoUrl(base, a, "medium"),
+            original: recordPhotoUrl(base, a),
+            thumb: recordPhotoUrl(base, a, "thumb"),
           }))}
           index={viewing}
           onIndex={setViewing}

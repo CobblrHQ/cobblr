@@ -3,7 +3,7 @@
 // external REST detector needs; new ones are added as a manifest + folder.
 // SSRF-guarded on every outbound call, exactly like the machine drivers.
 
-import { assertSafeMachineUrl } from "../drivers/ssrf.js";
+import { machineFetch } from "../drivers/machine-fetch.js";
 import type { DetectorManifest } from "./manifest.js";
 import { resolveReading, extractRaw, meetsMinVersion } from "./manifest.js";
 import type { DetectorContext } from "./types.js";
@@ -66,8 +66,7 @@ function fillPath(template: string, vars: Record<string, string>): string {
 }
 
 async function fetchJson(method: string, url: string, init: RequestInit): Promise<unknown> {
-  await assertSafeMachineUrl(url);
-  const res = await fetch(url, { ...init, method, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const res = await machineFetch(url, { ...init, method, signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!res.ok) throw new Error(`${method} ${url} → ${res.status}`);
   return res.status === 204 ? null : res.json().catch(() => null);
 }
@@ -252,8 +251,7 @@ export async function testDetectorManifest(
   let ok: boolean;
   let detail: string | undefined;
   try {
-    await assertSafeMachineUrl(path);
-    const res = await fetch(path, { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    const res = await machineFetch(path, { method, headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
     ok = res.ok;
     detail = res.ok ? undefined : `status ${res.status}`;
   } catch (e) {

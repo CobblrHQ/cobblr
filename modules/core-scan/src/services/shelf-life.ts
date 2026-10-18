@@ -28,6 +28,12 @@ export interface ShelfLife {
   shelf_life_opened_days?: number;
   /** Days past the date the food is still fine; the sweeper's grace. */
   grace_days?: number;
+  /** Days unopened but kept cold, when the fridge makes a real difference to
+   *  where the food normally lives. Moving the food into the fridge re-dates
+   *  its lot by this (inventory's cold-redate.ts). */
+  shelf_life_refrigerated_days?: number;
+  /** Days unopened in the freezer, for food that freezes well. */
+  shelf_life_frozen_days?: number;
 }
 
 // Names that settle it on their own, tried BEFORE any category. A retailer's
@@ -54,21 +60,21 @@ const RULES: Array<{ match: RegExp; life: ShelfLife }> = [
   // and pouches); the fresh-chicken rule below would otherwise read the name.
   { match: /\bsoups?\b|\bbroth\b|\bstock cubes?\b|\bbouillon\b|\bready meals?\b|\bmeal kits?\b/, life: { shelf_life_days: 365, shelf_life_opened_days: 3, grace_days: 60 } },
   // The short fresh things, most specific first.
-  { match: /\bberr(y|ies)\b|raspberr|strawberr|blueberr|blackberr/, life: { shelf_life_days: 4, grace_days: 1 } },
+  { match: /\bberr(y|ies)\b|raspberr|strawberr|blueberr|blackberr/, life: { shelf_life_days: 4, shelf_life_frozen_days: 240, grace_days: 1 } },
   { match: /\bsalad\b|\blettuce\b|\bgreens\b|\bspinach\b|\barugula\b|\brocket\b|\bherbs?\b|\bcilantro\b|\bparsley\b|\bbasil\b|\bkale\b/, life: { shelf_life_days: 5, grace_days: 1 } },
-  { match: /\bmushrooms?\b|\bavocados?\b|\bbananas?\b|\bcherr(y|ies)\b|\bgrapes\b|\bpeach|\bnectarine|\bplums?\b|\bmango|\bpapaya/, life: { shelf_life_days: 5, grace_days: 2 } },
-  { match: /\bfresh (meat|chicken|beef|pork|lamb|fish|seafood)\b|\bground (beef|meat|turkey|pork)\b|\bmince\b|\bchicken\b|\bturkey\b|\bbeef\b|\bpork\b|\blamb\b|\bsausages?\b|\bfish\b|\bsalmon\b|\bshrimp\b|\bprawns?\b|\bseafood\b|\bpoultry\b/, life: { shelf_life_days: 2, grace_days: 1 } },
+  { match: /\bmushrooms?\b|\bavocados?\b|\bbananas?\b|\bcherr(y|ies)\b|\bgrapes\b|\bpeach|\bnectarine|\bplums?\b|\bmango|\bpapaya/, life: { shelf_life_days: 5, shelf_life_refrigerated_days: 7, grace_days: 2 } },
+  { match: /\bfresh (meat|chicken|beef|pork|lamb|fish|seafood)\b|\bground (beef|meat|turkey|pork)\b|\bmince\b|\bchicken\b|\bturkey\b|\bbeef\b|\bpork\b|\blamb\b|\bsausages?\b|\bfish\b|\bsalmon\b|\bshrimp\b|\bprawns?\b|\bseafood\b|\bpoultry\b/, life: { shelf_life_days: 2, shelf_life_frozen_days: 120, grace_days: 1 } },
   { match: /\bdeli\b|charcuterie|\bham\b|\bsalami\b|\bprosciutto\b|sliced (turkey|chicken|meat)|\bcold cuts?\b/, life: { shelf_life_days: 5, shelf_life_opened_days: 3, grace_days: 2 } },
-  { match: /\bmilk\b|\bcream\b|creme fraiche|\bcr[eè]me\b|half.?and.?half|\bkefir\b|\bbuttermilk\b/, life: { shelf_life_days: 10, shelf_life_opened_days: 7, grace_days: 2 } },
+  { match: /\bmilk\b|\bcream\b|creme fraiche|\bcr[eè]me\b|half.?and.?half|\bkefir\b|\bbuttermilk\b/, life: { shelf_life_days: 10, shelf_life_opened_days: 7, shelf_life_frozen_days: 90, grace_days: 2 } },
   { match: /yogh?urt|\bskyr\b|cottage cheese|\bricotta\b|\bhummus\b|\bdips?\b|\bguacamole\b|\bsalsa\b|fresh pasta|\btofu\b|\btempeh\b/, life: { shelf_life_days: 14, shelf_life_opened_days: 5, grace_days: 5 } },
-  { match: /\bcheese\b|\bcheddar\b|\bmozzarella\b|\bparmesan\b|\bgouda\b|\bbrie\b|\bfeta\b|\bcamembert\b/, life: { shelf_life_days: 30, shelf_life_opened_days: 10, grace_days: 14 } },
+  { match: /\bcheese\b|\bcheddar\b|\bmozzarella\b|\bparmesan\b|\bgouda\b|\bbrie\b|\bfeta\b|\bcamembert\b/, life: { shelf_life_days: 30, shelf_life_opened_days: 10, shelf_life_frozen_days: 180, grace_days: 14 } },
   { match: /\beggs?\b/, life: { shelf_life_days: 28, grace_days: 14 } },
-  { match: /\bbutter\b|\bmargarine\b/, life: { shelf_life_days: 60, shelf_life_opened_days: 30, grace_days: 30 } },
-  { match: /\bbread\b|\bbagels?\b|\bbuns?\b|\brolls?\b|\btortillas?\b|\bpita\b|\bnaan\b|\bcroissants?\b|\bmuffins?\b|\bbaguette\b|\bbakery\b|\bpastr(y|ies)\b|\bcakes?\b|\bdonuts?\b|\bdoughnuts?\b/, life: { shelf_life_days: 5, grace_days: 2 } },
+  { match: /\bbutter\b|\bmargarine\b/, life: { shelf_life_days: 60, shelf_life_opened_days: 30, shelf_life_frozen_days: 270, grace_days: 30 } },
+  { match: /\bbread\b|\bbagels?\b|\bbuns?\b|\brolls?\b|\btortillas?\b|\bpita\b|\bnaan\b|\bcroissants?\b|\bmuffins?\b|\bbaguette\b|\bbakery\b|\bpastr(y|ies)\b|\bcakes?\b|\bdonuts?\b|\bdoughnuts?\b/, life: { shelf_life_days: 5, shelf_life_frozen_days: 90, grace_days: 2 } },
   // Sturdier produce.
-  { match: /\bapples?\b|\bcitrus\b|\boranges?\b|\blemons?\b|\blimes?\b|\bgrapefruit\b|\bcarrots?\b|\bcabbage\b|\bbeets?\b|\bcelery\b|\bbroccoli\b|\bcauliflower\b|\bpeppers?\b|\bcucumbers?\b|\bzucchini\b|\bcourgette/, life: { shelf_life_days: 14, grace_days: 5 } },
+  { match: /\bapples?\b|\bcitrus\b|\boranges?\b|\blemons?\b|\blimes?\b|\bgrapefruit\b|\bcarrots?\b|\bcabbage\b|\bbeets?\b|\bcelery\b|\bbroccoli\b|\bcauliflower\b|\bpeppers?\b|\bcucumbers?\b|\bzucchini\b|\bcourgette/, life: { shelf_life_days: 14, shelf_life_refrigerated_days: 28, grace_days: 5 } },
   { match: /\bpotato|\bonions?\b|\bgarlic\b|\bsquash\b|\bpumpkin\b|\bsweet potato|\byams?\b|\bginger\b/, life: { shelf_life_days: 30, grace_days: 14 } },
-  { match: /\btomato|\bfruit\b|\bvegetables?\b|\bproduce\b|\bveg\b|\blegumes? fra/, life: { shelf_life_days: 7, grace_days: 3 } },
+  { match: /\btomato|\bfruit\b|\bvegetables?\b|\bproduce\b|\bveg\b|\blegumes? fra/, life: { shelf_life_days: 7, shelf_life_refrigerated_days: 14, grace_days: 3 } },
   // Chilled drinks and opened-life things.
   { match: /\bjuice\b|\bsmoothie\b|\blemonade\b|\biced tea\b|\bkombucha\b/, life: { shelf_life_days: 21, shelf_life_opened_days: 7, grace_days: 5 } },
   { match: /\bcondiments?\b|\bketchup\b|\bmustard\b|\bmayo(nnaise)?\b|\bdressing\b|\bsauces?\b|\bsoy sauce\b|\bsriracha\b|\brelish\b|\bjams?\b|\bjell(y|ies)\b|\bmarmalade\b|\bpreserves\b|\bsyrup\b|\bhoney\b|\bpeanut butter\b|\bnut butters?\b|\btahini\b/, life: { shelf_life_days: 365, shelf_life_opened_days: 90, grace_days: 90 } },
@@ -153,5 +159,7 @@ export function expiryDefaults(opts: {
   };
   if (life.shelf_life_opened_days) out.shelf_life_opened_days = life.shelf_life_opened_days;
   if (life.grace_days) out.grace_days = life.grace_days;
+  if (life.shelf_life_refrigerated_days) out.shelf_life_refrigerated_days = life.shelf_life_refrigerated_days;
+  if (life.shelf_life_frozen_days) out.shelf_life_frozen_days = life.shelf_life_frozen_days;
   return out;
 }

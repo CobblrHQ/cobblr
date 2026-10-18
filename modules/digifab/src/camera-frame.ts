@@ -2,18 +2,17 @@
 // PNG, or an MJPEG stream URL, from which the first whole JPEG is taken. The server fetches it so a page
 // served over https can show a camera that only speaks plain http on the LAN; the address is held to the
 // same guard as a machine's, and the read is bounded in time and size.
-import { assertSafeMachineUrl } from "./drivers/ssrf.js";
+import { machineFetch } from "./drivers/machine-fetch.js";
 
 const LIMIT = 4 * 1024 * 1024;
 const SOI = Buffer.from([0xff, 0xd8]), EOI = Buffer.from([0xff, 0xd9]);
 
 export async function frameFromAddress(url: string, timeoutMs = 6000): Promise<{ bytes: Buffer; type: string } | null> {
   if (!/^https?:\/\//i.test(url)) return null;
-  await assertSafeMachineUrl(url);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal, redirect: "error" });
+    const res = await machineFetch(url, { signal: controller.signal, redirect: "error" });
     if (!res.ok || !res.body) return null;
     const type = (res.headers.get("content-type") ?? "").toLowerCase();
     const stream = type.startsWith("multipart/");

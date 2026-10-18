@@ -123,6 +123,7 @@ import { registerTrialMode } from "./platform/trial.js";
 import * as computedFields from "./platform/computed-fields.js";
 import * as createDefaults from "./platform/create-defaults.js";
 import * as deviceApply from "./platform/device-apply.js";
+import * as entityUpdaters from "./platform/entity-updaters.js";
 import * as scanRegistry from "./platform/scan-registry.js";
 import * as unitsImpl from "./platform/units.js";
 import * as instancesImpl from "./platform/instances.js";
@@ -189,8 +190,6 @@ import { voidReadOnlyShareSuggestionsAtBoot } from "./platform/heal-void-share-s
 import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
 import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
 import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
-import { scheduleOrderPageLinkHeal } from "./platform/heal-order-page-links.js";
-import { handOrderPageLink } from "./routes/receipt-ingest.js";
 import { healListRenames } from "./platform/heal-list-renames.js";
 import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
 import {
@@ -550,6 +549,10 @@ async function boot() {
       resolveCreateDefaults: createDefaults.resolveCreateDefaults,
       registerDeviceApply: deviceApply.registerDeviceApply,
       applyDevice: deviceApply.applyDevice,
+      registerUpdater: entityUpdaters.registerUpdater,
+      updaterFor: entityUpdaters.updaterFor,
+      updatableKinds: entityUpdaters.updatableKinds,
+      isUpdatable: async (orgId, kind) => !!entityUpdaters.updaterFor(await entities.baseKindOf(orgId, kind)),
       registerScannable: scanRegistry.registerScannable,
       registerLabelValuesProvider: scanRegistry.registerLabelValuesProvider,
       labelValuesFor: scanRegistry.labelValuesFor,
@@ -1003,7 +1006,7 @@ async function boot() {
         const tok = actor.authMethod === "api_token" && actor.apiTokenId
           ? await meta.selectFrom("api_tokens").select("name").where("id", "=", actor.apiTokenId).executeTakeFirst()
           : null;
-        return { auth_method: actor.authMethod, via: via?.kind ?? null, token_name: tok?.name ?? null };
+        return { auth_method: actor.authMethod, via: via?.kind ?? null, token_name: tok?.name ?? null, assistant: actor.assistant ?? null };
       },
       // An overlay's sender: never the configured one, and it replaces a
       // configured sender only when the instance says so (hosted-seams.ts).
@@ -2056,9 +2059,6 @@ async function boot() {
   startDeliverySweeper();
   // "Check my mailbox" dry runs (#5462): a few pages each every 20 s, one process at a time.
   startMailboxCheckRunner();
-  // Order emails filed before #5461: seal their store page links onto their
-  // orders and scrub the archive (one-shot, after the api is listening).
-  scheduleOrderPageLinkHeal(handOrderPageLink);
   await registerTidySweep();
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();

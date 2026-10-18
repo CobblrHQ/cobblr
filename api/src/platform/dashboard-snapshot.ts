@@ -4,10 +4,10 @@
 // route's status: a 403 the caller would have met is in the snapshot as a
 // 403, so the client meets it exactly as before.
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
-import { dashboardReads, snapshotKey, type DashboardReadContext, type DashboardSnapshot, type SnapshotEntry } from "@cobblr/platform-contract/dashboard-reads";
+import { dashboardReads, snapshotKey, type DashboardReadContext, type DashboardSnapshot, type SnapshotEntry, type SnapshotMiss } from "@cobblr/platform-contract/dashboard-reads";
 
 /** A section whose read hangs is left out (its own request then asks), never
- *  the reason the whole page waits. */
+ *  the reason the whole page waits. It is named in `missed` as a timeout. */
 export const READ_TIMEOUT_MS = 4_000;
 /** Reads in flight at once: the snapshot shares the database with everyone. */
 export const READ_CONCURRENCY = 12;
@@ -46,10 +46,10 @@ export async function composeDashboardSnapshot(input: ComposeInput): Promise<Das
   const origin = selfOrigin();
   const prefix = `/orgs/${input.slug}/`;
   const runRead = readQueue(READ_CONCURRENCY);
-  const answers = new Map<string, Promise<SnapshotEntry | null>>();
+  const answers = new Map<string, Promise<SnapshotEntry | SnapshotMiss>>();
   // One answer per path per snapshot: a path two sections read, or one a
   // section reads to name its others, is asked once.
-  const fetchOnce = (path: string): Promise<SnapshotEntry | null> => {
+  const fetchOnce = (path: string): Promise<SnapshotEntry | SnapshotMiss> => {
     const key = snapshotKey(path);
     let p = answers.get(key);
     if (!p) {
@@ -61,11 +61,11 @@ export async function composeDashboardSnapshot(input: ComposeInput): Promise<Das
           try {
             body = text ? JSON.parse(text) : null;
           } catch {
-            return null;
+            return "failed";
           }
           return { status: r.status, body };
-        } catch {
-          return null;
+        } catch (err) {
+          return err instanceof Error && err.name === "TimeoutError" ? "timeout" : "failed";
         }
       });
       answers.set(key, p);
@@ -79,7 +79,7 @@ export async function composeDashboardSnapshot(input: ComposeInput): Promise<Das
     enabled: input.enabled,
     read: async <T>(path: string) => {
       const e = await fetchOnce(path);
-      return e && e.status < 400 ? (e.body as T) : null;
+      return typeof e === "object" && e.status < 400 ? (e.body as T) : null;
     },
   };
   const reads = dashboardReads().filter((r) => !r.module || input.enabled.has(r.module));
@@ -90,9 +90,11 @@ export async function composeDashboardSnapshot(input: ComposeInput): Promise<Das
     await Promise.all(paths.map(fetchOnce));
   }));
   const entries: Record<string, SnapshotEntry> = {};
+  const missed: Record<string, SnapshotMiss> = {};
   for (const [key, p] of answers) {
     const e = await p;
-    if (e) entries[key] = e;
+    if (typeof e === "object") entries[key] = e;
+    else missed[key] = e;
   }
-  return { at: new Date().toISOString(), entries };
+  return { at: new Date().toISOString(), entries, missed };
 }

@@ -26,6 +26,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { relativeTime } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { notificationKeys } from "../lib/notification-keys";
+import { repeatsMessage } from "../lib/notification-lines";
 
 const STYLES = {
   primary:
@@ -105,8 +106,9 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
           const key = String(i);
           const acts = (row.actions ?? []).map((id) => byId.get(id)).filter((a): a is Action => !!a);
           return (
-            <div key={key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <RowText text={row.text} />
+            <div key={key} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1" data-testid="notification-row">
+              {/* A row that only repeats the title keeps its buttons, not its words. */}
+              {!repeatsMessage(row.text, n.message) && <RowText text={row.text} />}
               {done[key] ? (
                 <span className="text-[11px] text-muted dark:text-slate-400">{done[key]}</span>
               ) : (

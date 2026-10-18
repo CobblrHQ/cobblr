@@ -27,8 +27,12 @@ export function FileDetailPage() {
   const [viewing, setViewing] = useState(false);
   useFilePreviewRegistry();
 
-  const file = useQuery({ queryKey: ["file", activeSlug, id], queryFn: () => api.getFile(activeSlug, id), enabled: !!activeSlug && !!id, retry: false });
-  const usedBy = useQuery({ queryKey: ["file-used-by", activeSlug, id], queryFn: () => api.fileUsedBy(activeSlug, id), enabled: !!file.data });
+  // From the moment it is deleted this page stops reading the file: a
+  // refetch on focus or reconnect in the moment before it leaves asked for
+  // a file that is gone and logged a 404 (#7290).
+  const [deleting, setDeleting] = useState(false);
+  const file = useQuery({ queryKey: ["file", activeSlug, id], queryFn: () => api.getFile(activeSlug, id), enabled: !!activeSlug && !!id && !deleting, retry: false });
+  const usedBy = useQuery({ queryKey: ["file-used-by", activeSlug, id], queryFn: () => api.fileUsedBy(activeSlug, id), enabled: !!file.data && !deleting });
   const folders = useQuery({ queryKey: ["file-folders", activeSlug], queryFn: () => api.listFileFolders(activeSlug), enabled: !!activeSlug });
   usePageTitle(file.data?.filename ?? "File");
 
@@ -56,6 +60,7 @@ export function FileDetailPage() {
   });
   const remove = useMutation({
     mutationFn: () => api.deleteFile(activeSlug, id),
+    onMutate: () => setDeleting(true),
     onSuccess: () => {
       toast.action("File moved to Recently deleted.", {
         actionLabel: "Undo",
@@ -71,7 +76,10 @@ export function FileDetailPage() {
       void qc.invalidateQueries({ queryKey: ["files", activeSlug] });
       navigate("/files");
     },
-    onError: fail,
+    onError: (err) => {
+      setDeleting(false);
+      fail(err);
+    },
   });
 
   if (file.isLoading) return <div className="text-sm text-muted">Loading…</div>;

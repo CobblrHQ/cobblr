@@ -9,11 +9,17 @@
 //     from core_scan_inbox_items
 //    where status = 'pending' and suggested_name is not null
 //      and barcode_text ~ '^(2\d{7}|0\d{7}|\d{12,14})$'
-//      and coalesce(suggested_metadata->>'source', '') not in ('', 'photo', 'workspace');
+//      and coalesce(suggested_metadata->>'source', '') not in ('', 'photo', 'workspace', 'barcode')
+//      and created_at < '2026-10-13T00:34:05Z';
 // and judge each code with isStoreCode. /healthz reports the count this pass
 // found (noteHealShim). When it reads 0 on prod, staging and dev, delete this
-// file and its boot call. Nothing re-creates the shape: the classifier sends a
-// shop's own code to no catalog now.
+// file and its boot call. The classifier sends a shop's own code to no catalog
+// since STORE_CODE_RULE_SINCE, but other doors still make rows of the same
+// SHAPE: an import restores a row's capture `source: "barcode"` (#7283), which
+// is how the code was read, not a catalog's name for it. So the heal takes only
+// rows made before the rule, and never a "barcode" source: on a pooled test
+// workspace it renamed 5 of 55 freshly imported store-code rows mid-test and
+// turned main red (be2d28370).
 //
 // WHY IT EXISTS: an EAN-8 shop label (20446079 on a jar of ground cumin) was
 // looked up globally, because the rule then knew only 12 to 14 digit codes,
@@ -43,6 +49,13 @@ const rejudgeByEnrich: Rejudge = async (orgId, db, itemId, code) => {
   return enrichBarcodeItem({ db, orgId, itemId, orgSlug: "", upc: code, force: true, userId: null });
 };
 
+/** When the classifier stopped sending a shop's own code to a global catalog
+ *  (550d24f497): a row made after it was never named that way. */
+export const STORE_CODE_RULE_SINCE = "2026-10-13T00:34:05Z";
+
+/** Sources that say how the code was read, not which catalog named it. */
+const NOT_A_CATALOG = new Set(["photo", "workspace", "barcode"]);
+
 /** The SQL prefilter for a shop's own code's length and lead digit: EAN-8
  *  starting 2 or 0, and any 12 to 14 digit code. isStoreCode judges each. */
 export const STORE_CODE_SHAPE = "^(2[0-9]{7}|0[0-9]{7}|[0-9]{12,14})$";
@@ -50,10 +63,14 @@ export const STORE_CODE_SHAPE = "^(2[0-9]{7}|0[0-9]{7}|[0-9]{12,14})$";
 /** Does this pending row carry another shop's product: a name a catalog gave
  *  to a shop's own code? A name the person gave, one read off the photo, or
  *  this workspace's own filing is never one. */
-export function namedByCatalogForStoreCode(row: { status: string; barcode_text: string | null; suggested_name: string | null; suggested_metadata: unknown }): boolean {
+export function namedByCatalogForStoreCode(row: { status: string; barcode_text: string | null; suggested_name: string | null; suggested_metadata: unknown; created_at?: Date | string | null }): boolean {
   if (row.status !== "pending" || !row.suggested_name || !row.barcode_text) return false;
+  // Made after the rule: no catalog named it (#7283). A row with no date is
+  // judged as before, the shape this heal was written for.
+  const madeAt = row.created_at ? new Date(row.created_at).getTime() : NaN;
+  if (!Number.isNaN(madeAt) && madeAt >= Date.parse(STORE_CODE_RULE_SINCE)) return false;
   const source = (row.suggested_metadata as { source?: unknown } | null)?.source;
-  if (typeof source !== "string" || !source || source === "photo" || source === "workspace") return false;
+  if (typeof source !== "string" || !source || NOT_A_CATALOG.has(source)) return false;
   // A person renamed it: their name is kept apart from the column and shown
   // over it (user-name.ts), so there is nothing here to put right.
   if (personNameOf(row.suggested_metadata)) return false;
@@ -88,7 +105,7 @@ export async function storeCodeRowsToHeal<R extends HealRow>(
 }
 
 /** Heal one workspace. Answers how many rows it found. */
-export async function healStoreCodeNamesIn(orgId: string, db: Kysely<CoreScanDB>, rejudge: Rejudge = rejudgeByEnrich): Promise<number> {
+export async function healStoreCodeNamesIn(orgId: string, db: Kysely<CoreScanDB>, since: Date = new Date(STORE_CODE_RULE_SINCE), rejudge: Rejudge = rejudgeByEnrich): Promise<number> {
   const found = await storeCodeRowsToHeal((afterId, size) => {
     let q = db
       .selectFrom("core_scan_inbox_items")
@@ -96,7 +113,8 @@ export async function healStoreCodeNamesIn(orgId: string, db: Kysely<CoreScanDB>
       .where("status", "=", "pending")
       .where("suggested_name", "is not", null)
       .where(sql<boolean>`barcode_text ~ ${STORE_CODE_SHAPE}`)
-      .where(sql<boolean>`coalesce(suggested_metadata->>'source', '') not in ('', 'photo', 'workspace')`);
+      .where(sql<boolean>`coalesce(suggested_metadata->>'source', '') not in ('', 'photo', 'workspace', 'barcode')`)
+      .where("created_at", "<", since);
     if (afterId) q = q.where("id", ">", afterId);
     return q.orderBy("id").limit(size).execute();
   });
@@ -123,8 +141,9 @@ export async function healStoreCodeNamesIn(orgId: string, db: Kysely<CoreScanDB>
 export function registerStoreCodeNameHeal(): void {
   registerHealPass({
     name: "core-scan.heal-store-code-names",
+    since: STORE_CODE_RULE_SINCE,
     shim: "modules/core-scan/src/heal-store-code-names.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healStoreCodeNamesIn(orgId, db as Kysely<CoreScanDB>),
+    visit: ({ orgId, db, since }) => healStoreCodeNamesIn(orgId, db as Kysely<CoreScanDB>, since),
   });
 }

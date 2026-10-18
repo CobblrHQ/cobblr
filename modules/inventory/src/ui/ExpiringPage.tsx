@@ -24,10 +24,19 @@ export function ExpiringPage() {
   const q = useQuery({ queryKey: ["inventory-expiring", instance ?? "inventory", within], queryFn: () => api.stockExpiring(within) });
   const run = useRunWithUndo();
   const qc = useQueryClient();
-  // One at a time, as the record's own buttons do: each takes one off the
-  // oldest lot, and the row's count says what is left.
-  const settle = (l: { part_id: string; kind: string; name: string }, actionId: string, done: string) =>
-    run({ actionId, entityKind: l.kind, entityId: l.part_id }, done)
+  // One at a time, as the record's own buttons do, but off the lot this row
+  // names: the oldest is a different carton, and the row's count says what is
+  // left of this one.
+  const settle = (l: { part_id: string; kind: string; name: string; lot: string | null; received_on: string; expires_on: string }, actionId: string, done: string) =>
+    run(
+      {
+        actionId,
+        entityKind: l.kind,
+        entityId: l.part_id,
+        args: { ...(l.received_on ? { lot_received_on: l.received_on } : {}), lot_expires_on: l.expires_on, ...(l.lot ? { lot_number: l.lot } : {}) },
+      },
+      done,
+    )
       .catch(() => undefined)
       .finally(() => void qc.invalidateQueries({ queryKey: ["inventory-expiring"] }));
   const places = q.data?.places ?? [];

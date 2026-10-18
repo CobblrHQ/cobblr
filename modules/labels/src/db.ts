@@ -30,6 +30,15 @@ export interface LabelsBatchesTable {
   user_id: string | null;
   created_at: Generated<Date>;
   printed_at: Date | null;
+  /** An auto-printed batch's dispatch (0013): pending until its print job is
+   *  scheduled, then scheduled; null for a batch printed by hand. */
+  dispatch_state: "pending" | "scheduled" | null;
+  dispatch_printer_id: string | null;
+  /** The rendered document, kept only while the batch is pending. */
+  dispatch_document: Buffer | null;
+  dispatch_labels: number | null;
+  dispatch_job_id: string | null;
+  dispatch_error: string | null;
 }
 
 export interface LabelsPrintsTable {

@@ -67,7 +67,7 @@ export function unconfirmedSentence(n: number): string {
 }
 
 /** Heal one workspace; answers how many lines it stamped or withdrew. */
-export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<PurchasesDB>): Promise<number> {
+export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<PurchasesDB>, since: Date): Promise<number> {
   // A question asked in error, before the rule above, is taken back.
   const withdrawn = await sql`
     update purchases_order_items i
@@ -75,6 +75,7 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
       from purchases_orders o
      where o.id = i.order_id
        and i.receipt_unconfirmed
+       and i.created_at < ${since}
        and not ${MAY_HAVE_MISSED_STOCK}`.execute(db);
   const stamped = await sql<{ flagged: boolean }>`
     update purchases_order_items i
@@ -85,6 +86,7 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
        and o.status = 'arrived'
        and i.part_id is not null
        and i.received_at is null
+       and i.created_at < ${since}
        and o.updated_at < ${BEFORE_BOOT}
        and i.updated_at < ${BEFORE_BOOT}
     returning i.receipt_unconfirmed as flagged`.execute(db);
@@ -113,8 +115,9 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
 export function registerUnreceivedArrivalsHeal(): void {
   registerHealPass({
     name: "purchases.heal-unreceived-arrivals",
+    since: "2026-09-30T23:24:49Z",
     shim: "modules/purchases/src/heal-unreceived-arrivals.ts",
     module: "purchases",
-    visit: ({ orgId, db }) => healUnreceivedArrivalsIn(orgId, db as Kysely<PurchasesDB>),
+    visit: ({ orgId, db, since }) => healUnreceivedArrivalsIn(orgId, db as Kysely<PurchasesDB>, since),
   });
 }

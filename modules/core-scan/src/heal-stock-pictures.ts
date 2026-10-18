@@ -39,6 +39,7 @@ interface HealDB {
     catalog_image_url: string | null;
     suggested_metadata: unknown;
     updated_at: Date;
+    created_at: Date;
   };
 }
 
@@ -57,11 +58,12 @@ type Repick = (orgId: string, itemId: string, name: string, brand: string | null
 /** Heal one workspace: set aside every stock-preview picture on a pending row
  *  nobody picked, then look for the next picture. Answers how many rows it
  *  found. `repick` is injectable so the heal is testable without a search. */
-export async function healStockPicturesIn(orgId: string, db: Kysely<HealDB>, repick?: Repick): Promise<number> {
+export async function healStockPicturesIn(orgId: string, db: Kysely<HealDB>, since: Date, repick?: Repick): Promise<number> {
   const pattern = stockPrefilterPattern();
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name", "suggested_manufacturer", "catalog_image_file_id", "catalog_image_url", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where(sql<boolean>`coalesce((suggested_metadata->>'catalog_image_user_set')::boolean, false) = false`)
     .where(sql<boolean>`(catalog_image_url ~* ${pattern} or suggested_metadata->>'catalog_image_from' ~* ${pattern})`)
@@ -108,8 +110,9 @@ export async function healStockPicturesIn(orgId: string, db: Kysely<HealDB>, rep
 export function registerStockPictureHeal(): void {
   registerHealPass({
     name: "core-scan.heal-stock-pictures",
+    since: "2026-09-28T14:29:44Z",
     shim: "modules/core-scan/src/heal-stock-pictures.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healStockPicturesIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healStockPicturesIn(orgId, db as Kysely<HealDB>, since),
   });
 }

@@ -54,7 +54,11 @@ export function CatalogDetailPage() {
   });
   const PAGE_SIZE = 60;
   const entriesQ = useInfiniteQuery({
-    queryKey: ["core-catalog-entries", activeSlug, id, debounced],
+    // "pages": an infinite query keeps {pages, pageParams}, the match picker
+    // keeps one page under the same family. Sharing a key, the picker's page
+    // crashed this screen when the catalog was opened after matching (#7149).
+    // Invalidating [..., id] still reaches both.
+    queryKey: ["core-catalog-entries", activeSlug, id, "pages", debounced],
     initialPageParam: 0,
     queryFn: ({ pageParam }) =>
       api.listCatalogEntries(activeSlug, id!, {

@@ -13,7 +13,7 @@ import { Users } from "lucide-react";
 import { SegmentedChoice, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ContributedConfigSections } from "../panels/registry";
-import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type WorkspaceMember } from "../lib/api";
+import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type NotificationDefaultChannel, type WorkspaceMember } from "../lib/api";
 
 const MODES: Array<{ mode: NotificationAudienceMode; label: string }> = [
   { mode: "all", label: "Everyone" },
@@ -56,6 +56,7 @@ export function NotificationAudiencesPage() {
 
   return (
     <div className="space-y-5">
+      <DefaultChannels slug={activeSlug} />
       <p className="text-sm text-faint dark:text-slate-400">
         Each kind of notification this workspace sends, and who it goes to. Everyone is the default. How
         each person is told (the bell, a Discord DM, email) is their own choice under Your account.
@@ -81,6 +82,57 @@ export function NotificationAudiencesPage() {
         </section>
       ))}
     </div>
+  );
+}
+
+const DEFAULT_OPTIONS: Array<{ value: NotificationDefaultChannel | "none"; label: string }> = [
+  { value: "none", label: "The bell alone" },
+  { value: "email", label: "Email" },
+  { value: "discord_dm", label: "Discord (for members who connected it)" },
+  { value: "browser_push", label: "Phone and computer notifications" },
+];
+
+/** How members who have not chosen for themselves hear this workspace's urgent
+ *  and high events (#6909). A member who set any channel here keeps their own. */
+function DefaultChannels({ slug }: { slug: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const defaults = useQuery({ queryKey: ["notification-defaults", slug], queryFn: () => api.notificationDefaults(slug), enabled: !!slug });
+  const save = useMutation({
+    mutationFn: ({ priority, channel }: { priority: "urgent" | "high"; channel: NotificationDefaultChannel | null }) => api.setNotificationDefault(slug, priority, channel),
+    onSuccess: (data, { priority, channel }) => {
+      qc.setQueryData(["notification-defaults", slug], data);
+      const how = DEFAULT_OPTIONS.find((o) => o.value === (channel ?? "none"))!.label.split(" (")[0]!.toLowerCase();
+      toast.success(`Members who have not chosen now hear ${priority} events by ${how}.`);
+    },
+    onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save that. Try again."),
+  });
+  return (
+    <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3" data-testid="notification-defaults">
+      <h2 className="text-sm font-semibold text-content dark:text-slate-200">How members hear urgent and high events</h2>
+      <p className="text-sm text-faint dark:text-slate-400">
+        For members who have not chosen a channel in this workspace yet. Anyone who sets their own keeps it, and a channel
+        they turned off stays off. Everyone still sees everything in the bell.
+      </p>
+      {(["urgent", "high"] as const).map((priority) => (
+        <label key={priority} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="text-content dark:text-slate-200">{priority === "urgent" ? "Urgent events" : "High priority events"}</span>
+          <select
+            aria-label={priority === "urgent" ? "How members hear urgent events" : "How members hear high priority events"}
+            className="rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-800 px-2 py-1.5 text-sm max-w-full"
+            value={defaults.data?.[priority] ?? "none"}
+            disabled={!defaults.data || save.isPending}
+            onChange={(e) => save.mutate({ priority, channel: e.target.value === "none" ? null : (e.target.value as NotificationDefaultChannel) })}
+          >
+            {DEFAULT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+    </section>
   );
 }
 

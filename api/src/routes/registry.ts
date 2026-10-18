@@ -9,6 +9,7 @@
 // /sandbox/install) — each enforces its own permissions. This route is
 // just the read-only catalog. See docs/modules/extension-registry.md.
 
+// EGRESS-FILE: vendor-fixed - the registry's signature address is written in the code
 import { Router } from "express";
 import { verifyEd25519 } from "@cobblr/platform-contract/signature";
 import { requireAuth } from "../auth/middleware.js";

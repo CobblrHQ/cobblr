@@ -16,7 +16,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-scan",
-  version: "0.77.9",
+  version: "0.77.11",
   displayName: "Scan",
   description:
     "Scan a barcode or snap a photo, and get the thing named and ready to file in one tap.",
@@ -182,6 +182,7 @@ export default defineModule({
       "core-scan.scan.enriched",
       "core-scan.scan.confirmed",
       "core-scan.scan.unconfirmed",
+      "core-scan.scan.broken",
       "core-scan.scan.discarded",
       "core-scan.organize.applied",
       "core-scan.putaway.session-started",
@@ -218,7 +219,7 @@ export default defineModule({
     actions: [
       {
         // UI-SCREEN: /instances/:name
-        group: "buy", id: "core-scan:renewal-draft", label: "Draft from a receipt", scope: "workspace", invokeHandler: "core-scan.renewal-draft",
+        group: "buy", id: "core-scan:renewal-draft", changes: "records", label: "Draft from a receipt", scope: "workspace", invokeHandler: "core-scan.renewal-draft",
         runBy: "member",
         description: "Read a receipt file or forwarded receipt inbox item into a reviewable renewal draft. Pass target_kind and binding matching the collection's receipt_draft configuration, plus file_id or inbox_id. Nothing is filed until the person saves the draft with create_record.",
         argsSchema: { target_kind: { type: "text", label: "Collection", required: true }, file_id: { type: "text", label: "Receipt file" }, inbox_id: { type: "text", label: "Forwarded receipt" }, binding: { type: "json", label: "Receipt field mapping", required: true } },
@@ -227,6 +228,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /records
         id: "core-scan:lookup-barcode",
+        changes: "records",
         runBy: "member",
         examples: ["what is this barcode?", "look up this ISBN"],
         label: "Look up a barcode",
@@ -239,6 +241,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-scan:decode-identifier",
+        changes: "records",
         runBy: "member",
         examples: ["decode this package label", "read the fields in this identifier"],
         label: "Decode identifier",
@@ -252,6 +255,7 @@ export default defineModule({
         group: "more",
         // UI-SCREEN: /me/notifications (the parcel notification carries its receipt session)
         id: "core-scan:confirm-receipt-arrival",
+        changes: "records",
         runBy: "member",
         examples: ["I have the parcel", "the package is here", "got the delivery in hand"],
         label: "Confirm a parcel is in hand",
@@ -275,6 +279,7 @@ export default defineModule({
         // NO-PHRASING: the scan pipeline's own step; a person asking to identify something means core-scan:identify
         group: "more",
         id: "core-scan:identify-photo",
+        changes: "records",
         runBy: "member",
         label: "Identify a scanned photo",
         description:
@@ -292,6 +297,7 @@ export default defineModule({
         // NO-PHRASING: an internal ranking step between enrichment and the draft; there is no sentence for it
         group: "more",
         id: "core-scan:rank-catalog-photo",
+        changes: "records",
         runBy: "member",
         label: "Pick the best catalog photo",
         description:
@@ -309,6 +315,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:attach-paperwork",
+        changes: "records",
         runBy: "member",
         examples: ["attach this bill of sale to the Civic", "this receipt is for my mower, put it on it"],
         label: "Attach paperwork to a record",
@@ -329,6 +336,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:set-line-units",
+        changes: "records",
         runBy: "member",
         examples: ["those ten spools are all different colours", "that line is ten of the same"],
         label: "Say an order line is the same or different",
@@ -347,6 +355,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:split-off-units",
+        changes: "records",
         runBy: "member",
         examples: ["two of those ten are black", "split off the 3 that are red"],
         label: "Split the ones that differ off an order line",
@@ -366,6 +375,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:rejoin-order-line",
+        changes: "records",
         runBy: "member",
         examples: ["put those two back with the rest", "they were white after all, put them back"],
         label: "Put split-off units back into their line",
@@ -381,6 +391,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:fill-order-line",
+        changes: "records",
         runBy: "member",
         examples: ["this spool is one of the ten I ordered", "count that scan toward the Kingroon order"],
         label: "Count a scan as one of an order line's units",
@@ -400,6 +411,7 @@ export default defineModule({
         // UI-SCREEN: /scan
         group: "more",
         id: "core-scan:unfill-order-line",
+        changes: "records",
         runBy: "member",
         examples: ["that scan wasn't one of the ten", "take that last spool off the order"],
         label: "Take a scan off its order line",
@@ -415,6 +427,7 @@ export default defineModule({
         // NO-PHRASING: a table's own wire runs it when a record is made or changed; the person's door is the record's identifier box
         group: "more",
         id: "core-scan:fill-known",
+        changes: "records",
         // ADMIN-ONLY: fills any kind's empty fields through its writer; no one page gate covers every kind it may write
         runBy: "admin",
         label: "Fill what the record already says",
@@ -439,6 +452,7 @@ export default defineModule({
         description:
           "Undo of fill-known: empty the fields it filled, only where each still holds the value it put there. Args: { filled }.",
         appliesTo: { any: true },
+        changes: "records",
         invokeHandler: "core-scan.unfill-known",
         userInvokable: false,
         internal: true,
@@ -447,6 +461,7 @@ export default defineModule({
         group: "organise",
         // UI-SCREEN: /fields (fill empty provenance from past receipts)
         id: "core-scan:fill-fields-from-receipts",
+        changes: "records",
         // ADMIN-ONLY: the page's own route POST /receipts/backfill-fields gates on this action's own id, owner or admin (inbox.ts)
         runBy: "admin",
         examples: [
@@ -477,6 +492,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-scan:identify",
+        changes: "records",
         runBy: "member",
         examples: ["what is this thing", "identify this for me"],
         label: "Identify a thing",
@@ -495,6 +511,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /scan (a photo's card in the inbox: "Split by names…")
         id: "core-scan:add-things-from-photo",
+        changes: "records",
         runBy: "member",
         examples: ["this photo is two dehumidifiers, the Midea on the left and the Frigidaire on the right"],
         label: "Add several things from one photo",
@@ -514,6 +531,7 @@ export default defineModule({
         group: "stock",
         // UI-SCREEN: /scan (a split piece's card: "Undo split")
         id: "core-scan:undo-split",
+        changes: "records",
         runBy: "member",
         examples: ["undo that split, it was one thing"],
         label: "Undo split",
@@ -526,9 +544,44 @@ export default defineModule({
         },
       },
       {
+        group: "service",
+        // UI-SCREEN: /scan (the Broken mark on a scan that matched a thing you have, card and camera sheet)
+        id: "core-scan:mark-broken",
+        changes: "records",
+        runBy: "member",
+        examples: ["the drill I just scanned is broken", "that scan is the sander, it needs repair"],
+        label: "Mark broken",
+        description: "A scan of a thing you already have, which is broken: opens one repair entry in that thing's service log instead of filing a new thing, and settles the scan. Pass item_id from list_scan_inbox and an optional note (what is wrong). Only a scan that matched one thing by its code or serial number can be marked.",
+        scope: "workspace",
+        invokeHandler: "core-scan.mark-broken",
+        userInvokable: true,
+        undoable: true,
+        argsSchema: {
+          item_id: { label: "The scan", type: "text", required: true },
+          note: { label: "What is wrong", type: "text" },
+        },
+      },
+      {
+        group: "service",
+        // UI-SCREEN: /scan (Undo on a scan marked broken)
+        id: "core-scan:unmark-broken",
+        changes: "records",
+        runBy: "member",
+        examples: ["it isn't broken after all", "undo marking that broken"],
+        label: "Not broken after all",
+        description: "Take back Mark broken: the repair entry comes off the thing's service log and the scan is back in the inbox. Pass item_id, the scan that was marked.",
+        scope: "workspace",
+        invokeHandler: "core-scan.unmark-broken",
+        userInvokable: true,
+        argsSchema: {
+          item_id: { label: "The scan", type: "text", required: true },
+        },
+      },
+      {
         group: "stock",
         // UI-SCREEN: /scan (the Undo split toast's "Split again")
         id: "core-scan:redo-split",
+        changes: "records",
         runBy: "member",
         examples: ["put that split back", "I didn't mean to undo the split"],
         label: "Split again",
@@ -544,6 +597,7 @@ export default defineModule({
       {
         group: "stock",
         id: "core-scan:ran-out",
+        changes: "records",
         runBy: "member",
         examples: ["I just ran out of oat milk and I don't have it in Cobblr yet", "Mark the coffee filters I scanned as ran out"],
         label: "Ran out",

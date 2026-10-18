@@ -14,6 +14,7 @@
 // price table the cost ledger reads; a listed model it does not name logs no
 // cost rather than $0.
 
+// EGRESS-FILE: vendor-fixed - the provider's API address, written in the code
 import type { AiCapability } from "@cobblr/platform-contract";
 import type { AiListedModel, AiModelCatalog } from "@cobblr/platform-contract/ai-models";
 

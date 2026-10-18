@@ -121,18 +121,23 @@ export function registerBuildsActionHandlers(): void {
   // when a plate is judged good; not user-invokable.
   platform().actions.registerHandler("builds.credit-output", async (ctx) => {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
-    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number };
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; jobId?: string };
     const buildId =
       args.build_id?.trim() ||
       ev.buildId?.trim() ||
       (ctx.entity?.kind === "builds:build" ? ctx.entity.id : undefined);
     if (!buildId) return { ok: false, skipped: "no build_id" };
     const qty = Math.max(1, Math.floor(Number(args.qty ?? ev.qty ?? 1)) || 1);
+    // A job's output is credited once, however often digifab asks (a retried
+    // verdict, its sweep): the credit is keyed to the job, and once applied
+    // (or found applied) builds says so, which is what stamps the job.
+    const jobId = typeof ev.jobId === "string" && ev.jobId ? ev.jobId : undefined;
+    const credited = async (made: number) => { if (jobId) await platform().events.emit("builds.output.credited", { orgId: ctx.orgId, jobId, buildId, made }); };
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
     const build = await db.selectFrom("builds_builds").selectAll().where("id", "=", buildId).executeTakeFirst();
     if (!build) return { ok: false, skipped: "build not found" };
-    if (!build.output_part_id) return { ok: true, skipped: "the build has no output part" };
+    if (!build.output_part_id) { await credited(0); return { ok: true, skipped: "the build has no output part" }; }
 
     const made = (Number(build.output_qty) || 1) * qty;
     const res = (await platform().actions.invoke("inventory:adjust-stock", {
@@ -146,9 +151,10 @@ export function registerBuildsActionHandlers(): void {
         timestamp: ctx.event?.timestamp ?? new Date().toISOString(),
         trigger_type: "event",
       },
-      args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}` },
+      args: { partId: build.output_part_id, delta: made, reason: `build-output:${buildId}`, ...(jobId ? { once: true, sourceKind: "digifab:job-output", sourceId: jobId } : {}) },
     })) as { ok?: boolean; error?: string } | null;
     if (!res?.ok) return { ok: false, error: res?.error ?? "the output could not be added to stock" };
+    await credited(made);
     return { ok: true, buildId, made };
   });
 

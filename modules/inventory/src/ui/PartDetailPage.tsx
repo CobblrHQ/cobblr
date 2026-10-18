@@ -2,7 +2,7 @@ import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
@@ -318,9 +318,11 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
   const update = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api.updatePart(id!, patch),
-    onSuccess: () => {
+    onSuccess: (_r, patch) => {
       void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
+      // The gallery leads with the cover, so a new cover is a new gallery.
+      if ("image_path" in patch) void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, id] });
     },
   });
 
@@ -589,6 +591,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                     that are not about the record left the strip below for
                     this spot; the platform decides what a header carries. */}
                 <RecordHeaderChips kind={entityKind} id={p.id} label={p.name} />
+                <AllergenPills contains={p.metadata?.allergens} mayContain={p.metadata?.traces} />
                 {p.lifetime_warranty && (
                   <span className="text-[10px] inline-flex items-center gap-1 text-moss-600 border border-moss-200 dark:border-moss-800 rounded px-1.5 py-0.5">
                     lifetime warranty
@@ -892,7 +895,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <div id="units">
         <FaceSection face="serialized" kind={entityKind} holds={(p.units_count ?? 0) > 0}>
-          <UnitsPanel partId={p.id} />
+          <UnitsPanel partId={p.id} partName={p.name} />
         </FaceSection>
       </div>
 
@@ -923,9 +926,12 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       {/* Stays in reach on a phone: this row used to be five screens down. */}
       <StickyBottomBar className="flex items-center justify-center gap-4 pt-4 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
+        {/* Its one word keeps its width: the phone's min-width took a flex
+            item's own minimum away, and on a 360 px phone it shrank under
+            "Duplicate" while its neighbours wrapped (#7108). */}
         <button
           onClick={() => setDup(true)}
-          className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
+          className="shrink-0 text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
         >
           <Copy size={12} /> Duplicate
         </button>

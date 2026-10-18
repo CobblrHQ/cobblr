@@ -14,7 +14,7 @@
 import { type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { SalesDB, SalesOrderStatus } from "./db.js";
-import { fulfilOrderUnderLock, type FulfilDoor, type Shortage } from "./fulfilment.js";
+import { fulfilOrderUnderLock, orderStockComplete, type FulfilDoor, type Shortage } from "./fulfilment.js";
 import { withOrderLock } from "./order-lock.js";
 import { orderHappened } from "./history.js";
 
@@ -163,6 +163,10 @@ export async function shipOrder(
       if (!f.complete) {
         return { ok: false, code: "not_enough_stock", message: "Not all of this order came out of stock, so it cannot ship yet.", shortages: [], doors: [] };
       }
+    }
+
+    if (!(await orderStockComplete(db, order.id))) {
+      return { ok: false, code: "not_enough_stock", message: "Not all of this order came out of stock, so it cannot ship yet.", shortages: [], doors: [] };
     }
 
     const tracking = args.trackingNumber?.trim() || null;

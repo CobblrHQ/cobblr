@@ -9,7 +9,7 @@ import { Router, type Request } from "express";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { z } from "zod";
 import { likeEscape, platform } from "@cobblr/platform-contract";
-import { readGramsByTool } from "@cobblr/platform-contract/filament-draw";
+import { readFilamentDrawn, readGramsByTool } from "@cobblr/platform-contract/filament-draw";
 import { pagedAnswer, readListPage, TOTAL_COLUMN, MAX_PAGE } from "@cobblr/platform-contract/list-page";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import type { DigifabDB } from "../db.js";
@@ -26,7 +26,7 @@ import {
   REL_MADE_FOR,
   attachToStep,
   emitMakeCompleted,
-  drawnFromJob,
+  spoolsFromJob,
   isMakeStep,
   reachFor,
   recordMakeStep,
@@ -395,7 +395,7 @@ makesRouter.get(
     if (printRow?.job_id) {
       const job = (await db.selectFrom("digifab_jobs").selectAll().where("id", "=", printRow.job_id).executeTakeFirst()) as Record<string, unknown> | undefined;
       if (job) {
-        const drawn = drawnFromJob(job);
+        const drawn = spoolsFromJob(job);
         const spools = await Promise.all(
           drawn.map(async (d) => ({ ...d, title: await platform().entities.titleForEntity(orgId, "inventory:part", d.part_id) })),
         );
@@ -416,7 +416,8 @@ makesRouter.get(
           spools,
           // Measured once the print completes (#4016); the slicer's estimate
           // before that, and on a job that named its own spool.
-          grams_measured: Array.isArray(job.material_drawn),
+          material_pending: job.material_pending === true,
+          grams_measured: !job.material_pending && Array.isArray(job.material_drawn) && drawn.every(d => readFilamentDrawn(job.material_drawn).some(a => a.part_id === d.part_id && a.slot === d.slot)),
           grams_by_tool: readGramsByTool(job.material_grams_by_tool),
         };
       }

@@ -1,3 +1,4 @@
+// EGRESS-FILE: operator-configured - the catalogue resolver address is the operator's setting
 import { FACT_SCOPES } from "@cobblr/platform-contract/fact-scope";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { RecordTemplateSchema, ReceiptDraftSchema, RenewalBindingSchema } from "@cobblr/platform-contract/record-creation";
@@ -37,6 +38,7 @@ import {
 } from "../platform/platform-actions.js";
 import { getTenantDb } from "../db/tenant.js";
 import { resolveAppViewRefs, type SeededView } from "./bundle-app-view-refs.js";
+import { describeSettings, mergeBundleView, viewEdits, type BundleViewState } from "../platform/bundle-view-merge.js";
 import { appsFromManifest, syncBundleApps, type BundleApp, type BundleAppRow, type BundleAppsDB } from "./bundle-apps.js";
 import * as activity from "../platform/activity.js";
 import { enableModuleForOrg, isDefaultModule } from "../modules/enable.js";
@@ -75,6 +77,8 @@ interface CoreViewsViewsRow {
   owner_user_id: string | null;
   bundle_id: string | null;
   source_module: string | null;
+  bundle_key: string | null;
+  bundle_base: BundleViewState | null;
 }
 // core-catalogs lives in the same tenant DB. Bundles can ship catalog
 // shells (definition + schema, no rows) tagged by bundle_external_id
@@ -714,7 +718,7 @@ export interface BundleValidationPreview {
     entity_kind: string;
     name: string;
     field_label: string;
-    attr: "label" | "choices" | "removed";
+    attr: "label" | "choices" | "removed" | "view";
     yours: string | string[] | null;
     theirs: string | string[] | null;
   }>;
@@ -848,6 +852,28 @@ interface DeclaringManifest {
     wires?: readonly unknown[];
   }>;
   features?: readonly DeclaringManifest[];
+}
+
+/** The views a (resolved) manifest ships, the base ones and each table's own,
+ *  as the install writes them. */
+export function declaredViews(m: Pick<BundleManifestT, "saved_views" | "provides_instances">): Array<BundleViewState & { entity_kind: string }> {
+  return [
+    ...m.saved_views,
+    ...m.provides_instances.flatMap((inst) => inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` }))),
+  ].map((v) => ({
+    entity_kind: v.entity_kind,
+    name: v.name,
+    view_type: v.view_type,
+    config: (v.config ?? {}) as Record<string, unknown>,
+    is_default: v.is_default ?? false,
+    pinned: v.pinned ?? false,
+  }));
+}
+
+const viewKey = (entityKind: string, key: string) => `${entityKind}\u0000${key}`;
+
+function stateOf(r: { name: string; view_type: string; config: unknown; is_default: boolean; pinned: boolean }): BundleViewState {
+  return { name: r.name, view_type: r.view_type, config: (r.config ?? {}) as Record<string, unknown>, is_default: r.is_default, pinned: r.pinned };
 }
 
 /** Every field a manifest declares, wherever it declares it: the base kinds,
@@ -1278,6 +1304,41 @@ export async function validateBundle(
         if (userChoices != null && !sameJson(incoming.choices, cur.choices) && !nothingNewForYou) {
           upgradeConflicts.push({ entity_kind: o.entity_kind, name: o.name, field_label: fieldLabel, attr: "choices", yours: userChoices, theirs: incoming.choices ?? null });
         }
+      }
+    }
+  }
+
+  // 5b. Views. A view the person changed (its row differs from the bundle's own
+  //     copy) that this version changes in the same setting. Everything else the
+  //     person changed is kept and the rest of the update lands, so only a clash
+  //     is asked about.
+  {
+    const priorBundles = await meta.selectFrom("bundles").select("id").where("org_id", "=", orgId).where("external_id", "=", m.id).execute();
+    if (priorBundles.length > 0) {
+      try {
+        const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+        const rows = await tdb.selectFrom("core_views_views").selectAll().where("bundle_id", "in", priorBundles.map((b) => b.id)).execute();
+        const chosen = await storedNounChoices(orgId);
+        const filled = withNounsFilled(m, (name) => chosen.get(name) ?? null);
+        const incoming = new Map(declaredViews(filled).map((v) => [viewKey(v.entity_kind, v.name), v]));
+        for (const r of rows) {
+          const key = r.bundle_key ?? r.name;
+          const inc = incoming.get(viewKey(r.entity_kind, key));
+          if (!inc || !r.bundle_base) continue;
+          const merge = mergeBundleView(stateOf(r), r.bundle_base, inc);
+          if (!merge.conflicts.length) continue;
+          upgradeConflicts.push({
+            entity_kind: r.entity_kind,
+            name: key,
+            field_label: r.name,
+            attr: "view",
+            yours: describeSettings(stateOf(r), merge.conflicts),
+            theirs: describeSettings(inc, merge.conflicts),
+          });
+        }
+      } catch (err) {
+        // A preview that cannot read the views asks nothing: the update still keeps what a person changed.
+        console.error(`[bundle-validate] could not compare ${m.id}'s views with the update:`, (err as Error).message);
       }
     }
   }
@@ -1795,7 +1856,7 @@ export const ConflictResolutionSchema = z
   .object({
     entity_kind: z.string().min(1),
     name: z.string().min(1),
-    attr: z.enum(["label", "choices", "removed"]),
+    attr: z.enum(["label", "choices", "removed", "view"]),
     choice: z.enum(["mine", "theirs", "both"]),
   })
   .refine((r) => r.choice !== "both" || r.attr === "choices", {
@@ -1813,6 +1874,8 @@ async function resolveUpgradeConflict(
   conflicts: BundleValidationPreview["upgrade_conflicts"],
 ): Promise<void> {
   if (r.choice === "mine") return;
+  // A view's answer is applied where its row is rewritten, in the same step.
+  if (r.attr === "view") return;
   const c = conflicts.find((x) => x.entity_kind === r.entity_kind && x.name === r.name && x.attr === r.attr);
   if (!c) return; // not a conflict this update has: nothing of theirs to take
   const row = meta
@@ -2000,6 +2063,20 @@ async function applyValidatedBundleUnlocked(
   // the bundle first had them. A field still in the section the previous
   // version gave it follows the new version's.
   const keptSections = existing.length > 0 ? await personPlacedSections(orgId, existing) : new Map<string, string | null>();
+  // The views the previous version put here, as they are now: the replace below
+  // removes them and the new version's are written back under the SAME ids, with
+  // what a person changed carried over (bundle-view-merge.ts), so a pin, an app
+  // page or a wire narrowed to a view keeps pointing at it.
+  let priorViewRows: Array<{ id: string; entity_kind: string; name: string; view_type: string; config: unknown; is_default: boolean; pinned: boolean; owner_user_id: string | null; bundle_key: string | null; bundle_base: BundleViewState | null }> = [];
+  if (existing.length > 0) {
+    try {
+      const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      priorViewRows = await tdb.selectFrom("core_views_views").selectAll().where("bundle_id", "in", existing.map((b) => b.id)).execute();
+    } catch (err) {
+      console.error(`[bundle-apply] could not read ${m.id}'s views before the update (they are written fresh):`, (err as Error).message);
+    }
+  }
+  const takeViews = new Set((opts.resolutions ?? []).filter((r) => r.attr === "view" && r.choice === "theirs").map((r) => viewKey(r.entity_kind, r.name)));
   // The old version is kept in history now, but NOT removed here: it goes in
   // the same transaction that writes its replacement, so an update that stops
   // or fails before that commits leaves the old installation whole and the
@@ -2435,18 +2512,15 @@ async function applyValidatedBundleUnlocked(
   let viewsInstalled = 0;
   // Base views (declared entity_kind) + per-instance views (scoped to
   // `<instance_name>:item`) are applied the same way.
-  const allViews = [
-    ...m.saved_views,
-    ...m.provides_instances.flatMap((inst) =>
-      inst.saved_views.map((v) => ({ ...v, entity_kind: `${inst.instance_name}:item` })),
-    ),
-  ];
+  const allViews = declaredViews(m);
   // Keyed for the app-block view references below: a bundle app names the view
   // it wants, and only this insert knows the id that name got in THIS workspace.
   const seededViews: SeededView[] = [];
   if (allViews.length > 0 || existing.length > 0) {
     try {
       const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BundleTenantDB>;
+      const priorByKey = new Map(priorViewRows.map((r) => [viewKey(r.entity_kind, r.bundle_key ?? r.name), r]));
+      const matched = new Set<string>();
       // The old version's views go and the new ones come in one transaction:
       // a failure keeps the old views rather than leaving the bundle with none.
       await tdb.transaction().execute(async (ttrx) => {
@@ -2454,24 +2528,59 @@ async function applyValidatedBundleUnlocked(
         await ttrx.deleteFrom("core_views_views").where("bundle_id", "in", existing.map((e) => e.id)).execute();
       }
       for (const v of allViews) {
+        const key = viewKey(v.entity_kind, v.name);
+        const prior = priorByKey.get(key);
+        const incoming: BundleViewState = { name: v.name, view_type: v.view_type, config: v.config, is_default: v.is_default, pinned: v.pinned };
+        let state = incoming;
+        if (prior) {
+          matched.add(key);
+          if (prior.bundle_base) state = mergeBundleView(stateOf(prior), prior.bundle_base, incoming, takeViews.has(key) ? new Set(["*"]) : new Set()).next;
+        }
         // check-then-insert: applyValidatedBundle holds the workspace's bundle-apply advisory lock.
         const inserted_view = await ttrx
           .insertInto("core_views_views")
           .values({
+            ...(prior ? { id: prior.id } : {}),
             entity_kind: v.entity_kind,
-            name: v.name,
-            view_type: v.view_type,
-            config: sql`${JSON.stringify(v.config)}::jsonb`,
-            is_default: v.is_default ?? false,
-            pinned: v.pinned ?? false,
-            owner_user_id: null,
+            name: state.name,
+            view_type: state.view_type,
+            config: sql`${JSON.stringify(state.config)}::jsonb`,
+            is_default: state.is_default,
+            pinned: state.pinned,
+            owner_user_id: prior?.owner_user_id ?? null,
             bundle_id: inserted.id,
+            bundle_key: v.name,
+            bundle_base: sql`${JSON.stringify(incoming)}::jsonb`,
             source_module: null,
           } as never)
           .returning(["id", "name", "entity_kind"])
           .executeTakeFirst();
         if (inserted_view) seededViews.push(inserted_view as SeededView);
         viewsInstalled++;
+      }
+      // A view this version no longer ships: gone with it, unless a person had
+      // changed it. Theirs then stays, as their own view, with the same id.
+      for (const r of priorViewRows) {
+        if (matched.has(viewKey(r.entity_kind, r.bundle_key ?? r.name))) continue;
+        if (!r.bundle_base || viewEdits(stateOf(r), r.bundle_base).length === 0) continue;
+        // check-then-insert: the row was deleted with its bundle above, and applyValidatedBundle holds the workspace's bundle-apply advisory lock.
+        await ttrx
+          .insertInto("core_views_views")
+          .values({
+            id: r.id,
+            entity_kind: r.entity_kind,
+            name: r.name,
+            view_type: r.view_type,
+            config: sql`${JSON.stringify(r.config ?? {})}::jsonb`,
+            is_default: r.is_default,
+            pinned: r.pinned,
+            owner_user_id: r.owner_user_id,
+            bundle_id: null,
+            bundle_key: null,
+            bundle_base: null,
+            source_module: null,
+          } as never)
+          .execute();
       }
       });
     } catch (err) {

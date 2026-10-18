@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-views",
-  version: "0.4.0",
+  version: "0.5.0",
   displayName: "Views",
   description:
     "Save the ways you like to see a list (filtered, sorted, as a board or a calendar) and come back to them.",
@@ -63,6 +63,7 @@ export default defineModule({
         group: "organise",
         // UI-SCREEN: /views
         id: "core-views:delete-view",
+        changes: "records",
         runBy: "member",
         examples: ["delete the Idle machines board", "get rid of the old orders view"],
         undoable: true,
@@ -84,6 +85,7 @@ export default defineModule({
         // UI-SCREEN: /views
         group: "organise",
         id: "core-views:save-view",
+        changes: "records",
         runBy: "member",
         examples: ["save this as a board", "make me a kanban of tasks"],
         undoable: true,
@@ -105,6 +107,7 @@ export default defineModule({
         group: "organise",
         // UI-SCREEN: /views
         id: "core-views:edit-view",
+        changes: "records",
         runBy: "member",
         examples: ["rename the Idle machines board to Free machines", "unpin the orders table"],
         undoable: true,
@@ -127,6 +130,7 @@ export default defineModule({
         // NO-PHRASING: the way back for delete-view, run only from Undo
         group: "organise",
         id: "core-views:restore-view",
+        changes: "records",
         runBy: "member",
         internal: true,
         examples: ["put the view back"],
@@ -138,6 +142,23 @@ export default defineModule({
         invokeHandler: "core-views.restore-view",
         argsSchema: {
           view: { label: "The removed view, as it was", type: "json" },
+        },
+      },
+      {
+        group: "organise",
+        // UI-SCREEN: /views (a view's Edit sheet: "Put back as the bundle made it")
+        id: "core-views:reset-view",
+        changes: "records",
+        runBy: "member",
+        examples: ["put the Groceries pinned view back the way it came", "reset the Low stock view to the bundle's version"],
+        label: "Put a view back as its bundle made it",
+        description: "Undo a person's changes to a view that came with a bundle (its columns, sort, filters, name, layout), putting it back exactly as the bundle's current version has it. Only a view that came with a bundle; a view made by hand has nothing to go back to.",
+        scope: "workspace",
+        invokeHandler: "core-views.reset-view",
+        userInvokable: true,
+        undoable: true,
+        argsSchema: {
+          view: { label: "Which view (its name)", type: "text", required: true },
         },
       },
     ],

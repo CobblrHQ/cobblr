@@ -5,6 +5,7 @@
 // Channel registry is process-static — channels can't be added at
 // runtime (and don't need to be in Phase 0).
 
+import { defaultFor, workspaceDefaults } from "./notification-defaults.js";
 import { isCapped, notePaused, takeSendSlot } from "./channel-send-cap.js";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
@@ -45,6 +46,7 @@ import {
 } from "./delivery-windows.js";
 import { decodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { pushDevicesFor, pushSettingsFor } from "./push-delivery.js";
+import { channelsOffFor } from "./push-handoff.js";
 import { heldForQuietHours, privatePushLine, worthAPush, type PushSettings } from "./push-policy.js";
 
 // Exported so the delivery sweeper flushes through the SAME adapters a live
@@ -268,6 +270,23 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     const prefs = await resolveAccountPrefs(p.userId, p.eventType);
     for (const channel of fallbackChannels(prefs, priority, batched)) {
       effective.push({ channel, config: null });
+    }
+  }
+
+  // 1b. A channel the person turned off for their workspace updates (#7070,
+  //     usually when they turned push on) gets nothing, whatever a binding or
+  //     an account default says.
+  const off = await channelsOffFor(p.userId);
+  if (off.size) effective.splice(0, effective.length, ...effective.filter((e) => !off.has(e.channel)));
+
+  // The workspace's default for its urgent and high events (#6909), for a
+  // member who has chosen no channel in this workspace at all: one who has set
+  // anything here has chosen, so a channel they turned off stays off.
+  if (priority === "urgent" || priority === "high") {
+    const fallback = defaultFor(await workspaceDefaults(p.orgId), priority);
+    if (fallback && !effective.some((e) => e.channel === fallback)) {
+      const chose = await meta.selectFrom("notification_subscriptions").select("id").where("user_id", "=", p.userId).where("org_id", "=", p.orgId).limit(1).executeTakeFirst();
+      if (!chose) effective.push({ channel: fallback, config: null });
     }
   }
 

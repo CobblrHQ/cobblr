@@ -121,6 +121,20 @@ export function extractTokens(template: string): string[] {
   return [...out];
 }
 
+/** The hidden fields these templates name, as `{{field}}` or `{{event.after.field}}`
+ *  (the last word of the path is the field). Each once, in the order met. */
+export function hiddenFieldsNamed(templates: string[], hidden: readonly string[]): string[] {
+  if (hidden.length === 0) return [];
+  const out = new Set<string>();
+  for (const t of templates) {
+    for (const token of extractTokens(t)) {
+      const field = token.split(".").pop()!;
+      if (hidden.includes(field)) out.add(field);
+    }
+  }
+  return [...out];
+}
+
 /** Insert a {{field}} token into `template` at `caret` (end if undefined). */
 export function insertToken(template: string, field: string, caret?: number): string {
   const tok = `{{${field}}}`;

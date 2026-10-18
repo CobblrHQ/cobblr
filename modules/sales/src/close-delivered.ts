@@ -1,5 +1,7 @@
 // DONE WHEN: every sales-enabled workspace has close_delivered_orders in sales_settings on prod, staging and dev; the heal count is zero.
 // BORN WITH: migration 0007_close_delivered_orders.sql on signup or enable.
+// SINCE BY MARKER: it adds the setting's row when a workspace has none and
+// never changes one that exists, so no row of any age is rewritten.
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
@@ -75,7 +77,7 @@ export async function undoDeliveryClose(db: Kysely<SalesDB>, orgId: string, user
 }
 
 export function registerDeliveryCloseHeal(): void {
-  registerHealPass({ name: "sales.heal-delivery-close-default", shim: "modules/sales/src/close-delivered.ts", module: "sales",
+  registerHealPass({ name: "sales.heal-delivery-close-default", since: "2026-10-04T07:55:01Z", shim: "modules/sales/src/close-delivered.ts", module: "sales",
     visit: async ({ db }) => ensureDeliveryCloseDefault(db as Kysely<SalesDB>),
   });
 }

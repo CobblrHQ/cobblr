@@ -11,6 +11,7 @@
 // This exercises the engine extension (raw-body upload + {filename} +
 // templated submit body) end to end, manager by manager.
 
+// EGRESS-FILE: test-double - replaces the global fetch with a stub for a test; makes no request
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";

@@ -7,6 +7,10 @@
 // /healthz reports it (noteHealShim, through registerHealPass). When it reads
 // 0 on prod, staging and dev, delete this file and its boot call.
 //
+// SINCE BY MARKER: only migration 0006 sets pending, on the rows that existed
+// before it, so the flag itself says "made before the fix"; no row made
+// since carries it.
+//
 // WHY IT EXISTS: migration 0006 marks every project that existed before it as
 // pending. A pattern whose PDF lands from now on is kept by the reader itself
 // (runPatternRead), so nothing makes a new pending row.
@@ -72,6 +76,7 @@ export function patternReader(orgId: string): ReadPattern {
 export function registerPatternTextHeal(): void {
   registerHealPass({
     name: "projects.heal-pattern-text",
+    since: "2026-09-29T18:24:50Z",
     shim: "modules/projects/src/api/heal-pattern-text.ts",
     module: "projects",
     visit: async ({ orgId, db }) => {

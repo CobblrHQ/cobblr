@@ -305,10 +305,18 @@ but **a copy of the Postgres directory taken while the server is running is a to
 snapshot and may not restore.** That is what the dumps are for; copy them off the
 box, since they sit on the same disk as the database.
 
-Restore a dump:
+Restore a dump onto the same `.env` (keep `TENANT_CREDS_ENCRYPTION_KEY`) and an
+empty `data/db`: the database alone first, then the dump into the whole cluster,
+then the uploaded files (a dump holds rows, not files), then everything else.
 ```bash
-gunzip -c data/backups/daily/cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr
+docker compose up -d db
+docker compose exec db pg_isready -U cobblr -d cobblr_meta   # until "accepting connections"
+gunzip -c cobblr-<stamp>.sql.gz | docker compose exec -T db psql -U cobblr -d postgres
+cp -a /path/to/the/old/data/files ./data/
+docker compose up -d
 ```
+`role "cobblr" already exists` and `database "cobblr_meta" already exists` are
+the new database's own; any other `ERROR` means the restore is incomplete.
 
 To take one by hand:
 ```bash

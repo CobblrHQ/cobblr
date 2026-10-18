@@ -33,6 +33,9 @@ export const ArmStateSchema = z.object({
   power: z.enum(ARM_POWER).default("unknown"),
   safety_detail: z.string().max(500).nullable().default(null),
   program: ArmProgramRefSchema.nullable().default(null),
+  /** The controller's own identity for the run it is executing, when it has
+   *  one: how an uncertain start is reconciled by reading, never by resending. */
+  run_id: z.string().max(200).nullable().default(null),
   observed_at: z.string().datetime({ offset: true }),
 });
 export type ArmState = z.infer<typeof ArmStateSchema>;
@@ -92,6 +95,8 @@ export const ArmCommandResultSchema = z.object({
   ok: z.boolean(),
   detail: z.string().max(1000).optional(),
   state: ArmStateSchema.optional(),
+  /** A start's run identity, from the controller or the bridge. */
+  run_id: z.string().max(200).optional(),
 });
 export type ArmCommandResult = z.infer<typeof ArmCommandResultSchema>;
 
@@ -114,3 +119,32 @@ export function armCommandRefusal(command: ArmCommand, state: ArmState | null): 
   if (command.operation === "resume" && state.execution !== "paused") return "Only a paused program resumes.";
   return null;
 }
+
+/** What the arm reports happened, in order. The bridge numbers them (`seq`,
+ *  increasing) and names each once (`id`), and keeps them while Cobblr cannot
+ *  reach it, so a replay after an outage is the same events again: Cobblr
+ *  records each id once, and an event only ever changes records. It is never
+ *  a reason to command the arm. */
+const EventBase = { id: z.string().min(1).max(200), seq: z.number().int().nonnegative(), at: z.string().datetime({ offset: true }) };
+export const ArmEventSchema = z.discriminatedUnion("type", [
+  z.object({ ...EventBase, type: z.literal("run-started"), run_id: z.string().min(1).max(200), program: ArmProgramRefSchema }),
+  z.object({ ...EventBase, type: z.literal("cycle-completed"), run_id: z.string().min(1).max(200), cycle: z.number().int().positive(), good: z.number().int().nonnegative().default(0), scrap: z.number().int().nonnegative().default(0) }),
+  z.object({ ...EventBase, type: z.literal("run-ended"), run_id: z.string().min(1).max(200), outcome: z.enum(["completed", "aborted"]), detail: z.string().max(500).nullable().default(null) }),
+  z.object({ ...EventBase, type: z.literal("safety-changed"), safety: z.enum(ARM_SAFETY), detail: z.string().max(500).nullable().default(null) }),
+  z.object({ ...EventBase, type: z.literal("mode-changed"), mode: z.enum(ARM_MODES) }),
+]);
+export type ArmEvent = z.infer<typeof ArmEventSchema>;
+/** The events after a cursor (`seq`), and the cursor to ask from next. */
+export const ArmEventPageSchema = z.object({ events: z.array(ArmEventSchema).max(1000), cursor: z.number().int().nonnegative() });
+export type ArmEventPage = z.infer<typeof ArmEventPageSchema>;
+
+/** A run is the unit of work Cobblr approves, watches and records: one
+ *  invocation of a program, a batch of cycles, an order, a shift, or a
+ *  continuous program (palletising until full). It has cycles and parts. */
+export const ARM_RUN_KINDS = ["invocation", "batch", "order", "shift", "continuous"] as const;
+export type ArmRunKind = (typeof ARM_RUN_KINDS)[number];
+/** How a run ended. `stopped` or `idle` on the controller is none of these:
+ *  completed and aborted need the controller's run-ended event for this run;
+ *  unknown and not-started are said explicitly. */
+export const ARM_RUN_OUTCOMES = ["completed", "aborted", "unknown", "not-started"] as const;
+export type ArmRunOutcome = (typeof ARM_RUN_OUTCOMES)[number];

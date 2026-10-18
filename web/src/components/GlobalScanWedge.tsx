@@ -3,7 +3,7 @@ import { useScanOrigins } from "../lib/useScanOrigins";
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { CORNER_STACK, FloatingChrome, Modal, useToast } from "@cobblr/platform-web";
 import { MapPin, ScanLine } from "lucide-react";
 import { currentScanTarget } from "../lib/scanTarget";
 import { wedgeVerdict } from "../lib/scanPayload";
@@ -11,6 +11,7 @@ import { useBarcodeWedge } from "../lib/useBarcodeWedge";
 import { resolveSessionBatch } from "../lib/scanSession";
 import { api, ApiError, type ScanResolveCandidate } from "../lib/api";
 import { ScanAmbiguityModal } from "./ScanAmbiguityModal";
+import { ScanScopeChip } from "./ScanScopeChip";
 import { scanResolveActionFor } from "../lib/scanResolveAction";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -230,6 +231,13 @@ export function GlobalScanWedge({ activeSlug }: { activeSlug: string }) {
 
   return (
     <>
+    {/* The scope a scanner is scanning within, named where it can be cleared
+        (#6892). Only while the wedge is listening: the camera has its own. */}
+    {!!activeSlug && !onScanRoute && (
+      <FloatingChrome anchor="corner" stack={CORNER_STACK.scanScope} className="left-4">
+        <ScanScopeChip slug={activeSlug} />
+      </FloatingChrome>
+    )}
     {ambiguous && (
       <ScanAmbiguityModal
         scanKey={ambiguous.key}

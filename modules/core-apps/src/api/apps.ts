@@ -351,6 +351,13 @@ async function appReferentialErrors(orgId: string, pages: z.infer<typeof Pages>)
       if ((block.type === "record" || block.type === "form") && !kindIds.has(block.kind)) {
         errors.push({ path: `${at}.kind`, code: "unknown_kind", message: `Entity kind "${block.kind}" doesn't exist. Use one of the kinds listed in the context.` });
       }
+      if (block.type === "form" && block.mode === "edit" && kindIds.has(block.kind) && !(await platform().entities.isUpdatable(orgId, block.kind))) {
+        errors.push({
+          path: `${at}.mode`,
+          code: "kind_not_updatable",
+          message: `${block.kind} cannot be edited from an app. Edit mode works for ${platform().entities.updatableKinds().join(", ")}; use mode "create" or another kind.`,
+        });
+      }
       if (block.type === "action" && block.kind) {
         if (!kindIds.has(block.kind)) {
           errors.push({ path: `${at}.kind`, code: "unknown_kind", message: `Entity kind "${block.kind}" doesn't exist.` });

@@ -12,6 +12,7 @@
 // read it right now", never a state. After one, this driver stays quiet for
 // an hour rather than asking again; the caller keeps the last state it had.
 
+// EGRESS-FILE: vendor-fixed - the carrier's tracking host, written in the code
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {

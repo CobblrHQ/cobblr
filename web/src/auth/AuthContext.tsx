@@ -5,6 +5,8 @@
 
 import { forgetSignedInWith, signedInWith } from "../lib/oidc-sign-in";
 import { forgetKeptReads } from "../lib/offline";
+import { letGoOfAnotherAccountsPush, retirePushHere } from "../lib/push-device";
+import { getShareViewToken } from "../lib/share-view";
 import { onSessionChange } from "../lib/session-identity";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,7 +14,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  ApiError, SESSION_CHANGED, api, getToken, setToken,
+  ApiError, SESSION_CHANGED, accountToken, api, getToken, setToken,
   type OrgMembership, type SessionUser, type AuthResponse,
 } from "../lib/api";
 import { forgetPersonalChat } from "../lib/personal-chat-store";
@@ -74,6 +76,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // a late answer for the last account lands nowhere (#6970).
   const queryClient = useQueryClient();
   useEffect(() => onSessionChange(() => queryClient.clear()), [queryClient]);
+  // A browser subscribed for someone whose session ran out here stops taking
+  // their pushes once another account signs in (#7124).
+  useEffect(() => {
+    void letGoOfAnotherAccountsPush();
+    return onSessionChange(() => void letGoOfAnotherAccountsPush());
+  }, []);
 
   // Hydrate from /me on mount when a token's already present.
   useEffect(() => {
@@ -151,6 +159,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void forgetKeptReads();
+    // The browser stays with whoever uses it next: it stops taking this
+    // account's pushes (#7124). Signing out of a share's View as leaves the
+    // account signed in, and its pushes with it.
+    if (!getShareViewToken()) void retirePushHere(accountToken());
     forgetPersonalChat();
     // Signed in through the instance's own provider: end that session too,
     // when the provider says where (RP-initiated logout, #4492).

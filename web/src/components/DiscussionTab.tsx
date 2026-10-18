@@ -27,7 +27,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useLater, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion, walkPages } from "@cobblr/platform-web";
+import { useLater, useSentWords, useToast, useConfirm, relativeTime, ContextChip, discussionRecordOf, openDiscussion, walkPages } from "@cobblr/platform-web";
 import { clearChatSelection, useChatSelection } from "../lib/chat-context";
 import { api, ApiError, type DiscussionComment } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -316,14 +316,25 @@ export function DiscussionTab() {
         in_reply_to: suppressCobb && cobbWillReply ? null : replyTo,
       }),
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+      // Words typed while this one was on its way are the next comment, with
+      // its reply and mentions (#7167).
+      if (!draftSent.landed()) return;
       setDraft("");
       mentionRef.current?.();
       setReplyTo(null);
       setSuppressCobb(false);
-      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't post that."),
+    onSettled: () => {
+      sending.current = false;
+    },
   });
+  // Held from the moment a send starts, before the mutation says it is
+  // pending: Enter pressed again while the first post was on its way sent
+  // the same comment twice, since only the button looked at isPending (#7166).
+  const sending = useRef(false);
+  const draftSent = useSentWords(draft);
 
   const mention = useMentionPicker(draft, setDraft, taRef);
   // The mutation above is declared before the picker exists, so its success
@@ -339,7 +350,10 @@ export function DiscussionTab() {
    *  sentence that mentions nobody. */
   const send = () => {
     const body = mention.resolve(draft).trim();
-    if (body) post.mutate(body);
+    if (!body || sending.current) return;
+    sending.current = true;
+    draftSent.sending();
+    post.mutate(body);
   };
 
   // Discord DMs are the difference between hearing about a mention now and
@@ -417,13 +431,15 @@ export function DiscussionTab() {
   // delete invalidate, so an edit lands the same way a new comment does.
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
+  const editSent = useSentWords(editDraft);
   const edit = useMutation({
     mutationFn: (vars: { id: string; body: string }) =>
       api.editComment(activeSlug, vars.id, vars.body),
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
+      if (!editSent.landed()) return;
       setEditingId(null);
       setEditDraft("");
-      void qc.invalidateQueries({ queryKey: ["discussion", activeSlug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't save that."),
   });
@@ -679,7 +695,10 @@ export function DiscussionTab() {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
                             const body = editDraft.trim();
-                            if (body) edit.mutate({ id: c.id, body });
+                            if (body) {
+                              editSent.sending();
+                              edit.mutate({ id: c.id, body });
+                            }
                           } else if (e.key === "Escape") {
                             e.preventDefault();
                             setEditingId(null);
@@ -693,7 +712,10 @@ export function DiscussionTab() {
                           type="button"
                           onClick={() => {
                             const body = editDraft.trim();
-                            if (body) edit.mutate({ id: c.id, body });
+                            if (body) {
+                              editSent.sending();
+                              edit.mutate({ id: c.id, body });
+                            }
                           }}
                           disabled={!editDraft.trim() || edit.isPending}
                           className="inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 transition disabled:opacity-50"

@@ -20,6 +20,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { isApiClientFile } from "./lib/api-client-methods.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -51,7 +52,6 @@ const ALLOWED = new Set([
   "packages/platform-web/src/run-action.ts",
   // The api's own type and the request that defines it are not callers.
   "packages/platform-web/src/types.ts",
-  "web/src/lib/api.ts",
   "web/src/App.tsx",
   // The workspace's platform context hands the door to the package (#4640).
   "web/src/WorkspacePlatformWeb.tsx",
@@ -59,7 +59,8 @@ const ALLOWED = new Set([
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
-  if (ALLOWED.has(file)) return [];
+  // The web client defines the calls (web/src/lib/api.ts and its area files).
+  if (ALLOWED.has(file) || isApiClientFile(file)) return [];
   if (!/\/src\/ui\/|^web\/src\/|^packages\/platform-web\/src\//.test(file)) return [];
   const out: Violation[] = [];
   const lines = src.split("\n");

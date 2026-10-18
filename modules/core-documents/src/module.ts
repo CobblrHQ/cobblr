@@ -60,6 +60,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:link-item",
+        changes: "records",
         runBy: "member",
         examples: ["link the warranty PDF to the dishwasher", "link the Zelda ROM to this cartridge"],
         label: "Link from a library",
@@ -83,6 +84,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:unlink-item",
+        changes: "records",
         runBy: "member",
         examples: ["that manual is not for this one, unlink it"],
         label: "Unlink a library item",
@@ -102,6 +104,7 @@ export default defineModule({
       {
         group: "more",
         id: "core-documents:copy-item",
+        changes: "records",
         runBy: "member",
         examples: ["keep a copy of the manual in Cobblr"],
         label: "Bring a copy into Cobblr",

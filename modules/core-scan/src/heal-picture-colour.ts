@@ -28,14 +28,16 @@ interface HealDB {
     status: string;
     catalog_image_file_id: string | null;
     suggested_metadata: unknown;
+    created_at: Date;
   };
 }
 
 /** Heal one workspace. Cheap on the happy path: only unmeasured rows are read. */
-export async function healPictureColourIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healPictureColourIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where("catalog_image_file_id", "is not", null)
     .where(sql<boolean>`coalesce(suggested_metadata->'catalog_colour'->>'file_id', '') <> catalog_image_file_id::text`)
@@ -61,8 +63,9 @@ export async function healPictureColourIn(orgId: string, db: Kysely<HealDB>): Pr
 export function registerPictureColourHeal(): void {
   registerHealPass({
     name: "core-scan.heal-picture-colour",
+    since: "2026-09-25T15:02:59Z",
     shim: "modules/core-scan/src/heal-picture-colour.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healPictureColourIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healPictureColourIn(orgId, db as Kysely<HealDB>, since),
   });
 }

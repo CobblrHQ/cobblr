@@ -37,7 +37,7 @@ import { join } from "node:path";
 const BASE = process.env.COBBLR_LINT_ROOT?.trim() || ".";
 const ROOTS = ["web/src", "packages/platform-web/src", "modules"].map((r) => join(BASE, r));
 /** Module UIs only; the api side keeps the address as provenance. */
-const inScope = (file: string) => (file.startsWith("modules/") ? /\/ui\//.test(file) : !/web\/src\/lib\/api\.ts$/.test(file));
+const inScope = (file: string) => (file.startsWith("modules/") ? /\/ui\//.test(file) : !/web\/src\/lib\/api(\.ts|\/[^/]+\.ts)$/.test(file));
 
 /** One offending place. `line` is 1-based for a clickable path:line. */
 interface Violation {

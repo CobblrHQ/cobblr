@@ -7,6 +7,7 @@
 // BORN WITH: nothing (process-wide: it syncs the module registry rows from the loaded manifests; a workspace holds none of it)
 
 import { sql } from "kysely";
+import { anyColumnChanges } from "../db/upsert-only-changes.js";
 import { meta } from "../db/meta.js";
 import { listEntries } from "../modules/registry.js";
 import { clearExposableFieldsCache } from "./entities.js";
@@ -238,6 +239,29 @@ export async function syncManifestRegistries(): Promise<{
     // entity_action_org_overrides and entity_action_bindings on every
     // boot. ON CONFLICT update preserves those dependents.
     for (const k of kindRows) {
+      const kindSet = {
+        module_name: k.module_name,
+        display_name: k.display_name,
+        display_name_plural: k.display_name_plural,
+        icon: k.icon,
+        fields: sql`${JSON.stringify(k.fields)}::jsonb`,
+        detail_route: k.detail_route,
+        endpoints: k.endpoints
+          ? sql`${JSON.stringify(k.endpoints)}::jsonb`
+          : null,
+        version: k.version,
+        is_primary: k.is_primary,
+        traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
+        profile: k.profile,
+        label_code_overlay_default: k.label_code_overlay_default,
+        duplicate_scope: k.duplicate_scope,
+        exposable_fields: k.exposable_fields
+          ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
+          : null,
+        field_read_scopes: k.field_read_scopes
+          ? sql`${JSON.stringify(k.field_read_scopes)}::jsonb`
+          : null,
+      };
       await trx
         .insertInto("entity_kinds")
         .values({
@@ -265,33 +289,39 @@ export async function syncManifestRegistries(): Promise<{
             : null,
         })
         .onConflict((b) =>
-          b.column("id").doUpdateSet({
-            module_name: k.module_name,
-            display_name: k.display_name,
-            display_name_plural: k.display_name_plural,
-            icon: k.icon,
-            fields: sql`${JSON.stringify(k.fields)}::jsonb`,
-            detail_route: k.detail_route,
-            endpoints: k.endpoints
-              ? sql`${JSON.stringify(k.endpoints)}::jsonb`
-              : null,
-            version: k.version,
-            is_primary: k.is_primary,
-            traits: k.traits ? sql`${JSON.stringify(k.traits)}::jsonb` : null,
-            profile: k.profile,
-            label_code_overlay_default: k.label_code_overlay_default,
-            duplicate_scope: k.duplicate_scope,
-            exposable_fields: k.exposable_fields
-              ? sql`${JSON.stringify(k.exposable_fields)}::jsonb`
-              : null,
-            field_read_scopes: k.field_read_scopes
-              ? sql`${JSON.stringify(k.field_read_scopes)}::jsonb`
-              : null,
-          }),
+          b.column("id")
+            .doUpdateSet(kindSet)
+            .where(anyColumnChanges("entity_kinds", Object.keys(kindSet))),
         )
         .execute();
     }
     for (const a of actionRows) {
+      const actionSet = {
+        module_name: a.module_name,
+        label: a.label,
+        description: a.description,
+        icon: a.icon,
+        applies_to: sql`${JSON.stringify(a.applies_to)}::jsonb`,
+        scope: a.scope,
+        invoke_route: a.invoke_route,
+        invoke_handler: a.invoke_handler,
+        user_invokable: a.user_invokable,
+        action_group: a.action_group,
+        is_primary: a.is_primary,
+        args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
+        undoable: a.undoable,
+        effect: a.effect,
+        examples: sql`${JSON.stringify(a.examples)}::jsonb`,
+        position: a.position,
+        face: a.face,
+        internal: a.internal,
+        wire_only: a.wire_only,
+        record_optional: a.record_optional,
+        finishes: a.finishes,
+        stock_move: a.stock_move,
+        editor: a.editor,
+        version: a.version,
+      };
       await trx
         .insertInto("entity_actions")
         .values({
@@ -322,37 +352,26 @@ export async function syncManifestRegistries(): Promise<{
           editor: a.editor,
         })
         .onConflict((b) =>
-          b.column("id").doUpdateSet({
-            module_name: a.module_name,
-            label: a.label,
-            description: a.description,
-            icon: a.icon,
-            applies_to: sql`${JSON.stringify(a.applies_to)}::jsonb`,
-            scope: a.scope,
-            invoke_route: a.invoke_route,
-            invoke_handler: a.invoke_handler,
-            user_invokable: a.user_invokable,
-            action_group: a.action_group,
-            is_primary: a.is_primary,
-            args_schema: a.args_schema ? sql`${JSON.stringify(a.args_schema)}::jsonb` : null,
-            undoable: a.undoable,
-            effect: a.effect,
-            examples: sql`${JSON.stringify(a.examples)}::jsonb`,
-            position: a.position,
-            face: a.face,
-            internal: a.internal,
-            wire_only: a.wire_only,
-            record_optional: a.record_optional,
-            finishes: a.finishes,
-            stock_move: a.stock_move,
-            editor: a.editor,
-            version: a.version,
-          }),
+          b.column("id")
+            .doUpdateSet(actionSet)
+            .where(anyColumnChanges("entity_actions", Object.keys(actionSet))),
         )
         .execute();
     }
 
     for (const c of commandRows) {
+      const commandSet = {
+        module_name: c.module_name,
+        template: c.template,
+        description: c.description,
+        pattern: c.pattern,
+        slots: sql`${JSON.stringify(c.slots)}::jsonb`,
+        plan: sql`${JSON.stringify(c.plan)}::jsonb`,
+        repeat_field: c.repeat_field,
+        repeat_shape: c.repeat_shape,
+        version: c.version,
+        synced_at: new Date(),
+      };
       await trx
         .insertInto("entity_commands")
         .values({
@@ -368,18 +387,9 @@ export async function syncManifestRegistries(): Promise<{
           version: c.version,
         })
         .onConflict((b) =>
-          b.column("id").doUpdateSet({
-            module_name: c.module_name,
-            template: c.template,
-            description: c.description,
-            pattern: c.pattern,
-            slots: sql`${JSON.stringify(c.slots)}::jsonb`,
-            plan: sql`${JSON.stringify(c.plan)}::jsonb`,
-            repeat_field: c.repeat_field,
-            repeat_shape: c.repeat_shape,
-            version: c.version,
-            synced_at: new Date(),
-          }),
+          b.column("id")
+            .doUpdateSet(commandSet)
+            .where(anyColumnChanges("entity_commands", Object.keys(commandSet).filter((col) => col !== "synced_at"))),
         )
         .execute();
     }

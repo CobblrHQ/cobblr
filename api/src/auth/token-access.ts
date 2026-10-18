@@ -3,6 +3,7 @@
 // exactly the tools its token can run. requireAuth applies it here.
 export {
   TOKEN_ACCESS,
+  accessMessage,
   isTokenAccess,
   tokenAccessAllows,
   type TokenAccess,

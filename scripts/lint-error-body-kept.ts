@@ -39,6 +39,8 @@ function clientFiles(): string[] {
   const out: string[] = [];
   const web = join("web", "src", "lib", "api.ts");
   if (existsSync(web)) out.push(web);
+  const areas = join("web", "src", "lib", "api");
+  if (existsSync(areas)) for (const f of readdirSync(areas)) if (f.endsWith(".ts") && !f.endsWith(".test.ts")) out.push(join(areas, f));
   const modsDir = "modules";
   if (existsSync(modsDir)) {
     for (const m of readdirSync(modsDir)) {

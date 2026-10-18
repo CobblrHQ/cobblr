@@ -2,9 +2,10 @@
 import type { Kysely } from "kysely";
 import { z } from "zod";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
+import { releaseControl } from "../runs.js";
 import type { DigifabDB } from "../../../db.js";
 import { ArmRefusal } from "../station.js";
-import { addTypedProgram, editProgram, refreshArm, saveCompatibility, setMaintenance, setupArm } from "../store.js";
+import { addTypedProgram, editProgram, refreshArm, saveCompatibility, setMaintenance, setTooling, setupArm } from "../store.js";
 
 export function registerArmRecordAction(): void {
   platform().actions.registerHandler("digifab.arm-record", async (ctx) => {
@@ -18,7 +19,9 @@ export function registerArmRecordAction(): void {
       if (args.operation === "edit_program") return { ok: true, program: await editProgram(db, ctx.orgId, ctx.userId, id, fields), summary: "Updated the program." };
       if (args.operation === "compatibility") return { ...await saveCompatibility(db, ctx.orgId, ctx.userId, id, fields), summary: "Recorded what works on this arm." };
       if (args.operation === "maintenance") return { ...await setMaintenance(db, ctx.orgId, ctx.userId, id, fields), summary: "Changed the arm's service state." };
-      return { ok: false, error: "Choose setup, refresh, add_program, edit_program, compatibility or maintenance. Running the arm is at its station." };
+      if (args.operation === "tooling") return { ...await setTooling(db, ctx.orgId, ctx.userId, id, fields), summary: "Recorded the arm's tooling. Earlier approvals no longer hold." };
+      if (args.operation === "release_control") return { ...await releaseControl(db, ctx.orgId, id, "revoked", ctx.userId), summary: "Took control of the arm away from its station." };
+      return { ok: false, error: "Choose setup, refresh, add_program, edit_program, compatibility, maintenance, tooling or release_control. Running the arm is at its station." };
     } catch (e) { if (e instanceof z.ZodError || e instanceof ArmRefusal) return { ok: false, error: e.message }; throw e; }
   });
 }

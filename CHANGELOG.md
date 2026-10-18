@@ -2,12 +2,36 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-18
+
+### Improvements
+- The wire composer no longer offers a field you are not allowed to read, and says so when a wire already uses one
+- Embroidery, kilns and electronics production can each be turned off in a workspace, under Digital Fabrication in Configuration, Modules; they stay on unless you do.
+- While main waits on one pull request's re-check, other pull requests that change none of its files now merge instead of waiting with it.
+
+### Fixes
+- A record whose photo is its cover shows that photo in its Photos panel instead of saying it has none (#7335).
+- A comment that finishes sending no longer erases the next one you started typing, or who it replies to
+- On a phone, the Files page's pictures show their names again and each Move to menu stays inside its own picture, with no sideways scroll
+- On a phone, a scan row's "+1 more" is as wide as its words again instead of drawing "more" past its button (#7338).
+- On an iPhone, the station's Set total keypad keeps 0 and the delete key clear of the home bar, so a tap on them no longer swipes you out of the station
+- A narrow table column keeps each word whole ("Acrylic", not "Acryli c"); a cell breaks only between words (#7334).
+
 ## 2026-10-17
 
 ### Features
+- An update to a bundle no longer undoes the changes you made to its views. Change the columns, sort or filter of a view a bundle brought, or rename it, and the update keeps what you changed and still brings in what the bundle changed that you did not touch. The view stays the same view, so a dashboard pin or an app page that shows it keeps showing it. When you and the update both changed the same setting, you are asked, with your version beside the update's. A view you changed has a button under Edit to put it back as the bundle made it, and the assistant can do the same.
 - The wire composer now says how many existing records a wire fits right now ("2 parts of 3 in that state now"), updating as you change it, and says what the number means for the trigger. When a wire runs on linked records, the relationship is picked from the links in use in your workspace, with a way to type a new one. The assistant reads the same count and the same list before it sets an automation up.
+- A form in a worker app can now change an existing record, not only add one: pick a part, an asset or a project, correct its name, place or other fields, and save. The form offers only the fields you can see and may change, the record's history shows the change, and the assistant can make the same change by asking.
 - A build takes sub-assemblies from stock before making more
+- A storage tote scanned in the camera can become a bin in one tap, and the next scans land inside it without leaving the camera; undoing a scan put onto a bin you already had no longer deletes that bin.
+- Food moved into the fridge or the freezer is now re-dated by how long it keeps there, and by its warm shelf life when it comes out, with a line in its history saying why. An item can state a fridge and a freezer number beside the existing two, and an item with no number for the place, or a date you typed yourself, is left alone.
+- A food scanned from Open Food Facts now shows what it contains: its allergens and traces appear as warning pills on the scan card and on the pantry item, a view can keep only the foods that list a word such as nuts, and Cobb can answer which of your snacks have them. A food the catalog lists nothing for shows no pill.
 - A task left undone is now told again, louder each step: its assignee hears on the day it is due and again when it is late (the task is tagged late), and the whole household hears only when it has gone stale. A task nobody has goes to everyone at once, and marking it done stops the next step.
+- Universal Robots, Elite and Dobot arms connect through the shop's bridge: their programs are listed, loaded, started, paused and stopped, and their state and faults watched.
+- KUKA, FANUC, ABB and PLC-wired arms connect through an I/O board: a program is chosen by number and started over wires, with the wiring explained in plain words and safety left hardwired.
+- A scan of a thing you already have can be marked broken: the thing gets a repair entry in its service log instead of a second one being filed.
+- Scanning within one product opens its own unit when another product shares the serial, with no question, and each scan rule shows how often its key matched more than one thing in the last 30 days.
 
 ### Improvements
 - Ask Cobb to rename, re-lay or remove a saved view, change how units show or remove one, save or delete a template, and attach a file to a record or take it off
@@ -17,6 +41,8 @@ User-facing changes, newest first. Dates are release dates.
 - Ask Cobb whether a printer manager connection is still working; it checks without sending anything to a machine
 - A device post sent again under its delivery id is applied once, so a lost answer no longer counts pulses or parts twice
 - A new workspace's home leads with one box to add things, then three clear rows and a section of ready-made setups, with a one-line AI notice you can close
+- Turning on notifications on a phone or computer asks which of your other channels to turn off, and whether normal updates should push too
+- Photos uploaded together are offered as one thing more readily: a listing screenshot and a photo of the printer it sells, sent in one go, now get the Combine offer, while different things in one upload stay apart.
 
 ### Fixes
 - A bundle update that stopped or failed part-way used to leave the workspace without the bundle, and the hourly update pass never found it again. The old version now stays until its replacement is in, and an install that did not finish is finished on the next pass, with no reinstall.
@@ -26,6 +52,7 @@ User-facing changes, newest first. Dates are release dates.
 - On a small phone, a part's Duplicate button keeps its word whole beside Move and Delete
 - On a phone, the Locations page fits the screen again: Export and Import sit beside Recently deleted instead of pushing the page sideways
 - On a phone, a place's name on the Locations list stays readable: Add inside and Edit share one More menu on each row
+- On an iPhone, a full-screen picker and the floor plan's edit panel keep clear of the status bar and home bar, a long machine name shows whole, and Ctrl+K pressed as a page loads opens the palette
 - A read notification keeps its buttons at full strength, and a one-item notification says its line once
 - On a phone, a list counted in a unit other than each keeps each name readable: the amount control moves under the name instead of squeezing it
 - A public page's photo stops being served once its record leaves the page, its photo is replaced, or the page ends
@@ -42,6 +69,8 @@ User-facing changes, newest first. Dates are release dates.
 - A message to Slack, Discord or a webhook that meets a busy or briefly-down service is tried again, sent at the service's pace, and kept with a Send again button if it still fails
 - A Part-DB part kept in several storage locations imports as one card with a place for each, with the right amount in each
 - Robot arms are machines: an arm's page shows its controller's connection, mode, program and safety state, keeps its programs by revision and family and what it is known to work with, and its station loads, starts, pauses and stops programs. Cobblr never moves an arm or clears a stop. Robot arms are a part of Digital Fabrication you can switch off in Configuration, Modules: features can now have parts, and an off part's screens, actions and assistant tools disappear while everything it recorded is kept.
+- Robot arm runs are safe to start: one station has control at a time and the pendant always wins, a run starts only from a person's approval for that program revision and tooling, Start is sent once and never resent, and a run completes only when the arm reports it finished.
+- Confirming a scan offers the catalog entry it matches, such as a Lego brick's Rebrickable part, by its part number first, and tapping it files the thing bound to that entry.
 - Assets and locations from a Snipe-IT instance import with their serial numbers, asset tags, prices and pictures, and can be kept in sync
 
 ### Improvements
@@ -53,6 +82,8 @@ User-facing changes, newest first. Dates are release dates.
 - Recount from a tag's page. A tag's page now has Recount these… beside each collection's group of things carrying the tag: it starts a recount of just those things and opens it, the same recount Cobb starts when you ask it to recount everything tagged garage.
 - You can sign in with a username as well as your email (set it under Your account, Identity & password), and a kiosk install can make accounts that have no email at all.
 - A saved view can look for words. In a view's filters, a text field now offers contains and does not contain: *notes contain warranty* finds "Warranty until 2027" and "kept the WARRANTY card", ignoring case, and what you type is matched exactly, a `%` or `_` included. Does not contain also keeps the records with nothing written there. Cobb can filter the same way when you ask ("which tools mention a warranty?"), and a collection that cannot filter by text says so instead of showing everything. On a phone, a filter's value box now wraps onto its own line instead of running off the screen.
+- A saved view can ask for a value, like a recipe's Servings, and its computed fields scale by it
+- An owner or admin can choose how members hear a workspace's urgent and high priority events (email, Discord or phone notifications) until each member chooses for themselves
 
 ### Fixes
 - An operator can now send a job from the machines page, queue it, retry it and print it again. Any member can still stop or pause a machine, but resuming, framing or starting one, or starting a production test, now needs an operator or an admin. A refusal says which permission to ask for.

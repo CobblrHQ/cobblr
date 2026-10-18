@@ -284,6 +284,15 @@ export interface CoreScanIdentifyUsageTable {
   n: ColumnType<number, number | undefined, number>;
 }
 
+/** A resolver rule's scans per day, and how many named more than one thing
+ *  (0045, #6892). */
+export interface CoreScanQrRuleTalliesTable {
+  rule_id: string;
+  day: ColumnType<string, string, never>;
+  scans: ColumnType<number, number | undefined, number>;
+  ambiguous: ColumnType<number, number | undefined, number>;
+}
+
 export interface CoreScanDB {
   core_scan_photo_rank_config: CoreScanPhotoRankConfigTable;
   core_scan_record_photo_suggestions: CoreScanRecordPhotoSuggestionsTable;
@@ -298,6 +307,7 @@ export interface CoreScanDB {
   core_scan_decode_cache: CoreScanDecodeCacheTable;
   core_scan_eval_cases: CoreScanEvalCasesTable;
   core_scan_qr_rules: CoreScanQrRulesTable;
+  core_scan_qr_rule_tallies: CoreScanQrRuleTalliesTable;
   core_scan_import_runs: CoreScanImportRunsTable;
   core_scan_identify_usage: CoreScanIdentifyUsageTable;
   core_scan_station_screens: CoreScanStationScreensTable;

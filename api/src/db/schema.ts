@@ -949,6 +949,16 @@ export type NotificationAudienceMode = "all" | "owners" | "custom";
 /** Per workspace, per notification kind: WHO it is for. Absent = everyone.
  *  The per-person subscriptions above decide how someone is told; this
  *  decides whether they are one of the people to tell. */
+/** How a workspace's members hear its urgent and high events until they
+ *  choose for themselves (#6909). No row: the bell alone. */
+export interface WorkspaceNotificationDefaultsTable {
+  org_id: string;
+  priority: "urgent" | "high";
+  channel: "email" | "discord_dm" | "browser_push";
+  updated_by: string | null;
+  updated_at: Generated<Date>;
+}
+
 export interface NotificationAudiencesTable {
   org_id: string;
   event_type: string;
@@ -2018,6 +2028,7 @@ export interface MetaDB {
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_audiences: NotificationAudiencesTable;
+  workspace_notification_defaults: WorkspaceNotificationDefaultsTable;
   notification_account_prefs: NotificationAccountPrefsTable;
   account_email_sends: AccountEmailSendsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
@@ -2027,6 +2038,7 @@ export interface MetaDB {
   push_vapid_keys: PushVapidKeysTable;
   push_subscriptions: PushSubscriptionsTable;
   push_settings: PushSettingsTable;
+  notification_channels_off: NotificationChannelsOffTable;
   discord_connections: DiscordConnectionsTable;
   browser_drive_grants: BrowserDriveGrantsTable;
   entity_kinds: EntityKindsTable;
@@ -2522,6 +2534,15 @@ export interface PushSettingsTable {
   quiet_end_minute: ColumnType<number | null, number | null | undefined, number | null>;
   timezone: Generated<string>;
   updated_at: Generated<Date>;
+  /** When turning on push asked which other channels to turn off (#7070). */
+  handoff_asked_at: ColumnType<Date | null, Date | null | undefined, Date | null>;
+}
+
+/** A personal channel turned off for a person's workspace updates (#7070). */
+export interface NotificationChannelsOffTable {
+  user_id: string;
+  channel: string;
+  turned_off_at: Generated<Date>;
 }
 
 /** What a windowed channel still owes someone. The notification itself is

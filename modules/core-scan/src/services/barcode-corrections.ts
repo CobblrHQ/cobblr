@@ -11,6 +11,7 @@
 // here — this side doesn't need to know which. See
 // CobblrHQ/barcode-intelligence/docs/correction-feedback.md.
 
+// EGRESS-FILE: operator-configured - the shared barcode database address is the operator's setting
 import crypto from "node:crypto";
 import { LEARNED_BUNDLE_KEY } from "@cobblr/platform-contract/learned-route";
 import { isStockPreviewUrl } from "./stock-preview.js";

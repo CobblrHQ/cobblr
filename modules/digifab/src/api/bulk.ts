@@ -14,6 +14,7 @@ import { tenantDb, tenantContext } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { buildDriverById } from "../jobs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
+import { machineFetch } from "../drivers/machine-fetch.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import { detectControllerFirmware, detectPrinterFirmware } from "../firmware-detect.js";
 import { ensureDeclarativeDrivers, createPool, addPoolMember } from "./farm-build.js";
@@ -144,8 +145,7 @@ const DetectBody = z.object({
 async function probeJson(url: string, headers: Record<string, string>): Promise<unknown | undefined> {
   if (!/^https?:\/\//i.test(url)) return undefined;
   try {
-    await assertSafeMachineUrl(url);
-    const res = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
+    const res = await machineFetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
     if (!res.ok) return undefined;
     return await res.json().catch(() => null);
   } catch {
@@ -158,8 +158,7 @@ async function probeJson(url: string, headers: Record<string, string>): Promise<
 async function probeText(url: string, headers: Record<string, string>): Promise<string | undefined> {
   if (!/^https?:\/\//i.test(url)) return undefined;
   try {
-    await assertSafeMachineUrl(url);
-    const res = await fetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
+    const res = await machineFetch(url, { headers, redirect: "error", signal: AbortSignal.timeout(1000) });
     if (!res.ok) return undefined;
     return (await res.text()).slice(0, 64 * 1024);
   } catch {

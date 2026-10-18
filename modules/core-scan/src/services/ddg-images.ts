@@ -10,6 +10,7 @@
 // multi-tenant path without a per-tenant rate budget (core-ai is the
 // natural throttle for the LLM half; this half is best-effort).
 
+// EGRESS-FILE: vendor-fixed - the search engine's host, written in the code
 import { isJunkName } from "./enrich.js";
 import { readWebCassette, replayingWeb, writeWebCassette } from "./web-replay.js";
 import { formFactorFromObservation } from "./form-factor.js";

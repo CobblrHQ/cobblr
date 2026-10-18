@@ -2,6 +2,9 @@
 // PERMANENT RECONCILE: a configured collection seeds its existing renewals once
 // per binding. Settled collections need only their config read.
 // BORN WITH: core-maintenance:ensure-renewal runs on create and update wires.
+// SINCE BY MARKER: it runs once per binding revision (renewal_fields_seeded),
+// and seeding a record made since is the same idempotent ensure its create
+// wire already ran, so it changes nothing there.
 import { platform } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";
 import { RenewalBindingSchema } from "@cobblr/platform-contract/record-creation";
@@ -28,5 +31,5 @@ export async function healBoundRenewals(orgId: string, db: Kysely<CoreMaintenanc
   return seeded;
 }
 export function registerBoundRenewalsHeal(): void {
-  registerHealPass({ name: "core-maintenance.bound-renewals", shim: "modules/core-maintenance/src/heal-bound-renewals.ts", module: "core-maintenance", visit: ({ orgId, db }) => healBoundRenewals(orgId, db as Kysely<CoreMaintenanceDB>) });
+  registerHealPass({ name: "core-maintenance.bound-renewals", since: "2026-10-08T18:06:14Z", shim: "modules/core-maintenance/src/heal-bound-renewals.ts", module: "core-maintenance", visit: ({ orgId, db }) => healBoundRenewals(orgId, db as Kysely<CoreMaintenanceDB>) });
 }

@@ -65,6 +65,7 @@ export function healedPart(
 export async function healSplitPartValuesIn(
   orgId: string,
   db: Kysely<CoreScanDB>,
+  since: Date,
   refreshPicture?: (orgId: string, itemId: string, name: string) => Promise<unknown>,
 ): Promise<number> {
   // A pack line split before its picture step ran has none: it heads its
@@ -72,6 +73,7 @@ export async function healSplitPartValuesIn(
   const bare = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name"])
+    .where("created_at", "<", since)
     .where("status", "=", "resolved")
     .where("catalog_image_file_id", "is", null)
     .where(sql<boolean>`suggested_metadata->>'pack_split' = 'true'`)
@@ -92,6 +94,7 @@ export async function healSplitPartValuesIn(
   const parts = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name", "quantity", "suggested_candidates", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where(sql<boolean>`suggested_metadata ? 'pack_colour'`)
     .where(sql<boolean>`suggested_metadata->>'split_from' is not null`)
@@ -128,8 +131,9 @@ export async function healSplitPartValuesIn(
 export function registerSplitPartValuesHeal(): void {
   registerHealPass({
     name: "core-scan.heal-split-part-values",
+    since: "2026-10-14T17:40:18Z",
     shim: "modules/core-scan/src/heal-split-part-values.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healSplitPartValuesIn(orgId, db as Kysely<CoreScanDB>),
+    visit: ({ orgId, db, since }) => healSplitPartValuesIn(orgId, db as Kysely<CoreScanDB>, since),
   });
 }

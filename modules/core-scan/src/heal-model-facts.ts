@@ -23,14 +23,15 @@ import { factsTaughtBy, personValuesOf, readModelFacts, recordModelFacts, scoped
 
 interface HealDB {
   core_scan_model_facts: { kind: string; model_key: string; field: string; value: unknown; source: string; from_item_id: string | null; updated_at: Date };
-  core_scan_inbox_items: { id: string; status: string; suggested_name: string | null; suggested_candidates: unknown; suggested_metadata: unknown };
+  core_scan_inbox_items: { id: string; status: string; suggested_name: string | null; suggested_candidates: unknown; suggested_metadata: unknown; created_at: Date };
 }
 
 /** Heal one workspace. Returns how many rows it filled. */
-export async function healModelFactsIn(orgId: string, db: Kysely<HealDB>): Promise<number> {
+export async function healModelFactsIn(orgId: string, db: Kysely<HealDB>, since: Date): Promise<number> {
   const rows = await db
     .selectFrom("core_scan_inbox_items")
     .select(["id", "suggested_name", "suggested_candidates", "suggested_metadata"])
+    .where("created_at", "<", since)
     .where("status", "=", "pending")
     .where("suggested_name", "is not", null)
     .limit(2000)
@@ -69,8 +70,9 @@ export async function healModelFactsIn(orgId: string, db: Kysely<HealDB>): Promi
 export function registerModelFactsHeal(): void {
   registerHealPass({
     name: "core-scan.heal-model-facts",
+    since: "2026-10-12T17:55:09Z",
     shim: "modules/core-scan/src/heal-model-facts.ts",
     module: "core-scan",
-    visit: ({ orgId, db }) => healModelFactsIn(orgId, db as Kysely<HealDB>),
+    visit: ({ orgId, db, since }) => healModelFactsIn(orgId, db as Kysely<HealDB>, since),
   });
 }

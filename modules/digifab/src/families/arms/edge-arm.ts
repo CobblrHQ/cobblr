@@ -3,7 +3,7 @@
 // call. Every arm command goes through here, and only commands the contract
 // names can: the schema has no motion and no way to clear a stop. Pause and
 // stop need no station; the rest need its permit.
-import { ArmCommandResultSchema, ArmCommandSchema, ArmInfoSchema, ArmProgramListSchema, ArmStateSchema, type ArmCommand, type ArmCommandResult, type ArmInfo, type ArmProgramList, type ArmState } from "@cobblr/platform-contract/robot-arm";
+import { ArmCommandResultSchema, ArmCommandSchema, ArmEventPageSchema, ArmInfoSchema, ArmProgramListSchema, ArmStateSchema, type ArmCommand, type ArmCommandResult, type ArmEventPage, type ArmInfo, type ArmProgramList, type ArmState } from "@cobblr/platform-contract/robot-arm";
 import type { EdgeAdapterDriver } from "../../drivers/edge-adapter.js";
 import { DriverSaid } from "../../job-truth.js";
 import { hasArmPermit, type ArmPermit } from "./station.js";
@@ -22,6 +22,16 @@ export class EdgeArm {
       return ArmProgramListSchema.parse(await this.driver.familyRequest("GET", this.path(deviceId, "programs"), { timeoutMs: 30_000 }));
     } catch (e) {
       if (e instanceof DriverSaid && [404, 501].includes(e.status)) return { supported: false, detail: "This bridge cannot list the arm's programs. Type them here instead." };
+      throw e;
+    }
+  }
+  /** The events the arm reported after `after` (a seq). A bridge without
+   *  events answers none, so nothing is invented. */
+  async events(deviceId: string, after: number): Promise<ArmEventPage> {
+    try {
+      return ArmEventPageSchema.parse(await this.driver.familyRequest("GET", this.path(deviceId, `events/${after}`)));
+    } catch (e) {
+      if (e instanceof DriverSaid && [404, 501].includes(e.status)) return { events: [], cursor: after };
       throw e;
     }
   }

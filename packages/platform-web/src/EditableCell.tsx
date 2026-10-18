@@ -319,7 +319,7 @@ function Shell({
         }
       }}
       className={
-        "block w-full cursor-text rounded px-1.5 py-0.5 -mx-1.5 hover:bg-mortar-100/70 dark:hover:bg-slate-800 hover:ring-1 hover:ring-line dark:hover:ring-slate-700 focus:outline-none focus:ring-1 focus:ring-cobble-400 transition " +
+        "block cursor-text rounded px-1.5 py-0.5 -mx-1.5 hover:bg-mortar-100/70 dark:hover:bg-slate-800 hover:ring-1 hover:ring-line dark:hover:ring-slate-700 focus:outline-none focus:ring-1 focus:ring-cobble-400 transition " +
         (align === "right" ? "text-right" : "")
       }
     >

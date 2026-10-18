@@ -280,6 +280,9 @@ export const CAPABILITIES: Capability[] = [
     scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
     detect: /emit\(\s*["']purchases\.order_item\.received["']/,
     use: "receiveOrderLines(db, orgId, orderId, receivedOn) from modules/purchases/src/receive.ts",
+    except: {
+      "api/src/platform/a-failed-durable-wire-leaves-receiving-pending.test.ts": "Exercises the real event bus with receipt payloads to verify failure and acknowledgement behavior; it never receives an order.",
+    },
   },
   {
     kind: "owns",
@@ -1223,6 +1226,7 @@ export const CAPABILITIES: Capability[] = [
       "api/src/platform/egress.ts",
       "api/src/sandbox/pool.ts",
       "modules/core-scan/src/services/enrich.ts",
+      "modules/core-integrations/src/connectors/safe-fetch.ts",
     ],
     // The lookup callback of a hand-rolled pinned Agent. `detect` is matched
     // PER LINE, so it has to be the one line the copy always has - a

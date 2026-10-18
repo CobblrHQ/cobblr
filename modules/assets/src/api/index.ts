@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ASSET_EDITABLE_KEYS, updateAssetFields } from "./update-fields.js";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { assetsRouter } from "./assets.js";
@@ -10,6 +11,7 @@ import { registerLoansFromCustodyHeal } from "../heal-loans-from-custody.js";
 registerAssetsResolvers();
 registerActionHandlers();
 registerAssetsWriter(); // silent cross-module writer (core-mobility et al.)
+platform().entities.registerUpdater("assets:asset", updateAssetFields, { nativeFields: [...ASSET_EDITABLE_KEYS] });
 registerLoansFromCustodyHeal();
 // Declare assets:asset as a scan target. (Audit 2026-06-26 follow-up — was a
 // hardcoded entry in core-scan's SCANNABLE/endpoint/qty maps.)

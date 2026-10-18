@@ -14,6 +14,7 @@ import { Link } from "react-router-dom";
 import { Modal, StatusRow } from "@cobblr/platform-web";
 import { dismissInstall } from "../lib/install-app";
 import { usePushHere } from "../lib/usePushHere";
+import { PushHandoffPrompt } from "./PushHandoffPrompt";
 const InstallWalkBody = lazy(() => import("./InstallWalk").then((m) => ({ default: m.InstallWalkBody })));
 
 export const BELL_PUSH_DISMISSED_KEY = "cobblr.push.bell-offer-dismissed";
@@ -32,7 +33,7 @@ const act = "rounded-md bg-cobble-600 hover:bg-cobble-700 px-2.5 py-1 text-xs fo
 const quietAct = "rounded-md border border-line dark:border-slate-600 px-2.5 py-1 text-xs text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-60";
 
 export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
-  const { q, route, readiness, here, publicKey, turnOn, failure, remove, test } = usePushHere();
+  const { q, route, readiness, here, publicKey, turnOn, failure, remove, test, refresh } = usePushHere();
   const [dismissed, setDismissed] = useState(wasDismissed);
   const [walking, setWalking] = useState(false);
   if (q.isLoading || !q.data) return null;
@@ -69,6 +70,8 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
           <>
             <BellRing size={14} className="text-accent shrink-0" aria-hidden />
             <span className="flex-1 min-w-0">Notifications on this device</span>
+            {/* Turned on from here: ask about the other channels right away (#7070). */}
+            {turnOn.isSuccess && q.data.handoff?.due && <PushHandoffPrompt handoff={q.data.handoff} onDone={refresh} />}
             <button type="button" className={quietAct} disabled={test.isPending || !here} onClick={() => here && test.mutate(here.id)} data-testid="bell-push-test">
               {test.isPending ? "Sending…" : "Send a test"}
             </button>

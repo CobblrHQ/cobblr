@@ -151,6 +151,57 @@ const CHECKS: Check[] = [
       "Playwright's 30s default on camera and erases the evidence",
   },
   {
+    file: LIB,
+    needle: /if \(!box\) \{\s*console\.error\(`\[skip\] point:/,
+    why:
+      "point() says [skip] when there is nothing to point at — the Lego tour narrated a catalog " +
+      "link for weeks after the record stopped showing it, because the pointer missed in silence",
+  },
+  {
+    file: YARN,
+    needle: /const clickByName = \(scope, re\) => softly\(/,
+    why:
+      "a tour click waits for its button and says [skip] when it never comes — a bare count() " +
+      "check returned false at once on a confirm that followed a server answer, and a whole take " +
+      "ran on a workspace with nothing installed",
+  },
+  ...TOURS.map((file) => ({
+    file,
+    needle: /await requireTables\(slug, token, \[/,
+    why:
+      "the tour checks, through the API, that its install left the tables it films, and stops " +
+      "the take when one is missing — a yarn take ran four minutes on a workspace with nothing installed",
+  })),
+  {
+    file: LIB,
+    needle: /export async function requireTables\(/,
+    why: "requireTables() exists and throws on a missing table",
+  },
+  {
+    file: YARN,
+    needle: /still\(page, "homepage-scan-inbox", \{[\s\S]{0,300}?mustNot: INSTALLED_SAYS_OFF/,
+    why:
+      "the homepage inbox picture refuses a screen that offers to turn on a table the tour " +
+      "installed — 'Yarn isn't on yet' was on the card the hero is cut from",
+  },
+  {
+    file: LIB,
+    needle: /if \(mustNot\) \{/,
+    why: "still() refuses a picture whose screen carries its mustNot sentence",
+  },
+  {
+    file: YARN,
+    needle: /\[skip\] act5: the confirm never resolved on camera[^\n]*\n\s*process\.exitCode = 1;/,
+    why:
+      "a confirm that never happened on camera fails the take — the safety net filed the row and three " +
+      "yarn takes passed green over a beat the audience never saw",
+  },
+  {
+    file: YARN,
+    needle: /softly\("yarn installs"/,
+    why: "the install beat waits for 'Yarn is set up.' and says [skip] when it never lands",
+  },
+  {
     file: STATIC_CHECK,
     needle: /DEFAULT_MAX_STATIC/,
     why: "the pixel-level dead-air check exists — the log saying VERIFY YES is not evidence",
@@ -491,6 +542,29 @@ for (const file of CLIPS) {
     if (!/border-amber|bg-violet|bg-amber|header|Verify your email|staging/i.test(code)) return;
     failures.push(
       `${file}:${i + 1}: dev chrome hidden with CSS/DOM surgery - use prodLook (launchTour does)\n` +
+        `    ${code.slice(0, 110)}`,
+    );
+  });
+}
+
+// ── a pointer is never conditional on its target being there ──
+//
+// `if (await x.count()) await point(page, x)` is the same silence as an empty
+// catch: when the control moves, the beat quietly does not happen and its
+// caption narrates an empty screen. point() reports a miss itself, so call it.
+for (const file of [...TOURS, ...CLIPS]) {
+  let src: string;
+  try {
+    src = read(file);
+  } catch {
+    continue;
+  }
+  src.split("\n").forEach((line, i) => {
+    const code = line.trim();
+    if (!/if\s*\(\s*await\s+[\w.]+\.count\(\)\s*\)\s*await\s+point\(/.test(code)) return;
+    failures.push(
+      `${file}:${i + 1}: a pointer guarded by count() skips in silence when its target moves\n` +
+        `    → call point() directly; it logs [skip] when there is nothing to point at.\n` +
         `    ${code.slice(0, 110)}`,
     );
   });

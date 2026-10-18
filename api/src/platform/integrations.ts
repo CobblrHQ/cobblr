@@ -15,6 +15,8 @@ import {
   randomBytes,
 } from "node:crypto";
 import { meta } from "../db/meta.js";
+import type { InboundHandlerContext } from "@cobblr/platform-contract";
+export type { InboundHandlerContext } from "@cobblr/platform-contract";
 
 // ─────────────────── connector / inbound registry ─────────────────
 
@@ -52,13 +54,6 @@ export interface OutboundConnector {
   invoke: (ctx: ConnectorInvokeContext, actionId: string) => Promise<unknown>;
   /** Optional health check — returns ok on a successful test ping. */
   testConnection?: (credentials: Record<string, unknown>) => Promise<{ ok: boolean; error?: string }>;
-}
-
-export interface InboundHandlerContext {
-  orgId: string;
-  inboundRowId: string;
-  config: Record<string, unknown>;
-  emit: (eventName: string, payload: unknown) => Promise<void>;
 }
 
 export interface InboundHandler {

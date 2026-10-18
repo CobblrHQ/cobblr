@@ -1,9 +1,6 @@
 import { registerPanelPresence } from "../panel-presence.js";
-import { reflowProfilesRouter, registerReflowProfiles } from "./reflow-profiles.js";
 import {largeFormatRouter} from "./large-format.js";
 import {registerLargeFormatActions} from "../large-format/actions.js";
-import {embroideryRouter} from "./embroidery.js";
-import {registerEmbroideryActions} from "../embroidery-actions.js";
 
 import { registerStopAction } from "./stop-action.js";
 import { registerRevokeStationAction } from "./stations.js";
@@ -17,9 +14,6 @@ import { registerResinPostprocessAction } from "../resin-postprocess.js";
 
 import { Router } from "express";
 import { platform } from "@cobblr/platform-contract";
-import { productionRouter } from "./production.js";
-import { registerProductionTest } from "../production-actions.js";
-import { registerProductionReconcile } from "../production-reconcile.js";
 import { benchRouter } from "./bench.js";
 import { registerBench } from "../bench.js";
 import { connectionsRouter } from "./connections.js";
@@ -40,8 +34,6 @@ import { libraryRouter } from "./library.js";
 import { printRulesRouter } from "./print-rules.js";
 import { failureRouter } from "./failure.js";
 import { loadedRouter } from "./loaded.js";
-import { kilnsRouter } from "./kilns.js";
-import { registerKilnActions } from "../kilns/actions.js";
 import { laserRouter } from "./laser.js";
 import { registerMachineStationVerifier } from "./machine-stations.js";
 import { stationsRouter } from "./stations.js";
@@ -66,6 +58,45 @@ import { registerPrintThis } from "../print-this.js";
 import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
+import { registerSetFailureDetectionAction } from "./set-failure-detection-action.js";
+import { registerCheckForFailureAction } from "./check-for-failure-action.js";
+import { registerTestDetectorAction } from "./test-detector-action.js";
+
+registerTestDetectorAction();
+
+registerCheckForFailureAction();
+
+registerSetFailureDetectionAction();
+import { registerPrioritizeJobAction } from "./prioritize-job-action.js";
+import { registerRefreshJobAction } from "./refresh-job-action.js";
+import { registerDeleteJobAction } from "./delete-job-action.js";
+import { registerRenamePrintFileAction } from "./rename-print-file-action.js";
+import { registerDeletePrintFileAction } from "./delete-print-file-action.js";
+
+registerDeletePrintFileAction();
+
+registerRenamePrintFileAction();
+
+registerDeleteJobAction();
+
+registerRefreshJobAction();
+
+registerPrioritizeJobAction();
+import { registerMakePoolAction } from "./make-pool-action.js";
+import { registerRemovePoolAction } from "./remove-pool-action.js";
+import { registerRemoveFromPoolAction } from "./remove-from-pool-action.js";
+import { registerHoldRunAction } from "./hold-run-action.js";
+import { registerArrangeFloorAction } from "./arrange-floor-action.js";
+
+registerArrangeFloorAction();
+
+registerHoldRunAction();
+
+registerRemoveFromPoolAction();
+
+registerRemovePoolAction();
+
+registerMakePoolAction();
 import { registerTestConnectionAction } from "./test-connection-action.js";
 
 registerTestConnectionAction();
@@ -77,17 +108,13 @@ registerFamilies(FAMILIES);
 
 registerMachineStationVerifier();
 registerBench();
-registerProductionTest();
-registerProductionReconcile();
 registerFarmResolvers();
 registerMakeActions();
 registerLaserActions();
-registerKilnActions();
 
 registerCutterActions();
 registerStationRunAction();
 registerLargeFormatActions();
-registerEmbroideryActions();
 registerSnapmakerDiscovery();
 registerLaserControlAction();
 registerMachineControlAction();
@@ -118,22 +145,17 @@ platform().edge.registerConsumer({
   href: "/digifab",
 });
 
-registerReflowProfiles();
 const router = Router({ mergeParams: true });
-router.use("/", reflowProfilesRouter);
 router.use("/bench",benchRouter);
-router.use("/production", productionRouter);
 router.use("/connections", connectionsRouter);
 router.use("/stations", stationsRouter);
 router.use("/resin", resinRouter);
 router.use("/snapmaker", snapmakerRouter);
 router.use("/laser", laserRouter);
-router.use("/kilns", kilnsRouter);
 // Each family's routes, at the paths its module part owns (core/families.ts).
 for (const family of FAMILIES) for (const r of family.routes) router.use(r.path, r.router);
 router.use("/cutter", cutterRouter);
 router.use("/large-format",largeFormatRouter);
-router.use("/embroidery", embroideryRouter);
 router.use("/jobs", jobsRouter);
 router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);
