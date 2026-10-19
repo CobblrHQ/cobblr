@@ -1,7 +1,7 @@
 {
   "id": "klipper-moonraker",
   "name": "Klipper (Moonraker)",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/printer/info" },
@@ -28,6 +28,13 @@
       "progressScale": 1
     }
   },
+  "versions": [
+    { "method": "GET", "path": "/printer/info", "map": { "firmware": "$.result.software_version", "controller": "='Klipper'" } },
+    { "method": "GET", "path": "/server/info", "map": { "software": "$.result.moonraker_version" } }
+  ],
+  "camera": [
+    { "method": "GET", "path": "/server/webcams/list", "arrayPath": "result.webcams", "enabled": "$.enabled", "snapshot": "$.snapshot_url", "stream": "$.stream_url", "relativeTo": "host" }
+  ],
   "upload": {
     "method": "POST",
     "path": "/server/files/upload",

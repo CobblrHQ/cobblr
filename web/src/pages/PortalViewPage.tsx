@@ -11,7 +11,7 @@
 // loads it when the user has the capability.
 
 import { Link, useOutletContext, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { QueryError } from "../components/QueryError";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useState } from "react";
@@ -19,9 +19,10 @@ import { EntityThumb, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { useViewData } from "../lib/useViewData";
 import { ViewMore } from "../components/ViewMore";
-import { api, getToken } from "../lib/api";
+import { getToken } from "../lib/api";
 import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
 import { AskForItButton } from "../components/AskForItButton";
+import { useCapabilitiesFor } from "../lib/can";
 
 interface PortalCtx {
   activeSlug: string | null;
@@ -43,11 +44,7 @@ export function PortalViewPage() {
   usePageTitle(data.view?.entity_kind ?? "View");
 
   // User capabilities — drives whether to show the "+ New" button.
-  const caps = useQuery({
-    queryKey: ["my-capabilities", activeSlug],
-    queryFn: () => api.getMyCapabilities(activeSlug!),
-    enabled: !!activeSlug,
-  });
+  const caps = useCapabilitiesFor(activeSlug);
 
   if (!viewId || !activeSlug) return null;
 
@@ -55,7 +52,7 @@ export function PortalViewPage() {
   const createCap = createCapabilityForKind(entityKind) ?? undefined;
   const canCreate =
     createCap !== undefined &&
-    (caps.data?.all === true || caps.data?.grants.includes(createCap) === true);
+    (caps?.all === true || caps?.grants.includes(createCap) === true);
 
   return (
     <div className="space-y-4">
@@ -82,7 +79,7 @@ export function PortalViewPage() {
           )}
           {/* A create the person may not do yet is an ask, not a missing
               button: the sheet explains and offers it (#3073). */}
-          {createCap !== undefined && caps.data && !canCreate && (
+          {createCap !== undefined && caps && !canCreate && (
             <AskForItButton
               slug={activeSlug}
               remedies={[{ kind: "capability", key: createCap }]}

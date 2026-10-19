@@ -49,6 +49,10 @@ export interface SessionUser {
    *  request is clamped server-side to the Tier-B allowlist (see
    *  `appTokenPathAllowed`). */
   app_scope: string | null;
+  /** The record kinds an app token's app declares it edits; empty for any
+   *  other request. Limits the kernel verbs an app may fire
+   *  (`appTokenInvokeRefusal`). */
+  app_edit_kinds?: readonly string[];
   /** Capability scopes of the API token that signed this request, when it
    *  was minted with restrictions. Null = unrestricted (session, or a legacy
    *  full-access token). When non-null, requireAuth has already clamped the
@@ -130,14 +134,24 @@ function appTokenPathAllowed(method: string, rel: string, appScope: string): boo
 // may invoke a capability-gated MODULE action but never a `platform:*` one.
 // Enforced at the invoke route, where the actionId (request body) is known.
 //
-// The one kernel verb an app may fire is platform:update-fields: it is how a
-// form block in edit mode corrects a record. It carries no workspace config; it
-// refuses a kind with no registered updater, withholds any field the member
-// cannot see, and asks the kind's own capability, so it is no wider than the
-// member's own screen.
-export const APP_SAFE_KERNEL_ACTIONS: ReadonlySet<string> = new Set(["platform:update-fields"]);
-export function appTokenMayInvoke(actionId: string): boolean {
-  return APP_SAFE_KERNEL_ACTIONS.has(actionId) || !actionId.startsWith("platform:");
+// A kernel verb an app may fire names the record kind it writes, and runs only
+// on a kind the app declares it edits (its edit forms, carried in the token by
+// core-apps at mint). The member's own grant is not enough: an app running as
+// an owner would otherwise rewrite records of every updatable kind (#7408).
+const APP_KERNEL_ACTION_KIND: Readonly<Record<string, (args: Record<string, unknown> | null) => string | null>> = {
+  "platform:update-fields": (args) => (typeof args?.kind === "string" && args.kind ? args.kind : null),
+};
+export function appTokenInvokeRefusal(
+  actionId: string,
+  args: Record<string, unknown> | null,
+  editKinds: readonly string[],
+): string | null {
+  if (!actionId.startsWith("platform:")) return null;
+  const kindOf = APP_KERNEL_ACTION_KIND[actionId];
+  if (!kindOf) return "An app token may not invoke workspace-configuration (platform:*) actions.";
+  const kind = kindOf(args);
+  if (!kind || !editKinds.includes(kind)) return "This app does not edit that kind of record. Add an edit form for it to the app.";
+  return null;
 }
 
 // MCP read-grant clamp (Ask Cobb over the subscription bridge). A JWT with
@@ -173,8 +187,16 @@ const MCP_READ_PATHS: Array<string | RegExp> = [
   /^\/modules\/digifab\/bench\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   "/modules/digifab/floor",
   "/modules/digifab/fleet",
+  // what each machine runs against its cohort's target (read_machine_versions),
+  // in the machines module or one collection of it
+  "/modules/machines/machines/versions",
+  /^\/instances\/[a-z0-9_-]+\/items\/versions$/i,
+  // finished prints and what they cost (read_print_history)
+  "/modules/digifab/history",
   /^\/modules\/digifab\/kilns\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   /^\/modules\/digifab\/arms\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^\/modules\/digifab\/cells\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^\/modules\/digifab\/care\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   "/modules/digifab/laser/profiles",
   "/modules/digifab/laser/plans",
   /^\/modules\/digifab\/laser\/design\/[A-Za-z0-9-]+$/,
@@ -364,6 +386,7 @@ export async function requireAuth(
     let authMethod: "session" | "api_token" = "session";
     let apiTokenId: string | null = null;
     let appScope: string | null = null;
+    let appEditKinds: readonly string[] = [];
     let mcpReadSlug: string | null = null;
     let mcpWriteSlug: string | null = null;
     let shareViewSid: string | null = null;
@@ -400,6 +423,7 @@ export async function requireAuth(
       tokenIssuedAt = typeof claims.iat === "number" ? claims.iat : null;
       if (typeof claims.aud === "string" && claims.aud.startsWith("app:")) {
         appScope = claims.aud.slice("app:".length);
+        appEditKinds = claims.edits ?? [];
       } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-read:")) {
         mcpReadSlug = claims.aud.slice("mcp-read:".length);
       } else if (typeof claims.aud === "string" && claims.aud.startsWith("mcp-write:")) {
@@ -550,6 +574,7 @@ export async function requireAuth(
       api_token_id: apiTokenId,
       is_platform_admin: isPlatformAdmin(user.email),
       app_scope: appScope,
+      app_edit_kinds: appEditKinds,
       token_scopes: tokenScopes,
       token_access: tokenGrant?.access ?? null,
       token_org_id: tokenGrant?.orgId ?? null,

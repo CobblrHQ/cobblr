@@ -16,6 +16,7 @@
 import type {
   CommandResult,
   ConnectionResult,
+  DeviceVersions,
   MachineDriver,
   JobStatus,
   PlacementResolution,
@@ -47,6 +48,19 @@ export interface MockOptions {
   printers?: MockPrinter[];
   /** Polls until a queued job reads "completed" (default 2). */
   completeAfter?: number;
+}
+
+/** What a mock's printers say they run: its connection URL's `firmware`,
+ *  `software` and `controller` (mock://farm?firmware=6.1.3), so an api test
+ *  can have a printer report a version, and then another one. */
+export function mockVersions(baseUrl: string | null | undefined): DeviceVersions {
+  const q = new URLSearchParams((baseUrl ?? "").split("?")[1] ?? "");
+  const out: DeviceVersions = {};
+  for (const k of ["firmware", "software", "controller"] as const) {
+    const v = q.get(k)?.trim();
+    if (v) out[k] = v.slice(0, 120);
+  }
+  return out;
 }
 
 const DEFAULT_PRINTERS: MockPrinter[] = [
@@ -82,6 +96,14 @@ export class MockDriver implements MachineDriver {
         : { nozzle: { actual: 24, target: 0 }, bed: { actual: 23, target: 0 } };
       return { ...p, temps };
     });
+  }
+
+  /** The connection's URL, as last built: read for what the printers run. */
+  baseUrl: string | null = null;
+
+  async readVersions(): Promise<Array<DeviceVersions & { deviceId: string }>> {
+    const v = mockVersions(this.baseUrl);
+    return Object.keys(v).length ? this.printers.map((p) => ({ deviceId: p.id, ...v })) : [];
   }
 
   async setDeviceEnabled(deviceId: string, enabled: boolean): Promise<void> {

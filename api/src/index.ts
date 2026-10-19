@@ -89,6 +89,7 @@ import { tenantSweeps, startTenantSweeps } from "./platform/tenant-sweeps.js";
 import { startPoolWatch, poolCounts } from "./db/pool-stats.js";
 import { poolHolders } from "./db/client-error-guard.js";
 import { tenantPoolStats } from "./db/tenant.js";
+import { startMemoryLog } from "./platform/memory-log.js";
 import { mountModules } from "./modules/mount.js";
 import { registerBuiltinResolvables } from "./platform/resolvable-providers.js";
 import { registerResolvable, resolveValue } from "./platform/resolvables.js";
@@ -151,47 +152,22 @@ import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
 import { noteHealShim } from "./platform/heal-shim-log.js";
 import { notePassFailure } from "./platform/pass-failures.js";
-import { backfillPlacements } from "./platform/migrate-location-to-placement.js";
-import { registerDanglingPlacesHeal } from "./platform/heal-dangling-places.js";
-import { backfillDefaultBindings } from "./platform/seed-bindings.js";
-import { healWireBooleanArgs } from "./platform/heal-wire-boolean-args.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
-import { reconcileContributedFields } from "./platform/reconcile-contributed-fields.js";
 import { actionGateOf, gatePasses, capabilitiesHeldBy } from "./platform/action-gates.js";
-import { reconcileBundleFieldAggregates } from "./platform/reconcile-bundle-field-aggregates.js";
-import { reconcileIntegrationNav } from "./platform/integration-nav.js";
-import { reconcileBundleApps } from "./platform/reconcile-bundle-apps.js";
-import { reconcileBundleUpdates, startBundleUpdateSweeper } from "./platform/bundle-updates.js";
-import { reconcileBundleFieldRoles } from "./platform/bundle-field-roles.js";
-import { reconcileBundleInstanceConfig } from "./platform/bundle-instance-config.js";
-import { healBundleViewFields } from "./platform/heal-bundle-view-fields.js";
-import { repairReplayTruncatedNames } from "./platform/repair-replay-truncated-names.js";
-import { retireReceiptFailurePlaceholders } from "./platform/retire-receipt-failure-placeholders.js";
-import { backfillIdentityLinks } from "./platform/backfill-identity.js";
+import { startBundleUpdateSweeper } from "./platform/bundle-updates.js";
+import { runBootPhase } from "./platform/boot-passes.js";
 import { logAnnounceRouting } from "./platform/announce.js";
 import { postCardlessFeedback } from "./routes/feedback-card-post.js";
 import { logSignupGates } from "./platform/signup-gates.js";
 import { startTrialReaper } from "./platform/reap-trials.js";
 import { startDeletionReaper } from "./platform/reap-deletions.js";
-import { startOrphanFilesAudit } from "./platform/heal-orphan-files.js";
-import { healHalfMadeWorkspaces } from "./platform/heal-half-made-workspaces.js";
 import { startSandboxReaper } from "./platform/reap-sandboxes.js";
 import { startSandboxPool } from "./platform/try-sandbox-pool.js";
 import { seedSandbox } from "./platform/try-sandbox-seed.js";
 import { provisionOrgForUser } from "./routes/auth.js";
 import { enableDefaultModulesForOrg } from "./modules/enable.js";
 import { startDbUpgradeHoldWatch } from "./platform/db-upgrade-status.js";
-import { reconcileOrphanTenantRoles } from "./platform/reconcile-tenant-roles.js";
 import { registerShareChildren, shareChildrenFor } from "./platform/share-children.js";
-import { healCopiedCollectionLooksAtBoot } from "./platform/heal-copied-collection-looks.js";
-import { healStrayInstanceLookKeysAtBoot } from "./platform/heal-stray-instance-look-keys.js";
-import { reconcileShareSpaces } from "./platform/reconcile-share-spaces.js";
-import { voidReadOnlyShareSuggestionsAtBoot } from "./platform/heal-void-share-suggestions.js";
-import { reconcileScanCategoryFields, retireScanCategoryPlaceholders } from "./platform/reconcile-scan-category.js";
-import { reconcileAppScanFallback } from "./platform/reconcile-app-scan-fallback.js";
-import { backfillBundleClaims } from "./platform/backfill-bundle-claims.js";
-import { healListRenames } from "./platform/heal-list-renames.js";
-import { backfillInstallSideEffectClaims } from "./platform/backfill-install-side-effect-claims.js";
 import {
   registerDeclarativeScanResolver,
   refreshScanUrlManifests,
@@ -997,7 +973,7 @@ async function boot() {
       },
       describeBlockedCapability: (args) => describeCapabilityBlock(args),
       describeBlock: (args) => describeBlock(args),
-      mintAppToken: ({ userId, appSlug }) => signAppToken(userId, appSlug),
+      mintAppToken: ({ userId, appSlug, editKinds }) => signAppToken(userId, appSlug, editKinds),
       mintSession: ({ userId }) => signSession(userId),
       requestSource: async () => {
         const actor = currentActor();
@@ -1967,19 +1943,8 @@ async function boot() {
   // lacking digifab on all 4 metas — and migrate-inventory-locations — 0
   // legacy tables across all 205 tenant DBs. Restoring a backup that predates
   // those cutovers needs a build that still carries the shims.)
-  // Seed the placement primitive from existing location_id values (a Location is
-  // one KIND of container). Runs after locations are canonical + before
-  // syncTenantMigrations, same as above. Idempotent; the dual-write keeps it
-  // fresh once it ships (step 2b).
-  const placeResult = await T("backfillPlacements", backfillPlacements());
-  if (placeResult.orgsTouched > 0) {
-    console.log(
-      `[cobblr-api] location_id → placement backfill: ${placeResult.orgsTouched} org(s), ${placeResult.rowsInserted} placement row(s) seeded`,
-    );
-  }
-  // Things still naming a place deleted before a delete emptied it: a heal
-  // pass on the kernel's sweep, never a walk of its own here.
-  registerDanglingPlacesHeal();
+  // The kernel's boot passes run by phase; each is a file in platform/boot/.
+  await runBootPhase("before-migrations", T);
   // Self-heal: backfill foundational + autoEnable capabilities onto workspaces
   // that predate them. Signup only enables what existed then, so an older
   // workspace is missing newer capabilities' tables (e.g. core-devices owns
@@ -2006,50 +1971,13 @@ async function boot() {
   // Load operator-added vendor scan-URL resolvers now the table exists (migration
   // 069 ran above). Built-ins work without this; this folds in DB rows/overrides.
   await T("refreshScanUrlManifests", refreshScanUrlManifests());
-  // Top up default bindings for orgs created before Phase 4 introduced
-  // the seed-on-signup path. Idempotent per (org, source_kind, action_id,
-  // trigger_event), so repeated boots are safe.
-  // A field a module contributes after a workspace enabled it reaches that
-  // workspace too (reconcile-contributed-fields.ts).
-  const contributed = await T("reconcileContributedFields", reconcileContributedFields());
-  await T("reconcileIntegrationNav", reconcileIntegrationNav());
-  if (contributed.added > 0) console.log(`[cobblr-api] contributed fields reconciled: ${contributed.added} added (${contributed.modules.join(", ")})`);
-  // A shipped bundle's number fields add up the way its manifest now says
-  // (reconcile-bundle-field-aggregates.ts).
-  await T("reconcileBundleFieldAggregates", reconcileBundleFieldAggregates());
-  const seeded = await T("backfillDefaultBindings", backfillDefaultBindings());
-  console.log(`[cobblr-api] default bindings backfilled: ${seeded} added`);
-  // A wire saved with a boolean argument as "true" is saved as true (#6130).
-  await T("healWireBooleanArgs", healWireBooleanArgs());
+  await runBootPhase("after-migrations", T);
   // A first boot with no UI: COBBLR_OIDC_* sets up the instance's sign-in
   // provider (platform/oidc.ts). One saved in the UI is left alone.
   await T("seedOidcProviderFromEnv", seedProviderFromEnv());
   await T("ensureVapidKeys", ensureVapidKeys());
 
-  // Installed bundles catch up to the catalog on their own (patch/minor, with
-  // the install route's own gates). Used to happen only when somebody opened
-  // the dashboard. Idempotent: a current workspace costs one row in a meta
-  // query and opens no tenant pool.
-  const bundleUpdates = await T("reconcileBundleUpdates", reconcileBundleUpdates());
-  if (bundleUpdates.applied > 0) {
-    console.log(`[cobblr-api] bundle updates: ${bundleUpdates.applied} applied, ${bundleUpdates.skipped} left for the prompt`);
-  }
-  const appsReconciled = await T("reconcileBundleApps", reconcileBundleApps());
-  if (appsReconciled.updated > 0) console.log(`[cobblr-api] bundle apps: ${appsReconciled.updated} updated`);
-  // A field a bundle owns carries the role its current manifest declares, even
-  // on an install whose update is waiting on the prompt (a lot the scan reads
-  // is filed by role). Fills a missing role only; meta-only.
-  const rolesFilled = await T("reconcileBundleFieldRoles", reconcileBundleFieldRoles());
-  if (rolesFilled > 0) console.log(`[cobblr-api] bundle field roles: ${rolesFilled} filled from the catalog`);
-  // A table a bundle installed carries the declarations its current manifest
-  // makes (a Lego Sets table's parts_into), on an install from before them.
-  // Fills a missing key only; meta-only.
-  const tablesFilled = await T("reconcileBundleInstanceConfig", reconcileBundleInstanceConfig());
-  if (tablesFilled > 0) console.log(`[cobblr-api] bundle tables: ${tablesFilled} filled from the catalog`);
-  // A view a bundle seeded names fields its kind has, as the shipped bundle
-  // now defines it, unless the person edited it (Lego 0.6.4's grouping).
-  const viewsHealed = await T("healBundleViewFields", healBundleViewFields());
-  if (viewsHealed.healed > 0) console.log(`[cobblr-api] bundle views: ${viewsHealed.healed} healed from the catalog`);
+  await runBootPhase("bundles", T);
 
   // The one sweeper that flushes windowed notification channels. Every module
   // that wants a digest gets it from here rather than growing its own timer:
@@ -2103,75 +2031,9 @@ async function boot() {
   // happening, once per stretch (#3033).
   startPoolWatch("meta-pool", () => poolCounts(metaPool), undefined, () => poolHolders(metaPool));
   startPoolWatch("tenant-pools", () => tenantPoolStats());
+  if (env.COBBLR_MEMORY_LOG_S) startMemoryLog(env.COBBLR_MEMORY_LOG_S, () => tenantPoolStats());
 
-  // Put back scan names a Replay truncated before 2026-08-12 (a cache miss
-  // degraded to the keyword heuristic, whose candidate name then overwrote the
-  // real one). The user did nothing to cause it, so the platform undoes it
-  // rather than asking them to. See platform/repair-replay-truncated-names.ts.
-  const nameRepair = await T("repairReplayTruncatedNames", repairReplayTruncatedNames());
-  if (nameRepair.rowsRepaired > 0) {
-    console.log(
-      `[cobblr-api] replay-truncated scan names: ${nameRepair.rowsRepaired} restored across ${nameRepair.orgsTouched} workspace(s)`,
-    );
-  }
-  // A receipt whose read failed used to be a placeholder inbox row; it is a
-  // state on the session now. Move the rows already written so nobody cleans
-  // up by hand. See platform/retire-receipt-failure-placeholders.ts.
-  const placeholders = await T("retireReceiptFailurePlaceholders", retireReceiptFailurePlaceholders());
-  if (placeholders.rowsRetired > 0) {
-    console.log(
-      `[cobblr-api] receipt-failure placeholders: ${placeholders.rowsRetired} retired into session state across ${placeholders.orgsTouched} workspace(s)`,
-    );
-  }
-
-  // Sweep per-tenant Postgres roles left behind by deleted workspaces (roles are
-  // cluster-global, so DROP DATABASE never removed them). One query on a healthy
-  // instance; opens no tenant pools. See platform/reconcile-tenant-roles.ts.
-  const roleSweep = await T("reconcileOrphanTenantRoles", reconcileOrphanTenantRoles());
-  await T("reconcileShareSpaces", reconcileShareSpaces());
-  await T("healCopiedCollectionLooks", healCopiedCollectionLooksAtBoot());
-  await T("healStrayInstanceLookKeys", healStrayInstanceLookKeysAtBoot());
-  await T("voidReadOnlyShareSuggestions", voidReadOnlyShareSuggestionsAtBoot());
-  if (roleSweep.dropped > 0 || roleSweep.skippedBroken > 0) {
-    console.log(
-      `[cobblr-api] orphaned tenant roles: ${roleSweep.dropped} dropped, ${roleSweep.skippedBroken} left for investigation`,
-    );
-  }
-
-  // Give every workspace's scan FALLBACK table a category axis. Without one, the
-  // matchmaker's only way to say "this is electrical, that is plumbing" is to
-  // route them to different TABLES — which is how five electrical parts ended up
-  // scattered across four near-synonym tables. Idempotent; a workspace that
-  // already has an axis costs one in-memory check and opens no tenant pool.
-  await T("reconcileScanCategoryFields", reconcileScanCategoryFields());
-
-  // A managed app's own table is its scan fallback, for app workspaces that
-  // were provisioned before provisioning set it. Two cobblr_meta reads.
-  const appFallback = await T("reconcileAppScanFallback", reconcileAppScanFallback());
-  if (appFallback.orgsHealed > 0) console.log(`[cobblr-api] app scan-fallback reconcile: ${appFallback.orgsHealed} workspace(s) pointed at their app's table`);
-
-  // Self-heal the bundle-resource-claims ledger for installs that predate it,
-  // so a bundle uninstall can refcount correctly. Once per org, idempotent.
-  const claimsOrgs = await T("backfillBundleClaims", backfillBundleClaims());
-  if (claimsOrgs > 0) {
-    console.log(`[cobblr-api] bundle-resource claims backfilled for ${claimsOrgs} org(s)`);
-  }
-  // List renames the assistant wrote under the bare list name, which nothing
-  // read (#4495): folded into the row the app reads. One cobblr_meta read.
-  const listRenames = await T("healListRenames", healListRenames());
-  if (listRenames > 0) console.log(`[cobblr-api] list renames healed: ${listRenames}`);
-  // The modules an install switched on before installs claimed them (#3918),
-  // where the activity log can say so. One cobblr_meta query, no tenant pool.
-  const sideEffectClaims = await T("backfillInstallSideEffectClaims", backfillInstallSideEffectClaims());
-  if (sideEffectClaims > 0) console.log(`[cobblr-api] install side-effect claims backfilled: ${sideEffectClaims}`);
-
-  // Central identity federation (Slice 3): link any unlinked local user to its global
-  // identity by email. No-op unless IDENTITY_URL is wired. Meta-only, idempotent,
-  // resilient — a failed batch never blocks boot.
-  const idLinks = await T("backfillIdentityLinks", backfillIdentityLinks());
-  if (idLinks.linked > 0) {
-    console.log(`[cobblr-api] central identity: linked ${idLinks.linked} local user(s)`);
-  }
+  await runBootPhase("workspaces", T);
 
   // Where user feedback goes. A webhook in the env or one admin-set row is the
   // difference between a private report and one posted to a chat server, and that is
@@ -2185,10 +2047,7 @@ async function boot() {
   console.log(`[bootphase] === pre-createApp total: ${Date.now() - bootT0}ms ===`);
   const { app } = createApp();
   await T("mountModules", mountModules(app));
-  // After the mount, not with the axis pass above: the values it moves live in
-  // a module's own table and only that module's writer (registered by its api
-  // bundle, just mounted) may move them. See retireScanCategoryPlaceholders.
-  await T("retireScanCategoryPlaceholders", retireScanCategoryPlaceholders());
+  await runBootPhase("after-mount", T);
   completeApp(app);
   setSelfHandler(app as unknown as Parameters<typeof setSelfHandler>[0]);
 
@@ -2214,13 +2073,10 @@ async function boot() {
   // Reap expired trial/demo workspaces (drops the tenant DB past a grace window).
   // No-op unless COBBLR_TRIAL_REAP=dry|live; only ever touches trial_expires_at-stamped
   // orgs, so prod/staging/self-host are untouchable. See platform/reap-trials.ts.
-  // Finish the workspaces an older signup left with no database (one-shot).
-  void healHalfMadeWorkspaces().catch((err) => console.error("[heal] half-made workspaces:", (err as Error).message));
+  await runBootPhase("background", T);
   startTrialReaper();
   // Workspaces their owners asked to delete, once the grace period is over.
   startDeletionReaper();
-  // Counts the files deleted workspaces left behind (dry run: erases nothing).
-  startOrphanFilesAudit();
   // Sandboxes live an hour, so they are swept in minutes, not the trial
   // reaper's six hours. No-op unless the box hands them out.
   startSandboxReaper();

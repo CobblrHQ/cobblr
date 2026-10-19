@@ -15,7 +15,8 @@
 // #4937. The report keeps the failure for /healthz, /readyz and tests.
 //
 // WHAT A PASS IS, DISCOVERED, NOT LISTED: every function the boot times in
-// api/src/index.ts (`T("<label>", fn(...))`), every callback handed to
+// api/src/index.ts (`T("<label>", fn(...))`) or registers in
+// api/src/platform/boot/ (#7387), every callback handed to
 // `sweeps.register` or `registerHealPass`, and, transitively, every function
 // in the same file those call by name (a heal's visit is usually a one-line
 // call to a `heal…In` function beside it).
@@ -30,9 +31,9 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { bootPassRefs } from "./lib/boot-passes.ts";
 
 const ROOTS = ["api/src", "modules"];
-const BOOT = "api/src/index.ts";
 const REGISTER = /(^|\.)(sweeps\.register|registerHealPass)$/;
 /** Boot steps the boot times that are not passes over workspaces: loading
  *  and mounting code, and printing what the boot found. A module that fails
@@ -70,19 +71,10 @@ function* walk(dir: string): Generator<string> {
 
 const parse = (file: string, src: string) => ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true);
 
-/** The functions the boot runs as passes, by name: `T("label", fn(...))`. */
+/** The functions the boot runs as passes, by name: index.ts's `T("label", fn(...))`
+ *  and the registry's descriptors (scripts/lib/boot-passes.ts). */
 function bootPassNames(): Set<string> {
-  const names = new Set<string>();
-  const sf = parse(BOOT, readFileSync(BOOT, "utf8"));
-  const v = (n: ts.Node): void => {
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "T" && n.arguments.length === 2) {
-      const inner = n.arguments[1];
-      if (inner && ts.isCallExpression(inner) && ts.isIdentifier(inner.expression) && !NOT_PASSES.has(inner.expression.text)) names.add(inner.expression.text);
-    }
-    ts.forEachChild(n, v);
-  };
-  v(sf);
-  return names;
+  return new Set(bootPassRefs(".").map((p) => p.fn).filter((fn) => !NOT_PASSES.has(fn)));
 }
 
 /** Named functions declared at any depth in a file: declarations and

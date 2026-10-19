@@ -18,7 +18,7 @@ import { withTenant } from "../middleware/tenant.js";
 import * as aiImpl from "../platform/ai.js";
 import * as connectionProviders from "../platform/connections.js";
 import { notifyAccount } from "../platform/notifications.js";
-import { absoluteAppUrl } from "../platform/public-url.js";
+import { emailableUrl, pointTo } from "../platform/link-origin.js";
 import { isWorkingVerification, unverifiedRefusal } from "@cobblr/platform-contract/connection-verification";
 import { isCapabilityId } from "@cobblr/platform-contract/connection-capability";
 import { carriesCredentials, probeConnection, testStoredConnection } from "../platform/connection-probe.js";
@@ -133,13 +133,13 @@ async function notifyOwnersOfOffers(
     const org = await meta.selectFrom("orgs").select(["name"]).where("id", "=", r.org_id).executeTakeFirst();
     const wsName = org?.name ?? "your workspace";
     const configPath = "/configuration/ai";
-    const configUrl = absoluteAppUrl(configPath);
+    const configUrl = emailableUrl(configPath);
     const email = {
       subject: `${offererName} wants to share their AI with ${wsName}`,
       text:
         `${offererName} offered to share their AI connection with ${wsName} on ${productName()}.\n\n` +
         `Until you approve it, the workspace's Ask Cobb chat and other AI features stay off. ` +
-        `Approve or decline it from the notification, or here:\n${configUrl}\n\n` +
+        `${pointTo("Approve or decline it from the notification, or here", configUrl)}\n\n` +
         `(You can always change this later under Configuration → AI.)`,
     };
     const membership = await meta.selectFrom("org_memberships").select("role").where("org_id", "=", r.org_id).where("user_id", "=", offererId).executeTakeFirst();

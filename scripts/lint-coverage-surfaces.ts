@@ -1,14 +1,9 @@
 #!/usr/bin/env tsx
 // Every page, entity kind and user-facing action the registries name has a row in the coverage matrix.
 //
-// THE RULE. scripts/coverage-matrix/surfaces.generated.json is exactly what
-// scripts/gen-coverage-surfaces.ts derives from the tree today (the web
-// router, each module's own router, the manifests' kinds and actions, the
-// foundational allowlist, the fundamentals walks' areas). A page, kind or
-// action added without regenerating it would never appear in the matrix, and
-// "never tested" would not even be on the page. merge-pr regenerates the file
-// on the merge tree (scripts/lib/generated-files.mjs), so a stale copy never
-// lands. No opt-out: regenerate.
+// THE RULE. The matrix's rows are what scripts/gen-coverage-surfaces.ts derives from the tree today (the
+// web router, each module's own router, the manifests' kinds and actions, the foundational allowlist, the
+// fundamentals walks' areas), made fresh by whoever reads them; no committed copy can go stale (2026-10-19).
 //
 // And every `// COVERAGE: <surface or glob> <dimension>` claim a test file
 // makes (scripts/lib/coverage-annotations.mjs) must name a row and a
@@ -24,7 +19,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { OUT, generate } from "./gen-coverage-surfaces.ts";
+import { generate } from "./gen-coverage-surfaces.ts";
 import { claimsIn, expandClaims } from "./lib/coverage-annotations.mjs";
 import { repoFiles } from "./lib/repo-files.ts";
 
@@ -37,13 +32,8 @@ const count = (s: string) => {
 };
 
 async function main(): Promise<void> {
+  // The rows are made here, never read from a committed copy (gen-coverage-surfaces.ts says why).
   const want = await generate();
-  const have = existsSync(OUT) ? readFileSync(OUT, "utf8") : "";
-  if (have !== want) {
-    console.error(`lint:coverage-surfaces - ${OUT} has ${count(have)} rows; the registries give ${count(want)}. A page, kind or action changed without its matrix row.`);
-    console.error("npx tsx scripts/gen-coverage-surfaces.ts");
-    process.exit(1);
-  }
   const rows = JSON.parse(want) as { dimensions: Array<{ id: string }>; surfaces: Array<{ id: string; applicable?: string[] }> };
   const problems: string[] = [];
   let claims = 0;

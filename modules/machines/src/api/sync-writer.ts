@@ -165,6 +165,7 @@ export function registerMachinesWriter(): void {
         { key: "run_hours", label: "run hours" },
         { key: "print_hours", label: "print hours" },
         { key: "print_count", label: "prints" },
+        { key: "cycles", label: "cycles" },
       ],
       async read(orgId, id) {
         const db = (await platform().tenants.getDb(orgId)) as Kysely<MachinesDB>;
@@ -174,7 +175,7 @@ export function registerMachinesWriter(): void {
           const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN;
           return Number.isFinite(n) ? n : null;
         };
-        return { run_hours: num(m.run_hours) ?? 0, print_hours: num(m.print_hours), print_count: num(m.print_count) };
+        return { run_hours: num(m.run_hours) ?? 0, print_hours: num(m.print_hours), print_count: num(m.print_count), cycles: num(m.cycles) };
       },
     },
 

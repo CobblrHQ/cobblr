@@ -1,10 +1,20 @@
 // Tenant-side DB types + request helpers for digifab.
 
-import type { CncUseSnapshot, CncStockUse } from "./cnc-runtime.js";
-import type { JobLayout } from "./laser-plans.js";
+import type { JobLayout } from "./sheet-layout.js";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { Request } from "express";
 import type { OrgRoleName } from "@cobblr/platform-contract/org-roles";
+
+/** What a CNC job's Start snapshots of its stock and tools (`cnc_setup`), and
+ *  what its outcome reports it used (`cnc_usage_report`). */
+export interface CncUseSnapshot {
+ jobId:string;executionId:string;stockId:string;shape:"sheet"|"count";
+ region:{x:number;y:number;width:number;height:number};
+ tools:{number:number;partId:string}[];
+}
+export type CncStockUse = {partId:string;source:string;outcome:"good"|"scrapped"} & (
+ {shape:"sheet";region:CncUseSnapshot["region"]} | {shape:"count"|"wearing_tool";amount:number}
+);
 
 export interface DigifabCutterProfilesTable {
  id: Generated<string>; connection_id: string; remote_device_id: string;
@@ -66,7 +76,13 @@ export interface DigifabJobsTable {
   material_grams_by_tool: ColumnType<number[] | null, string | null, string | null>;
   /** What a completed print took off which loaded spool (0036). */
   material_drawn: unknown | null;
-  material_plan: ColumnType<import("./loaded-spools.js").MaterialPlan | null, string | null, string | null>;
+  /** What the finished print cost, in `cost_currency`; null when any of it
+   *  could not be priced (0078). `cost_detail` is the line per spool and the
+   *  machine time it was made of. */
+  cost_amount: string | null;
+  cost_currency: string | null;
+  cost_detail: unknown | null;
+  material_plan: ColumnType<import("./core/printing.js").MaterialPlan | null, string | null, string | null>;
   material_pending: Generated<boolean>;
   /** A build (bill-of-materials) this job produces. On send, a seeded wire fires
    *  builds:build-one to consume the build's components from inventory; the
@@ -222,6 +238,9 @@ export interface DigifabDeviceSettingsTable {
    *  trails in its own row) + whether this machine starts a new row. */
   sort_order: number | null;
   row_break: Generated<boolean>;
+  /** What an hour of this printer costs, in hour_rate_currency (0078). */
+  hour_rate: string | null;
+  hour_rate_currency: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -340,18 +359,12 @@ export interface DigifabLaserProfilesTable {
 }
 export interface DigifabLaserPlansTable {
   id: Generated<string>; connection_id: string; remote_device_id: string; library_id: string;
-  plan: import("./laser-plans.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
+  plan: import("./sheet-layout.js").LaserPlan; run_id: string | null; created_at: Generated<Date>;
 }
 export interface DigifabDB {
   digifab_large_prints: {job_id:string;connection_id:string;device_id:string;plan:import("./large-format/service.js").LargePrintPlan;started_at:Generated<Date|null>;report:Generated<import("./large-format/service.js").PrintOutcome|null>;consumed_at:Generated<Date|null>;created_at:Generated<Date>};
   digifab_printer_supplies: {connection_id:string;device_id:string;supply_id:string;reading:import("./large-format/supplies.js").SupplyReading;low:Generated<boolean>;updated_at:Generated<Date>};
   digifab_bench_readings: { id: Generated<string>; connection_id:string; device_id:string; machine_id:string; record_kind:string; record_id:string; report:import("./bench-model.js").BenchReport; screenshot_file_id:string|null; capture_file_id:Generated<string|null>; created_at:Generated<Date> };
-  digifab_resin_prints: {
-    job_id: string; connection_id: string; device_id: string; review_file_id: string;
-    phase: Generated<string>; snapshot: import("./resin-prints.js").ResinSnapshot;
-    stock_error: string | null; wash_done: Generated<boolean>; cure_done: Generated<boolean>;
-    created_at: Generated<Date>; updated_at: Generated<Date>;
-  };
   digifab_material_dispatches: { id: Generated<string>; library_id: string; request: import("./floor-manager.js").DispatchRequest; status: Generated<string>; error: string | null; shortage: Generated<boolean>; plan_ids: Generated<string[]>; created_at: Generated<Date>; updated_at: Generated<Date> };
   digifab_cutter_profiles: DigifabCutterProfilesTable;
   digifab_cutter_plans: DigifabCutterPlansTable;
@@ -378,6 +391,10 @@ export interface DigifabDB {
   digifab_connections: DigifabConnectionsTable;
   digifab_jobs: DigifabJobsTable;
   digifab_device_links: DigifabDeviceLinksTable;
+  digifab_alarms: { id: Generated<string>; machine_id: string; source: "arm" | "machine"; source_ref: string; code: string; text: string; severity: "info" | "warning" | "error"; program: string | null; step: string | null; camera_file_id: string | null; occurred_at: Date; escalation_level: Generated<number>; next_escalation_at: Date | null; acknowledged_by: string | null; acknowledged_at: Date | null; note: Generated<string> };
+  digifab_alarm_escalation: { id: Generated<number>; operators: ColumnType<string[], string | undefined, string>; supervisors: ColumnType<string[], string | undefined, string>; integrators: ColumnType<string[], string | undefined, string>; supervisor_after_minutes: Generated<number>; integrator_after_minutes: Generated<number>; updated_at: Generated<Date> };
+  digifab_utilisation: { machine_id: string; hour: Date; run_s: Generated<number>; idle_s: Generated<number>; fault_s: Generated<number>; unknown_s: Generated<number> };
+  digifab_utilisation_last: { machine_id: string; state: "run" | "idle" | "fault" | "unknown"; detail: Generated<string>; seen_at: Date };
   digifab_machine_slots: { machine_id: string; slots: Generated<number>; updated_at: Generated<Date> };
   digifab_drivers: DigifabDriversTable;
   digifab_pools: DigifabPoolsTable;
@@ -386,7 +403,6 @@ export interface DigifabDB {
   digifab_device_attention: DigifabDeviceAttentionTable;
   digifab_device_settings: DigifabDeviceSettingsTable;
   digifab_device_snapshots: DigifabDeviceSnapshotsTable;
-  digifab_bambu_status: DigifabBambuStatusTable;
   digifab_edge_shares: DigifabEdgeSharesTable;
   digifab_observed_prints: DigifabObservedPrintsTable;
   digifab_bambu_tasks: DigifabBambuTasksTable;
@@ -394,6 +410,7 @@ export interface DigifabDB {
   digifab_printer_files: DigifabPrinterFilesTable;
   digifab_printer_file_meta: DigifabPrinterFileMetaTable;
   digifab_fleet_device_cache: DigifabFleetDeviceCacheTable;
+  digifab_device_versions: DigifabDeviceVersionsTable;
   digifab_failure_config: DigifabFailureConfigTable;
   digifab_failure_watch: DigifabFailureWatchTable;
   digifab_detectors: DigifabDetectorsTable;
@@ -455,6 +472,17 @@ export interface DigifabFleetDeviceCacheTable {
   connection_id: string;
   devices: unknown; // RemoteDevice[] as jsonb
   fetched_at: Generated<Date>;
+}
+
+/** What one device last said it runs (0071), read once an hour. */
+export interface DigifabDeviceVersionsTable {
+  connection_id: string;
+  remote_device_id: string;
+  firmware: string | null;
+  software: string | null;
+  controller: string | null;
+  model: string | null;
+  seen_at: Generated<Date>;
 }
 
 /** Durable cache of one on-disk gcode file + its slicer thumbnail/estimate. The
@@ -549,25 +577,6 @@ export interface DigifabEdgeSharesTable {
 
 /** Live cloud-MQTT telemetry per Bambu printer, written by the bambu-pump and
  *  read (fresh) by the fleet. One row per (connection, serial). */
-export interface DigifabBambuStatusTable {
-  connection_id: string;
-  serial: string;
-  state: string | null;
-  stage: string | null;
-  nozzle_actual: number | null;
-  nozzle_target: number | null;
-  bed_actual: number | null;
-  bed_target: number | null;
-  chamber_actual: number | null;
-  chamber_target: number | null;
-  progress: number | null;
-  remaining_min: number | null;
-  layer_num: number | null;
-  total_layers: number | null;
-  /** The full live MQTT `print` object, raw. */
-  report: Record<string, unknown> | null;
-  updated_at: Generated<Date>;
-}
 
 /** Re-exported from the contract so this module cannot fall behind the
  *  vocabulary. It already had: this line used to omit "editor". */

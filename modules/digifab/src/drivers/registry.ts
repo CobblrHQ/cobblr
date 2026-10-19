@@ -9,14 +9,13 @@ import type { DigifabDB } from "../db.js";
 import type { ManagerConfig, MachineDriver } from "./types.js";
 import { fdmMonsterFactory } from "./fdm-monster.js";
 import { MockDriver } from "./mock.js";
-import { DirectLaserDriver } from "./direct-laser.js";
 import { DeclarativeDriver } from "./declarative.js";
 import { EdgeAdapterDriver, type EdgeRelay } from "./edge-adapter.js";
-import { BambuCloudDriver } from "./bambu-cloud-driver.js";
 import { ElegooSdcpDriver } from "./elegoo-sdcp.js";
 import { formlabsDriver } from "./formlabs-dashboard.js";
 import { DriverManifest } from "./manifest.js";
 import { newerCatalogManifest } from "./catalog.js";
+import { requireFamilyConnectionDriver, requireFamilyDriver } from "../core/families.js";
 
 /** Built-in drivers — always available, ship in code, reference impls. */
 export const BUILTIN_DRIVERS = [
@@ -50,7 +49,7 @@ export async function resolveDriver(
   // Bambu Lab: cloud-mode does telemetry + light/pause/stop over Bambu's API
   // (creds in cfg.extra.creds); full control + the camera route over the LAN
   // edge-bridge (edge_adapter), either pure-LAN or per-printer hybrid.
-  if (type === "bambu") return new BambuCloudDriver(cfg, connectionId);
+  if (type === "bambu") return requireFamilyConnectionDriver("bambu", cfg, connectionId);
   // Elegoo Centauri (and other SDCP V3 printers): UDP discovery + WS commands
   // + chunked HTTP upload, all on the printer itself. Stateless per call.
   if (type === "elegoo_sdcp") return new ElegooSdcpDriver(cfg);
@@ -61,6 +60,7 @@ export async function resolveDriver(
       m = new MockDriver();
       mockInstances.set(connectionId, m);
     }
+    m.baseUrl = cfg.baseUrl;
     return m;
   }
   // Installed driver.
@@ -85,7 +85,7 @@ export async function resolveDriver(
           /* the upgraded copy still drives this request; the write retries next build */
         });
     }
-    return manifest.laser ? new DirectLaserDriver(manifest, cfg) : new DeclarativeDriver(manifest, cfg);
+    return manifest.laser ? requireFamilyDriver("laser", manifest, cfg) : new DeclarativeDriver(manifest, cfg);
   }
   throw new Error(`driver kind "${row.kind}" is not supported yet`);
 }

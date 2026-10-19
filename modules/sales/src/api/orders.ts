@@ -385,11 +385,11 @@ ordersRouter.post(
   }),
 );
 
-// AI-REACH: edits a line on a financial record; add-line is the door, edits and removals stay a person's
+// AI-ACTION: sales:change-line
 ordersRouter.patch(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:change-line"))) return;
     const parsed = ItemUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     if (!(await orderHere(req))) {
@@ -405,11 +405,11 @@ ordersRouter.patch(
   }),
 );
 
-// AI-REACH: removing a line from a financial record is something a person watches happen; adding has an action
+// AI-ACTION: sales:remove-line
 ordersRouter.delete(
   "/:id/items/:itemId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "sales:remove-line"))) return;
     if (!(await orderHere(req))) {
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;

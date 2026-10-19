@@ -13,6 +13,7 @@
 // can't be silently narrowed). Run: npx tsx scripts/lint-self-heal.ts
 
 import { readFileSync } from "node:fs";
+import { bootPassRefs } from "./lib/boot-passes.ts";
 
 const ENABLE = "api/src/modules/enable.ts";
 const INDEX = "api/src/index.ts";
@@ -77,8 +78,8 @@ try {
 } catch {
   errors.push(`${ROLE_SWEEP_FILE} is missing - deleted workspaces will leak their Postgres role again.`);
 }
-if (!new RegExp(`${ROLE_SWEEP_FN}\\(`).test(index)) {
-  errors.push(`${INDEX}: ${ROLE_SWEEP_FN}() is not called in boot() - the sweep exists but never runs.`);
+if (!bootPassRefs(".").some((p) => p.fn === ROLE_SWEEP_FN)) {
+  errors.push(`${ROLE_SWEEP_FN}() is not a boot pass (api/src/platform/boot/ or boot() in ${INDEX}) - the sweep exists but never runs.`);
 }
 // The delete path must drop the role itself; the sweep is the backstop, not the
 // primary mechanism (an instance that rarely reboots would accumulate orphans).

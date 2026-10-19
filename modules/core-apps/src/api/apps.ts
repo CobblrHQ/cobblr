@@ -206,6 +206,21 @@ appsRouter.get(
   }),
 );
 
+/** The record kinds an app declares it edits: its edit forms' kinds. The app
+ *  token carries them, and a kernel record verb runs on no other kind under
+ *  it, whatever the member may change elsewhere (#7408). */
+function appEditKinds(pages: unknown): string[] {
+  const kinds = new Set<string>();
+  for (const page of Array.isArray(pages) ? pages : []) {
+    const blocks = (page as { blocks?: unknown } | null)?.blocks;
+    for (const b of Array.isArray(blocks) ? blocks : []) {
+      const block = b as { type?: unknown; mode?: unknown; kind?: unknown } | null;
+      if (block?.type === "form" && block.mode === "edit" && typeof block.kind === "string" && block.kind) kinds.add(block.kind);
+    }
+  }
+  return [...kinds];
+}
+
 // POST /apps/:slug/token — mint a short-lived, capability-scoped token
 // (Tier B) for the App Player to mediate a sandboxed custom frontend's
 // reads. Only if the caller can open the app. The token acts AS the
@@ -232,7 +247,7 @@ appsRouter.post(
       res.status(401).json({ error: { code: "unauthenticated", message: "Auth required" } });
       return;
     }
-    const minted = await platform().auth.mintAppToken({ userId: user.id, appSlug: row.slug });
+    const minted = await platform().auth.mintAppToken({ userId: user.id, appSlug: row.slug, editKinds: appEditKinds(row.pages) });
     res.json(minted);
   }),
 );

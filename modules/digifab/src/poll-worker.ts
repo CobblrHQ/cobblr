@@ -7,7 +7,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { pollJob, pollTuning } from "./jobs-core.js";
-import { ensureFailureWatch } from "./failure-detect.js";
+import { familyOnPrinting } from "./core/families.js";
 import { noteFarmActive } from "./farm-active.js";
 
 export const POLL_QUEUE = "digifab.poll";
@@ -38,7 +38,7 @@ export function registerPollWorker(): void {
       if (res?.status === "printing") {
         try {
           const row = await db.selectFrom("digifab_jobs").select(["connection_id", "target_device"]).where("id", "=", jobId).executeTakeFirst();
-          if (row?.connection_id && row.target_device) await ensureFailureWatch(db, job.orgId, row.connection_id, row.target_device);
+          if (row?.connection_id && row.target_device) await familyOnPrinting(db, job.orgId, row.connection_id, row.target_device);
         } catch {
           /* watch is best-effort; never break the poll chain */
         }

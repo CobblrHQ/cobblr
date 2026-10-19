@@ -346,6 +346,7 @@ export const LEDGERED_TOOLS = new Set([
   "add_thing",
   "file_inbox_items",
   "put_back_scan_item",
+  "change_scan_item",
   "create_record",
   "create_records",
   "update_record",

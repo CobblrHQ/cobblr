@@ -9,7 +9,7 @@
 
 import { productName } from "../product-name.js";
 import { postJson } from "./http-helpers.js";
-import { absoluteAppUrl } from "../public-url.js";
+import { emailableUrl } from "../link-origin.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 interface SlackConfig {
@@ -40,7 +40,8 @@ export const slackChannel: Channel = {
     const body: Record<string, unknown> = {
       text: `${prefix} ${event.message}`,
     };
-    if (event.link_url) {
+    const link = event.link_url ? emailableUrl(event.link_url) : null;
+    if (link) {
       body.blocks = [
         {
           type: "section",
@@ -52,7 +53,7 @@ export const slackChannel: Channel = {
             {
               type: "button",
               text: { type: "plain_text", text: `Open in ${productName()}` },
-              url: absoluteAppUrl(event.link_url),
+              url: link,
             },
           ],
         },

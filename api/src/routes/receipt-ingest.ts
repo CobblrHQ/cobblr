@@ -24,7 +24,7 @@ import { signSession } from "../auth/jwt.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
 import { landedSomething } from "../platform/inbound-dedupe.js";
 import { notifyAccount } from "../platform/notifications.js";
-import { absoluteAppUrl } from "../platform/public-url.js";
+import { emailableUrl, pointTo, NO_ADDRESS_NOTE } from "../platform/link-origin.js";
 import { planBodyCapture, planEmptyRead } from "../platform/receipt-body.js";
 import { classifyOrderNotice, classifyReturnEmail, classifyShipmentEmail, isAutomatedStoreSender, isForwardingVerification, isOrderConfirmation, trackingAddedReply } from "../platform/shipment-email.js";
 import { outcomeStatus } from "../platform/inbound-outcome.js";
@@ -238,7 +238,7 @@ export async function ingestReceiptEmail(
   // dashboard — reported 2026-08-01). Outbound channels absolutize it themselves.
   // The absolute form is still what goes in email/DM BODY text.
   const scanPath = `/w/${slug}/scan`;
-  const scanUrl = absoluteAppUrl(scanPath);
+  const scanUrl = emailableUrl(scanPath);
   const sessionToken = await signSession(userId);
   const post = (path: string, payload: Record<string, unknown>) =>
     apiFetch(`${INTERNAL_API}/api/v1/orgs/${slug}${path}`, {
@@ -576,7 +576,7 @@ export async function ingestReceiptEmail(
       link_url: scanPath,
       email: {
         subject: reSubject("Your emailed receipt is in your scan inbox"),
-        text: `We captured ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your receipt. Review them in your scan inbox:\n${scanUrl}`,
+        text: `We captured ${parsedCount} item${parsedCount === 1 ? "" : "s"} from your receipt. ${pointTo("Review them in your scan inbox", scanUrl)}`,
         ...replyHeaders,
       },
     }).catch(() => {});
@@ -595,7 +595,7 @@ export async function ingestReceiptEmail(
       link_url: `/w/${slug}/purchases`,
       email: {
         subject: reSubject("Tracking number not added"),
-        text: `That was a shipping notice${refLabel} with tracking number ${observed.trackingNumber}, but I couldn't tell which order to add it to. Open the order in Purchases and add the number there:\n${absoluteAppUrl(`/w/${slug}/purchases`)}`,
+        text: `That was a shipping notice${refLabel} with tracking number ${observed.trackingNumber}, but I couldn't tell which order to add it to. ${pointTo("Open the order in Purchases and add the number there", emailableUrl(`/w/${slug}/purchases`))}`,
         ...replyHeaders,
       },
     }).catch(() => {});
@@ -606,7 +606,7 @@ export async function ingestReceiptEmail(
     // Deep link that re-runs the import with force for THIS file if the user
     // really wants the duplicate; the scan page confirms before importing.
     const reimportPath = `/w/${slug}/scan?reimport_file=${duplicate.fileId}${duplicate.order_ref ? `&ref=${encodeURIComponent(duplicate.order_ref)}` : ""}`;
-    const reimportUrl = absoluteAppUrl(reimportPath);
+    const reimportUrl = emailableUrl(reimportPath);
     await notifyAccount({
       // An emailed receipt is answered by email - the bell records it, Discord
       // stays quiet. The double-send this ends was reported 2026-08-24.
@@ -618,7 +618,7 @@ export async function ingestReceiptEmail(
       link_url: reimportPath,
       email: {
         subject: reSubject("You already imported this receipt"),
-        text: `Looks like you already imported this receipt${refLabel}. Its items are already in your scan inbox. To import this copy anyway:\n${reimportUrl}`,
+        text: `Looks like you already imported this receipt${refLabel}. Its items are already in your scan inbox.${reimportUrl ? ` To import this copy anyway:\n${reimportUrl}` : ` ${NO_ADDRESS_NOTE}`}`,
         ...replyHeaders,
       },
     }).catch(() => {});
@@ -634,7 +634,7 @@ export async function ingestReceiptEmail(
       link_url: scanPath,
       email: {
         subject: reSubject("Your receipt is in your scan inbox (as a note)"),
-        text: `We saved your receipt to your scan inbox. We couldn't split it into line items automatically, so it's there as a single note for you to sort:\n${scanUrl}`,
+        text: `We saved your receipt to your scan inbox. We couldn't split it into line items automatically, so it's ${pointTo("there as a single note for you to sort", scanUrl)}`,
         ...replyHeaders,
       },
     }).catch(() => {});
@@ -650,7 +650,7 @@ export async function ingestReceiptEmail(
       link_url: scanPath,
       email: {
         subject: reSubject("We couldn't find a receipt in your email"),
-        text: `We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email:\n${scanUrl}`,
+        text: `We got your email but couldn't find a receipt to import. Reply with the receipt as a PDF or photo, or forward the store's receipt email${scanUrl ? `:\n${scanUrl}` : `. ${NO_ADDRESS_NOTE}`}`,
         ...replyHeaders,
       },
     }).catch(() => {});

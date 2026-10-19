@@ -21,7 +21,7 @@ import { discordConnectConfigured } from "./discord-oauth.js";
 import { discordInviteUrl } from "./community.js";
 import { discordConnectionState } from "./discord-connection.js";
 import { discordCommunityMember } from "./discord-bot-trigger.js";
-import { absoluteAppUrl } from "./public-url.js";
+import { emailableUrl } from "./link-origin.js";
 import type { EmailLine } from "./email-html.js";
 
 /** A person sees the invitation in at most this many feedback emails. */
@@ -43,7 +43,7 @@ export interface DiscordInviteFacts {
   /** In the community server: true, false, or null when nobody could say. */
   member: boolean | null;
   /** Absolute base of this surface, for the settings links. */
-  appUrl: (path: string) => string;
+  appUrl: (path: string) => string | null;
 }
 
 /** Which lines the invitation carries for this person; none means no section. */
@@ -56,16 +56,21 @@ export function discordInviteLines(f: DiscordInviteFacts): EmailLine[] {
       { text: f.inviteUrl.replace(/^https?:\/\//, ""), href: f.inviteUrl },
     ]);
   }
+  // Where no address can be given, the words stay and the link is dropped.
+  const to = (text: string, path: string): string | { text: string; href: string } => {
+    const href = f.appUrl(path);
+    return href ? { text, href } : text;
+  };
   lines.push(
     f.linked
       ? [
           "You've connected Discord, so these replies can come there instead of by email: ",
-          { text: "switch feedback replies to Discord", href: f.appUrl(`${SETTINGS_PATH}#${FEEDBACK_ROW}`) },
+          to("switch feedback replies to Discord", `${SETTINGS_PATH}#${FEEDBACK_ROW}`),
           ".",
         ]
       : [
           "Get our replies as a Discord message: ",
-          { text: "open your notification settings", href: f.appUrl(SETTINGS_PATH) },
+          to("open your notification settings", SETTINGS_PATH),
           " and connect Discord (it's under ",
           { strong: "Your account → Notifications" },
           ").",
@@ -94,5 +99,5 @@ export async function discordInviteFor(userId: string): Promise<EmailLine[]> {
     .executeTakeFirst();
   const linked = discordConnectionState(conn) === "verified";
   const member = linked && conn?.discord_user_id ? await discordCommunityMember(conn.discord_user_id) : null;
-  return discordInviteLines({ connectable, inviteUrl: discordInviteUrl() || null, shown, linked, member, appUrl: absoluteAppUrl });
+  return discordInviteLines({ connectable, inviteUrl: discordInviteUrl() || null, shown, linked, member, appUrl: emailableUrl });
 }

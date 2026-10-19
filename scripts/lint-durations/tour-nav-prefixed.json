@@ -8,5 +8,6 @@
   "ms": 1102,
   "recorded": "2026-09-23",
   "source": "by hand at twice a dev-box time after widening to e2e/ (2026-09-23), to be replaced from its first CI run",
-  "readMB": 1.9
+  "readMB": 1.9,
+  "readTreeMB": 44.1
 }

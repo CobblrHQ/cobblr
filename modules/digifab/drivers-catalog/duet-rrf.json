@@ -1,7 +1,7 @@
 {
   "id": "duet-rrf",
   "name": "Duet (RepRapFirmware)",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "routing": false,
   "test": { "method": "GET", "path": "/rr_status?type=1" },
   "listDevices": {
@@ -34,6 +34,9 @@
       "progressScale": 1
     }
   },
+  "versions": [
+    { "method": "GET", "path": "/rr_model?key=boards", "map": { "firmware": "$.result.0.firmwareVersion", "controller": "='RepRapFirmware'", "model": "$.result.0.name" } }
+  ],
   "upload": {
     "method": "PUT",
     "path": "/rr_upload?name=0:/gcodes/{filename}",

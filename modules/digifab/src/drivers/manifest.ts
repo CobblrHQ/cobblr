@@ -67,6 +67,37 @@ export const DriverManifest = z.object({
       remainingSec: Extract.optional(),
     }),
   }),
+  /** OPTIONAL — where a single-device manager says what it runs, read once an
+   *  hour (never on the fleet poll). Each probe is one GET; a later probe fills
+   *  only what an earlier one left empty. A `json` probe's map values are
+   *  extracts; a `text` probe's are a regular expression whose first group is
+   *  the value (or a `='literal'`), for a controller that answers in plain text
+   *  (GRBL's `$I`). */
+  versions: z.array(z.object({
+    method: Method,
+    path: z.string(),
+    format: z.enum(["json", "text"]).default("json"),
+    map: z.object({ firmware: Extract.optional(), software: Extract.optional(), controller: Extract.optional(), model: Extract.optional() }),
+  })).max(4).optional(),
+  /** OPTIONAL — where a single-device manager says its camera is, read at most
+   *  every few minutes (never on each fleet poll). Each probe is one GET, tried
+   *  in turn until one names a camera; `arrayPath` when the answer is a list,
+   *  whose first row not `enabled: false` is the camera. `snapshot` (a still)
+   *  is preferred over `stream` (MJPEG); either may be absolute or relative.
+   *  `relativeTo: "host"` resolves a relative address against the manager's
+   *  host on its default port (Moonraker answers on 7125 while its web front end
+   *  serves the camera on 80); "base" against the manager's own address. A
+   *  camera named on the loopback address is moved to the manager's host, since
+   *  that is where it is. */
+  camera: z.array(z.object({
+    method: Method,
+    path: z.string(),
+    arrayPath: z.string().optional(),
+    snapshot: Extract.optional(),
+    stream: Extract.optional(),
+    enabled: Extract.optional(),
+    relativeTo: z.enum(["base", "host"]).default("base"),
+  }).refine((c) => c.snapshot || c.stream, "a camera needs a snapshot or a stream")).min(1).max(3).optional(),
   upload: z.object({
     method: Method,
     path: z.string(),

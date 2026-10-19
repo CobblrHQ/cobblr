@@ -7,21 +7,28 @@
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
 import type { MachinesDB } from "../db.js";
+import { applyReportedVersions, type ReportedVersions } from "./versions-store.js";
 import { isRefusal, mergeInto, nameUnit, splitOne, splitUnit, unitsCtxFor, type Refusal } from "./units.js";
 
 const refused = (r: Refusal) => ({ ok: false as const, error: r.error.code, message: r.error.message });
 
 export function registerMachinesActionHandlers(): void {
   registerUndos();
+  // A driver's reading of what a linked machine runs (digifab's hourly read).
+  platform().events.on("digifab.device.versions_reported", "machines", async (payload) => {
+    const p = (payload ?? {}) as { orgId?: string; linkedMachineId?: string } & ReportedVersions;
+    if (p.orgId && p.linkedMachineId) await applyReportedVersions(p.orgId, p.linkedMachineId, p);
+  });
   registerUnitActions();
   platform().actions.registerHandler("machines.record-usage", async (ctx) => {
     // Args (a hardwired wire value) take precedence; else the event payload.
-    const args = (ctx.args ?? {}) as { machineId?: string; prints?: number; hours?: number };
+    const args = (ctx.args ?? {}) as { machineId?: string; prints?: number; hours?: number; cycles?: number };
     const ev = (ctx.event?.payload ?? {}) as {
       machineId?: string;
       linkedMachineId?: string;
       prints?: number;
       hours?: number;
+      cycles?: number;
     };
     // The action is declared on machines ("that machine ran four hours"), so
     // the record it is run on IS the machine. Read from args alone, the
@@ -37,7 +44,10 @@ export function registerMachinesActionHandlers(): void {
     // assistant pressing it with no count has no such evidence, and a call
     // that said nothing used to record one print and report it (#3141).
     const evidenced = ctx.event?.trigger_type && ctx.event.trigger_type !== "user-invoked" ? 1 : 0;
-    const prints = Number(args.prints ?? ev.prints ?? evidenced) || 0;
+    const cycles = Number(args.cycles ?? ev.cycles ?? 0) || 0;
+    // An event that names no prints is one finished print, unless it counts
+    // cycles: an arm's picks are not prints.
+    const prints = Number(args.prints ?? ev.prints ?? (cycles ? 0 : evidenced)) || 0;
     const hours = Number(args.hours ?? ev.hours ?? 0) || 0;
     // A wire whose event names no machine skips, as it always has; a person
     // or the assistant is told what was missing, in words they can act on.
@@ -45,8 +55,8 @@ export function registerMachinesActionHandlers(): void {
     if (!machineId) {
       return pressed ? { ok: false, error: "which machine? run this on the machine, or pass its id as machineId" } : { ok: true, skipped: true, reason: "no machineId" };
     }
-    if (prints === 0 && hours === 0) {
-      return pressed ? { ok: false, error: "nothing to add: say the hours or the prints" } : { ok: true, skipped: true, reason: "nothing to add" };
+    if (prints === 0 && hours === 0 && cycles === 0) {
+      return pressed ? { ok: false, error: "nothing to add: say the hours, the prints or the cycles" } : { ok: true, skipped: true, reason: "nothing to add" };
     }
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<MachinesDB>;
@@ -54,34 +64,40 @@ export function registerMachinesActionHandlers(): void {
       .updateTable("machines_machines")
       .set({
         // Keep the counters in one atomic update so concurrent finishes add up.
-        metadata: sql`jsonb_set(jsonb_set(
+        metadata: sql`jsonb_set(jsonb_set(jsonb_set(
           jsonb_set(coalesce(metadata, '{}'::jsonb), '{print_count}',
             to_jsonb(coalesce((metadata->>'print_count')::numeric, 0) + ${prints})),
           '{print_hours}',
             to_jsonb(coalesce((metadata->>'print_hours')::numeric, 0) + ${hours})),
           '{run_hours}',
-            to_jsonb(coalesce((metadata->>'run_hours')::numeric, 0) + ${hours}))` as never,
+            to_jsonb(coalesce((metadata->>'run_hours')::numeric, 0) + ${hours})),
+          '{cycles}',
+            to_jsonb(coalesce((metadata->>'cycles')::numeric, 0) + ${cycles}))` as never,
         updated_at: new Date(),
       })
       .where("id", "=", machineId)
       .returning(["id", "name"])
       .executeTakeFirst();
     if (!updated) return { ok: false, error: "that machine is not here any more" };
+    // What is installed in the machine wears with it: each module that keeps
+    // tools counts its own (assets: record-wear-action.ts).
+    void platform().events.emit("machines.usage.recorded", { orgId: ctx.orgId, machine: { kind: "machines:machine", id: machineId }, prints, hours, cycles });
     // The card's line after Do it: it read a bare "Done." (#3255).
-    const what = [hours ? `${hours} hour${hours === 1 ? "" : "s"}` : "", prints ? `${prints} print${prints === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
-    return { ok: true, machineId, prints, hours, summary: `${what} recorded on "${updated.name}"` };
+    const what = [hours ? `${hours} hour${hours === 1 ? "" : "s"}` : "", prints ? `${prints} print${prints === 1 ? "" : "s"}` : "", cycles ? `${cycles} cycle${cycles === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ");
+    return { ok: true, machineId, prints, hours, cycles, summary: `${what} recorded on "${updated.name}"` };
   });
 }
 
 function registerUndos(): void {
   platform().actions.registerUndo("machines.record-usage", (result, ctx) => {
-    const r = result as { ok?: unknown; skipped?: unknown; machineId?: unknown; prints?: unknown; hours?: unknown } | null;
+    const r = result as { ok?: unknown; skipped?: unknown; machineId?: unknown; prints?: unknown; hours?: unknown; cycles?: unknown } | null;
     if (r?.ok !== true || r.skipped || typeof r.machineId !== "string") return null;
     const prints = typeof r.prints === "number" ? -r.prints : 0;
     const hours = typeof r.hours === "number" ? -r.hours : 0;
-    if (!prints && !hours) return null;
+    const cycles = typeof r.cycles === "number" ? -r.cycles : 0;
+    if (!prints && !hours && !cycles) return null;
     const on = ctx.entity ? { entity_kind: ctx.entity.kind, entity_id: ctx.entity.id } : { entity_kind: "machines:machine", entity_id: r.machineId };
-    return { action_id: "machines:record-usage", args: { machineId: r.machineId, prints, hours }, ...on };
+    return { action_id: "machines:record-usage", args: { machineId: r.machineId, prints, hours, cycles }, ...on };
   });
 }
 

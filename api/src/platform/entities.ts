@@ -766,6 +766,10 @@ export async function lookup(
     }
   } catch (err) {
     console.error(`[entities] resolver for ${kind} failed:`, err);
+    // Counted with the lists' failures on /healthz: a read that could not reach
+    // the database answers "no such record" here, which a renewal took for a
+    // changed expiry and refused (#7326).
+    noteResolverFailure(kind, err);
   }
 
   // M1 v0.2 cross-workspace lookup: if the caller is the TARGET of an

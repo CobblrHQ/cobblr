@@ -29,6 +29,7 @@ import {
 import { ORG_ROLES, roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 import { bringBack, markGone } from "./dispositions.js";
+import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { lookup, resolveKind } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
@@ -477,6 +478,29 @@ async function noteHandedOverFiled(p: { orgId?: unknown; itemId?: unknown; targe
   if (Object.keys(fill).length) await platform().entities.mergeMetadata(orgId, kind, entityId, fill).catch(() => undefined);
 }
 
+/** Test-only: the next `times` runs of one hand-over step in a workspace
+ *  throw, as a failed write would, so a test can see the retry finish it. */
+export type HandOverStep = "receive" | "give-away" | "bring-back";
+const handOverFailures = new Map<string, number>();
+export function failHandOverStepForTests(orgId: string, step: HandOverStep, times: number): void {
+  if (times > 0) handOverFailures.set(`${orgId}/${step}`, times);
+  else handOverFailures.delete(`${orgId}/${step}`);
+}
+function injectedFailure(orgId: string, step: HandOverStep): void {
+  const left = handOverFailures.get(`${orgId}/${step}`) ?? 0;
+  if (left <= 0) return;
+  failHandOverStepForTests(orgId, step, left - 1);
+  throw new Error(`the hand-over's ${step} failed (a test's injected failure)`);
+}
+
+/** Whether the giver still holds this record: it is not marked given away,
+ *  sold or gone. What a hand-over step reads so that a retry does only the
+ *  part that is not done yet. */
+async function stillHeld(src: { org_id: string; kind: string; id: string }): Promise<boolean> {
+  const rec = await lookup(src.org_id, src.kind, src.id).catch(() => null);
+  return !readRecordDisposition(((rec?.fields ?? {}) as Record<string, unknown>).metadata);
+}
+
 export function registerShareOfferOps(): void {
   platform().events.on("core-scan.scan.confirmed", "platform", (payload) => noteHandedOverFiled((payload ?? {}) as Record<string, unknown>).catch((err) => console.error("[share] noting a hand-over filed failed:", (err as Error).message)));
   // A thing offered: it lands in this side's scan inbox, as an offer.
@@ -484,18 +508,25 @@ export function registerShareOfferOps(): void {
     const offerId = String(p.offer_id ?? "");
     const thing = p.thing as OfferedThing | undefined;
     if (!offerId || !thing?.name) throw new Error("an offer without its thing");
-    const existing = await meta.selectFrom("share_offers").select("id").where("link_id", "=", link.id).where("peer_offer_id", "=", offerId).executeTakeFirst();
-    if (existing) return;
     const from = (typeof p.from_name === "string" && p.from_name) || link.peer_name || "them";
-    const row = await meta
-      .insertInto("share_offers")
-      .values({ link_id: link.id, direction: "in", peer_offer_id: offerId, batch: String(p.batch ?? offerId), title: thing.name.slice(0, 300) })
-      // The same offer delivered twice at once (an outbox retry racing its
-      // first try): it landed once, and the second has nothing to do.
-      .onConflict((oc) => oc.columns(["link_id", "peer_offer_id"]).where("peer_offer_id", "is not", null).doNothing())
-      .returning("id")
-      .executeTakeFirst();
+    // The row says the offer arrived; `landed` says it reached the inbox. A
+    // try that failed between the two is retried and resumes at the inbox:
+    // the row alone once ended the retry, and the offer never landed (#7133).
+    // Receiving is keyed by the offer, so a try that did land finds it.
+    const existing = await meta.selectFrom("share_offers").select(["id", "landed"]).where("link_id", "=", link.id).where("peer_offer_id", "=", offerId).executeTakeFirst();
+    if (existing?.landed) return;
+    const row =
+      existing ??
+      (await meta
+        .insertInto("share_offers")
+        .values({ link_id: link.id, direction: "in", peer_offer_id: offerId, batch: String(p.batch ?? offerId), title: thing.name.slice(0, 300) })
+        // The same offer delivered twice at once (an outbox retry racing its
+        // first try): it landed once, and the second has nothing to do.
+        .onConflict((oc) => oc.columns(["link_id", "peer_offer_id"]).where("peer_offer_id", "is not", null).doNothing())
+        .returning("id")
+        .executeTakeFirst());
     if (!row) return;
+    injectedFailure(link.org_id, "receive");
     const [landed] = await intake().receive(link.org_id, {
       session: { key: `share:${link.id}:${String(p.batch ?? offerId)}`, label: `Offered by ${from}`, from },
       things: [{ offer_id: row.id, thing }],
@@ -510,12 +541,18 @@ export function registerShareOfferOps(): void {
   registerShareOp("offer.decided", async (link, p) => {
     const decision = p.decision as OfferDecision;
     const row = await meta.selectFrom("share_offers").select(["id", "source", "status"]).where("id", "=", String(p.offer_id ?? "")).where("link_id", "=", link.id).where("direction", "=", "out").executeTakeFirst();
-    if (!row || !open(row.status)) return;
-    await meta
-      .updateTable("share_offers")
-      .set({ status: decision, decided_at: new Date(), ...(decision === "taken" ? { taken_at: new Date() } : {}) })
-      .where("id", "=", row.id)
-      .execute();
+    if (!row) return;
+    // The status is the decision; what it does to the giver's record follows.
+    // A retry after that failed finds the status already set to this
+    // decision and finishes the rest, instead of returning at "not open" and
+    // leaving the giver's record active beside the receiver's (#7133).
+    if (open(row.status)) {
+      await meta
+        .updateTable("share_offers")
+        .set({ status: decision, decided_at: new Date(), ...(decision === "taken" ? { taken_at: new Date() } : {}) })
+        .where("id", "=", row.id)
+        .execute();
+    } else if (row.status !== decision) return;
     const src = row.source as Source | null;
     if (!src || decision === "maybe") return;
     if (decision === "passed") return clearSourceMark(src);
@@ -523,8 +560,11 @@ export function registerShareOfferOps(): void {
     // scan that had not been filed leaves the inbox.
     if (isRecord(src)) {
       await platform().entities.mergeMetadata(src.org_id, src.kind, src.id, { [RECORD_OFFER_KEY]: null }).catch(() => undefined);
-      const r = await markGone(src.org_id, null, src.kind, [src.id], { how: "given-away", to: link.peer_name });
-      if (!r.ok) throw new Error(r.error);
+      if (await stillHeld(src)) {
+        injectedFailure(src.org_id, "give-away");
+        const r = await markGone(src.org_id, null, src.kind, [src.id], { how: "given-away", to: link.peer_name });
+        if (!r.ok) throw new Error(r.error);
+      }
     } else {
       await intake().remove(src.org_id, src.inbox_id);
     }
@@ -545,13 +585,19 @@ export function registerShareOfferOps(): void {
   // The receiver sent a taken thing back: it is the giver's again.
   registerShareOp("offer.returned", async (link, p) => {
     const row = await meta.selectFrom("share_offers").select(["id", "source", "status"]).where("id", "=", String(p.offer_id ?? "")).where("link_id", "=", link.id).where("direction", "=", "out").executeTakeFirst();
-    if (!row || row.status !== "taken") return;
-    await meta.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
+    if (!row || (row.status !== "taken" && row.status !== "returned")) return;
+    // Returned first, because bringBack refuses a record a hand-over still
+    // says is theirs; a retry after bringBack failed finds "returned" and
+    // brings it back then (#7133).
+    if (row.status === "taken") await meta.updateTable("share_offers").set({ status: "returned", decided_at: new Date() }).where("id", "=", row.id).execute();
     const src = row.source as Source | null;
     if (!src) return;
     if (isRecord(src)) {
-      const r = await bringBack(src.org_id, null, src.kind, [src.id]);
-      if (!r.ok) throw new Error(r.error);
+      if (!(await stillHeld(src))) {
+        injectedFailure(src.org_id, "bring-back");
+        const r = await bringBack(src.org_id, null, src.kind, [src.id]);
+        if (!r.ok) throw new Error(r.error);
+      }
     } else {
       await intake().restore(src.org_id, src.inbox_id);
     }

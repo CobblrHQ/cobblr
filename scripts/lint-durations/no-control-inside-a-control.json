@@ -1,0 +1,10 @@
+{
+  "lint": "lint:no-control-inside-a-control",
+  "run": "node scripts/lint-no-control-inside-a-control.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 616,
+  "recorded": "2026-10-19",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

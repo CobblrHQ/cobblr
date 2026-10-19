@@ -294,7 +294,9 @@ export function makeLexicalScorer(item: FitItem): {
   // itself; a name that IS a prepositional phrase falls back to the full name.
   const rawName = (item.name ?? "").toLowerCase();
   const nameCore = rawName.split(/\b(?:for|with|fits)\b/)[0]!.trim() || rawName;
-  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each", "roll", "rolls"]);
+  const TAIL = new Set(["pack", "packs", "count", "ct", "pcs", "pc", "set", "sets", "oz", "ml", "lb", "lbs", "kg", "inch", "in", "ft", "each", "roll", "rolls",
+    // The sizes a store prints after a food (#7518): "Whole Milk 1 Gal" heads "milk".
+    "gal", "gals", "gallon", "gallons", "quart", "quarts", "pint", "pints", "liter", "liters", "litre", "litres", "ltr", "gram", "grams", "ounce", "ounces", "pound", "pounds", "dozen", "doz"]);
   // Retail names end with the COLOR ("…Rocker Switch White", "…Soft White") —
   // a color is a property, never what the item IS, and treating it as the head
   // noun let a filament table's color choice "White" claim a light switch.

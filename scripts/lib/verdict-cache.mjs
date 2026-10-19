@@ -12,6 +12,7 @@
 //   IMPORTS  the forward closure of its imports (a workspace package: every file under it)
 //   NAMES    a file its source names: path, extensionless path, or a distinct basename; a directory
 //            it walks (every non-code file under it); and the non-code files beside and below it
+//   READS    the files and directories it reads by a path built from its own directory
 //   LISTS    the files its listing patterns match
 // and itself.
 //
@@ -25,8 +26,8 @@
 import { createHash } from "node:crypto";
 import { matchesGlob } from "node:path";
 import {
-  CODE_EXT, GLOB_STRING, LISTS, PREFIX_REGEX, DISTINCT_BASENAME_MAX,
-  keyOf, parseSpecifiers, quoted, resolveSpecifier, stripComments, walksDir,
+  ANY_TEST, CODE_EXT, GLOB_STRING, LISTS, PREFIX_REGEX, DISTINCT_BASENAME_MAX, TEST_LISTER,
+  keyOf, parseSpecifiers, quoted, readsOf, resolveSpecifier, stripComments, walksDir,
 } from "./unit-affected-lib.mjs";
 
 const sha = (s) => createHash("sha256").update(s).digest("hex");
@@ -206,6 +207,15 @@ export function unitTestInputs({ test, sources, packages, tree }) {
   }
   const tDir = test.slice(0, test.lastIndexOf("/"));
   if (tDir.includes("/")) for (const p of tree.filesUnder(tDir)) if (!CODE_EXT.test(p)) inputs.add(p);
+
+  // READS: a file or directory it reads by a path built from its own directory (#7412).
+  for (const r of readsOf(test, src)) {
+    if (tree.byKey.has(r)) inputs.add(r);
+    if (tree.dirs.has(r)) for (const p of tree.filesUnder(r)) inputs.add(p);
+  }
+
+  // SCANS: a test that reaches the lister of test files reads every test file in the repo (#7434).
+  if (closure.files.has(TEST_LISTER)) for (const p of tree.files) if (ANY_TEST.test(p)) inputs.add(p);
 
   // LISTS
   if (LISTS.test(s)) {

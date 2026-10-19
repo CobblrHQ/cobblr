@@ -21,7 +21,7 @@
 // One predicate, read by every commit surface, keeps the warning and the
 // commit in agreement by construction.
 
-import { variantsDisagree } from "@cobblr/platform-contract/same-product";
+import { materialsDisagree, variantsDisagree } from "@cobblr/platform-contract/same-product";
 import { lineUnitsOf } from "@cobblr/platform-contract/line-units";
 import { scanSourceConflict, sourceConflictWords, type SourceConflict } from "@cobblr/platform-contract/acquisition-source";
 import { evidenceConflictWords, scanEvidenceConflicts } from "@cobblr/platform-contract/scan-evidence";
@@ -1148,8 +1148,10 @@ export function scanTrackedMatch(row: ScanTriageRow): ScanTrackedMatch | null {
   // A match by name is judged again as it is read: a stamp written before
   // the variant rule (#5725) held a Multicolor pack to the white spool you
   // have, "Possible match" on a session a day old (#6004). A different
-  // variant of the same product is never the thing you have.
+  // variant of the same product is never the thing you have, and nor is
+  // the same thing in another material (#7523).
   if (m.matched_by === "name" && variantsDisagree(row.suggested_name ?? null, m.title)) return null;
+  if (m.matched_by === "name" && materialsDisagree({ name: row.suggested_name ?? null }, { name: m.title })) return null;
   return {
     title: m.title,
     matched_by: str(m.matched_by),

@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, NumberField } from "@cobblr/platform-web";
 import { api, type DigifabLibraryItem, type LaserPlanRecord, type LaserProfileRecord } from "../../lib/api";
+import { useEnabledModules } from "../../lib/useEnabledModules";
 export { LaserDrawing } from "./LaserDrawing";
 const control = "block min-h-11 w-full rounded border border-line bg-surface px-3 py-2";
 const button = "min-h-11 rounded border border-line px-4 py-2 disabled:opacity-50";
@@ -42,7 +43,9 @@ export function LaserLayoutPlanner({ slug, item, onClose }: { slug: string; item
  const design = useQuery({ queryKey: ["laser-design", slug, item.id, units], queryFn: () => api.laserDesign(slug, item.id, units) });
  const layers = [...new Set(design.data?.paths.map(p => p.layer) ?? [])];
  const selected = mode !== "laser" && material.trim() ? {material: material.trim(), thickness_mm:thickness} : profiles.data?.items.find(p => p.id === Object.values(mapping)[0])?.profile;
- const stock = useQuery({ queryKey: ["laser-sheets", slug, selected?.material, selected?.thickness_mm, design.data?.width, design.data?.height, rotate, offset], queryFn: () => api.laserSheets(slug, { material: selected!.material, thickness_mm: selected!.thickness_mm, width_mm: design.data!.width, height_mm: design.data!.height, rotate, offset, outline: true }), enabled: !!selected && !!design.data });
+ // Sheets are Inventory's: with it off there are none to ask for, and the read would be refused.
+ const inventoryOn = !!useEnabledModules(slug)?.has("inventory");
+ const stock = useQuery({ queryKey: ["laser-sheets", slug, selected?.material, selected?.thickness_mm, design.data?.width, design.data?.height, rotate, offset], queryFn: () => api.laserSheets(slug, { material: selected!.material, thickness_mm: selected!.thickness_mm, width_mm: design.data!.width, height_mm: design.data!.height, rotate, offset, outline: true }), enabled: inventoryOn && !!selected && !!design.data });
  const run = async (work: () => Promise<void>) => { if (busy) return; setBusy(true); setError(""); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } };
  const reset = () => { setPlan(null); setAccepted(false); };
  const preview = async (budget_ms = 3000) => {

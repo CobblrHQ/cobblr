@@ -47,6 +47,11 @@ export interface FeedbackSourceItem {
   /** The item's card in the team's Discord channel, or null when it has none
    *  (filed while Discord was off, or its post failed). */
   announce_message_id?: string | null;
+  /** What a resolve left for the owner to publish (#7460): the public line, the
+   *  reporter's message (null message = the default line), and when it went out. */
+  held_summary?: string | null;
+  held_reply?: { message: string | null; status: string } | null;
+  published_at?: string | null;
   triage_priority: "urgent" | "high" | "medium" | "low" | null;
   triage_summary: string | null;
   triage_action: string | null;
@@ -88,6 +93,8 @@ export interface FeedbackSource {
   /** Post the card of an item that has none. Absent where the host cannot
    *  (the hub, until its server forwards it to the owning instance). */
   postToDiscord?(item: FeedbackSourceItem): Promise<{ announce_message_id: string | null }>;
+  /** The owner's go for what a resolve held: the public card and the reporter's message. */
+  publish?(item: FeedbackSourceItem): Promise<{ published: boolean; reply_sent: boolean }>;
   /** A URL the browser can load for a reporter's screenshot, or null when this host
    *  cannot serve it (the hub does not proxy tenant files). */
   imageUrl(item: FeedbackSourceItem, fileId: string, variant?: "thumb" | "medium"): string | null;

@@ -1,7 +1,8 @@
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { ARM_RUN_KINDS, type ArmEventPage, type ArmState } from "@cobblr/platform-contract/robot-arm";
+import { ARM_RUN_KINDS, type ArmEvent, type ArmEventPage, type ArmState } from "@cobblr/platform-contract/robot-arm";
+import { raiseAlarm } from "../../core/alarms.js";
 import type { DigifabDB } from "../../db.js";
 import { authorizeArm, ArmRefusal } from "./station.js";
 import { armDriver, machineRef, requireUnit } from "./store.js";
@@ -54,6 +55,7 @@ export async function approveRun(db: Kysely<DigifabDB>, orgId: string, machineId
  const permit = await authorizeArm(db, unit.connection_id, unit.device_id, input.station_token);
  const program = await db.selectFrom("digifab_arm_programs").selectAll().where("id", "=", input.program_id).where("machine_id", "=", machineId).executeTakeFirst();
  if (!program || program.missing_since) throw new ArmRefusal("Choose a program this arm's controller holds.");
+ if (!program.released_at) throw new ArmRefusal("This revision is not released for production. Review what changed in it and release it first.");
  if (input.tooling !== unit.tooling) throw new ArmRefusal("The tooling you checked is not the tooling recorded on this arm. Record what is installed, then approve.");
  const row = await db.insertInto("digifab_arm_approvals").values({ machine_id: machineId, program_id: program.id, revision: program.revision, tooling: unit.tooling, station_id: permit.stationId!, approved_by: userId, expires_at: minutes(APPROVAL_MINUTES), used_at: null, revoked_at: null }).returningAll().executeTakeFirstOrThrow();
  await platform().activity.log({ orgId, userId, action: "arm_run_approved", ref: machineRef(machineId), diff: { program: program.name, revision: program.revision, tooling: unit.tooling } });
@@ -93,10 +95,13 @@ export async function startRun(db: Kysely<DigifabDB>, orgId: string, machineId: 
   ? { status: "uncertain" as const, evidence: JSON.stringify({ start: "unanswered" }) }
   : sent.ok ? { status: "running" as const, controller_run_id: sent.run_id ?? null, evidence: JSON.stringify({ start: "acknowledged" }) }
   : { status: "ended" as const, outcome: "not-started" as const, ended_at: new Date(), evidence: JSON.stringify({ start: "refused", detail: sent.detail ?? "" }) };
- const saved = await db.updateTable("digifab_arm_runs").set(next).where("id", "=", run.id).where("status", "=", "starting").returningAll().executeTakeFirstOrThrow();
+ // The monitor may have read the arm's own events while Start was in flight
+ // and moved the run on; what the arm reported stands over the answer.
+ const saved = await db.updateTable("digifab_arm_runs").set(next).where("id", "=", run.id).where("status", "=", "starting").returningAll().executeTakeFirst()
+  ?? await db.selectFrom("digifab_arm_runs").selectAll().where("id", "=", run.id).executeTakeFirstOrThrow();
  await platform().activity.log({ orgId, userId: actor.userId, action: "arm_run_started", ref: machineRef(machineId), diff: { run: run.id, kind: input.kind, program: program.name, revision: program.revision, status: saved.status } });
  if (failed) throw failed;
- if (saved.status === "ended") throw new ArmRefusal(sent.detail || "The arm did not start.");
+ if (saved.status === "ended" && saved.outcome === "not-started") throw new ArmRefusal(sent.detail || "The arm did not start.");
  return saved;
 }
 
@@ -120,14 +125,18 @@ const openRunOf = (run: Run | undefined, program: { name: string; revision: stri
 /** Record the events an arm reported after the unit's cursor. Each event id
  *  is recorded once; a replay or an overlap changes nothing; nothing here
  *  ever sends the arm a command. Returns how many were new. */
-export async function ingestArmEvents(db: Kysely<DigifabDB>, _orgId: string, machineId: string, page: ArmEventPage): Promise<number> {
- let fresh = 0;
+export async function ingestArmEvents(db: Kysely<DigifabDB>, orgId: string, machineId: string, page: ArmEventPage): Promise<number> {
+ let fresh = 0, cycles = 0;
+ const alarms: Array<Extract<ArmEvent, { type: "alarm" }>> = [];
  for (const ev of [...page.events].sort((a, b) => a.seq - b.seq)) {
   await db.transaction().execute(async trx => {
    const run = await trx.selectFrom("digifab_arm_runs").selectAll().where("machine_id", "=", machineId).where("status", "<>", "ended").forUpdate().executeTakeFirst();
    const inserted = await trx.insertInto("digifab_arm_events").values({ machine_id: machineId, event_id: ev.id, seq: ev.seq, type: ev.type, payload: JSON.stringify(ev), run_id: run?.id ?? null }).onConflict(oc => oc.columns(["machine_id", "event_id"]).doNothing()).returning("event_id").executeTakeFirst();
    if (!inserted) return;
    fresh++;
+   // Every cycle wears the arm and its tools, whoever started the program.
+   if (ev.type === "cycle-completed") cycles++;
+   if (ev.type === "alarm") alarms.push(ev);
    const program = run?.program_id ? await trx.selectFrom("digifab_arm_programs").select(["name", "revision"]).where("id", "=", run.program_id).executeTakeFirst() : undefined;
    const effect = eventEffect(ev, openRunOf(run, program ?? null));
    if (effect.kind === "release-control") await trx.updateTable("digifab_arm_ownership").set({ released_at: new Date(), release_reason: "pendant" }).where("machine_id", "=", machineId).where("released_at", "is", null).execute();
@@ -141,6 +150,11 @@ export async function ingestArmEvents(db: Kysely<DigifabDB>, _orgId: string, mac
  // the start again, and a cursor kept above it would never read its events.
  // Reading one twice is harmless, every event id is recorded once.
  await db.updateTable("digifab_arm_units").set({ event_cursor: page.cursor }).where("machine_id", "=", machineId).execute();
+ if (cycles) await platform().actions.invoke("machines:record-usage", { orgId, userId: null, entity: { kind: "machines:machine", id: machineId }, args: { machineId, cycles }, event: { name: "digifab.arm.cycles", payload: { machineId, cycles }, actor: { user_id: null, display_name: null, auth_method: "session" }, timestamp: new Date().toISOString(), trigger_type: "event" } })
+  .catch((err) => platform().health.notePassFailure("digifab.arm-monitor", `${orgId}:${machineId}:usage`, err));
+ const unit = alarms.length ? await db.selectFrom("digifab_arm_units").select(["connection_id", "device_id"]).where("machine_id", "=", machineId).executeTakeFirst() : undefined;
+ const device = unit?.connection_id && unit.device_id ? { connection_id: unit.connection_id, device_id: unit.device_id } : null;
+ for (const a of alarms) await raiseAlarm(db, orgId, { device, machine_id: machineId, source: "arm", code: a.code, text: a.text, severity: a.severity, program: a.program ? `${a.program.name}${a.program.revision ? ` (${a.program.revision})` : ""}` : null, step: a.step, occurred_at: new Date(a.at), source_ref: a.id });
  return fresh;
 }
 

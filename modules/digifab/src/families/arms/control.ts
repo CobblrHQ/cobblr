@@ -5,6 +5,7 @@ import { ArmCommandSchema, armCommandRefusal, type ArmCommand, type ArmCommandRe
 import type { DigifabDB } from "../../db.js";
 import { authorizeArm, ArmRefusal, type ArmPermit } from "./station.js";
 import { ownershipRefusal } from "./rules.js";
+import { machineHoldRefusal } from "../../core/holds.js";
 import { armDriver, machineRef, requireUnit } from "./store.js";
 export const ArmCommandInput = z.object({ command: ArmCommandSchema, station_token: z.string().min(32).max(128).optional() });
 export interface ArmActor { userId: string | null; via: "page" | "station" | "assistant"; operate: boolean; admin: boolean }
@@ -24,6 +25,7 @@ export async function sendArmCommand(db: Kysely<DigifabDB>, orgId: string, machi
   if (command.operation === "start" && !opts.run) throw new ArmRefusal("Start a run at the arm's station: a start needs a person's approval for this program and tooling.");
   permit = await authorizeArm(db, unit.connection_id, unit.device_id, input.station_token);
   if (unit.maintenance === "down-for-repair" && !stops(command)) throw new ArmRefusal("This arm is down for repair. Return it to service first.");
+  if (!stops(command)) { const held = await machineHoldRefusal(db, unit.connection_id, unit.device_id); if (held) throw new ArmRefusal(held); }
   if (!stops(command)) {
    const own = await db.selectFrom("digifab_arm_ownership").selectAll().where("machine_id", "=", machineId).executeTakeFirst();
    const refused = ownershipRefusal(own ?? null, permit.stationId!, null, new Date());

@@ -1,0 +1,10 @@
+{
+  "lint": "lint:outgoing-bodies-hold-no-app-path",
+  "run": "node scripts/lint-outgoing-bodies-hold-no-app-path.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 592,
+  "recorded": "2026-10-20",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

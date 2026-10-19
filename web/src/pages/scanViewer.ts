@@ -17,6 +17,7 @@ import { mayCreateIn } from "@cobblr/platform-contract/create-capability";
 import { api, type ScanMenuEntry } from "../lib/api";
 import { scanResolverTables } from "../lib/scanResolverTables";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useCapabilitiesFor } from "../lib/can";
 
 export interface ScanViewerInput {
   /** The person's role in the workspace; unknown while the org loads. */
@@ -68,12 +69,7 @@ export function scanViewerContext({ role, caps, menu, modules, instances }: Scan
 /** The context for the signed-in person over the active workspace. */
 export function useScanViewer(menu: readonly ScanMenuEntry[] | null | undefined): ScanRowStateContext {
   const { activeSlug, activeOrg } = useActiveOrg();
-  const myCaps = useQuery({
-    queryKey: ["me-capabilities", activeSlug],
-    queryFn: () => api.getMyCapabilities(activeSlug),
-    enabled: !!activeSlug,
-    staleTime: 60_000,
-  });
+  const myCaps = useCapabilitiesFor(activeSlug);
   // The same cached list the nav reads: no extra request.
   const orgModules = useQuery({
     queryKey: ["org-modules", activeSlug],
@@ -88,5 +84,5 @@ export function useScanViewer(menu: readonly ScanMenuEntry[] | null | undefined)
     enabled: !!activeSlug,
     staleTime: 30_000,
   });
-  return scanViewerContext({ role: activeOrg?.role, caps: myCaps.data ?? null, menu, modules: orgModules.data?.items ?? null, instances: instances.data?.items ?? null });
+  return scanViewerContext({ role: activeOrg?.role, caps: myCaps, menu, modules: orgModules.data?.items ?? null, instances: instances.data?.items ?? null });
 }

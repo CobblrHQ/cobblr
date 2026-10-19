@@ -1,0 +1,10 @@
+{
+  "lint": "lint:gated-writes-ask-the-gate",
+  "run": "node scripts/lint-gated-writes-ask-the-gate.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 510,
+  "recorded": "2026-10-19",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -4,11 +4,7 @@ import {registerLargeFormatActions} from "../large-format/actions.js";
 
 import { registerStopAction } from "./stop-action.js";
 import { registerRevokeStationAction } from "./stations.js";
-import { cutterRouter } from "./cutter.js";
-import { registerCutterActions } from "../cutter-actions.js";
 import { registerStationRunAction } from "./station-run-action.js";
-import { resinRouter } from "./resin.js";
-import { registerResinPostprocessAction } from "../resin-postprocess.js";
 // digifab router. Mounted at
 //   /api/v1/orgs/:slug/modules/digifab/.
 
@@ -21,52 +17,29 @@ import { jobsRouter, registerSendAction } from "./jobs.js";
 import { linksRouter } from "./links.js";
 import { driversRouter } from "./drivers.js";
 import { fleetRouter } from "./fleet.js";
+import { careRouter } from "./machine-care.js";
 import { poolsRouter } from "./pools.js";
 import { runsRouter } from "./runs.js";
 import { makesRouter } from "./makes.js";
 import { importRouter } from "./import.js";
 import { bulkRouter } from "./bulk.js";
-import { bambuRouter } from "./bambu.js";
 import { edgeRelayRouter } from "./edge-relay.js";
 import { edgeSharesRouter } from "./edge-shares.js";
 import { historyRouter } from "./history.js";
 import { libraryRouter } from "./library.js";
-import { printRulesRouter } from "./print-rules.js";
-import { failureRouter } from "./failure.js";
-import { loadedRouter } from "./loaded.js";
-import { laserRouter } from "./laser.js";
 import { registerMachineStationVerifier } from "./machine-stations.js";
 import { stationsRouter } from "./stations.js";
-import { snapmakerRouter } from "./snapmaker.js";
-import { registerSnapmakerDiscovery } from "../snapmaker.js";
 import { registerFarmResolvers } from "./resolvers.js";
 import { registerFloorManager } from "../floor-manager.js";
 import { floorRouter } from "./floor.js";
-import { registerLaserSetupAction } from "../laser-setup.js";
-import { registerMachineControlAction } from "../cnc-controls.js";
-import { registerCncOutcomeAction } from "../cnc-outcome-recording.js";
-import { registerCncPlacementAction } from "../cnc-placement-service.js";
-import { registerResinControlAction } from "../resin-controls.js";
-import { registerLaserControlAction } from "../laser-controls.js";
-import { registerLaserActions } from "../laser-actions.js";
 import { registerMakeActions } from "../make-actions.js";
 import { registerDeviceSeam } from "./device-provider.js";
-import { registerDetectorServices } from "../detectors/services.js";
-import { registerDetectorAdapters } from "../detectors/adapters.js";
-import { printingProfilesRouter, registerPickPrinter } from "./printing-profiles.js";
-import { registerPrintThis } from "../print-this.js";
 import { asyncHandler } from "./util.js";
 import { tenantContext } from "../db.js";
 import { extractPlateMetadata } from "../library/extract-metadata.js";
-import { registerSetFailureDetectionAction } from "./set-failure-detection-action.js";
-import { registerCheckForFailureAction } from "./check-for-failure-action.js";
-import { registerTestDetectorAction } from "./test-detector-action.js";
 
-registerTestDetectorAction();
 
-registerCheckForFailureAction();
 
-registerSetFailureDetectionAction();
 import { registerPrioritizeJobAction } from "./prioritize-job-action.js";
 import { registerRefreshJobAction } from "./refresh-job-action.js";
 import { registerDeleteJobAction } from "./delete-job-action.js";
@@ -102,6 +75,15 @@ import { registerTestConnectionAction } from "./test-connection-action.js";
 registerTestConnectionAction();
 import { registerFamilies } from "../core/families.js";
 import { FAMILIES } from "../families/index.js";
+import { registerAlarmAckAction } from "./alarm-ack-action.js";
+import { registerAlarmEscalationAction } from "./alarm-escalation-action.js";
+
+registerAlarmEscalationAction();
+
+registerAlarmAckAction();
+import { registerSetMachineHourRateAction } from "./set-machine-hour-rate-action.js";
+
+registerSetMachineHourRateAction();
 
 registerFamilies(FAMILIES);
 
@@ -110,29 +92,14 @@ registerMachineStationVerifier();
 registerBench();
 registerFarmResolvers();
 registerMakeActions();
-registerLaserActions();
-
-registerCutterActions();
 registerStationRunAction();
 registerLargeFormatActions();
-registerSnapmakerDiscovery();
-registerLaserControlAction();
-registerMachineControlAction();
-registerCncOutcomeAction();
-registerCncPlacementAction();
-registerResinControlAction();
 registerStopAction();
 registerPanelPresence();
 registerRevokeStationAction();
-registerResinPostprocessAction();
-registerLaserSetupAction();
 registerFloorManager();
 registerDeviceSeam(); // back platform().devices.getDriver + the digifab:run-command alias
-registerDetectorServices(); // the in-process print checks as inspect.print built-ins
-registerDetectorAdapters(); // PrintGuard, Obico, a LAN box: adapters on a person's connection
 registerSendAction(); // digifab:send, the one door a job reaches a machine by (effect: physical)
-registerPickPrinter(); // digifab:pick-printer (Services §14.3)
-registerPrintThis(); // digifab:print-this, and the slice's completion into the one yes
 
 // Edge-bridge consumer: the generic Edge-bridges page renders this card, so a
 // user who already has a bridge connected sees "attach machine managers"
@@ -149,29 +116,22 @@ const router = Router({ mergeParams: true });
 router.use("/bench",benchRouter);
 router.use("/connections", connectionsRouter);
 router.use("/stations", stationsRouter);
-router.use("/resin", resinRouter);
-router.use("/snapmaker", snapmakerRouter);
-router.use("/laser", laserRouter);
 // Each family's routes, at the paths its module part owns (core/families.ts).
 for (const family of FAMILIES) for (const r of family.routes) router.use(r.path, r.router);
-router.use("/cutter", cutterRouter);
 router.use("/large-format",largeFormatRouter);
 router.use("/jobs", jobsRouter);
 router.use("/links", linksRouter);
 router.use("/drivers", driversRouter);
 router.use("/fleet", fleetRouter);
+router.use("/care", careRouter);
 router.use("/floor", floorRouter);
 router.use("/pools", poolsRouter);
-router.use("/printing-profiles", printingProfilesRouter); // a machine's Printing profile (Services §14.3)
 router.use("/runs", runsRouter); // quantity-driven production runs (mint-to-ceiling on pools)
 router.use("/makes", makesRouter); // Makes: one fabrication run, request to outcome (services.md §13)
 router.use("/import", importRouter);
 router.use("/bulk", bulkRouter);
-router.use("/bambu", bambuRouter);
-  router.use("/failure", failureRouter);
 router.use("/edge", edgeRelayRouter); // cloud↔on-site bridge tunnel (register/poll/respond)
 router.use("/edge-shares", edgeSharesRouter); // owner-side: grant machines to another workspace
-router.use("/loaded", loadedRouter); // spools loaded on a printer, by slot
 router.use("/history", historyRouter); // print history + at-a-glance stats
 router.use("/library", libraryRouter); // stored 3MF/gcode files + send-to-machine
 
@@ -194,6 +154,5 @@ router.get(
     });
   }),
 );
-router.use("/print-rules", printRulesRouter); // configurable print-update notifications (channels + rules)
 
 export default router;

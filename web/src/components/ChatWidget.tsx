@@ -1849,7 +1849,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                     choice
                       ? { read_tools: prefs.read_tools, write_mode: prefs.write_mode, ...choice }
                       : { read_tools: prefs.read_tools, write_mode: prefs.write_mode, provider_id: null, model: null, credential_id: null },
-                    { onSuccess: () => void modelsQ.refetch() },
+                    { onSuccess: () => void qc.invalidateQueries({ queryKey: aiAvailabilityKeys.chatModels(activeSlug) }) },
                   )
                 }
                 onRetry={() =>

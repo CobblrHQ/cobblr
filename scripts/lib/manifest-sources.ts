@@ -6,11 +6,17 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** The manifest files of the module in `moduleDir` (modules/<name>), module.ts first. */
+/** The manifest files of the module in `moduleDir` (modules/<name>), module.ts
+ *  first, then each action file in src/actions/ (one action per file, found by
+ *  module.ts in name order, #7382), then each family's manifest. */
 export function manifestSources(moduleDir: string): string[] {
   const main = join(moduleDir, "src", "module.ts");
   const families = join(moduleDir, "src", "families");
+  const actions = join(moduleDir, "src", "actions");
   const out = existsSync(main) ? [main] : [];
+  if (existsSync(actions)) for (const f of readdirSync(actions).sort()) {
+    if (/\.ts$/.test(f) && !/\.(test|d)\.ts$/.test(f)) out.push(join(actions, f));
+  }
   if (existsSync(families)) for (const f of readdirSync(families).sort()) {
     const piece = join(families, f, "manifest.ts");
     if (existsSync(piece)) out.push(piece);

@@ -95,10 +95,12 @@ export interface DigifabDetectorPrinter { id: string; name?: string; status?: st
 export interface DigifabHistory {
   days: number;
   /** Dense daily trend over the window (zero-filled) — jobs + Bambu cloud tasks. */
-  series?: { date: string; completed: number; failed: number; filament_g: number }[];
-  summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number };
-  by_device: { name: string; total: number; completed: number; failed: number; filament_g: number }[];
-  recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; at: string; duration_s?: number }[];
+  series?: { date: string; completed: number; failed: number; filament_g: number; cost?: number | null }[];
+  /** `cost` sums the priced prints in `currency`; `unpriced` counts the finished prints no price could be put on. */
+  summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number; cost?: number | null; unpriced?: number };
+  currency?: string;
+  by_device: { name: string; total: number; completed: number; failed: number; filament_g: number; cost?: number | null; unpriced?: number }[];
+  recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; cost?: number | null; cost_currency?: string | null; at: string; duration_s?: number }[];
 }
 
 export interface DigifabLibraryItem {
@@ -244,6 +246,8 @@ export interface DigifabFleetDevice {
   /** Snapshot relay (opt-in, off by default) + whether a fresh relayed frame is
    *  available right now (the web prefers it over camera_url for remote viewing). */
   snapshot_relay: boolean;
+  /** What an hour of this printer costs, when set; null otherwise. */
+  hour_rate?: { amount: number; currency: string } | null;
   snapshot_fresh: boolean;
   /** The bridge can grab this printer's own camera (the cockpit /camera route) —
    *  the camera wall shows it with no manual URL and no relay. */

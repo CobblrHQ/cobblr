@@ -33,6 +33,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import ts from "typescript";
 
 const RUNNER = process.env.WALK_RUNNER || "scripts/walk.mjs";
+// The runner's browserless rules: a check it named here (its key list, its
+// table label, its spec validation) was the same collision, one file over.
+const RUNNER_LIB = process.env.WALK_RUNNER_LIB || "scripts/lib/walk-lib.mjs";
 const DIR = "scripts/walk";
 
 interface Violation {
@@ -46,7 +49,7 @@ const CHECKS = new Set(stems("checks"));
 const ACTIONS = new Set(stems("actions"));
 const home = (k: string) => (ACTIONS.has(k) && !CHECKS.has(k) ? `${DIR}/actions/${k}.mjs` : CHECKS.has(k) ? `${DIR}/checks/${k}.mjs` : `${DIR}/checks/${k}.mjs (an expect) or ${DIR}/actions/${k}.mjs (a do)`);
 
-function checkRunner(file: string, src: string): Violation[] {
+function checkRunner(file: string, src: string, lib = false): Violation[] {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const out: Violation[] = [];
   const at = (n: ts.Node) => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
@@ -69,10 +72,10 @@ function checkRunner(file: string, src: string): Violation[] {
       out.push({ file, line: at(n), what: `"${n.left.text}" in ${n.right.getText(sf)} branches on an entry's key: write it as ${home(n.left.text)}` });
     } else if (ts.isStringLiteral(n) && (CHECKS.has(n.text) || ACTIONS.has(n.text)) && !(ts.isBinaryExpression(n.parent) && n.parent.operatorToken.kind === ts.SyntaxKind.InKeyword)) {
       out.push({ file, line: at(n), what: `"${n.text}" names a walk kind in the runner: what it adds belongs in ${home(n.text)}` });
-    } else if ((ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && ts.isIdentifier(n.name) && CHECKS.has(n.name.text)) {
+    } else if (!lib && (ts.isPropertyAssignment(n) || ts.isShorthandPropertyAssignment(n)) && ts.isIdentifier(n.name) && CHECKS.has(n.name.text)) {
       out.push({ file, line: at(n), what: `{ ${n.name.text}: ... } names a check in the runner: a check every step runs is its own \`auto\` export in ${home(n.name.text)}` });
     }
-    if (ts.isIfStatement(n) || ts.isConditionalExpression(n)) {
+    if (!lib && (ts.isIfStatement(n) || ts.isConditionalExpression(n))) {
       const test = ts.isIfStatement(n) ? n.expression : n.condition;
       for (const read of testsAParam(test)) out.push({ file, line: at(test), what: `branches on ${read}: a check or action is its own file, ${home(read.split(".")[1]!)}` });
     }
@@ -87,19 +90,23 @@ function checkRunner(file: string, src: string): Violation[] {
 
 function checkKinds(): Violation[] {
   const out: Violation[] = [];
-  for (const [sub, fn] of [["checks", "judge"], ["actions", "act"]] as const) {
+  for (const [sub, fns] of [["checks", ["judge", "describe"]], ["actions", ["act"]]] as const) {
     for (const stem of stems(sub)) {
       const file = `${DIR}/${sub}/${stem}.mjs`;
       const src = readFileSync(file, "utf8");
       if (!src.includes(`export const key = ${JSON.stringify(stem)};`)) out.push({ file, line: 1, what: `exports no key "${stem}" (a kind's key is its file name)` });
-      if (!new RegExp(`export (async )?function ${fn}\\(|export const ${fn} =`).test(src)) out.push({ file, line: 1, what: `exports no ${fn}()` });
+      for (const fn of fns) if (!new RegExp(`export (async )?function ${fn}\\(|export const ${fn} =`).test(src)) out.push({ file, line: 1, what: `exports no ${fn}()${fn === "describe" ? ", what the walk's table calls it" : ""}` });
       if (!/^\/\/ "/.test(src)) out.push({ file, line: 1, what: `opens with no comment saying what "${stem}" takes and does (\`walk.mjs --kinds\` prints it)` });
     }
   }
   return out;
 }
 
-const violations = [...checkRunner(RUNNER, readFileSync(RUNNER, "utf8")), ...checkKinds()];
+// walk-lib's helpers branch on their own arguments by design (a spec's
+// fields, an inset's sides), and the one-off walk's flags build a few entries
+// ({ text }, { role }), so there only an `"x" in c` test and a string naming a
+// kind are judged: the shapes of a key list and of a label per check.
+const violations = [...checkRunner(RUNNER, readFileSync(RUNNER, "utf8")), ...checkRunner(RUNNER_LIB, readFileSync(RUNNER_LIB, "utf8"), true), ...checkKinds()];
 if (violations.length) {
   console.error(`lint:walk-kinds-in-their-files - ${violations.length} violation(s):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);

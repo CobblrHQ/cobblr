@@ -73,9 +73,9 @@ export const CREDENTIAL_ROUTE_FILES: Record<string, string> = {
   "modules/core-ai/src/api/providers.ts": "PATCH /api/v1/orgs/x/modules/core-ai/providers/p1",
   "modules/core-print/src/api/index.ts": "PATCH /api/v1/orgs/x/modules/core-print/printers/p1",
   "modules/digifab/src/api/connections.ts": "PATCH /api/v1/orgs/x/modules/digifab/connections/c1",
-  "modules/digifab/src/api/print-rules.ts": "PATCH /api/v1/orgs/x/modules/digifab/print-rules/channels/ch1",
-  "modules/digifab/src/api/failure.ts": "PATCH /api/v1/orgs/x/modules/digifab/failure/detectors/d1",
-  "modules/digifab/src/api/fleet.ts": "reads-only",
+  "modules/digifab/src/families/printers/api/print-rules.ts": "PATCH /api/v1/orgs/x/modules/digifab/print-rules/channels/ch1",
+  "modules/digifab/src/families/printers/api/failure.ts": "PATCH /api/v1/orgs/x/modules/digifab/failure/detectors/d1",
+  "modules/digifab/src/families/printers/api/bambu-lan-access.ts": "PUT /api/v1/orgs/x/modules/digifab/fleet/c1/d1/lan",
   "modules/inventory/src/api/spoolman.ts": "PATCH /api/v1/orgs/x/modules/inventory/spoolman/connections/c1",
 };
 

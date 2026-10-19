@@ -8,13 +8,26 @@ import { PLATFORM_ACTIONS } from "../src/platform/platform-actions.js";
 
 const MODULES = fileURLToPath(new URL("../../modules", import.meta.url));
 
+function manifestFiles(moduleDir: string): string[] {
+  const main = join(moduleDir, "src", "module.ts");
+  if (!existsSync(main)) return [];
+  const ts = (dir: string) => (existsSync(dir) ? readdirSync(dir).sort().filter((f) => /\.ts$/.test(f) && !/\.(test|d)\.ts$/.test(f)).map((f) => join(dir, f)) : []);
+  const families = join(moduleDir, "src", "families");
+  const pieces = existsSync(families) ? readdirSync(families).sort().map((f) => join(families, f, "manifest.ts")).filter((f) => existsSync(f)) : [];
+  return [main, ...ts(join(moduleDir, "src", "actions")), ...pieces];
+}
+
 /** Every action id declared undoable across the manifests and the kernel. */
 export function declaredUndoable(): string[] {
   const ids: string[] = [];
   for (const mod of readdirSync(MODULES)) {
-    const manifest = join(MODULES, mod, "src", "module.ts");
-    if (!existsSync(manifest)) continue;
-    const lines = readFileSync(manifest, "utf8").split("\n");
+    // module.ts, the module's own action files and its families' manifest
+    // pieces, read as one: the list scripts/lib/manifest-sources.ts makes,
+    // written here because pins:update (an .mts) cannot import that file. An
+    // undoable action that moves into a family keeps its pin.
+    const files = manifestFiles(join(MODULES, mod));
+    if (!files.length) continue;
+    const lines = files.map((f) => readFileSync(f, "utf8")).join("\n").split("\n");
     lines.forEach((line, i) => {
       if (!/^\s*undoable: true,\s*$/.test(line)) return;
       // The `id:` it belongs to is the nearest one above it.

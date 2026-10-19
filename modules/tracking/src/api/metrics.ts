@@ -235,11 +235,11 @@ metricsRouter.get(
   }),
 );
 
-// AI-REACH: a reading is history; the person removes one they logged by mistake, and Undo reverses a log
+// AI-ACTION: tracking:remove-measurement
 metricsRouter.delete(
   "/measurements/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "member")) return;
+    if (!(await requireCapability(req, res, "tracking:remove-measurement"))) return;
     const db = tenantDb(req);
     await db.deleteFrom("tracking_measurements").where("id", "=", req.params.id!).execute();
     res.status(204).end();

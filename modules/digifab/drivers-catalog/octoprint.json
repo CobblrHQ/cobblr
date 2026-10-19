@@ -1,7 +1,7 @@
 {
   "id": "octoprint",
   "name": "OctoPrint",
-  "version": "1.2.0",
+  "version": "1.4.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -16,6 +16,13 @@
       "temps": {"nozzle": {"actual": "$.temperature.tool0.actual", "target": "$.temperature.tool0.target"}, "bed": {"actual": "$.temperature.bed.actual", "target": "$.temperature.bed.target"}}
     }
   },
+  "versions": [
+    { "method": "GET", "path": "/api/version", "map": { "software": "$.server" } }
+  ],
+  "camera": [
+    { "method": "GET", "path": "/api/settings", "enabled": "$.webcam.webcamEnabled", "stream": "$.webcam.streamUrl" },
+    { "method": "GET", "path": "/api/settings", "stream": "$.plugins.classicwebcam.stream" }
+  ],
   "upload": {
     "method": "POST",
     "path": "/api/files/local",

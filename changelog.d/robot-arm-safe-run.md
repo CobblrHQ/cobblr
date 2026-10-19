@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-16
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-19
 ---
 
 Robot arm runs are safe to start: one station has control at a time and the pendant always wins, a run starts only from a person's approval for that program revision and tooling, Start is sent once and never resent, and a run completes only when the arm reports it finished.

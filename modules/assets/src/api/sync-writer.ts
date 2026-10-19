@@ -55,12 +55,15 @@ export function registerAssetsWriter(): void {
   platform().entities.registerWriter("assets:asset", {
     table: "assets_assets",
     counters: {
-      defs: [{ key: "production_cycles", label: "test cycles" }],
+      // What a tool counts while installed in a machine (assets:record-wear),
+      // so a schedule on the tool is due by its own use.
+      defs: [{ key: "production_cycles", label: "test cycles" }, { key: "used_cycles", label: "cycles in use" }, { key: "used_prints", label: "prints in use" }, { key: "used_hours", label: "hours in use" }],
       async read(orgId, id) {
         const db = await platform().tenants.getDb(orgId) as Kysely<AssetsDB>;
         const row = await db.selectFrom("assets_assets").select("metadata").where("id", "=", id).executeTakeFirst();
-        const value = (row?.metadata as Record<string, unknown> | null)?.production_cycles;
-        return { production_cycles: typeof value === "number" && Number.isFinite(value) ? value : null };
+        const m = (row?.metadata as Record<string, unknown> | null) ?? {};
+        const num = (v: unknown) => { const n = typeof v === "number" ? v : typeof v === "string" && v.trim() ? Number(v) : NaN; return Number.isFinite(n) ? n : null; };
+        return { production_cycles: num(m.production_cycles), used_cycles: num(m.used_cycles), used_prints: num(m.used_prints), used_hours: num(m.used_hours) };
       },
     },
     snapshotDeletion: async (orgId, id) => snapshotRowTree(await platform().tenants.getDb(orgId), "assets_assets", id, "assets_"),

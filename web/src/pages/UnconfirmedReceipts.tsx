@@ -2,10 +2,13 @@
 //
 // "Mark arrived" once marked an order arrived without adding its stock. Which
 // past orders went through it cannot be worked out, so stock is never changed
-// for a person: each such line is shown here, and they say which it was. "Add
-// to stock" adds the line's quantity now (once, however often it is pressed);
-// "Already counted" only clears the question. The banner shows only while any
-// line is waiting, and the notice's link (?unconfirmed=1) opens the list.
+// for a person: each such line is shown here, and they say which it was. A
+// line whose stock was refused (its part is marked gone, or was deleted)
+// waits here too, with the refusal beside it, instead of being retried
+// forever (#7407). "Add to stock" adds the line's quantity now (once,
+// however often it is pressed); "Already counted" only clears the question.
+// The banner shows only while any line is waiting, and the notice's link
+// (?unconfirmed=1) opens the list.
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -37,7 +40,7 @@ export function UnconfirmedReceiptsBanner({ slug }: { slug: string }) {
       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 mb-4">
         <PackageCheck className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" aria-hidden />
         <p className="text-sm text-content dark:text-mortar-100 flex-1 min-w-[12rem]">
-          {items.length === 1 ? "One thing you ordered" : `${items.length} things you ordered`} may not have reached your stock when {items.length === 1 ? "it was" : "they were"} delivered.
+          {items.length === 1 ? "One thing you ordered" : `${items.length} things you ordered`} {items.length === 1 ? "has" : "have"} not reached your stock, or may not have, when {items.length === 1 ? "it was" : "they were"} delivered.
         </p>
         <button type="button" onClick={() => setOpen(true)} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white">
           Check them
@@ -66,7 +69,8 @@ function UnconfirmedReceiptsModal({ slug, items, onClose }: { slug: string; item
   return (
     <Modal open onClose={onClose} title="Orders to check">
       <p className="text-sm text-muted mb-3">
-        For a while, an order marked as delivered (with its Arrived button, or by answering "Yes, it turned up") did not add what came to your stock. For each item, say whether it is already counted or should be added now.
+        {items.some((it) => !it.refused) && 'For a while, an order marked as delivered (with its Arrived button, or by answering "Yes, it turned up") did not add what came to your stock. '}
+        For each item, say whether it is already counted or should be added now.
       </p>
       <ul className="space-y-2">
         {items.map((it) => (
@@ -77,6 +81,7 @@ function UnconfirmedReceiptsModal({ slug, items, onClose }: { slug: string; item
             <div className="text-xs text-muted mb-2">
               {[it.vendor, it.order_number ? `order ${it.order_number}` : null, it.arrived_at ? `arrived ${String(it.arrived_at).slice(0, 10)}` : null].filter(Boolean).join(" · ")}
             </div>
+            {it.refused && <p className="text-sm text-content dark:text-mortar-100 mb-2">Its stock was not added: {it.refused}</p>}
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"

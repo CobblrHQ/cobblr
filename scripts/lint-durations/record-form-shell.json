@@ -5,6 +5,8 @@
     "shared-web-primitive"
   ],
   "ms": 1980,
+  "readMB": 22.1,
+  "readTreeMB": 80.1,
   "recorded": "2026-10-04",
   "source": "CI typecheck run 36590 (5c04c11c1, status success)"
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Codegen for the built-in DETECTOR list. Mirrors the edge-bridge driver
 // refactor (scripts/gen-builtins.mjs): each detector is a self-contained folder
-// under src/detectors/<key>/index.ts that exports a `builtin` descriptor. This
-// scans for those folders PRESENT ON DISK and emits src/detectors/
+// under src/families/printers/detectors/<key>/index.ts that exports a `builtin` descriptor. This
+// scans for those folders PRESENT ON DISK and emits src/families/printers/detectors/
 // builtins.generated.ts with STATIC imports of only the ones found. Static
 // imports mean tsc/esbuild still bundle them; "only what's present" means a
 // held-back (deleted) detector folder is simply not wired — no build break.
@@ -32,7 +32,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const DETECTORS = join(HERE, "..", "src", "detectors");
+const DETECTORS = join(HERE, "..", "src", "families", "printers", "detectors");
 const OUT = join(DETECTORS, "builtins.generated.ts");
 const CHECK = process.argv.includes("--check");
 

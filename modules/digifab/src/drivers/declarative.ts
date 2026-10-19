@@ -10,6 +10,7 @@ import type {
   ControlDef,
   DeviceJob,
   DeviceTemps,
+  DeviceVersions,
   ManagerConfig,
   MachineDriver,
   JobState,
@@ -35,6 +36,17 @@ const KNOWN_CONTROLS: Record<string, ControlDef> = {
 };
 import type { DriverManifest } from "./manifest.js";
 import { machineFetch } from "./machine-fetch.js";
+import { frameFromAddress } from "../camera-frame.js";
+
+const VERSION_KEYS = ["firmware", "software", "controller", "model"] as const;
+
+// Where each manager's camera is, kept between fleet polls (a driver is built
+// per request): a camera moves when someone reconfigures it, not every few
+// seconds. A manager that did not answer is asked again sooner.
+const CAMERA_FOUND_MS = 10 * 60_000;
+const CAMERA_MISSING_MS = 2 * 60_000;
+const cameraAddresses = new Map<string, { at: number; url: string | null }>();
+const LOOPBACK = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0)$/i;
 
 const JOB_STATES = new Set<JobState>([
   "queued", "printing", "paused", "completed", "failed", "cancelled", "awaiting-assignment", "unknown",
@@ -49,12 +61,15 @@ export class DeclarativeDriver implements MachineDriver {
   pauseJob?: (jobId: string) => Promise<void>;
   resumeJob?: (jobId: string) => Promise<void>;
   cancelJob?: (jobId: string) => Promise<void>;
+  /** Defined only when the manifest says where the camera is. */
+  getCameraFrame?: () => Promise<Buffer | null>;
   constructor(protected manifest: DriverManifest, protected cfg: ManagerConfig) {
     this.base = cfg.baseUrl.replace(/\/+$/, "");
     const cmds = this.manifest.commands ?? {};
     if (cmds.pause) this.pauseJob = (jobId) => this.runJobCommand("pause", jobId);
     if (cmds.resume) this.resumeJob = (jobId) => this.runJobCommand("resume", jobId);
     if (cmds.cancel) this.cancelJob = (jobId) => this.runJobCommand("cancel", jobId);
+    if (this.manifest.camera?.length) this.getCameraFrame = () => this.cameraFrame();
   }
 
   /** Run a job-control command (pause/resume/cancel) from the manifest. The job's
@@ -137,9 +152,13 @@ export class DeclarativeDriver implements MachineDriver {
     const m = this.manifest.listDevices;
     const data = await this.json(m.method, this.path(m.path));
     const rows: unknown[] = m.result === "single" ? [data] : ((m.arrayPath ? this.deref(data, m.arrayPath) : data) as unknown[]) ?? [];
-    return (Array.isArray(rows) ? rows : []).map((d) => {
+    const list = Array.isArray(rows) ? rows : [];
+    // A manager-wide camera belongs to its one device; on a farm of several it would be pinned on all of them.
+    const camera = list.length === 1 && this.manifest.camera?.length ? !!(await this.cameraAddress()) : false;
+    return list.map((d) => {
       const state = this.deviceState(m.map.state, d);
       return {
+        ...(camera ? { camera_available: true } : {}),
         id: this.extract(m.map.id, d),
         name: this.extract(m.map.name, d) || "device",
         enabled: m.map.enabled ? this.extract(m.map.enabled, d) !== "false" : true,
@@ -151,6 +170,74 @@ export class DeclarativeDriver implements MachineDriver {
         job: /^(printing|paused)$/i.test(state ?? "") ? this.deviceJob(m.map, d) : null,
       };
     });
+  }
+
+  /** What the one device on this manager runs, from the manifest's `versions`
+   *  probes. A manager listing several devices reads none: a manager-wide
+   *  answer would be pinned on every one of them. A probe that does not answer
+   *  leaves its fields to the next probe, or unread. */
+  async readVersions(): Promise<Array<DeviceVersions & { deviceId: string }>> {
+    const probes = this.manifest.versions;
+    if (!probes?.length) return [];
+    const devices = await this.listDevices();
+    if (devices.length !== 1) return [];
+    const out: DeviceVersions = {};
+    for (const probe of probes) {
+      const keys = VERSION_KEYS.filter((k) => probe.map[k] && !out[k]);
+      if (!keys.length) continue;
+      const res = await this.req(probe.method, this.path(probe.path)).catch(() => null);
+      if (!res?.ok) continue;
+      const body = probe.format === "text" ? await res.text() : await res.json().catch(() => null);
+      for (const k of keys) {
+        const expr = probe.map[k]!;
+        const value = probe.format === "text" && !expr.startsWith("='") ? new RegExp(expr, "m").exec(String(body))?.[1] ?? "" : this.extract(expr, body);
+        const clean = value.trim().slice(0, 120);
+        if (clean && !/[\x00-\x1f]/.test(clean)) out[k] = clean;
+      }
+    }
+    return Object.keys(out).length ? [{ deviceId: devices[0]!.id, ...out }] : [];
+  }
+
+  /** Where this manager's camera is, from the manifest's `camera` read: a
+   *  snapshot over a stream, resolved against the manager, or null when it has
+   *  none or did not answer. */
+  async cameraAddress(): Promise<string | null> {
+    const probes = this.manifest.camera;
+    if (!probes?.length) return null;
+    const key = `${this.manifest.id} ${this.base}`;
+    const kept = cameraAddresses.get(key);
+    if (kept && Date.now() - kept.at < (kept.url ? CAMERA_FOUND_MS : CAMERA_MISSING_MS)) return kept.url;
+    let url: string | null = null;
+    for (const probe of probes) {
+      const data = await this.json(probe.method, this.path(probe.path)).catch(() => null);
+      if (data == null) continue;
+      const rows = probe.arrayPath ? this.deref(data, probe.arrayPath) : [data];
+      const row = (Array.isArray(rows) ? rows : []).find((r) => !probe.enabled || this.extract(probe.enabled, r) !== "false");
+      const raw = row == null ? "" : (probe.snapshot && this.extract(probe.snapshot, row)) || (probe.stream && this.extract(probe.stream, row)) || "";
+      url = raw.trim() ? this.resolveCamera(raw.trim(), probe.relativeTo) : null;
+      if (url) break;
+    }
+    cameraAddresses.set(key, { at: Date.now(), url });
+    return url;
+  }
+
+  private resolveCamera(raw: string, relativeTo: "base" | "host"): string | null {
+    let base: URL;
+    try { base = new URL(this.base); } catch { return null; }
+    const root = relativeTo === "host" ? `${base.protocol}//${base.hostname}/` : `${base.origin}${base.pathname.replace(/\/*$/, "/")}`;
+    let url: URL;
+    try { url = new URL(raw, root); } catch { return null; }
+    if (!/^https?:$/.test(url.protocol)) return null;
+    if (LOOPBACK.test(url.hostname)) url.hostname = base.hostname;
+    return url.toString();
+  }
+
+  /** One frame from the manager's camera. The manager's key goes along only to the manager itself. */
+  private async cameraFrame(): Promise<Buffer | null> {
+    const url = await this.cameraAddress();
+    if (!url) return null;
+    const own = new URL(url).origin === new URL(this.base).origin;
+    return (await frameFromAddress(url, 6000, own ? this.authHeaders() : {}))?.bytes ?? null;
   }
 
   /** A number the response carries at `expr`, or null when it is absent or not a number. */

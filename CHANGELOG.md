@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-19
+
+### Fixes
+- A suggested photo for a record is no longer added to your files before you choose Use this photo, and looking up photos for records is off until a workspace turns it on in the AI page's Scan photos section.
+
 ## 2026-10-18
 
 ### Improvements
@@ -28,8 +33,16 @@ User-facing changes, newest first. Dates are release dates.
 - Food moved into the fridge or the freezer is now re-dated by how long it keeps there, and by its warm shelf life when it comes out, with a line in its history saying why. An item can state a fridge and a freezer number beside the existing two, and an item with no number for the place, or a date you typed yourself, is left alone.
 - A food scanned from Open Food Facts now shows what it contains: its allergens and traces appear as warning pills on the scan card and on the pantry item, a view can keep only the foods that list a word such as nuts, and Cobb can answer which of your snacks have them. A food the catalog lists nothing for shows no pill.
 - A task left undone is now told again, louder each step: its assignee hears on the day it is due and again when it is late (the task is tagged late), and the whole household hears only when it has gone stale. A task nobody has goes to everyone at once, and marking it done stops the next step.
+- Every finished print knows what it cost, from the spool it used, with cost per day in Job history
+- Klipper, OctoPrint and PrusaLink printers show their camera on the fleet card with no address typed
+- ABB IRC5 arms connect over Robot Web Services: programs load, start once or forever and stop from Cobblr, with the controller's write lock given back after every command.
+- Robot arms get guided software updates read back from the controller, licences on the machine page, and a written safety boundary linked from every arm and cell page.
+- Cells: a CNC and the arm that unloads it run as one job on the shop bridge, started at the cell, with every step recorded, its parts counted into stock and its operators told when it pauses.
 - Universal Robots, Elite and Dobot arms connect through the shop's bridge: their programs are listed, loaded, started, paused and stopped, and their state and faults watched.
+- Machines show their alarms with escalation, observed use with how much was seen, the tools installed in them with their wear, and their spare parts.
 - KUKA, FANUC, ABB and PLC-wired arms connect through an I/O board: a program is chosen by number and started over wires, with the wiring explained in plain words and safety left hardwired.
+- ABB OmniCore arms connect over Robot Web Services 2.0, with the controller's certificate pinned.
+- Robot arm programs are versioned and compared before release, copies to another arm are a re-teach checklist, and backups are proven by a restore test.
 - A scan of a thing you already have can be marked broken: the thing gets a repair entry in its service log instead of a second one being filed.
 - Scanning within one product opens its own unit when another product shares the serial, with no question, and each scan rule shows how often its key matched more than one thing in the last 30 days.
 
@@ -39,10 +52,13 @@ User-facing changes, newest first. Dates are release dates.
 - Ask Cobb to move a print job up the queue, refresh or clear a job, and rename or delete a file in the print library; none of it starts a machine
 - Ask Cobb to turn print failure detection on and tune it, check a print for failure now, or test a failure detector
 - Ask Cobb whether a printer manager connection is still working; it checks without sending anything to a machine
+- Ask Cobb to add or remove a build's components, add, change or remove its steps, log time or scrap at a step, and plan, change or remove a build on the schedule
+- Ask Cobb to change or remove a queued label, save or remove a label size, pull spools in from Spoolman, add a numbered unit, change or remove a sales order line, remove a mistaken reading, or read a pattern's materials
 - A device post sent again under its delivery id is applied once, so a lost answer no longer counts pulses or parts twice
 - A new workspace's home leads with one box to add things, then three clear rows and a section of ready-made setups, with a one-line AI notice you can close
 - Turning on notifications on a phone or computer asks which of your other channels to turn off, and whether normal updates should push too
 - Photos uploaded together are offered as one thing more readily: a listing screenshot and a photo of the printer it sells, sent in one go, now get the Combine offer, while different things in one upload stay apart.
+- Ask Cobb or an MCP assistant to tidy the scan inbox: rename a scan, bin or restore it, send a filed scan back, look it up again, combine duplicates, tag a batch, or fix a photo
 
 ### Fixes
 - A bundle update that stopped or failed part-way used to leave the workspace without the bundle, and the hourly update pass never found it again. The old version now stays until its replacement is in, and an install that did not finish is finished on the next pass, with no reinstall.
@@ -66,6 +82,7 @@ User-facing changes, newest first. Dates are release dates.
 
 ### Features
 - When a member offers to share their AI with your workspace, you can approve or decline it with one tap from the notification, in Cobblr or in your Discord DM.
+- Machines now say what firmware and software they run: a printer on OctoPrint, Klipper, PrusaLink, Duet, a GRBL or FluidNC controller or the shop bridge reports it every hour, and any other machine's is typed on its page. The new Versions tab groups machines by model and firmware family and counts them against the version an owner or admin sets, such as "15 of 20 current", with how many are behind, unknown or down for repair, and a place filter. A version nobody has seen for a week is unknown, never current, and each new version is a line in the machine's History.
 - A message to Slack, Discord or a webhook that meets a busy or briefly-down service is tried again, sent at the service's pace, and kept with a Send again button if it still fails
 - A Part-DB part kept in several storage locations imports as one card with a place for each, with the right amount in each
 - Robot arms are machines: an arm's page shows its controller's connection, mode, program and safety state, keeps its programs by revision and family and what it is known to work with, and its station loads, starts, pauses and stops programs. Cobblr never moves an arm or clears a stop. Robot arms are a part of Digital Fabrication you can switch off in Configuration, Modules: features can now have parts, and an off part's screens, actions and assistant tools disappear while everything it recorded is kept.

@@ -26,6 +26,7 @@ import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { useAuth } from "../auth/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
 import { fontFaceCss, mutedStyle, textStyle, themeWrapperStyle } from "../lib/appTheme";
+import { useCapabilitiesFor } from "../lib/can";
 
 export function PortalLayout() {
   const { slug } = useParams<{ slug: string }>();
@@ -40,11 +41,7 @@ export function PortalLayout() {
     enabled: !!slug,
   });
 
-  const caps = useQuery({
-    queryKey: ["my-capabilities", slug],
-    queryFn: () => api.getMyCapabilities(slug!),
-    enabled: !!slug,
-  });
+  const caps = useCapabilitiesFor(slug);
 
   // Apps the caller can open — used both to inherit the launcher skin and
   // (in PortalHomePage) to render the launcher tiles.
@@ -58,8 +55,8 @@ export function PortalLayout() {
   // shells without typing the URL. `all` is the server's answer to which
   // roles that is. A member's shell is the workspace too (#3122); their
   // link says so, and a guest, whose shell is this, gets none.
-  const isAdmin = caps.data?.all === true;
-  const hasWorkspace = !!caps.data && shellForRole(caps.data.role) === "workspace";
+  const isAdmin = caps?.all === true;
+  const hasWorkspace = !!caps && shellForRole(caps.role) === "workspace";
 
   const portalConfig: PortalConfig = config.data?.config ?? { pinned_views: [] };
   const headerName = portalConfig.display_name || config.data?.org_name || "Portal";

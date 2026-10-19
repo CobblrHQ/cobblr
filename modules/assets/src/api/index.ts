@@ -7,6 +7,10 @@ import { registerAssetsResolvers } from "./resolvers.js";
 import { registerActionHandlers } from "./action-handlers.js";
 import { registerAssetsWriter } from "./sync-writer.js";
 import { registerLoansFromCustodyHeal } from "../heal-loans-from-custody.js";
+import { registerRecordWearAction, registerWearFromMachineUse } from "./record-wear-action.js";
+
+registerRecordWearAction();
+registerWearFromMachineUse();
 
 registerAssetsResolvers();
 registerActionHandlers();

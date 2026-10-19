@@ -272,14 +272,45 @@ export async function judgeRun(results, quietMs = {}, rerun, opts = {}) {
 export const READ_FACTOR = 2;
 export const READ_SLACK_MB = 10;
 export const NEW_READ_MB = 30;
-export function overReadBudget(results, recordedMB = {}) {
+/** A lint's read limit, MB, from its recorded reads (or none), grown with the tree since it was recorded.
+ *  SCALED BY THE TREE (2026-10-19): the tracked text tree went from 44.1 MB to 80.0 MB in the three weeks after
+ *  the records were taken, the lints' reads by a median 1.6x, and 59 of them stood past 80% of a limit fixed
+ *  at their 09-29 size: lint:test-imports-script reached its line and reddened #7020, a pull request it had
+ *  nothing to do with. A lint that reads in step with the tree keeps its share; one that reads faster than
+ *  the tree is still the change that grew it. `growth` is tree now / tree at record, never below 1. */
+export const readLimitMB = (rec, growth = 1) => {
+  if (rec === undefined) return NEW_READ_MB;
+  const g = Number.isFinite(growth) && growth > 1 ? growth : 1;
+  return Math.max(rec * g * READ_FACTOR, rec * g + READ_SLACK_MB);
+};
+
+/** PURE. Each lint's growth factor: tree now over the tree its reads were recorded against (1 when unknown). */
+export const growthOf = (treeNowMB, recordedTreeMB = {}) => (name) => {
+  const then = recordedTreeMB[name];
+  return treeNowMB && then ? treeNowMB / then : 1;
+};
+
+/** NEAR THE LINE (2026-10-19). A record from weeks ago and a suite that grows: lint:test-imports-script's 7.1 MB
+ *  from 09-29 reached its 17.1 MB limit as tests were added, and #7020 went red on it with no test failing. A
+ *  lint whose reads pass NEAR_READ_SHARE of its limit is said before it reddens a pull request it has nothing to
+ *  do with. PURE. */
+export const NEAR_READ_SHARE = 0.8;
+export function nearReadBudget(results, recordedMB = {}, share = NEAR_READ_SHARE, growth = () => 1) {
+  return results
+    .filter((r) => typeof r.readMB === "number")
+    .map((r) => ({ name: r.name, readMB: r.readMB, limitMB: readLimitMB(recordedMB[r.name], growth(r.name)), recordedMB: recordedMB[r.name] }))
+    .filter((r) => r.readMB > r.limitMB * share && r.readMB <= r.limitMB)
+    .sort((a, b) => b.readMB / b.limitMB - a.readMB / a.limitMB);
+}
+
+export function overReadBudget(results, recordedMB = {}, growth = () => 1) {
   const over = [];
   for (const r of results) {
     if (typeof r.readMB !== "number") continue;
     const rec = recordedMB[r.name];
-    const limit = rec === undefined ? NEW_READ_MB : Math.max(rec * READ_FACTOR, rec + READ_SLACK_MB);
+    const limit = readLimitMB(rec, growth(r.name));
     if (r.readMB > limit) {
-      over.push({ name: r.name, readMB: r.readMB, limitMB: limit, why: rec === undefined ? `read ${r.readMB.toFixed(1)} MB with no recorded read volume (limit ${NEW_READ_MB} MB for a lint without one)` : `read ${r.readMB.toFixed(1)} MB against its recorded ${rec} MB (limit ${limit.toFixed(1)} MB)` });
+      over.push({ name: r.name, readMB: r.readMB, limitMB: limit, why: rec === undefined ? `read ${r.readMB.toFixed(1)} MB with no recorded read volume (limit ${NEW_READ_MB} MB for a lint without one)` : `read ${r.readMB.toFixed(1)} MB against its recorded ${rec} MB (limit ${limit.toFixed(1)} MB${growth(r.name) > 1 ? `, grown ${growth(r.name).toFixed(2)}x with the tree` : ""})` });
     }
   }
   return over.sort((a, b) => b.readMB - a.readMB);

@@ -57,6 +57,9 @@ export { ordersRouter as primaryRouter };
 import { registerSalesLineHandlers } from "./line-handlers.js";
 import { registerPrepareDocumentAction } from "./prepare-document-action.js";
 import { registerSendDocumentAction } from "./send-document-action.js";
+import { registerChangeLineAction } from "./change-line-action.js";
+
+registerChangeLineAction();
 
 registerSendDocumentAction();
 

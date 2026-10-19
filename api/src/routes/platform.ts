@@ -31,7 +31,7 @@ import { platform, isActionRefusal, crashSentence, uploadOne } from "@cobblr/pla
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { requireAuth, appTokenMayInvoke } from "../auth/middleware.js";
+import { requireAuth, appTokenInvokeRefusal } from "../auth/middleware.js";
 import { accessMessage } from "../auth/token-access.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
@@ -862,19 +862,21 @@ platformOrgRouter.post(
         return;
       }
       // A Tier-B app-scoped token may fire capability-gated MODULE actions but
-      // never a kernel workspace-config one (`platform:*`). requireCapability
-      // below is not enough: an owner/admin identity passes it implicitly, so a
-      // managed-app bundle running under one could otherwise disable a module or
-      // rename the workspace. Server-side twin of the Player's client mediator.
-      if (req.session?.app_scope && !appTokenMayInvoke(parsed.data.actionId)) {
-        res.status(403).json({
-          error: {
-            code: "app_token_out_of_scope",
-            message:
-              "An app token may not invoke workspace-configuration (platform:*) actions.",
-          },
-        });
-        return;
+      // never a kernel workspace-config one (`platform:*`), and a kernel record
+      // verb only on a kind its app declares it edits. requireCapability below
+      // is not enough: an owner/admin identity passes it implicitly, so a
+      // managed-app bundle running under one could otherwise disable a module,
+      // rename the workspace or rewrite any record (#7408).
+      if (req.session?.app_scope) {
+        const refusal = appTokenInvokeRefusal(
+          parsed.data.actionId,
+          (parsed.data.args ?? null) as Record<string, unknown> | null,
+          req.session.app_edit_kinds ?? [],
+        );
+        if (refusal) {
+          res.status(403).json({ error: { code: "app_token_out_of_scope", message: refusal } });
+          return;
+        }
       }
 
       // A personal token that may change only records (token-access.ts)

@@ -3,19 +3,20 @@
 //
 // DONE WHEN: no tenant DB has a pending or enriching core_scan_inbox_items row
 // with catalog_image_url set and catalog_image_file_id null, and no
-// core_scan_record_photo_suggestions row with status 'suggested' and no
-// file_id. Check with, per tenant:
+// core_scan_record_photo_suggestions row with status 'suggested', no file_id
+// and no held picture. Check with, per tenant:
 //   select count(*) from core_scan_inbox_items
 //    where status in ('pending','enriching')
 //      and catalog_image_url is not null and catalog_image_file_id is null;
 //   select count(*) from core_scan_record_photo_suggestions
-//    where status = 'suggested' and file_id is null;
+//    where status = 'suggested' and file_id is null and held_bytes is null;
 // /healthz reports the count this pass found (noteHealShim). When both read 0
 // on prod, staging and dev, delete this file and its boot call.
 //
 // BORN WITH: nothing (a new choice is stored before it is committed: the
 // catalog-image door and downloadCatalogImage never leave an address alone,
-// and a suggestion is offered only with its file).
+// and a suggestion is offered only with its picture: held in the suggestion
+// store since #7447, a file before).
 //
 // WHY IT EXISTS: rows chosen before that rule held an address the browser
 // could draw and the server never stored, so the card showed the picture in
@@ -39,6 +40,7 @@ interface HealDB {
     entity_id: string;
     status: string;
     file_id: string | null;
+    held_bytes: Buffer | null;
     attempts: number;
     updated_at: Date;
   };
@@ -67,12 +69,14 @@ export async function healUnsavedCatalogChoicesIn(orgId: string, db: Kysely<Heal
       console.error(`[core-scan] org ${orgId} row ${r.id}: could not store its catalog picture:`, (err as Error).message);
     }
   }
-  // A suggestion offered without its file is looked for again.
+  // A suggestion offered with no picture at all is looked for again. One that
+  // holds its picture (#7447: a suggestion is not a file) is whole.
   const requeued = await db
     .updateTable("core_scan_record_photo_suggestions")
     .set({ status: "queued", attempts: 0, updated_at: new Date() })
     .where("status", "=", "suggested")
     .where("file_id", "is", null)
+    .where("held_bytes", "is", null)
     .executeTakeFirst()
     .then((r) => Number(r.numUpdatedRows ?? 0))
     .catch(() => 0);

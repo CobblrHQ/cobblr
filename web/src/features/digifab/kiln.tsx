@@ -3,6 +3,7 @@ import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-quer
 import { NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 import { api, type PlatformResolvedEntity } from "../../lib/api";
+import { useEnabledModules } from "../../lib/useEnabledModules";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { readKiln, saveKiln, createFiring, finishFiring, controlFiring, type KilnProfile, type Segment, type FiringLog, type Piece } from "./kiln-api";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -80,7 +81,9 @@ function NewFiring({ slug, profile, busy, save, saveSchedule }: { slug: string; 
 }
 function GlazePicker({ slug, onPick }: { slug: string; onPick: (p: { id: string; kind: string; name: string }) => void }) {
  const [text, setText] = useState("");
- const found = useInfiniteQuery({ queryKey: ["kiln-glaze-stock", slug, text], initialPageParam: 0,
+ // Glazes are Inventory's liquid stock: with it off the picker asks nothing.
+ const inventoryOn = !!useEnabledModules(slug)?.has("inventory");
+ const found = useInfiniteQuery({ queryKey: ["kiln-glaze-stock", slug, text], initialPageParam: 0, enabled: inventoryOn,
   queryFn: ({ pageParam }) => api.listWorkshopStock(slug, { q: text, shape: "liquid", offset: pageParam }),
   getNextPageParam: (last, pages) => { const count = pages.reduce((n, p) => n + p.items.length, 0); return last.total !== null && count < last.total ? count : undefined; },
  });

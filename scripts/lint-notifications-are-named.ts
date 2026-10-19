@@ -40,6 +40,7 @@
 //   npx tsx scripts/lint-notifications-are-named.ts   (pnpm lint notifications-are-named)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { manifestSources } from "./lib/manifest-sources.ts";
 
 const KERNEL_LIST = join("api", "src", "platform", "notification-kinds.ts");
 const ACCOUNT_CATALOG = join("api", "src", "platform", "notification-catalog.ts");
@@ -64,9 +65,8 @@ function* walk(dir: string): Generator<string> {
 const declared = new Set<string>();
 const declaredAt = new Map<string, string>();
 const manifests: string[] = [];
-for (const mod of readdirSync("modules")) {
-  const man = join("modules", mod, "src", "module.ts");
-  if (!existsSync(man)) continue;
+// A family's manifest (scripts/lib/manifest-sources.ts) declares its own.
+for (const mod of readdirSync("modules")) for (const man of manifestSources(join("modules", mod))) {
   manifests.push(man);
   const src = readFileSync(man, "utf8");
   // An entry of exposes.notifications carries a label beside its eventType.

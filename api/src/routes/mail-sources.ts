@@ -77,12 +77,14 @@ mailSourcesRouter.get("/me/mail-sources/gmail/callback", async (req, res) => {
       return publicBaseUrl();
     }
   })();
+  // PATH-OK: a browser redirect target; a relative Location is correct
   let page = "/me/connections";
   const back = (word: string) => res.redirect(`${origin}${page}?gmail=${word}`);
   try {
     const code = typeof req.query.code === "string" ? req.query.code : "";
     const state = typeof req.query.state === "string" ? req.query.state : "";
     const claims = state ? await readGoogleState(state) : null;
+    // PATH-OK: a browser redirect target; a relative Location is correct
     if (claims?.purpose === "send") page = "/configuration/email";
     if (typeof req.query.error === "string") return back("denied");
     if (!code || !claims) return back("error");

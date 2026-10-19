@@ -274,7 +274,7 @@ export async function stockDeltaIn(
     .select([sql<string | null>`metadata->>'tracked_by'`.as("tracked_by"), "qty", "metadata", "name"])
     .where("id", "=", partId)
     .forUpdate().executeTakeFirst();
-  if (!ext) return { ok: false, error: "part_not_found" };
+  if (!ext) return { ok: false, error: "part_not_found", final: true };
   if (p.operationId) {
     const already = await trx.selectFrom("inventory_stock_operations").select("operation_id")
       .where("operation_id", "=", p.operationId).where("part_id", "=", partId).executeTakeFirst();
@@ -288,7 +288,7 @@ export async function stockDeltaIn(
       return { ok: true, partId, delta: Number(prior.delta), replayed: true };
     }
   }
-  if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name) };
+  if (isGone(ext.metadata)) return { ok: false, error: goneStockRefusal(ext.name), final: true };
   if (!stockTrackerAllows(ext.tracked_by, p.reporter)) {
     return { ok: true, skipped: true, deliverySatisfied: true, reason: `externally tracked by ${ext.tracked_by}` };
   }
@@ -655,8 +655,8 @@ export async function withBatchesIn(
     .where("id", "=", partId)
     .forUpdate()
     .executeTakeFirst();
-  if (!row) return { out: { ok: false, error: "missing_part" }, reason };
-  if (isGone(row.metadata)) return { out: { ok: false, error: goneStockRefusal(row.name) }, reason };
+  if (!row) return { out: { ok: false, error: "missing_part", final: true }, reason };
+  if (isGone(row.metadata)) return { out: { ok: false, error: goneStockRefusal(row.name), final: true }, reason };
 
   const md = ((row.metadata as Record<string, unknown> | null) ?? {}) as Record<string, unknown>;
   const qtyNow = Number(row.qty);
@@ -869,7 +869,7 @@ export function registerInventoryActionHandlers(): void {
       }
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<InventoryDB>;
       const once = (args.once ?? ev.once) === true && !!sourceKind && !!sourceId;
-      const restock = (args as { restock?: unknown }).restock === true;
+      const restock = ((args as { restock?: unknown }).restock ?? (ev as { restock?: unknown }).restock) === true;
       // What other connections have to say (the day, the field roles) is read
       // before the transaction takes its own, so a small pool is never asked
       // for a second connection by one that is holding the first.

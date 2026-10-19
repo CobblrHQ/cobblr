@@ -71,7 +71,6 @@ export async function remindDue(db: Kysely<SalesDB>, orgId: string, now: Date): 
   const only = owed.length === 1 ? owed[0]! : null;
   const link = only ? await platform().entities.recordAddressForEntity(orgId, "sales:order", only.id) : "/sales";
   const message = only ? only.line : `Orders that need you:\n${owed.map((o) => o.line).join("\n")}`;
-  const key = owed.map((o) => `${o.id}:${o.due}:${o.state}`).join(",");
   for (const userId of await platform().notifications.audienceFor(orgId, DUE_EVENT)) {
     // dispatch-per-row-ok: one notice per person for the whole round; userId only varies the address and deduplication key.
     await platform().notifications.dispatch({
@@ -79,7 +78,7 @@ export async function remindDue(db: Kysely<SalesDB>, orgId: string, now: Date): 
       ...(only ? { entityType: "order", entityId: only.id } : {}),
       // Due on a date, knowable in advance: the morning brief, not a ping.
       triggeredBy: "schedule",
-      idempotencyKey: `sales-order-due:${key}:${userId}`.slice(0, 500),
+      subjects: owed.map((o) => ({ kind: "sales:order", id: o.id, question: `due-${o.state}`, line: o.line })),
       message,
       ...(link ? { link_url: link } : { no_link_reason: "The order has no registered page." }),
     });

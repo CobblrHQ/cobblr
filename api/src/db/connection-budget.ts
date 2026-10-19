@@ -74,6 +74,11 @@ export function connectionBudget(i: BudgetInputs): Budget {
   };
 }
 
+/** pg-pool's answer when no connection came free within the pool's connect timeout. */
+export function isPoolAcquireTimeout(err: unknown): boolean {
+  return (err as Error | null)?.message === "timeout exceeded when trying to connect";
+}
+
 /** Postgres's answer when it has no connection left to give (53300). */
 export function isConnectionRefusal(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "53300";

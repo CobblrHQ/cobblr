@@ -101,12 +101,14 @@ export async function personalExportFiles(userId: string): Promise<Record<string
     (owned.length
       ? `The records inside a workspace belong to the workspace. You own ${owned.length}; take each one's\n` +
         `backup from its Backup page (Configuration, Backup):\n\n` +
+        // PATH-OK: the README names the Backup page in words beside the path; it is read next to the app
         owned.map((m) => `  ${m.name}: /w/${m.slug}/configuration/backup`).join("\n") +
         "\n"
       : `The records inside a workspace belong to the workspace, and its owners can back it up.\n`);
   return {
     "README.txt": readme,
     "account.json": json(user),
+    // PATH-OK: data in workspaces.json, a path inside the app for a reader who knows the instance
     "workspaces.json": json(memberships.map((m) => ({ ...m, backup: m.role === "owner" ? `/w/${m.slug}/configuration/backup` : null }))),
     "tokens.json": json(tokens),
     "connections.json": json(connections),
@@ -167,6 +169,7 @@ async function buildPersonalExport(id: string, userId: string, origin: string): 
         subject: `Your ${productName()} data is ready`,
         text:
           `The copy of your ${productName()} data you asked for is ready. Sign in and download it from your account:\n\n` +
+          // PATH-OK: after the instance's own address, which the caller gives from linkOrigin(req)
           `${origin}/me/identity\n\nIt is kept for ${PERSONAL_EXPORT_DAYS} days. If you did not ask for it, change your password.`,
         kind: "notification",
       });

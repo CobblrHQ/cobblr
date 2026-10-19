@@ -106,6 +106,8 @@ interface PlatformWebCtx {
 }
 
 const Ctx = createContext<PlatformWebCtx | null>(null);
+/** The provider itself, for a hook that must also work outside one (can.ts). */
+export const PlatformWebContext = Ctx;
 
 // ─────────────────────────── Invokable flows ───────────────────────────
 // A first-party "flow" is an interactive overlay (the organize planner, a

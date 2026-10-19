@@ -7,14 +7,16 @@
 // scripts/api-log.sh finds a reference there.
 //
 // A database with no connection to give is busy, not broken: that is a 503
-// the caller may retry, never an anonymous 500.
+// the caller may retry, never an anonymous 500. So is a pool that gave none
+// within its connect timeout (pg's "timeout exceeded when trying to connect",
+// #7501).
 import { randomBytes } from "node:crypto";
 import type { Request, Response } from "express";
-import { isConnectionRefusal } from "../db/connection-budget.js";
+import { isConnectionRefusal, isPoolAcquireTimeout } from "../db/connection-budget.js";
 
 export function answerServerError(err: Error, req: Pick<Request, "method" | "originalUrl">, res: Response, production: boolean, log: (line: string, err?: unknown) => void = console.error): void {
   const ref = randomBytes(4).toString("hex");
-  if (isConnectionRefusal(err)) {
+  if (isConnectionRefusal(err) || isPoolAcquireTimeout(err)) {
     log(`[cobblr-api] busy ref=${ref} ${req.method} ${req.originalUrl}: ${err.message}`);
     res.setHeader("Retry-After", "2");
     res.status(503).json({ error: { code: "busy", message: "This server is busy just now. Try again in a moment.", ref } });

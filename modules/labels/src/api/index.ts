@@ -16,6 +16,18 @@ import { sizesRouter } from "./sizes.js";
 import { autoflushRouter } from "./autoflush.js";
 import { actionLabelsRouter } from "./action-labels.js";
 import { registerLabelsHandlers } from "./handlers.js";
+import { registerChangeQueuedLabelAction } from "./change-queued-label-action.js";
+import { registerRemoveQueuedLabelAction } from "./remove-queued-label-action.js";
+import { registerSaveSizeAction } from "./save-size-action.js";
+import { registerRemoveSizeAction } from "./remove-size-action.js";
+
+registerRemoveSizeAction();
+
+registerSaveSizeAction();
+
+registerRemoveQueuedLabelAction();
+
+registerChangeQueuedLabelAction();
 
 registerLabelsHandlers();
 

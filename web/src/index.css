@@ -18,6 +18,7 @@
     --c-muted: 61 68 81;      /* slate-500 #3D4451 — secondary text */
     --c-faint: 95 101 114;    /* #5F6572 — faint text: 4.5:1 on the canvas (#6B7280 was 3.75) */
     --c-line: 200 204 210;    /* slate-200 #C8CCD2 — borders */
+    --c-danger: 161 69 48;    /* ember-500: validation and error text */
     --c-accent: 111 92 68;    /* cobble-600 #6F5C44 — links / focus */
   }
 
@@ -47,6 +48,7 @@
     --c-content: 244 239 229; /* mortar-100 #F4EFE5 — primary text */
     --c-muted: 180 186 194;   /* #B4BAC2 — secondary (matches the muted-lift below) */
     --c-faint: 167 172 181;   /* #A7ACB5 — faint: 4.5:1 on a dark card (#9CA2AC was 4.0) */
+    --c-danger: 234 165 144;  /* ember-200: readable on dark pages and cards */
     --c-accent: 194 167 130;  /* #C2A782 — links on dark: 4.5:1 on a card (cobble-300 was 4.1) */
   }
 
@@ -65,6 +67,7 @@
     --c-content: 244 239 229;
     --c-muted: 180 186 194;
     --c-faint: 167 172 181;
+    --c-danger: 234 165 144;  /* ember-200: readable on dark pages and cards */
     --c-accent: 194 167 130;
     color-scheme: dark;
   }
@@ -102,8 +105,12 @@
   /* A <select> is as wide as its longest option, so one long workspace
      name ran Your notifications 80px past a phone (#5991). It never grows
      past its row; the chosen option's text is cut inside the box instead,
-     and any explicit width utility still wins. */
-  select { max-width: 100%; }
+     and any explicit width utility still wins. WebKit still counts that cut
+     text as page width, so a long workspace name chosen in the picker
+     scrolled an iPhone 116px sideways (#7416): paint containment clips it
+     there. Not layout containment, which drops the select's baseline; the
+     select's own border, outline and focus ring are outside what it clips. */
+  select { max-width: 100%; contain: paint; }
   body {
     /* A word too long for its box breaks rather than pushing the page wider
        than a phone: an action's description listing
@@ -284,12 +291,14 @@
    Cards are now the lighter slate-900 (#334155). The slate shades
    components pair into their `dark:` text variant were tuned for the
    old near-black cards and read too faint on the lighter surface
-   (138 spots use dark:text-slate-500 alone). Lift the muted tiers
-   here instead of touching every component. Unlayered, so it beats
+   (138 spots use dark:text-slate-500 alone). Share the readable tokens
+   so explicit variants and semantic text cannot drift. Unlayered, so it beats
    Tailwind's own layered `dark:` utilities. */
-html.dark .dark\:text-slate-500 { color: #9CA2AC; }
-html.dark .dark\:text-slate-400 { color: #B4BAC2; }
-html.dark .dark\:text-slate-600 { color: #6B7280; }
+html.dark .dark\:text-slate-500 { color: rgb(var(--c-faint)); }
+html.dark .dark\:text-slate-400 { color: rgb(var(--c-muted)); }
+html.dark .dark\:text-slate-600 { color: rgb(var(--c-faint)); }
+
+html.dark .dark\:text-cobble-300 { color: rgb(var(--c-accent)); }
 
 /* ── Dark-mode line lift ─────────────────────────────────────────
    The same for the borders components pair (500 spots use

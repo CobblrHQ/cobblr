@@ -24,23 +24,21 @@
 //                              webhook receiver, health probe, internal/boot,
 //                              auth callback, media stream, code minting, ...
 //
-// Baseline: scripts/ai-coverage-baseline.json freezes the KNOWN existing
-// unclassified routes (predate this rule). The lint is GREEN today and FAILS on
-// any NEW unclassified mutating route. Shrink the baseline, never grow it — the
-// way to shrink it is to add an AI-REACH marker to a baselined route.
+// No baseline: every unclassified route it grandfathered was classified by
+// #7236, so a mutating route with no marker fails outright, and there is no
+// list to add one to.
 //
 //   cd <repo> && npx tsx scripts/lint-ai-coverage.ts
-//   cd <repo> && npx tsx scripts/lint-ai-coverage.ts --write-baseline   # regenerate
 //
 // Scope: modules/*/src/api/ (where module capabilities land). Platform routes
 // (api/src/routes) are out of scope for now — noted for a follow-up.
 
-import { readdirSync, statSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiDirs } from "./lib/manifest-sources.ts";
 
-const MODULES_DIR = "modules";
-const BASELINE_PATH = "scripts/ai-coverage-baseline.json";
+const ROOT = process.env.COBBLR_LINT_ROOT || ".";
+const MODULES_DIR = join(ROOT, "modules");
 const LOOKBACK = 8;
 // A route call on any `*Router` variable (the repo convention — codesRouter,
 // partsRouter, …). Whitespace/newlines between "(" and the path are allowed so
@@ -64,7 +62,6 @@ interface Finding {
   path: string;
   line: number;
 }
-type BaselineEntry = Omit<Finding, "line">;
 
 function walk(dir: string, out: string[]): void {
   for (const name of readdirSync(dir)) {
@@ -111,30 +108,7 @@ for (const m of readdirSync(MODULES_DIR)) {
 }
 findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
-const key = (v: BaselineEntry) => `${v.file}::${v.method}::${v.path}`;
-
-if (process.argv.includes("--write-baseline")) {
-  const entries: BaselineEntry[] = findings.map((f) => ({ file: f.file, method: f.method, path: f.path }));
-  writeFileSync(BASELINE_PATH, JSON.stringify(entries, null, 2) + "\n");
-  console.log(`wrote ${entries.length} entr${entries.length === 1 ? "y" : "ies"} to ${BASELINE_PATH}`);
-  process.exit(0);
-}
-
-const baseline: BaselineEntry[] = existsSync(BASELINE_PATH)
-  ? (JSON.parse(readFileSync(BASELINE_PATH, "utf8")) as BaselineEntry[])
-  : [];
-const baselined = new Set(baseline.map(key));
-const fresh = findings.filter((v) => !baselined.has(key(v)));
-const stale = baseline.filter((b) => !findings.some((v) => key(v) === key(b)));
-
-console.log(
-  `ai-coverage lint: ${findings.length} unclassified mutating route(s), ${findings.length - fresh.length} baselined, ${fresh.length} NEW`,
-);
-if (stale.length > 0) {
-  console.log(
-    `  (${stale.length} baseline entr${stale.length === 1 ? "y is" : "ies are"} stale — route gone or now classified; prune with --write-baseline)`,
-  );
-}
+console.log(`ai-coverage lint: ${findings.length} unclassified mutating route(s)`);
 if (badReasons.length > 0) {
   console.error(`\n✗ AI-REACH: exempt without a reason the owner would agree with:\n`);
   for (const v of badReasons) console.error(`  ${v.file}:${v.line} — ${v.method.toUpperCase()} ${v.path}: ${v.why}`);
@@ -143,9 +117,9 @@ Confirm, money, the device wire, a file stream) or which action/tool reaches the
 same thing. If none applies, the route needs an action, not an exemption.`);
   process.exit(1);
 }
-if (fresh.length > 0) {
-  console.error(`\n✗ NEW mutating route(s) with no AI-reachability classification:\n`);
-  for (const v of fresh) console.error(`  ${v.file}:${v.line} — ${v.method.toUpperCase()} ${v.path}`);
+if (findings.length > 0) {
+  console.error(`\n✗ Mutating route(s) with no AI-reachability classification:\n`);
+  for (const v of findings) console.error(`  ${v.file}:${v.line} — ${v.method.toUpperCase()} ${v.path}`);
   console.error(`\nA new module operation must be reachable by the AI (Ask Cobb / MCP) or say
 why not. Add a comment within ${LOOKBACK} lines above the route:
   AI-REACH: action <id>   — expose it as an action (entity or workspace) so Cobb
@@ -154,8 +128,7 @@ why not. Add a comment within ${LOOKBACK} lines above the route:
   AI-REACH: crud          — it's a kind's create/update/delete endpoint;
   AI-REACH: exempt <why>  — deliberately not AI-reachable (webhook, health,
                             internal, auth, media, minting), with a reason.
-Do NOT add it to the baseline — the baseline only grandfathers routes that
-predate this rule. See docs/architecture/wires-and-bundles.md (actions, and the
+There is no baseline to add it to. See docs/architecture/wires-and-bundles.md (actions, and the
 workspace scope) and docs/modules/mcp-server.md (AI reachability).`);
   process.exit(1);
 }

@@ -46,6 +46,7 @@ import {
   themeWrapperStyle,
 } from "../lib/appTheme";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { useCapabilitiesFor } from "../lib/can";
 
 interface Caps {
   role: string;
@@ -75,11 +76,7 @@ export function AppPlayerPage() {
     queryFn: () => api.getApp(slug!, appSlug!),
     enabled: !!slug && !!appSlug,
   });
-  const caps = useQuery({
-    queryKey: ["my-capabilities", slug],
-    queryFn: () => api.getMyCapabilities(slug!),
-    enabled: !!slug,
-  });
+  const caps = useCapabilitiesFor(slug);
   usePageTitle(app.data?.name ?? "App");
 
   if (!slug || !appSlug) return null;
@@ -142,7 +139,7 @@ export function AppPlayerPage() {
     ) : (
       <div className="space-y-5">
         {page.blocks.map((block, i) => (
-          <BlockRenderer key={i} slug={slug} appSlug={appSlug} block={block} caps={caps.data} theme={theme} />
+          <BlockRenderer key={i} slug={slug} appSlug={appSlug} block={block} caps={caps ?? undefined} theme={theme} />
         ))}
       </div>
     );
@@ -157,7 +154,7 @@ export function AppPlayerPage() {
   // dual-access (owner/admin) users. App-only users just get Exit + Log
   // out; the standalone look never strands anyone without a way out.
   if (theme) {
-    const isAdmin = caps.data?.all === true;
+    const isAdmin = caps?.all === true;
     const ff = fontFaceCss(theme);
     return createPortal(
       <OverlayLayer className="z-50 overflow-y-auto" style={themeWrapperStyle(theme)}>
@@ -632,18 +629,14 @@ function RecordView({
   // doesn't hold, so a worker never sees a button that 403s. owner/admin
   // see everything (the server enforces invoke regardless). Non-gated
   // actions always show.
-  const caps = useQuery({
-    queryKey: ["my-capabilities", slug],
-    queryFn: () => api.getMyCapabilities(slug),
-    enabled: !!slug,
-  });
+  const caps = useCapabilitiesFor(slug);
   const grantable = useQuery({
     queryKey: ["grantable-actions", slug],
     queryFn: () => api.listGrantableActions(slug),
     enabled: !!slug,
   });
-  const isPriv = caps.data?.all === true;
-  const held = new Set(caps.data?.grants ?? []);
+  const isPriv = caps?.all === true;
+  const held = new Set(caps?.grants ?? []);
   const excludeActionIds = isPriv
     ? undefined
     : (grantable.data?.items ?? [])

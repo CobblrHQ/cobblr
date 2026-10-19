@@ -56,7 +56,12 @@ export function registerRenewDocumentAction(): void {
     let created = false;
     let expiryTouched = false;
     try {
-      const result = await db.transaction().execute(async tx => {
+      // The second tap waits HERE, holding none of the workspace's
+      // connections (#7326). Waiting inside the transaction held one: with
+      // both taps holding theirs, the first one's reads of the car could not
+      // get a connection, it failed, and so did the second, and no term was
+      // paid. The lock inside the transaction stays for any other writer.
+      const result = await platform().exclusive.serial(`core-maintenance.renewal:${ctx.orgId}:${baseKind}:${d.record_id}:${type.expiryField}`, () => db.transaction().execute(async tx => {
         // A car without a schedule has no row to lock yet. Both uploads must
         // take the same lock before deciding to create its first schedule.
         await sql`select pg_advisory_xact_lock(hashtext(${`${baseKind}:${d.record_id}:${type.expiryField}`}))`.execute(tx);
@@ -89,7 +94,7 @@ export function registerRenewDocumentAction(): void {
         const renewal = await renewSchedule(tx, ctx.orgId, ctx.userId, schedule, { new_expiry: d.new_expiry, expected_expiry: d.previous_expiry, cost_cents, currency: d.currency, reference: d.reference });
         await platform().vault.link(ctx.orgId, ctx.userId!, filed.fileId, { kind: "core-maintenance:term", id: renewal.entry.id });
         return { ...renewal, original_expiry: previous, created_schedule: created, old_binding: oldBinding };
-      });
+      }));
       return { ok: true, summary: `${type.label} renewed to ${d.new_expiry}. The original is in your Vault.`, result: { entry_id: result.entry.id, schedule_id: result.entry.schedule_id, vault_file_id: filed!.fileId, folder_id: filed!.folderId, folder_name: filed!.folderName, new_expiry: d.new_expiry }, before: {
         record_kind: d.record_kind, record_id: d.record_id, expiry_field: type.expiryField, original_expiry: previous,
         created_schedule: result.created_schedule, schedule_was: result.was, occurrence: result.occurrence, old_binding: result.old_binding,

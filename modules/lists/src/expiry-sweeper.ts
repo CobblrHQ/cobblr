@@ -268,6 +268,8 @@ export async function visitWorkspace(orgId: string, raw: unknown, now: Date = ne
           userId,
           eventType: "lists.expiring",
           triggeredBy: "schedule",
+          subjects: lines.map((l) => ({ kind: "inventory:part", id: l.id, question: "expiring", line: `**${l.name}** — ${l.tone}` })),
+          subjectDay: arrivedEverywhere(now),
           message: digest.message,
           card: digest.card,
           actions: digest.actions,

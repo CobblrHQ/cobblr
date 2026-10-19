@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A surface the app shell always mounts (what AppLayout renders, or a rail tab) reads an opt-in module's routes only after checking the module is on (useEnabledModules or the nav's enabledNames), or says module-on: and why.
+// A surface the app shell always mounts (what AppLayout renders, or a rail tab), or a module's page reading another opt-in module, reads that module's routes only after checking the module is on (useEnabledModules or the nav's enabledNames), or says module-on: and why.
 //
 // THE BUG THIS PREVENTS. Ask Cobb opened on Pinned in a fresh workspace, which read Knowledge (off) and got 409, failing the nightly shell walk at every width (#5142, 2026-10-08)
 //
@@ -14,13 +14,26 @@
 // A read that is safe anyway says `module-on: <why>` on the call's line or
 // the one above.
 //
-// THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Only the shell: a module's
-// own pages render only when the module is on (ModuleOffGate), so the 157
-// digifab helpers called from digifab's pages are not judged. QuickAccess
-// already gated its Knowledge read on enabledNames and passes; PinnedTab, a
-// rail tab mounted for every workspace, did not.
+// AND A MODULE'S PAGE THAT READS ANOTHER ONE (#7519). A module's own pages
+// render only when the module is on (ModuleOffGate), so the 157 digifab
+// helpers called from digifab's pages are not judged. But a page of one
+// module that reads a second opt-in module is: Digital Fabrication's New
+// print job form read Inventory's parts and Builds' builds in a workspace with
+// both off, a 409 each on every open. So in any file under web/src that reads
+// two or more opt-in modules, the one it reads most is its own, and every
+// other one's read checks that module (`.has("<module>")`, as
+// useEnabledModules gives it) or says `module-on: <why>`.
 //
-// PROVED RED on PinnedTab.tsx before its read was gated (#5142).
+// THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. A file reading one opt-in
+// module is that module's page, behind its gate. QuickAccess already gated
+// its Knowledge read on enabledNames and passes; PinnedTab, a rail tab
+// mounted for every workspace, did not. A cutter's station records a roll
+// only for a cut that was planned on Inventory's roll stock, so its read
+// says module-on rather than asking.
+//
+// PROVED RED on PinnedTab.tsx before its read was gated (#5142), and on
+// DigifabPage.tsx, LaserLayout.tsx, LargeFormatStation.tsx, kiln.tsx and
+// CutterStation.tsx before theirs were (#7519).
 //
 //   npx tsx scripts/lint-shell-reads-wait-for-their-module.ts   (pnpm lint shell-reads-wait-for-their-module)
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -115,10 +128,34 @@ const OPT_IN = optInModules();
 const HELPERS = helperModules();
 const SHELL = shellFiles();
 
+/** A module's page reading another opt-in module: every read past the file's
+ *  own (the module it reads most) checks that module is on. */
+function crossModule(file: string, src: string): Violation[] {
+  const out: Violation[] = [];
+  const reads = new Map<string, number>();
+  for (const m of src.matchAll(/\bapi\.([A-Za-z_]\w*)\(/g)) {
+    const mod = HELPERS.get(m[1]!);
+    if (mod && OPT_IN.has(mod)) reads.set(mod, (reads.get(mod) ?? 0) + 1);
+  }
+  if (reads.size < 2) return out;
+  const own = [...reads.entries()].sort((a, b) => b[1] - a[1])[0]![0];
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/module-on: \S/.test(line) || /module-on: \S/.test(lines[i - 1] ?? "")) continue;
+    for (const m of line.matchAll(/\bapi\.([A-Za-z_]\w*)\(/g)) {
+      const mod = HELPERS.get(m[1]!);
+      if (!mod || mod === own || !OPT_IN.has(mod) || src.includes(`.has("${mod}")`)) continue;
+      out.push({ file, line: i + 1, what: `api.${m[1]}() reads ${mod} from a page of ${own}, and a workspace can have ${own} on with ${mod} off` });
+    }
+  }
+  return out;
+}
+
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
-  if (!SHELL.has(file)) return out;
+  if (!SHELL.has(file)) return crossModule(file, src);
   if (/\buseEnabledModules\(|\benabledNames\b|\benabledModules\b/.test(src)) return out;
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {

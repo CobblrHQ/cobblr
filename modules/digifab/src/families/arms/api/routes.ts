@@ -11,6 +11,8 @@ import { asyncHandler, badBody, requireRole } from "../../../api/util.js";
 import { ArmRefusal } from "../station.js";
 import { addTypedProgram, editProgram, readArm, readFamily, refreshArm, saveCompatibility, setMaintenance, setTooling, setupArm } from "../store.js";
 import { sendArmCommand } from "../control.js";
+import { cancelUpdate, checkUpdateStep, startUpdate, verifyUpdate } from "../updates.js";
+import { cancelCopy, checkCopyItem, copyProgram, programChanges, releaseProgram, restoreAtStation, setBackupSchedule, takeBackup, testRestore } from "../programs.js";
 export const armsRouter = Router({ mergeParams: true });
 const Id = z.string().uuid();
 function refuse(res: Response, e: unknown) {
@@ -117,4 +119,79 @@ armsRouter.post("/:machineId/runs", asyncHandler(async (req, res) => {
 armsRouter.post("/runs/:id/end", asyncHandler(async (req, res) => {
  if (!(await requireCapability(req, res, "digifab:operate"))) return;
  try { res.json(await endRunByPerson(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.id), req.body, sessionUser(req)?.id ?? null)); } catch (e) { refuse(res, e); }
+}));
+// What changed in a revision since the last one released on its arm, file by file.
+armsRouter.get("/programs/:id/changes", asyncHandler(async (req, res) => {
+ try { res.json(await programChanges(tenantDb(req), Id.parse(req.params.id))); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/programs/:id/release", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await releaseProgram(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, Id.parse(req.params.id))); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/programs/:id/copy", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(201).json(await copyProgram(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, { ...req.body, program_id: req.params.id })); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/copies/:id/check", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await checkCopyItem(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, { ...req.body, copy_id: req.params.id })); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/copies/:id/cancel", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await cancelCopy(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, Id.parse(req.params.id))); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/:machineId/backups", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(201).json(await takeBackup(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, Id.parse(req.params.machineId))); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.patch("/:machineId/backup-schedule", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await setBackupSchedule(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, Id.parse(req.params.machineId), req.body)); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/backups/:id/test-restore", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: releasing a program for production, copying it to another arm and an arm's backups are the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.json(await testRestore(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, { ...req.body, backup_id: req.params.id })); } catch (e) { refuse(res, e); }
+}));
+// AI-REACH: exempt restoring an arm's own programs changes what it runs: only a person at its authorized station, with the arm stopped, never an assistant or a wire.
+armsRouter.post("/:machineId/restore", asyncHandler(async (req, res) => {
+ if (!(await requireCapability(req, res, "digifab:operate"))) return;
+ try { res.json(await restoreAtStation(tenantDb(req), tenantContext(req).org.id, Id.parse(req.params.machineId), req.body, sessionUser(req)!.id)); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/:machineId/updates", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: a guided update of an arm's controller software is the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(201).json(await startUpdate(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, Id.parse(req.params.machineId), req.body)); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/updates/:id/check", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: a guided update of an arm's controller software is the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(200).json(await checkUpdateStep(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, { ...req.body, update_id: req.params.id })); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/updates/:id/verify", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: a guided update of an arm's controller software is the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(200).json(await verifyUpdate(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, Id.parse(req.params.id))); } catch (e) { refuse(res, e); }
+}));
+// AI-ACTION: digifab:arm-record
+armsRouter.post("/updates/:id/cancel", asyncHandler(async (req, res) => {
+ // ADMIN-ONLY: a guided update of an arm's controller software is the admin tier's on the page, at every door
+ if (!(await requireCapability(req, res, "digifab:arm-record"))) return;
+ try { res.status(200).json(await cancelUpdate(tenantDb(req), tenantContext(req).org.id, sessionUser(req)!.id, Id.parse(req.params.id))); } catch (e) { refuse(res, e); }
 }));

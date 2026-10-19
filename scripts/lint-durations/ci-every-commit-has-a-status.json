@@ -4,5 +4,6 @@
   "ms": 200,
   "recorded": "2026-10-01",
   "source": "replaces lint:ci-paths-mirror (docs-only.yml retired)",
-  "readMB": 0.1
+  "readMB": 0.1,
+  "readTreeMB": 49.5
 }

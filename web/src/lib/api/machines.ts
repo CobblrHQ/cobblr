@@ -25,6 +25,58 @@ export interface Machine {
   units_not_named?: number;
   /** On a unit: the record it is one of. */
   unit_of?: { id: string; name: string } | null;
+  /** What it runs: reported by its driver or typed, and when last seen (#6887). */
+  firmware_version?: string | null;
+  firmware_source?: "reported" | "typed" | null;
+  firmware_seen_at?: string | null;
+  software_version?: string | null;
+  software_source?: "reported" | "typed" | null;
+  software_seen_at?: string | null;
+  controller?: string | null;
+}
+
+/** One version as the versions view reads it: `fresh` is false when it is
+ *  missing or nobody has seen it lately, and then it never counts current. */
+export interface MachineVersionReading {
+  version: string | null;
+  source: "reported" | "typed" | null;
+  seen_at: string | null;
+  fresh: boolean;
+}
+
+export type MachineVersionStatus = "current" | "behind" | "unknown";
+
+export interface MachineVersionCohort {
+  cohort: string;
+  label: string;
+  target: { firmware_target: string | null; software_target: string | null } | null;
+  machines: number;
+  current: number;
+  behind: number;
+  unknown: number;
+  down_for_repair: number;
+  summary: string;
+  versions: Array<{ field: "firmware" | "software"; version: string; machines: number }>;
+  items: Array<{
+    id: string;
+    name: string;
+    state: string | null;
+    serial_number: string | null;
+    where: string | null;
+    count: number;
+    status: MachineVersionStatus | null;
+    down_for_repair: boolean;
+    firmware: MachineVersionReading;
+    software: MachineVersionReading;
+  }>;
+}
+
+export interface MachineVersionFleet {
+  as_of: string;
+  location_id: string | null;
+  totals: { machines: number; current: number; behind: number; unknown: number; down_for_repair: number };
+  cohorts: MachineVersionCohort[];
+  places: Array<{ id: string; name: string }>;
 }
 
 export interface MachineUnit {
@@ -55,6 +107,12 @@ export const machinesApi = {
     });
     return { ...walked, gone_count };
   },
+  /** The versions view: this collection's machines by cohort, against each target. */
+  getMachineVersions: (slug: string, instance?: string, locationId?: string | null) =>
+    request<MachineVersionFleet>("GET", `${primaryBase(slug, "machines/machines", instance)}/versions${locationId ? `?location_id=${encodeURIComponent(locationId)}` : ""}`),
+  /** Set (or, with empty values, clear) the version one cohort should run. Admins only. */
+  setMachineVersionTarget: (slug: string, body: { cohort: string; firmware_target?: string | null; software_target?: string | null }, instance?: string) =>
+    request<{ ok: true; summary: string }>("POST", `${primaryBase(slug, "machines/machines", instance)}/version-targets`, body),
   getMachine: (slug: string, id: string, instance?: string) =>
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>

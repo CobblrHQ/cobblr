@@ -4,7 +4,7 @@
 // and extracts the thumbnail; "send" creates a normal job that uploads those
 // bytes to the chosen printer/pool (the existing send+poll path).
 
-import { isLayoutFile } from "../laser-plans.js";
+import { isLayoutFile } from "../sheet-layout.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";

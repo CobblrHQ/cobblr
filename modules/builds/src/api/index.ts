@@ -14,6 +14,36 @@ import { registerBuildsActionHandlers } from "./action-handlers.js";
 import { asyncHandler } from "./util.js";
 import { sessionUser, tenantContext } from "../db.js";
 import { searchComponents } from "../component-search.js";
+import { registerAddComponentAction } from "./add-component-action.js";
+import { registerRemoveComponentAction } from "./remove-component-action.js";
+import { registerAddStepAction } from "./add-step-action.js";
+import { registerChangeStepAction } from "./change-step-action.js";
+import { registerRemoveStepAction } from "./remove-step-action.js";
+import { registerLogStepTimeAction } from "./log-step-time-action.js";
+import { registerLogStepCountAction } from "./log-step-count-action.js";
+import { registerPlanBuildAction } from "./plan-build-action.js";
+import { registerChangePlanAction } from "./change-plan-action.js";
+import { registerRemovePlanAction } from "./remove-plan-action.js";
+
+registerRemovePlanAction();
+
+registerChangePlanAction();
+
+registerPlanBuildAction();
+
+registerLogStepCountAction();
+
+registerLogStepTimeAction();
+
+registerRemoveStepAction();
+
+registerChangeStepAction();
+
+registerAddStepAction();
+
+registerRemoveComponentAction();
+
+registerAddComponentAction();
 import { registerSetSubAssemblySourceAction } from "./set-sub-assembly-source-action.js";
 
 registerSetSubAssemblySourceAction();

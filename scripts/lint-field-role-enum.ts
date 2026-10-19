@@ -14,9 +14,9 @@
 import { readFileSync } from "node:fs";
 import { globSync } from "node:fs";
 
-const CONTRACT = "packages/platform-contract/src/index.ts";
-// The values are declared in the vocabulary file; the schema over them in the
-// index (zod stays out of what a browser page loads).
+const CONTRACT = "packages/platform-contract/src/entity-fields.ts";
+// The values are declared in the vocabulary file; the schema over them in
+// entity-fields.ts (zod stays out of what a browser page loads).
 const VOCAB = "packages/platform-contract/src/field-vocabulary.ts";
 
 // A zod enum literal that lists the field-role values by hand. Matches

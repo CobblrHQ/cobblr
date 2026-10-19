@@ -29,11 +29,14 @@ import { announceNotificationChange } from "./notification-stream.js";
 // Registers the approval request as a subject whose cards settle; imported
 // here so every inbox read has it, whatever else the process has loaded.
 import "./approval-subject.js";
+import "./ai-held-change-subject.js";
 import { hasAuthEmailSender, sendAuthEmail } from "./hosted-seams.js";
 import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trigger.js";
 import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
-import type { NotificationDestination } from "@cobblr/platform-contract";
+import { arrivedEverywhere, type AttentionDeclaration, type AttentionSubject, type NotificationDestination } from "@cobblr/platform-contract";
+import { narrowToWhatIsNew, subjectClaimKey } from "./attention-subject.js";
+import { randomUUID } from "node:crypto";
 import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
 import { fallbackChannels } from "./dispatch-fallback.js";
 import {
@@ -78,7 +81,7 @@ function meetsThreshold(
   return PRIORITY_ORDER[notifPriority] >= PRIORITY_ORDER[threshold];
 }
 
-export type DispatchParams = NotificationDestination & {
+export type DispatchParams = NotificationDestination & AttentionDeclaration & {
   idempotencyKey?: string;
   orgId: string;
   userId: string;
@@ -92,19 +95,6 @@ export type DispatchParams = NotificationDestination & {
    *  about urgency lands in the standard "I care if I'm at the
    *  computer" tier. */
   priority?: NotificationPriority;
-  /** What CAUSED this: somebody doing something (`activity`, the default), or a
-   *  date arriving (`schedule`).
-   *
-   *  A second dial beside priority, and a different question. Priority is "how
-   *  much does this interrupt"; this is "was it news, or was it the calendar".
-   *  People want those delivered on different cadences on the SAME channel —
-   *  chat as it happens, everything due today as one morning list — and no
-   *  priority bar can express that, because both are `normal`.
-   *
-   *  Set `schedule` when the notification exists because a date or threshold was
-   *  reached and was knowable in advance: expiring today, service due, running
-   *  low. Leave it alone for anything that just happened. */
-  triggeredBy?: TriggeredBy;
   payload?: unknown;
   /** What the reader can do about it, offered right in the message. Channels
    *  render them however they can; one that cannot ignores them, so `message`
@@ -152,11 +142,28 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     return { notificationId: "", deliveredVia: [] };
   }
 
+  if (p.triggeredBy === "schedule" && (p.subjects?.length ?? 0) === 0) {
+    // The type asks for the list; an empty one is a producer that has nothing
+    // to say about, and saying it anyway is how the same fact arrives twice.
+    throw new Error(`a scheduled notification (${p.eventType}) names no subject`);
+  }
+  // What this person was already told today is not said again, by whoever is
+  // asking: a subject is claimed once, before the notice is written, so two
+  // producers at once cannot both win. All claimed -> nothing to say; some
+  // claimed -> the notice says only what is new (one message, each thing once).
+  const notificationId = randomUUID();
+  if (p.subjects?.length) {
+    const day = p.subjectDay ?? arrivedEverywhere(new Date());
+    const claimed = await claimSubjects(p.orgId, p.userId, day, p.subjects, notificationId);
+    if (claimed.fresh.length === 0) return { notificationId: claimed.toldIn ?? "", deliveredVia: [] };
+    if (claimed.fresh.length < p.subjects.length) p = narrowToWhatIsNew(p, claimed.fresh);
+  }
   // 1. Insert the notification row first so it exists in the DB even
   //    if every channel fails. delivered_via starts empty.
   const inserted = await meta
     .insertInto("notifications")
     .values({
+      id: notificationId,
       dedupe_key: p.idempotencyKey ?? null,
       org_id: p.orgId,
       user_id: p.userId,
@@ -965,8 +972,42 @@ export async function pruneRead(userId: string): Promise<number> {
   return gone.length;
 }
 
+/** Claim each subject for this person on this day. `fresh` are the subjects
+ *  nobody had claimed (this notice is now the one that says them); `toldIn` is
+ *  the notice that already said the rest. */
+async function claimSubjects(
+  orgId: string,
+  userId: string,
+  day: string,
+  subjects: readonly AttentionSubject[],
+  notificationId: string,
+): Promise<{ fresh: AttentionSubject[]; toldIn: string | null }> {
+  const byKey = new Map(subjects.map((s) => [subjectClaimKey(s), s]));
+  const won = await meta
+    .insertInto("notification_subject_claims")
+    .values([...byKey.keys()].map((subject) => ({ org_id: orgId, user_id: userId, day, subject, notification_id: notificationId })))
+    .onConflict((oc) => oc.columns(["org_id", "user_id", "day", "subject"]).doNothing())
+    .returning("subject")
+    .execute();
+  const wonKeys = new Set(won.map((r) => r.subject));
+  const fresh = [...byKey].filter(([k]) => wonKeys.has(k)).map(([, s]) => s);
+  if (fresh.length === byKey.size) return { fresh, toldIn: null };
+  const told = await meta
+    .selectFrom("notification_subject_claims")
+    .select("notification_id")
+    .where("org_id", "=", orgId).where("user_id", "=", userId).where("day", "=", day)
+    .where("subject", "in", [...byKey.keys()].filter((k) => !wonKeys.has(k)))
+    .limit(1)
+    .executeTakeFirst();
+  return { fresh, toldIn: told?.notification_id ?? null };
+}
+
 function sometimesPrune(userId: string): void {
   if (Math.random() >= 0.05) return;
+  // Claims are only read for today; a week is long past any day a producer names.
+  void sql`delete from notification_subject_claims where claimed_at < now() - interval '7 days'`
+    .execute(meta)
+    .catch((err) => console.error("[notifications] claim prune failed:", (err as Error).message));
   void pruneRead(userId).catch((err) => console.error("[notifications] retention prune failed:", (err as Error).message));
 }
 

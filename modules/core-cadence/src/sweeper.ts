@@ -262,6 +262,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
                 // clock talking, so it belongs with the rest of the day's
                 // standing advice rather than as an interruption.
                 triggeredBy: "schedule",
+                subjects: buyLess.map((b) => ({ kind: b.kind, id: b.id, question: "buy-less", line: `${b.name} (${b.pct}% wasted)` })),
                 message,
                 module: "core-cadence",
                 payload: { count: buyLess.length },

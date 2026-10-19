@@ -4,5 +4,6 @@
   "ms": 3700,
   "recorded": "2026-09-22",
   "source": "by hand on the dev box under load (2026-09-22)",
-  "readMB": 4.4
+  "readMB": 4.4,
+  "readTreeMB": 44.1
 }

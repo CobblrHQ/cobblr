@@ -1,9 +1,9 @@
 // sales:add-line — put a line on an existing order.
 //
 // create-order builds one with its lines and fulfill-order closes it; adding to
-// an order already raised had no door. Same shape, and the same reasoning, as
-// purchases:add-line — including leaving removal to the app, because an order
-// is a financial record.
+// an order already raised had no door. Same shape as purchases:add-line.
+// Removing (sales:remove-line, below) and changing a line always ask first,
+// because an order is a financial record.
 
 import { platform, requireActionEntity } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";

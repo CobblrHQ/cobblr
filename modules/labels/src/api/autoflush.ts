@@ -75,7 +75,9 @@ const PutBody = z.object({
   client_fired: z.boolean().default(false),
 });
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+// AI-REACH: exempt — decides whether queued labels print by themselves at a
+// printer; what prints unattended, on paper and a roll that costs money, is a
+// person's call at the printer
 autoflushRouter.put(
   "/",
   asyncHandler(async (req, res) => {

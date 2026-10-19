@@ -28,6 +28,7 @@
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { manifestSources } from "./lib/manifest-sources.ts";
+import { bracedBody, topLevelKeys } from "./lib/braced-body.ts";
 
 const MODULES = "modules";
 const OPEN_MARK = /ARGS-OPEN:/;
@@ -85,8 +86,12 @@ function manifestActions(src: string): Array<{ id: string; handler: string | nul
     // Union of EVERY argsSchema in the action, not just the first: a block
     // that carried two (a real duplicate) once hid the second from this check.
     const declared = new Set<string>();
-    for (const schema of block.matchAll(/argsSchema:\s*\{([\s\S]*?)\n\s{6,8}\},/g)) {
-      for (const x of schema[1]!.matchAll(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*\{/gm)) declared.add(x[1]!);
+    // The schema's own braces end it, not an indentation: an action in a file
+    // of its own (src/actions/, #7382) closes at a different column than one
+    // in module.ts's array.
+    for (const at of block.matchAll(/argsSchema:\s*\{/g)) {
+      const body = bracedBody(block, at.index! + at[0].length - 1);
+      for (const x of topLevelKeys(body)) declared.add(x);
     }
     out.push({ id: m[1]!, handler, declared });
   }

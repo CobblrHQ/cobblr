@@ -122,6 +122,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   notifications: { travels: "never", why: PERSONAL },
   notification_subscriptions: { travels: "never", why: PERSONAL },
   notification_deferred: { travels: "never", why: PERSONAL },
+  notification_subject_claims: { travels: "never", why: "what a person was told today, by subject; it only stops the same thing being said twice in one day, and a restore starts a new day" },
   notification_audiences: { travels: "never", why: PERSONAL },
   workspace_notification_defaults: { travels: "never", why: "how members hear urgent and high events, a row naming the admin who set it; a restored workspace's admin sets it again in one choice on Who gets told" },
   share_links: { travels: "never", why: "a pairing with another workspace, holding the keys both sides sign with; a restored workspace shares again by inviting again" },

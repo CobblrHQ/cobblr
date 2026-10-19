@@ -2,10 +2,11 @@ import { countOf, quantityWithUnit } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NumberField, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
+import { useCan } from "../lib/can";
 const button =
   "inline-flex min-h-11 items-center justify-center rounded border border-line px-4 py-2 disabled:opacity-50";
 const control =
@@ -259,10 +260,16 @@ export function EmbroideryPage() {
   const [stationOffset, setStationOffset] = useState(0);
   // This screen's own credential, checked for anyone who may run a prepared
   // job at its station: an operator runs the work an admin prepared (#7173).
+  // Who may run a job at a station at all: an admin, an operator, or a member
+  // given Run machines (digifab:operate). Only they ask the station check; a
+  // member's screen holding a station credential never probes a permission it
+  // cannot have (#7510).
+  const operates = useCan("digifab:operate");
+  const runsMachines = admin || !!operates;
   const currentStation = useQuery({
     queryKey: ["embroidery-current-station", slug, machineId, station?.id, stationVersion],
     queryFn: () => api.embroideryStationCheck(slug, machineId!, { station_id: station!.id, token: station!.token }),
-    enabled: !!machineId && !!station,
+    enabled: !!machineId && !!station && runsMachines,
     retry: false,
   });
   const stations = useQuery({
@@ -300,9 +307,9 @@ export function EmbroideryPage() {
     enabled: !!machine?.config.asset_ref,
   });
   const authorized = !!station && !!currentStation.data?.authorized;
-  // Start, interruption and the outcome are the station's: an admin, or anyone
-  // the station check admits (it refuses those who may not run jobs at a station).
-  const runsAtStation = admin || !!currentStation.data;
+  // Start, interruption and the outcome are the station's: an admin, or someone
+  // who may run machines and whom the station check answered.
+  const runsAtStation = admin || (runsMachines && !!currentStation.data);
   const selectedHoop = machine?.config.hoops.find((h) => h.name === hoop),
     tooLarge =
       !!design &&
@@ -323,15 +330,17 @@ export function EmbroideryPage() {
     setNeedleUp(false);
     setVerdict("good");
   };
+  // Invalidated, never refetched by hand: an explicit refetch runs a query its
+  // own gate disables, so an operator's refresh asked for the admin's station
+  // list and met a refusal every time (#7509). Invalidation refetches only the
+  // queries this person's page has enabled.
+  const queryClient = useQueryClient();
   const refresh = async () => {
-    await Promise.all([
-      machines.refetch(),
-      designs.refetch(),
-      spools.refetch(),
-      runs.refetch(),
-      stations.refetch(),
-      ...(station ? [currentStation.refetch()] : []),
-    ]);
+    await Promise.all(
+      ["embroidery-machines", "embroidery-designs", "embroidery-spools", "embroidery-runs", "embroidery-stations", "embroidery-current-station"].map(
+        (key) => queryClient.invalidateQueries({ queryKey: [key, slug] }),
+      ),
+    );
   };
   const perform = async (work: () => Promise<unknown>, success: string) => {
     if (busy) return;

@@ -8,7 +8,7 @@ export const APPROVAL_MINUTES = 30;
 export const OWNERSHIP_MINUTES = 5;
 
 export interface Approval { revision: string | null; tooling: string; expires_at: Date; used_at: Date | null; revoked_at: Date | null }
-export interface ProgramNow { revision: string | null; missing_since: Date | null }
+export interface ProgramNow { revision: string | null; missing_since: Date | null; released_at: Date | null }
 
 /** (1) An approval starts one run of exactly what the person checked at the
  *  cell: this arm, this program revision, this tooling. Anything changed,
@@ -19,6 +19,7 @@ export function approvalRefusal(a: Approval, program: ProgramNow | null, tooling
  if (a.expires_at <= now) return "This approval expired. Check the cell and approve again.";
  if (!program || program.missing_since) return "The approved program is no longer on the controller. Read its programs and approve again.";
  if (program.revision !== a.revision) return "The program changed since it was approved. Approve the new revision at the cell.";
+ if (!program.released_at) return "This revision is not released for production. Review what changed in it and release it first.";
  if (tooling !== a.tooling) return "The arm's tooling changed since it was approved. Approve again with the tooling installed now.";
  return null;
 }

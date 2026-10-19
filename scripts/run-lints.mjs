@@ -18,7 +18,8 @@
 //   node scripts/run-lints.mjs --only isolation,docs
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
-import { readPathMs, readQuietMs, readRecordedReadMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
+import { readPathMs, readQuietMs, readRecordedReadMB, readRecordedReadTreeMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
+import { treeTextMB } from "./lib/tree-size.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,7 @@ import { lintCommand } from "./lib/lint-command.mjs";
 import { workingTreePaths } from "./lib/git-porcelain.mjs";
 import { fetchManifests, latestPasses, lintRoots, lintRootsKey, lintSalt, mergeManifest, rootIds, rootsUnchanged, verdictMode } from "./lib/lint-verdicts.mjs";
 import { record as recordVerdicts, recordShadow } from "./lib/verdict-cache.mjs";
-import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget } from "./lib/lint-budget.mjs";
+import { CEILING_MS, quietFor, judgeRun, ioPressure, IO_CONTENDED_AT, cpuPressure, CPU_CONTENDED_AT, overReadBudget, nearReadBudget, readLimitMB, growthOf, NEAR_READ_SHARE } from "./lib/lint-budget.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { EMBEDDED_PAYLOADS, PAYLOAD_READERS } from "./lib/embedded-payloads.mjs";
 import { tmpdir } from "node:os";
@@ -414,7 +415,19 @@ async function main() {
     }
     // The read budget: deterministic, so it is enforced on every run, contended
     // or not (lib/lint-budget.mjs). Under --record the reads become the record.
-    const overRead = record ? [] : overReadBudget(results, readRecordedReadMB());
+    // Each read budget grows with the tracked text tree since it was recorded (lib/lint-budget.mjs readLimitMB).
+    const treeNow = treeTextMB("HEAD", ROOT);
+    const growth = growthOf(treeNow, readRecordedReadTreeMB());
+    const overRead = record ? [] : overReadBudget(results, readRecordedReadMB(), growth);
+    // Near the line: said on every run, and written for the nightly's check (COBBLR_LINT_READS_OUT).
+    const nearRead = record ? [] : nearReadBudget(results, readRecordedReadMB(), NEAR_READ_SHARE, growth);
+    if (nearRead.length)
+      console.log(
+        `[lints] ${nearRead.length} lint(s) past ${Math.round(NEAR_READ_SHARE * 100)}% of their read budget (narrow what they read, or re-record with a reason):\n` +
+          nearRead.map((r) => `    ${r.name}  ${r.readMB.toFixed(1)} of ${r.limitMB.toFixed(1)} MB (recorded ${r.recordedMB ?? "none"})`).join("\n"),
+      );
+    if (process.env.COBBLR_LINT_READS_OUT)
+      writeFileSync(process.env.COBBLR_LINT_READS_OUT, JSON.stringify({ at: new Date().toISOString(), treeMB: treeNow, lints: results.map((r) => ({ name: r.name, ms: r.ms, readMB: r.readMB, limitMB: readLimitMB(readRecordedReadMB()[r.name], growth(r.name)) })), reused: reusedNames, near: nearRead, over: overRead }, null, 1));
     if (overRead.length) {
       console.error(
         `\n[lints] ✗ ${overRead.length} lint(s) over their read budget:\n` +
@@ -461,7 +474,8 @@ async function main() {
         return;
       }
       const source = `run-lints.mjs --record (${results.length} lints, ${(wall / 1000).toFixed(1)}s wall, ${concurrency} at a time)`;
-      for (const r of results) writeQuietMs(r.name, r.ms, source, undefined, undefined, r.readMB);
+      const recordTree = treeTextMB("HEAD", ROOT) ?? undefined;
+      for (const r of results) writeQuietMs(r.name, r.ms, source, undefined, undefined, r.readMB, recordTree);
       console.log(`[lints] recorded ${results.length} quiet baselines to scripts/lint-durations/`);
       if (scripts["lint:lint-durations"]) {
         const [again] = await runParallel([{ name: "lint:lint-durations", cmd: lintCommand(scripts["lint:lint-durations"]), cwd: ROOT }], { concurrency: 1 });

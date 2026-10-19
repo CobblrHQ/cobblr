@@ -1,13 +1,10 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { planResinPrint, readLoadedResinStock, resinStationKey } from "../resin-stock.js";
-import { reservedResin } from "../resin-prints.js";
 import { sql } from "kysely";
-import { libraryForJob } from "../laser-plans.js";
+import { libraryForJob } from "../sheet-layout.js";
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
-import { cncStationStock } from "../cnc-stock.js";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
 import { authorizeLaserStart, stationTokenHash } from "../laser-station.js";
@@ -16,7 +13,7 @@ import { LaserMaterialSchema, materialFromFields } from "../laser-material.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 import { machineStationsRouter } from "./machine-stations.js";
-import { familyOfStationKind, familyStartingAtStation } from "../core/families.js";
+import { familyOfReviewKind, familyOfStationKind, familyStartingAtStation, requireFamilyProcess } from "../core/families.js";
 
 export const stationsRouter = Router({ mergeParams: true });
 stationsRouter.use("/machines", machineStationsRouter);
@@ -100,7 +97,7 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const link = await db.selectFrom("digifab_device_links").select("machine_id").where("connection_id", "=", connection).where("remote_device_id", "=", device).executeTakeFirst();
   const machine = link?.machine_id ? await platform().entities.lookup(orgId, "machines:machine", link.machine_id) : null;
   const type = typeof machine?.fields.type === "string" ? machine.fields.type.trim() : "";
-  const processKind = driver?.printProcess === "resin" || driver?.printProcess === "large-format" ? driver.printProcess : null;
+  const processKind = driver?.printProcess === "fdm" ? "print" : driver?.printProcess === "resin" || driver?.printProcess === "large-format" ? driver.printProcess : null;
   // Known print processes keep the station and Stop reachable while the bridge is disconnected.
   const remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device);
   // A production test station is a bridge device of its own; it is read from the same device list, never a second call.
@@ -120,23 +117,12 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const cnc = screen_kind === "cnc" || ((kind === "cnc" || kind === null) && (!!finished?.cnc_setup || jobs.some(j => !!j.cnc_setup)));
   const job = (cnc ? finished : null) ?? jobs.find(j => j.status !== "queued") ?? jobs[0] ?? null;
   const library = job ? await libraryForJob(db, job) : null;
-  if (cnc) return void res.json({ kind: "cnc", screen_kind: "cnc", job, library: library ?? null, attention: attention ?? null, sheets: [], cncStock: await cncStationStock(orgId, typeof req.query.q === "string" ? req.query.q : undefined) });
+  if (cnc) return void res.json({ kind: "cnc", screen_kind: "cnc", job, library: library ?? null, attention: attention ?? null, sheets: [], ...await familyOfReviewKind("cnc")?.stationScreen?.(orgId, { q: typeof req.query.q === "string" ? req.query.q : undefined }) });
   if (!screen_kind) return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "cutter") return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "resin") {
-    let loaded: Awaited<ReturnType<typeof readLoadedResinStock>> = [];
-    let canStart = false, warning = "";
-    try {
-      loaded = await readLoadedResinStock(orgId, connection, device);
-      const plan = planResinPrint(library?.metadata ?? {}, loaded, await reservedResin(db, job?.id));
-      canStart = plan.canStart && job?.status === "queued" && !job.send_token && !job.remote_job_id; warning = job ? plan.warning : "";
-    } catch (error) { warning = error instanceof Error ? error.message : "Check the loaded resin stock."; }
-    const postprocess = await db.selectFrom("digifab_resin_prints as p").innerJoin("digifab_jobs as j", "j.id", "p.job_id")
-      .select(["p.job_id", "p.wash_done", "p.cure_done", "j.file_ref", "j.metadata"])
-      .where("p.connection_id", "=", connection).where("p.device_id", "=", device).where("p.phase", "=", "settled").where("j.outcome", "=", "good")
-      .where(eb => eb.or([eb("p.wash_done", "=", false), eb("p.cure_done", "=", false)])).orderBy("p.created_at", "asc").limit(50).execute();
-    const accounting = attention?.job_id ? await db.selectFrom("digifab_resin_prints").select("stock_error").where("job_id", "=", attention.job_id).executeTakeFirst() : null;
-    return void res.json({ kind: "resin", screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [], resin: { station: resinStationKey(connection, device), loaded, canStart, warning, stockError: accounting?.stock_error ?? null, postprocess } });
+    const screen = await requireFamilyProcess("resin").stationScreen({ db, orgId, connectionId: connection, deviceId: device, job, metadata: library?.metadata, attentionJobId: attention?.job_id ?? null });
+    return void res.json({ kind: "resin", screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [], ...screen });
   }
   if (kind !== "laser") return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   const stockKind = "inventory:part";

@@ -3,6 +3,7 @@ import {Link} from "react-router-dom";
 import {useQuery,useQueryClient} from "@tanstack/react-query";
 import {Modal,NumberField,usePageTitle} from "@cobblr/platform-web";
 import {api,type DigifabJobReview} from "../../lib/api";
+import {useEnabledModules} from "../../lib/useEnabledModules";
 import {MAIN_ID,SkipToContent} from "../../components/a11y/shell-landmarks";
 import {LargeFormatStock} from "./LargeFormatStock";
 const button="min-h-12 rounded border border-line px-4 py-3 disabled:opacity-50";
@@ -20,7 +21,9 @@ export function LargeFormatStation({slug,connectionId,deviceId}:{slug:string;con
  const b={connection_id:connectionId,device_id:deviceId};
  const q=useQuery({queryKey:["large-format-station",slug,connectionId,deviceId],queryFn:()=>api.largeFormatStation(slug,connectionId,deviceId),refetchInterval:4000});
  const library=useQuery({queryKey:["digifab-library",slug],queryFn:()=>api.listDigifabLibrary(slug)});
- const stock=useQuery({queryKey:["large-format-rolls",slug,connectionId,deviceId],queryFn:()=>api.listWorkshopStock(slug,{station:`digifab:${connectionId}:${deviceId}`,limit:1}),refetchInterval:4000});
+ // The loaded roll is Inventory's: with it off this poll would be refused every four seconds.
+ const inventoryOn=!!useEnabledModules(slug)?.has("inventory");
+ const stock=useQuery({queryKey:["large-format-rolls",slug,connectionId,deviceId],queryFn:()=>api.listWorkshopStock(slug,{station:`digifab:${connectionId}:${deviceId}`,limit:1}),enabled:inventoryOn,refetchInterval:4000});
  const history=useQuery({queryKey:["large-format-history",slug,connectionId,deviceId,offset],queryFn:()=>api.largeFormatJobs(slug,connectionId,deviceId,offset),refetchInterval:8000});
  const fleet=useQuery({queryKey:["digifab-fleet",slug],queryFn:()=>api.getDigifabFleet(slug),refetchInterval:10000});
  const device=fleet.data?.connections.find(c=>c.connection_id===connectionId)?.devices.find(d=>d.id===deviceId),job=q.data?.job,plan=q.data?.plan?.plan;

@@ -1,10 +1,11 @@
-import { NumberStepper, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb } from "@cobblr/platform-web";
+import { NumberStepper, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
 // lists UI — the host mounts <ListsUI /> at /lists. A grid of lists;
 // clicking one opens a detail MODAL with check-off, add-item, and clear-done.
 // Modals (not pages) for detail/create; toasts (not dialogs) for feedback;
 // destructive deletes confirm via useConfirm. Matches house conventions.
 
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
@@ -138,6 +139,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
 }
 
 function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () => void; onDelete: () => void }) {
+  const canDelete = roleSatisfies(useViewerRole(), ["owner", "admin"]);
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 p-3 hover:border-cobble-400 transition group">
       <div className="flex items-start justify-between">
@@ -147,9 +149,9 @@ function ListCard({ list, onOpen, onDelete }: { list: ListSummary; onOpen: () =>
             {list.open_count} open{list.done_count > 0 ? ` · ${list.done_count} done` : ""}
           </div>
         </button>
-        <button title="Delete list" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete list">
+        {canDelete && <button title="Delete list" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete list">
           <Trash2 size={15} />
-        </button>
+        </button>}
       </div>
     </div>
   );
@@ -191,9 +193,37 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   });
   const toggle = useMutation({
     mutationFn: ({ id, checked, quantity }: { id: string; checked: boolean; quantity?: number }) => api.toggleItem(id, checked, quantity),
-    onSuccess: invalidate,
+    // Waits for the fresh list, so a line's box does not blink back to the old
+    // answer between the save and the read.
+    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ["lists-detail", listId] }), qc.invalidateQueries({ queryKey: ["lists"] })]),
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
+  // A box tapped again before its first tap has saved: what the person last
+  // asked for is what shows, and the writes go one after another per line so
+  // the server hears them in the order they were made (#7503). Reading the box
+  // from the last fetch alone sent "checked" twice and kept the stock an undo
+  // was meant to give back.
+  const [wanted, setWanted] = useState<Record<string, boolean>>({});
+  const lineQueue = useRef(new Map<string, Promise<unknown>>());
+  const setChecked = (it: ListItem, checked: boolean, quantity?: number) => {
+    setWanted((w) => ({ ...w, [it.id]: checked }));
+    const run = (lineQueue.current.get(it.id) ?? Promise.resolve()).then(() =>
+      toggle.mutateAsync({ id: it.id, checked, quantity }).then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    lineQueue.current.set(it.id, run);
+    void run.then(() => {
+      if (lineQueue.current.get(it.id) !== run) return;
+      lineQueue.current.delete(it.id);
+      setWanted((w) => {
+        const { [it.id]: _gone, ...rest } = w;
+        return rest;
+      });
+    });
+  };
+  const isChecked = (it: ListItem) => wanted[it.id] ?? it.checked;
   // The amount a line will restock when checked, per line, corrected here
   // before the check. Starts from the line's own quantity ("×3") when it has
   // one, else the wire's amount. Only lines that restock have an entry.
@@ -333,11 +363,11 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
               <div className="flex items-center gap-3">
               <input aria-label={it.title}
                 type="checkbox"
-                checked={it.checked}
-                onChange={() => toggle.mutate({ id: it.id, checked: !it.checked, quantity: amountFor(it) ?? undefined })}
+                checked={isChecked(it)}
+                onChange={() => setChecked(it, !isChecked(it), amountFor(it) ?? undefined)}
                 className="h-4 w-4 accent-cobble-600"
               />
-              <span className={`flex-1 min-w-0 ${it.checked ? "line-through text-faint" : ""}`}>
+              <span className={`flex-1 min-w-0 ${isChecked(it) ? "line-through text-faint" : ""}`}>
                 {it.title}
                 {it.qty && <span className="text-xs text-muted ml-2">×{it.qty}</span>}
                 {it.note && <span className="block text-xs text-muted">{it.note}</span>}

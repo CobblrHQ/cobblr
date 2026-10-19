@@ -80,6 +80,8 @@ import "./palette-events";
 import { ShortcutsSheet } from "./ShortcutsSheet";
 import { AiNoticeGiven, useAiStatus } from "./AiStatusNotice";
 import { readOpenOn, readOpenTab, restoresOn, writeOpenOn, writeOpenTab } from "../lib/panel-memory";
+import { useRoleAtLeast } from "../lib/can";
+import { MANAGED_APP_REFRESHERS } from "@cobblr/platform-contract/org-roles";
 
 /** Below `sm` the side rail is the full width of the screen (SideRail's
  *  `sm:w-[min(100vw,440px)]`): open, it hides the page. */
@@ -301,13 +303,16 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   // Auto-update on use: once per session, ask the server to re-apply the latest
   // bundle if this managed app is behind. No-op when current; if it updated,
   // refetch so the new fields/views appear. Fire-and-forget — never blocks.
+  // Only for who the route lets refresh: a member's first page sent it and
+  // met a 403 every session (#7552).
+  const mayRefreshApp = useRoleAtLeast(MANAGED_APP_REFRESHERS);
   useEffect(() => {
-    if (!appMode || !activeSlug) return;
+    if (!appMode || !activeSlug || !mayRefreshApp) return;
     const key = `cobblr.appRefreshed.${activeSlug}`;
     if (sessionStorage.getItem(key)) return;
     sessionStorage.setItem(key, "1");
     void api.refreshApp(activeSlug).then((r) => { if (r.updated) void qc.invalidateQueries(); }).catch(() => {});
-  }, [appMode, activeSlug, qc]);
+  }, [appMode, activeSlug, mayRefreshApp, qc]);
 
   // Workspace brand for the admin shell. The whole dashboard recolours to
   // `admin_theme` — page, header bar, every module page / card / table —

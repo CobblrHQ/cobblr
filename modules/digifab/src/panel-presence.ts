@@ -40,6 +40,9 @@ export function registerPanelPresence(): void {
   panels.registerPresence("digifab:cockpit", (ctx) =>
     onMachine(ctx, (db, id) => exists(db.selectFrom("digifab_device_links").select("machine_id").where("machine_id", "=", id).limit(1))),
   );
+  panels.registerPresence("digifab:care", (ctx) =>
+    onMachine(ctx, async (db, id) => await exists(db.selectFrom("digifab_device_links").select("machine_id").where("machine_id", "=", id).limit(1)) || await exists(db.selectFrom("digifab_utilisation_last").select("machine_id").where("machine_id", "=", id))),
+  );
   panels.registerPresence("digifab:loaded", (ctx) =>
     onMachine(ctx, (db, id) => exists(db.selectFrom("digifab_machine_slots").select("machine_id").where("machine_id", "=", id))),
   );

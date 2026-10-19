@@ -1,9 +1,9 @@
 import { poolGroupCondition } from "../pool-groups.js";
+import { machineHoldRefusal } from "../core/holds.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { isStopControl, RUN_MACHINES } from "../motion-gate.js";
 import { plainDriverError } from "../job-truth.js";
 import { runBench } from "../bench.js";
-import { settleResinPrint } from "../resin-prints.js";
 // /api/v1/orgs/:slug/modules/digifab/fleet — the live floor view.
 //
 // Coordinate-not-control at FLEET scale: for every enabled connection we ask
@@ -17,30 +17,23 @@ import { settleResinPrint } from "../resin-prints.js";
 // the view of the others).
 
 import { readBridgeConfig } from "../bridge-identity.js";
-import { drawForCompletedJob, putBackDrawn } from "../loaded-spools.js";
 import { recordVerdictOnMake } from "../makes-core.js";
 import { Router, raw } from "express";
 import { isEdgeManagerUrl } from "@cobblr/platform-contract/edge-bridge-client";
 import { z } from "zod";
-import { frameFromAddress } from "../camera-frame.js";
+import { cameraSourceFor, frameFromAddress } from "../camera-frame.js";
 import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, requireRole } from "./util.js";
 import { putSnapshot, getSnapshot, freshSnapshotKeys } from "../snapshot-store.js";
-import { getBambuStatusMap } from "../bambu-status-store.js";
-import { managerName, buildDriverById, bambuLanDriverFor, runControlWithCloudFallback, parseBambuLan, bambuLanMode, recordJobOutcome, type BambuLan } from "../jobs-core.js";
-import { controlCnc } from "../cnc-controls.js";
-import { CncOutcomeBody, recordCncOutcome } from "../cnc-outcome-recording.js";
-import { CncOutcomeRefusal } from "../cnc-outcomes.js";
+import { managerName, buildDriverById, runControlWithCloudFallback, recordJobOutcome } from "../jobs-core.js";
+import { familyOutcome } from "../core/families.js";
 import { ReviewRequired } from "../drivers/job-review.js";
-import { controlResinPrinter } from "../resin-controls.js";
-import { controlDirectLaser } from "../laser-controls.js";
-import { LaserPlanRefusal, recordFinishedLayout } from "../laser-plans.js";
+import { familyControlFor, familyDeviceLan, familyDeviceTelemetry, familyFleetFields, familyFleetLive, familyLanCameras, familyManagedDevices, familyPreferredDriver, requireFamilyPrinting, requireFamilyProcess } from "../core/families.js";
+import { LaserPlanRefusal, recordFinishedLayout } from "../sheet-layout.js";
 import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
-import { ownedDeviceRefs } from "../detectors/owned.js";
-import { lentDeviceRefs } from "../detectors/lent.js";
-import { readLightBurnReadiness } from "../lightburn-readiness.js";
+import { lentDeviceRefs } from "../lent-machines.js";
 import { classify, fleetState } from "../state.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
 import { sql, type Kysely } from "kysely";
@@ -87,7 +80,7 @@ async function fileDriverFor(
   connId: string,
   deviceId: string,
 ): Promise<MachineDriver | null> {
-  const lan = await bambuLanDriverFor(orgId, connId, deviceId);
+  const lan = await familyPreferredDriver(orgId, connId, deviceId);
   return lan ?? (await buildDriverById(db, orgId, connId));
 }
 
@@ -290,7 +283,7 @@ fleetRouter.get(
     // report). Merged over any driver-reported camera below.
     const settings = await db
       .selectFrom("digifab_device_settings")
-      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay", "grid_x", "grid_y", "sort_order", "row_break"])
+      .select(["connection_id", "remote_device_id", "camera_url", "snapshot_relay", "grid_x", "grid_y", "sort_order", "row_break", "hour_rate", "hour_rate_currency"])
       .execute();
     const freshSnaps = await freshSnapshotKeys(db); // which devices have a recent relayed frame
     // AI failure-watch state per device (one query for the whole floor).
@@ -300,7 +293,7 @@ fleetRouter.get(
       .execute();
     // Printers an external detector owns — Cobblr stands down its camera pull for
     // them (the detector handles detection); one query for the whole floor.
-    const owned = await ownedDeviceRefs(db);
+    const owned = await familyManagedDevices(db);
     // Printers lent out (record-loans.md): away, and the farm skips them.
     const lent = await lentDeviceRefs(db, orgId).catch(() => new Map<string, string>());
 
@@ -314,21 +307,11 @@ fleetRouter.get(
           const { devices, at, stale } = await fetchDevicesCached(db, driver, c.id, finishedByConnection.get(c.id));
           // For a cloud Bambu, prefer the live MQTT telemetry the pump caches
           // (real-time temps/progress/state) over the slower HTTP list.
-          const bambuLive = c.type === "bambu" ? await getBambuStatusMap(db, c.id) : null;
+          const bambuLive = await familyFleetLive(db, c);
           // Per-printer LAN config → the cams wall knows this device has a real
           // camera reachable over the bridge (the cockpit's /camera route), even
           // with no manual camera_url and no snapshot relay.
-          let bambuLan: Record<string, BambuLan> = {};
-          if (c.type === "bambu") {
-            try {
-              const internal = await platform().devices.connections().getInternal(orgId, c.id);
-              if (internal?.credentials_enc) {
-                bambuLan = parseBambuLan(await platform().integrations.decryptCredentials(orgId, internal.credentials_enc));
-              }
-            } catch {
-              /* creds unreadable → no LAN camera flag, nothing else degrades */
-            }
-          }
+          const lanCameras = await familyLanCameras(orgId, c);
           const mapped = devices.map((d) => {
             const job = jobs.find((j) => j.connection_id === c.id && j.target_device === d.id && j.status !== "queued") ?? null;
             const next = queuedSorted.find(
@@ -350,7 +333,7 @@ fleetRouter.get(
               state,
               klass: classify(state),
               enabled: d.enabled,
-              lightburn_readiness: readLightBurnReadiness(d.raw?.lightburnReadiness),
+              ...familyFleetFields(d),
               laser_backend: d.raw?.laserBackend ?? null,
               laser_setup: d.raw?.laserSetup === true,
               tags: d.tags ?? [],
@@ -388,11 +371,13 @@ fleetRouter.get(
               // The bridge can grab frames from this printer's own camera (the
               // cockpit /camera route) — lets the camera wall show it without a
               // manual URL or the snapshot relay.
-              lan_camera: !managedByDetector && (d.camera_available === true || !!bambuLan[d.id]?.host && !!bambuLan[d.id]?.access_code && bambuLanMode(bambuLan[d.id]) !== "cloud"),
+              lan_camera: !managedByDetector && (d.camera_available === true || lanCameras.has(d.id)),
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
               snapshot_relay: !managedByDetector && (setting?.snapshot_relay ?? false),
+              // What an hour of this printer costs, when set (digifab:set-machine-hour-rate).
+              hour_rate: setting?.hour_rate != null ? { amount: Number(setting.hour_rate), currency: setting.hour_rate_currency ?? "USD" } : null,
               snapshot_fresh: !managedByDetector && !!setting?.snapshot_relay && freshSnaps.has(`${c.id}:${d.id}`),
               // ⑦ Spatial floor position (null = unplaced, flows after placed).
               position: setting?.grid_x != null && setting?.grid_y != null ? { x: setting.grid_x, y: setting.grid_y } : null,
@@ -476,16 +461,9 @@ fleetRouter.post(
     const connectionId = req.params.connectionId!;
     const deviceId = req.params.deviceId!;
     const att = await db.selectFrom("digifab_device_attention").select(["job_id", "reason"]).where("connection_id", "=", connectionId).where("remote_device_id", "=", deviceId).executeTakeFirst();
-    const requested = CncOutcomeBody.safeParse(req.body);
-    const outcomeJobIds = [...new Set([att?.job_id, requested.success ? requested.data.job_id : undefined].filter((id): id is string => !!id))];
-    const outcomeJobs = outcomeJobIds.length ? await db.selectFrom("digifab_jobs").select("cnc_setup").where("id", "in", outcomeJobIds).where("connection_id", "=", connectionId).where("target_device", "=", deviceId).execute() : [];
-    if (outcomeJobs.some(job => job.cnc_setup)) {
-      const cnc = CncOutcomeBody.safeParse(req.body);
-      if (!cnc.success) return void res.status(400).json({ error: { code: "bad_body", message: "Choose this CNC job's outcome and actual tool seconds when requested." } });
-      try { await recordCncOutcome(db, orgId, connectionId, deviceId, cnc.data, sessionUser(req)?.id ?? null); res.json({ ok: true }); }
-      catch (e) { if (!(e instanceof CncOutcomeRefusal) && !(e instanceof ReviewRequired)) throw e; res.status(409).json({ error: { code: e instanceof CncOutcomeRefusal ? e.code : "stock_not_recorded", message: e.message, ...(e instanceof CncOutcomeRefusal && e.details ? { details: e.details } : {}) } }); }
-      return;
-    }
+    // A family's own job (a CNC setup) records its own outcome; anything else is a good/scrap verdict.
+    const own = await familyOutcome({ db, orgId, connectionId, deviceId, attentionJobId: att?.job_id ?? null, body: req.body, userId: sessionUser(req)?.id ?? null });
+    if (own) return void res.status(own.status).json(own.body);
     const body = ReadyBody.safeParse(req.body ?? {});
     if (!body.success) return void res.status(400).json({ error: { code: "bad_body", message: "outcome is good or scrapped; good and scrap are whole numbers" } });
     const counts = body.data.good != null || body.data.scrap != null ? { good: body.data.good ?? 0, scrap: body.data.scrap ?? 0 } : undefined;
@@ -502,13 +480,7 @@ fleetRouter.post(
     if (att?.job_id) {
       const resin = await db.selectFrom("digifab_jobs").select("resin_print").where("id", "=", att.job_id).executeTakeFirst();
       if (resin?.resin_print) {
-        let lcdSeconds: number | undefined;
-        try {
-          const driver = await buildDriverById(db, orgId, connectionId);
-          const device = (await driver?.listDevices())?.find(item => item.id === deviceId);
-          if (typeof device?.raw?.PrintScreen === "number") lcdSeconds = device.raw.PrintScreen;
-        } catch { /* The sliced estimate remains available when counters cannot be read. */ }
-        try { await settleResinPrint(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", sessionUser(req)?.id ?? null, lcdSeconds); }
+        try { await requireFamilyProcess("resin").settle(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", sessionUser(req)?.id ?? null, { connectionId, deviceId }); }
         catch (e) { return void res.status(409).json({ error: { code: "resin_use_not_recorded", message: e instanceof Error ? e.message : "Check this print's stock use." } }); }
         if (att.reason !== "print-completed") await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       }
@@ -516,7 +488,7 @@ fleetRouter.post(
 
     // Resolve the print's downstream context from its job, for the wires.
     if (att?.reason === "print-completed" && att.job_id) {
-      try { await drawForCompletedJob(db, orgId, { id: att.job_id }); }
+      try { await requireFamilyPrinting().drawCompleted(db, orgId, { id: att.job_id }); }
       catch { return void res.status(409).json({ error: { code: "filament_accounting_pending", message: "Filament accounting is still pending. Try clearing the bed again shortly." } }); }
       // Production runs: the human verdict is what counts a plate — good
       // increments the run (and may close it), scrapped marks the plate
@@ -560,7 +532,7 @@ fleetRouter.post(
             prints: -1,
           });
           // And the grams it drew from the spools loaded on the printer.
-          if (!job.resin_print) await putBackDrawn(orgId, job);
+          if (!job.resin_print) await requireFamilyPrinting().putBack(orgId, job);
         }
       }
     }
@@ -880,7 +852,7 @@ fleetRouter.post(
     // than cloud, and the only path that works if cloud rejects the command) — but
     // fall back to cloud if the LAN/edge-bridge path fails, so a flaky bridge can't
     // block a command the cloud broker can also send (light / pause / temps).
-    const lan = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!);
+    const lan = await familyPreferredDriver(orgId, req.params.connectionId!, req.params.deviceId!);
     const driver = lan ?? (await buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
     if (driver?.benchInstrument===true) {
       if(parsed.data.id!=="output-off")return void res.status(409).json({error:{code:"bench_control_required",message:"Use the bench panel to confirm and log supply changes."}});
@@ -889,18 +861,9 @@ fleetRouter.post(
       const result=await runBench(tenantDb(req),orgId,{machine_id:link.machine_id,operation:"output_off"},sessionUser(req)?.id || null);
       return void res.json({ok:"off" in result && result.off===true});
     }
-    if (driver?.laserBackend && ["stop", "pause", "resume", "frame"].includes(parsed.data.id)) {
-      const result = await controlDirectLaser(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
-      if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
-      return void res.json(result);
-    }
-    if (await driver?.jobReviewKind?.() === "cnc" && ["stop", "pause", "resume", "frame"].includes(parsed.data.id)) {
-      const result = await controlCnc(tenantDb(req), orgId, driver!, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
-      if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
-      return void res.json(result);
-    }
-    if (driver?.printProcess === "resin") {
-      const result = await controlResinPrinter(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, req.params.connectionId!);
+    const own = await familyControlFor(driver, parsed.data.id);
+    if (driver && own) {
+      const result = await own.run(tenantDb(req), orgId, driver, req.params.deviceId!, parsed.data.id, parsed.data.params ?? {}, req.params.connectionId!);
       if (!result.ok) return void res.status(502).json({ error: { code: "control_failed", message: result.detail } });
       return void res.json(result);
     }
@@ -931,6 +894,8 @@ fleetRouter.post(
     if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const parsed = PrintBody.safeParse(req.body);
     if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "file name required" } });
+    const held = await machineHoldRefusal(tenantDb(req), req.params.connectionId!, req.params.deviceId!);
+    if (held) return void res.status(409).json({ error: { code: "machine_held", message: held } });
     const driver = await fileDriverFor(tenantDb(req), tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!);
     if (!driver?.printFile) return void res.status(501).json({ error: { code: "unsupported", message: "this printer can't start an on-disk file here" } });
     const r = await driver.printFile(req.params.deviceId!, parsed.data.name);
@@ -943,36 +908,16 @@ fleetRouter.post(
 // on-site bridge can push files / control over the printer's LAN, while cloud
 // keeps doing telemetry. The access code is a credential → stored encrypted in
 // the connection's creds (creds.bambu_lan = { serial: { host, access_code } }).
-const LanBody = z.object({
-  host: optionalText(200),
-  access_code: optionalText(64),
-  mode: optionalField(z.enum(["cloud", "prefer_lan", "lan_only"])),
-});
-async function readLanMap(orgId: string, connId: string): Promise<{ conn: { id: string; type: string; credentials_enc: string | null } | null; map: Record<string, BambuLan> }> {
-  const conn = await platform().devices.connections().getInternal(orgId, connId);
-  if (!conn) return { conn: null, map: {} };
-  const creds = conn.credentials_enc ? await platform().integrations.decryptCredentials(orgId, conn.credentials_enc) : {};
-  return { conn: { id: conn.id, type: conn.type, credentials_enc: conn.credentials_enc }, map: parseBambuLan(creds) };
-}
 // AI-REACH: exempt — stores a printer's LAN access code, a credential; the
 // assistant never handles a secret
 fleetRouter.put(
   "/:connectionId/:deviceId/lan",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
-    const parsed = LanBody.safeParse(req.body);
-    if (!parsed.success) return void res.status(400).json({ error: { code: "bad_body", message: "host + access_code required" } });
-    const orgId = tenantContext(req).org.id;
-    const { conn, map } = await readLanMap(orgId, req.params.connectionId!);
-    if (!conn || conn.type !== "bambu") return void res.status(400).json({ error: { code: "not_bambu", message: "LAN access is for Bambu connections" } });
-    // Merge — host/access_code on first enable; mode can change on its own later.
-    const prev = map[req.params.deviceId!] ?? { host: "", access_code: "" };
-    const host = (parsed.data.host ?? prev.host).trim();
-    const access_code = (parsed.data.access_code ?? prev.access_code).trim();
-    if (!host || !access_code) return void res.status(400).json({ error: { code: "incomplete", message: "host + access_code required to enable LAN" } });
-    map[req.params.deviceId!] = { host, access_code, mode: parsed.data.mode ?? prev.mode ?? "prefer_lan" };
-    await platform().devices.connections().update(orgId, conn.id, { creds: { bambu_lan: JSON.stringify(map) } });
-    res.json({ ok: true, host, mode: map[req.params.deviceId!]!.mode });
+    const own = familyDeviceLan();
+    if (!own) return void res.status(400).json({ error: { code: "not_bambu", message: "LAN access is for Bambu connections" } });
+    const r = await own.write(tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!, req.body);
+    res.status(r.status).json(r.body);
   }),
 );
 // AI-REACH: exempt — deletes a printer's stored LAN access code for good; no
@@ -982,11 +927,10 @@ fleetRouter.delete(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin")) return;
     const orgId = tenantContext(req).org.id;
-    const { conn, map } = await readLanMap(orgId, req.params.connectionId!);
-    if (!conn) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
-    delete map[req.params.deviceId!];
-    await platform().devices.connections().update(orgId, conn.id, { creds: { bambu_lan: JSON.stringify(map) } });
-    res.json({ ok: true });
+    const own = familyDeviceLan();
+    if (!own) return void res.status(404).json({ error: { code: "not_found", message: "no such connection" } });
+    const r = await own.remove(orgId, req.params.connectionId!, req.params.deviceId!);
+    res.status(r.status).json(r.body);
   }),
 );
 
@@ -1000,56 +944,43 @@ fleetRouter.get(
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const orgId = tenantContext(req).org.id;
-    const driver = await bambuLanDriverFor(orgId, req.params.connectionId!, req.params.deviceId!) ?? await buildDriverById(tenantDb(req), orgId, req.params.connectionId!);
-    if (!driver?.getCameraFrame) {
-      const setting = await tenantDb(req).selectFrom("digifab_device_settings").select("camera_url")
-        .where("connection_id", "=", req.params.connectionId!).where("remote_device_id", "=", req.params.deviceId!).executeTakeFirst();
-      if (!setting?.camera_url) return void res.status(501).json({ error: { code: "no_camera", message: "no camera address saved for this machine" } });
-      const frame = await frameFromAddress(setting.camera_url);
+    const lan = await familyPreferredDriver(orgId, req.params.connectionId!, req.params.deviceId!);
+    const setting = await tenantDb(req).selectFrom("digifab_device_settings").select("camera_url")
+      .where("connection_id", "=", req.params.connectionId!).where("remote_device_id", "=", req.params.deviceId!).executeTakeFirst();
+    const source = await cameraSourceFor(lan, setting?.camera_url, () => buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
+    if (!source) return void res.status(501).json({ error: { code: "no_camera", message: "no camera address saved for this machine" } });
+    if ("address" in source) {
+      const frame = await frameFromAddress(source.address);
       if (!frame) return void res.status(502).json({ error: { code: "camera_failed", message: "the camera did not answer with a picture. Check its address is a snapshot or MJPEG stream URL." } });
       // DETACHED: caching the frame for the next open; the frame is served without it
       if (frame.type === "image/jpeg") void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, frame.bytes).catch(() => {});
       return void res.set("Content-Type", frame.type).set("Cache-Control", "no-store").send(frame.bytes);
     }
-    const jpeg = await driver.getCameraFrame();
+    const driver = source.driver;
+    const jpeg = await driver.getCameraFrame!();
     if (!jpeg || jpeg.length === 0) return void res.status(502).json({ error: { code: "camera_failed", message: "couldn't grab a camera frame" } });
+    // A manager's snapshot can be a PNG (PrusaLink's is).
+    const png = jpeg[0] === 0x89 && jpeg[1] === 0x50;
     // Cache the frame so the next modal-open can show it INSTANTLY (via /snapshot)
     // instead of 3s of "connecting" while the live grab runs. Best-effort.
     // DETACHED: caching the frame for the next open; the frame is served without it
-    void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, jpeg).catch(() => {});
-    res.set("Content-Type", "image/jpeg").set("Cache-Control", "no-store").send(jpeg);
+    if (!png) void putSnapshot(tenantDb(req), req.params.connectionId!, req.params.deviceId!, jpeg).catch(() => {});
+    res.set("Content-Type", png ? "image/png" : "image/jpeg").set("Cache-Control", "no-store").send(jpeg);
   }),
 );
 
-// ── Rich live detail — the captured Bambu MQTT report, distilled for the printer
-// modal: AMS filament slots (color/material/remaining), chamber light, firmware
-// update, HMS error count, temps. Empty for non-Bambu / no live stream.
-function bHex(c: unknown): string | null {
-  if (typeof c !== "string" || !/^[0-9a-fA-F]{6,8}$/.test(c)) return null;
-  const rgb = c.slice(0, 6).toUpperCase();
-  return rgb === "000000" && c.length === 8 && c.slice(6).toUpperCase() === "00" ? null : `#${rgb}`;
-}
-function bNum(v: unknown): number | null {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
+// ── Rich live detail: a family's own telemetry (a Bambu account's cloud
+// report, core/families.ts deviceTelemetry), else the bridge's device list.
 fleetRouter.get(
   "/:connectionId/:deviceId/detail",
   asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     // LAN config for this printer (hybrid) — surfaced so the modal can show the
     // "LAN access" state. Host only; never the access code.
-    const { conn: lanConn, map: lanMap } = await readLanMap(tenantContext(req).org.id, req.params.connectionId!);
-    const lanCfg = lanMap[req.params.deviceId!];
     // Camera available when LAN is configured (Bambu chamber cam via the bridge).
-    const lan = { applicable: lanConn?.type === "bambu", configured: !!lanCfg, host: lanCfg?.host, mode: bambuLanMode(lanCfg), camera: !!lanCfg && bambuLanMode(lanCfg) !== "cloud" };
-    const row = await tenantDb(req)
-      .selectFrom("digifab_bambu_status")
-      .select(["report", "updated_at"])
-      .where("connection_id", "=", req.params.connectionId!)
-      .where("serial", "=", req.params.deviceId!)
-      .executeTakeFirst();
-    if (!row?.report) {
+    const lan = (await familyDeviceLan()?.read(tenantContext(req).org.id, req.params.connectionId!, req.params.deviceId!)) ?? { applicable: false, configured: false, host: undefined, mode: "cloud", camera: false };
+    const own = await familyDeviceTelemetry(tenantDb(req), req.params.connectionId!, req.params.deviceId!);
+    if (!own) {
       // No Bambu cloud MQTT report. For an edge-bridge machine (Duet, PrusaLink,
       // Moonraker) live temps + state come from the bridge's device list, not a
       // cloud pump — so pull them (cached, shared with the floor view) and report
@@ -1083,37 +1014,9 @@ fleetRouter.get(
       }
       return void res.json({ live: false, telemetry: null, lan });
     }
-    const p = row.report as Record<string, unknown>;
-    const slots: { id: string; type: string | null; color: string | null; remain: number | null; brand: string | null }[] = [];
-    const amsUnits = Array.isArray((p.ams as { ams?: unknown })?.ams) ? ((p.ams as { ams: Record<string, unknown>[] }).ams) : [];
-    for (const unit of amsUnits) {
-      const trays = Array.isArray(unit.tray) ? (unit.tray as Record<string, unknown>[]) : [];
-      for (const t of trays) {
-        if (!t.tray_type) continue; // empty slot
-        slots.push({ id: `${unit.id}-${t.id}`, type: (t.tray_type as string) || null, color: bHex(t.tray_color), remain: bNum(t.remain), brand: (t.tray_sub_brands as string) || null });
-      }
-    }
-    const vt = p.vt_tray as Record<string, unknown> | undefined;
-    if (vt?.tray_type) slots.push({ id: "ext", type: (vt.tray_type as string) || null, color: bHex(vt.tray_color), remain: bNum(vt.remain), brand: (vt.tray_sub_brands as string) || null });
-    const lights = Array.isArray(p.lights_report) ? (p.lights_report as { node?: string; mode?: string }[]) : [];
-    const fwList = Array.isArray((p.upgrade_state as { new_ver_list?: unknown })?.new_ver_list) ? ((p.upgrade_state as { new_ver_list: { cur_ver?: string; new_ver?: string }[] }).new_ver_list) : [];
     res.json({
       live: true,
-      updated_at: new Date(row.updated_at).toISOString(),
-      telemetry: {
-        nozzle: bNum(p.nozzle_temper), nozzle_target: bNum(p.nozzle_target_temper),
-        bed: bNum(p.bed_temper), bed_target: bNum(p.bed_target_temper),
-        chamber: bNum(p.chamber_temper),
-        light: lights.find((l) => l.node === "chamber_light")?.mode ?? null,
-        speed_level: bNum(p.spd_lvl),
-        nozzle_diameter: (p.nozzle_diameter as string) ?? null,
-        nozzle_type: (p.nozzle_type as string) ?? null,
-        wifi: (p.wifi_signal as string) ?? null,
-        gcode_state: (p.gcode_state as string) ?? null,
-        firmware_update: fwList.some((v) => v.new_ver && v.cur_ver && v.new_ver !== v.cur_ver),
-        hms_count: Array.isArray(p.hms) ? (p.hms as unknown[]).length : 0,
-        ams: slots,
-      },
+      ...own,
       lan,
     });
   }),

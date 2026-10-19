@@ -2,9 +2,9 @@
 // module part, its actions and its panels. Data only: src/module.ts spreads it
 // in through families/manifests.ts. The part is on everywhere, as embroidery was
 // before it had a folder of its own.
-import type { ModuleActionInput, ModulePanelInput, ModulePartInput } from "@cobblr/platform-contract";
+import type { FamilyManifest } from "../../core/families.js";
 
-export const embroideryManifest: { part: ModulePartInput; panels: ModulePanelInput[]; actions: ModuleActionInput[] } = {
+export const embroideryManifest: FamilyManifest = {
   part: {
     id: "embroidery",
     label: "Embroidery",

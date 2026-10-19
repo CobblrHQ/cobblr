@@ -4,7 +4,8 @@
 
 import { Router } from "express";
 import { z } from "zod";
-import { tenantDb } from "../db.js";
+import { tenantContext, tenantDb } from "../db.js";
+import { reportLinkedVersions } from "../version-read.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 
 export const linksRouter = Router({ mergeParams: true });
@@ -67,6 +68,8 @@ linksRouter.post(
       )
       .returning(LINK_COLS)
       .executeTakeFirstOrThrow();
+    // The machine learns what the device runs now, not at the next hourly read.
+    await reportLinkedVersions(tenantDb(req), tenantContext(req).org.id, row);
     res.status(201).json(row);
   }),
 );

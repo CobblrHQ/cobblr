@@ -234,6 +234,60 @@ export function variantsDisagree(a: string | null | undefined, b: string | null 
   return !extra.some((w) => options.has(w));
 }
 
+/** Words that say what a thing is MADE of, as one material each. Only words
+ *  that name a material wherever they appear: "wood" (a wood screw), "glass"
+ *  (glass cleaner), "iron" (a soldering iron) and "silk" (silk PLA) name a
+ *  use or a finish as often, and stay out. */
+const MATERIAL_WORDS: Record<string, string> = {
+  brass: "brass",
+  bronze: "bronze",
+  copper: "copper",
+  steel: "steel",
+  stainless: "stainless",
+  aluminium: "aluminium",
+  aluminum: "aluminium",
+  titanium: "titanium",
+  zinc: "zinc",
+  nickel: "nickel",
+  nylon: "nylon",
+  plastic: "plastic",
+  rubber: "rubber",
+  silicone: "silicone",
+  cotton: "cotton",
+  wool: "wool",
+  acrylic: "acrylic",
+  polyester: "polyester",
+  pla: "pla",
+  petg: "petg",
+  abs: "abs",
+  asa: "asa",
+  tpu: "tpu",
+};
+
+/** The materials a side states, in its name or its `material` field. Stainless
+ *  steel is its own material, not more steel. */
+export function materialsOf(side: { name?: string | null; fields?: Record<string, unknown> | null }): Set<string> {
+  const f = side.fields ?? {};
+  const meta = f.metadata && typeof f.metadata === "object" ? (f.metadata as Record<string, unknown>) : {};
+  const field = [f.material, meta.material].filter((v): v is string => typeof v === "string").join(" ");
+  const out = new Set<string>();
+  for (const w of `${side.name ?? ""} ${field}`.toLowerCase().replace(/pet-g/g, "petg").split(/[^a-z]+/)) {
+    const m = MATERIAL_WORDS[w];
+    if (m) out.add(m);
+  }
+  if (out.has("stainless")) out.delete("steel");
+  return out;
+}
+
+/** Two sides that both state a material and share none (#7523): a steel
+ *  washer is not more of the brass washer, however many words the names
+ *  share. A side that states none says nothing. */
+export function materialsDisagree(a: ProductSide, b: ProductSide): boolean {
+  const ma = materialsOf(a);
+  const mb = materialsOf(b);
+  return ma.size > 0 && mb.size > 0 && ![...ma].some((m) => mb.has(m));
+}
+
 export interface ProductSide {
   name?: string | null;
   fields?: Record<string, unknown> | null;
@@ -243,7 +297,7 @@ export type SameProductVerdict =
   /** An identifier field agrees: one product, whatever the names say. */
   | { verdict: "same"; by: "identifier" }
   /** An identifier field disagrees, or the names' model numbers do. */
-  | { verdict: "different"; by: "identifier" | "model-number" | "version" | "variant" }
+  | { verdict: "different"; by: "identifier" | "model-number" | "version" | "variant" | "material" }
   /** Nothing decisive: the caller's name rule decides. */
   | { verdict: "unknown" };
 
@@ -259,5 +313,6 @@ export function sameProduct(a: ProductSide, b: ProductSide, roles?: Record<strin
   if (modelNumbersDisagree(a.name, b.name)) return { verdict: "different", by: "model-number" };
   if (versionsDisagree(a.name, b.name)) return { verdict: "different", by: "version" };
   if (variantsDisagree(a.name, b.name)) return { verdict: "different", by: "variant" };
+  if (materialsDisagree(a, b)) return { verdict: "different", by: "material" };
   return { verdict: "unknown" };
 }

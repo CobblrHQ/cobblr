@@ -281,6 +281,9 @@ export interface UnconfirmedReceiptLine {
   qty: number;
   part_id: string | null;
   part_title: string | null;
+  /** Why the stock write refused it (the part is marked gone, or deleted);
+   *  null for a line from before receipts added stock reliably. */
+  refused: string | null;
 }
 
 export const purchasesApi = {

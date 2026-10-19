@@ -5,6 +5,8 @@
     "kernel-platform-service"
   ],
   "ms": 2204,
+  "readMB": 17.2,
+  "readTreeMB": 80.1,
   "recorded": "2026-09-29",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
 }

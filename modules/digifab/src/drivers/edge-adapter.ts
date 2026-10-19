@@ -28,6 +28,7 @@ import { ReviewRequired, InterruptedStart } from "./job-review.js";
 import type {
   CommandResult,
   ControlDef,
+  DeviceVersions,
   ConnectionResult,
   ManagerConfig,
   MachineDriver,
@@ -72,6 +73,18 @@ function coerceState(raw: unknown): JobState {
 
 /** Coerce a bridge's free-form temps JSON into DeviceTemps. Display-only; drops
  *  anything malformed rather than throwing. */
+/** A bridge device's `versions` block: the strings it gave, each a version's
+ *  own words (no control characters, bounded), or null when it gave none. */
+function coerceVersions(raw: unknown): DeviceVersions | null {
+  if (!raw || typeof raw !== "object") return null;
+  const out: DeviceVersions = {};
+  for (const k of ["firmware", "software", "controller", "model"] as const) {
+    const v = (raw as Record<string, unknown>)[k];
+    if (typeof v === "string" && v.trim() && !/[\x00-\x1f]/.test(v)) out[k] = v.trim().slice(0, 120);
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function coerceTemps(raw: unknown): DeviceTemps | null {
   if (!raw || typeof raw !== "object") return null;
   const pair = (v: unknown): { actual: number; target?: number } | null => {
@@ -146,7 +159,7 @@ export class EdgeAdapterDriver implements MachineDriver {
     this.benchInstrument = edge?.driver ? ["scpi","riden","esphome-bench","sigrok"].includes(String(edge.driver)) : undefined;
     this.laserBackend = edge?.driver === "gcode-laser" ? "gcode" : edge?.driver === "ruida" ? "ruida" : edge?.driver === "galvo" ? "galvo" : undefined;
     this.knownCutterReview = edge?.driver === "cutter";
-    this.printProcess = edge?.driver === "sdcp" ? "resin" : edge?.driver === "ipp" ? "large-format" : undefined;
+    this.printProcess = edge?.driver === "sdcp" ? "resin" : edge?.driver === "ipp" ? "large-format" : edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1" ? "fdm" : undefined;
     this.knownPrintReview = edge?.driver === "ipp" || edge?.driver === "sdcp" || edge?.driver === "snapmaker" || edge?.driver === "moonraker" && edge.profile === "snapmaker-u1";
     this.cncReviewIsJobId = edge?.driver === "cnc";
     this.knownCncReview = this.cncReviewIsJobId;
@@ -381,7 +394,14 @@ export class EdgeAdapterDriver implements MachineDriver {
       job: coerceJob(d.job),
       stage: typeof d.stage === "string" && d.stage ? d.stage : null,
       raw: d.raw && typeof d.raw === "object" ? (d.raw as Record<string, unknown>) : null,
+      versions: coerceVersions(d.versions),
     }));
+  }
+
+  /** What each device runs, as the bridge reports it on the device list. A
+   *  bridge too old to report leaves every device unread. */
+  async readVersions(): Promise<Array<DeviceVersions & { deviceId: string }>> {
+    return (await this.listDevices()).flatMap((d) => (d.versions ? [{ deviceId: d.id, ...d.versions }] : []));
   }
 
   async setDeviceEnabled(): Promise<void> {

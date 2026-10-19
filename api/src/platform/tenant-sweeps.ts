@@ -93,6 +93,42 @@ function noteQuietVisit(pass: TenantSweepPass, orgId: string, now: number): void
   quietVisits.set(pass.name, seen);
   seen.set(orgId, now);
 }
+/** A workspace a pass fails the same way every round is held, not retried
+ *  every round (#7407, #7410): a refusal that cannot clear on its own (a
+ *  record gone, an undo that would delete someone's edit) otherwise fails the
+ *  sweep, opens the pool and logs a line every cadence, forever. After
+ *  HOLD_AFTER identical failures in a row the workspace sits out that pass
+ *  for a backoff that doubles each time, up to HOLD_MAX_MS; /healthz keeps
+ *  listing it (`held`) until a visit succeeds. A different error starts the
+ *  count again, and a run naming the workspace is never held back. */
+export const HOLD_AFTER = 3;
+const HOLD_MAX_MS = 24 * 60 * 60 * 1000;
+interface Repeat { message: string; failures: number; until: number }
+const repeats = new Map<string, Map<string, Repeat>>();
+function heldNow(pass: TenantSweepPass, orgId: string, now: number): boolean {
+  const r = repeats.get(pass.name)?.get(orgId);
+  return !!r && r.failures >= HOLD_AFTER && now < r.until;
+}
+function noteVisitFailed(pass: TenantSweepPass, orgId: string, message: string, now: number): void {
+  const seen = repeats.get(pass.name) ?? new Map<string, Repeat>();
+  repeats.set(pass.name, seen);
+  const prior = seen.get(orgId);
+  const failures = prior && prior.message === message ? prior.failures + 1 : 1;
+  const until = failures >= HOLD_AFTER ? now + Math.min(HOLD_MAX_MS, pass.everyMs * 2 ** (failures - HOLD_AFTER + 1)) : 0;
+  seen.set(orgId, { message, failures, until });
+  if (failures === HOLD_AFTER) {
+    console.warn(`[tenant-sweeps] ${pass.name}: workspace ${orgId} failed the same way ${failures} times; held until ${new Date(until).toISOString()}, backing off, and listed on /healthz until a visit succeeds:`, message);
+  }
+}
+function noteVisitDone(pass: TenantSweepPass, orgId: string): void {
+  repeats.get(pass.name)?.delete(orgId);
+}
+/** The workspaces each pass holds: failed the same way HOLD_AFTER times or more. */
+function heldOf(name: string): Array<{ orgId: string; message: string; failures: number; until: number }> {
+  return [...(repeats.get(name) ?? new Map<string, Repeat>()).entries()]
+    .filter(([, r]) => r.failures >= HOLD_AFTER)
+    .map(([orgId, r]) => ({ orgId, message: r.message.slice(0, 300), failures: r.failures, until: r.until }));
+}
 let started: { stop: () => void } | null = null;
 let rand: () => number = Math.random;
 
@@ -126,12 +162,15 @@ export function recordLastRound(name: string, res: TenantSweepRunResult, at: num
   r.last = { at, visited: res.visited, failed: res.failed, failures: res.failures };
 }
 
-/** The passes whose last round failed for at least one workspace: the
- *  /healthz line. Empty is healthy; a pass that has not run yet is absent. */
-export function failingTenantSweeps(): Array<{ name: string } & SweepLastRound> {
+/** The passes whose last round failed for at least one workspace, or that
+ *  hold one: the /healthz line. Empty is healthy; a pass that has not run
+ *  yet is absent. A held workspace is not visited each round, so its last
+ *  round can be clean while it is still stuck: `held` keeps it said. */
+export function failingTenantSweeps(): Array<{ name: string; held?: ReturnType<typeof heldOf> } & SweepLastRound> {
   return [...registry.values()]
-    .filter((r) => r.last && r.last.failed > 0)
-    .map((r) => ({ name: r.pass.name, ...r.last! }));
+    .map((r) => ({ r, held: heldOf(r.pass.name) }))
+    .filter(({ r, held }) => r.last && (r.last.failed > 0 || held.length > 0))
+    .map(({ r, held }) => ({ name: r.pass.name, ...r.last!, ...(held.length ? { held } : {}) }));
 }
 
 /** Start the rounds. `startAfterMs` keeps the first round clear of boot. */
@@ -355,6 +394,7 @@ export async function walkWith(
       const inScope = rows
         .filter((r) => !s.pass.module || r.modules.includes(s.pass.module))
         .filter((r) => opts.orgIds !== undefined || !quiet.has(r.id) || quietVisitDue(s.pass, r.id, opts.now.getTime()))
+        .filter((r) => opts.orgIds !== undefined || !heldNow(s.pass, r.id, opts.now.getTime()))
         .map((r) => r.id);
       let chosen: string[] | null = null;
       // Nothing in scope (a fresh instance, a module nobody turned on): there
@@ -401,6 +441,7 @@ export async function walkWith(
           try {
             const r = (await s.pass.visit({ orgId, db, now: opts.now })) as TenantSweepVisitResult | void;
             s.result.visited++;
+            noteVisitDone(s.pass, orgId);
             if (opts.orgIds === undefined && quiet.has(orgId)) noteQuietVisit(s.pass, orgId, opts.now.getTime());
             s.result.results.push({ orgId, result: r });
             if (r?.backlog) s.result.backlog = true;
@@ -409,6 +450,7 @@ export async function walkWith(
             s.result.failed++;
             noteFailure(s.pass.name, s.result, orgId, (err as Error).message);
             console.warn(`[tenant-sweeps] ${s.pass.name}: workspace ${orgId} failed:`, (err as Error).message);
+            noteVisitFailed(s.pass, orgId, (err as Error).message, opts.now.getTime());
           }
         }
       } finally {
@@ -461,6 +503,7 @@ export const tenantSweeps: PlatformSweeps = {
 /** Tests: forget every pass (the registry is process-wide). */
 export function resetTenantSweepsForTests(): void {
   quietVisits.clear();
+  repeats.clear();
   started?.stop();
   registry.clear();
 }

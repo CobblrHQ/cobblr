@@ -11,6 +11,7 @@
 
 import { registerOrgForTeardown } from "./setup-teardown.js";
 import { fetchTransient } from "./fetch-transient.js";
+import { noteProvisioning, type ProvisionedBy } from "./fixture-log.js";
 import { eventually } from "./eventually.js";
 import { arrivedEverywhere, dayIn } from "@cobblr/platform-contract/day";
 
@@ -58,18 +59,19 @@ async function signupOnce(body: unknown): Promise<Response> {
 /** Pool fast path: check out a pre-provisioned org instead of provisioning one.
  *  Returns null when the pool is off, empty, or the request fails — the caller
  *  then falls back to a real signup, so the pool is a pure optimization. */
-async function tryCheckoutPoolOrg(): Promise<TestSession | null> {
-  if (!process.env.COBBLR_TEST_ORG_POOL) return null;
+/** A pooled workspace, or why there was none (fixture-log.ts keeps the reason for the measurement ledger). */
+async function tryCheckoutPoolOrg(): Promise<{ session: TestSession | null; by: ProvisionedBy }> {
+  if (!process.env.COBBLR_TEST_ORG_POOL) return { session: null, by: "pool off" };
   try {
     // Retry the CHEAP checkout on a transient blip. Falling back to a full
     // signup (CREATE DATABASE) on every blip would ADD to the storm that caused
     // the blip. A real 409 (pool_exhausted) still returns immediately → signup.
     const res = await fetchTransient(`${BASE}/api/v1/test-support/checkout-org`, { method: "POST" });
-    if (!res.ok) return null; // 409 pool_exhausted → fall back to real signup
+    if (!res.ok) return { session: null, by: res.status === 409 ? "pool exhausted" : `pool HTTP ${res.status}` }; // → real signup
     const j = (await res.json()) as { token: string; userId: string; orgId: string; slug: string };
-    return { token: j.token, userId: j.userId, orgId: j.orgId, slug: j.slug };
+    return { session: { token: j.token, userId: j.userId, orgId: j.orgId, slug: j.slug }, by: "pool" };
   } catch {
-    return null;
+    return { session: null, by: "pool unreachable" };
   }
 }
 
@@ -90,13 +92,15 @@ export const FRESH_ORG_BUDGET_MS = 60_000;
  *  (`POST /modules/<name>/disable`); two such tests passed locally and failed
  *  in CI by assuming a fresh workspace had one off (2026-09-28). */
 export async function signupFreshOrg(label: string): Promise<TestSession> {
+  const started = performance.now();
   // Pool fast path — a checked-out org is already all-modules-provisioned.
-  const pooled = await tryCheckoutPoolOrg();
+  const { session: pooled, by } = await tryCheckoutPoolOrg();
   if (pooled) {
     registerOrgForTeardown({ token: pooled.token, slug: pooled.slug });
     // Cheap top-up: no-op when the pooled org already has every module (the
     // common case); self-heals a pool baked before a new module was added.
     await enableAllModulesForTests(pooled);
+    noteProvisioning(by, performance.now() - started);
     return pooled;
   }
   const session = await signupBlankOrg(label);
@@ -107,6 +111,7 @@ export async function signupFreshOrg(label: string): Promise<TestSession> {
   // suite was written against. (The blank-slate default itself is
   // covered by the driven walkthrough, not the unit suite.)
   await enableAllModulesForTests(session);
+  noteProvisioning(by, performance.now() - started);
   return session;
 }
 

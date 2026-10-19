@@ -147,7 +147,7 @@ queueRouter.post(
   }),
 );
 
-const QueuePatch = z
+export const QueuePatch = z
   .object({
     qty: z.number().int().min(1).max(99).optional(),
     // The printed caption — editable so a long title can be trimmed to a short name
@@ -156,58 +156,39 @@ const QueuePatch = z
   })
   .refine((b) => b.qty !== undefined || b.description !== undefined, { message: "qty or description required" });
 
-// AI-REACH: edits a queued label job; the queue is a device-bound surface, and queue-from-entity is the door in
+/** A queued label of this person's, changed: the route's PATCH and labels:change-queued-label. */
+export async function changeQueued(db: ReturnType<typeof tenantDb>, userId: string, id: string, change: z.infer<typeof QueuePatch>) {
+  const patch: Record<string, unknown> = {};
+  if (change.qty !== undefined) patch.qty = change.qty;
+  if (change.description !== undefined) patch.description = change.description.trim();
+  return (await db.updateTable("labels_queue").set(patch).where("id", "=", id).where("user_id", "=", userId).returningAll().executeTakeFirst()) ?? null;
+}
+
+/** A queued label of this person's, taken off: the route's DELETE and labels:remove-queued-label. */
+export async function removeQueued(db: ReturnType<typeof tenantDb>, userId: string, id: string) {
+  return (await db.deleteFrom("labels_queue").where("id", "=", id).where("user_id", "=", userId).returningAll().executeTakeFirst()) ?? null;
+}
+
+// AI-ACTION: labels:change-queued-label
 queueRouter.patch(
   "/:id",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "labels:change-queued-label"))) return;
     const parsed = QueuePatch.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    const session = sessionUser(req);
-    const id = req.params.id;
-    if (!id) {
-      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
-      return;
-    }
-    const patch: Record<string, unknown> = {};
-    if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
-    if (parsed.data.description !== undefined) patch.description = parsed.data.description.trim();
-    const updated = await db
-      .updateTable("labels_queue")
-      .set(patch)
-      .where("id", "=", id)
-      .where("user_id", "=", session.id)
-      .returningAll()
-      .executeTakeFirst();
-    if (!updated) {
-      res.status(404).json({ error: { code: "not_found", message: "queue item not found" } });
-      return;
-    }
+    const updated = await changeQueued(tenantDb(req), sessionUser(req).id, req.params.id ?? "", parsed.data);
+    if (!updated) return void res.status(404).json({ error: { code: "not_found", message: "queue item not found" } });
     res.json(updated);
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: labels:remove-queued-label
 queueRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    const db = tenantDb(req);
-    const session = sessionUser(req);
-    const id = req.params.id;
-    if (!id) {
-      res.status(400).json({ error: { code: "missing_id", message: "id required" } });
-      return;
-    }
-    const deleted = await db
-      .deleteFrom("labels_queue")
-      .where("id", "=", id)
-      .where("user_id", "=", session.id)
-      .returning("id")
-      .executeTakeFirst();
-    if (!deleted) {
-      res.status(404).json({ error: { code: "not_found", message: "queue item not found" } });
-      return;
-    }
+    if (!(await requireCapability(req, res, "labels:remove-queued-label"))) return;
+    const deleted = await removeQueued(tenantDb(req), sessionUser(req).id, req.params.id ?? "");
+    if (!deleted) return void res.status(404).json({ error: { code: "not_found", message: "queue item not found" } });
     res.status(204).end();
   }),
 );

@@ -156,7 +156,7 @@ const PlanBody = z
     message: "scope:\"refs\" requires a non-empty refs array",
   });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-TOOL: replan_putaway
 organizeRouter.post(
   "/organize/plan",
   asyncHandler(async (req, res) => {
@@ -554,7 +554,8 @@ interface StoredGroup {
     | { kind: "unassigned" };
 }
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a bulk write over the whole put-away plan; an agent files
+// items through file_inbox_items, where each filing is seen and undoable
 organizeRouter.post(
   "/organize/apply",
   asyncHandler(async (req, res) => {
@@ -902,7 +903,9 @@ const WalkStateBody = z.object({
   placed_item_ids: z.array(z.string().min(1).max(200)).max(PLAN_MAX_ITEMS),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 // UI-REACH: compatibility write for tabs from before put-away sessions; current progress is recorded by the session controls, not this retired checklist.
 organizeRouter.post(
   "/organize/walk-state",

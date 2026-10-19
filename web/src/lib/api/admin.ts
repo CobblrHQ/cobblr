@@ -300,6 +300,9 @@ export const adminApi = {
    *  one, or when Discord is off for new feedback. */
   postFeedbackToDiscord: (id: string) =>
     request<{ ok: boolean; announce_message_id: string | null }>("POST", `/super-admin/feedback/${id}/announce`),
+  /** The owner's go for a resolved item's public card and held reporter message (#7460). */
+  publishFeedback: (id: string) =>
+    request<{ id: string; published: boolean; reply_sent: boolean }>("POST", `/super-admin/feedback/${id}/publish`),
   listAnnounceSettings: () =>
     request<{ items: AnnounceSetting[] }>("GET", "/super-admin/announce-settings"),
   setAnnounceSetting: (

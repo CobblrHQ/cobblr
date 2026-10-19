@@ -117,7 +117,8 @@ entityImageRouter.get(
   }),
 );
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — sets a record's picture from a photo a person took or
+// uploaded; the assistant holds no image bytes
 entityImageRouter.post(
   "/entity-image",
   asyncHandler(async (req, res) => {
@@ -323,7 +324,8 @@ const BackfillBody = z.object({
   /** Bounded per press — this spends a web search + download per record. */
   limit: optionalField(z.number().int().min(1).max(50)),
 });
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — fans an outside image search out over every record
+// without a picture; one person's sweep, not a chat's
 entityImageRouter.post(
   "/entity-image/backfill",
   asyncHandler(async (req, res) => {

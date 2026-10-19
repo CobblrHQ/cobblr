@@ -109,14 +109,19 @@ export function FeedbackCard({
   onUpdate,
   onPostToDiscord,
   posting = false,
+  onPublish,
+  publishing = false,
 }: {
   f: FeedbackSourceItem;
-  source: Pick<FeedbackSource, "imageUrl" | "update" | "postToDiscord">;
+  source: Pick<FeedbackSource, "imageUrl" | "update" | "postToDiscord" | "publish">;
   onUpdate: (body: FeedbackUpdate) => void;
   /** Post this item's card to the team channel. Offered only for an open item
    *  with no card, and only where the source can do it. */
   onPostToDiscord?: () => void;
   posting?: boolean;
+  /** Publish what the resolve held. Offered on a resolved item that has something unpublished. */
+  onPublish?: () => void;
+  publishing?: boolean;
 }) {
   const [notes, setNotes] = useState(f.admin_notes ?? "");
   const [reply, setReply] = useState("");
@@ -230,6 +235,31 @@ export function FeedbackCard({
           </a>
         )}
       </div>
+      {source.publish && onPublish && f.status === "resolved" && !f.published_at && (f.held_summary || f.held_reply) && (
+        <div className="rounded border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-2 space-y-1.5 text-xs" role="group" aria-label="Held until you publish">
+          <div className="font-medium">Held until you publish</div>
+          {f.held_summary && (
+            <div>
+              <span className="text-faint dark:text-slate-500">Public card: </span>
+              {f.held_summary}
+            </div>
+          )}
+          {f.held_reply && (
+            <div>
+              <span className="text-faint dark:text-slate-500">To the reporter: </span>
+              {f.held_reply.message ?? "the default “fixed” line"}
+            </div>
+          )}
+          <button
+            type="button"
+            className="rounded border border-line dark:border-slate-700 px-2 py-0.5 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-60"
+            disabled={publishing}
+            onClick={onPublish}
+          >
+            {publishing ? "Publishing…" : f.held_reply ? "Publish and send" : "Publish"}
+          </button>
+        </div>
+      )}
       <div className="text-content dark:text-mortar-100 whitespace-pre-wrap">{f.message}</div>
       {ctx.route && (
         <div className="text-[10px] font-mono text-faint dark:text-slate-500 break-all">@ {ctx.route}</div>

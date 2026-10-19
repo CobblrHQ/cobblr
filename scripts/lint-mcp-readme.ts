@@ -17,18 +17,16 @@
 // Run: npx tsx scripts/lint-mcp-readme.ts
 
 import { readFileSync } from "node:fs";
+import { registeredToolNames } from "./lib/workspace-tool-names.ts";
 
 const README = "packages/mcp-server/README.md";
 const SERVER = "packages/mcp-server/src/tools.ts";
-const REGISTRY = "packages/workspace-tools/src/tools.ts";
 
 const readme = readFileSync(README, "utf8");
 const server = readFileSync(SERVER, "utf8");
-const registry = readFileSync(REGISTRY, "utf8");
 
-// OPERATE: `name: "<tool>"` in the registry array. The `name: string` interface
-// field is unquoted, so it does not match.
-const operate = [...registry.matchAll(/^\s*name:\s*["']([a-z0-9_]+)["']/gm)].map((m) => `cobblr_${m[1]!}`);
+// OPERATE: each registry tool file's `name: "<tool>"`.
+const operate = registeredToolNames().map((n) => `cobblr_${n}`);
 // BUILD/DRIVE: quoted `registerTool("cobblr_…")` names. The operate loop uses a
 // backtick template (`cobblr_${tool.name}`), so it is not double-counted here.
 const staticNames = [...server.matchAll(/registerTool\(\s*["'](cobblr_[a-z0-9_]+)["']/g)].map((m) => m[1]!);
@@ -57,7 +55,7 @@ if (missing.length) {
   console.error(`✗ mcp-readme lint: ${README} omits ${missing.length} tool(s) the server registers:`);
   for (const n of missing) console.error(`    ${n}`);
   console.error(
-    `\n  Operate tools come from ${REGISTRY} (registered as cobblr_<name>); build/drive tools from ${SERVER}.\n` +
+    `\n  Operate tools come from packages/workspace-tools/src/tools/ (registered as cobblr_<name>); build/drive tools from ${SERVER}.\n` +
       `  Document each in the README's Tools section — or cover a family with a \`cobblr_<prefix>*\` glob —\n` +
       `  so the docs can never advertise a smaller surface than the server exposes.`,
   );

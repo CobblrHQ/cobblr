@@ -20,12 +20,11 @@ import { signSession } from "../auth/jwt.js";
 import { dispatch } from "./notifications.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { productName } from "./product-name.js";
+import { HELD_CHANGE_TTL_MS } from "./ai-held-change-policy.js";
 
 export const CONFIRM_HELD_CHANGE_ACTION = "platform:confirm-held-change";
 export const KEEP_HELD_CHANGE_ACTION = "platform:keep-held-change";
 const EVENT = "platform.assistant.change_held";
-/** A card answered after this deletes nothing: nobody remembers what it was. */
-export const HELD_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** The path under /api/v1/orgs/<slug>, or null for anything else. */
 function workspacePath(originalUrl: string, slug: string): string | null {
@@ -85,6 +84,8 @@ export async function holdForAPerson(req: Request, res: Response): Promise<void>
       orgId: tenant.org.id,
       userId,
       eventType: EVENT,
+      entityType: "ai_held_change",
+      entityId: row.id,
       message: `An assistant asked to delete ${summary}. Delete it?`,
       priority: "high",
       no_link_reason: "the question is answered on the card itself",

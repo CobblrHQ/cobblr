@@ -5,6 +5,8 @@
     "module-ui"
   ],
   "ms": 1486,
+  "readMB": 1.3,
+  "readTreeMB": 80.1,
   "recorded": "2026-10-11",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
 }

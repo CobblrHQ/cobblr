@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-// A deferred line in docs/BACKLOG.md carries a probe naming what will exist once it ships, and the lint fails the day that thing appears in the source, so a shipped item cannot stay listed as open.
+// A deferred line in docs/backlog.d/ carries a probe naming what will exist once it ships, and the lint fails the day that thing appears in the source, so a shipped item cannot stay listed as open.
 //
 // THE BUG THIS PREVENTS. About 15 shipped things were still listed as open in
 // BACKLOG.md and the design docs on 2026-10-16 (#6912): the photo cross-check,
@@ -8,7 +8,7 @@
 //
 // THE RULE.
 //   1. A probe is `<!-- open-while-absent: <term> -->` on a deferred line in
-//      docs/BACKLOG.md, docs/modules or docs/design-decisions. <term> is what
+//      docs/backlog.d, docs/modules or docs/design-decisions. <term> is what
 //      the item will be built under: a function, an action id, a route. While
 //      no shipping source file (api/src, web/src, modules, packages; tests
 //      excluded) contains <term>, the line passes. The day one does, the lint
@@ -16,7 +16,8 @@
 //      for another reason, point the probe at something still absent.
 //      An identifier-shaped term matches as a whole word; anything else
 //      (`move-everything`, `POST /x`) matches as plain text.
-//   2. Every item in BACKLOG.md's "Deferred in the ... docs" lists carries a
+//   2. Every item in a deferred-list entry (a docs/backlog.d/ file with
+//      `deferred_from:`, one per module or design doc since #7383) carries a
 //      probe, or `<!-- no-probe: <why> -->` when nothing it would be built
 //      under can be named yet (a design not settled, a taste call).
 //
@@ -38,13 +39,14 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
+import { BACKLOG_DIR } from "./lib/backlog.mjs";
 
 const DOC_ROOTS = ["docs/modules", "docs/design-decisions"];
-const BACKLOG = "docs/BACKLOG.md";
 const SOURCE_ROOTS = ["api/src", "web/src", "modules", "packages"];
 const PROBE = /<!-- open-while-absent: (.+?) -->/g;
 const NO_PROBE = /<!-- no-probe: \S.*?-->/;
-const DEFERRED_LIST = /^##\s+Deferred in the .* docs\b/;
+/** A deferred-list entry: a backlog.d file whose front matter names the doc it holds the deferrals of. */
+const DEFERRED_LIST = /^---\n(?:[^\n]*\n)*?deferred_from:\s*\S/;
 
 interface Violation {
   file: string;
@@ -109,32 +111,28 @@ export function foundAt(term: string, hits: Hit[]): string | null {
   return hit ? `${hit.file}:${hit.line}` : null;
 }
 
-/** Every probe in one doc whose term now exists, plus (for BACKLOG) every deferred-list item without one. */
+/** Every probe in one doc whose term now exists, plus (for a deferred-list entry) every item without one. */
 export function check(file: string, text: string, hits: Hit[]): Violation[] {
   const out: Violation[] = [];
   const lines = text.split("\n");
-  let inDeferredList = false;
+  const inDeferredList = file.startsWith(`${BACKLOG_DIR}/`) && DEFERRED_LIST.test(text);
   for (let i = 0; i < lines.length; i++) {
     // A probe quoted in inline code is an example of the syntax, not a probe.
     const line = (lines[i] ?? "").replace(/`[^`\n]*`/g, "");
-    if (/^##\s/.test(line)) inDeferredList = file === BACKLOG && DEFERRED_LIST.test(line);
     for (const m of line.matchAll(PROBE)) {
       const term = m[1]!.trim();
       const at = foundAt(term, hits);
       if (at) out.push({ file, line: i + 1, what: `"${term}" now exists at ${at}: if this shipped, strike the line and move it into its doc's main text` });
     }
     if (inDeferredList && /^\s*- /.test(line) && !/<!-- open-while-absent: /.test(line) && !NO_PROBE.test(line)) {
-      // An item with sub-items (a doc's name in bold) is a heading, not a deferral.
-      const next = lines[i + 1] ?? "";
-      const isGroup = /^- \*\*`[^`]+`\*\*\s*$/.test(lines[i] ?? "") && /^\s+- /.test(next);
-      if (!isGroup) out.push({ file, line: i + 1, what: "a deferred item with no `<!-- open-while-absent: <term> -->` probe and no `<!-- no-probe: <why> -->`" });
+      out.push({ file, line: i + 1, what: "a deferred item with no `<!-- open-while-absent: <term> -->` probe and no `<!-- no-probe: <why> -->`" });
     }
   }
   return out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const docs = [BACKLOG, ...DOC_ROOTS.flatMap((root) => [...walk(root, (n) => n.endsWith(".md"))])].map((file) => ({ file, text: readFileSync(file, "utf8") }));
+  const docs = [BACKLOG_DIR, ...DOC_ROOTS].flatMap((root) => [...walk(root, (n) => n.endsWith(".md"))]).map((file) => ({ file, text: readFileSync(file, "utf8") }));
   const terms = [...new Set(docs.flatMap(({ text }) => [...text.replace(/`[^`\n]*`/g, "").matchAll(PROBE)].map((m) => m[1]!.trim())))];
   const hits = shippingHits(terms);
   const violations: Violation[] = [];

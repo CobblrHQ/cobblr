@@ -9,8 +9,8 @@
       "import": "./dist/module.js",
       "types": "./dist/module.d.ts"
     },
-    "./laser-controller": "./src/laser-controller.ts",
-    "./laser-session": "./src/laser-session.ts"
+    "./laser-controller": "./src/families/lasers/laser-controller.ts",
+    "./laser-session": "./src/families/lasers/laser-session.ts"
   },
   "scripts": {
     "gen": "node scripts/gen-detectors.mjs",

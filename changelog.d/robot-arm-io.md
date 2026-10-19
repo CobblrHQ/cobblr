@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-19
 ---
 
 KUKA, FANUC, ABB and PLC-wired arms connect through an I/O board: a program is chosen by number and started over wires, with the wiring explained in plain words and safety left hardwired.

@@ -73,7 +73,8 @@ export interface MetaQrToken {
   expires_at: Date | null;
 }
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — mints a QR token, the secret part of a printed code's
+// address; the assistant never mints a credential
 qrTokensRouter.post(
   "/",
   asyncHandler(async (req, res) => {
@@ -180,7 +181,8 @@ qrTokensRouter.get(
   }),
 );
 
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — kills a printed code's token for good, so that label stops
+// working wherever it is stuck; only a person who can see it should
 qrTokensRouter.post(
   "/:id/revoke",
   asyncHandler(async (req, res) => {

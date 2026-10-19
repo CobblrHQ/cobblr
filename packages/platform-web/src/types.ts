@@ -187,6 +187,10 @@ export interface FieldSection {
 export type BulkFieldOption = Pick<PlatformFieldDef, "name" | "display_label" | "type" | "required" | "choices" | "learns" | "ref_kind" | "unit" | "field_role"> & { native: boolean; money?: "cents" | "amount" };
 
 export interface PlatformWebApi {
+  /** What the viewer may do here (GET /:slug/me/capabilities), read through
+   *  useCan / useCapabilities (can.ts); a host without it draws no gated
+   *  control, since nothing can say it would be allowed. */
+  getMyCapabilities?(slug: string): Promise<import("./can").MyCapabilities>;
   lookupBarcode?(slug: string, code: string): Promise<import("./barcode-fill").BarcodeLookup>;
   /** How a collection presents its native fields: relabels and hides
    *  (GET /:slug/native-field-overrides?kind=). Read through

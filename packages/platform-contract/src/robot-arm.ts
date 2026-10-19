@@ -63,6 +63,41 @@ export const ArmProgramListSchema = z.discriminatedUnion("supported", [
 ]);
 export type ArmProgramList = z.infer<typeof ArmProgramListSchema>;
 
+/** One file of a program or of the arm's installation, as the controller
+ *  holds it: text as utf8, anything else (a UR .urp is gzipped XML) as
+ *  base64. A path is relative and never climbs out of its folder. */
+export const ArmFileSchema = z.object({
+  path: z.string().trim().min(1).max(300).refine((p) => !p.startsWith("/") && !p.split(/[\\/]/).includes(".."), "A file path is relative and stays in its folder."),
+  encoding: z.enum(["utf8", "base64"]),
+  content: z.string().max(4_000_000),
+});
+export type ArmFile = z.infer<typeof ArmFileSchema>;
+/** A program's text: its name, the revision the controller lists it at, and
+ *  its files. What Cobblr keeps, diffs and copies. */
+export const ArmProgramSourceSchema = ArmProgramRefSchema.extend({ files: z.array(ArmFileSchema).min(1).max(200) });
+export type ArmProgramSource = z.infer<typeof ArmProgramSourceSchema>;
+/** Everything a controller's programs need to come back: every program and
+ *  the installation they depend on (tool, payload, I/O names, the
+ *  controller's configuration). `missing` says what could not be read, so a
+ *  backup never looks more complete than it is. */
+export const ArmBackupSchema = z.object({
+  taken_at: z.string().datetime({ offset: true }),
+  programs: z.array(ArmProgramSourceSchema).max(2000),
+  installation: z.array(ArmFileSchema).max(200),
+  missing: z.array(z.string().max(300)).max(200).default([]),
+});
+export type ArmBackup = z.infer<typeof ArmBackupSchema>;
+/** A restore writes programs back, and only programs. The installation is
+ *  never written from Cobblr: it carries the controller's safety settings,
+ *  which are restored at the pendant (ARM_FORBIDDEN_OPERATIONS). */
+export const ArmRestoreRequestSchema = z.object({ programs: z.array(ArmProgramSourceSchema).min(1).max(2000) }).strict();
+export const ArmRestoreResultSchema = z.object({
+  ok: z.boolean(),
+  restored: z.array(ArmProgramRefSchema).max(2000),
+  skipped: z.array(z.object({ name: z.string().max(200), detail: z.string().max(500) })).max(2000),
+});
+export type ArmRestoreResult = z.infer<typeof ArmRestoreResultSchema>;
+
 export const ARM_OPERATIONS = ["load", "start", "pause", "resume", "stop", "power"] as const;
 export type ArmOperation = (typeof ARM_OPERATIONS)[number];
 
@@ -132,6 +167,10 @@ export const ArmEventSchema = z.discriminatedUnion("type", [
   z.object({ ...EventBase, type: z.literal("run-ended"), run_id: z.string().min(1).max(200), outcome: z.enum(["completed", "aborted"]), detail: z.string().max(500).nullable().default(null) }),
   z.object({ ...EventBase, type: z.literal("safety-changed"), safety: z.enum(ARM_SAFETY), detail: z.string().max(500).nullable().default(null) }),
   z.object({ ...EventBase, type: z.literal("mode-changed"), mode: z.enum(ARM_MODES) }),
+  /** An alarm the controller raised, in its own code and words, with the
+   *  program and step it was at when the controller says. A record and a
+   *  reason to tell people; never a reason to command the arm. */
+  z.object({ ...EventBase, type: z.literal("alarm"), code: z.string().trim().min(1).max(100), text: z.string().trim().min(1).max(500), severity: z.enum(["info", "warning", "error"]), program: ArmProgramRefSchema.nullable().default(null), step: z.string().max(200).nullable().default(null) }),
 ]);
 export type ArmEvent = z.infer<typeof ArmEventSchema>;
 /** The events after a cursor (`seq`), and the cursor to ask from next. */

@@ -9,7 +9,8 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy, MapPin } from "lucide-react";
 import { api, type CalendarEvent } from "../lib/api";
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { CALENDAR_FEED_MANAGERS } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../lib/can";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -204,7 +205,6 @@ function SourceFilters({ events, hidden, onChange }: { events: CalendarEvent[]; 
 }
 
 function WarrantyReminders({ slug }: { slug: string }) {
-  const { activeOrg } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
   const settings = useQuery({ queryKey: ["warranty-reminders", slug], queryFn: () => api.getWarrantyReminders(slug), enabled: !!slug });
@@ -213,7 +213,8 @@ function WarrantyReminders({ slug }: { slug: string }) {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["warranty-reminders", slug] }); },
     onError: (e) => toast.error((e as Error).message),
   });
-  const canEdit = roleSatisfies(activeOrg?.role, ["owner", "admin"]);
+  // The reminders route reads the same list (api/src/routes/calendar.ts).
+  const canEdit = useRoleAtLeast(CALENDAR_FEED_MANAGERS);
   return (
     <section className="rounded-xl border border-line bg-surface p-4 space-y-2">
       <label className="flex items-center gap-2 text-sm font-medium">
@@ -229,6 +230,7 @@ function WarrantyReminders({ slug }: { slug: string }) {
 }
 
 function SubscribeBar({ slug }: { slug: string }) {
+  const canManage = useRoleAtLeast(CALENDAR_FEED_MANAGERS);
   const qc = useQueryClient();
   const toast = useToast();
   const feed = useQuery({ queryKey: ["calendar-feed", slug], queryFn: () => api.getCalendarFeed(slug), enabled: !!slug });
@@ -259,7 +261,7 @@ function SubscribeBar({ slug }: { slug: string }) {
       <div className="flex items-center gap-2">
         <button
           onClick={() => toggle.mutate(!enabled)}
-          disabled={toggle.isPending}
+          disabled={!canManage || toggle.isPending}
           className={"rounded-md text-sm font-medium px-3 py-1.5 transition " + (enabled ? "bg-cobble-100 text-accent dark:bg-cobble-900/40" : "bg-slate-700 hover:bg-slate-600 text-mortar-50")}
         >
           {enabled ? "Feed on" : "Enable feed"}
@@ -270,12 +272,13 @@ function SubscribeBar({ slug }: { slug: string }) {
             <button aria-label="Copy URL" onClick={() => { void navigator.clipboard?.writeText(url); toast.success("Copied."); }} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Copy URL">
               <Copy size={14} />
             </button>
-            <button aria-label="Rotate (invalidate old URL)" onClick={() => rotate.mutate()} disabled={rotate.isPending} className="p-2 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Rotate (invalidate old URL)">
+            <button aria-label="Rotate (invalidate old URL)" onClick={() => rotate.mutate()} disabled={!canManage || rotate.isPending} className="p-2 rounded hover:bg-cobble-100 disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-slate-800 transition" title="Rotate (invalidate old URL)">
               <RefreshCw size={14} />
             </button>
           </>
         )}
       </div>
+      {!canManage && <p className="text-xs text-faint">An owner or admin can turn the feed on or off and change its link. {enabled ? "You can copy it." : ""}</p>}
     </section>
   );
 }

@@ -25,37 +25,59 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 /** Why a picture could not be kept, in words for the person who picked it. */
 export type StoreOutcome = { fileId: string } | { fileId: null; why: string };
 
-/** Fetch an external image (SSRF-guarded, size/timeout-bounded) and store it in
- *  the workspace file store. Stores via the platform files seam (in-process),
- *  NOT the HTTP upload route: a system-fetched image is not a user upload, so
- *  it must bypass any gate on that route (e.g. the trial tier withholds user
- *  uploads). Never throws; a refusal says why. */
-export async function storeImageFrom(orgId: string, imageUrl: string, photoSource?: PhotoSource): Promise<StoreOutcome> {
+/** A picture fetched from the web and checked, not yet stored anywhere: what a
+ *  suggestion holds until a person says Use it (#7447). */
+export interface FetchedImage {
+  bytes: Uint8Array;
+  mimeType: string;
+  filename: string;
+}
+
+/** Fetch an external image (SSRF-guarded, size/timeout-bounded) and check it
+ *  is a picture. Stores nothing. Never throws; a refusal says why. */
+export async function fetchImage(imageUrl: string): Promise<{ image: FetchedImage } | { image: null; why: string }> {
   try {
     const dl = await guardedImageFetch(imageUrl, { headers: browserImageHeaders(imageUrl), signal: AbortSignal.timeout(8_000) });
     if (!dl.ok) {
-      if (dl.status === 401 || dl.status === 403) return { fileId: null, why: "That site doesn't allow its pictures to be saved elsewhere." };
-      if (dl.status === 404 || dl.status === 410) return { fileId: null, why: "That picture is no longer on the site it came from." };
-      return { fileId: null, why: `That site answered with an error (${dl.status}) instead of the picture.` };
+      if (dl.status === 401 || dl.status === 403) return { image: null, why: "That site doesn't allow its pictures to be saved elsewhere." };
+      if (dl.status === 404 || dl.status === 410) return { image: null, why: "That picture is no longer on the site it came from." };
+      return { image: null, why: `That site answered with an error (${dl.status}) instead of the picture.` };
     }
     const declared = Number(dl.headers.get("content-length") ?? 0);
-    if (declared && declared > MAX_IMAGE_BYTES) return { fileId: null, why: "That picture is too large to keep (over 10 MB)." };
+    if (declared && declared > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB)." };
     const blob = await dl.blob();
-    if (blob.size > MAX_IMAGE_BYTES) return { fileId: null, why: "That picture is too large to keep (over 10 MB)." };
-    if (blob.size === 0 || (blob.type && !blob.type.startsWith("image/"))) return { fileId: null, why: "That address gave back a page, not a picture." };
-    const name = (imageUrl.split("/").pop() ?? "image").split("?")[0] || "image.jpg";
-    const written = await platform().files.write(orgId, new Uint8Array(await blob.arrayBuffer()), {
-      filename: name,
-      mimeType: blob.type || "image/jpeg",
-      photoSource: photoSource ?? { kind: "web", original_url: imageUrl, at: new Date().toISOString() },
-    });
-    return written?.fileId ? { fileId: written.fileId } : { fileId: null, why: "The picture came, but storing it failed." };
+    if (blob.size > MAX_IMAGE_BYTES) return { image: null, why: "That picture is too large to keep (over 10 MB)." };
+    if (blob.size === 0 || (blob.type && !blob.type.startsWith("image/"))) return { image: null, why: "That address gave back a page, not a picture." };
+    const filename = (imageUrl.split("/").pop() ?? "image").split("?")[0] || "image.jpg";
+    return { image: { bytes: new Uint8Array(await blob.arrayBuffer()), mimeType: blob.type || "image/jpeg", filename } };
   } catch (err) {
     const e = err as Error;
-    if (e.name === "TimeoutError" || e.name === "AbortError") return { fileId: null, why: "That site took too long to send the picture." };
-    if (e.name === "StockPreviewRefused") return { fileId: null, why: "That is a stock agency's watermarked preview." };
-    if (/blocked/i.test(e.message)) return { fileId: null, why: "That address can't be reached from here." };
-    return { fileId: null, why: "That site couldn't be reached." };
+    if (e.name === "TimeoutError" || e.name === "AbortError") return { image: null, why: "That site took too long to send the picture." };
+    if (e.name === "StockPreviewRefused") return { image: null, why: "That is a stock agency's watermarked preview." };
+    if (/blocked/i.test(e.message)) return { image: null, why: "That address can't be reached from here." };
+    return { image: null, why: "That site couldn't be reached." };
+  }
+}
+
+/** Store a fetched picture in the workspace file store, through the platform
+ *  files seam (in-process), NOT the HTTP upload route: a system-fetched image
+ *  is not a user upload, so it must bypass any gate on that route (e.g. the
+ *  trial tier withholds user uploads). */
+export async function storeFetchedImage(orgId: string, image: FetchedImage, photoSource: PhotoSource): Promise<string | null> {
+  const written = await platform().files.write(orgId, image.bytes, { filename: image.filename, mimeType: image.mimeType, photoSource });
+  return written?.fileId ?? null;
+}
+
+/** Fetch an external image and store it in the workspace file store. Never
+ *  throws; a refusal says why. */
+export async function storeImageFrom(orgId: string, imageUrl: string, photoSource?: PhotoSource): Promise<StoreOutcome> {
+  const got = await fetchImage(imageUrl);
+  if (!got.image) return { fileId: null, why: got.why };
+  try {
+    const fileId = await storeFetchedImage(orgId, got.image, photoSource ?? { kind: "web", original_url: imageUrl, at: new Date().toISOString() });
+    return fileId ? { fileId } : { fileId: null, why: "The picture came, but storing it failed." };
+  } catch {
+    return { fileId: null, why: "The picture came, but storing it failed." };
   }
 }
 

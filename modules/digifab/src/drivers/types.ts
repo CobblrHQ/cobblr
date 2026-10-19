@@ -38,6 +38,18 @@ export interface RemoteDevice {
    *  Bambu LAN driver attaches its MQTT report). Lets the cloud ingest LAN
    *  telemetry as the source of truth for LAN-only / prefer-LAN modes. */
   raw?: Record<string, unknown> | null;
+  /** OPTIONAL — what the device runs, when its driver can read it (an edge
+   *  bridge reports it on each device). */
+  versions?: DeviceVersions | null;
+}
+
+/** What one device reports it runs: its firmware, the software or manager on
+ *  it, the firmware family, and its model. Each is the device's own words. */
+export interface DeviceVersions {
+  firmware?: string;
+  software?: string;
+  controller?: string;
+  model?: string;
 }
 
 /** Live job progress while a device is printing — cockpit display only. */
@@ -172,6 +184,10 @@ export interface MachineDriver {
   testConnection(): Promise<ConnectionResult>;
   /** Pull the printer list (for the one-time machine↔printer mapping). Read-only. */
   listDevices(): Promise<RemoteDevice[]>;
+  /** OPTIONAL — what each device runs, read on a slow cadence (an hour), never
+   *  on the fleet's poll. Read-only. A driver that cannot ask leaves it out and
+   *  its machines' versions are typed by a person. */
+  readVersions?(): Promise<Array<DeviceVersions & { deviceId: string }>>;
   /** Enable/disable a printer (outbound state sync). */
   setDeviceEnabled(deviceId: string, enabled: boolean): Promise<void>;
   /** Upload a sliced file; returns the farm's file id. */

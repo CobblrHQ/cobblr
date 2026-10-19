@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "purchases",
-  version: "0.18.3",
+  version: "0.18.6",
   displayName: "Purchases",
   description:
     "Orders you placed and what they cost, with each line tied to the parts it bought and what they went into.",
@@ -352,11 +352,12 @@ export default defineModule({
         examples: ["that order turned up", "the parcel arrived"],
         label: "Mark arrived",
         description:
-          "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. With shipmentId, only that parcel's lines are received, and the order arrives when nothing else on it is still to come. Does nothing if the order is already arrived. Args (all optional): { orderId, shipmentId, arrivedOn }.",
+          "Record that a purchase order turned up: sets its status to arrived, stamps the arrival date, and releases the stock-receipt events for every line mapped to a part. With shipmentId, only that parcel's lines are received, and the order arrives when nothing else on it is still to come. Does nothing if the order is already arrived. Args (all optional): { orderId, shipmentId, arrivedOn }; orderIds (a list) marks several orders arrived at once, for a card that asks about every order due that morning.",
         appliesTo: { kinds: ["purchases:order"] },
         invokeHandler: "purchases.mark-arrived",
         argsSchema: {
           orderId: { label: "Which order, defaults to the record this ran on", type: "text" },
+          orderIds: { label: "Several orders that all arrived (replaces the single order)", type: "list" },
           shipmentId: { label: "One parcel of the order: only its lines arrived", type: "text" },
           arrivedOn: { label: "The date it arrived, defaults to today", type: "text" },
           add_to_stock: { label: "Add its lines to stock (default yes; no for a past purchase whose stock is already counted)", type: "boolean" },

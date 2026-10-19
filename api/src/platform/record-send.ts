@@ -512,18 +512,36 @@ async function prepareTargetShape(orgId: string, userId: string, p: SendRequest)
 }
 
 
+// A send left half done (the api stopped mid-send) is undone by this pass. An
+// undo it cannot make without losing a person's work (the arrival was edited,
+// or filed elsewhere, since) is refused, and retrying that every minute only
+// failed the sweep forever (#7410). Such a send is held for a day, then looked
+// at again in case the person has since removed what arrived.
+const RECOVERY_HOLD_MS = 24 * 60 * 60_000;
+const recoveryDue = (now: number) => sql<boolean>`(transfer->'recovery_held'->>'at' is null or (transfer->'recovery_held'->>'at')::timestamptz < ${new Date(now - RECOVERY_HOLD_MS)})`;
+const unfinishedSend = sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`;
+
 export function registerOwnSendRecovery(): void {
   platform().sweeps.register({
     name: "platform.own-workspace-send-recovery", everyMs: 60_000,
     async candidates() {
-      const rows = await meta.selectFrom("share_offers").select(sql<string>`case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end`.as("org_id")).where("target_org_id", "is not", null).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`).execute();
+      const rows = await meta.selectFrom("share_offers").select(sql<string>`case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end`.as("org_id")).where("target_org_id", "is not", null).where(unfinishedSend).where(recoveryDue(Date.now())).execute();
       return [...new Set(rows.map((r) => r.org_id))];
     },
-    async visit({ orgId }) {
+    async visit({ orgId, now }) {
       const rows = await meta.selectFrom("share_offers").select(["id", "created_by"]).where("target_org_id", "is not", null)
-        .where(sql<string>`(case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end)`, "=", orgId).where(sql<boolean>`(transfer->>'state' <> 'undone' and (transfer->>'state' <> 'complete' or transfer->>'batch_complete' is distinct from 'true'))`)
-        .where("created_at", "<", new Date(Date.now() - 5 * 60_000)).limit(200).execute();
-      for (const row of rows) if (row.created_by) await runSerialised(`record-send:${orgId}`, () => undoSendUnlocked(orgId, row.created_by!, row.id, true));
+        .where(sql<string>`(case when transfer->>'transport' = 'file-import' then target_org_id::text else source->>'org_id' end)`, "=", orgId).where(unfinishedSend).where(recoveryDue(now.getTime()))
+        .where("created_at", "<", new Date(now.getTime() - 5 * 60_000)).limit(200).execute();
+      for (const row of rows) {
+        if (!row.created_by) continue;
+        try {
+          await runSerialised(`record-send:${orgId}`, () => undoSendUnlocked(orgId, row.created_by!, row.id, true));
+        } catch (err) {
+          if (!(err instanceof SendError)) throw err;
+          const held = { recovery_held: { at: now.toISOString(), reason: err.message } };
+          await meta.updateTable("share_offers").set({ transfer: sql`transfer || ${JSON.stringify(held)}::jsonb` as never }).where("id", "=", row.id).execute();
+        }
+      }
     },
   });
 }

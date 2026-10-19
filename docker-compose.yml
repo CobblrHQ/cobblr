@@ -58,6 +58,7 @@ services:
       NODE_ENV: ${NODE_ENV:-development}
       # Deploy label for the web's env indicator (navbar tint + chip).
       COBBLR_ENV: ${COBBLR_ENV:-development}
+      COBBLR_MEMORY_LOG_S: ${COBBLR_MEMORY_LOG_S:-}
       # What the server calls itself in emails, push titles and refusals (#6815); unset is Cobblr.
       COBBLR_PRODUCT_NAME: ${COBBLR_PRODUCT_NAME:-}
       API_PORT: 4000

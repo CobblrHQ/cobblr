@@ -13,6 +13,7 @@ import { api, type AppTheme, type PortalConfig } from "../lib/api";
 import { usePageTitle } from "@cobblr/platform-web";
 import { QueryError } from "../components/QueryError";
 import { accentStyle, cardStyle, mutedStyle, textStyle } from "../lib/appTheme";
+import { useCapabilitiesFor } from "../lib/can";
 
 interface PortalCtx {
   portalConfig: PortalConfig;
@@ -32,12 +33,8 @@ export function PortalHomePage() {
     queryFn: () => api.listSavedViews(activeSlug!),
     enabled: !!activeSlug && portalConfig.pinned_views.length > 0,
   });
-  const caps = useQuery({
-    queryKey: ["my-capabilities", activeSlug],
-    queryFn: () => api.getMyCapabilities(activeSlug!),
-    enabled: !!activeSlug,
-  });
-  const isAdmin = caps.data?.all === true;
+  const caps = useCapabilitiesFor(activeSlug);
+  const isAdmin = caps?.all === true;
 
   // Custom worker apps (H1) this member can open. The server already
   // filters to apps the caller's capabilities grant, so we render

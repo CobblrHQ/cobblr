@@ -4,6 +4,7 @@
 // is sent is one function a render test can call for every case.
 
 import { productName } from "./product-name.js";
+import { NO_ADDRESS_NOTE } from "./link-origin.js";
 import { cobblrEmailHtml, emailLinesText, type EmailLine } from "./email-html.js";
 
 /** The invitation's heading in each email (#4318, the approved wording). */
@@ -19,8 +20,9 @@ export interface FeedbackEmailInput {
   report: string;
   /** The fix (resolved) or our reply (open). */
   body: string;
-  /** Absolute link to their feedback page. */
-  feedbackUrl: string;
+  /** Absolute link to their feedback page, or null where this server has no
+   *  address to give (the mail then leaves the link out and says so). */
+  feedbackUrl: string | null;
   /** The tokenized Reply-To, when replies by email reach the report. */
   replyAddress: string | null;
   /** The Discord invitation's lines for this person; empty means no section. */
@@ -40,8 +42,8 @@ export interface FeedbackEmail {
 export function feedbackEmail(o: FeedbackEmailInput): FeedbackEmail {
   const bq = (s: string) => s.split("\n").map((l) => `> ${l}`).join("\n");
   const replyHere = o.replyAddress
-    ? `Just reply to this email and it'll land on your report — or use your feedback page:\n  ${o.feedbackUrl}`
-    : `To reply, use your feedback page — replies to this email aren't monitored yet:\n  ${o.feedbackUrl}`;
+    ? `Just reply to this email and it'll land on your report — or use your feedback page${o.feedbackUrl ? `:\n  ${o.feedbackUrl}` : `. ${NO_ADDRESS_NOTE}`}`
+    : `To reply, use your feedback page — replies to this email aren't monitored yet${o.feedbackUrl ? `:\n  ${o.feedbackUrl}` : `. ${NO_ADDRESS_NOTE}`}`;
   const heading = DISCORD_ASIDE_HEADING[o.kind];
   const discordText = o.discord.length ? `${heading}\n${emailLinesText(o.discord)}\n\n` : "";
   const aside = { heading, lines: o.discord };
@@ -59,7 +61,7 @@ export function feedbackEmail(o: FeedbackEmailInput): FeedbackEmail {
         quoteText: report,
         bodyParas: [o.body],
         aside,
-        ctaUrl: o.feedbackUrl,
+        ...(o.feedbackUrl ? { ctaUrl: o.feedbackUrl } : {}),
         ctaLabel: "View your feedback",
         footerNote: o.replyAddress ? "Still off? Just reply to this email and it'll land on your report." : "Still off? Reply on your feedback page (email replies aren't monitored yet).",
       }),
@@ -77,7 +79,7 @@ export function feedbackEmail(o: FeedbackEmailInput): FeedbackEmail {
       quoteText: report,
       bodyParas: [o.body],
       aside,
-      ctaUrl: o.feedbackUrl,
+      ...(o.feedbackUrl ? { ctaUrl: o.feedbackUrl } : {}),
       ctaLabel: "Open your feedback",
       footerNote: o.replyAddress ? "Reply to this email to answer, or use your feedback page." : "Reply on your feedback page; email replies aren't monitored yet.",
     }),

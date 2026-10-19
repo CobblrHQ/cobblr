@@ -3,15 +3,15 @@
 exports[`both feedback emails, every invitation case > reply: linked and in the community: switch only 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Thanks, we're raising the limit and making the error say why.</p>
     <p style="margin:18px 0 10px;font-weight:600;">Want faster answers?</p><p style="margin:0 0 14px;">&bull; You've connected Discord, so these replies can come there instead of by email: <a href="https://app.example.test/me/communication#platform.feedback.replied" style="color:#8a6f47;">switch feedback replies to Discord</a>.</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">Open your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "We replied to your Cobblr feedback",
   "text": "Hi Sam,
@@ -34,15 +34,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > reply: linked, not in the community: join, and switch 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Thanks, we're raising the limit and making the error say why.</p>
     <p style="margin:18px 0 10px;font-weight:600;">Want faster answers?</p><p style="margin:0 0 10px;">&bull; Join the Cobblr community on Discord to ask questions, share your projects, and see what's new: <a href="https://discord.gg/example-invite" style="color:#8a6f47;">discord.gg/example-invite</a></p><p style="margin:0 0 14px;">&bull; You've connected Discord, so these replies can come there instead of by email: <a href="https://app.example.test/me/communication#platform.feedback.replied" style="color:#8a6f47;">switch feedback replies to Discord</a>.</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">Open your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "We replied to your Cobblr feedback",
   "text": "Hi Sam,
@@ -66,15 +66,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > reply: not linked: both lines 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Thanks, we're raising the limit and making the error say why.</p>
     <p style="margin:18px 0 10px;font-weight:600;">Want faster answers?</p><p style="margin:0 0 10px;">&bull; Join the Cobblr community on Discord to ask questions, share your projects, and see what's new: <a href="https://discord.gg/example-invite" style="color:#8a6f47;">discord.gg/example-invite</a></p><p style="margin:0 0 14px;">&bull; Get our replies as a Discord message: <a href="https://app.example.test/me/communication" style="color:#8a6f47;">open your notification settings</a> and connect Discord (it's under <strong>Your account → Notifications</strong>).</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">Open your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "We replied to your Cobblr feedback",
   "text": "Hi Sam,
@@ -98,15 +98,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > reply: shown three times: nothing 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Thanks, we're raising the limit and making the error say why.</p>
     
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">Open your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Reply to this email to answer, or use your feedback page.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "We replied to your Cobblr feedback",
   "text": "Hi Sam,
@@ -126,15 +126,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > resolved: linked and in the community: switch only 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Files up to 100 MB now upload, and one that is too big says so.</p>
     <p style="margin:18px 0 10px;font-weight:600;">If you haven't already, join us on Discord</p><p style="margin:0 0 14px;">&bull; You've connected Discord, so these replies can come there instead of by email: <a href="https://app.example.test/me/communication#platform.feedback.replied" style="color:#8a6f47;">switch feedback replies to Discord</a>.</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "Your Cobblr request is live",
   "text": "Hi Sam,
@@ -158,15 +158,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > resolved: linked, not in the community: join, and switch 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Files up to 100 MB now upload, and one that is too big says so.</p>
     <p style="margin:18px 0 10px;font-weight:600;">If you haven't already, join us on Discord</p><p style="margin:0 0 10px;">&bull; Join the Cobblr community on Discord to ask questions, share your projects, and see what's new: <a href="https://discord.gg/example-invite" style="color:#8a6f47;">discord.gg/example-invite</a></p><p style="margin:0 0 14px;">&bull; You've connected Discord, so these replies can come there instead of by email: <a href="https://app.example.test/me/communication#platform.feedback.replied" style="color:#8a6f47;">switch feedback replies to Discord</a>.</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "Your Cobblr request is live",
   "text": "Hi Sam,
@@ -191,15 +191,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > resolved: not linked: both lines 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Files up to 100 MB now upload, and one that is too big says so.</p>
     <p style="margin:18px 0 10px;font-weight:600;">If you haven't already, join us on Discord</p><p style="margin:0 0 10px;">&bull; Join the Cobblr community on Discord to ask questions, share your projects, and see what's new: <a href="https://discord.gg/example-invite" style="color:#8a6f47;">discord.gg/example-invite</a></p><p style="margin:0 0 14px;">&bull; Get our replies as a Discord message: <a href="https://app.example.test/me/communication" style="color:#8a6f47;">open your notification settings</a> and connect Discord (it's under <strong>Your account → Notifications</strong>).</p>
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "Your Cobblr request is live",
   "text": "Hi Sam,
@@ -224,15 +224,15 @@ The Cobblr team",
 exports[`both feedback emails, every invitation case > resolved: shown three times: nothing 1`] = `
 {
   "html": "<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">Hi Sam,</p>
     <p style="margin:0 0 4px;color:#6b7280;font-size:13px;">You reported:</p>
        <blockquote style="margin:0 0 18px;padding:10px 16px;border-left:3px solid #c7b8a6;background:#f6f3ee;color:#374151;border-radius:0 6px 6px 0;white-space:pre-wrap;">Some of my files won't upload; it says there was an internal error.</blockquote>
     <p style="margin:0 0 14px;">Files up to 100 MB now upload, and one that is too big says so.</p>
     
     <p style="margin:22px 0 8px;"><a href="https://app.example.test/me/feedback" style="display:inline-block;background:#8a6f47;color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;">View your feedback</a></p>
-    <p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The Cobblr team</p>
+    <p style="margin:14px 0 0;color:#6b7280;font-size:12px;">Still off? Just reply to this email and it'll land on your report.</p>
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The Cobblr team</p>
   </div></body></html>",
   "subject": "Your Cobblr request is live",
   "text": "Hi Sam,

@@ -285,7 +285,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "account / password / sign out",
     keywords: ["log out", "logout", "sign out", "password", "reset password", "my account", "profile", "log in"],
     reply:
-      "Your **account menu** is at the top-right: profile, password, notifications, and **sign out**. Locked out? An admin on this workspace can reset your password (there's no email reset).",
+      "Your **account menu** is at the top-right: profile, password, notifications, and **sign out**. Locked out? On the sign-in screen, type your email and press **Forgot password?**: a link to choose a new one comes by email. If it never arrives, ask whoever runs this Cobblr to check that it can send email.",
   },
   {
     key: "feedback-support",

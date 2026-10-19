@@ -2568,6 +2568,7 @@ meRouter.post("/me/discord/oauth-start", requireAuth, async (req, res, next) => 
 // identity, store it UNVERIFIED, fire the test DM, bounce back to settings in a
 // waiting/blocked state. Browser redirect → never 4xx; carry status in a query.
 meRouter.get("/me/discord/oauth-callback", async (req, res, next) => {
+  // PATH-OK: a browser redirect target; a relative Location is correct
   const settings = `${publicBaseUrl()}/me/communication`;
   try {
     const code = typeof req.query.code === "string" ? req.query.code : "";

@@ -1,10 +1,7 @@
-import { persistCncRuntime } from "./cnc-runtime.js";
-import { lentPrinterRefusal } from "./detectors/lent.js";
-import { releaseUnstartedCncStock, validateCncStock } from "./cnc-start.js";
+import { lentPrinterRefusal } from "./lent-machines.js";
 import {verifyLargePrint} from "./large-format/service.js";
 import { authorizeCutterStart, requireCutterStation } from "./cutter-station.js";
 import { verifyCutterPlan } from "./cutter-plans.js";
-import { reserveResinPrint, checkResinStart, setResinPhase, settleResinPrint } from "./resin-prints.js";
 // Shared job logic — building a driver from a stored connection, and
 // polling a job's status. No express dependency, so both the HTTP route
 // and the core-queue poll worker use the same code.
@@ -13,14 +10,14 @@ import { interpretReport, plainDriverError, unreachablePlan, POLL_MS } from "./j
 import { persistResinStart } from "./resin-start.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { extractPlateMetadata } from "./library/extract-metadata.js";
-import { printerMaterialRefusal } from "./material-dispatch.js";
-import { machineOfJob } from "./loaded-spools.js";
-import { drawForCompletedJob, planCompletedMaterial } from "./loaded-spools.js";
+import { machineOfJob } from "./core/printing.js";
+import { priceCompletedJob } from "./print-cost.js";
 import { creditPendingOutput } from "./output-credit.js";
 import { settleMakeForJob } from "./makes-core.js";
 import { platform } from "@cobblr/platform-contract";
 import { takeBatchStartPermit, type BatchStartPermit } from "./batch-start-permit.js";
 import { isEdgeManagerUrl, edgeInstanceOf } from "@cobblr/platform-contract/edge-bridge-client";
+import { machineHoldRefusal } from "./core/holds.js";
 import type { Kysely, Selectable } from "kysely";
 import type { DigifabDB } from "./db.js";
 import { submitReviewedJob, ReviewRequired, InterruptedStart } from "./drivers/job-review.js";
@@ -28,7 +25,7 @@ import { verifyLaserOutput } from "./laser-layout.js";
 import { authorizeLaserStart, stationTokenHash } from "./laser-station.js";
 import type { JobApproval } from "./drivers/types.js";
 import { resolveDriver } from "./drivers/registry.js";
-import { EdgeAdapterDriver, type EdgeRelay } from "./drivers/edge-adapter.js";
+import type { EdgeRelay } from "./drivers/edge-adapter.js";
 import type { CommandResult, MachineDriver, RemoteDevice, SubmitResult } from "./drivers/types.js";
 import { isAssignable } from "./state.js";
 import { randomUUID } from "node:crypto";
@@ -37,7 +34,7 @@ import { notifyPrint, progressBucket } from "./notify.js";
 // resolves it when the retry fires.
 import { kickAssign } from "./assign-worker.js";
 import { edgeChannelKey } from "@cobblr/platform-contract/edge-channel";
-import { checkFamilyJobOutcome } from "./core/families.js";
+import { checkFamilyJobOutcome, familyMaterialRefusal, familyPreferredDriver, familyPrinting, planJobMaterial, requireFamilyPrinting, familyRecordPoll, requireFamilyProcess, requireFamilyStart, type FamilyProcess, type FamilyStart } from "./core/families.js";
 
 /** The manual camera URL set for a device (for the "Live view" link in print
  *  notifications). Null when none or no device. */
@@ -273,46 +270,6 @@ export { edgeChannelKey };
  *  encrypted in creds, not plaintext config). HYBRID: a Bambu connection keeps
  *  its cloud telemetry AND, for any printer with LAN config here, routes
  *  file-push + control through the on-site bridge's `bambu` (LAN) driver. */
-/** Per-printer transport mode: all cloud / prefer LAN (cloud fallback) / LAN only
- *  (cloud off, accept losing cloud-only history). Default = prefer_lan once LAN
- *  is configured. */
-export type BambuLanMode = "cloud" | "prefer_lan" | "lan_only";
-export type BambuLan = { host: string; access_code: string; mode?: BambuLanMode };
-export function bambuLanMode(lan: BambuLan | undefined): BambuLanMode {
-  return lan?.mode ?? (lan?.host ? "prefer_lan" : "cloud");
-}
-export function parseBambuLan(creds: Record<string, unknown>): Record<string, BambuLan> {
-  try {
-    const m = JSON.parse(String(creds.bambu_lan ?? "{}")) as Record<string, BambuLan>;
-    return m && typeof m === "object" ? m : {};
-  } catch {
-    return {};
-  }
-}
-
-/** Build the edge-routed `bambu` LAN driver for one printer — the bridge dials
- *  the printer over `mqtts://host:8883` (+ FTPS file push) using the access code.
- *  Each printer is its own bridge instance (`bambu-<serial>`); rides the org's
- *  default bridge channel (same bridge that serves the workspace's other LAN
- *  machines). */
-export function buildBambuLanDriver(orgId: string, serial: string, lan: BambuLan, bridge?: string | null): MachineDriver {
-  const baseUrl = `cobblr-edge://bambu-${serial}`;
-  const relay = buildEdgeRelay(orgId, baseUrl, { driver: "bambu", transport: "lan", host: lan.host, serial, accessCode: lan.access_code, ...(bridge ? { bridge } : {}) } as Record<string, unknown>, null);
-  return new EdgeAdapterDriver({ baseUrl, apiKey: null, username: null, password: null, extra: {} }, relay);
-}
-
-/** If this connection is Bambu AND `deviceId` has LAN config, return the LAN
- *  driver (for file-push/control); else null (cloud handles it). */
-export async function bambuLanDriverFor(orgId: string, connectionRef: string, deviceId: string): Promise<MachineDriver | null> {
-  const conn = await platform().devices.connections().getInternal(orgId, connectionRef);
-  if (!conn || conn.type !== "bambu" || !conn.credentials_enc) return null;
-  const creds = await platform().integrations.decryptCredentials(orgId, conn.credentials_enc);
-  const lan = parseBambuLan(creds)[deviceId];
-  // "All cloud" mode ignores LAN even if the host/code are stored.
-  if (!lan?.host || !lan?.access_code || bambuLanMode(lan) === "cloud") return null;
-  return buildBambuLanDriver(orgId, deviceId, lan);
-}
-
 /** Run a control, falling back to the cloud driver when the LAN/edge-bridge path
  *  failed. A flaky bridge (or a printer that's off the LAN) shouldn't block a
  *  command the cloud broker can ALSO send — the chamber light, pause/resume/stop,
@@ -437,7 +394,7 @@ export async function pollJob(
   // FDM Monster) was resurrected by its next poll: cancelled → printing → later a
   // spurious print.completed + filament deduction. Local terminal is final.
   if (TERMINAL.has(job.status)) {
-    if (job.material_pending) await drawForCompletedJob(db, orgId, job);
+    if (job.material_pending) await requireFamilyPrinting().drawCompleted(db, orgId, job);
     return { status: job.status, terminal: true, intervalMs: 0 };
   }
   if (!job.remote_job_id || !job.connection_id) return null;
@@ -458,7 +415,7 @@ export async function pollJob(
   const manager = await managerName(orgId, job.connection_id);
   try {
     const st = await driver.getJobStatus(job.remote_job_id);
-    if(job.cnc_setup) await persistCncRuntime(db,jobId,st.raw&&typeof st.raw==="object"?(st.raw as Record<string,unknown>).toolSeconds:undefined);
+    await familyRecordPoll(db, job, st.raw);
     progress = st.progress ?? null;
     etaSec = st.timeRemainingSec ?? null;
     elapsedSec = st.elapsedSec ?? null;
@@ -541,7 +498,7 @@ export async function pollJob(
   const fields = { ...(status === "completed" ? { linked_machine_id: linkedMachineId } : {}), progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
   const cutterJob = terminal && (!!await db.selectFrom("digifab_large_prints").select("job_id").where("job_id", "=", jobId).executeTakeFirst() || !!await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst());
   const materialPlan = status === "completed" && !cutterJob && driver.printProcess !== "resin"
-    ? await planCompletedMaterial(db, orgId, job) : null;
+    ? await planJobMaterial(db, orgId, job) : null;
   if (terminal) {
     // Status flip + bed-clear row, one transaction — see markJobTerminal. A
     // concurrent poll that already ended the job wins; this one emits nothing,
@@ -585,8 +542,16 @@ export async function pollJob(
     // print.completed → projects:set-dep-satisfied / mark task done /
     // bump stock, with neither module importing the other.
     if (materialPlan?.draws.length) {
-      try { await drawForCompletedJob(db, orgId, job); }
+      try { await requireFamilyPrinting().drawCompleted(db, orgId, job); }
       catch (error) { platform().health.notePassFailure("digifab.material-recovery", orgId, error); }
+    }
+    // Priced from the plan committed with the completion (which spool gave
+    // which grams), so a stock change still waiting on recovery never leaves
+    // the print unpriced.
+    if (materialPlan) {
+      await priceCompletedJob(db, orgId, jobId, completedRunHours(elapsedSec, job.sent_at)).catch((err: unknown) =>
+        console.error(`[digifab] job ${jobId}: pricing the print failed: ${(err as Error).message}`),
+      );
     }
     // A driver-reported `cancelled` (someone stopped it at the printer) is NOT a
     // failure — firing print.failed for it ran failure wires + posted "❌ Print
@@ -777,7 +742,7 @@ export async function recordJobOutcome(
   const good = counts ? clean(counts.good) : outcome === "good" ? whole : 0;
   const scrap = counts ? clean(counts.scrap) : outcome === "good" ? 0 : whole;
   const settled: JobOutcome = good > 0 ? "good" : "scrap";
-  if (job.resin_print) await settleResinPrint(db, orgId, jobId, settled, null);
+  if (job.resin_print) await requireFamilyProcess("resin").settle(db, orgId, jobId, settled, null);
   const large = await db.selectFrom("digifab_large_prints").select("consumed_at").where("job_id", "=", jobId).executeTakeFirst();
   if (large && !large.consumed_at) throw new ReviewRequired("Record roll and ink use at this printer before clearing the job.");
   // Already judged: its good output may still be waiting for its credit (a
@@ -827,7 +792,7 @@ export type SendJobResult =
   | { ok: false; code: "send_failed" | "material_not_ready"; message: string; shouldPoll?: boolean }
   /** The printer is lent out (record-loans.md): nothing was sent, the job is
    *  untouched, and the sentence says to whom. */
-  | { ok: false; code: "printer_lent"; message: string };
+  | { ok: false; code: "printer_lent" | "machine_held"; message: string };
 
 /** Claim a job for ONE send, in a single conditional UPDATE: the job still
  *  unsent, in one of `statuses`, and not already claimed. Two sends of one job
@@ -879,6 +844,9 @@ export async function sendJob(
   // A printer lent out is away; the job stays as it is for when it is back.
   const lent = await lentPrinterRefusal(db, orgId, job);
   if (lent) return { ok: false, code: "printer_lent", message: lent };
+  // A machine a cell's job holds takes no other work (core/holds.ts).
+  const held = await machineHoldRefusal(db, job.connection_id, job.target_device);
+  if (held) return { ok: false, code: "machine_held", message: held };
 
   // From here on this send owns the job, or it stops: nothing below this line
   // runs twice for one job at the same time.
@@ -992,7 +960,7 @@ async function sendClaimed(
   // (cloud `driver` is still used above for listDevices/validation).
   let sendDriver = driver;
   if (deviceId) {
-    const lan = await bambuLanDriverFor(orgId, connectionId, deviceId);
+    const lan = await familyPreferredDriver(orgId, connectionId, deviceId);
     if (lan) sendDriver = lan;
   }
 
@@ -1005,6 +973,8 @@ async function sendClaimed(
   let doing = "uploading the file";
   let cutter = false;
   let cnc = false;
+  let familyStart: FamilyStart | null = null;
+  let familyProcess: FamilyProcess | null = null;
   let resinAccepted = false;
   let largeMayHaveStarted = false;
   let resinChecks = 0;
@@ -1019,11 +989,13 @@ async function sendClaimed(
     const printReview = approval && (kind === "print" || kind === "cnc") ? await sendDriver.getJobReview?.(approval.fileId) : undefined;
     cnc = kind === "cnc";
     if (cnc && printReview?.project.kind !== "cnc") throw new ReviewRequired("Review this posted program at its CNC station before Start.");
+    if (cnc) familyStart = requireFamilyStart("cnc");
     cutter = kind === "cutter";
     const stationPermit = reviewRequired ? cutter ? await authorizeCutterStart(db, orgId, { ...job, target_device: deviceId }, approval) : await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview) : undefined;
     if (sendDriver.printProcess === "resin") {
       if (!approval) throw new ReviewRequired("Review this resin print at its station before Start.");
-      await reserveResinPrint(db, orgId, jobId, approval.fileId);
+      familyProcess = requireFamilyProcess("resin");
+      await familyProcess.reserve(db, orgId, jobId, approval.fileId);
     }
     const layout = job.laser_layout;
     if (layout && approval && sendDriver.getJobReview) {
@@ -1033,14 +1005,14 @@ async function sendClaimed(
     const checkStartAllowed = reviewRequired || sendDriver.laserBackend || cnc || cutter || ["resin", "large-format"].includes(sendDriver.printProcess ?? "") ? async () => {
       if (sendDriver.printProcess === "resin" && resinChecks++ > 0) {
         resinAccepted = true;
-        await setResinPhase(db, jobId, "started");
+        await requireFamilyProcess("resin").started(db, jobId);
       }
       const current = await db.selectFrom("digifab_jobs").select(["cancel_requested_at", "status"]).where("id", "=", jobId).executeTakeFirst();
       if (!current || current.cancel_requested_at || TERMINAL.has(current.status)) throw new ReviewRequired("Stop was requested. Review this job again before Start.");
-      if (cnc && approval && printReview) {
+      if (familyStart && approval && printReview) {
         const station = await db.selectFrom("digifab_stations").select("id").where("token_hash", "=", stationTokenHash(approval.stationToken ?? "")).where("connection_id", "=", connectionId).where("remote_device_id", "=", deviceId!).where("revoked_at", "is", null).executeTakeFirst();
         if (!station) throw new ReviewRequired("This screen's Start permission was revoked. Stop and authorize the machine station again.");
-        await validateCncStock(orgId, { ...job, target_device: deviceId }, approval, printReview, station.id);
+        await familyStart.recheck({ db, orgId, job: { ...job, target_device: deviceId }, approval, review: printReview, stationId: station.id });
       }
       if (sendDriver.printProcess === "large-format" && deviceId) {
         await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
@@ -1060,7 +1032,7 @@ async function sendClaimed(
       }
       if (sendDriver.printProcess === "resin") {
         await authorizeLaserStart(db, orgId, { ...job, target_device: deviceId }, approval, printReview);
-        await checkResinStart(db, orgId, jobId);
+        await requireFamilyProcess("resin").check(db, orgId, jobId);
       }
       // Every other reviewed family (a laser, a reviewed print) asks again
       // whether its station still holds Start, before the machine is told and
@@ -1075,13 +1047,13 @@ async function sendClaimed(
       await db.updateTable("digifab_jobs").set({remote_file_id:approval?.fileId??null,remote_job_id:e.remoteJobId,status:"sent",sent_at:new Date(),cancel_requested_at:new Date(),send_token:null,send_claimed_at:null,error:e.message,updated_at:new Date()}).where("id","=",jobId).execute();
       return {ok:false,code:"send_failed",message:e.message,shouldPoll:true};
     }
-    if (cnc) await releaseUnstartedCncStock(db, jobId);
+    await familyStart?.release(db, jobId);
     if (sendDriver.printProcess === "resin") {
       if (resinAccepted && approval) {
         const remote = `cobblr-${approval.fileId}.goo`;
         await db.updateTable("digifab_jobs").set({ remote_job_id: remote, sent_at: new Date(), cancel_requested_at: new Date(), updated_at: new Date() }).where("id", "=", jobId).execute();
         await enqueuePoll(orgId, jobId);
-      } else await setResinPhase(db, jobId, "released");
+      } else await familyProcess?.release(db, jobId);
     }
     if (e instanceof ReviewRequired && !largeMayHaveStarted) return { ok: false, code: "send_failed", message: e.message };
     const message = plainDriverError(e, await managerName(orgId, connectionId), doing).slice(0, 300);
@@ -1113,7 +1085,7 @@ async function sendClaimed(
       updated_at: new Date(),
     };
   if (sendDriver.printProcess === "resin") {
-    await setResinPhase(db, jobId, "started");
+    await requireFamilyProcess("resin").started(db, jobId);
     if (!deviceId || !await persistResinStart(db, sendDriver, deviceId, jobId, token, sentFields)) {
       if (remoteJobId) await enqueuePoll(orgId, jobId);
       return { ok: false, code: "send_failed", message: "Stop was requested. Waiting for the printer to confirm it stopped." };
@@ -1157,9 +1129,9 @@ async function checkJobMaterial(
     material_by_tool: metadata.material_by_tool,
     color_by_tool: metadata.color_by_tool,
   };
-  if (printerMaterialRefusal(requirements, []) === null) return null;
-  const { loadedSpoolsForMachine } = await import("./api/printing-profiles.js");
-  const refusal = printerMaterialRefusal(requirements, await loadedSpoolsForMachine(orgId, machine));
+  if (familyMaterialRefusal(requirements, []) === null) return null;
+  const printing = familyPrinting();
+  const refusal = printing ? printing.materialRefusal(requirements, await printing.loadedFor(orgId, machine)) : familyMaterialRefusal(requirements, []);
   const fields = {
     material_type: requirements.material_type,
     material_grams: requirements.material_grams == null ? null : String(requirements.material_grams),
@@ -1173,7 +1145,7 @@ async function checkJobMaterial(
 export type AssignJobResult =
   | { ok: true; status: string; remoteJobId: string | null; placement: SubmitResult; shouldPoll: boolean }
   | { ok: false; code: "not_found" | "batch_approval_required" | "not_awaiting" | "no_connection" | "no_file" | "unknown_device" | "already_sending" }
-  | { ok: false; code: "material_not_ready" | "printer_lent"; message: string };
+  | { ok: false; code: "material_not_ready" | "printer_lent" | "machine_held"; message: string };
 
 /** F-14 — re-pick a printer for a job stuck in `awaiting-assignment` (its target
  *  matched 0 or many printers). The file is ALREADY on the farm (remote_file_id),
@@ -1194,6 +1166,8 @@ export async function assignJob(
   if (!job.remote_file_id) return { ok: false, code: "no_file" };
   const lent = await lentPrinterRefusal(db, orgId, { connection_id: job.connection_id, target_device: deviceId });
   if (lent) return { ok: false, code: "printer_lent", message: lent };
+  const held = await machineHoldRefusal(db, job.connection_id, deviceId);
+  if (held) return { ok: false, code: "machine_held", message: held };
 
   const driver = await buildDriverById(db, orgId, job.connection_id);
   if (!driver) return { ok: false, code: "no_connection" };

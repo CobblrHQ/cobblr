@@ -5,7 +5,7 @@
 // parts_per_plate; target_qty is immutable after creation (PFM semantics) but
 // completed_qty is operator-editable with reopen/close guardrails.
 
-import { isLayoutFile } from "../laser-plans.js";
+import { isLayoutFile } from "../sheet-layout.js";
 import { Router } from "express";
 import { markJobTerminal } from "../jobs-core.js";
 import { z } from "zod";

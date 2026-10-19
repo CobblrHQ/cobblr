@@ -1,6 +1,7 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName, useSentWords } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
+import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
 import { LaserLayoutPlanner } from "../features/digifab/LaserLayout";
@@ -24,6 +25,8 @@ import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
 import { useReprint } from "../features/digifab/useReprint";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { centsFromAmount, formatMoney } from "@cobblr/platform-contract/money";
+import { HourRateEditor } from "../features/digifab/HourRate";
 
 /** What a Start confirm says: that it starts a machine, and how to stop it. It said a print "can't be stopped
  *  from here" beside a job that offers Pause and Cancel (#6785). */
@@ -756,6 +759,35 @@ function ReassignControl({ job, slug, onDone }: { job: DigifabJob; slug: string;
 // ember=fail); identity is never color-alone — the legend labels both, the
 // stack order is fixed, and the caption reads the hovered day. One axis (count);
 // filament lives in the stat tiles, so no dual-scale.
+const printMoney = (amount: number, currency?: string | null) => formatMoney(centsFromAmount(amount), { currency: currency || undefined });
+
+/** What the priced prints cost each day, beside the prints-per-day trend. */
+function CostTrendChart({ series, currency }: { series: NonNullable<DigifabHistory["series"]>; currency?: string }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const max = Math.max(0, ...series.map((d) => d.cost ?? 0));
+  if (max <= 0) return null;
+  const H = 48;
+  const h = hover != null ? series[hover] : null;
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <div className="text-[10px] uppercase tracking-widest text-faint">Cost per day</div>
+        <div className="text-[10px] text-faint tabular-nums">{h ? `${dayLabel(h.date, { month: "short", day: "numeric" })} · ${printMoney(h.cost ?? 0, currency)}` : null}</div>
+      </div>
+      <div className="flex items-end gap-[2px]" style={{ height: H }} onMouseLeave={() => setHover(null)}>
+        {series.map((d, i) => {
+          const barH = Math.round(((d.cost ?? 0) / max) * H);
+          return (
+            <div key={d.date} className="flex-1 min-w-[2px] h-full flex flex-col justify-end" onMouseEnter={() => setHover(i)} title={`${dayLabel(d.date, { month: "short", day: "numeric" })}: ${printMoney(d.cost ?? 0, currency)}`}>
+              {barH > 0 ? <div className="rounded-t-[3px] bg-cobble-500" style={{ height: barH, opacity: hover == null || hover === i ? 1 : 0.4 }} /> : <div className="h-[2px] rounded-full bg-line dark:bg-slate-700" />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["series"]> }) {
   const [hover, setHover] = useState<number | null>(null);
   const max = Math.max(1, ...series.map((d) => d.completed + d.failed));
@@ -1015,6 +1047,9 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
   const isWatcher = shape === "camera-watcher";
   // Import lists for the link picker (only while editing a camera-watcher).
   const fleet = useQuery({ queryKey: ["digifab-fleet", slug], queryFn: () => api.getDigifabFleet(slug), enabled: editing && isWatcher });
+  // Invalidated, never refetched by hand: both lists are a watcher's, and a refetch runs past that gate (#7509).
+  const qc = useQueryClient();
+  const refreshDetector = (key: "cameras" | "printers") => void qc.invalidateQueries({ queryKey: [`digifab-detector-${key}`, slug, det.id] });
   const camsQuery = useQuery({ queryKey: ["digifab-detector-cameras", slug, det.id], queryFn: () => api.listDigifabDetectorCameras(slug, det.id), enabled: editing && isWatcher, retry: false });
   const deviceOpts = (fleet.data?.connections ?? []).flatMap((c) => c.devices.map((d) => ({ value: `${c.connection_id}:${d.id}`, label: `${c.label} — ${d.name}` })));
   const cams = camsQuery.data?.cameras ?? [];
@@ -1095,7 +1130,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <div className={detLbl}>Linked cameras - a machine → its camera in the detector</div>
-                <button type="button" onClick={() => camsQuery.refetch()} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline" title="Refresh the camera list">
+                <button type="button" onClick={() => refreshDetector("cameras")} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline" title="Refresh the camera list">
                   {camsQuery.isFetching ? "…" : "↻"}
                 </button>
               </div>
@@ -1147,7 +1182,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
             </div>
           )}
           <button type="button" onClick={() => save.mutate()} disabled={save.isPending} className="rounded bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 text-white text-xs px-3 py-1.5">Save</button>
-          {isWatcher && <PrinterRegister slug={slug} detId={det.id} fleet={fleet.data} onDone={() => { camsQuery.refetch(); printers.refetch(); }} />}
+          {isWatcher && <PrinterRegister slug={slug} detId={det.id} fleet={fleet.data} onDone={() => { refreshDetector("cameras"); refreshDetector("printers"); }} />}
         </div>
       )}
     </div>
@@ -1279,13 +1314,19 @@ function PrintHistorySection({ slug }: { slug: string }) {
           </div>
           {hist.isLoading ? <div className="text-xs text-muted">Loading…</div> : s && (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {stat("Jobs", String(s.total))}
                 {stat("Success", rate == null ? "—" : `${rate}%`)}
                 {stat("Filament", s.filament_g ? `${Math.round(s.filament_g)} g` : "—")}
                 {stat("Run time", s.hours ? `${s.hours} h` : "—")}
+                <div className="rounded border border-line dark:border-slate-700 px-2.5 py-1.5">
+                  <div className="text-[10px] uppercase tracking-widest text-faint">Cost</div>
+                  <div className="text-lg font-semibold text-content dark:text-mortar-100">{s.cost != null ? printMoney(s.cost, hist.data?.currency) : "—"}</div>
+                  {!!s.unpriced && <div className="text-[10px] text-faint">{s.unpriced} not priced</div>}
+                </div>
               </div>
               {hist.data?.series && hist.data.series.length > 0 && <PrintTrendChart series={hist.data.series} />}
+              {hist.data?.series && hist.data.series.length > 0 && <CostTrendChart series={hist.data.series} currency={hist.data.currency} />}
               {(hist.data?.by_device.length ?? 0) > 0 && (
                 <div>
                   <div className="text-[10px] uppercase tracking-widest text-faint mb-1">By machine</div>
@@ -1300,7 +1341,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                             {dr != null && (
                               <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600 dark:text-ember-400")}>{dr}%</span>
                             )}
-                            <span className="text-faint shrink-0">{d.completed}/{d.total}{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}</span>
+                            <span className="text-faint shrink-0">{d.completed}/{d.total}{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}{d.cost != null ? ` · ${printMoney(d.cost, hist.data?.currency)}` : d.completed ? " · not priced" : ""}</span>
                           </li>
                         );
                       })}
@@ -1334,6 +1375,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                           <span className="text-faint truncate max-w-[22%] shrink-0" title={r.device}>{r.device}</span>
                           {dur && <span className="text-faint shrink-0">{dur}</span>}
                           {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}
+                          {r.status === "completed" && <span className="text-faint shrink-0 tabular-nums">{r.cost != null ? printMoney(r.cost, r.cost_currency) : "not priced"}</span>}
                           <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
                         </button>
                         </li>
@@ -2067,18 +2109,22 @@ function NewJobModal({
     queryFn: () => api.listDigifabPools(activeSlug),
     enabled: !!activeSlug,
   });
+  // Inventory and Builds are asked only where they are on: a module that is
+  // off answers 409, and the form asked anyway on every open (#7519).
+  const modulesOn = useEnabledModules(activeSlug);
+  const inventoryOn = !!modulesOn?.has("inventory");
   // Filament parts to deduct from on completion (any inventory part).
   const parts = useQuery({
     queryKey: ["inventory-parts-flat", activeSlug],
     queryFn: () => api.listInventoryParts(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && inventoryOn,
   });
-  // Builds (bills-of-materials) this job can produce — drawn from inventory on
-  // send. 404s + empty when the builds module isn't enabled; the field hides.
+  // Builds (bills-of-materials) this job can produce, drawn from inventory on
+  // send; with Builds off the field is absent.
   const builds = useQuery({
     queryKey: ["digifab-builds-flat", activeSlug],
     queryFn: () => api.listDigifabBuilds(activeSlug),
-    enabled: !!activeSlug,
+    enabled: !!activeSlug && !!modulesOn?.has("builds"),
     retry: false,
   });
 
@@ -2316,7 +2362,12 @@ function NewJobModal({
           },
           {
             need: fieldNeed("materialPartId", { control: "number", label: "Filament (optional)" }),
-            node: (
+            node: modulesOn && !inventoryOn ? (
+              <div className="block">
+                <span className={lbl}>Filament (optional)</span>
+                <span className="block text-[11px] text-faint">Turn on Inventory to track the filament a print uses.</span>
+              </div>
+            ) : (
               <label className="block">
                 <span className={lbl}>Filament (optional)</span>
                 <div className="flex gap-2">
@@ -2861,6 +2912,7 @@ function PoolsSection({ slug }: { slug: string }) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-content dark:text-mortar-100">{p.name}</span>
                   <span className="text-[11px] text-faint">{p.members.length} machine{p.members.length === 1 ? "" : "s"}</span>
+                  {typeof p.config.hour_rate === "number" && <span className="text-[11px] text-faint">· {formatMoney(centsFromAmount(p.config.hour_rate), { currency: String(p.config.hour_rate_currency ?? "") || undefined })} an hour</span>}
                   <div className="flex-1" />
                   <button
                     aria-label="Remove pool"
@@ -2903,6 +2955,7 @@ function PoolsSection({ slug }: { slug: string }) {
                     />
                   )}
                 </div>
+                <HourRateEditor slug={slug} target={{ pool: p.id }} current={typeof p.config.hour_rate === "number" ? { amount: p.config.hour_rate, currency: String(p.config.hour_rate_currency ?? "USD") } : null} />
               </div>
             );
           })}

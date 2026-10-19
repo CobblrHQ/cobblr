@@ -20,14 +20,37 @@ export interface MachinesMachinesTable {
   quantity: Generated<number>;
   location_id: string | null;
   metadata: ColJsonb;
+  /** What it runs (0004): each version with where it came from and when it was last seen. */
+  firmware_version: string | null;
+  firmware_source: VersionSource | null;
+  firmware_seen_at: Date | null;
+  software_version: string | null;
+  software_source: VersionSource | null;
+  software_seen_at: Date | null;
+  /** The firmware family (Klipper, PrusaLink, RepRapFirmware): half of its cohort. */
+  controller: string | null;
   /** Multi-instance scope (defaults to 'machines'). */
   instance: Generated<string>;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
 
+export type VersionSource = "reported" | "typed";
+
+/** The version an admin wants one cohort on (0004). */
+export interface MachinesVersionTargetsTable {
+  id: Generated<string>;
+  instance: string;
+  cohort: string;
+  firmware_target: string | null;
+  software_target: string | null;
+  set_by: string | null;
+  updated_at: Generated<Date>;
+}
+
 export interface MachinesDB {
   machines_machines: MachinesMachinesTable;
+  machines_version_targets: MachinesVersionTargetsTable;
 }
 
 /** Re-exported from the contract so this module cannot fall behind the

@@ -4,6 +4,7 @@
 
 import type { EntitySavedEvent } from "@cobblr/platform-contract/entity-saved";
 import type { SuggestionStore } from "./record-photos.js";
+import type { FetchedImage } from "./entity-image.js";
 
 export interface MemoryRow {
   entity_kind: string;
@@ -14,10 +15,12 @@ export interface MemoryRow {
   file_id?: string;
   source_url?: string;
   query?: string;
+  /** The picture a suggestion holds instead of a file (#7447). */
+  held?: FetchedImage;
   seq: number;
 }
 
-export function memoryStore(opts: { autoApply?: boolean; backfilled?: boolean } = {}): SuggestionStore & { rows: Map<string, MemoryRow> } {
+export function memoryStore(opts: { autoApply?: boolean; backfilled?: boolean; on?: boolean } = {}): SuggestionStore & { rows: Map<string, MemoryRow> } {
   const rows = new Map<string, MemoryRow>();
   let seq = 0;
   let backfilled = opts.backfilled ?? true;
@@ -46,10 +49,14 @@ export function memoryStore(opts: { autoApply?: boolean; backfilled?: boolean } 
       Object.assign(r, set);
     },
     autoApply: async () => opts.autoApply === true,
+    // On unless a test says off: these tests hold what suggestions do once a
+    // workspace has turned them on (#7447).
+    enabled: async () => opts.on !== false,
     backfilled: async () => backfilled,
     markBackfilled: async () => {
       backfilled = true;
     },
+    ensureConfig: async () => undefined,
     queueIfAbsent: async (k, id, name) => {
       if (rows.has(key(k, id))) return false;
       // Behind every save, as the product store dates it at the epoch.
@@ -59,7 +66,7 @@ export function memoryStore(opts: { autoApply?: boolean; backfilled?: boolean } 
     requeue: async (k, id) => {
       const r = rows.get(key(k, id));
       if (!r) return false;
-      Object.assign(r, { status: "queued", attempts: 0, file_id: undefined, source_url: undefined });
+      Object.assign(r, { status: "queued", attempts: 0, file_id: undefined, source_url: undefined, held: undefined });
       return true;
     },
   };
@@ -75,3 +82,6 @@ export const saved = (over: Partial<EntitySavedEvent> = {}): EntitySavedEvent =>
   userId: "u-1",
   ...over,
 });
+
+/** A fetched picture, as a suggestion would hold it. */
+export const picture = (name = "dremel.jpg"): FetchedImage => ({ bytes: new Uint8Array([1, 2, 3]), mimeType: "image/jpeg", filename: name });

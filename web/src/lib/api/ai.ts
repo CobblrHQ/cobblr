@@ -458,6 +458,7 @@ export type AiChatProposal =
   /** Inbox items filed into one list; `lines` names each one. */
   | { kind: "file"; ids: string[]; list: string; list_label?: string; lines?: string[] }
   | { kind: "put_back"; id: string; revision?: string; label?: string }
+  | { kind: "change_scan"; args: Record<string, unknown>; label?: string }
   /** What one message asked for, as one card: its steps in the order they
    *  run, each worded after the ones before it, and one Confirm (#4574). */
   | {

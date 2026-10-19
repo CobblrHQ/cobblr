@@ -29,6 +29,8 @@
 // `name: CI` stays, so the status contexts stay `CI / typecheck (push)` and
 // `CI / test (push)`, which the release, merge-pr and deploy read.
 //
+// A RULES RE-CHECK (recheck/<pr>-<head>-rules) gets ci.yml's typecheck job alone: RECHECK_RULES below.
+//
 // THE FAST LANE IS GENERATED HERE TOO (#4343): ci-fast.yml is the same CI for a push to
 // fast/<pr> (main plus one critical pull request, pushed by scripts/ci/fast-lane.mjs), on
 // labels only the reserved fast runner carries (pr-check -> fast-light, ci-test -> fast-test),
@@ -47,6 +49,8 @@ const OUT_FAST = join(ROOT, ".forgejo/workflows/ci-fast.yml");
 const OUT_IMPACT = join(ROOT, ".forgejo/workflows/ci-impact.yml");
 const OUT_RECHECK = join(ROOT, ".forgejo/workflows/ci-recheck.yml");
 const OUT_RECHECK_FIRST = join(ROOT, ".forgejo/workflows/ci-recheck-first.yml");
+const OUT_RECHECK_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-rules.yml");
+const OUT_RECHECK_FIRST_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-first-rules.yml");
 
 export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
 export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
@@ -54,6 +58,20 @@ export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
 const MAIN = {
   lane: LANE,
   branches: "[main, 'bisect/**']",
+  // The merge queue dispatches main's run once its set has landed (lib/set-tip.mjs, lib/queue-landing.mjs).
+  on: [
+    "  push:",
+    "    branches: [main, 'bisect/**']",
+    "  workflow_dispatch:",
+    "    inputs:",
+    "      set_tip:",
+    "        description: \"true: the merge queue's set has landed; test main's tip against its newest commit whose test passed\"",
+    "        required: false",
+    "        default: \"\"",
+  ],
+  // THE SET'S TIP (lib/set-tip.mjs): how many pull requests the queue is about to land (a push to main stands
+  // down while more are coming), and whether this run is the set's tip run the queue dispatched once they had.
+  env: ["env:", "  QUEUE_LANDING: ${{ vars.COBBLR_QUEUE_LANDING }}", "  CI_SET_TIP: ${{ github.event.inputs.set_tip }}"],
   group: "ci-main-${{ github.ref }}-${{ github.sha }}",
   header: [
     "# The same CI as ci.yml, for pushes to main and bisect branches, on",
@@ -157,6 +175,7 @@ export const IMPACT_SHARDS = 6;
 export const IMPACT_DROPS = [
   "No test file over its time budget",
   "Tests that passed only on a retry",
+  "Keep this run's per-file times in the measurement ledger",
   "Test balance (no single file may become the job's wall clock)",
   "Did the affected set miss this? (tracker lane, on red)",
   "Say what this run covered (suite / affected, suite / full)",
@@ -269,7 +288,8 @@ export const IMPACT = {
 // hour behind them: a recheck is a pull request's run, so it takes the pull request lane's labels.
 export const RECHECK = {
   lane: { "pr-check": "pr-check", "ci-test": "ci-test" },
-  branches: "['recheck/**']",
+  // A rules re-check (recheck/<pr>-<head>-rules) is ci-recheck-rules.yml's: typecheck only (RECHECK_RULES).
+  branches: "['recheck/**', '!recheck/**-rules']",
   group: "ci-recheck-${{ github.ref }}-${{ github.sha }}",
   header: [
     "# The same CI as ci.yml, for a push to recheck/<pr>-<head>: the direct policy's",
@@ -289,12 +309,45 @@ export const RECHECK = {
 export const RECHECK_FIRST_LANE = { "pr-check": "fast-recheck-light", "ci-test": "fast-recheck-test" };
 export const RECHECK_FIRST = {
   lane: RECHECK_FIRST_LANE,
-  branches: "['recheck-first/**']",
+  branches: "['recheck-first/**', '!recheck-first/**-rules']",
   group: "ci-recheck-first-${{ github.ref }}-${{ github.sha }}",
   header: [
     "# The same CI as ci.yml, for a push to recheck-first/<pr>-<head>: the re-check",
     "# that holds main frozen (scripts/lib/main-freeze.mjs). On labels only it asks",
     "# for (its own reserved runner), so it never waits behind anything else.",
+  ],
+  tail: [],
+};
+
+// A RULES RE-CHECK RUNS ITS TYPECHECK AND NOTHING ELSE (lib/direct-merge.mjs, #6608). Main gained a lint or a
+// tree-reading test since a pull request's green run and none of its files changed on main, so the typecheck job,
+// where those rules run, is the whole judgement (direct-merge's ciWord reads only `typecheck` for one). Pushed to
+// recheck/<pr>-<head>-rules, it ran all of ci-recheck.yml: its test job queued for one of the few test slots, set
+// up, and skipped its suite (ci-affected.sh), a verdict nobody read (2026-10-19: three at once, #7007, #7457 and
+// #7459). A workflow of its own has no test job, so none is ever queued; the lanes above ignore -rules branches.
+/** PURE. ci.yml's typecheck job alone, as a workflow's jobs block. */
+const typecheckOnly = (body) => ["jobs:", ...trimEnd(jobLines(body, "typecheck"))];
+export const RECHECK_RULES = {
+  lane: RECHECK.lane,
+  branches: "['recheck/**-rules']",
+  group: "ci-recheck-rules-${{ github.ref }}-${{ github.sha }}",
+  transform: typecheckOnly,
+  header: [
+    "# ci.yml's typecheck job alone, for a push to recheck/<pr>-<head>-rules: a re-check",
+    "# because main gained a rule (a lint, a tree-reading test), judged by the typecheck",
+    "# job where those rules run (scripts/lib/direct-merge.mjs). No test job is queued.",
+  ],
+  tail: [],
+};
+export const RECHECK_FIRST_RULES = {
+  lane: RECHECK_FIRST_LANE,
+  branches: "['recheck-first/**-rules']",
+  group: "ci-recheck-first-rules-${{ github.ref }}-${{ github.sha }}",
+  transform: typecheckOnly,
+  header: [
+    "# ci.yml's typecheck job alone, for a push to recheck-first/<pr>-<head>-rules: the",
+    "# rules re-check that holds main frozen, on its reserved runner's labels",
+    "# (scripts/lib/main-freeze.mjs). No test job is queued.",
   ],
   tail: [],
 };
@@ -309,6 +362,7 @@ export const RECHECK_FIRST = {
 function liveGated(body) {
   const out = [];
   let inJob = null;
+  let seenCheckout = null;
   for (const line of trimEnd(body)) {
     const job = /^  ([a-z][a-z0-9-]*):\s*$/.exec(line);
     if (job) inJob = job[1];
@@ -319,13 +373,27 @@ function liveGated(body) {
     // Every job of ci.yml waits on the live job and runs only when it says go. ci.yml's own `if:`
     // (a pull request's ci:ready gate) never applies to a push to fast/<pr>, so it is replaced.
     if (inJob && /^    runs-on: /.test(line)) {
-      out.push(line, "    needs: [live]");
+      out.push(line, "    needs: [live]", "    if: needs.live.outputs.go == 'true'");
       continue;
     }
+    // After the job's checkout, a background watch that stops the job if its pull request merges or closes while it
+    // runs (fast-lane.mjs watch): `live` above asks only before it starts.
+    if (inJob && /^ {6}(- name: |#)/.test(line) && seenCheckout === inJob) {
+      out.push(...WATCH_STEP);
+      seenCheckout = null;
+    }
+    if (inJob && line === "      - name: Checkout") seenCheckout = inJob;
     out.push(line);
   }
-  return dropReadyGate(out);
+  return out;
 }
+const WATCH_STEP = [
+  "      - name: Stand down if the pull request merges or closes mid-run (fast-lane.mjs watch)",
+  "        env:",
+  "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+  "          TESTED_HEAD: ${{ needs.live.outputs.head }}",
+  "        run: setsid nohup node scripts/ci/fast-lane.mjs watch > /tmp/fast-lane-watch.log 2>&1 < /dev/null &",
+];
 const LIVE_JOB = [
   "  # Is this run still worth the reserved runner? Only while its pull request is open and at this head.",
   "  live:",
@@ -333,6 +401,7 @@ const LIVE_JOB = [
   "    timeout-minutes: 5",
   "    outputs:",
   "      go: ${{ steps.live.outputs.go }}",
+  "      head: ${{ steps.live.outputs.head }}",
   "    steps:",
   "      - uses: https://github.com/actions/checkout@v4",
   "        with:",
@@ -343,18 +412,21 @@ const LIVE_JOB = [
   "        run: node scripts/ci/fast-lane.mjs live",
   "",
 ];
-/** ci.yml's `if: >-` ready gate, three lines, becomes the live job's answer. */
-function dropReadyGate(lines) {
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === "    if: >-" && /github\.event_name != 'pull_request' \|\|/.test(lines[i + 1] ?? "")) {
-      out.push("    if: needs.live.outputs.go == 'true'");
-      i += 3;
+/** PURE. ci.yml's jobs for a lane that a push starts: without each job's pull request gate (its comment and its
+ *  `if: >-` block, which opens `github.event_name != 'pull_request' ||`), which only a pull request's events
+ *  ever read. Throws when a job still reads the admission mode after. */
+export function withoutAdmission(body) {
+  const kept = [];
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "    if: >-" && /github\.event_name != 'pull_request' \|\|/.test(body[i + 1] ?? "")) {
+      while (kept.length && /^ {4}#/.test(kept[kept.length - 1])) kept.pop();
+      while (i + 1 < body.length && /^ {6}/.test(body[i + 1])) i++;
       continue;
     }
-    out.push(lines[i]);
+    kept.push(body[i]);
   }
-  return out;
+  if (kept.some((l) => /CI_ADMISSION_MODE|ci:admitted/.test(l) && !/^\s*#/.test(l))) throw new Error("a ci.yml job still reads its pull request gate after withoutAdmission");
+  return kept;
 }
 
 /** ci-main.yml's (or, with FAST, ci-fast.yml's) text, from ci.yml's. Throws when ci.yml no longer has the shape this relies on. */
@@ -378,11 +450,11 @@ export function generate(ci, kind = MAIN) {
   const pi = lines.findIndex((l, n) => n > pr && n < conc && /^ {4}paths-ignore:\s*$/.test(l));
   if (pi >= 0) for (let i = pi + 1; i < conc && /^ {6}- /.test(lines[i]); i++) paths.push(lines[i]);
 
-  const body = lines.slice(jobs).map((l) => {
+  const body = withoutAdmission(lines.slice(jobs)).map((l) => {
     const m = /^( {4}runs-on: )(\S+)\s*$/.exec(l);
     if (!m) return l;
     const to = LANE[m[2]];
-    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no ${kind === MAIN ? "main" : kind === FAST ? "fast" : kind === IMPACT ? "impact" : kind === RECHECK_FIRST ? "recheck-first" : "recheck"} lane in gen-ci-main.mjs`);
+    if (!to) throw new Error(`ci.yml has a job on '${m[2]}', which has no ${kind === MAIN ? "main" : kind === FAST ? "fast" : kind === IMPACT ? "impact" : kind === RECHECK_FIRST || kind === RECHECK_FIRST_RULES ? "recheck-first" : "recheck"} lane in gen-ci-main.mjs`);
     return `${m[1]}${to}`;
   });
   for (const [from, to] of Object.entries(LANE)) {
@@ -406,6 +478,7 @@ export function generate(ci, kind = MAIN) {
     `  group: ${kind.group}`,
     `  cancel-in-progress: ${kind.cancel ? "true" : "false"}`,
     "",
+    ...(kind.env ? [...kind.env, ""] : []),
     ...(kind.transform ? kind.transform(body) : kind.tail.length ? trimEnd(body) : body),
     ...kind.tail,
     ...(kind.tail.length ? [""] : []),
@@ -420,7 +493,7 @@ function trimEnd(lines) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const ci = readFileSync(SRC, "utf8");
-  const outs = [[OUT, generate(ci, MAIN)], [OUT_FAST, generate(ci, FAST)], [OUT_RECHECK, generate(ci, RECHECK)], [OUT_RECHECK_FIRST, generate(ci, RECHECK_FIRST)], [OUT_IMPACT, generate(ci, IMPACT)]];
+  const outs = [[OUT, generate(ci, MAIN)], [OUT_FAST, generate(ci, FAST)], [OUT_RECHECK, generate(ci, RECHECK)], [OUT_RECHECK_FIRST, generate(ci, RECHECK_FIRST)], [OUT_RECHECK_RULES, generate(ci, RECHECK_RULES)], [OUT_RECHECK_FIRST_RULES, generate(ci, RECHECK_FIRST_RULES)], [OUT_IMPACT, generate(ci, IMPACT)]];
   if (process.argv.includes("--check")) {
     let bad = 0;
     for (const [out, want] of outs) {
@@ -434,7 +507,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       }
     }
     if (bad) process.exit(1);
-    console.log("lint:ci-main-generated OK (ci-main.yml, ci-fast.yml, ci-recheck.yml, ci-recheck-first.yml and ci-impact.yml are ci.yml on their lanes)");
+    console.log("lint:ci-main-generated OK (ci-main.yml, ci-fast.yml, ci-recheck.yml, ci-recheck-first.yml, their -rules typecheck-only twins and ci-impact.yml are ci.yml on their lanes)");
   } else {
     for (const [out, want] of outs) {
       writeFileSync(out, want);

@@ -12,7 +12,7 @@ import { ENERGIES, PRIORITIES, PROJECT_STATUSES, TASK_STATUSES } from "./vocab.j
 
 export default defineModule({
   name: "projects",
-  version: "0.3.41",
+  version: "0.4.0",
   displayName: "Projects",
   description:
     "Projects and their tasks, with what each task is waiting for.",
@@ -251,6 +251,22 @@ export default defineModule({
         appliesTo: { kinds: ["projects:project"] },
         invokeHandler: "projects.copy-project",
         argsSchema: { name: { label: "Name of the new project", type: "text", required: true } },
+      },
+      {
+        group: "plan",
+        id: "projects:read-pattern",
+        changes: "records",
+        runBy: "member",
+        examples: ["read the materials off the pattern again"],
+        label: "Read the pattern",
+        description: "Read this project's pattern into what it needs (yarns, hooks, needles): its attached PDF again, or materials text pasted in. photo: true pulls the pattern's photo out again instead.",
+        appliesTo: { kinds: ["projects:project"] },
+        invokeHandler: "projects.read-pattern",
+        argsSchema: {
+          text: { label: "Materials text pasted from the pattern", type: "text" },
+          file_id: { label: "A pattern PDF already attached (empty: the latest)", type: "text" },
+          photo: { label: "Pull the pattern's photo out again instead", type: "boolean" },
+        },
       },
     ],
   },

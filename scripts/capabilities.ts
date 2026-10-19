@@ -73,6 +73,21 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "ci:workflow-dispatch",
+    what: "a workflow is dispatched through lib/forge-dispatch.mjs: once while a run of it on the commit waits or runs, never from a test to the real forge",
+    why: "the merge queue's tests ran a real dispatch with the ops token and queued 33 docker-builds of one commit in five minutes (#7564, 2026-10-20)",
+    owner: "scripts/lib/forge-dispatch.mjs",
+    scope: ["scripts/**/*.sh", "scripts/**/*.mjs"],
+    detect: /^(?!\s*(#|\/\/|\*|echo\b|printf\b)).*\/dispatches\b/,
+    use: "dispatchOnce({ workflow, ref, inputs, repo, token, base }) from scripts/lib/forge-dispatch.mjs, or `node scripts/lib/forge-dispatch.mjs <workflow> --ref R [--repo O/R] [--input k=v]` from a shell script",
+    except: {
+      "scripts/lib/deploy-lag.mjs": "a sentence telling a person which dispatch to make, never a call",
+      "scripts/release-daily.sh": "the 04:00 cut's dispatches, moved through the door in #7565, not hours before a cut",
+      "scripts/cut-release.sh": "the release's dispatches, moved through the door in #7565, not hours before a cut",
+    },
+  },
+  {
+    kind: "owns",
     id: "auth:role-refusal-words",
     what: "a role gate's refusal is the sentence roleRefusal(allowed) builds: who may, in words",
     why: "34 copies of requireRole each answered \"Requires one of: owner, admin\", a list of role ids a person cannot act on, which an operator pressing Send on the machines page read (#6785)",
@@ -99,7 +114,7 @@ export const CAPABILITIES: Capability[] = [
     id: "views:read-a-view-query",
     what: "a saved view's query (filter, where, sort) is read off its config by viewQuery, the one reading every surface shares",
     why: "the public view, board and app readers passed only filter and sort, so a published \"Status is not Draft\" view showed its drafts to anyone with the link (#7126)",
-    owner: "packages/platform-contract/src/index.ts",
+    owner: "packages/platform-contract/src/entity-resolvers.ts",
     scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
     detect: /\b(cfg|vcfg|viewConfig|viewCfg)\.(filter|where)\b/,
     also: /\bentities\.list(All)?\(/,
@@ -411,7 +426,7 @@ export const CAPABILITIES: Capability[] = [
     why:
       "the AI transits matched an edge error's words (/no edge device|edge disconnected/), the kernel reworded the message, and " +
       "a bridge's poll gap became a hard AI failure with nothing to show why (#4034 S3a)",
-    owner: "packages/platform-contract/src/index.ts",
+    owner: "packages/platform-contract/src/edge.ts",
     scope: ["modules/*/src/**/*.ts", "api/src/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx"],
     detect: /no edge device|edge disconnected|edge channel gone/i,
     use: "catch (e) { if (e instanceof EdgeOffline) … } from @cobblr/platform-contract",
@@ -648,7 +663,8 @@ export const CAPABILITIES: Capability[] = [
       "modules/core-scan/src/api/duplicates.ts",
       "modules/core-search/src/api/index.ts",
       "modules/core-ai/src/api/chat.ts",
-      "packages/workspace-tools/src/tools.ts",
+      "packages/workspace-tools/src/tool-kit.ts",
+      "packages/workspace-tools/src/tools/*.ts",
       "api/src/routes/platform.ts",
       "api/src/platform/entities.ts",
       "web/src/pages/ScanPage.tsx",
@@ -867,6 +883,7 @@ export const CAPABILITIES: Capability[] = [
     scope: [
       "modules/core-scan/src/api/entity-image.ts",
       "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/inbox/*.ts",
       "modules/core-scan/src/services/enrich-photo.ts",
       "modules/core-scan/src/services/enrich.ts",
       "modules/core-scan/src/services/auto-rank.ts",
@@ -892,6 +909,7 @@ export const CAPABILITIES: Capability[] = [
     owner: "modules/core-scan/src/services/scan-target.ts",
     scope: [
       "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/inbox/*.ts",
       "modules/core-scan/src/api/duplicates.ts",
       "modules/core-scan/src/api/entity-image.ts",
       "modules/core-scan/src/api/organize.ts",
@@ -916,7 +934,7 @@ export const CAPABILITIES: Capability[] = [
       "dates and no lot was started, while a check-off on the same record dated a fresh one (2026-09-12). The bin adjust and the " +
       "undo had their own PATCH too. A quantity key spelled in a scan route is the next path back to the bare write",
     owner: "modules/core-scan/src/services/scan-target.ts",
-    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/putaway.ts", "modules/core-scan/src/services/autofile.ts"],
+    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/inbox/*.ts", "modules/core-scan/src/api/putaway.ts", "modules/core-scan/src/services/autofile.ts"],
     detect: /\[[^\]\n]*(qty(_f|F)ield|\bfield)[^\]\n]*\]\s*[:=]/,
     use: "moveQuantity(orgId, target, entity, delta, { restock, reason, source, door, current }) and startingCount(scannable, qty) from services/scan-target.ts",
   },
@@ -1117,7 +1135,7 @@ export const CAPABILITIES: Capability[] = [
       "tags the name, purchase lines the description. To a person 'the Bambu one' is a manufacturer and 'my deltas' a type, " +
       "and to the assistant q is a text search, so a name-only resolver answered 'you have no Bambu' about a workspace with " +
       "one (2026-08-27). The clause is identical everywhere; only the column list belongs to the module",
-    owner: "packages/platform-contract/src/index.ts",
+    owner: "packages/platform-contract/src/text-search.ts",
     scope: [
       "modules/purchases/src/api/resolvers.ts",
       "modules/projects/src/api/handlers.ts",
@@ -1202,7 +1220,7 @@ export const CAPABILITIES: Capability[] = [
     owner: "modules/core-scan/src/services/committed-image.ts",
     // The paths that COMMIT a scan onto a record. Rendering an already-stored
     // file elsewhere is not this rule's business.
-    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/organize.ts"],
+    scope: ["modules/core-scan/src/api/inbox.ts", "modules/core-scan/src/api/inbox/*.ts", "modules/core-scan/src/api/organize.ts"],
     // A files/<id>/raw path built inline from a catalog image id, instead of asking the helper.
     detect: /core-files\/files\/\$\{[^}]*catalog_image_file_id[^}]*\}\/raw/,
     use: "committedImagePath(orgSlug, catalogImageFileId, catalogImageUrl) from core-scan's services/committed-image",
@@ -1384,6 +1402,7 @@ export const CAPABILITIES: Capability[] = [
     owner: "packages/platform-contract/src/category-reconcile.ts",
     scope: [
       "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/inbox/*.ts",
       "modules/core-scan/src/services/matchmaker.ts",
       "api/src/platform/instance-promote.ts",
       "web/src/pages/sessionCategory.ts",
@@ -1457,8 +1476,10 @@ export const CAPABILITIES: Capability[] = [
       "web/src/pages/scanFileAll.ts",
       "web/src/pages/scan-status.ts",
       "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/inbox/*.ts",
       "modules/core-scan/src/api/organize.ts",
-      "packages/workspace-tools/src/tools.ts",
+      "packages/workspace-tools/src/tool-kit.ts",
+      "packages/workspace-tools/src/tools/*.ts",
     ],
     // Three single-line signatures of a re-derivation: the confidence threshold,
     // the stale window, and the two lookup flags read TOGETHER. Reading
@@ -1683,6 +1704,7 @@ export const CAPABILITIES: Capability[] = [
       "modules/core-scan/src/services/identify-identifier.ts",
       "modules/core-scan/src/services/catalog-replay.ts",
       "modules/core-scan/src/api/inbox.ts",
+      "modules/core-scan/src/api/inbox/*.ts",
       "modules/core-scan/src/api/decode.ts",
       "modules/core-scan/src/api/handlers.ts",
     ],
@@ -1734,8 +1756,8 @@ export const CAPABILITIES: Capability[] = [
       "modules/inventory/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
       "modules/machines/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
       "modules/core-locations/src/api/sync-writer.ts": "a sync applies the remote record's whole state; replacing is how a key removed at the source goes",
-      "modules/core-scan/src/api/inbox.ts": "builds a REQUEST body for the owning module's PATCH (which merges), holding only the keys the scan adds",
-      "modules/digifab/src/api/failure.ts": "a failure-detection config row with no custom-field bag; an upsert of plain columns",
+      "modules/core-scan/src/api/inbox/attach.ts": "builds a REQUEST body for the owning module's PATCH (which merges), holding only the keys the scan adds",
+      "modules/digifab/src/families/printers/api/failure.ts": "a failure-detection config row with no custom-field bag; an upsert of plain columns",
     },
   },
   {

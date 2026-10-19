@@ -35,8 +35,7 @@ import {
   type StepRow,
   type StepWrite,
 } from "../makes-core.js";
-import { startPrint, startPrintThis } from "../print-this.js";
-import { startBatchPrint, reviewBatch, cancelBatch } from "../print-batch.js";
+import { requireFamilyPrinting } from "../core/families.js";
 
 export const makesRouter = Router({ mergeParams: true });
 
@@ -300,7 +299,7 @@ makesRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = PrintThisBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const r = await startPrintThis(tenantContext(req).org.id, sessionUser(req)?.id ?? null, { ...parsed.data, origin: "page" });
+    const r = await requireFamilyPrinting().startPrintThis(tenantContext(req).org.id, sessionUser(req)?.id ?? null, { ...parsed.data, origin: "page" });
     if (!r.ok) {
       res.status(r.code === "not_found" || r.code === "no_file" ? 404 : 409).json({ error: { code: r.code, message: r.error }, make_id: r.make_id ?? null });
       return;
@@ -317,7 +316,7 @@ makesRouter.post(
     if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const body = z.object({ confirm_hash: z.string().regex(/^[a-f0-9]{64}$/) }).safeParse(req.body);
     if (!body.success) return badBody(res, body.error);
-    const r = await startPrint(tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash);
+    const r = await requireFamilyPrinting().startPrint(tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash);
     if (!r.ok) {
       res.status(r.code === "not_found" ? 404 : r.code === "send_failed" ? 502 : 409).json({ error: { code: r.code, message: r.error } });
       return;
@@ -348,7 +347,7 @@ makesRouter.post("/:id/print/next", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "digifab:start-next-print"))) return;
   const body = z.object({ bed_clear: z.literal(true), confirm_hash: z.string().regex(/^[a-f0-9]{64}$/).optional() }).safeParse(req.body);
   if (!body.success) return badBody(res, body.error);
-  const r = await startBatchPrint(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash, true);
+  const r = await requireFamilyPrinting().startBatch(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, String(req.params.id), body.data.confirm_hash, true);
   res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
 }));
 
@@ -358,14 +357,14 @@ makesRouter.post("/:id/print/review", asyncHandler(async (req, res) => {
   if (!requireRole(req, res, "owner", "admin")) return;
   const body = z.object({ quantity: z.number().int().positive().max(10000).optional() }).safeParse(req.body ?? {});
   if (!body.success) return badBody(res, body.error);
-  const r = await reviewBatch(tenantDb(req), tenantContext(req).org.id, String(req.params.id), body.data.quantity);
+  const r = await requireFamilyPrinting().reviewBatch(tenantDb(req), tenantContext(req).org.id, String(req.params.id), body.data.quantity);
   res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
 }));
 
 // AI-ACTION: digifab:cancel-print-batch
 makesRouter.post("/:id/print/cancel", asyncHandler(async (req, res) => {
   if (!(await requireCapability(req, res, "digifab:cancel-print-batch"))) return;
-  const r = await cancelBatch(tenantDb(req), String(req.params.id));
+  const r = await requireFamilyPrinting().cancelBatch(tenantDb(req), String(req.params.id));
   res.status(r.ok ? 200 : 409).json(r.ok ? r : { error: { code: r.code, message: r.error } });
 }));
 

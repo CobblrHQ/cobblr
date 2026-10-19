@@ -2,10 +2,8 @@
   "lint": "lint:node-resolves",
   "run": "node scripts/lint-node-resolves.ts",
   "ms": 11930,
-  "recorded": "2026-10-13",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
-  "readMB": 14.0,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14); readMB re-measured 2026-10-13 on CI (run 47909): it loads every module's entry points, so its reads grow with the code it checks",
-  "readMB": 26.0
+  "readMB": 26.0,
+  "readTreeMB": 72.3
 }

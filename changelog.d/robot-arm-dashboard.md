@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-19
 ---
 
 Universal Robots, Elite and Dobot arms connect through the shop's bridge: their programs are listed, loaded, started, paused and stopped, and their state and faults watched.

@@ -5,6 +5,8 @@
     "migration"
   ],
   "ms": 2804,
+  "readMB": 12.0,
+  "readTreeMB": 80.1,
   "recorded": "2026-10-13",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
 }

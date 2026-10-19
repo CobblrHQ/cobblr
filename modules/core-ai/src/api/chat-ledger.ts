@@ -49,7 +49,7 @@ export interface WriteRequest {
    *  (#4472) puts a thing through the scan inbox's intake and may file it;
    *  what it filed is ledgered as a create of that record, so the panel's
    *  Undo removes it like any other. */
-  via?: "add_thing" | "file_inbox" | "put_back_scan";
+  via?: "add_thing" | "file_inbox" | "put_back_scan" | "change_scan";
 }
 
 export interface BulkOutcome {
@@ -204,6 +204,8 @@ export function undoableOf(
       // Items filed out of the inbox go back into it.
       if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "file_inbox") return true;
       // A scan item put back is taken back by restoring what the put-back recorded.
+      // An inbox item tidied keeps the step that takes it back, when there is one.
+      if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "change_scan") return !!parseJsonb<{ undo?: unknown }>(row.payload)?.undo;
       if (parseJsonb<{ via?: unknown }>(row.payload)?.via === "put_back_scan") return !!parseJsonb<{ undo_revision?: unknown }>(row.payload)?.undo_revision;
       return !!undoSteps(parseJsonb<{ undo?: unknown }>(row.payload)?.undo);
     default:
@@ -357,6 +359,36 @@ export async function performWrite(
   },
 ): Promise<WriteOutcome> {
   const { tool, entity_kind } = req;
+
+  if (req.via === "change_scan") {
+    // What a person does to an inbox item from its card (#6949), through the
+    // card's own route; the tool says the step that takes it back, if any.
+    const r = await getTool("change_scan_item")!.execute(wsApi, req.args ?? {});
+    if (!r.ok) return { ok: false, message: r.error ?? "The inbox item was not changed." };
+    const out = (r.data ?? {}) as { id?: string; name?: string | null; undo?: unknown };
+    const step = String(req.args?.do ?? "");
+    const label = out.name ? `Inbox: ${step} “${out.name}”` : `Inbox: ${step}`;
+    const undo = out.undo && typeof out.undo === "object" ? out.undo : null;
+    const row = await db
+      .insertInto("core_ai_chat_writes")
+      .values({
+        user_id: userId,
+        tool: "action",
+        entity_kind: "",
+        entity_id: null,
+        entity_label: label,
+        before: null,
+        payload: JSON.stringify({ via: "change_scan", args: req.args ?? {}, undo }) as unknown,
+        auto_applied: opts.auto,
+        prompt: opts.prompt ?? null,
+        turn_id: opts.turnId ?? null,
+        undone_at: null,
+        undo_of: opts.undoOf ?? null,
+      })
+      .returning("id")
+      .executeTakeFirst();
+    return { ok: true, message: `Done: ${step} on the inbox item.`, ledger_id: row?.id, undoable: !!undo };
+  }
 
   if (req.via === "put_back_scan") {
     // A scan inbox item put back as an earlier step found it (#6100). The
@@ -749,6 +781,19 @@ export async function undoWrite(
       held: "deleted-since",
       message: `${row.entity_label} has been deleted since, so there is nothing to put back. Undoing that deletion is a separate step.`,
     };
+  }
+
+  if (row.tool === "action" && payload?.via === "change_scan") {
+    // The step the tool handed back: another tidy (an edit, a restore, an
+    // uncombine) or a put-back of the item's newest change (a lookup again).
+    const undo = (payload.undo ?? null) as { put_back?: unknown } & Record<string, unknown> | null;
+    if (!undo) return { ok: false, message: "This change kept nothing to undo it with." };
+    const r = typeof undo.put_back === "string"
+      ? await getTool("put_back_scan_item")!.execute(wsApi, { id: undo.put_back })
+      : await getTool("change_scan_item")!.execute(wsApi, undo);
+    if (!r.ok) return { ok: false, message: r.error ?? "The inbox item could not be put back the way it was." };
+    await db.updateTable("core_ai_chat_writes").set({ undone_at: new Date() }).where("id", "=", row.id).execute();
+    return { ok: true, message: "Undid the change to the inbox item." };
   }
 
   if (row.tool === "action" && payload?.via === "put_back_scan") {

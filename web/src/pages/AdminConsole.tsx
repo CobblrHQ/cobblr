@@ -2204,6 +2204,14 @@ function FeedbackTab() {
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Could not post to Discord."),
   });
+  const publish = useMutation({
+    mutationFn: (f: FeedbackSourceItem) => apiFeedbackSource.publish!(f),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["sa-feedback"] });
+      toast.success(r.reply_sent ? "Published, and the reporter was told." : "Published.");
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Could not publish."),
+  });
   const items = q.data?.items ?? [];
   return (
     <div className="space-y-4">
@@ -2257,6 +2265,8 @@ function FeedbackTab() {
             onUpdate={(body) => update.mutate({ id: f.id, body })}
             onPostToDiscord={() => post.mutate(f as unknown as FeedbackSourceItem)}
             posting={post.isPending && post.variables?.id === f.id}
+            onPublish={() => publish.mutate(f as unknown as FeedbackSourceItem)}
+            publishing={publish.isPending && publish.variables?.id === f.id}
           />
         ))}
       </ul>

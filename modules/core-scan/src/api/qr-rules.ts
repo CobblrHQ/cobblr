@@ -120,7 +120,8 @@ qrRulesRouter.get(
   }),
 );
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a rule decides where a scanned QR code sends whoever
+// scans it; one written from a chat could send people to any site
 qrRulesRouter.post(
   "/qr-rules",
   asyncHandler(async (req, res) => {
@@ -145,7 +146,7 @@ qrRulesRouter.post(
   }),
 );
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — changes where a scanned code sends people; see POST above
 qrRulesRouter.patch(
   "/qr-rules/:id",
   asyncHandler(async (req, res) => {
@@ -175,7 +176,8 @@ qrRulesRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-REACH: exempt — removes a redirect rule the owner wrote; codes that used
+// it stop resolving, and only the owner can write it again
 qrRulesRouter.delete(
   "/qr-rules/:id",
   asyncHandler(async (req, res) => {
@@ -194,7 +196,8 @@ qrRulesRouter.delete(
   }),
 );
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — the order decides which rule wins, so it decides where a
+// scanned code sends people; see POST above
 qrRulesRouter.post(
   "/qr-rules/reorder",
   asyncHandler(async (req, res) => {
@@ -217,7 +220,8 @@ qrRulesRouter.post(
   }),
 );
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — follows a foreign code's outside address from the
+// server; a chat must not make the server fetch arbitrary addresses
 qrRulesRouter.post(
   "/resolve-external",
   asyncHandler(async (req, res) => {

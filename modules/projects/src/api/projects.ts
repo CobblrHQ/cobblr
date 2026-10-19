@@ -284,7 +284,7 @@ const ExtractFileBody = z.object({ file_id: z.string().uuid() });
 
 /** Read a pattern file now, asking the AI if its text names nothing. A read
  *  the upload already started (text only) is waited for, then finished. */
-async function readPatternNow(orgId: string, projectId: string, fileId: string, userId: string | null) {
+export async function readPatternNow(orgId: string, projectId: string, fileId: string, userId: string | null) {
   await runPatternRead(orgId, projectId, fileId, { ai: true, userId });
   const again = await readPatternNeedsState(orgId, projectId, userId);
   if (again.read.status === "pending") await runPatternRead(orgId, projectId, fileId, { ai: true, userId });
@@ -309,11 +309,12 @@ function legacyShape(state: PatternNeedsState) {
 
 // Read an attached pattern PDF into the pattern's needs, now. The page reads
 // by itself (GET /:id/needs); this is the explicit door, and the older name.
-// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
+// AI-ACTION: projects:read-pattern
 // UI-REACH: legacy response shape for pattern-file clients; opening a pattern reads its needs and the current reread control uses the needs API.
 projectsRouter.post(
   "/:id/extract-pattern-file",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:read-pattern"))) return;
     const parsed = ExtractFileBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -545,10 +546,11 @@ projectsRouter.delete(
 // `file_id` (a specific PDF); otherwise the design's most recent pattern PDF.
 const ExtractImagesBody = z.object({ file_id: z.string().uuid().optional() });
 
-// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
+// AI-ACTION: projects:read-pattern
 projectsRouter.post(
   "/:id/extract-pattern-images",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:read-pattern"))) return;
     const parsed = ExtractImagesBody.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);
@@ -649,10 +651,11 @@ projectsRouter.post(
 );
 
 // Pasted materials text: read into the pattern's needs, its own words first.
-// AI-REACH: takes an uploaded pattern file/images; the assistant cannot carry a file
+// AI-ACTION: projects:read-pattern
 projectsRouter.post(
   "/:id/extract-pattern",
   asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "projects:read-pattern"))) return;
     const parsed = ExtractBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const ctx = tenantContext(req);

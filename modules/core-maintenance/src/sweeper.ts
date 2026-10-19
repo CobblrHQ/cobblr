@@ -16,7 +16,7 @@
 // time-of-day precision later, swap the interval for a daily-at-8am
 // schedule.
 
-import type { NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
+import type { AttentionSubject, NotificationAction, NotificationCardRow } from "@cobblr/platform-contract";
 import { Kysely, sql } from "kysely";
 import { loanOfFields } from "@cobblr/platform-contract/loan";
 import { platform, countOf } from "@cobblr/platform-contract";
@@ -154,6 +154,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
     const lines: string[] = [];
     const actions: NotificationAction[] = [];
     const cardRows: NotificationCardRow[] = [];
+    const subjects: AttentionSubject[] = [];
     /** The single entry, when there is exactly one, so the notification can
      *  still deep-link to it. A list of twelve has nowhere to point. */
     let only: (typeof due)[number] | null = null;
@@ -192,6 +193,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       actions.push(...rowActions);
       cardRows.push({ text: message, actions: rowActions.map((a) => a.id) });
       lines.push(message);
+      subjects.push({ kind: `${row.entity_module}:${row.entity_type}`, id: row.entity_id, question: "service-due", line: message });
       only = lines.length === 1 ? row : null;
 
       // Mark notified so we don't re-fire next tick.
@@ -237,6 +239,7 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
             eventType: "maintenance.due-soon",
             // Due on a date, knowable in advance: the morning brief, not a ping.
             triggeredBy: "schedule",
+            subjects,
             message,
             link_url: link,
             module: "core-maintenance",

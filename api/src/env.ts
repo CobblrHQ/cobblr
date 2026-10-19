@@ -224,6 +224,10 @@ const Schema = z.object({
    *  Email screens and the assistant alike (platform/send-limits.ts, #6528):
    *  invites that email someone, hand-offs of a person's things, and test
    *  emails. A hosted workspace must not be a way to mail strangers. */
+  // Seconds between one-line memory breakdowns in the log ([memory] rss, heap, external, array buffers, open
+  // tenant pools). Unset or empty: off. The nightly tour sets it: its api died at 3.7 GB in a 6.5 GB job three
+  // nights running and its RSS alone could not say heap from native (#6772).
+  COBBLR_MEMORY_LOG_S: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().optional()),
   INVITES_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   HAND_OFFS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),
   SALES_DOCUMENT_EMAILS_PER_HOUR: z.preprocess((v) => (v === "" ? undefined : v), z.coerce.number().int().positive().default(20)),

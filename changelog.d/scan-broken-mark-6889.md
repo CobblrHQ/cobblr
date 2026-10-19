@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-17
 docs_target: docs/user-guide/scan.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-19
 ---
 
 A scan of a thing you already have can be marked broken: the thing gets a repair entry in its service log instead of a second one being filed.

@@ -3,6 +3,7 @@
   "run": "node scripts/lint-test-imports-script.ts",
   "ms": 524,
   "recorded": "2026-09-14",
-  "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
-  "readMB": 7.1
+  "source": "split from scripts/lint-durations.json (recorded 2026-09-14); reads re-recorded 2026-10-19 once git grep picks its files (2.6 MB)",
+  "readMB": 2.6,
+  "readTreeMB": 80.0
 }

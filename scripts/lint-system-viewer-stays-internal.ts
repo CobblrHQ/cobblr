@@ -52,7 +52,7 @@ const ANSWERS_A_CLIENT = /\bRouter\(|\basyncHandler\(|\bres\.(?:status|send|end)
 
 /** The check. Return every violation in one file; an empty array is a pass. */
 function check(file: string, src: string): Violation[] {
-  if (!src.includes("SYSTEM_VIEWER") || /platform-contract\/src\/index\.ts$/.test(file)) return [];
+  if (!src.includes("SYSTEM_VIEWER") || /platform-contract\/src\/entity-resolvers\.ts$/.test(file)) return [];
   const out: Violation[] = [];
   const lines = src.split("\n");
   const route = ANSWERS_A_CLIENT.test(src);

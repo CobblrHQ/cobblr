@@ -15,9 +15,10 @@
 // lint makes each file carry its half of that answer, so the next pass
 // answers it at authoring time.
 //
-// THE RULE. Every function `boot()` (api/src/index.ts) awaits through
-// `T("<name>", <name>(...))` whose file lives under api/src/platform must
-// carry, in that file, one of:
+// THE RULE. Every boot pass whose function lives under api/src/platform (one
+// `boot()` in api/src/index.ts times as `T("<name>", <name>(...))`, or one
+// registered in api/src/platform/boot/, #7387) must carry, in that file, one
+// of:
 //   BORN WITH: <identifier> ...   the function a new workspace goes through
 //                                 that gives it the same thing (signup, an
 //                                 enable, provisioning); the identifier must
@@ -34,7 +35,8 @@
 //
 //   npx tsx scripts/lint-boot-pass-born-with.ts   (pnpm run lint boot-pass-born-with)
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { bootPassRefs } from "./lib/boot-passes.ts";
 
 const LINT_ROOT = process.env.COBBLR_LINT_ROOT || ".";
 const INDEX = join(LINT_ROOT, "api/src/index.ts");
@@ -62,24 +64,12 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-/** The boot passes: `T("name", name(` in boot(), each resolved to the file
- *  its import names. Only the ones under api/src/platform are returned. */
-export function bootPasses(indexSrc: string, indexPath: string): Array<{ name: string; file: string }> {
-  const out: Array<{ name: string; file: string }> = [];
-  const imports = new Map<string, string>();
-  for (const m of indexSrc.matchAll(/import\s*\{([^}]+)\}\s*from\s*"(\.[^"]+)\.js"/g)) {
-    for (const raw of m[1]!.split(",")) {
-      const name = raw.trim().split(/\s+as\s+/).pop()?.trim();
-      if (name) imports.set(name, resolve(dirname(indexPath), `${m[2]}.ts`));
-    }
-  }
-  for (const m of indexSrc.matchAll(/T\("([A-Za-z0-9_]+)",\s*([A-Za-z0-9_]+)\(/g)) {
-    const file = imports.get(m[2]!);
-    if (!file) continue;
-    if (!resolve(file).startsWith(resolve(PLATFORM))) continue;
-    out.push({ name: m[2]!, file });
-  }
-  return out;
+/** The boot passes whose function lives under api/src/platform: the ones
+ *  index.ts times itself and the registry's (scripts/lib/boot-passes.ts). */
+export function bootPasses(root: string): Array<{ name: string; file: string }> {
+  return bootPassRefs(root)
+    .filter((p): p is typeof p & { file: string } => !!p.file && resolve(p.file).startsWith(resolve(PLATFORM)))
+    .map((p) => ({ name: p.fn, file: p.file }));
 }
 
 let sources: string[] | undefined;
@@ -110,7 +100,7 @@ export function checkPass(file: string, src: string): Violation[] {
 
 const violations: Violation[] = [];
 if (existsSync(INDEX)) {
-  const passes = bootPasses(readFileSync(INDEX, "utf8"), INDEX);
+  const passes = bootPasses(LINT_ROOT);
   const seen = new Set<string>();
   for (const p of passes) {
     if (seen.has(p.file)) continue;

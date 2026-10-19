@@ -14,9 +14,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import type { DigifabDB } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
-import { controlDirectLaser } from "../laser-controls.js";
-import { controlResinPrinter } from "../resin-controls.js";
-import { cutterControl } from "../cutter-controls.js";
+import { familyStopping } from "../core/families.js";
 import { cancelJob, controlJobById } from "./jobs.js";
 import { stopLargePrint } from "../large-format/service.js";
 
@@ -40,13 +38,10 @@ async function stopMachine(db: Kysely<DigifabDB>, orgId: string, connectionId: s
   const driver = await buildDriverById(db, orgId, connectionId);
   if (!driver) return { ok: false, error: "That machine is not connected." };
   const done = command === "stop" ? "Stopped" : "Paused";
-  if (driver.laserBackend) {
-    const r = await controlDirectLaser(db, orgId, driver, deviceId, command, {}, connectionId);
-    return r.ok ? { ok: true, summary: `${done} the laser.` } : { ok: false, error: r.detail ?? "The laser did not confirm." };
-  }
-  if (driver.printProcess === "resin") {
-    const r = await controlResinPrinter(db, orgId, driver, deviceId, command, connectionId);
-    return r.ok ? { ok: true, summary: `${done} the resin printer.` } : { ok: false, error: r.detail ?? "The printer did not confirm." };
+  const own = await familyStopping(driver);
+  if (own?.stopsWithoutJob) {
+    const r = await own.run(db, orgId, driver, deviceId, command, {}, connectionId);
+    return r.ok ? { ok: true, summary: `${done} the ${own.noun}.` } : { ok: false, error: r.detail ?? `The ${own.noun} did not confirm.` };
   }
   if (driver.printProcess === "large-format") {
     if (command !== "stop") return { ok: false, error: "Use Stop for this large-format printer." };
@@ -55,15 +50,6 @@ async function stopMachine(db: Kysely<DigifabDB>, orgId: string, connectionId: s
       return { ok: true, summary: "Stop sent; check the printer's status." };
     } catch (err) {
       return { ok: false, error: (err as Error).message || "Use Stop on the printer. Its bridge is unavailable." };
-    }
-  }
-  if ((await driver.jobReviewKind?.()) === "cutter") {
-    try {
-      const r = (await cutterControl(db, orgId, { connection_id: connectionId, device_id: deviceId, operation: command })) as { ok?: boolean; error?: string };
-      return r?.ok === false ? { ok: false, error: r.error ?? "The cutter did not confirm." } : { ok: true, summary: `${done} the cutter.` };
-    } catch (err) {
-      // The cutter's own refusal (a ReviewRequired) is a sentence for a person.
-      return { ok: false, error: (err as Error).message || "The cutter did not confirm." };
     }
   }
   return { ok: false, error: "Name the job to stop on this machine (job_id): it is stopped through its print." };

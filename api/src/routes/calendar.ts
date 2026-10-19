@@ -18,6 +18,7 @@ import { z } from "zod";
 import { randomBytes } from "node:crypto";
 import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
+import { CALENDAR_FEED_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import * as calendar from "../platform/calendar-registry.js";
@@ -69,7 +70,7 @@ calendarOrgRouter.put(
   "/:slug/calendar/reminders", requireAuth, withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!requireRole(req, res, ...CALENDAR_FEED_MANAGERS)) return;
       const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: { code: "invalid_body", message: "Choose whether warranty reminders are on." } });
@@ -118,7 +119,7 @@ calendarOrgRouter.put(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!requireRole(req, res, ...CALENDAR_FEED_MANAGERS)) return;
       const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({ error: { code: "invalid_body", message: "enabled required" } });
@@ -153,7 +154,7 @@ calendarOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
-      if (!requireRole(req, res, "owner", "admin")) return;
+      if (!requireRole(req, res, ...CALENDAR_FEED_MANAGERS)) return;
       const orgId = req.tenant!.org.id;
       const token = newToken();
       await meta

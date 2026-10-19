@@ -56,6 +56,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
         cobbIcon={CobbHead}
         api={{
           lookupBarcode: api.lookupBarcode,
+          getMyCapabilities: (slug) => api.getMyCapabilities(slug),
           listActions: (slug, kind) => api.listActions(slug, kind),
           setRecordActionPin: (slug, kind, action, pinned) => api.setRecordActionPin(slug, kind, action, pinned),
           // A record's door to a module that is off (#3883): turning it on is an

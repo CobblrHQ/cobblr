@@ -65,6 +65,9 @@ export async function refreshArm(db: Kysely<DigifabDB>, orgId: string, userId: s
   }
   await trx.updateTable("digifab_arm_programs").set({ missing_since: now }).where("machine_id", "=", machineId).where("source", "=", "controller").where("last_seen_at", "<", now).where("missing_since", "is", null).execute();
  });
+ // Each revision first seen keeps its text, so it can be compared before it is released.
+ const { readNewTexts } = await import("./programs.js");
+ await readNewTexts(db, orgId, machineId).catch((err) => platform().health.notePassFailure("digifab.arm-texts", `${orgId}:${machineId}`, err));
  return { info, programs_listed: true, count: list.programs.length };
 }
 export async function addTypedProgram(db: Kysely<DigifabDB>, orgId: string, userId: string | null, machineId: string, value: unknown) {
@@ -119,7 +122,7 @@ export function byFamily(programs: Program[]) {
 }
 export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: string) {
  const unit = await db.selectFrom("digifab_arm_units").selectAll().where("machine_id", "=", machineId).executeTakeFirst();
- if (!unit) return { unit: null, state: null, connection_error: null, link_lost: null, programs: [], families: [], compatibility: null, support: "untested" as const, ownership: null, approvals: [], open_run: null, runs: [] };
+ if (!unit) return { unit: null, state: null, connection_error: null, link_lost: null, programs: [], families: [], compatibility: null, support: "untested" as const, ownership: null, approvals: [], open_run: null, runs: [], copies: [], outgoing: [], backups: [], guide: null, updates: [] };
  let state: ArmState | null = null, connection_error: string | null = null;
  if (unit.connection_id && unit.device_id) {
   try { state = await (await armDriver(db, orgId, unit.connection_id)).state(unit.device_id); }
@@ -132,7 +135,10 @@ export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: s
  const approvals = await db.selectFrom("digifab_arm_approvals").selectAll().where("machine_id", "=", machineId).where("used_at", "is", null).where("revoked_at", "is", null).where("expires_at", ">", now).orderBy("approved_at", "desc").limit(20).execute();
  const runs = await db.selectFrom("digifab_arm_runs").selectAll().where("machine_id", "=", machineId).orderBy("started_at", "desc").limit(20).execute();
  const link = !unit.connection_id ? null : linkLost(!connection_error, state);
- return { unit, state, connection_error: link ? LINK_WORDS[link] : null, link_lost: link, programs, families: byFamily(programs), compatibility, support: supportOf(compatibility), ownership: ownership ?? null, approvals, open_run: runs.find(r => r.status !== "ended") ?? null, runs };
+ const { readProgramControl } = await import("./programs.js");
+ const { readUpdates } = await import("./updates.js");
+ const listed = programs.map(({ text_files: _text, ...p }) => ({ ...p, text: p.text_read_at ? "read" as const : "unread" as const }));
+ return { unit, state, connection_error: link ? LINK_WORDS[link] : null, link_lost: link, programs: listed, families: byFamily(listed as unknown as Program[]), compatibility, support: supportOf(compatibility), ownership: ownership ?? null, approvals, open_run: runs.find(r => r.status !== "ended") ?? null, runs, ...await readProgramControl(db, machineId), ...await readUpdates(db, machineId) };
 }
 /** Every unit's program in one family, across arms: the same family is a
  *  different program on two identical arms. */

@@ -124,6 +124,13 @@ function writeRequestOf(call: ToolCall): WriteRequest | null {
       return Array.isArray(a.ids) && a.ids.length && typeof a.list === "string" && a.list.trim()
         ? { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: a.ids, list: a.list } }
         : null;
+    case "change_scan_item": {
+      // A step with a way back (an edit, a discard, a lookup again, a combine)
+      // is a change the ledger can undo; the rest always ask a person first.
+      const step = typeof a.do === "string" ? a.do : "";
+      if (!step) return null;
+      return { tool: ["edit", "discard", "restore", "rerun", "combine"].includes(step) ? "update" : "action", via: "change_scan", entity_kind: "", args: a };
+    }
     case "put_back_scan_item":
       return typeof a.id === "string" && a.id.trim()
         ? { tool: "update", via: "put_back_scan", entity_kind: "", args: { id: a.id, ...(typeof a.revision === "string" && a.revision ? { revision: a.revision } : {}) } }
@@ -635,6 +642,27 @@ async function proposalOf(
         summary: `File ${ids.length === 1 ? "1 inbox item" : `${ids.length} inbox items`} into ${label}`,
         proposal: { kind: "file", ids, list, list_label: label, lines: names },
       };
+    }
+    case "change_scan_item": {
+      const step = String(a.do ?? "");
+      const id = String(a.id ?? "").trim();
+      const ids = Array.isArray(a.ids) ? (a.ids as unknown[]).map(String) : [];
+      const r = id ? await getTool("get_scan_item")?.execute(wsApi, { id }).catch(() => null) : null;
+      const name = r?.ok ? ((r.data as { name?: string; suggested_name?: string } | undefined)?.name ?? (r.data as { suggested_name?: string } | undefined)?.suggested_name) : undefined;
+      const it = name ? `“${name}”` : ids.length ? countOf(ids.length, "inbox item") : "this inbox item";
+      const said: Record<string, string> = {
+        edit: `Change ${it}${typeof a.name === "string" && a.name ? ` to “${a.name}”` : ""}${typeof a.quantity === "number" ? `, ${a.quantity} of them` : ""}`,
+        discard: `Take ${it} out of the inbox (it can be restored)`,
+        restore: `Bring ${it} back to the inbox`,
+        send_back: `Send ${it} back to the inbox to be filed again`,
+        rerun: `Look ${it} up again${typeof a.hint === "string" && a.hint ? `: ${a.hint}` : ""}`,
+        combine: `Combine ${it} into one line`,
+        uncombine: `Undo the combine of ${it}`,
+        theme: `Give ${it} ${[typeof a.tag === "string" && a.tag ? `the tag ${a.tag}` : "", typeof a.category === "string" && a.category ? `the category ${a.category}` : ""].filter(Boolean).join(" and ")}`,
+        photo: `Change the photo of ${it}`,
+      };
+      if (!said[step]) return { error: "Say what to do with the inbox item." };
+      return { summary: said[step]!, proposal: { kind: "change_scan", args: a, ...(name ? { label: name } : {}) } };
     }
     case "put_back_scan_item": {
       const id = String(a.id ?? "").trim();
@@ -2182,6 +2210,8 @@ const ExecStep = z.union([
   z.object({ kind: z.literal("build"), draft_id: z.string() }),
   // add_thing (#4472): what the agent asked to add, run through the inbox.
   z.object({ kind: z.literal("add"), args: z.record(z.unknown()) }),
+  // change_scan_item (#6949): what a person does to an inbox item from its card.
+  z.object({ kind: z.literal("change_scan"), args: z.record(z.unknown()), label: z.string().optional() }),
   // put_back_scan_item (#6100): a scan inbox item put back as a step found it.
   z.object({ kind: z.literal("put_back"), id: z.string().min(1), revision: z.string().optional(), label: z.string().optional() }),
   // file_inbox_items: inbox items filed into one list, each its record there.
@@ -2287,6 +2317,15 @@ chatRouter.post(
           tenantDb(req),
           me,
           { tool: "create", via: "file_inbox", entity_kind: "", args: { ids: step.ids, list: step.list } },
+          { auto: false, orgId: tenantContext(req).org.id, ...prompt },
+        );
+      }
+      if (step.kind === "change_scan") {
+        return performWrite(
+          chatWorkspaceApi(c),
+          tenantDb(req),
+          me,
+          { tool: "update", via: "change_scan", entity_kind: "", args: step.args },
           { auto: false, orgId: tenantContext(req).org.id, ...prompt },
         );
       }

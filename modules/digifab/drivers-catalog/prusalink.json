@@ -1,7 +1,7 @@
 {
   "id": "prusalink",
   "name": "PrusaLink",
-  "version": "1.3.0",
+  "version": "1.5.0",
   "auth": { "kind": "header", "header": "X-Api-Key", "from": "apiKey" },
   "routing": false,
   "test": { "method": "GET", "path": "/api/version" },
@@ -19,6 +19,13 @@
       "remainingSec": "$.job.time_remaining"
     }
   },
+  "versions": [
+    { "method": "GET", "path": "/api/version", "map": { "firmware": "$.firmware", "software": "$.server", "controller": "='PrusaLink'" } },
+    { "method": "GET", "path": "/api/version", "map": { "software": "$.version" } }
+  ],
+  "camera": [
+    { "method": "GET", "path": "/api/v1/cameras", "arrayPath": "camera_list", "enabled": "$.connected", "snapshot": "='/api/v1/cameras/snap'" }
+  ],
   "upload": {
     "method": "PUT",
     "path": "/api/v1/files/usb/{filename}",

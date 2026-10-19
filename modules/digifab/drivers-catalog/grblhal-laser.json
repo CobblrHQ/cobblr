@@ -1,7 +1,7 @@
 {
   "id": "grblhal-laser",
   "name": "grblHAL laser (network)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "routing": false,
   "test": {
     "method": "GET",
@@ -16,6 +16,9 @@
       "name": "='FluidNC'"
     }
   },
+  "versions": [
+    { "method": "GET", "path": "/command?commandText=%24I", "format": "text", "map": { "firmware": "\\[VER:([^:\\]]+)", "controller": "='grblHAL'" } }
+  ],
   "upload": {
     "method": "POST",
     "path": "/upload",

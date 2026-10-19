@@ -10,7 +10,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "sales",
-  version: "0.1.41",
+  version: "0.2.0",
   displayName: "Sales",
   description:
     "Customers and the orders they place; fulfilling an order takes what you sold out of stock.",
@@ -137,20 +137,21 @@ export default defineModule({
         argsSchema: { order_id: { label: "Order id", type: "text", required: true } },
       },
       {
-        // NO-PHRASING: the way back for another action, run only from Undo
+        // WORKSPACE-scoped by its line's id, and also the way back for add-line.
         group: "more",
+        // UI-SCREEN: /sales
         id: "sales:remove-line",
         changes: "records",
         runBy: "member",
-        internal: true,
+        examples: ["take the third line off that order", "remove the gift wrap line"],
         label: "Remove an order line",
-        description: "Internal, the inverse of adding a line to a sales order: removes it again. Runs from Undo on the card; not for direct use.",
-        icon: "undo",
+        description:
+          "Take a line off a sales order, by the line's id (get_record on the order lists them). Not undoable: an order is a financial record, so it always asks first.",
+        icon: "trash-2",
         scope: "workspace" as const,
-        userInvokable: false,
         invokeHandler: "sales.remove-line",
         argsSchema: {
-          line_id: { label: "The line's id", type: "text" },
+          line_id: { label: "The line's id", type: "text", required: true },
         },
       },
       {
@@ -162,7 +163,7 @@ export default defineModule({
         undoable: true,
         label: "Add a line to this order",
         description:
-          "Put another line on a sales order that already exists. Pass `qty` and either `description` or `part_id` for a part you track, optionally `unit_price`. Removing a line has no action on purpose: an order is a financial record, so deleting from it is done in the app.",
+          "Put another line on a sales order that already exists. Pass `qty` and either `description` or `part_id` for a part you track, optionally `unit_price`. Changing or removing a line has its own action, which always asks first.",
         icon: "plus",
         appliesTo: { kinds: ["sales:order"] },
         invokeHandler: "sales.add-line",
@@ -343,6 +344,23 @@ export default defineModule({
           kind: { label: "quote or invoice", type: "text", required: true },
           version: { label: "Saved document revision", type: "text", required: true },
           to: { label: "Customer email to confirm", type: "text", required: true },
+        },
+      },
+      {
+        group: "more",
+        id: "sales:change-line",
+        changes: "records",
+        runBy: "member",
+        examples: ["make that two instead of three"],
+        label: "Change an order line",
+        description: "Change a line on this sales order: how many, the price each, or what it says. Always asks first, since an order is a financial record.",
+        appliesTo: { kinds: ["sales:order"] },
+        invokeHandler: "sales.change-line",
+        argsSchema: {
+          line: { label: "Which line (what it says, or its id)", type: "text" },
+          qty: { label: "How many", type: "number" },
+          unit_price: { label: "Price each", type: "number" },
+          description: { label: "What it says", type: "text" },
         },
       },
     ],

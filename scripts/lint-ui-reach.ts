@@ -70,6 +70,7 @@
 //   npx tsx scripts/lint-ui-reach.ts                    (pnpm lint ui-reach)
 //   npx tsx scripts/lint-ui-reach.ts --write-baseline   (only when the rule is first turned on)
 //   npx tsx scripts/lint-ui-reach.ts --prune            (drop reached lines; merge-pr runs it)
+import { manifestSources } from "./lib/manifest-sources.ts";
 import { readOnce } from "./lib/read-once.ts";
 import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -261,9 +262,9 @@ function screenPatterns(): string[][] {
     for (const m of readOnce(f).matchAll(/<Route\s+path=["'`]([^"'`]+)["'`]/g)) add(m[1]!);
   }
   for (const mod of readdirSync(MODULES)) {
-    const man = join(MODULES, mod, "src", "module.ts");
-    if (!existsSync(man)) continue;
-    for (const m of readOnce(man).matchAll(/\b(?:route|path)\s*:\s*["'`](\/[^"'`]*)["'`]/g)) add(m[1]!);
+    for (const man of manifestSources(join(MODULES, mod))) {
+      for (const m of readOnce(man).matchAll(/\b(?:route|path)\s*:\s*["'`](\/[^"'`]*)["'`]/g)) add(m[1]!);
+    }
   }
   return out;
 }
@@ -372,10 +373,9 @@ function actionsOf(file: string, arrayOpeners: RegExp): Action[] {
 
 function allActions(): Action[] {
   const out: Action[] = [];
-  for (const mod of readdirSync(MODULES)) {
-    const man = join(MODULES, mod, "src", "module.ts");
-    if (existsSync(man)) out.push(...actionsOf(man, /\bactions:\s*\[/g));
-  }
+  // module.ts, its action files and its families' manifest pieces (lib/manifest-sources.ts):
+  // an action declared in a family is judged like one in module.ts.
+  for (const mod of readdirSync(MODULES)) for (const man of manifestSources(join(MODULES, mod))) out.push(...actionsOf(man, /\bactions:\s*\[/g));
   if (existsSync(PLATFORM_ACTIONS_FILE)) out.push(...actionsOf(PLATFORM_ACTIONS_FILE, /PlatformActionDecl\s*\[\s*\]\s*=\s*\[/g));
   return out;
 }

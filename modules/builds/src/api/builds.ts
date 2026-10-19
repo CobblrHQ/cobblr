@@ -31,6 +31,7 @@ import { nameRecords } from "@cobblr/platform-contract/record-subjects";
 import { scheduleEDD, type PlannedItem } from "../schedule.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { resolveOutputPart } from "../output-part.js";
+import { addComponent, addStep, changePlan, changeStep, logStepCount, logStepTime, addPlannedBuild, removeComponent, removePlan, removeStep } from "./build-steps.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { shortageSentence } from "../shortage.js";
 
@@ -318,50 +319,19 @@ buildsRouter.delete(
 );
 
 // ───────────────────────── components ─────────────────────────
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:add-component
 buildsRouter.post(
   "/builds/:id/components",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:add-component"))) return;
     const parsed = ComponentCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const buildId = req.params.id!;
-    const db = tenantDb(req);
-
-    // Guard against a build referencing itself as a sub-assembly. Deeper
-    // (transitive) cycles are caught + skipped by the explosion walk.
-    if (parsed.data.sub_assembly_build_id) {
-      if (parsed.data.sub_assembly_build_id === buildId) {
-        res
-          .status(400)
-          .json({ error: { code: "invalid_subassembly", message: "A build can't be its own sub-assembly" } });
-        return;
-      }
-      const sub = await db
-        .selectFrom("builds_builds")
-        .select(["id"])
-        .where("id", "=", parsed.data.sub_assembly_build_id)
-        .executeTakeFirst();
-      if (!sub) {
-        res.status(400).json({ error: { code: "not_found", message: "sub-assembly build not found" } });
-        return;
-      }
+    try {
+      res.status(201).json(await addComponent(tenantDb(req), req.params.id!, parsed.data));
+    } catch (e) {
+      if (e instanceof ActionRefusal) return void res.status(400).json({ error: { code: "invalid_subassembly", message: e.message } });
+      throw e;
     }
-
-    const row = await db
-      .insertInto("builds_components")
-      .values({
-        build_id: buildId,
-        part_id: parsed.data.part_id ?? null,
-        sub_assembly_build_id: parsed.data.sub_assembly_build_id ?? null,
-        quantity: String(parsed.data.quantity),
-        optional: parsed.data.optional ?? false,
-        use_stock: parsed.data.use_stock ?? true,
-        notes: parsed.data.notes ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    res.status(201).json(row);
   }),
 );
 
@@ -386,17 +356,12 @@ buildsRouter.patch(
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: builds:remove-component
 buildsRouter.delete(
   "/builds/:id/components/:cid",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const db = tenantDb(req);
-    await db
-      .deleteFrom("builds_components")
-      .where("id", "=", req.params.cid!)
-      .where("build_id", "=", req.params.id!)
-      .execute();
+    if (!(await requireCapability(req, res, "builds:remove-component"))) return;
+    await removeComponent(tenantDb(req), req.params.id!, req.params.cid!);
     res.status(204).end();
   }),
 );
@@ -417,116 +382,36 @@ buildsRouter.get(
   }),
 );
 
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:add-step
 buildsRouter.post(
   "/builds/:id/operations",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:add-step"))) return;
     const parsed = OperationCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const buildId = req.params.id!;
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-
-    // Append at the end of the routing: next seq after the current max.
-    const max = await db
-      .selectFrom("builds_operations")
-      .select(({ fn }) => [fn.max<number>("seq").as("m")])
-      .where("build_id", "=", buildId)
-      .executeTakeFirst();
-    const nextSeq = (Number(max?.m) || 0) + 1;
-
-    const row = await db
-      .insertInto("builds_operations")
-      .values({
-        build_id: buildId,
-        seq: nextSeq,
-        name: parsed.data.name.trim(),
-        description: parsed.data.description ?? null,
-        est_minutes: parsed.data.est_minutes != null ? String(parsed.data.est_minutes) : null,
-        resource_module: parsed.data.resource_module ?? null,
-        resource_type: parsed.data.resource_type ?? null,
-        resource_id: parsed.data.resource_id ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("builds.operation.created", {
-      orgId: ctx.org.id,
-      buildId,
-      operationId: row.id,
-      name: row.name,
-    });
-    res.status(201).json(row);
+    res.status(201).json(await addStep(tenantDb(req), tenantContext(req).org.id, req.params.id!, parsed.data));
   }),
 );
 
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:change-step
 buildsRouter.patch(
   "/builds/:id/operations/:opId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:change-step"))) return;
     const parsed = OperationUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const buildId = req.params.id!;
-    const opId = req.params.opId!;
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-
-    const before = await db
-      .selectFrom("builds_operations")
-      .select(["status"])
-      .where("id", "=", opId)
-      .where("build_id", "=", buildId)
-      .executeTakeFirst();
-    if (!before) {
-      res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
-      return;
-    }
-
-    const patch: Record<string, unknown> = { updated_at: new Date() };
-    if (parsed.data.name !== undefined) patch.name = parsed.data.name.trim();
-    if (parsed.data.description !== undefined) patch.description = parsed.data.description;
-    if (parsed.data.status !== undefined) patch.status = parsed.data.status;
-    if (parsed.data.seq !== undefined) patch.seq = parsed.data.seq;
-    if (parsed.data.est_minutes !== undefined)
-      patch.est_minutes = parsed.data.est_minutes != null ? String(parsed.data.est_minutes) : null;
-    if (parsed.data.resource_module !== undefined) patch.resource_module = parsed.data.resource_module;
-    if (parsed.data.resource_type !== undefined) patch.resource_type = parsed.data.resource_type;
-    if (parsed.data.resource_id !== undefined) patch.resource_id = parsed.data.resource_id;
-    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
-
-    const row = await db
-      .updateTable("builds_operations")
-      .set(patch)
-      .where("id", "=", opId)
-      .where("build_id", "=", buildId)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-
-    // Fire a wireable event when a step crosses INTO done (e.g. close a linked task).
-    if (parsed.data.status === "done" && before.status !== "done") {
-      await platform().events.emit("builds.operation.completed", {
-        orgId: ctx.org.id,
-        buildId,
-        operationId: opId,
-        name: row.name,
-      });
-    }
-    res.json(row);
+    const out = await changeStep(tenantDb(req), tenantContext(req).org.id, req.params.id!, req.params.opId!, parsed.data);
+    if (!out) return void res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
+    res.json(out.row);
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: builds:remove-step
 buildsRouter.delete(
   "/builds/:id/operations/:opId",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const db = tenantDb(req);
-    await db
-      .deleteFrom("builds_operations")
-      .where("id", "=", req.params.opId!)
-      .where("build_id", "=", req.params.id!)
-      .execute();
+    if (!(await requireCapability(req, res, "builds:remove-step"))) return;
+    await removeStep(tenantDb(req), req.params.id!, req.params.opId!);
     res.status(204).end();
   }),
 );
@@ -554,88 +439,32 @@ async function operationOfBuild(db: ReturnType<typeof tenantDb>, buildId: string
 }
 
 // Log time against an operation.
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:log-step-time
 buildsRouter.post(
   "/builds/:id/operations/:opId/time",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:log-step-time"))) return;
     const parsed = TimeLog.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const buildId = req.params.id!;
-    const opId = req.params.opId!;
     const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const session = sessionUser(req);
-    const op = await operationOfBuild(db, buildId, opId);
-    if (!op) {
-      res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
-      return;
-    }
-    const row = await db
-      .insertInto("builds_op_time")
-      .values({
-        operation_id: opId,
-        build_id: buildId,
-        kind: parsed.data.kind ?? "labor",
-        minutes: String(parsed.data.minutes),
-        notes: parsed.data.notes ?? null,
-        logged_by: session?.id ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("builds.operation.time_logged", {
-      orgId: ctx.org.id,
-      buildId,
-      operationId: opId,
-      kind: row.kind,
-      minutes: Number(row.minutes) || 0,
-    });
-    res.status(201).json(row);
+    const op = await operationOfBuild(db, req.params.id!, req.params.opId!);
+    if (!op) return void res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
+    res.status(201).json(await logStepTime(db, tenantContext(req).org.id, req.params.id!, op, parsed.data, sessionUser(req)?.id ?? null));
   }),
 );
 
 // Log a quantity (good / scrap / rework) at an operation.
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:log-step-count
 buildsRouter.post(
   "/builds/:id/operations/:opId/quantities",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:log-step-count"))) return;
     const parsed = QtyLog.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const buildId = req.params.id!;
-    const opId = req.params.opId!;
     const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const session = sessionUser(req);
-    const op = await operationOfBuild(db, buildId, opId);
-    if (!op) {
-      res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
-      return;
-    }
-    const row = await db
-      .insertInto("builds_op_qty")
-      .values({
-        operation_id: opId,
-        build_id: buildId,
-        kind: parsed.data.kind,
-        quantity: String(parsed.data.quantity),
-        reason: parsed.data.reason ?? null,
-        logged_by: session?.id ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    // Scrap is the wireable signal (e.g. → a notification, or a quality log later).
-    if (row.kind === "scrap") {
-      await platform().events.emit("builds.operation.scrapped", {
-        orgId: ctx.org.id,
-        buildId,
-        operationId: opId,
-        operationName: op.name,
-        quantity: Number(row.quantity) || 0,
-        reason: row.reason,
-      });
-    }
-    res.status(201).json(row);
+    const op = await operationOfBuild(db, req.params.id!, req.params.opId!);
+    if (!op) return void res.status(404).json({ error: { code: "not_found", message: "operation not found" } });
+    res.status(201).json(await logStepCount(db, tenantContext(req).org.id, req.params.id!, op, parsed.data, sessionUser(req)?.id ?? null));
   }),
 );
 
@@ -903,77 +732,40 @@ const PlannedUpdate = z.object({
   notes: z.string().max(2_000).nullable().optional(),
 });
 
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:plan-build
 buildsRouter.post(
   "/planned",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:plan-build"))) return;
     const parsed = PlannedCreate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const build = await db.selectFrom("builds_builds").select(["id", "metadata"]).where("id", "=", parsed.data.build_id).executeTakeFirst();
-    if (!build) {
-      res.status(400).json({ error: { code: "not_found", message: "build not found" } });
-      return;
-    }
-    if ((build.metadata as { assembly?: unknown } | null)?.assembly) throw new ActionRefusal("Use the assembly work order action for a board revision.");
-    const row = await db
-      .insertInto("builds_planned")
-      .values({
-        build_id: parsed.data.build_id,
-        qty: String(parsed.data.qty ?? 1),
-        due_date: parsed.data.due_date ?? null,
-        priority: parsed.data.priority ?? 0,
-        resource_label: parsed.data.resource_label ?? null,
-        notes: parsed.data.notes ?? null,
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    await platform().events.emit("builds.planned.created", { orgId: ctx.org.id, plannedId: row.id, buildId: row.build_id });
-    res.status(201).json(row);
+    const build = await db.selectFrom("builds_builds").select(["id"]).where("id", "=", parsed.data.build_id).executeTakeFirst();
+    if (!build) return void res.status(400).json({ error: { code: "not_found", message: "build not found" } });
+    const { build_id, ...plan } = parsed.data;
+    res.status(201).json(await addPlannedBuild(db, tenantContext(req).org.id, build_id, plan));
   }),
 );
 
-// AI-REACH: part of the build workflow (components, operations, time) which is a designed multi-step surface; build-one and reverse-one are the doors
+// AI-ACTION: builds:change-plan
 buildsRouter.patch(
   "/planned/:pid",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "builds:change-plan"))) return;
     const parsed = PlannedUpdate.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    const ctx = tenantContext(req);
-    const before = await db.selectFrom("builds_planned").select(["status", "assembly"]).where("id", "=", req.params.pid!).executeTakeFirst();
-    if (!before) {
-      res.status(404).json({ error: { code: "not_found", message: "planned item not found" } });
-      return;
-    }
-    const patch: Record<string, unknown> = { updated_at: new Date() };
-    if (before.assembly) throw new ActionRefusal("Change this order through its assembly workflow.");
-    if (parsed.data.qty !== undefined) patch.qty = String(parsed.data.qty);
-    if (parsed.data.due_date !== undefined) patch.due_date = parsed.data.due_date;
-    if (parsed.data.priority !== undefined) patch.priority = parsed.data.priority;
-    if (parsed.data.resource_label !== undefined) patch.resource_label = parsed.data.resource_label;
-    if (parsed.data.status !== undefined) patch.status = parsed.data.status;
-    if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
-    const row = await db.updateTable("builds_planned").set(patch).where("id", "=", req.params.pid!).returningAll().executeTakeFirstOrThrow();
-    if (parsed.data.status === "done" && before.status !== "done") {
-      await platform().events.emit("builds.planned.completed", { orgId: ctx.org.id, plannedId: row.id, buildId: row.build_id });
-    }
-    res.json(row);
+    const out = await changePlan(tenantDb(req), tenantContext(req).org.id, req.params.pid!, parsed.data);
+    if (!out) return void res.status(404).json({ error: { code: "not_found", message: "planned item not found" } });
+    res.json(out.row);
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: builds:remove-plan
 buildsRouter.delete(
   "/planned/:pid",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const db = tenantDb(req);
-    const row = await db.selectFrom("builds_planned").select("assembly").where("id", "=", req.params.pid!).executeTakeFirst();
-    if (row?.assembly) throw new ActionRefusal("Cancel this order through its assembly workflow to release the kit.");
-    await db.deleteFrom("builds_planned").where("id", "=", req.params.pid!).execute();
+    if (!(await requireCapability(req, res, "builds:remove-plan"))) return;
+    await removePlan(tenantDb(req), req.params.pid!);
     res.status(204).end();
   }),
 );

@@ -65,6 +65,11 @@ export async function visitLowStock(orgId: string, raw: unknown, now: Date): Pro
       const delivery = await platform().notifications.dispatch({
         orgId, userId, eventType: LOW_STOCK_EVENT, module: "inventory",
         triggeredBy: "schedule", priority: "normal", message,
+        subjectDay: day,
+        subjects: [
+          ...items.map((p) => ({ kind: "inventory:part", id: p.id, question: "low-stock", line: `${p.name}: ${p.onHand - Number(p.assigned_qty ?? 0)} left (minimum ${Number(p.min_qty)})` })),
+          ...shortages.map((s) => ({ kind: "inventory:shortage", id: s.key, question: "low-stock", line: s.text })),
+        ],
         link_url: link ?? "/", payload: { count },
       });
       if (!delivery.notificationId) continue;

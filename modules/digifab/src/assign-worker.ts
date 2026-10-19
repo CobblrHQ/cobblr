@@ -8,8 +8,6 @@
 // printer that frees up pulls the next job within a tick; an empty queue stops
 // the loop. `kickAssign` fires an immediate pass on job-create.
 
-import { gatherCandidates } from "./api/printing-profiles.js";
-import { printerMaterialRefusal } from "./material-dispatch.js";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { DigifabDB } from "./db.js";
@@ -18,8 +16,8 @@ import { mintRunJobs, runStatuses } from "./runs-core.js";
 import { enqueuePoll } from "./poll-worker.js";
 import { classify } from "./state.js";
 import { noteFarmActive } from "./farm-active.js";
-import { ownedDeviceRefs } from "./detectors/owned.js";
-import { lentDeviceRefs } from "./detectors/lent.js";
+import { familyManagedDevices, familyMaterialRefusal, familyPrinting } from "./core/families.js";
+import { lentDeviceRefs } from "./lent-machines.js";
 import type { RemoteDevice } from "./drivers/types.js";
 
 export const ASSIGN_QUEUE = "digifab.assign";
@@ -96,7 +94,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
     ),
   );
   // Single-owner: printers an external detector owns aren't Cobblr's to drive.
-  const owned = await ownedDeviceRefs(db);
+  const owned = await familyManagedDevices(db);
   // A printer lent out is away: it takes no plate until it is back.
   const lent = await lentDeviceRefs(db, orgId);
 
@@ -134,7 +132,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
   // (in-flight plates finish normally — the PFM pause semantics).
   const runStates = await runStatuses(db, [...new Set(queued.map((j) => j.run_id).filter((x): x is string => !!x))]);
 
-  const materialCandidates = queued.some(j => printerMaterialRefusal(j, []) !== null) ? await gatherCandidates(orgId, db) : [];
+  const materialCandidates = queued.some(j => familyMaterialRefusal(j, []) !== null) ? (await familyPrinting()?.candidates(orgId, db)) ?? [] : [];
   let stillQueued = 0;
   for (const job of queued) {
     if (!job.target_pool) continue;
@@ -157,7 +155,7 @@ export async function assignPoolJobs(db: Kysely<DigifabDB>, orgId: string): Prom
       const dev = (await devicesFor(m.connection_id)).find((d) => d.id === m.remote_device_id);
       if (!dev || !dev.enabled || classify(dev.state ?? "") !== "idle") continue;
 
-      const refusal = job.file_id ? null : printerMaterialRefusal(job, materialCandidates.find(c => c.device.connection_id === m.connection_id && c.device.remote_device_id === m.remote_device_id)?.loaded ?? []);
+      const refusal = job.file_id ? null : familyMaterialRefusal(job, materialCandidates.find(c => c.device.connection_id === m.connection_id && c.device.remote_device_id === m.remote_device_id)?.loaded ?? []);
       if (refusal) { materialBlock = refusal; continue; }
       const driver = await buildDriverById(db, orgId, m.connection_id);
       if (await driver?.jobReviewRequired?.()) continue;

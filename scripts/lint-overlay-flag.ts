@@ -50,7 +50,7 @@ const EXEMPT = /overlay-open\.(ts|tsx)$|\.test\.(ts|tsx)$/;
 // is the same bug with a different pill. Fixing all fourteen is its own change
 // with its own blast radius; recording them here stops the list from GROWING
 // while that happens. Delete a line as each one starts raising the flag.
-// See docs/BACKLOG.md "Overlays that do not raise data-overlay-open".
+// See docs/history/BACKLOG-archive.md "Overlays that do not raise data-overlay-open".
 const KNOWN_GAPS = new Set<string>([]);
 
 function walk(dir: string, out: string[] = []): string[] {

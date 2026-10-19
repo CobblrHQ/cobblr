@@ -13,6 +13,8 @@ import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contra
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
+import { readFleet, typedStamp } from "./versions-store.js";
+import { setVersionTarget } from "./set-version-target-action.js";
 import { isRefusal, liftUnits, unitIdsIn, mergeInto, nameUnit, releaseForDelete, splitOne, splitUnit, unitsSummary, type Refusal, type UnitsCtx } from "./units.js";
 
 function unitsCtx(req: Parameters<typeof tenantDb>[0]): UnitsCtx {
@@ -50,6 +52,10 @@ const MachineCreate = z.object({
   quantity: z.number().int().min(0).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   location_id: z.string().uuid().nullable().optional(),
   metadata: z.record(z.unknown()).optional(),
+  // What it runs, typed by a person; source and last seen are stamped here.
+  firmware_version: z.string().max(120).nullable().optional(),
+  software_version: z.string().max(120).nullable().optional(),
+  controller: z.string().max(120).nullable().optional(),
 });
 
 const MACHINE_NATIVE_KEYS = new Set(Object.keys(MachineCreate.shape));
@@ -102,6 +108,30 @@ machinesRouter.get(
   }),
 );
 
+// The versions view: every machine in this collection by cohort, against the
+// cohort's target, with how many are current, behind, unknown or down for
+// repair. The assistant reads the same through read_machine_versions.
+machinesRouter.get(
+  "/versions",
+  asyncHandler(async (req, res) => {
+    const location = typeof req.query.location_id === "string" && /^[0-9a-f-]{36}$/i.test(req.query.location_id) ? req.query.location_id : null;
+    res.json(await readFleet(tenantDb(req), tenantContext(req).org.id, instanceOf(req), { location_id: location }));
+  }),
+);
+
+// POST, not PUT: a PUT under /machines/<x> is a record update to the platform (the kind's update endpoint).
+// AI-REACH: action machines:set-version-target
+// AI-ACTION: machines:set-version-target
+machinesRouter.post(
+  "/version-targets",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "machines:set-version-target"))) return;
+    const out = await setVersionTarget(tenantDb(req), tenantContext(req).org.id, sessionUser(req).id, instanceOf(req), req.body ?? {});
+    if (!out.ok) res.status(422).json({ error: { code: "version_target_refused", message: out.error } });
+    else res.json(out);
+  }),
+);
+
 machinesRouter.get(
   "/:id",
   asyncHandler(async (req, res) => {
@@ -144,6 +174,7 @@ machinesRouter.post(
       .insertInto("machines_machines")
       .values({
         ...createRest,
+        ...typedStamp(createRest),
         instance: instanceOf(req),
         metadata: parsed.data.metadata ?? {},
       } as never)
@@ -208,7 +239,7 @@ machinesRouter.patch(
     const updated = await db
       .updateTable("machines_machines")
       // The custom fields MERGE into the live row (withMetadataMerged, #3625).
-      .set(withMetadataMerged({ ...patchRest, updated_at: new Date() } as Record<string, unknown>) as never)
+      .set(withMetadataMerged({ ...patchRest, ...typedStamp(patchRest), updated_at: new Date() } as Record<string, unknown>) as never)
       .where("id", "=", id)
       .where("instance", "=", instanceOf(req))
       .returningAll()

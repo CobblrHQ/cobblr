@@ -17,7 +17,7 @@ import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
 import { IDLE_RELEASE_MS } from "./connection-budget.js";
 import { poolCounts, type PoolCounts } from "./pool-stats.js";
-import { createConnectionLimit } from "./tenant-connection-limit.js";
+import { connectThroughEnds, createConnectionLimit } from "./tenant-connection-limit.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -234,13 +234,13 @@ async function openTenant(orgId: string): Promise<CachedTenant> {
   // between a narrower window and a closed one. Re-acquire goes through
   // getTenantDb, so the reopened pool is the CACHED one — no orphaned pools.
   const shim = {
-    connect: async () => {
-      const dead = pool as unknown as { ended?: boolean; ending?: boolean };
-      if (!dead.ended && !dead.ending) return pool.connect();
-      await getTenantDb(orgId);
-      const live = await cache.get(orgId);
-      return (live?.pool ?? pool).connect();
-    },
+    // Ended before or while this checkout waited (tenant-connection-limit.ts):
+    // the org's live pool serves it.
+    connect: () =>
+      connectThroughEnds(pool, async () => {
+        await getTenantDb(orgId);
+        return (await cache.get(orgId))?.pool ?? pool;
+      }),
     end: () => pool.end(),
   };
   const db = new Kysely<TenantDB>({

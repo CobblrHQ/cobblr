@@ -1,6 +1,7 @@
 // /modules/purchases/unconfirmed-receipts: the lines of orders marked arrived
-// whose stock may never have been added (heal-unreceived-arrivals.ts), and a
-// person's answer for each: add it to stock now, or it was already counted.
+// whose stock may never have been added (heal-unreceived-arrivals.ts), or
+// whose stock write was refused for good (`refused`, 0019), and a person's
+// answer for each: add it to stock now, or it was already counted.
 
 import { Router } from "express";
 import { z } from "zod";
@@ -19,7 +20,7 @@ unconfirmedRouter.get(
     const rows = await db
       .selectFrom("purchases_order_items as i")
       .innerJoin("purchases_orders as o", "o.id", "i.order_id")
-      .select(["i.id", "i.order_id", "i.part_id", "i.qty", "i.description", "o.vendor", "o.order_number", "o.arrived_at"])
+      .select(["i.id", "i.order_id", "i.part_id", "i.qty", "i.description", "i.receipt_refused", "o.vendor", "o.order_number", "o.arrived_at"])
       .where("i.receipt_unconfirmed", "=", true)
       .orderBy("o.arrived_at", "desc")
       .execute();
@@ -33,6 +34,7 @@ unconfirmedRouter.get(
         description: r.description,
         qty: Number(r.qty ?? 0),
         part_id: r.part_id,
+        refused: r.receipt_refused,
         part_title: r.part_id ? await platform().entities.titleForEntity(orgId, "inventory:part", r.part_id).catch(() => null) : null,
       })),
     );
@@ -48,7 +50,11 @@ unconfirmedRouter.post(
     const parsed = z.object({ decision: z.enum(["add", "counted"]) }).safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const orgId = tenantContext(req).org.id;
-    const settled = await settleUnconfirmedLine(tenantDb(req), orgId, String(req.params.id), parsed.data.decision);
+    const { settled, refused } = await settleUnconfirmedLine(tenantDb(req), orgId, String(req.params.id), parsed.data.decision);
+    if (refused) {
+      res.status(409).json({ error: { code: "stock_refused", message: refused } });
+      return;
+    }
     if (settled) {
       await platform().activity.log({
         orgId,

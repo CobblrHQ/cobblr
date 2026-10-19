@@ -15,7 +15,7 @@
 //     priority, org_id, user_id, occurred_at
 //   }
 
-import { absoluteAppUrl } from "../public-url.js";
+import { emailableUrl } from "../link-origin.js";
 import { postJson } from "./http-helpers.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
@@ -48,7 +48,8 @@ export const webhookChannel: Channel = {
         notification_id: event.notificationId,
         event_type: event.eventType,
         message: event.message,
-        link_url: event.link_url ? absoluteAppUrl(event.link_url) : null,
+        link_url: event.link_url ? emailableUrl(event.link_url) : null,
+        link_path: event.link_url ?? null,
         priority: event.priority,
         org_id: event.orgId,
         user_id: event.userId,

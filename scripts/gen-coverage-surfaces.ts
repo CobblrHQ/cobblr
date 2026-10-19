@@ -1,12 +1,15 @@
 #!/usr/bin/env tsx
-// Writes scripts/coverage-matrix/surfaces.generated.json: the coverage matrix's rows
+// The coverage matrix's rows
 // and columns, from the registries (scripts/lib/coverage-surfaces.ts says
 // which). The nightly walk and the attest CLI post it to the CI sink's store,
-// and lint:coverage-surfaces holds it to the tree, so a page, kind or action
-// added today is a matrix row today, reading "never tested".
+// made fresh each time, so a page, kind or action added today is a matrix row
+// today, reading "never tested".
 //
-//   npx tsx scripts/gen-coverage-surfaces.ts           write it
-//   npx tsx scripts/gen-coverage-surfaces.ts --check   exit 1 if it is stale
+//   node scripts/gen-coverage-surfaces.ts           write it (gitignored), to read by hand
+//   node scripts/gen-coverage-surfaces.ts --print   print it (lib/coverage-client.mjs surfaces() reads this)
+//
+// NOT COMMITTED (2026-10-19): every page, kind or action added anywhere changed it, so it rode 59 of a
+// week's 157 regenerated heads, each another CI run. Whoever reads it makes it, in two seconds.
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -104,13 +107,8 @@ export function pageFilesOf(app: string, appFile: string): Record<string, string
 async function main(): Promise<void> {
   const want = await generate();
   const path = join(ROOT, OUT);
-  if (process.argv.includes("--check")) {
-    const have = existsSync(path) ? readFileSync(path, "utf8") : "";
-    if (have !== want) {
-      console.error(`lint:coverage-surfaces - ${OUT} is not what the registries give. A page, kind or action changed without its matrix row. Run: npx tsx scripts/gen-coverage-surfaces.ts`);
-      process.exit(1);
-    }
-    console.log(`lint:coverage-surfaces OK (${JSON.parse(want).surfaces.length} surfaces)`);
+  if (process.argv.includes("--print")) {
+    process.stdout.write(want);
   } else {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, want);

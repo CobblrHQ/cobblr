@@ -20,7 +20,6 @@
   "modules/core-import/src/services/sheet-import.ts": 1,
   "modules/core-maintenance/src/api/schedules.ts": 1,
   "modules/core-maintenance/src/schedules-store.ts": 1,
-  "modules/core-scan/src/api/inbox.ts": 1,
   "modules/core-scan/src/api/shipment-event.ts": 1,
   "modules/core-scan/src/services/decode-cache.ts": 2,
   "modules/inventory/src/api/adopt-axis-values.ts": 1,
@@ -30,7 +29,6 @@
   "modules/inventory/src/api/target-lines.ts": 1,
   "modules/labels/src/api/action-labels.ts": 1,
   "modules/labels/src/api/autoflush.ts": 5,
-  "modules/labels/src/api/sizes.ts": 2,
   "modules/labels/src/services/codes.ts": 2,
   "modules/machines/src/api/machines.ts": 1,
   "modules/machines/src/api/units.ts": 1,
@@ -45,5 +43,6 @@
   "modules/sales/src/api/customers.ts": 1,
   "modules/sales/src/api/orders.ts": 1,
   "modules/sales/src/create-order.ts": 1,
-  "modules/sales/src/order-lines.ts": 1
+  "modules/sales/src/order-lines.ts": 1,
+  "modules/core-scan/src/api/inbox/receipts.ts": 1
 }

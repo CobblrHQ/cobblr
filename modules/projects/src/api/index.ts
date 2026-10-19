@@ -56,6 +56,9 @@ import { registerDependencyHandlers } from "./dep-handlers.js";
 registerDependencyHandlers();
 import { registerOrderHandlers } from "./order.js";
 import { registerCopyProjectAction } from "./copy-project-action.js";
+import { registerReadPatternAction } from "./read-pattern-action.js";
+
+registerReadPatternAction();
 
 registerCopyProjectAction();
 registerOrderHandlers();

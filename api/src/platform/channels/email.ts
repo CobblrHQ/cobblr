@@ -4,13 +4,14 @@
 // shape + per-provider transport live in ../email-send.ts, shared with the
 // platform BYO auth-email sender.
 //
-// Subject is `[<event_type>] <first 60 chars>`; body is plain text (the full
+// Subject is the message's own first line; body is plain text (the full
 // message + a link if any) — no HTML, which keeps every provider's payload
-// trivial and dodges email-client rendering quirks.
+// trivial and dodges email-client rendering quirks. Neither carries the event's
+// key or the priority's enum: a reader has no use for them (#7544).
 
 import { productName } from "../product-name.js";
 import { checkEmailConfig, sendEmailVia, type EmailConfig, type ValidConfig } from "../email-send.js";
-import { absoluteAppUrl } from "../public-url.js";
+import { emailableUrl, NO_ADDRESS_NOTE } from "../link-origin.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 /** Validate config for the chosen provider; null (+ a warn) if incomplete. */
@@ -24,12 +25,28 @@ function readConfig(payload: unknown): ValidConfig | null {
   return r.config;
 }
 
-function subjectAndText(event: ChannelEvent): { subject: string; text: string } {
-  const subject = `[${event.eventType}] ` + event.message.slice(0, 60) + (event.message.length > 60 ? "…" : "");
-  const text = [event.message, "", event.link_url ? `Link: ${absoluteAppUrl(event.link_url)}` : null, "", `Priority: ${event.priority}`, `Sent by ${productName()}.`]
+const SUBJECT_MAX = 70;
+
+/** The subject a notice reads as in an inbox: its own first line, in plain
+ *  words. Never the event's key or a bullet list flattened and cut mid-word
+ *  (#7544). A digest's first line is its count ("4 updates from your
+ *  workspace:"), so its subject is that, not the first update. */
+function subjectOf(message: string): string {
+  const first = (message.split("\n").find((l) => l.trim()) ?? "").replace(/\*\*/g, "").replace(/^[•\-*]\s*/, "").trim().replace(/[:\s]+$/, "");
+  if (first.length <= SUBJECT_MAX) return first || "A notice";
+  const cut = first.slice(0, SUBJECT_MAX - 1);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), 20)).replace(/[,;:\s]+$/, "")}…`;
+}
+
+export function subjectAndText(event: ChannelEvent): { subject: string; text: string } {
+  const link = event.link_url ? emailableUrl(event.link_url) : null;
+  // The priority is said only when it asks for attention, and in words.
+  const urgency = event.priority === "urgent" ? "This one is marked urgent." : event.priority === "high" ? "This one is marked important." : null;
+  const text = [event.message.replace(/\*\*/g, ""), "", link ? `Open it: ${link}` : event.link_url ? NO_ADDRESS_NOTE : null, urgency ? "" : null, urgency, "", `Sent by ${productName()}.`]
     .filter((line) => line !== null)
-    .join("\n");
-  return { subject, text };
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+  return { subject: subjectOf(event.message), text };
 }
 
 async function accountEmail(event: ChannelEvent): Promise<boolean> {

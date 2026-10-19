@@ -90,9 +90,9 @@ for (const vocab of VOCABS) {
       continue;
     }
     // The vocabulary's own module defines and documents it.
-    // The vocabulary's declaration file, and the contract index it was split
-    // from, which still holds the schemas over it.
-    if (file === CONTRACT || file === "packages/platform-contract/src/index.ts") continue;
+    // The vocabulary's declaration file, and the contract file that holds the
+    // schemas over it (split out of the index, #7381).
+    if (file === CONTRACT || file === "packages/platform-contract/src/entity-fields.ts") continue;
 
     const lines = src.split("\n");
     const seen = new Map<string, number>();

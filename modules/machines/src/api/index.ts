@@ -5,6 +5,9 @@ import { machinesRouter } from "./machines.js";
 import { registerMachinesResolvers } from "./resolvers.js";
 import { registerMachinesActionHandlers } from "./action-handlers.js";
 import { registerMachinesWriter } from "./sync-writer.js";
+import { registerSetVersionTargetAction } from "./set-version-target-action.js";
+
+registerSetVersionTargetAction();
 
 registerMachinesResolvers();
 platform().devices.registerMachineRecords({

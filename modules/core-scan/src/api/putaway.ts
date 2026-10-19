@@ -318,7 +318,9 @@ const StartBody = z.object({
   catch_all_location_id: z.string().uuid().nullable().optional(),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 putawayRouter.post(
   "/putaway/start",
   asyncHandler(async (req, res) => {
@@ -573,7 +575,9 @@ const SetupBinsBody = z.object({
   include_catch_all: z.boolean().default(false),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 // UI-SCREEN: /scan (Live Sort creates numbered bins)
 putawayRouter.post(
   "/putaway/:id/setup-bins",
@@ -670,7 +674,9 @@ const ScanBody = z.object({
   inbox_item_id: z.string().uuid(),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 putawayRouter.post(
   "/putaway/:id/scan",
   asyncHandler(async (req, res) => {
@@ -841,7 +847,9 @@ const ConfirmBody = z.object({
   container: z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) }).optional(),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 // UI-SCREEN: /scan (Live Sort confirms the current item)
 putawayRouter.post(
   "/putaway/:id/confirm",
@@ -974,7 +982,9 @@ putawayRouter.post(
 
 const UndoBody = z.object({ entry_id: z.string().uuid() });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 // UI-SCREEN: /scan (Live Sort undoes the last placement)
 putawayRouter.post(
   "/putaway/:id/undo",
@@ -1054,7 +1064,9 @@ const StateBody = z.object({
   placed_item_ids: z.array(z.string().min(1).max(200)).max(MAX_ITEMS),
 });
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 putawayRouter.post(
   "/putaway/:id/state",
   asyncHandler(async (req, res) => {
@@ -1113,7 +1125,9 @@ putawayRouter.post(
 
 // ─────────────────────── POST /putaway/:id/end ───────────────────────
 
-// AI-REACH: a step of the guided scan/put-away flow, driven from the scanner screen with a camera in hand; the assistant reaches the inbox through list_scan_inbox and the plan through get_putaway_plan
+// AI-REACH: exempt — a step of a put-away walk: a person carrying things scans
+// each bin label as they go; only the scanner in hand knows which bin it is.
+// The assistant plans the walk through get_putaway_plan and replan_putaway
 putawayRouter.post(
   "/putaway/:id/end",
   asyncHandler(async (req, res) => {

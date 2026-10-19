@@ -59,7 +59,7 @@ export function durationPath(name, dir = DURATIONS_DIR) {
  *  second lint's name, is refused rather than read: the old map grew two
  *  lint entries at its top level beside `ms` (2026-09-22), where the budget
  *  never looked, so a hand-added time sat there reading as recorded. */
-export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "recorded", "source", "paths"];
+export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "readTreeMB", "recorded", "source", "paths"];
 
 /** The map this directory replaced. It must not come back beside it. */
 export const LEGACY_MAP = join(ROOT, "scripts", "lint-durations.json");
@@ -69,12 +69,19 @@ export const LEGACY_MAP = join(ROOT, "scripts", "lint-durations.json");
 function readOne(dir, file) {
   const expected = `lint:${file.slice(0, -5)}`;
   let d;
+  let raw = "";
   try {
-    d = JSON.parse(readFileSync(join(dir, file), "utf8"));
+    raw = readFileSync(join(dir, file), "utf8");
+    d = JSON.parse(raw);
   } catch (e) {
     return { name: expected, problem: `${file} is not JSON (${e.message})` };
   }
   if (!d || typeof d !== "object" || Array.isArray(d)) return { name: expected, problem: `${file} is not an object` };
+  // A key written twice: JSON keeps the last and says nothing. Two branches that each changed a different line
+  // of one record merge into exactly that (2026-10-19: test-imports-script.json and node-resolves.json carried two
+  // "readMB" and two "source", and which one the budget read depended on their order).
+  const twice = Object.keys(d).filter((k) => (raw.match(new RegExp(`^\\s*${JSON.stringify(k).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*:`, "gm")) ?? []).length > 1);
+  if (twice.length) return { name: expected, problem: `${file} has ${twice.map((k) => JSON.stringify(k)).join(", ")} twice (a merge kept both lines); keep one` };
   const extra = Object.keys(d).filter((k) => !FILE_KEYS.includes(k));
   if (extra.length) return { name: expected, problem: `${file} carries ${extra.map((k) => JSON.stringify(k)).join(", ")}; a file holds one lint's record and only ${FILE_KEYS.join("/")}` };
   if (d.lint !== expected) return { name: expected, problem: `${file} says it is ${JSON.stringify(d.lint)}; its filename says ${expected}` };
@@ -87,11 +94,13 @@ function readOne(dir, file) {
   if (onTsx && !(typeof d.tsx === "string" && d.tsx.trim().length >= 20)) return { name: expected, problem: `${file} runs under tsx with no "tsx" reason; run it as \`node ${d.run.replace(/^tsx\s+/, "")}\` (Node strips the types, ~0.1 s to start against ~1.3 s), or say why it needs tsx` };
   if (!onTsx && d.tsx !== undefined) return { name: expected, problem: `${file} gives a "tsx" reason but does not run under tsx` };
   if (d.readMB !== undefined && !(Number.isFinite(d.readMB) && d.readMB >= 0)) return { name: expected, problem: `${file} has readMB ${JSON.stringify(d.readMB)}, which is not a size` };
+  // The tracked text tree's size when readMB was taken (lib/tree-size.mjs): the read budget grows with the tree.
+  if (d.readTreeMB !== undefined && !(Number.isFinite(d.readTreeMB) && d.readTreeMB > 0)) return { name: expected, problem: `${file} has readTreeMB ${JSON.stringify(d.readTreeMB)}, which is not a size` };
   // A lint with a fast path and a full fallback has a quiet time per path ("paths": {"full": 14000}); it says
   // which it took with a `[lint-path] <name>` line, and is judged against that path's time.
   if (d.paths !== undefined && !(d.paths && typeof d.paths === "object" && !Array.isArray(d.paths) && Object.values(d.paths).every((v) => Number.isFinite(v) && v > 0)))
     return { name: expected, problem: `${file} has "paths" that is not an object of path name to a time` };
-  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), ...(d.paths ? { paths: d.paths } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
+  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), ...(d.readTreeMB !== undefined ? { readTreeMB: d.readTreeMB } : {}), ...(d.paths ? { paths: d.paths } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
 }
 
 /** Every registered lint, from its record: `{ name, run, rows, manual }`.
@@ -205,6 +214,23 @@ export function readRecordedReadMB(dir = DURATIONS_DIR) {
   return out;
 }
 
+/** The tree each read volume was recorded against, `{ "lint:x": 44.1 }` in MB (lib/tree-size.mjs). */
+export function readRecordedReadTreeMB(dir = DURATIONS_DIR) {
+  const out = {};
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const file of names) {
+    if (!file.endsWith(".json")) continue;
+    const r = readOne(dir, file);
+    if (r.readTreeMB !== undefined) out[r.name] = r.readTreeMB;
+  }
+  return out;
+}
+
 /** Which lints have a file at all (whatever it holds). */
 export function recordedNames() {
   return new Set(Object.keys(readQuietMs()));
@@ -213,7 +239,7 @@ export function recordedNames() {
 /** Write one lint's time. `source` says where the number came from, because a
  *  hand-taken number on a busy box and a CI measurement are not the same
  *  claim and the next reader has to be able to tell. */
-export function writeQuietMs(name, ms, source, recorded = new Date().toISOString().slice(0, 10), dir = DURATIONS_DIR, readMB = undefined) {
+export function writeQuietMs(name, ms, source, recorded = new Date().toISOString().slice(0, 10), dir = DURATIONS_DIR, readMB = undefined, readTreeMB = undefined) {
   // A baseline that is not a number is not a baseline, and writing one would
   // be the same silent nothing this file exists to end: the budget would read
   // the file, find no usable time, and judge the lint at the median anyway.
@@ -230,7 +256,9 @@ export function writeQuietMs(name, ms, source, recorded = new Date().toISOString
   }
   if (typeof prior.run !== "string" || !prior.run.trim()) throw new Error(`lint-durations: ${lint} has no registration to record a time against (scripts/new-lint.sh registers a lint)`);
   const reads = readMB !== undefined ? Math.round(readMB * 10) / 10 : prior.readMB;
-  const doc = { lint, run: prior.run, ...(prior.rows ? { rows: prior.rows } : {}), ...(prior.manual ? { manual: prior.manual } : {}), ms: Math.round(ms), ...(reads !== undefined ? { readMB: reads } : {}), recorded, source };
+  // A new read volume carries the tree it was read from; a kept one keeps its own.
+  const tree = readMB !== undefined ? (readTreeMB !== undefined ? Math.round(readTreeMB * 10) / 10 : undefined) : prior.readTreeMB;
+  const doc = { lint, run: prior.run, ...(prior.rows ? { rows: prior.rows } : {}), ...(prior.manual ? { manual: prior.manual } : {}), ms: Math.round(ms), ...(reads !== undefined ? { readMB: reads } : {}), ...(tree !== undefined ? { readTreeMB: tree } : {}), recorded, source };
   writeFileSync(durationPath(lint, dir), `${JSON.stringify(doc, null, 2)}\n`);
   return durationPath(lint, dir);
 }

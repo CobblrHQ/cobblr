@@ -26,7 +26,7 @@ import { platform } from "@cobblr/platform-contract";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 import { env } from "../env.js";
-import { absoluteAppUrl } from "./public-url.js";
+import { emailableUrl } from "./link-origin.js";
 import { readReplyToken, replyToken, type ReplyClaim } from "./external-message-tokens.js";
 import { outboundEmailStatus, sendFromWorkspace } from "./outbound-email.js";
 import { outboundSmsStatus, sendTextFromWorkspace } from "./outbound-sms.js";
@@ -251,14 +251,15 @@ export async function sendExternalMessage(m: ExternalMessage): Promise<ExternalR
   const org = await meta.selectFrom("orgs").select("name").where("id", "=", m.orgId).executeTakeFirst();
   const who = await meta.selectFrom("users").select(["display_name", "email"]).where("id", "=", sentBy).executeTakeFirst();
   const setter = who?.display_name || who?.email || "Someone";
-  const stop = absoluteAppUrl(`/m/stop/${stopToken({ o: m.orgId, w: m.bindingId, p: m.personId })}`);
+  const stop = emailableUrl(`/m/stop/${stopToken({ o: m.orgId, w: m.bindingId, p: m.personId })}`);
   // The message's own id, known before it is sent, so its reply link can
   // name it (the answer is kept on the message it answers).
   const logId = randomUUID();
-  const reply = m.replyLink ? `\n\nGot it, or bought it? Say so here: ${absoluteAppUrl(`/m/reply/${replyToken({ o: m.orgId, l: logId, e: Date.now() + REPLY_LIFETIME_MS }, env.JWT_SECRET)}`)}` : "";
+  const replyUrl = m.replyLink ? emailableUrl(`/m/reply/${replyToken({ o: m.orgId, l: logId, e: Date.now() + REPLY_LIFETIME_MS }, env.JWT_SECRET)}`) : null;
+  const reply = replyUrl ? `\n\nGot it, or bought it? Say so here: ${replyUrl}` : "";
   if (byText) {
     // A text is short, so its footer is: who, where, and the stop link.
-    const body = `${m.text}${reply}\n\n-- ${setter}, ${org?.name ?? "their workspace"} (an automation). Stop: ${stop}`;
+    const body = `${m.text}${reply}\n\n-- ${setter}, ${org?.name ?? "their workspace"} (an automation). ${stop ? `Stop: ${stop}` : `To stop these, ask ${setter}.`}`;
     const sent = await sendTextFromWorkspace(m.orgId, { to, text: body });
     if (!sent.ok) {
       await record(m, to, "failed", sent.message, null, body, logId);
@@ -267,7 +268,7 @@ export async function sendExternalMessage(m: ExternalMessage): Promise<ExternalR
     await record(m, to, "sent", null, null, body, logId);
     return { ok: true, status: "sent", to, name: person.name };
   }
-  const text = `${m.text}${reply}\n\n--\nSent by an automation ${setter} set up in ${org?.name ?? "their workspace"}. To stop these messages: ${stop}`;
+  const text = `${m.text}${reply}\n\n--\nSent by an automation ${setter} set up in ${org?.name ?? "their workspace"}. ${stop ? `To stop these messages: ${stop}` : `To stop these messages, ask ${setter}.`}`;
   const subject = m.record?.title ? `${m.record.title}: a message from ${org?.name ?? "a workspace"}` : `A message from ${org?.name ?? "a workspace"}`;
   const out = await sendFromWorkspace(m.orgId, {
     to,

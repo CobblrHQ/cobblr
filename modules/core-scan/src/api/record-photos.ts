@@ -5,19 +5,27 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { bearer, tenantContext, tenantDb } from "../db.js";
-import { kyselyStore, oneRowPerRecord, putPictureOn, readAutoApply, recordHasNoPicture, searchAgain, writeAutoApply } from "../services/record-photos.js";
-import { imagePathForFile, setEntityImageFile } from "../services/entity-image.js";
+import { kyselyStore, nudge, oneRowPerRecord, putPictureOn, readAutoApply, readSuggestOn, recordHasNoPicture, searchAgain, writeAutoApply, writeSuggestOn } from "../services/record-photos.js";
+import { imagePathForFile, setEntityImageFile, storeFetchedImage } from "../services/entity-image.js";
 
 export const recordPhotosRouter: Router = Router({ mergeParams: true });
 
+/** Where a held suggestion's picture is served from: the suggestion store,
+ *  never Files (#7447). */
+export function heldPicturePath(slug: string, kind: string, id: string): string {
+  return `/api/v1/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/picture`;
+}
+
 /** A suggestion as a card reads it: the picture to show, and whether it is
- *  still being looked for. */
-function served(slug: string, r: { entity_kind: string; entity_id: string; status: string; file_id: string | null; query: string | null }) {
+ *  still being looked for. A held picture is served from the suggestion
+ *  store; a file only once it was used (or, on a workspace from before #7447
+ *  the heal has not reached yet, the file it was stored as). */
+function served(slug: string, r: { entity_kind: string; entity_id: string; status: string; file_id: string | null; held: unknown; query: string | null }) {
   return {
     entity_kind: r.entity_kind,
     entity_id: r.entity_id,
     status: r.status,
-    image_path: r.file_id ? imagePathForFile(slug, r.file_id) : null,
+    image_path: r.held === true || r.held === 1 ? heldPicturePath(slug, r.entity_kind, r.entity_id) : r.file_id ? imagePathForFile(slug, r.file_id) : null,
     query: r.query,
   };
 }
@@ -50,7 +58,7 @@ const ListQuery = z
 async function lookup(req: Parameters<typeof tenantDb>[0], kind: string | undefined, ids: readonly string[]) {
   let q = tenantDb(req)
     .selectFrom("core_scan_record_photo_suggestions")
-    .select(["entity_kind", "entity_id", "status", "file_id", "query", "updated_at"])
+    .select((eb) => ["entity_kind", "entity_id", "status", "file_id", "query", "updated_at", eb("held_bytes", "is not", null).as("held")])
     .where("status", "in", ["suggested", "queued", "none"]);
   // A list asks by its kind AND names the records it shows: a record's row
   // may sit under another kind name (a collection's item is its module's
@@ -90,6 +98,29 @@ recordPhotosRouter.get(
 
 const Target = z.object({ kind: z.string().min(1).max(100), id: z.string().min(1).max(100) });
 
+// GET /photo-suggestions/:kind/:id/picture: the picture a suggestion holds,
+// from the suggestion store (#7447). Nothing about it is in Files.
+recordPhotosRouter.get(
+  "/photo-suggestions/:kind/:id/picture",
+  asyncHandler(async (req, res) => {
+    const t = Target.safeParse(req.params);
+    if (!t.success) return badBody(res, t.error);
+    const row = await tenantDb(req)
+      .selectFrom("core_scan_record_photo_suggestions")
+      .select(["held_bytes", "held_type"])
+      .where("entity_kind", "=", t.data.kind)
+      .where("entity_id", "=", t.data.id)
+      .executeTakeFirst();
+    if (!row?.held_bytes) {
+      res.status(404).json({ error: { code: "no_picture", message: "This suggestion holds no picture now." } });
+      return;
+    }
+    res.setHeader("Content-Type", row.held_type || "image/jpeg");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(Buffer.from(row.held_bytes));
+  }),
+);
+
 // AI-REACH: exempt a person answering a picture offered on a record's own card; the assistant sets a record's picture through the record's update
 recordPhotosRouter.post(
   "/photo-suggestions/:kind/:id/use",
@@ -101,11 +132,11 @@ recordPhotosRouter.post(
     const ctx = tenantContext(req);
     const row = await db
       .selectFrom("core_scan_record_photo_suggestions")
-      .select(["status", "file_id"])
+      .select(["status", "file_id", "held_bytes", "held_type", "held_name", "source_url", "query"])
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .executeTakeFirst();
-    if (!row?.file_id || row.status !== "suggested") {
+    if (!row || row.status !== "suggested" || (!row.held_bytes && !row.file_id)) {
       res.status(404).json({ error: { code: "no_suggestion", message: "There is no suggested picture for this record now." } });
       return;
     }
@@ -115,7 +146,21 @@ recordPhotosRouter.post(
       res.status(409).json({ error: { code: "has_picture", message: "This record has a picture now, so the suggestion was left alone." } });
       return;
     }
-    let done = await putPictureOn(ctx.org.id, ctx.org.slug, t.data.kind, t.data.id, row.file_id);
+    // Use it is what makes the file: the very picture the card showed, from
+    // the bytes the suggestion held (#7447). A suggestion from before the
+    // heal still names its file.
+    const fileId = row.held_bytes
+      ? await storeFetchedImage(
+          ctx.org.id,
+          { bytes: new Uint8Array(row.held_bytes), mimeType: row.held_type || "image/jpeg", filename: row.held_name || "picture.jpg" },
+          { kind: "web", original_url: row.source_url ?? "", ...(row.query ? { query: row.query } : {}), at: new Date().toISOString() },
+        ).catch(() => null)
+      : row.file_id;
+    if (!fileId) {
+      res.status(422).json({ error: { code: "not_applied", message: "The picture could not be kept. Try Show others." } });
+      return;
+    }
+    let done = await putPictureOn(ctx.org.id, ctx.org.slug, t.data.kind, t.data.id, fileId);
     if (!done) {
       // A kind with no in-process writer is set the way the person would set
       // it: the record's own update route, with their own token.
@@ -128,7 +173,7 @@ recordPhotosRouter.post(
           entityKind: t.data.kind,
           entityId: t.data.id,
           instance: t.data.kind.endsWith(":item") ? prefix ?? null : null,
-          fileId: row.file_id,
+          fileId,
         })));
     }
     if (!done) {
@@ -137,11 +182,11 @@ recordPhotosRouter.post(
     }
     await db
       .updateTable("core_scan_record_photo_suggestions")
-      .set({ status: "applied", updated_at: new Date() })
+      .set({ status: "applied", file_id: fileId, held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .execute();
-    res.json({ ok: true, image_path: imagePathForFile(ctx.org.slug, row.file_id) });
+    res.json({ ok: true, image_path: imagePathForFile(ctx.org.slug, fileId) });
   }),
 );
 
@@ -174,7 +219,8 @@ recordPhotosRouter.post(
     if (!t.success) return badBody(res, t.error);
     await tenantDb(req)
       .updateTable("core_scan_record_photo_suggestions")
-      .set({ status: "declined", updated_at: new Date() })
+      // No thanks keeps nothing: the held picture goes with it (#7447).
+      .set({ status: "declined", held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
       .where("entity_kind", "=", t.data.kind)
       .where("entity_id", "=", t.data.id)
       .execute();
@@ -185,11 +231,12 @@ recordPhotosRouter.post(
 recordPhotosRouter.get(
   "/photo-suggest-config",
   asyncHandler(async (req, res) => {
-    res.json({ auto_apply: await readAutoApply(tenantDb(req)) });
+    const db = tenantDb(req);
+    res.json({ suggest_on: await readSuggestOn(db), auto_apply: await readAutoApply(db) });
   }),
 );
 
-const ConfigBody = z.object({ auto_apply: z.boolean() });
+const ConfigBody = z.object({ suggest_on: z.boolean().optional(), auto_apply: z.boolean().optional() });
 
 // AI-REACH: exempt a workspace setting on the AI page's photos section; the assistant does not change a workspace's settings
 recordPhotosRouter.put(
@@ -198,7 +245,12 @@ recordPhotosRouter.put(
     if (!requireRole(req, res, "owner", "admin")) return;
     const parsed = ConfigBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    await writeAutoApply(tenantDb(req), parsed.data.auto_apply);
-    res.json({ auto_apply: parsed.data.auto_apply });
+    const db = tenantDb(req);
+    if (parsed.data.suggest_on !== undefined) await writeSuggestOn(db, parsed.data.suggest_on);
+    if (parsed.data.auto_apply !== undefined) await writeAutoApply(db, parsed.data.auto_apply);
+    // Turned on: the existing records are queued and looked at soon, not at
+    // the next idle round.
+    if (parsed.data.suggest_on) nudge(tenantContext(req).org.id);
+    res.json({ suggest_on: await readSuggestOn(db), auto_apply: await readAutoApply(db) });
   }),
 );

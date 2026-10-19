@@ -20,6 +20,10 @@ export const PINNED_WRITE_TOOLS = [
   // A scan inbox item put back as a step in its History found it (#6100):
   // the card's own Put back, through the chat ledger, undoable like a filing.
   "put_back_scan_item",
+  // What a person does to inbox items from their cards (#6949): edit, discard,
+  // restore, send back, rerun, combine, theme, photo. One module tool (sent only
+  // where Scan is on), each step the card's own route as the asker.
+  "change_scan_item",
   // The one write rail for every module operation, entity or workspace.
   "invoke_action",
   // The one door to outside services (#4034), not a kernel-config write: it

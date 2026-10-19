@@ -13,8 +13,8 @@
 // fact — only the bell's defensive origin-strip, which should stay a safety net
 // rather than the mechanism.
 //
-// Flags: `link_url: absoluteAppUrl(...)`, `link_url: <ident>` where that ident
-// was assigned from absoluteAppUrl in the same file, and string literals that
+// Flags: `link_url: emailableUrl(...)`, `link_url: <ident>` where that ident
+// was assigned from emailableUrl in the same file, and string literals that
 // start with a scheme.
 //
 // And a written-out path must be a page the app has. "Change the limit" linked
@@ -102,7 +102,7 @@ for (const r of ROOTS) {
     if (!src.includes("link_url")) continue;
     const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 
-    // Locals in this file that hold an absoluteAppUrl(...) result.
+    // Locals in this file that hold an emailableUrl(...) result.
     const absolutized = new Set<string>();
     const collect = (node: ts.Node): void => {
       if (
@@ -110,7 +110,7 @@ for (const r of ROOTS) {
         ts.isIdentifier(node.name) &&
         node.initializer &&
         ts.isCallExpression(node.initializer) &&
-        node.initializer.expression.getText(sf) === "absoluteAppUrl"
+        node.initializer.expression.getText(sf) === "emailableUrl"
       ) {
         absolutized.add(node.name.text);
       }
@@ -130,10 +130,10 @@ for (const r of ROOTS) {
         node.name.text === "link_url"
       ) {
         const init = node.initializer;
-        if (ts.isCallExpression(init) && init.expression.getText(sf) === "absoluteAppUrl") {
-          flag(node, "link_url: absoluteAppUrl(...) — store the path, let channels absolutize");
+        if (ts.isCallExpression(init) && init.expression.getText(sf) === "emailableUrl") {
+          flag(node, "link_url: emailableUrl(...) — store the path, let channels absolutize");
         } else if (ts.isIdentifier(init) && absolutized.has(init.text)) {
-          flag(node, `link_url: ${init.text} — that variable holds an absoluteAppUrl(...) result`);
+          flag(node, `link_url: ${init.text} — that variable holds an emailableUrl(...) result`);
         } else if (ts.isStringLiteralLike(init) && /^https?:\/\//i.test(init.text)) {
           flag(node, `link_url: "${init.text.slice(0, 50)}…" — absolute URL literal`);
         } else if (ts.isStringLiteralLike(init) && init.text.startsWith("/") && !isAPage(init.text)) {

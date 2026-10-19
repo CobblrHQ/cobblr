@@ -7,5 +7,6 @@
   "ms": 2900,
   "recorded": "2026-09-22",
   "source": "by hand at twice a dev-box time taken under load (2026-09-22), to be replaced from its first CI run",
-  "readMB": 1.8
+  "readMB": 1.8,
+  "readTreeMB": 44.1
 }

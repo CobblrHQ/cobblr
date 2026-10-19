@@ -959,6 +959,16 @@ export interface WorkspaceNotificationDefaultsTable {
   updated_at: Generated<Date>;
 }
 
+/** What a person was already told today, by subject (#7464). */
+export interface NotificationSubjectClaimsTable {
+  org_id: string;
+  user_id: string;
+  day: string;
+  subject: string;
+  notification_id: string;
+  claimed_at: Generated<Date>;
+}
+
 export interface NotificationAudiencesTable {
   org_id: string;
   event_type: string;
@@ -1460,6 +1470,12 @@ export interface FeedbackTable {
   /** Per-channel outcome of the LAST reply we sent (20260821-106). Null for an
    *  item nobody has replied to, or one replied to before the column existed. */
   reply_delivery: DeliveryOutcomes | null;
+  /** The public changelog line a resolve left for the owner to publish (20261019-236). */
+  held_summary: string | null;
+  /** The reporter message a resolve by an API token held back: `message` null = the default line. */
+  held_reply: { message: string | null; status: "resolved" | "wontfix" } | null;
+  /** When the owner published the held summary and reply; null = not yet. */
+  published_at: Date | null;
   /** Can anyone be reached about this item (20261004-197)? False for an
    *  anonymous sandbox guest with no contact address. Decided where the item is
    *  written (feedback-reachability.ts); every surface reads it. */
@@ -2028,6 +2044,7 @@ export interface MetaDB {
   notifications: NotificationsTable;
   notification_subscriptions: NotificationSubscriptionsTable;
   notification_audiences: NotificationAudiencesTable;
+  notification_subject_claims: NotificationSubjectClaimsTable;
   workspace_notification_defaults: WorkspaceNotificationDefaultsTable;
   notification_account_prefs: NotificationAccountPrefsTable;
   account_email_sends: AccountEmailSendsTable;

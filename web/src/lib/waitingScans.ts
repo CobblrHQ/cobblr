@@ -9,6 +9,7 @@
 // from the query cache the pages already fill.
 import type { QueryClient } from "@tanstack/react-query";
 import type { PlatformWaitingScan } from "@cobblr/platform-web";
+import { capabilitiesQuery } from "./can";
 import { filedIntoOf, scanRowState } from "@cobblr/platform-contract/scan-triage";
 import { api, type ScanInboxItem } from "./api";
 import { scanFileUrl } from "./rowPictures";
@@ -19,7 +20,7 @@ import { oneTapDestination, quickFileRow } from "../pages/scanQuickFile";
 async function viewerFor(qc: QueryClient, slug: string, role: string | null) {
   const [menu, caps, modules] = await Promise.all([
     qc.fetchQuery({ queryKey: ["scan-menu", slug], queryFn: () => api.scanMenu(slug), staleTime: 60_000 }),
-    qc.fetchQuery({ queryKey: ["me-capabilities", slug], queryFn: () => api.getMyCapabilities(slug), staleTime: 60_000 }),
+    qc.fetchQuery(capabilitiesQuery(slug)),
     qc.fetchQuery({ queryKey: ["org-modules", slug], queryFn: () => api.orgModules(slug), staleTime: 30_000 }),
   ]);
   return scanViewerContext({ role, caps, menu: menu.items, modules: modules.items });

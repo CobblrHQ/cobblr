@@ -28,7 +28,7 @@ const WRITE_TOOLS = new Set(["add_thing", "create_record", "create_records", "up
 
 /** Tools a topic's words bring in, beyond the core and the writes. */
 const TOPICS: Array<{ words: RegExp; tools: string[] }> = [
-  { words: /\b(scan|scanned|inbox|captur|unfiled|put back|put away|putaway|station)/i, tools: ["list_scan_inbox", "get_scan_item", "file_inbox_items", "put_back_scan_item", "get_putaway_plan", "replan_putaway", "list_scan_stations", "list_scan_station_sessions", "get_scan_station_session"] },
+  { words: /\b(scan|scanned|inbox|captur|unfiled|put back|put away|putaway|station)/i, tools: ["list_scan_inbox", "get_scan_item", "file_inbox_items", "put_back_scan_item", "change_scan_item", "get_putaway_plan", "replan_putaway", "list_scan_stations", "list_scan_station_sessions", "get_scan_station_session"] },
   { words: /\b(who|whose|mine|my|owns?|owned|belong)/i, tools: ["things_of_person"] },
   { words: /\b(history|activity|changed|recent|lately|last time|yesterday|this week|did i|who did)/i, tools: ["list_activity"] },
   { words: /\b(notif|alert|remind|ping|tell me when)/i, tools: ["list_notifications", "get_my_notification_delivery"] },
@@ -41,6 +41,8 @@ const TOPICS: Array<{ words: RegExp; tools: string[] }> = [
   { words: /\b(laser|cut|engrave)/i, tools: ["read_laser_batch"] },
   { words: /\b(bench|instrument|meter|scope|measure)/i, tools: ["read_bench"] },
   { words: /\b(fabricat|floor|queue|printer|print|cnc|machine|job)/i, tools: ["read_fabrication_floor"] },
+  { words: /\b(firmware|software version|versions?|up to date|outdated|update[sd]?|klipper|prusalink)\b/i, tools: ["read_machine_versions"] },
+  { words: /\b(print|filament|spool)\w*\b.*\b(cost|spent|spend|price|history|month|week)|\b(cost|spent|spend)\b.*\bprint/i, tools: ["read_print_history"] },
   { words: /\b(label|qr|code prefix|barcode prefix)/i, tools: ["list_label_codes"] },
   { words: /\b(service|paperless|connected|integration|import from)/i, tools: ["list_services", "invoke_service", "get_service_job"] },
 ];

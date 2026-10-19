@@ -72,6 +72,15 @@ interface TrackedRow {
   pending_items: number;
 }
 
+/** A receipt whose order exists is the same delivery as the order: the
+ *  order's sweep asks about it, once, with the button that marks the order
+ *  arrived, and answering it settles the receipt too (receipt-answers.ts).
+ *  Tracking number or not: gating this on the number left every dated
+ *  receipt asking beside its own order (2026-10-19, two DMs at 8:01). */
+export function receiptAsksItself(row: { purchases_order_id: string | null; tracking_number?: string | null }): boolean {
+  return !row.purchases_order_id;
+}
+
 /** The states worth interrupting someone for. `out_for_delivery` earns a
  *  message because it is the one that changes what you do TODAY; the rest of
  *  the journey is visible in the inbox without being pushed at anyone. */
@@ -334,8 +343,7 @@ async function visitWorkspace(
             // better question - "was delivered. Put it away?" with a working
             // mark-arrived button - so this one stays quiet rather than
             // sending a second, weaker message for the same box.
-            const orderOwnsTheAnnouncement = Boolean(row.purchases_order_id && row.tracking_number);
-            if (announce && !orderOwnsTheAnnouncement) {
+            if (announce && receiptAsksItself(row)) {
               // Marker FIRST, then send: a crash between the two now costs one
               // missed message instead of the same message to every member on
               // every tick until someone notices (2026-08-25 audit). The next
@@ -422,6 +430,7 @@ async function notifyArrival(orgId: string, row: TrackedRow, state: string): Pro
         // parcel at whatever hour the tick ran, past the "dated things once a
         // morning" window users chose (2026-08-25 audit).
         triggeredBy: "schedule",
+        subjects: [{ kind: "core-scan:receipt", id: row.id, question: `parcel-${state}`, line: message }],
         // The RECEIPT, not the inbox. A notification that names one parcel and
         // lands you on a page of thirty is a search task, and the id is right
         // here. `?batch=` scopes the inbox to one session (ScanPage).

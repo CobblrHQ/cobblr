@@ -7,5 +7,6 @@
   "ms": 1562,
   "recorded": "2026-09-26",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement",
-  "readMB": 12.6
+  "readMB": 12.6,
+  "readTreeMB": 44.1
 }

@@ -26,6 +26,8 @@
   "core_services_job_files": "Files one service job used or made: the owner's own job.",
   "core_tags_assignments": "Which records carry a tag in the owner's workspace: tags are the owner's own vocabulary, shared as values on a record, not as this table.",
   "digifab_arm_approvals": "A person's approval at the cell to start one program revision with the owner's tooling on the owner's arm: it authorizes physical work there and must never travel to another workspace.",
+  "digifab_arm_copies": "A copy of one of the owner's arm programs onto another of their arms, with its re-teach checklist: work in the owner's own cell on their own machines, not what they wrote about the program.",
+  "digifab_cell_steps": "The steps one of the owner's cell jobs ran in their own workshop: live machine history, not what the owner wrote about a record.",
   "digifab_jobs": "Jobs sent to the owner's own machines through a connection: the owner's equipment and history.",
   "digifab_laser_sheet_claims": "Sheets a laser plan has claimed from the owner's stock: the owner's own use.",
   "digifab_make_steps": "Steps the owner's machines ran for one make: production history.",

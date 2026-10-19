@@ -80,7 +80,7 @@ export async function visitTidyWorkspace(orgId: string, now: Date): Promise<void
         await tx.updateTable("orgs").set({ tidy_shape_version: org.shape_version }).where("id", "=", orgId).execute();
       });
       if (candidates.length) {
-        await platform().notifications.dispatch({ orgId, userId: as.user_id, eventType: "platform.tidy.suggested", message: candidates.map((c) => c.why).join("\n"), link_url: "/", priority: "normal", triggeredBy: "schedule" });
+        await platform().notifications.dispatch({ orgId, userId: as.user_id, eventType: "platform.tidy.suggested", message: candidates.map((c) => c.why).join("\n"), link_url: "/", priority: "normal", triggeredBy: "schedule", subjects: [{ kind: "platform:workspace", id: orgId, question: "tidy-suggested", line: candidates.map((c) => c.why).join("\n") }] });
       }
     },
   });

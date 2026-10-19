@@ -15,7 +15,7 @@ import { receiveOrderLines } from "../receive.js";
 import { receiveShipment } from "../shipments.js";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { platform, readListArg, type ActionInvokeContext } from "@cobblr/platform-contract";
 import type { OrderStatus, PurchasesDB } from "../db.js";
 import { PURCHASED_STATUSES } from "../price-stats.js";
 
@@ -176,60 +176,77 @@ export function registerPurchasesActionHandlers(): void {
   // plus a date picker, because it is asked of people who were interrupted to
   // answer it.
   platform().actions.registerHandler("purchases.mark-arrived", async (ctx) => {
-    const args = (ctx.args as { orderId?: string; shipmentId?: string; arrivedOn?: string; add_to_stock?: unknown } | null) ?? {};
-    const orderId = args.orderId ?? (ctx.entity?.id || undefined);
-    if (!orderId) return { ok: true, skipped: "no order in scope" };
-
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<PurchasesDB>;
-    // One parcel of several turned up: its lines, and the order only once
-    // nothing else on it is still to come.
-    if (args.shipmentId) {
-      const out = await receiveShipment(db, ctx.orgId, orderId, args.shipmentId, args.arrivedOn ?? arrivedEverywhere(new Date()));
-      return { ok: true, order_id: orderId, shipment_id: args.shipmentId, lines_received: out.received, order_arrived: out.orderArrived };
+    // "All arrived" on a card that asks about several orders at once: each
+    // goes through the same one-order door, so an order already in hand is
+    // skipped and the rest still land.
+    const many = readListArg(ctx.args ?? undefined, "orderIds");
+    if (many.length > 0) {
+      const results = [];
+      for (const id of many) results.push(await markOrderArrived(ctx, { ...(ctx.args as object), orderId: id } as never));
+      return { ok: true, orders: results.length, arrived: results.filter((r) => !(r as { skipped?: unknown }).skipped).length, results };
     }
-    const before = await db
-      .selectFrom("purchases_orders")
-      .select(["id", "status", "arrived_at"])
-      .where("id", "=", orderId)
-      .executeTakeFirst();
-    if (!before) return { ok: false, error: "order not found" };
-    // Idempotent: answering twice (two devices, or a stale notification) must
-    // not re-emit the arrival and double-bump stock.
-    if (before.status === "arrived") {
-      const at = before.arrived_at as Date | string | null;
-      const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
-      await receiveOrderLines(db, ctx.orgId, orderId, on);
-      return { ok: true, skipped: "already arrived" };
-    }
-
-    // NOT the UTC day: pressing "Yes, it turned up" at 8pm US Eastern stamped
-    // TOMORROW's date. arrivedEverywhere lags, never leads.
-    const arrivedOn = args.arrivedOn ?? arrivedEverywhere(new Date());
-    await db
-      .updateTable("purchases_orders")
-      .set({
-        status: "arrived" as OrderStatus,
-        arrived_at: arrivedOn,
-        ...(typeof args.add_to_stock === "boolean" ? { add_to_stock: args.add_to_stock } : {}),
-        updated_at: new Date(),
-      } as never)
-      .where("id", "=", orderId)
-      .execute();
-
-    await platform().events.emit("purchases.order.status_changed", {
-      orgId: ctx.orgId,
-      orderId,
-      from: before.status,
-      to: "arrived",
-    });
-    await platform().events.emit("purchases.order.arrived", { orgId: ctx.orgId, orderId });
-
-    // The lines not yet received are received now, the same way the status
-    // dropdown receives them (receive.ts).
-    const received = await receiveOrderLines(db, ctx.orgId, orderId, arrivedOn);
-
-    return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: received };
+    // The ambient record is the fallback subject: run from an order's own page.
+    const args = ((ctx.args as { orderId?: string } | null) ?? {}) as { orderId?: string };
+    return markOrderArrived(ctx, { ...args, orderId: args.orderId ?? (ctx.entity?.id || undefined) } as never);
   });
+}
+
+async function markOrderArrived(
+  ctx: ActionInvokeContext,
+  args: { orderId?: string; shipmentId?: string; arrivedOn?: string; add_to_stock?: unknown },
+): Promise<Record<string, unknown>> {
+  const orderId = args.orderId ?? (ctx.entity?.id || undefined);
+  if (!orderId) return { ok: true, skipped: "no order in scope" };
+
+  const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<PurchasesDB>;
+  // One parcel of several turned up: its lines, and the order only once
+  // nothing else on it is still to come.
+  if (args.shipmentId) {
+    const out = await receiveShipment(db, ctx.orgId, orderId, args.shipmentId, args.arrivedOn ?? arrivedEverywhere(new Date()));
+    return { ok: true, order_id: orderId, shipment_id: args.shipmentId, lines_received: out.received, order_arrived: out.orderArrived };
+  }
+  const before = await db
+    .selectFrom("purchases_orders")
+    .select(["id", "status", "arrived_at"])
+    .where("id", "=", orderId)
+    .executeTakeFirst();
+  if (!before) return { ok: false, error: "order not found" };
+  // Idempotent: answering twice (two devices, or a stale notification) must
+  // not re-emit the arrival and double-bump stock.
+  if (before.status === "arrived") {
+    const at = before.arrived_at as Date | string | null;
+    const on = at instanceof Date ? at.toISOString().slice(0, 10) : at ? String(at).slice(0, 10) : arrivedEverywhere(new Date());
+    await receiveOrderLines(db, ctx.orgId, orderId, on);
+    return { ok: true, skipped: "already arrived" };
+  }
+
+  // NOT the UTC day: pressing "Yes, it turned up" at 8pm US Eastern stamped
+  // TOMORROW's date. arrivedEverywhere lags, never leads.
+  const arrivedOn = args.arrivedOn ?? arrivedEverywhere(new Date());
+  await db
+    .updateTable("purchases_orders")
+    .set({
+      status: "arrived" as OrderStatus,
+      arrived_at: arrivedOn,
+      ...(typeof args.add_to_stock === "boolean" ? { add_to_stock: args.add_to_stock } : {}),
+      updated_at: new Date(),
+    } as never)
+    .where("id", "=", orderId)
+    .execute();
+
+  await platform().events.emit("purchases.order.status_changed", {
+    orgId: ctx.orgId,
+    orderId,
+    from: before.status,
+    to: "arrived",
+  });
+  await platform().events.emit("purchases.order.arrived", { orgId: ctx.orgId, orderId });
+
+  // The lines not yet received are received now, the same way the status
+  // dropdown receives them (receive.ts).
+  const received = await receiveOrderLines(db, ctx.orgId, orderId, arrivedOn);
+
+  return { ok: true, order_id: orderId, arrived_at: arrivedOn, lines_received: received };
 }
 
 function registerUndos(): void {

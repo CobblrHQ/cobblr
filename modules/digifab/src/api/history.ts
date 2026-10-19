@@ -7,7 +7,8 @@
 
 import { Router } from "express";
 import { sql } from "kysely";
-import { tenantDb } from "../db.js";
+import { platform } from "@cobblr/platform-contract";
+import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler } from "./util.js";
 
 export const historyRouter = Router({ mergeParams: true });
@@ -38,6 +39,7 @@ historyRouter.get(
   "/",
   asyncHandler(async (req, res) => {
     const db = tenantDb(req);
+    const orgId = tenantContext(req).org.id;
     const days = Math.min(365, Math.max(1, Number(req.query.days) || 30));
     const since = new Date(Date.now() - days * 86_400_000);
 
@@ -70,6 +72,32 @@ historyRouter.get(
       .groupBy("day")
       .execute();
 
+    // What the finished prints cost, by day and printer: a priced print adds its
+    // cost, an unpriced one (no spool price, no grams) is counted, never as zero.
+    const workspaceCurrency = await platform().money.currency(orgId);
+    const costRows = await db
+      .selectFrom("digifab_jobs")
+      .where("status", "=", "completed")
+      .where("updated_at", ">", since)
+      .select([
+        sql<string>`to_char(date_trunc('day', updated_at), 'YYYY-MM-DD')`.as("day"),
+        "connection_id",
+        "target_device",
+        "cost_currency",
+        sql<string | null>`sum(cost_amount)`.as("cost"),
+        sql<number>`count(*) filter (where cost_amount is null)`.as("unpriced"),
+      ])
+      .groupBy(["day", "connection_id", "target_device", "cost_currency"])
+      .execute();
+    const money = async (parts: Array<{ amount: number; currency: string; day: string }>): Promise<number | null> => {
+      if (!parts.length) return 0;
+      if (parts.every((p) => p.currency === workspaceCurrency)) return parts.reduce((a, p) => a + p.amount, 0);
+      const total = await platform().money.total(orgId, parts.map((p) => ({ value: { amount: p.amount, currency: p.currency }, day: p.day })), workspaceCurrency);
+      return Object.keys(total.excluded).length ? null : total.amount;
+    };
+    const costParts = costRows.filter((r) => r.cost != null).map((r) => ({ amount: Number(r.cost), currency: r.cost_currency || workspaceCurrency, day: r.day, conn: r.connection_id, dev: r.target_device }));
+    const round = (v: number | null) => (v == null ? null : Math.round(v * 100) / 100);
+
     // Device names: prefer the user's linked machine label, else the remote name.
     const links = await db
       .selectFrom("digifab_device_links")
@@ -84,7 +112,7 @@ historyRouter.get(
       .selectFrom("digifab_jobs")
       .where("status", "in", TERMINAL)
       .where("updated_at", ">", since)
-      .select(["id", "file_ref", "metadata", "connection_id", "target_device", "status", "material_grams", "created_at", "updated_at"])
+      .select(["id", "file_ref", "metadata", "connection_id", "target_device", "status", "material_grams", "cost_amount", "cost_currency", "created_at", "updated_at"])
       .orderBy("updated_at", "desc")
       // list-cap-ok: the latest 50 finished jobs are the feed; the rollups beside it count every job
       .limit(50)
@@ -111,7 +139,7 @@ historyRouter.get(
     // richer than the MQTT-observed rows: model name (translated), cover thumbnail,
     // weight, duration. One row per cloud task; supersedes digifab_observed_prints
     // for Bambu (which the pump can no longer name well).
-    type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; at: string; duration_s: number };
+    type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; cost: number | null; cost_currency: string | null; at: string; duration_s: number };
     const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["task_id", "raw", "captured_at"]).execute();
     const taskItems: Item[] = taskRows
       .map((t) => {
@@ -129,6 +157,9 @@ historyRouter.get(
           device_id: null,
           status: r.status === 3 ? "failed" : "completed",
           filament_g: r.weight != null ? Number(r.weight) : null,
+          // A cloud task names no spool, so it cannot be priced.
+          cost: null,
+          cost_currency: null,
           at,
           duration_s: dur,
         };
@@ -137,17 +168,31 @@ historyRouter.get(
     const taskHours = taskItems.reduce((h, t) => h + t.duration_s / 3600, 0);
 
     // by-device: jobs + cloud tasks, keyed by resolved device name.
-    const byName = new Map<string, { name: string; total: number; completed: number; failed: number; filament_g: number }>();
+    type DeviceRow = { name: string; total: number; completed: number; failed: number; filament_g: number; cost: number | null; unpriced: number };
+    const byName = new Map<string, DeviceRow>();
+    const blank = (name: string): DeviceRow => ({ name, total: 0, completed: 0, failed: 0, filament_g: 0, cost: 0, unpriced: 0 });
     for (const r of byDeviceRows) {
       const name = nameOf(r.connection_id, r.target_device);
-      const e = byName.get(name) ?? { name, total: 0, completed: 0, failed: 0, filament_g: 0 };
+      const e = byName.get(name) ?? blank(name);
       e.total += n(r.total); e.completed += n(r.completed); e.failed += n(r.failed); e.filament_g += n(r.filament_g);
       byName.set(name, e);
     }
+    const deviceCost = new Map<string, Array<{ amount: number; currency: string; day: string }>>();
+    for (const r of costRows) {
+      const name = nameOf(r.connection_id, r.target_device);
+      const e = byName.get(name) ?? blank(name);
+      e.unpriced += n(r.unpriced);
+      byName.set(name, e);
+    }
+    for (const p of costParts) {
+      const name = nameOf(p.conn, p.dev);
+      deviceCost.set(name, [...(deviceCost.get(name) ?? []), p]);
+    }
+    for (const [name, e] of byName) e.cost = deviceCost.has(name) ? round(await money(deviceCost.get(name)!)) : null;
     for (const t of taskItems) {
-      const e = byName.get(t.device) ?? { name: t.device, total: 0, completed: 0, failed: 0, filament_g: 0 };
+      const e = byName.get(t.device) ?? blank(t.device);
       e.total += 1;
-      if (t.status === "completed") e.completed += 1;
+      if (t.status === "completed") { e.completed += 1; e.unpriced += 1; }
       if (t.status === "failed") e.failed += 1;
       e.filament_g += t.filament_g ?? 0;
       byName.set(t.device, e);
@@ -169,6 +214,8 @@ historyRouter.get(
         device_id: r.target_device,
         status: r.status,
         filament_g: r.material_grams == null ? null : Number(r.material_grams),
+        cost: r.cost_amount == null ? null : round(Number(r.cost_amount)),
+        cost_currency: r.cost_amount == null ? null : r.cost_currency || workspaceCurrency,
         at: new Date(r.updated_at).toISOString(),
         duration_s: Math.max(0, (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 1000),
       })),
@@ -192,12 +239,13 @@ historyRouter.get(
     // `days` daily buckets ending TODAY (not `since`, which lands on yesterday —
     // today's prints are counted by the summary via `updated_at > since`, so the
     // trend must include today or the last bar visibly undercounts).
-    const series: Array<{ date: string; completed: number; failed: number; filament_g: number }> = [];
+    const series: Array<{ date: string; completed: number; failed: number; filament_g: number; cost: number | null }> = [];
     const startMs = Date.now() - (days - 1) * 86_400_000;
     for (let i = 0; i < days; i++) {
       const date = new Date(startMs + i * 86_400_000).toISOString().slice(0, 10);
-      series.push({ date, ...(byDay.get(date) ?? { completed: 0, failed: 0, filament_g: 0 }) });
+      series.push({ date, ...(byDay.get(date) ?? { completed: 0, failed: 0, filament_g: 0 }), cost: round(await money(costParts.filter((p) => p.day === date))) });
     }
+    const unpriced = costRows.reduce((a, r) => a + n(r.unpriced), 0) + taskCompleted;
 
     res.json({
       days,
@@ -209,7 +257,11 @@ historyRouter.get(
         cancelled: n(summary?.cancelled),
         filament_g: Math.round(n(summary?.filament_g) + taskFilament),
         hours: Math.round((n(summary?.seconds) / 3600 + taskHours) * 10) / 10,
+        // What the priced prints cost, and how many finished prints could not be priced.
+        cost: costParts.length ? round(await money(costParts)) : null,
+        unpriced,
       },
+      currency: workspaceCurrency,
       by_device: [...byName.values()],
       recent: recentMerged,
     });

@@ -663,9 +663,11 @@ export const scanApi = {
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/search`),
   declinePhotoSuggestion: (slug: string, kind: string, id: string) =>
     request<{ ok: true }>("POST", `/orgs/${slug}/modules/core-scan/photo-suggestions/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/decline`),
-  photoSuggestConfig: (slug: string) => request<{ auto_apply: boolean }>("GET", `/orgs/${slug}/modules/core-scan/photo-suggest-config`),
-  setPhotoSuggestConfig: (slug: string, auto_apply: boolean) =>
-    request<{ auto_apply: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-suggest-config`, { auto_apply }),
+  /** Whether this workspace looks up photos for its records at all (off until
+   *  it turns it on, #7447), and whether the top match is put on the record. */
+  photoSuggestConfig: (slug: string) => request<{ suggest_on: boolean; auto_apply: boolean }>("GET", `/orgs/${slug}/modules/core-scan/photo-suggest-config`),
+  setPhotoSuggestConfig: (slug: string, patch: { suggest_on?: boolean; auto_apply?: boolean }) =>
+    request<{ suggest_on: boolean; auto_apply: boolean }>("PUT", `/orgs/${slug}/modules/core-scan/photo-suggest-config`, patch),
   /** Fill in the missing pictures across a whole collection in one press — the
    *  same derived auto-fetch a single record's "Auto" runs, for every record
    *  with no image. Idempotent (a record that has one is never touched) and

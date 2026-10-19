@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-16
 docs_target: docs/user-guide/scan.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-19
 ---
 
 Confirming a scan offers the catalog entry it matches, such as a Lego brick's Rebrickable part, by its part number first, and tapping it files the thing bound to that entry.

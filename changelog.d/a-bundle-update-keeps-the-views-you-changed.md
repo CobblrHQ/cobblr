@@ -4,6 +4,7 @@ scope: bundles
 date: 2026-10-17
 docs_target: docs/user-guide/bundles.md#Choosing what to keep on an update
 ui: none (the update's list of things to decide shows a view's settings beside the update's, and a view's Edit sheet offers to put it back as the bundle made it)
+docs_published: 2026-10-19
 ---
 An update to a bundle no longer undoes the changes you made to its views. Change the columns, sort or filter of a view a bundle brought, or rename it, and the update keeps what you changed and still brings in what the bundle changed that you did not touch. The view stays the same view, so a dashboard pin or an app page that shows it keeps showing it. When you and the update both changed the same setting, you are asked, with your version beside the update's. A view you changed has a button under Edit to put it back as the bundle made it, and the assistant can do the same.
 

@@ -24,6 +24,7 @@ import { fleetStatusChip, indexFleetByMachine } from "../lib/fleet-status";
 import { ContributedPageTab, ContributedDetailPanels, hasPageTab } from "../panels/registry";
 import { DirectManagerConnect } from "../components/DirectManagerConnect";
 import { MachineUnits } from "../components/MachineUnits";
+import { MachineVersions, VersionProvenance } from "../components/MachineVersions";
 import { RecordPhoto } from "../components/RecordPhoto";
 import { pictureStateFor, suggestedSrcFor, usePhotoSuggestions } from "../lib/photoSuggestions";
 // NewMachineModal's inline "connect its manager" flow still reaches the
@@ -341,7 +342,8 @@ export function MachinesPage({
   // Persisted so the tab you're on (items vs a contributed tab) survives a
   // refresh. A stale persisted id (module disabled since) falls back to items.
   const [pageTabRaw, setPageTab] = usePersistedState<string>("machines.tab", "items");
-  const pageTab = pageTabRaw !== "items" && contributedTabs.some((p) => p.id === pageTabRaw) ? pageTabRaw : "items";
+  // "versions" is this page's own: what every machine here runs, against its cohort's target.
+  const pageTab = pageTabRaw === "versions" || (pageTabRaw !== "items" && contributedTabs.some((p) => p.id === pageTabRaw)) ? pageTabRaw : "items";
   const showContributedTabs = !!instance && contributedTabs.length > 0;
   // One machine, two lenses: the registry shows each LINKED machine's live
   // status (● printing 46% / needs clearing / offline) next to its lifecycle
@@ -489,12 +491,12 @@ export function MachinesPage({
             )}
           </div>
         )}
-        {showContributedTabs && (
+        {(instance || !lensName) && (
           <SegmentedChoice
             label="What to show"
             value={pageTab}
             onChange={setPageTab}
-            options={[{ value: "items", label: nounPlural }, ...contributedTabs.map((p) => ({ value: p.id, label: p.title }))]}
+            options={[{ value: "items", label: nounPlural }, { value: "versions", label: "Versions" }, ...(showContributedTabs ? contributedTabs.map((p) => ({ value: p.id, label: p.title })) : [])]}
           />
         )}
         {!instance && !lensName && availableLenses.length > 0 && (
@@ -533,7 +535,7 @@ export function MachinesPage({
       {/* Saved-view chips — one-click perspectives (the bundle's "Printer fleet
           by state", plus any you save). Only on the flat instance/lens list,
           where a view's group_by + state filter apply. */}
-      {(instance || lensName) && pageTab !== "fleet" && (
+      {(instance || lensName) && pageTab === "items" && (
         <div className="flex items-center gap-1.5 flex-wrap">
           <MachineViewChip active={!activeView} onClick={() => selectView(null)}>
             All {nounPlural}
@@ -554,7 +556,9 @@ export function MachinesPage({
         </div>
       )}
 
-      {pageTab !== "items" ? (
+      {pageTab === "versions" ? (
+        <MachineVersions slug={activeSlug} instance={instance} noun={nounPlural} onOpen={openDetail} />
+      ) : pageTab !== "items" ? (
         /* A contributed page tab (e.g. digifab's Fleet — scoped to THIS
            collection's machines; the whole-shop floor stays on /digifab).
            Rendered through the panel registry: this page doesn't know or
@@ -1356,6 +1360,10 @@ export function MachineDetailModal({
               !fp.hidden("type") && (m.type || !instance) ? editFieldItem("type", { label: fp.label("type", "Type"), value: m.type ?? "", onCommit: (v) => update.mutate({ type: v || null }) }) : null,
               !fp.hidden("manufacturer") ? usedValueFieldItem("manufacturer", { label: fp.label("manufacturer", "Manufacturer"), kind: instance ? `${instance}:item` : ENTITY_KIND, field: "manufacturer", value: m.manufacturer ?? null, onCommit: (v) => update.mutate({ manufacturer: v || null }) }) : null,
               !fp.hidden("serial_number") && (m.serial_number || !instance) ? editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: m.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) }) : null,
+              // What it runs (#6887): typed here, or reported by its printer's driver.
+              !fp.hidden("firmware_version") ? editFieldItem("firmware_version", { label: fp.label("firmware_version", "Firmware"), value: m.firmware_version ?? "", onCommit: (v) => update.mutate({ firmware_version: v || null }) }) : null,
+              !fp.hidden("software_version") && (m.software_version || !instance) ? editFieldItem("software_version", { label: fp.label("software_version", "Software"), value: m.software_version ?? "", onCommit: (v) => update.mutate({ software_version: v || null }) }) : null,
+              !fp.hidden("controller") && (m.controller || m.firmware_version || !instance) ? editFieldItem("controller", { label: fp.label("controller", "Firmware family"), value: m.controller ?? "", onCommit: (v) => update.mutate({ controller: v || null }) }) : null,
               !fp.hidden("state")
                 ? {
                     need: fieldNeed("state", { control: "choice", label: fp.label("state", "State"), choices: machineStates }),
@@ -1371,6 +1379,8 @@ export function MachineDetailModal({
           />
             )}
           </FacesOn>
+
+          <VersionProvenance machine={m} />
 
           {/* One record standing for several identical machines, or one of
               them named under it (#3817). A single machine offers joining a

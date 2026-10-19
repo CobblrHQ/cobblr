@@ -44,3 +44,14 @@ export type ActionUndoer = (
 export function isActionStep(step: ActionUndoStep): step is Extract<ActionUndoStep, { action_id: string }> {
   return typeof (step as { action_id?: unknown }).action_id === "string";
 }
+
+/** Fill the record on each action step that targets a record action
+ *  (`entityScoped`) and names none, from the record the undone action ran on.
+ *  The platform applies it to every undoer's steps, so an undoer that forgets
+ *  to say which record still hands Undo a step that runs. */
+export function onTheSameRecord(steps: ActionUndoStep[], entity: { kind: string; id: string } | undefined, entityScoped: ReadonlySet<string>): ActionUndoStep[] {
+  if (!entity) return steps;
+  return steps.map((st) =>
+    isActionStep(st) && !st.entity_id && entityScoped.has(st.action_id) ? { ...st, entity_kind: entity.kind, entity_id: entity.id } : st,
+  );
+}

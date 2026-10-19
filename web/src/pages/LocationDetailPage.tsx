@@ -30,6 +30,7 @@ import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { deleteDialogMessage, deletedSentence, restoredSentence } from "../lib/placeDelete";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { useCan } from "../lib/can";
 
 /** Where a kind's detail page lives. The placement endpoint answers WHAT is
  *  here; the registry is still how a kind says where to click through to. */
@@ -117,10 +118,13 @@ export function LocationDetailPage() {
 
   // What everything here is worth, at any depth, each thing once: a computer
   // on a shelf counts its own value and its installed parts as themselves.
+  // Asked only by who may see costs: every member's room, shelf and bin
+  // asked and was refused (#7552).
+  const seesCosts = useCan("inventory:view-costs");
   const worth = useQuery({
     queryKey: ["placement-worth", activeSlug, id],
     queryFn: () => api.placementWorth(activeSlug, { kind: "core-locations:location", id: id! }),
-    enabled: !!activeSlug && !!id,
+    enabled: !!activeSlug && !!id && seesCosts === true,
     staleTime: 30_000,
   });
 

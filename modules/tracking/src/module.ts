@@ -14,7 +14,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "tracking",
-  version: "0.1.13",
+  version: "0.2.0",
   displayName: "Tracking",
   description:
     "Log a number over time toward a goal (weight, runs, a budget) and see the trend.",
@@ -84,20 +84,20 @@ export default defineModule({
     ],
     actions: [
       {
-        // NO-PHRASING: the way back for another action, run only from Undo
+        // WORKSPACE-scoped by the reading's id, and also the way back for log-measurement.
         group: "more",
+        // UI-SCREEN: /tracking
         id: "tracking:remove-measurement",
         changes: "records",
         runBy: "member",
-        internal: true,
+        examples: ["delete that last reading, I typed it wrong", "remove the 12.4 measurement"],
         label: "Remove a measurement",
-        description: "Internal, the inverse of logging a measurement: removes it again. Runs from Undo on the card; not for direct use.",
-        icon: "undo",
+        description: "Remove one reading logged by mistake, by its id (the metric's readings list it). A reading is history, so it always asks first.",
+        icon: "trash-2",
         scope: "workspace" as const,
-        userInvokable: false,
         invokeHandler: "tracking.remove-measurement",
         argsSchema: {
-          measurement_id: { label: "The measurement's id", type: "text" },
+          measurement_id: { label: "The reading's id", type: "text", required: true },
         },
       },
       {

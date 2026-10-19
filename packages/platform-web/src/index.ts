@@ -17,6 +17,7 @@ export {
   type FlowComponent,
   type FlowRegistry,
 } from "./context";
+export { useCan, useCapabilities, useRoleAtLeast, capabilityAllows, myCapabilitiesKey, type MyCapabilities, type CapabilitySource } from "./can";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { AllergenPills, allergenWords } from "./AllergenPills";

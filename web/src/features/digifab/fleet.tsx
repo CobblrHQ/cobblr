@@ -45,6 +45,7 @@ import { capitalise, machineWords, type MachineWords } from "../../lib/machine-w
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { useJobStartReview } from "./startReview";
 import { useReprint } from "./useReprint";
+import { HourRateEditor } from "./HourRate";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 export type LinkableMachine = { id: string; name: string; instLabel: string | null; image: string | null };
@@ -261,6 +262,9 @@ export const BRIDGE_DRIVERS: { key: string; label: string; driver?: string; conf
   {key:"arm-ur-cb3",driver:"dashboard-arm",config:{brand:"ur",remoteMode:"always"},label:"Robot arm: Universal Robots CB3 (no remote mode)",fields:[{key:"host",label:"Arm controller IP / host",placeholder:"192.168.1.70"},{key:"port",label:"Dashboard port",placeholder:"29999",optional:true},{key:"programDirectory",label:"Folder of the controller\u2019s programs on the bridge",optional:true}]},
   {key:"arm-elite",driver:"dashboard-arm",config:{brand:"elite"},label:"Robot arm: Elite CS",fields:[{key:"host",label:"Arm controller IP / host",placeholder:"192.168.1.70"},{key:"port",label:"Dashboard port",placeholder:"29999",optional:true},{key:"programDirectory",label:"Folder of the controller\u2019s programs on the bridge",optional:true}]},
   {key:"arm-dobot",driver:"dashboard-arm",config:{brand:"dobot"},label:"Robot arm: Dobot CR / Nova",fields:[{key:"host",label:"Arm controller IP / host",placeholder:"192.168.1.70"},{key:"port",label:"Dashboard port",placeholder:"29999",optional:true},{key:"programDirectory",label:"Folder of the controller\u2019s programs on the bridge",optional:true}]},
+  {key:"cell",driver:"cell",label:"Cell: machines that run as one job",help:"A cell runs the machines on this bridge that work together, like a CNC and the arm that unloads it, as one job: the next file on the CNC, then the arm's program, cycle after cycle. Add each of its machines to this same bridge first, then set the cell up on its machine record and give it its steps. If a step fails or takes too long, the bridge pauses every machine that can pause and the cell's operators are told. It is not a safety function: guards and stops stay with the machines and the cell's safety devices.",fields:[]},
+  {key:"arm-abb-rws",driver:"abb-rws",label:"Robot arm: ABB IRC5 (Robot Web Services 1.0)",help:"The bridge talks to the controller\u2019s Robot Web Services (RobotWare 6, option 616-1 PC Interface) on its service or WAN port. Give it an RWS user allowed to load and run programs; it logs in with digest, so the password never crosses the network. For each command it takes the controller\u2019s write lock (mastership) and gives it back straight after, so the FlexPendant can always take the arm back; while the pendant holds it nothing loads or starts. Programs are the folders in the program folder that hold a .pgf, and a program changes revision when any of its modules does. Cycle once runs main once per start; forever runs it until stopped. Name a RAPID number your program raises at the end of each cycle (Module/variable) and every cycle is counted. The bridge never moves the arm, releases brakes or acknowledges a stop: those stay at the pendant.",fields:[{key:"host",label:"Controller IP / host",placeholder:"192.168.125.1"},{key:"port",label:"HTTP port",placeholder:"80",optional:true},{key:"user",label:"RWS user",placeholder:"Default User",optional:true},{key:"password",label:"RWS password",optional:true,secret:true},{key:"programDirectory",label:"Program folder on the controller",placeholder:"$HOME/Programs",optional:true},{key:"cycle",label:"Cycle (once or forever)",placeholder:"once",optional:true},{key:"cycleCounter",label:"Cycle counter (Module/variable)",placeholder:"MainModule/nCycles",optional:true}]},
+  {key:"arm-abb-omnicore",driver:"abb-rws",config:{dialect:"rws2"},label:"Robot arm: ABB OmniCore (Robot Web Services 2.0)",help:"The bridge talks to an OmniCore controller\u2019s Robot Web Services (RobotWare 7) over HTTPS. The controller signs its own certificate, so the bridge pins it: open the controller\u2019s address in a browser on the shop network, view its certificate and copy the SHA-256 fingerprint here. The bridge checks it before it sends anything, so the RWS password only ever goes to this controller, and if the certificate changes the arm reads offline until the new fingerprint is checked and entered. Give it an RWS user allowed to load and run programs. For each command it takes the controller\u2019s write access (mastership) and gives it back straight after, so the FlexPendant can always take the arm back; while the pendant holds it nothing loads or starts. Programs are the folders in the program folder that hold a .pgf, and a program changes revision when any of its modules does. Cycle once runs main once per start; forever runs it until stopped. Name a RAPID number your program raises at the end of each cycle (Module/variable) and every cycle is counted. The bridge never moves the arm, releases brakes or acknowledges a stop: those stay at the pendant.",fields:[{key:"host",label:"Controller IP / host",placeholder:"192.168.125.1"},{key:"fingerprint",label:"Controller certificate fingerprint (SHA-256)",placeholder:"3F:A1:\u2026"},{key:"port",label:"HTTPS port",placeholder:"443",optional:true},{key:"user",label:"RWS user",placeholder:"Default User",optional:true},{key:"password",label:"RWS password",optional:true,secret:true},{key:"programDirectory",label:"Program folder on the controller",placeholder:"$HOME/Programs",optional:true},{key:"cycle",label:"Cycle (once or forever)",placeholder:"once",optional:true},{key:"cycleCounter",label:"Cycle counter (Module/variable)",placeholder:"MainModule/nCycles",optional:true}]},
   {key:"arm-io-kuka",driver:"io-arm",config:{profile:"kuka-automatic-external"},label:"Robot arm: KUKA (Automatic External, on I/O)",help:"The bridge talks to a Modbus TCP I/O board wired to the robot\u2019s digital I/O. Write the wiring as the board\u2019s output channels, a semicolon, then its input channels, each signal=channel and the program number as a range, lowest bit first. To load program N the bridge sets its number on the program wires, raises the strobe and waits for the robot to acknowledge; Start is then a short press of the start wire. List the programs as number=name. On a KUKA the program wires are PGNO (with PGNO_PARITY), the strobe is PGNO_VALID, start is EXT_START and stop is DRIVES_OFF; ready is RC_RDY1, remote is the EXT operating mode, running is PRO_ACT and fault is STOPMESS. Wire the e-stop, safeguards and enabling devices to the robot\u2019s own safety circuit: this connection carries none of them, and a fault or a robot that is not ready refuses everything but Stop.",fields:[{key:"host",label:"I/O board IP / host",placeholder:"192.168.1.80"},{key:"port",label:"Modbus port",placeholder:"502",optional:true},{key:"unit",label:"Modbus unit",placeholder:"1",optional:true},{key:"wiring",label:"Wiring (outputs; inputs)",placeholder:"program=0-7 parity=8 strobe=9 start=10 stop=11; ready=0 remote=1 running=2 fault=3"},{key:"programs",label:"Programs (number=name)",placeholder:"1=unload-cnc-3, 2=palletise"}]},
   {key:"arm-io-fanuc",driver:"io-arm",config:{profile:"fanuc-uop"},label:"Robot arm: FANUC (UOP / PNS, on I/O)",help:"The bridge talks to a Modbus TCP I/O board wired to the robot\u2019s digital I/O. Write the wiring as the board\u2019s output channels, a semicolon, then its input channels, each signal=channel and the program number as a range, lowest bit first. To load program N the bridge sets its number on the program wires, raises the strobe and waits for the robot to acknowledge; Start is then a short press of the start wire. List the programs as number=name. On a FANUC the program wires are PNS1 to PNS8, the strobe is PNSTROBE, start is PROD_START, pause is *HOLD and stop is CSTOPI; ready is CMDENBL, running is PROGRUN, paused is PAUSED, fault is FAULT, acknowledged is SNACK and the echo is SNO1 to SNO8. Program N runs PNS000N. Wire the e-stop, safeguards and enabling devices to the robot\u2019s own safety circuit: this connection carries none of them, and a fault or a robot that is not ready refuses everything but Stop.",fields:[{key:"host",label:"I/O board IP / host",placeholder:"192.168.1.80"},{key:"port",label:"Modbus port",placeholder:"502",optional:true},{key:"unit",label:"Modbus unit",placeholder:"1",optional:true},{key:"wiring",label:"Wiring (outputs; inputs)",placeholder:"program=0-7 strobe=8 start=9 pause=10 stop=11; ready=0 running=1 paused=2 fault=3 ack=4 echo=8-15"},{key:"programs",label:"Programs (number=name)",placeholder:"3=unload-cnc-3, 7=palletise"}]},
   {key:"arm-io-abb",driver:"io-arm",config:{profile:"abb-system-inputs"},label:"Robot arm: ABB (system inputs, on I/O)",help:"The bridge talks to a Modbus TCP I/O board wired to the robot\u2019s digital I/O. Write the wiring as the board\u2019s output channels, a semicolon, then its input channels, each signal=channel and the program number as a range, lowest bit first. To load program N the bridge sets its number on the program wires, raises the strobe and waits for the robot to acknowledge; Start is then a short press of the start wire. List the programs as number=name. On an ABB the program wires are a group input your router task reads, the strobe is its program-valid input, start and stop are the Start and Stop system inputs; ready is Motors On state, remote is Auto On, running is Cycle On and fault is Execution Error. Wire the e-stop, safeguards and enabling devices to the robot\u2019s own safety circuit: this connection carries none of them, and a fault or a robot that is not ready refuses everything but Stop.",fields:[{key:"host",label:"I/O board IP / host",placeholder:"192.168.1.80"},{key:"port",label:"Modbus port",placeholder:"502",optional:true},{key:"unit",label:"Modbus unit",placeholder:"1",optional:true},{key:"wiring",label:"Wiring (outputs; inputs)",placeholder:"program=0-7 strobe=8 start=9 stop=10; ready=0 remote=1 running=2 fault=3 ack=4"},{key:"programs",label:"Programs (number=name)",placeholder:"1=unload-cnc-3, 2=palletise"}]},
@@ -436,7 +440,7 @@ export function EdgeBridgeSetup({ onCreated, onClose, presetDriver, presetName, 
                   <label key={f.key} className="block">
                     <span className={lbl}>{f.label}{f.optional ? "" : " *"}</span>
                     {f.secret || m.driver === "snapmaker-u1" && f.key === "apiKey"
-                      ? <SecretInput secret what={f.key==="encryption_key"?"Native API encryption key":f.secret ? "panel read token" : "API key"} value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
+                      ? <SecretInput secret what={f.secret ? f.label.charAt(0).toLowerCase() + f.label.slice(1) : "API key"} value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />
                       : <input value={m.cfg[f.key] ?? ""} onChange={(e) => setField(m.key, f.key, e.target.value)} placeholder={f.placeholder} className={field} />}
                     {m.driver === "lightburn" && f.key === "host" && <span className="block text-xs text-muted">127.0.0.1 when LightBurn runs on the bridge’s computer.</span>}
                   </label>
@@ -1412,55 +1416,60 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   // overlay strip. Streams/snapshots regardless of state (that's the point of
   // switching to this view). Clicking opens the cockpit.
   if (cams) {
+    // Selecting, the tile is the checkbox's (the root toggles it), so no
+    // button wraps it: never a control inside a control (#7514).
+    const face = (
+      <>
+        <div className="relative aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
+          {d.snapshot_relay ? (
+            <RelaySnapshotFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} />
+          ) : d.lan_camera ? (
+            <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
+          ) : d.camera_url ? (
+            // EXTERNAL-IMAGE-OK: the printer's own LAN camera URL, not a stored file.
+            // photo-frame: a live frame from the printer's camera, not a stored photo
+            <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+          ) : d.linked_machine?.image_path ? (
+            <MachinePhotoFill src={d.linked_machine.image_path} alt={`${title ?? d.name} photo`} />
+          ) : (
+            <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> no camera</span>
+          )}
+          {/* The AI verdict, on the image it judges — the camera wall is where
+              "is that print turning into spaghetti?" gets asked. */}
+          {!d.managed_by_detector && d.failure?.paused ? (
+            <span className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full bg-ember-600/90 text-white px-1.5 py-0.5 text-[10px] font-medium shadow">
+              ⚠ paused by AI
+            </span>
+          ) : !d.managed_by_detector && d.failure?.watching ? (
+            <span
+              className={`absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium shadow ${
+                d.failure.score >= 0.6
+                  ? "bg-ember-600/90 text-white"
+                  : d.failure.score >= 0.3
+                    ? "bg-amber-500/90 text-slate-900"
+                    : "bg-emerald-600/85 text-white"
+              }`}
+              title={`AI failure watch: rolling score ${d.failure.score.toFixed(2)}`}
+            >
+              <ShieldCheck size={10} /> {Math.round(d.failure.score * 100)}%
+            </span>
+          ) : null}
+        </div>
+        <div className="px-2 py-1.5 flex items-center gap-2">
+          {selecting && <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
+          <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
+          <span className="text-xs font-medium text-content dark:text-mortar-100 truncate">{title ?? d.name}</span>
+          <span className="flex-1" />
+          {pct != null && <span className="text-[10px] font-mono text-faint shrink-0">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</span>}
+          {needsShort && <span className="text-[10px] text-amber-600 shrink-0">{needsShort}</span>}
+        </div>
+      </>
+    );
     return (
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
         {startReview.sheet}
         <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
-        <button type="button" onClick={selecting ? undefined : () => setDetailOpen(true)} className="block w-full text-left">
-          <div className="relative aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
-            {d.snapshot_relay ? (
-              <RelaySnapshotFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} />
-            ) : d.lan_camera ? (
-              <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
-            ) : d.camera_url ? (
-              // EXTERNAL-IMAGE-OK: the printer's own LAN camera URL, not a stored file.
-              // photo-frame: a live frame from the printer's camera, not a stored photo
-              <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
-            ) : d.linked_machine?.image_path ? (
-              <MachinePhotoFill src={d.linked_machine.image_path} alt={`${title ?? d.name} photo`} />
-            ) : (
-              <span className="flex flex-col items-center gap-1 text-faint text-[11px]"><Camera size={18} /> no camera</span>
-            )}
-            {/* The AI verdict, on the image it judges — the camera wall is where
-                "is that print turning into spaghetti?" gets asked. */}
-            {!d.managed_by_detector && d.failure?.paused ? (
-              <span className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full bg-ember-600/90 text-white px-1.5 py-0.5 text-[10px] font-medium shadow">
-                ⚠ paused by AI
-              </span>
-            ) : !d.managed_by_detector && d.failure?.watching ? (
-              <span
-                className={`absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium shadow ${
-                  d.failure.score >= 0.6
-                    ? "bg-ember-600/90 text-white"
-                    : d.failure.score >= 0.3
-                      ? "bg-amber-500/90 text-slate-900"
-                      : "bg-emerald-600/85 text-white"
-                }`}
-                title={`AI failure watch: rolling score ${d.failure.score.toFixed(2)}`}
-              >
-                <ShieldCheck size={10} /> {Math.round(d.failure.score * 100)}%
-              </span>
-            ) : null}
-          </div>
-          <div className="px-2 py-1.5 flex items-center gap-2">
-            {selecting && <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
-            <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
-            <span className="text-xs font-medium text-content dark:text-mortar-100 truncate">{title ?? d.name}</span>
-            <span className="flex-1" />
-            {pct != null && <span className="text-[10px] font-mono text-faint shrink-0">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</span>}
-            {needsShort && <span className="text-[10px] text-amber-600 shrink-0">{needsShort}</span>}
-          </div>
-        </button>
+        {selecting ? <div className="block w-full text-left">{face}</div> : <button type="button" onClick={() => setDetailOpen(true)} className="block w-full text-left">{face}</button>}
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
       </div>
     );
@@ -1619,6 +1628,9 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           {d.camera_url && <button aria-label="Remove" onClick={() => camera.mutate(null)} disabled={camera.isPending} title="Remove" className="text-faint hover:text-ember-500 p-0.5"><X size={12} /></button>}
         </div>
       )}
+      {camOpen && d.lan_camera && !d.camera_url && (
+        <p className="mt-1 text-[10px] text-faint">Showing the camera this printer reports. An address typed here is used instead.</p>
+      )}
       {camOpen && (
         // Snapshot relay (opt-in, OFF by default): pushes frames up so the feed
         // works for a REMOTE viewer (not on the printer's LAN). Costs bandwidth.
@@ -1627,6 +1639,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           Relay snapshots to cloud (for remote viewing){d.snapshot_relay && !d.snapshot_fresh ? " (waiting for the agent…)" : ""}
         </label>
       )}
+      {camOpen && !laser && <HourRateEditor slug={slug} target={{ printer: `${connId}/${d.id}` }} current={d.hour_rate ?? null} />}
       {att && (
         // F-1: bed-clear gate. The printer finished/failed a print and won't take
         // new work until a human confirms the bed is clear.

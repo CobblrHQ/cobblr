@@ -162,7 +162,8 @@ entriesRouter.delete(
 
 // Upload an image for an entry (e.g. a scanner CONFIG-barcode screenshot).
 // Stores via core-files and stamps the entry's image_path (a raw file URL).
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a multipart upload of an image's bytes; the assistant
+// holds no image to send
 entriesRouter.post(
   "/entries/:id/image",
   upload,

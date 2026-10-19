@@ -447,7 +447,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R
 }
 
 // ── POST /import/preview — parse + mapping report, never writes ─────────────
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — writes nothing; the person's look at the export file they
+// uploaded before they import it (see /import below)
 importRouter.post(
   "/import/preview",
   expressText({ type: ["text/csv", "text/plain"], limit: "32mb" }),
@@ -477,7 +478,8 @@ importRouter.post(
 );
 
 // ── POST /import ─────────────────────────────────────────────────────────────
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — a bulk import of an uploaded export file; the assistant
+// holds no file, and adds things through add_thing one at a time
 // UI-SCREEN: /scan (More inbox actions, Import from file)
 importRouter.post(
   "/import",

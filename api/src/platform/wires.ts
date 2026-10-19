@@ -375,9 +375,13 @@ async function fireBindings(
           args: renderedArgs,
         }));
         if (delivery) {
-          const outcome = result as { ok?: boolean; skipped?: boolean; deliverySatisfied?: boolean; error?: unknown } | null;
+          const outcome = result as { ok?: boolean; skipped?: boolean; deliverySatisfied?: boolean; error?: unknown; final?: boolean } | null;
           const satisfied = outcome?.skipped === true && outcome.deliverySatisfied === true;
-          if (!satisfied && (outcome?.ok === false || outcome?.error)) throw new Error(String(outcome?.error || "Automation did not complete"));
+          if (!satisfied && (outcome?.ok === false || outcome?.error)) {
+            const message = String(outcome?.error || "Automation did not complete");
+            if (outcome?.final !== true || !delivery.refused) throw new Error(message);
+            await delivery.refused(deliveryKey, message);
+          }
           await delivery.acknowledge(deliveryKey);
         }
         // Log a successful firing so the /wires "recent firings" panel

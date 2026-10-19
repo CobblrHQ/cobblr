@@ -245,6 +245,11 @@ export interface CoreScanRecordPhotoSuggestionsTable {
   query: string | null;
   attempts: Generated<number>;
   user_id: string | null;
+  /** The suggested picture's bytes, held here until Use it writes the file
+   *  (#7447): a suggestion is never a row in Files. */
+  held_bytes: Buffer | null;
+  held_type: string | null;
+  held_name: string | null;
   created_at: Generated<Date>;
   updated_at: Generated<Date>;
 }
@@ -265,6 +270,9 @@ export interface CoreScanRecordPhotoSearchesTable {
 export interface CoreScanPhotoSuggestConfigTable {
   id: Generated<boolean>;
   auto_apply: Generated<boolean>;
+  /** Whether this workspace looks for pictures for its records at all
+   *  (#7447): off until it turns it on, an update never opts it in. */
+  suggest_on: Generated<boolean>;
   /** When the workspace's existing records were queued once (#3818). */
   backfilled_at: ColumnType<Date | null, Date | string | null | undefined, Date | string | null | undefined>;
   updated_at: Generated<Date>;

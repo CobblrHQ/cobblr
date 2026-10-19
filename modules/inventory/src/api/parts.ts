@@ -13,7 +13,7 @@ import { fieldCurrency } from "@cobblr/platform-contract/money";
 import { heldInLines, placeNames } from "@cobblr/platform-contract";
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { sql, type RawBuilder } from "kysely";
+import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
 import { daysUntilField, likeNeedle, platform, stockDisclosureFromConfig, valueSearchWhere, type FilterPredicate } from "@cobblr/platform-contract";
 import { asMeasure, measureTokens } from "@cobblr/platform-contract/measure";
@@ -22,7 +22,7 @@ import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { floorDelta } from "../stock-floor.js";
 import { applyPartFilters, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
-import { instanceOf, instanceQtyUnit, partKindOf, sessionUser, tenantContext, tenantDb } from "../db.js";
+import { instanceOf, instanceQtyUnit, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, FIT_PATTERNS } from "@cobblr/platform-contract/entity-metadata";
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
@@ -1096,6 +1096,55 @@ partsRouter.get(
   }),
 );
 
+/** Mint a UNIT of a model: a child part in the SAME instance, paired unit-of,
+ *  qty 1. The route's POST /:id/units and inventory:add-unit. */
+export async function mintUnit(
+  db: Kysely<InventoryDB>,
+  orgId: string,
+  userId: string | null,
+  model: { id: string; name: string; instance: string; kind: string; qtyUnit: string | null },
+  input: { serial_number?: string; name?: string },
+) {
+    const serial = input.serial_number?.trim() || null;
+    // Default a unit's name from its model + serial, so a bare "add a serial"
+    // yields "ThinkPad X1 · SN-014" rather than an untitled row.
+    const name = input.name?.trim() || (serial ? `${model.name} · ${serial}` : model.name);
+
+    // check-then-insert: the only key is the spoolman link, which this insert never sets
+    const unit = await db
+      .insertInto("inventory_parts")
+      .values({
+        instance: model.instance,
+        name,
+        qty: "1",
+        unit: model.qtyUnit ?? "each",
+        serial_number: serial,
+        metadata: {},
+      })
+      .returning(["id", "name", "qty", "serial_number", "created_at"])
+      .executeTakeFirstOrThrow();
+
+    await platform().pairings.create({
+      orgId: orgId,
+      sourceKind: model.kind,
+      sourceId: unit.id,
+      targetKind: model.kind,
+      targetId: model.id,
+      relationshipKind: UNIT_OF,
+      createdBy: userId,
+    });
+    await platform().activity.log({
+      orgId: orgId,
+      userId: userId,
+      action: "unit_added",
+      ref: { module: "inventory", entityType: "part", entityId: model.id },
+      diff: { unit_id: unit.id, serial },
+    });
+    await platform().events.emit("inventory.part.created", { orgId: orgId, partId: unit.id });
+
+  return unit;
+}
+
 const MintUnit = z.object({
   serial_number: z.string().max(160).optional(),
   name: z.string().min(1).max(160).optional(),
@@ -1106,11 +1155,11 @@ const MintUnit = z.object({
 // what's on file, and them disagreeing is the reconciliation prompt's whole job
 // (one-record-substrate.md / within-instance-units.md). A unit is one physical
 // thing → qty 1, and a leaf.
-// AI-REACH: mints serialised units of a part; a labelling step done with the items in hand
+// AI-ACTION: inventory:add-unit
 partsRouter.post(
   "/:id/units",
   asyncHandler(async (req, res) => {
-    if (!(await requireCapability(req, res, "inventory:create-part"))) return;
+    if (!(await requireCapability(req, res, "inventory:add-unit"))) return;
     const modelId = req.params.id;
     if (!modelId) {
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
@@ -1134,43 +1183,7 @@ partsRouter.post(
       return;
     }
 
-    const serial = parsed.data.serial_number?.trim() || null;
-    // Default a unit's name from its model + serial, so a bare "add a serial"
-    // yields "ThinkPad X1 · SN-014" rather than an untitled row.
-    const name = parsed.data.name?.trim() || (serial ? `${model.name} · ${serial}` : model.name);
-
-    // check-then-insert: the only key is the spoolman link, which this insert never sets
-    const unit = await db
-      .insertInto("inventory_parts")
-      .values({
-        instance: inst,
-        name,
-        qty: "1",
-        unit: instanceQtyUnit(req) ?? "each",
-        serial_number: serial,
-        metadata: {},
-      })
-      .returning(["id", "name", "qty", "serial_number", "created_at"])
-      .executeTakeFirstOrThrow();
-
-    await platform().pairings.create({
-      orgId: ctx.org.id,
-      sourceKind: partKindOf(req),
-      sourceId: unit.id,
-      targetKind: partKindOf(req),
-      targetId: modelId,
-      relationshipKind: UNIT_OF,
-      createdBy: session.id,
-    });
-    await platform().activity.log({
-      orgId: ctx.org.id,
-      userId: session.id,
-      action: "unit_added",
-      ref: { module: "inventory", entityType: "part", entityId: modelId },
-      diff: { unit_id: unit.id, serial },
-    });
-    await platform().events.emit("inventory.part.created", { orgId: ctx.org.id, partId: unit.id });
-
+    const unit = await mintUnit(db, ctx.org.id, session.id, { id: modelId, name: model.name, instance: inst, kind: partKindOf(req), qtyUnit: instanceQtyUnit(req) }, parsed.data);
     res.status(201).json(unit);
   }),
 );

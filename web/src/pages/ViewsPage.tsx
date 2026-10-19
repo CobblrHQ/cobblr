@@ -1882,7 +1882,7 @@ function LayoutPicker({ value, onChange }: { value: ViewLayout; onChange: (t: Vi
           role="radio"
           aria-checked={value === t}
           onClick={() => onChange(t)}
-          className={`min-h-11 flex-1 inline-flex items-center justify-center gap-1 px-3 text-xs rounded transition ${
+          className={`min-h-11 min-w-fit flex-1 inline-flex items-center justify-center gap-1 px-3 text-xs rounded transition ${
             value === t
               ? "bg-cobble-600 text-white"
               : "bg-subtle dark:bg-slate-800 text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700"

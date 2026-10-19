@@ -1,0 +1,8 @@
+{
+  "api/src/routes/auth.ts": 18,
+  "api/src/routes/bundles.ts": 12,
+  "api/src/routes/me.ts": 60,
+  "api/src/routes/platform.ts": 60,
+  "api/src/routes/super-admin.ts": 58,
+  "modules/core-ai/src/api/chat.ts": 18
+}

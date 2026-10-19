@@ -65,6 +65,9 @@ export interface PurchasesOrderItemsTable {
   /** Received before a line's stock was reliably added; a person settles it
    *  (0010, heal-unreceived-arrivals.ts). */
   receipt_unconfirmed: Generated<boolean>;
+  /** Why its stock write was refused for good (0019): the line waits as
+   *  unconfirmed, and its spend was already told. */
+  receipt_refused: ColumnType<string | null, string | null | undefined, string | null | undefined>;
   /** The parcel this line travels in, when the order shipped in more than
    *  one (0012). Null: it travels under the order's own tracking number. */
   shipment_id: ColumnType<string | null, string | null | undefined, string | null | undefined>;
@@ -146,6 +149,8 @@ export interface PurchasesReceiveOutboxTable {
   payload: Record<string, unknown>;
   completed_recipients: Generated<string[]>;
   next_attempt_at: Generated<Date>;
+  /** Failed deliveries so far; the next waits a minute doubled this often (0019). */
+  attempts: Generated<number>;
   completed_at: Date | null;
   last_error: string | null;
   created_at: Generated<Date>;

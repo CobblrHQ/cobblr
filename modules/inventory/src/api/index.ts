@@ -187,4 +187,10 @@ export { partsRouter as primaryRouter };
 
 // Side-effect: the assistant's door to categories.
 import { registerCategoryHandlers } from "./category-handlers.js";
+import { registerPullConnectedStockAction } from "./pull-connected-stock-action.js";
+import { registerAddUnitAction } from "./add-unit-action.js";
+
+registerAddUnitAction();
+
+registerPullConnectedStockAction();
 registerCategoryHandlers();

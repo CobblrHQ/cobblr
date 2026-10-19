@@ -16,8 +16,50 @@
 //   ended to make room, or the caller waits for a connection to come back;
 // - a caller never waits forever: past `waitMs` it opens anyway and says so,
 //   which is the old behaviour, so a caller holding one workspace while it
-//   waits for another can never deadlock the api.
+//   waits for another can never deadlock the api;
+// - a checkout still waiting when its pool is ended is refused at once with
+//   PoolEndedError, never left to pg's timer: pg-pool's end() serves nothing
+//   still queued, so a read that queued just before the limit or a release
+//   ended its pool waited out connectionTimeoutMillis and answered a 500
+//   (#7501, 2026-10-19: 535 of them in fifteen minutes on staging).
 import type { Pool, PoolClient } from "pg";
+
+/** A checkout refused because its pool was ended while it waited; the caller
+ *  takes a connection from the workspace's live pool instead. */
+export class PoolEndedError extends Error {
+  constructor() {
+    super("the pool was ended while this checkout waited");
+    this.name = "PoolEndedError";
+  }
+}
+
+/** Whether a checkout failed only because its pool ended (here, or by pg's own guard). */
+export function isPoolEnded(err: unknown): boolean {
+  return err instanceof PoolEndedError || /Cannot use a pool after calling end/.test((err as Error | null)?.message ?? "");
+}
+
+const isEnding = (pool: Pool) => {
+  const p = pool as unknown as { ended?: boolean; ending?: boolean };
+  return !!(p.ended || p.ending);
+};
+
+/** A connection from `first`, or, when that pool has ended or ends while the
+ *  checkout waits, from the workspace's live pool, asked again each time: under
+ *  load the limit can end the live pool too before its checkout starts. Any
+ *  other failure is the caller's. */
+export async function connectThroughEnds(first: Pool, live: () => Promise<Pool>, attempts = 4): Promise<PoolClient> {
+  let pool = first;
+  for (let i = 1; ; i++) {
+    if (!isEnding(pool)) {
+      try {
+        return await pool.connect();
+      } catch (err) {
+        if (!isPoolEnded(err) || i >= attempts) throw err;
+      }
+    } else if (i > attempts) throw new PoolEndedError();
+    pool = await live();
+  }
+}
 
 export interface ConnectionLimitOptions {
   /** Connections this api may hold across every workspace pool. */
@@ -83,8 +125,37 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
     const raw = pool.connect.bind(pool) as () => Promise<PoolClient>;
     type Done = (err?: Error | boolean) => void;
     type Callback = (err: Error | undefined, client?: PoolClient, done?: Done) => void;
+    // The checkouts still waiting on this pool, refused the moment it is ended.
+    const waiting = new Set<(err: Error) => void>();
+    const end = pool.end.bind(pool) as (...a: unknown[]) => unknown;
+    (pool as unknown as { end: (...a: unknown[]) => unknown }).end = (...a: unknown[]) => {
+      const ended = end(...a);
+      for (const refuse of [...waiting]) refuse(new PoolEndedError());
+      return ended;
+    };
+    const checkout = (): Promise<PoolClient> =>
+      new Promise<PoolClient>((resolve, reject) => {
+        let settled = false;
+        const refuse = (err: Error) => {
+          if (settled) return;
+          settled = true;
+          waiting.delete(refuse);
+          reject(err);
+        };
+        waiting.add(refuse);
+        connect(key, pool, raw).then(
+          (client) => {
+            waiting.delete(refuse);
+            // Refused already: the caller went to the live pool, so this one goes back.
+            if (settled) return void client.release();
+            settled = true;
+            resolve(client);
+          },
+          refuse,
+        );
+      });
     (pool as unknown as { connect: (cb?: Callback) => Promise<PoolClient> | undefined }).connect = (cb?: Callback) => {
-      const p = connect(key, pool, raw);
+      const p = checkout();
       if (!cb) return p;
       p.then(
         (client) => cb(undefined, client, (err) => client.release(err)),

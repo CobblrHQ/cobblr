@@ -16,7 +16,7 @@ import { getHistoryWriterFor } from "../platform/history-store.js";
 //   5. Two different orgs see two different `platform_local`
 //      contents (different `created_at` values)
 
-import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { MANAGED_APP_REFRESHERS, roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
@@ -673,7 +673,7 @@ const RefreshAppBody = z.object({ manifest: z.unknown().optional() });
 // AI-REACH: the app refreshes itself on entry; there is nothing here for anyone to decide
 orgsRouter.post("/:slug/refresh-app", requireAuth, withTenant, async (req, res, next) => {
   try {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, ...MANAGED_APP_REFRESHERS)) return;
     const parsed = RefreshAppBody.safeParse(req.body ?? {});
     const result = await refreshManagedApp(req.tenant!.org.id, req.session!.id, parsed.success ? parsed.data.manifest : undefined);
     res.json(result);

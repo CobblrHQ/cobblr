@@ -4,5 +4,6 @@
   "ms": 608,
   "recorded": "2026-09-14",
   "source": "split from scripts/lint-durations.json (recorded 2026-09-14)",
-  "readMB": 7.2
+  "readMB": 7.2,
+  "readTreeMB": 44.1
 }

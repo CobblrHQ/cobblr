@@ -166,3 +166,22 @@ export function roleHoldsEveryCapability(role: string | null | undefined): boole
 export function shellForRole(role: string | null | undefined): "workspace" | "portal" {
   return role === "guest" ? "portal" : "workspace";
 }
+
+/**
+ * Who may switch the calendar feed on or off and rotate its link.
+ *
+ * The link is a credential: handing one out, or revoking every calendar
+ * already subscribed to it, is the workspace's call. The route gate and the
+ * Calendar page both read this list, so a control is never drawn for a
+ * person the route would refuse (#7507). Anyone who can open Calendar may
+ * still read and copy an enabled link.
+ */
+export const CALENDAR_FEED_MANAGERS = ["owner", "admin"] as const;
+
+/**
+ * Who may bring a managed app's workspace up to its app's latest version.
+ * The shell asks once a session on the app's first page; the route and the
+ * shell read this list, so a member's first page never sends a refresh the
+ * route refuses (#7552).
+ */
+export const MANAGED_APP_REFRESHERS = ["owner", "admin"] as const;

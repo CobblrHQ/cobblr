@@ -35,7 +35,9 @@ const SettingsUpdate = z
     message: "no settings fields provided",
   });
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+// AI-REACH: exempt — sets the address every printed QR code points at and
+// whether codes name the thing; one changed from a chat could send every
+// future label's scan elsewhere, so it is the owner's
 qrSettingsRouter.put(
   "/",
   asyncHandler(async (req, res) => {

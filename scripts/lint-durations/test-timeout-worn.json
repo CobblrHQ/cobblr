@@ -4,5 +4,6 @@
   "ms": 12320,
   "recorded": "2026-09-22",
   "source": "scaffolded by new-lint.sh: twice a dev-box time taken under load (2026-09-22), replaced from its first CI run",
-  "readMB": 7.1
+  "readMB": 7.1,
+  "readTreeMB": 44.1
 }

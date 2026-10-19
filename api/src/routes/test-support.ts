@@ -361,6 +361,42 @@ testSupportRouter.post("/test-support/mirror-apply-hold", async (req, res, next)
 // The next `times` edits a share space queues fail inside their write, after
 // the edit is queued (#7125). Body: { slug, times }; GET ?slug= reads what is
 // left to fail.
+// The next runs of one hand-over step fail (#7133): the retry must finish it.
+testSupportRouter.post("/test-support/hand-over-fails", async (req, res, next) => {
+  try {
+    const { slug, step, times } = (req.body ?? {}) as { slug?: string; step?: string; times?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || !["receive", "give-away", "bring-back"].includes(step ?? "") || typeof times !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + step (receive|give-away|bring-back) + times required" } });
+      return;
+    }
+    const { failHandOverStepForTests } = await import("../platform/share-offers.js");
+    failHandOverStepForTests(o.id, step as "receive" | "give-away" | "bring-back", times);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+// Hold all but `leave` of a workspace's connections for `ms` (#7326), as a
+// busy workspace does: two taps must still pay for one term with what is left.
+testSupportRouter.post("/test-support/hold-tenant-connections", async (req, res, next) => {
+  try {
+    const { slug, leave, ms } = (req.body ?? {}) as { slug?: string; leave?: number; ms?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || typeof leave !== "number" || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + leave + ms required" } });
+      return;
+    }
+    const { getTenantPool, TENANT_POOL_MAX } = await import("../db/tenant.js");
+    const { holdClients } = await import("../db/pool-stats.js");
+    const held = await holdClients(await getTenantPool(o.id), Math.max(0, TENANT_POOL_MAX - leave));
+    const release = setTimeout(() => held.forEach((c) => c.release()), Math.min(ms, 60_000));
+    release.unref?.();
+    res.json({ held: held.length, pool_max: TENANT_POOL_MAX });
+  } catch (err) {
+    next(err);
+  }
+});
 testSupportRouter.post("/test-support/edits-queue-fails", async (req, res, next) => {
   try {
     const { slug, times } = (req.body ?? {}) as { slug?: string; times?: number };
@@ -865,21 +901,26 @@ testSupportRouter.get("/test-support/push-service/:box", (req, res) => {
 // as for any module's notification.
 testSupportRouter.post("/test-support/dispatch", async (req, res, next) => {
   try {
-    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; message?: string; link_url?: string; priority?: string; private?: boolean };
+    const b = (req.body ?? {}) as { org_id?: string; user_id?: string; message?: string; link_url?: string; priority?: string; private?: boolean; event_type?: string; subjects?: Array<{ kind: string; id: string; question: string; line?: string }> };
     if (!b.org_id || !b.user_id || !b.message) {
       res.status(400).json({ error: { code: "bad_body", message: "org_id, user_id and message required" } });
       return;
     }
     const priority = (["low", "normal", "high", "urgent"] as const).find((p) => p === b.priority) ?? "normal";
-    const out = await notifications.dispatch({
+    const subjects = b.subjects?.length ? b.subjects : null;
+    const common = {
       orgId: b.org_id,
       userId: b.user_id,
-      eventType: "test.notification",
+      eventType: b.event_type ?? "test.notification",
       message: b.message,
-      ...(b.link_url ? { link_url: b.link_url } : { no_link_reason: "a test notification" }),
       priority,
       private: b.private === true,
-    });
+    };
+    const destination = b.link_url ? { link_url: b.link_url } : { no_link_reason: "a test notification" };
+    // A producer that names what it is about is a calendar-raised notice.
+    const out = subjects
+      ? await notifications.dispatch({ ...common, ...destination, triggeredBy: "schedule", subjects: subjects.map((s) => ({ ...s, line: s.line ?? s.id })) })
+      : await notifications.dispatch({ ...common, ...destination });
     res.json(out);
   } catch (err) {
     next(err);

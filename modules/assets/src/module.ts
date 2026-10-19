@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "assets",
-  version: "0.6.7",
+  version: "0.7.0",
   displayName: "Assets",
   description:
     "Keep track of the things you own one at a time: tools, appliances, collections, anything worth knowing about individually.",
@@ -264,6 +264,22 @@ export default defineModule({
         invokeHandler: "assets.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,
+      },
+      {
+        group: "service",
+        id: "assets:record-wear",
+        changes: "records",
+        runBy: "member",
+        examples: ["the gripper on arm 2 did 500 more cycles", "count 3 print hours on this nozzle"],
+        label: "Count wear on a tool",
+        description: "Add the use a machine made of a tool installed in it: cycles, prints and hours, so a service schedule on the tool comes due by its own use (replace the suction cups every 200,000 picks). Args: assetId, cycles, prints, hours, each added to what the tool has counted.",
+        appliesTo: { kinds: ["assets:asset"] },
+        invokeHandler: "assets.record-wear",
+        argsSchema: {
+          cycles: { label: "Cycles the machine made with it", type: "number" },
+          prints: { label: "Prints the machine made with it", type: "number" },
+          hours: { label: "Hours it was in use", type: "number" },
+        },
       },
     ],
   },

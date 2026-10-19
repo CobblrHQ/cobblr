@@ -102,7 +102,7 @@ export function CatalogMatchPage() {
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           Match to catalog
         </h1>
-        <p className="text-sm text-ember-500">
+        <p className="text-sm text-danger">
           Missing <code>source_kind</code> / <code>source_id</code> query
           params. This page expects to be opened by clicking the "Match to
           catalog" action on an entity's detail page.

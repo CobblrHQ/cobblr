@@ -24,7 +24,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { manifestSources } from "./lib/manifest-sources.ts";
 
-const TOOLS = join("packages", "workspace-tools", "src", "tools.ts");
+const TOOLS = join("packages", "workspace-tools", "src", "escort-destinations.ts");
 const src = readFileSync(TOOLS, "utf8");
 
 /** Every WORKSPACE-scoped action the platform declares — modules and the kernel.
@@ -80,7 +80,7 @@ if (problems.length) {
   console.error(
     `✗ escort-claims lint: ${problems.length} destination(s) send people to a screen for work an action already does.\n\n` +
       problems.join("\n") +
-      "\n\nAdd them to that destination's `covered_by` (packages/workspace-tools/src/tools.ts) so the\n" +
+      "\n\nAdd them to that destination's `covered_by` (packages/workspace-tools/src/escort-destinations.ts) so the\n" +
       "tool tells the model to RUN them, and say in `why` what the screen is still for.\n",
   );
   process.exit(1);

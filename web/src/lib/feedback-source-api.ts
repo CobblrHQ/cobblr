@@ -26,6 +26,9 @@ export const apiFeedbackSource: FeedbackSource = {
     const r = await api.postFeedbackToDiscord(item.id);
     return { announce_message_id: r.announce_message_id };
   },
+  publish(item) {
+    return api.publishFeedback(item.id);
+  },
   imageUrl(item, fileId, variant) {
     return api.feedbackAttachmentRawUrl(item.id, fileId, variant);
   },

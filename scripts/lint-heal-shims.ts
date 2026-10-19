@@ -76,7 +76,8 @@ for (const f of files) {
   const rel = relative(ROOT, f);
   const base = f.split("/").pop() ?? "";
   const isShimByName =
-    rel.startsWith("api/src/platform/") && /^(migrate|backfill)-.+\.ts$/.test(base);
+    // A descriptor in platform/boot/ only registers the pass; the shim is the file it runs (#7387).
+    rel.startsWith("api/src/platform/") && !rel.startsWith("api/src/platform/boot/") && /^(migrate|backfill)-.+\.ts$/.test(base);
   const src = sourceOf(f);
   const isShimByMarker = src.includes("HISTORICAL DATA MIGRATION");
   if (!isShimByName && !isShimByMarker) continue;

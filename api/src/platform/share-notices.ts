@@ -77,9 +77,9 @@ export async function sendDueShareNotices(): Promise<void> {
       const titles = [...new Set(rows.map((r) => r.title).filter((t): t is string => !!t))];
       const message = sentence(g.kind, who, rows.length, titles.length ? titles : ["a thing"]);
       if (link.side === "owner") {
-        const where = g.kind === "applied" ? "/configuration/sharing" : "/suggestions";
+        const route = g.kind === "applied" ? "/configuration/sharing" : "/suggestions";
         for (const userId of await platform().notifications.audienceFor(link.org_id, SHARE_EDITS_SUGGESTED)) {
-          await platform().notifications.dispatch({ orgId: link.org_id, userId, eventType: SHARE_EDITS_SUGGESTED, message, link_url: where, priority: "normal", triggeredBy: "activity" }); // dispatch-per-row-ok: one per person the kind is for; the rows were folded into this one message
+          await platform().notifications.dispatch({ orgId: link.org_id, userId, eventType: SHARE_EDITS_SUGGESTED, message, link_url: route, priority: "normal", triggeredBy: "activity" }); // dispatch-per-row-ok: one per person the kind is for; the rows were folded into this one message
         }
       } else {
         for (const userId of await platform().notifications.audienceFor(link.org_id, SHARE_EDITS_DECIDED)) {

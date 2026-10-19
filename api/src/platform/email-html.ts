@@ -72,13 +72,13 @@ export function cobblrEmailHtml(opts: CobblrEmail): string {
       asideLines.map((l, i) => `<p style="margin:0 0 ${i === asideLines.length - 1 ? 14 : 10}px;">&bull; ${lineHtml(l)}</p>`).join("")
     : "";
   return `<!DOCTYPE html><html><body style="margin:0;background:#f3f4f6;padding:24px 12px;">
-  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
+  <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937;font-size:15px;line-height:1.5;max-width:560px;margin:0 auto;overflow-wrap:anywhere;word-break:break-word;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:28px 28px 24px;">
     <p style="margin:0 0 16px;">${escHtml(opts.greeting)}</p>
     ${quote}
     ${opts.bodyParas.map(para).join("")}
     ${aside}
     ${cta}
-    ${opts.footerNote ? `<p style="margin:14px 0 0;color:#9ca3af;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
-    <p style="margin:18px 0 0;color:#9ca3af;font-size:12px;">The ${escHtml(productName())} team</p>
+    ${opts.footerNote ? `<p style="margin:14px 0 0;color:#6b7280;font-size:12px;">${escHtml(opts.footerNote)}</p>` : ""}
+    <p style="margin:18px 0 0;color:#6b7280;font-size:12px;">The ${escHtml(productName())} team</p>
   </div></body></html>`;
 }

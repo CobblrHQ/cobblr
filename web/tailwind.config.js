@@ -41,6 +41,7 @@ export default {
         subtle: "rgb(var(--c-subtle) / <alpha-value>)",   // subtle fills (was bg-mortar-50)
         content: "rgb(var(--c-content) / <alpha-value>)", // primary text (was text-slate-700/600)
         muted: "rgb(var(--c-muted) / <alpha-value>)",     // secondary text (was text-slate-500)
+        danger: "rgb(var(--c-danger) / <alpha-value>)",   // validation and error text
         faint: "rgb(var(--c-faint) / <alpha-value>)",     // faint text (was text-slate-400)
         line: "rgb(var(--c-line) / <alpha-value>)",       // borders (was border-slate-200/300/100)
         accent: "rgb(var(--c-accent) / <alpha-value>)",   // links / focus (was text-cobble-*)

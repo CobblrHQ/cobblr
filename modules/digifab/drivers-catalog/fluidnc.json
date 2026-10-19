@@ -1,7 +1,7 @@
 {
   "id": "fluidnc",
   "name": "FluidNC (WiFi GRBL laser/CNC)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "routing": false,
   "test": { "method": "GET", "path": "/command?commandText=%3F" },
   "listDevices": {
@@ -10,6 +10,9 @@
     "result": "single",
     "map": { "id": "='fluidnc'", "name": "='FluidNC'" }
   },
+  "versions": [
+    { "method": "GET", "path": "/command?commandText=%24I", "format": "text", "map": { "firmware": "FluidNC v([0-9][^\\s:\\]]*)", "controller": "='FluidNC'" } }
+  ],
   "upload": {
     "method": "POST",
     "path": "/upload",

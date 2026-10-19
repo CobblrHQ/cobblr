@@ -118,14 +118,20 @@ const read = (dir: string): string => {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const violations: Violation[] = [];
-  for (const mod of readdirSync("modules")) for (const file of manifestSources(join("modules", mod))) {
-    let src: string;
-    try {
-      src = readFileSync(file, "utf8");
-    } catch {
-      continue;
+  for (const mod of readdirSync("modules")) {
+    // The module's code once, however many manifest files it has: core-scan's
+    // actions are a file each (#7382), and reading src/ per file read it 23 times.
+    let code: string | null = null;
+    for (const file of manifestSources(join("modules", mod))) {
+      let src: string;
+      try {
+        src = readFileSync(file, "utf8");
+      } catch {
+        continue;
+      }
+      code ??= read(join("modules", mod, "src"));
+      violations.push(...checkModule(file, src, code));
     }
-    violations.push(...checkModule(file, src, read(join("modules", mod, "src"))));
   }
   const kernel = "api/src/platform/platform-actions.ts";
   const requesterLines = read("api/src/platform").split("\n").filter((l) => l.includes("registerRequester("));

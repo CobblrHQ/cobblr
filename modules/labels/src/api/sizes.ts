@@ -7,7 +7,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { deriveGrid } from "../label-sizes.js";
 import { tenantDb, sessionUser } from "../db.js";
-import { asyncHandler, badBody, requireRole } from "./util.js";
+import { asyncHandler, badBody } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withArticle } from "@cobblr/platform-contract/plural";
 
 export const sizesRouter = Router({ mergeParams: true });
@@ -16,7 +17,7 @@ export const sizesRouter = Router({ mergeParams: true });
 const dim = z.number().positive().max(100);
 const gap = z.number().min(0).max(100);
 
-const SizeBody = z.object({
+export const SizeBody = z.object({
   name: z.string().trim().min(1).max(120),
   media_w: dim,
   media_h: dim,
@@ -72,66 +73,76 @@ sizesRouter.get(
   }),
 );
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+export type SizeInput = z.infer<typeof SizeBody>;
+
+/** Insert or change a custom size; a label bigger than its media fits zero
+ *  times, so it is refused rather than stored as a size that can never print. */
+export async function writeSize(db: ReturnType<typeof tenantDb>, d: SizeInput, at: { id: string } | { userId: string }) {
+  const grid = deriveGrid({ paper_w: d.media_w, paper_h: d.media_h, ...d });
+  if (grid.cols < 1 || grid.rows < 1) return { error: `${withArticle(`${d.label_w}x${d.label_h}"`)} label does not fit ${withArticle(`${d.media_w}x${d.media_h}"`)} sheet.` };
+  const row = "id" in at
+    ? await db.updateTable("labels_custom_sizes").set({ ...d, updated_at: new Date() } as never).where("id", "=", at.id as never).returning(COLS as unknown as string[] as never).executeTakeFirst()
+    : await db
+        .insertInto("labels_custom_sizes")
+        .values({
+          name: d.name,
+          media_w: String(d.media_w),
+          media_h: String(d.media_h),
+          label_w: String(d.label_w),
+          label_h: String(d.label_h),
+          margin_t: String(d.margin_t),
+          margin_l: String(d.margin_l),
+          col_gap: String(d.col_gap),
+          row_gap: String(d.row_gap),
+          created_by_user_id: at.userId,
+        })
+        .returning(COLS as unknown as string[] as never)
+        .executeTakeFirstOrThrow();
+  return row ? { size: present(row as unknown as SizeRow) } : null;
+}
+
+export async function removeSize(db: ReturnType<typeof tenantDb>, id: string) {
+  const r = await db.deleteFrom("labels_custom_sizes").where("id", "=", id as never).executeTakeFirst();
+  return Number(r.numDeletedRows ?? 0);
+}
+
+export async function listSizes(db: ReturnType<typeof tenantDb>) {
+  const rows = await db.selectFrom("labels_custom_sizes").select(COLS as unknown as string[] as never).orderBy("created_at", "asc").execute();
+  return (rows as unknown as SizeRow[]).map(present);
+}
+
+// AI-ACTION: labels:save-size
 sizesRouter.post(
   "/",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "labels:save-size"))) return;
     const parsed = SizeBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const d = parsed.data;
-    // A label bigger than its media fits zero times: reject rather than store a
-    // size that can never print.
-    const grid = deriveGrid({ paper_w: d.media_w, paper_h: d.media_h, ...d });
-    if (grid.cols < 1 || grid.rows < 1) {
-      res.status(400).json({ error: "does_not_fit", detail: `${withArticle(`${d.label_w}x${d.label_h}"`)} label does not fit ${withArticle(`${d.media_w}x${d.media_h}"`)} media with those margins` });
-      return;
-    }
-    const row = await tenantDb(req)
-      .insertInto("labels_custom_sizes")
-      .values({ ...d, created_by_user_id: sessionUser(req).id } as never)
-      .returning(COLS as unknown as string[] as never)
-      .executeTakeFirstOrThrow();
-    res.status(201).json(present(row as unknown as SizeRow));
+    const out = await writeSize(tenantDb(req), parsed.data, { userId: sessionUser(req).id });
+    if (out && "error" in out) return void res.status(400).json({ error: "does_not_fit", detail: out.error });
+    res.status(201).json(out!.size);
   }),
 );
 
-// AI-REACH: workspace configuration; the assistant changes config only through a workspace-scoped action, so a route with no action stays a person's
+// AI-ACTION: labels:save-size
 sizesRouter.put(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
+    if (!(await requireCapability(req, res, "labels:save-size"))) return;
     const parsed = SizeBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const d = parsed.data;
-    const grid = deriveGrid({ paper_w: d.media_w, paper_h: d.media_h, ...d });
-    if (grid.cols < 1 || grid.rows < 1) {
-      res.status(400).json({ error: "does_not_fit" });
-      return;
-    }
-    const row = await tenantDb(req)
-      .updateTable("labels_custom_sizes")
-      .set({ ...d, updated_at: new Date() } as never)
-      .where("id", "=", req.params.id as never)
-      .returning(COLS as unknown as string[] as never)
-      .executeTakeFirst();
-    if (!row) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-    res.json(present(row as unknown as SizeRow));
+    const out = await writeSize(tenantDb(req), parsed.data, { id: String(req.params.id) });
+    if (!out) return void res.status(404).json({ error: "not_found" });
+    if ("error" in out) return void res.status(400).json({ error: "does_not_fit" });
+    res.json(out.size);
   }),
 );
 
-// AI-REACH: destructive on a record with no undo path through the ledger; delete_record covers kinds that declare it
+// AI-ACTION: labels:remove-size
 sizesRouter.delete(
   "/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin", "member")) return;
-    const r = await tenantDb(req)
-      .deleteFrom("labels_custom_sizes")
-      .where("id", "=", req.params.id as never)
-      .executeTakeFirst();
-    res.json({ deleted: Number(r.numDeletedRows ?? 0) });
+    if (!(await requireCapability(req, res, "labels:remove-size"))) return;
+    res.json({ deleted: await removeSize(tenantDb(req), String(req.params.id)) });
   }),
 );

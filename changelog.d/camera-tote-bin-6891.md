@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-17
 docs_target: docs/user-guide/scan.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-19
 ---
 
 A storage tote scanned in the camera can become a bin in one tap, and the next scans land inside it without leaving the camera; undoing a scan put onto a bin you already had no longer deletes that bin.

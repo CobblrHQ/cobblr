@@ -7,6 +7,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantContext, tenantDb } from "../db.js";
 import type { InventoryDB } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const spoolmanRouter = Router({ mergeParams: true });
@@ -68,7 +69,8 @@ const ConnCreate = z.object({
   base_url: z.string().url().max(500),
   api_key: optionalText(500),
 });
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — takes a Spoolman's address and API key; the assistant
+// never handles a secret
 spoolmanRouter.post(
   "/connections",
   asyncHandler(async (req, res) => {
@@ -84,7 +86,8 @@ spoolmanRouter.post(
     res.status(201).json(row);
   }),
 );
-// AI-REACH: holds or mints credentials; the assistant must never handle these
+// AI-REACH: exempt — deletes a Spoolman connection and its stored key for
+// good; no undo can bring a secret back
 spoolmanRouter.delete(
   "/connections/:id",
   asyncHandler(async (req, res) => {
@@ -96,38 +99,33 @@ spoolmanRouter.delete(
 
 // ── sync: pull Spoolman spools → upsert parts (qty = remaining) ──
 const SyncBody = z.object({ connection_id: z.string().uuid(), instance: z.string().max(120).optional(), authority: z.enum(["spoolman", "cobblr"]).optional() });
-// AI-REACH: drives an external connector with its own credentials and rate limits; a person owns that
-spoolmanRouter.post(
-  "/sync",
-  asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
-    const ctx = tenantContext(req);
-    const parsed = SyncBody.safeParse(req.body);
-    if (!parsed.success) return void badBody(res, parsed.error);
-
-    const conn = await store().getInternal(ctx.org.id, parsed.data.connection_id);
-    if (!conn || conn.type !== SPOOLMAN_TYPE) {
-      return void res.status(404).json({ error: { code: "not_found", message: "no such Spoolman connection" } });
-    }
+/** Pull a Spoolman's spools into stock: the route's sync and inventory:pull-connected-stock. */
+export async function syncSpoolman(
+  db: Kysely<InventoryDB>,
+  orgId: string,
+  connectionId: string,
+  opts: { instance?: string; authority?: "spoolman" | "cobblr" },
+): Promise<{ status: 200; synced: number; created: number; updated: number } | { status: 404 | 502; code: string; message: string }> {
+    const conn = await store().getInternal(orgId, connectionId);
+    if (!conn || conn.type !== SPOOLMAN_TYPE) return { status: 404, code: "not_found", message: "no such Spoolman connection" } as const;
     let apiKey: string | null = null;
     if (conn.credentials_enc) {
-      const creds = await platform().integrations.decryptCredentials(ctx.org.id, conn.credentials_enc);
+      const creds = await platform().integrations.decryptCredentials(orgId, conn.credentials_enc);
       apiKey = (creds.apiKey as string | undefined) ?? null;
     }
 
     let spools: SpoolmanSpool[];
     try {
-      spools = await fetchSpools(ctx.org.id, conn.base_url, apiKey);
+      spools = await fetchSpools(orgId, conn.base_url, apiKey);
     } catch (err) {
-      await store().setProbe(ctx.org.id, conn.id, {}, (err as Error).message.slice(0, 120)).catch(() => {});
-      return void res.status(502).json({ error: { code: "spoolman_unreachable", message: (err as Error).message } });
+      await store().setProbe(orgId, conn.id, {}, (err as Error).message.slice(0, 120)).catch(() => {});
+      return { status: 502, code: "spoolman_unreachable", message: (err as Error).message } as const;
     }
 
-    const saved = await store().get(ctx.org.id, conn.id);
-    const authority = parsed.data.authority ?? (saved?.config.authority === "cobblr" ? "cobblr" : "spoolman");
-    const onlyConnection = (await store().list(ctx.org.id)).filter((c) => c.type === SPOOLMAN_TYPE).length === 1;
-    const db = tenantDb(req) as Kysely<InventoryDB>;
-    const instance = parsed.data.instance || "inventory";
+    const saved = await store().get(orgId, conn.id);
+    const authority = opts.authority ?? (saved?.config.authority === "cobblr" ? "cobblr" : "spoolman");
+    const onlyConnection = (await store().list(orgId)).filter((c) => c.type === SPOOLMAN_TYPE).length === 1;
+    const instance = opts.instance || "inventory";
     let created = 0;
     let updated = 0;
     for (const sp of spools) {
@@ -173,7 +171,7 @@ spoolmanRouter.post(
           })
           .where("id", "=", existing.id)
           .execute();
-        if (authority === "cobblr") await publishSpool(ctx.org.id, db, existing.id);
+        if (authority === "cobblr") await publishSpool(orgId, db, existing.id);
         updated++;
       } else {
         await db
@@ -192,9 +190,21 @@ spoolmanRouter.post(
         created++;
       }
     }
-    await store().update(ctx.org.id, conn.id, { config: { authority } });
-    await store().setProbe(ctx.org.id, conn.id, { spools: spools.length }, "ok").catch(() => {});
-    res.json({ ok: true, synced: spools.length, created, updated });
+    await store().update(orgId, conn.id, { config: { authority } });
+    await store().setProbe(orgId, conn.id, { spools: spools.length }, "ok").catch(() => {});
+    return { status: 200, synced: spools.length, created, updated };
+}
+
+// AI-ACTION: inventory:pull-connected-stock
+spoolmanRouter.post(
+  "/sync",
+  asyncHandler(async (req, res) => {
+    if (!(await requireCapability(req, res, "inventory:pull-connected-stock"))) return;
+    const parsed = SyncBody.safeParse(req.body);
+    if (!parsed.success) return void badBody(res, parsed.error);
+    const out = await syncSpoolman(tenantDb(req) as Kysely<InventoryDB>, tenantContext(req).org.id, parsed.data.connection_id, parsed.data);
+    if (out.status !== 200) return void res.status(out.status).json({ error: { code: out.code, message: out.message } });
+    res.json({ ok: true, synced: out.synced, created: out.created, updated: out.updated });
   }),
 );
 

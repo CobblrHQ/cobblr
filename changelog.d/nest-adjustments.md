@@ -2,7 +2,7 @@
 type: feature
 scope: digifab
 date: 2026-10-13
-docs_target: docs/modules/digifab-drivers.md#Adjust a saved layout
+docs_target: docs/modules/digifab-drivers/queue-guidance.md#Adjust a saved layout
 docs_published: 2026-10-14
 ---
 

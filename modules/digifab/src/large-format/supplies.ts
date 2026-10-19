@@ -22,7 +22,7 @@ export async function refreshSupplies(db:Kysely<DigifabDB>,orgId:string,b:z.infe
   const message=`${device.name}: low ink or toner. ${low.map(i=>`${i.name}: ${i.percent}%`).join(", ")}`;
   for(const userId of await platform().notifications.audienceFor(orgId,"digifab.ink.low")) {
    // dispatch-per-row-ok: one combined supply alert for each configured recipient.
-   await platform().notifications.dispatch({orgId,userId,eventType:"digifab.ink.low",module:"digifab",triggeredBy:"schedule",priority:"normal",message,link_url:`/station/machine/${b.connection_id}/${encodeURIComponent(b.device_id)}`,payload:{connectionId:b.connection_id,deviceId:b.device_id,supplies:low}});
+   await platform().notifications.dispatch({orgId,userId,eventType:"digifab.ink.low",module:"digifab",triggeredBy:"schedule",subjects:[{kind:"digifab:device",id:`${b.connection_id}/${b.device_id}`,question:"ink-low",line:message}],priority:"normal",message,link_url:`/station/machine/${b.connection_id}/${encodeURIComponent(b.device_id)}`,payload:{connectionId:b.connection_id,deviceId:b.device_id,supplies:low}});
   }
  }
  return {ok:true,device};

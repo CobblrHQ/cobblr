@@ -103,6 +103,7 @@ export async function healUnreceivedArrivalsIn(orgId: string, db: Kysely<Purchas
           message,
           module: "purchases",
           triggeredBy: "schedule",
+          subjects: [{ kind: "platform:workspace", id: orgId, question: "unconfirmed-receipts", line: message }],
           link_url: "/purchases?unconfirmed=1",
           card: { heading: "Check what was delivered", body: message },
         })

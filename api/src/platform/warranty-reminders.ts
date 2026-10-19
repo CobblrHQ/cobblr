@@ -40,6 +40,7 @@ export async function remindWarranties(orgId: string, now: Date): Promise<{ noti
     // dispatch-per-row-ok: one combined reminder per member, remembering each recipient separately
     const result = await platform().notifications.dispatch({
       orgId, userId, eventType: "warranty.ending", triggeredBy: "schedule", priority: "normal",
+      subjects: due.map((e) => ({ kind: e.entityModule && e.entityType ? `${e.entityModule}:${e.entityType}` : "platform:calendar-event", id: e.entityId ?? e.id, question: "warranty-ending", line: `${e.title} in ${daysUntilField(e.date, today)} days (${e.date})` })),
       message, link_url: link ?? `/calendar?date=${due[0]!.date}`,
       entityType: only?.entityType, entityId: only?.entityId,
       payload: { count: due.length, expiresOn: only?.date },

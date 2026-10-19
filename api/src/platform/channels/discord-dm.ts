@@ -21,7 +21,7 @@ import { productName } from "../product-name.js";
 import { meta } from "../../db/meta.js";
 import { sendDiscordDm, dmResultUnverifies } from "../discord-bot-trigger.js";
 import { canDeliverDiscordDm } from "../discord-connection.js";
-import { absoluteAppUrl } from "../public-url.js";
+import { emailableUrl } from "../link-origin.js";
 import { componentsForRows, dmSummary } from "./discord-card.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
@@ -77,16 +77,15 @@ export function discordDmPayload(
   // plainForm is the DEGRADED shape: if Discord rejects the rich payload
   // (malformed embed, component limit change), the bot retries with this, so
   // a render failure costs the decoration and never the notification.
-  const plainForm = event.link_url
-    ? `${event.message}\n${absoluteAppUrl(event.link_url)}`
-    : event.message;
+  const link = event.link_url ? emailableUrl(event.link_url) : null;
+  const plainForm = link ? `${event.message}\n${link}` : event.message;
   // With a card there is NO text line: the embed's title already says who and
   // where ("Alex in the Workshop"), so a sentence above it saying "Alex said
   // something in the Workshop" was the same fact twice. The interactions
   // endpoint reads the embed back as the message's "original" (the bot
   // forwards it), and the plain form below is what a failed embed degrades to.
   const text = event.card ? "" : plainForm;
-  const openUrl = event.card && event.link_url ? absoluteAppUrl(event.link_url) : null;
+  const openUrl = event.card ? link : null;
 
   // The card becomes ONE embed. Discord renders it with a coloured spine and
   // its own block, which is what makes a notification readable at a glance
@@ -97,7 +96,7 @@ export function discordDmPayload(
           ...(event.card.heading ? { title: event.card.heading.slice(0, 250) } : {}),
           ...(event.card.body ? { description: event.card.body.slice(0, 4000) } : {}),
           ...(event.card.context ? { footer: { text: event.card.context.slice(0, 2000) } } : {}),
-          ...(event.link_url ? { url: absoluteAppUrl(event.link_url) } : {}),
+          ...(link ? { url: link } : {}),
           color: 0xc98a3f,
         },
       ]

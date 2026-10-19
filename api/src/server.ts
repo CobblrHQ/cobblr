@@ -353,6 +353,7 @@ export function createApp(): AppHandles {
         visited: f.visited,
         failed: f.failed,
         failures: f.failures,
+        ...(f.held ? { held: f.held.map((h) => ({ ...h, until: new Date(h.until).toISOString() })) } : {}),
       })),
       // The kinds whose list resolver FAILED in the last hour (a search or a
       // list that answered `failed`), with the last error. Empty is healthy.

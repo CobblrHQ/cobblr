@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.22.1",
+  version: "0.22.2",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -772,7 +772,7 @@ export default defineModule({
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots?, once?, reversible?, takeBack?, sourceKind?, sourceId? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots?, once?, reversible?, takeBack?, sourceKind?, sourceId? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true (set in the args, or carried by the event, as a received purchase does) a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -1203,6 +1203,41 @@ export default defineModule({
         invokeHandler: "inventory.field-to-location",
         // Migration-only: run by the bundle-upgrade flow, never a detail button.
         userInvokable: false,
+      },
+      {
+        group: "stock",
+        // UI-SCREEN: /inventory/*
+        id: "inventory:pull-connected-stock",
+        changes: "records",
+        // ADMIN-ONLY: the page's own route POST /spoolman/sync is owner or admin (spoolman.ts)
+        runBy: "admin",
+        examples: ["sync my spools from Spoolman"],
+        label: "Sync spools from Spoolman",
+        description: "Pull the spools from a connected Spoolman into stock now: new spools are added and remaining weights updated. Its key is never shown.",
+        scope: "workspace",
+        invokeHandler: "inventory.pull-connected-stock",
+        userInvokable: true,
+        argsSchema: {
+          connection: { label: "Which Spoolman (its name; empty: the only one)", type: "text" },
+        },
+      },
+      {
+        group: "stock",
+        id: "inventory:add-unit",
+        changes: "records",
+        runBy: "member",
+        // The item page already has Add unit (its Units section); a second
+        // button for the same gesture is what one-button-per-gesture refuses.
+        userInvokable: false,
+        examples: ["add a unit with serial SN-0042"],
+        label: "Add a numbered unit",
+        description: "Add one physical unit of this item to its list, with its serial number, so each one can be tracked on its own. The item's counted quantity is not changed.",
+        appliesTo: { kinds: ["inventory:part"] },
+        invokeHandler: "inventory.add-unit",
+        argsSchema: {
+          serial_number: { label: "Its serial number", type: "text" },
+          name: { label: "Its name (empty: the item's name and serial)", type: "text" },
+        },
       },
     ],
   },

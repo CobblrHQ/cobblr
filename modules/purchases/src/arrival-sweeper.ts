@@ -15,6 +15,7 @@
 // Modelled on lists' expiry sweeper: hourly tick, per-org isolation, and
 // withDb so a tenant pool cannot outlive the closure (CLAUDE.md section 8.1).
 
+import { arrivalDigest, arrivalLine } from "./arrival-card.js";
 import { sql, type Kysely } from "kysely";
 import { platform, parcelAudience } from "@cobblr/platform-contract";
 import { arrivedEverywhere } from "@cobblr/platform-contract";
@@ -440,6 +441,14 @@ async function visitWorkspace(
         // Only now, with something to say, do we pay for the member list.
         const memberIds = await platform().notifications.orgMemberIds(org.id);
 
+        const claimed: Array<{
+          row: (typeof decisions)[number]["row"];
+          decision: (typeof decisions)[number]["decision"];
+          message: string;
+          askedAbout: string | null;
+          audience: string[];
+          recordLink: string | undefined;
+        }> = [];
         for (const { row, decision } of decisions) {
           // Null for a carrier-driven ask on an order with no estimate.
           const askedAbout = row.expected_arrival;
@@ -487,62 +496,99 @@ async function visitWorkspace(
             "purchases:order",
             row.id,
           );
-          for (const userId of audience) {
-            try {
+          claimed.push({ row, decision, message, askedAbout, audience, recordLink });
+          asked += 1;
+        }
+
+        // ONE message per person per morning, however many orders are due:
+        // each of them a line with its own answer, and "All arrived". Three
+        // orders due the same day used to be three DMs, each with a button.
+        const perPerson = new Map<string, typeof claimed>();
+        for (const c of claimed) {
+          for (const userId of c.audience) perPerson.set(userId, [...(perPerson.get(userId) ?? []), c]);
+        }
+        for (const [userId, items] of perPerson) {
+          try {
+            if (items.length > 1) {
+              const digest = arrivalDigest(
+                items.map((c) => ({
+                  orderId: c.row.id,
+                  name: c.row.vendor ?? (c.row.order_number ? `order ${c.row.order_number}` : "Your order"),
+                  orderNumber: c.row.order_number,
+                  question: c.message,
+                })),
+              );
               await platform().notifications.dispatch({
                 orgId: org.id,
                 userId,
                 eventType: "purchases.order.due",
-                message,
+                message: digest.message,
                 module: "purchases",
-                // This sweeper IS the clock - its asks belong to the user's
-                // digest window, not to whatever hour the tick ran.
                 triggeredBy: "schedule",
-                entityType: "purchases:order",
-                entityId: row.id,
-                // Without this the notification asks a question and gives no
-                // way to answer it: dispatch does NOT derive a link from
-                // entityType/entityId, it passes link_url straight through.
-                ...(recordLink
-                  ? { link_url: recordLink }
-                  : { no_link_reason: "the order has no detail page" }),
-                // The DM renders this as one rich card with the button in it,
-                // instead of a sentence trailing a bare URL.
-                card: {
-                  heading: askedAbout
-                    ? `An order was due ${askedAbout}`
-                    : row.shipment_state
-                      ? "An order should have arrived"
-                      : "Has this order arrived?",
-                  body: message,
-                  ...(row.vendor ? { context: row.vendor } : {}),
-                },
-                payload: { expectedArrival: askedAbout, nudge: decision === "nudge" },
-                // The answer to the question the message asks, offered in the
-                // message. `mark-arrived` is idempotent, so pressing it twice
-                // (two devices, a stale card) is harmless.
-                //
-                // Only here, and NOT on core-scan's parcel notification: that
-                // one is about a receipt still in the inbox, which has no
-                // order to mark. An action whose subject does not exist yet
-                // returns "no order in scope" and looks like a dead button.
-                actions: [
-                  {
-                    id: "arrived",
-                    label: "Yes, it turned up",
-                    action: "purchases:mark-arrived",
-                    args: { orderId: row.id },
-                    style: "primary" as const,
-                  },
-                ],
+                subjects: items.map((c) => ({ kind: "purchases:order", id: c.row.id, question: "delivery-due", line: arrivalLine({ orderId: c.row.id, name: "", orderNumber: c.row.order_number, question: c.message }) })),
+                subjectDay: today,
+                // PAGE-LINK: several orders at once, so the page they are listed on.
+                link_url: "/purchases",
+                card: digest.card,
+                payload: { orderIds: items.map((c) => c.row.id) },
+                actions: digest.actions,
               });
-            } catch (err) {
-              platform().health.notePassFailure("purchases.arrival-notify", orgId, err);
-              console.error("[purchases] arrival notify failed:", (err as Error).message);
+              continue;
             }
+            const { row, decision, message, askedAbout, recordLink } = items[0]!;
+            await platform().notifications.dispatch({
+              orgId: org.id,
+              userId,
+              eventType: "purchases.order.due",
+              message,
+              module: "purchases",
+              // This sweeper IS the clock - its asks belong to the user's
+              // digest window, not to whatever hour the tick ran.
+              triggeredBy: "schedule",
+              subjects: [{ kind: "purchases:order", id: row.id, question: "delivery-due", line: message }],
+              subjectDay: today,
+              entityType: "purchases:order",
+              entityId: row.id,
+              // Without this the notification asks a question and gives no
+              // way to answer it: dispatch does NOT derive a link from
+              // entityType/entityId, it passes link_url straight through.
+              ...(recordLink
+                ? { link_url: recordLink }
+                : { no_link_reason: "the order has no detail page" }),
+              // The DM renders this as one rich card with the button in it,
+              // instead of a sentence trailing a bare URL.
+              card: {
+                heading: askedAbout
+                  ? `An order was due ${askedAbout}`
+                  : row.shipment_state
+                    ? "An order should have arrived"
+                    : "Has this order arrived?",
+                body: message,
+                ...(row.vendor ? { context: row.vendor } : {}),
+              },
+              payload: { expectedArrival: askedAbout, nudge: decision === "nudge" },
+              // The answer to the question the message asks, offered in the
+              // message. `mark-arrived` is idempotent, so pressing it twice
+              // (two devices, a stale card) is harmless.
+              //
+              // Only here, and NOT on core-scan's parcel notification: that
+              // one is about a receipt still in the inbox, which has no
+              // order to mark. An action whose subject does not exist yet
+              // returns "no order in scope" and looks like a dead button.
+              actions: [
+                {
+                  id: "arrived",
+                  label: "Yes, it turned up",
+                  action: "purchases:mark-arrived",
+                  args: { orderId: row.id },
+                  style: "primary" as const,
+                },
+              ],
+            });
+          } catch (err) {
+            platform().health.notePassFailure("purchases.arrival-notify", orgId, err);
+            console.error("[purchases] arrival notify failed:", (err as Error).message);
           }
-
-          asked += 1;
         }
       }
     }
@@ -689,6 +735,7 @@ async function visitShipments(
           message,
           module: "purchases",
           triggeredBy: "schedule",
+          subjects: [{ kind: "purchases:shipment", id: parcel.id, question: `parcel-${parcel.shipment_state}`, line: message }],
           entityType: "purchases:order",
           entityId: parcel.order_id,
           ...(recordLink ? { link_url: recordLink } : { no_link_reason: "the order has no detail page" }),

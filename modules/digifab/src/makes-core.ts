@@ -13,6 +13,7 @@
 // last step Cobblr can do, with one door to what comes next. Never an empty
 // box for something that cannot happen.
 
+import { familyPrinting } from "./core/families.js";
 import { sql, type Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { readFilamentDrawn, readGramsByTool } from "@cobblr/platform-contract/filament-draw";
@@ -281,8 +282,9 @@ export async function linkPrint(db: Kysely<DigifabDB>, orgId: string, makeId: st
  *  step's status, and links to the spools the print actually drew from.
  *  Nothing when the job belongs to no Make. */
 export async function settleMakeForJob(db: Kysely<DigifabDB>, orgId: string, jobId: string, status: "completed" | "failed" | "cancelled"): Promise<void> {
-  const { settleBatchForJob } = await import("./print-batch.js");
-  if (await settleBatchForJob(db, orgId, jobId, status)) return;
+  // A batch print's job settles its batch; with no printers family there is no batch to settle.
+  const printing = familyPrinting();
+  if (printing && await printing.settleBatchForJob(db, orgId, jobId, status)) return;
   const step = await db.selectFrom("digifab_make_steps").select(["id", "make_id"]).where("job_id", "=", jobId).where("step", "=", "print").executeTakeFirst();
   if (!step) return;
   await db

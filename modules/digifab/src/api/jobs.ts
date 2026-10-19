@@ -1,9 +1,5 @@
-import { controlCnc } from "../cnc-controls.js";
-import { CncPlacementBody, placeCncProgram } from "../cnc-placement-service.js";
+import { familyControlling, requireFamilyProcess } from "../core/families.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { prepareResinPrint } from "../resin-prints.js";
-import { extractPlateMetadata } from "../library/extract-metadata.js";
-import { controlResinPrinter } from "../resin-controls.js";
 import { stopLargePrint } from "../large-format/service.js";
 // /api/v1/orgs/:slug/modules/digifab/jobs —
 // the print queue. Create a job (queued), SEND it to the farm
@@ -13,36 +9,31 @@ import { stopLargePrint } from "../large-format/service.js";
 // farm, so it's owner/admin only and isolated. The mock driver makes
 // the whole pipeline testable without touching hardware.
 
-import { sql } from "kysely";
-import { isLayoutFile } from "../laser-plans.js";
+import { sql, type Kysely } from "kysely";
+import { isLayoutFile } from "../sheet-layout.js";
 import { verifyLaserOutput } from "../laser-layout.js";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
-import { tenantDb, tenantContext, sessionUser } from "../db.js";
+import { tenantDb, tenantContext, sessionUser, type DigifabDB } from "../db.js";
 import { asyncHandler, badBody } from "./util.js";
 import { pollJob, sendJob, assignJob, buildDriverById, reverseBuildIfCommitted, TERMINAL, markJobTerminal, managerName } from "../jobs-core.js";
 import { enqueuePoll, reconcilePolls } from "../poll-worker.js";
-import { JobApprovalSchema, ReviewRequired } from "../drivers/job-review.js";
+import { JobApprovalSchema } from "../drivers/job-review.js";
 import { requireLaserBedReady, stationTokenHash } from "../laser-station.js";
 import { matchingLibraryMaterial } from "../laser-material.js";
-import type { JobApproval } from "../drivers/types.js";
+import type { CommandResult, JobApproval, MachineDriver } from "../drivers/types.js";
 import { plainDriverError } from "../job-truth.js";
 
-export const jobsRouter = Router({ mergeParams: true });
+/** Stop through the family whose control drives this resin printer; a printer no family drives is not stopped as a generic machine. */
+async function resinStop(db: Kysely<DigifabDB>, orgId: string, driver: MachineDriver, deviceId: string, connectionId: string): Promise<CommandResult> {
+  const own = await familyControlling(driver);
+  if (!own) return { ok: false, detail: "This workspace cannot stop this resin printer: its machine family is not available." };
+  return own.run(db, orgId, driver, deviceId, "stop", {}, connectionId);
+}
 
-// AI-REACH: action digifab:place-program
-// UI-SCREEN: /station/machine/:connectionId/:deviceId
-jobsRouter.post("/:id/place", asyncHandler(async (req, res) => {
-  // ADMIN-ONLY: placing a program on stock is setting up the machine; it stays with the admin tier, at every door (#5170)
-  if (!(await requireCapability(req, res, "digifab:place-program"))) return;
-  const body = CncPlacementBody.safeParse(req.body), id = z.string().uuid().safeParse(req.params.id);
-  if (!body.success) return badBody(res, body.error);
-  if (!id.success) return badBody(res, id.error);
-  try { res.json(await placeCncProgram(tenantDb(req), tenantContext(req).org.id, id.data, body.data)); }
-  catch (e) { if (!(e instanceof ReviewRequired)) throw e; res.status(409).json({ error: { code: "placement_refused", message: e.message } }); }
-}));
+export const jobsRouter = Router({ mergeParams: true });
 
 const JOB_COLS = [
   "embroidery_run",
@@ -57,6 +48,9 @@ const JOB_COLS = [
   "material_type",
   "material_grams_by_tool",
   "material_drawn",
+  "cost_amount",
+  "cost_currency",
+  "cost_detail",
   "material_pending",
   "remote_file_id",
   "remote_job_id",
@@ -155,7 +149,7 @@ jobsRouter.get(
       const ext = obs.map((o) => ({
         embroidery_run: false, id: o.id, connection_id: o.connection_id, file_ref: o.file_ref ?? "(started on the printer)",
         target_device: o.serial, target_tag: null, target_pool: null,
-        material_part_id: null, material_grams: null, material_type: null, material_grams_by_tool: null, material_drawn: null, material_pending: false, remote_file_id: null, remote_job_id: null,
+        material_part_id: null, material_grams: null, material_type: null, material_grams_by_tool: null, material_drawn: null, material_pending: false, cost_amount: null, cost_currency: null, cost_detail: null, remote_file_id: null, remote_job_id: null,
         status: "printing", priority: 0, attempts: 0, max_attempts: 1, progress: null, eta_sec: null,
         error: null, file_id: null, linked_machine_id: null, linked_task_id: null,
         linked_build_id: null, build_qty: 1, build_consumed_at: null, build_reversed_at: null,
@@ -321,8 +315,7 @@ jobsRouter.post("/:id/prepare", asyncHandler(async (req, res) => {
     const review = await driver.prepareJob(new Uint8Array(file.bytes), file.filename);
     if (driver.printProcess === "resin") {
       if (!job.target_device) throw new Error("Choose this resin printer before reviewing the print.");
-      const seconds = typeof device.raw?.PrintScreen === "number" ? device.raw.PrintScreen : undefined;
-      await prepareResinPrint(db, orgId, job.id, job.connection_id, job.target_device, review.fileId, extractPlateMetadata(file.filename, Buffer.from(file.bytes)), seconds);
+      await requireFamilyProcess("resin").prepare({ db, orgId, jobId: job.id, connectionId: job.connection_id, deviceId: job.target_device, reviewFileId: review.fileId, filename: file.filename, bytes: new Uint8Array(file.bytes), raw: device.raw });
       await db.updateTable("digifab_jobs").set({ resin_print: true }).where("id", "=", job.id).execute();
     }
     const layout = job.laser_layout;
@@ -637,8 +630,9 @@ export async function cancelJob(db: ReturnType<typeof tenantDb>, orgId: string, 
 
     if(job.send_token && job.connection_id && job.target_device && !job.remote_job_id){
       const driver=await buildDriverById(db,orgId,job.connection_id);
-      if(await driver?.jobReviewKind?.()==="cnc"){
-        const result=await controlCnc(db,orgId,driver!,job.target_device,"stop",{},job.connection_id);
+      const own=await driver?.jobReviewKind?.()==="cnc"?await familyControlling(driver):null;
+      if(own){
+        const result=await own.run(db,orgId,driver!,job.target_device,"stop",{},job.connection_id);
         if(!result.ok)return reply(502, {error:{code:"cancel_failed",message:result.detail??"The CNC controller has not confirmed Stop. Check the machine."}});
         return reply(202, {status:job.status,cancelling:true,remote_cancelled:false,message:"Stop requested during Start. Waiting for the CNC controller to confirm."});
       }
@@ -649,7 +643,7 @@ export async function cancelJob(db: ReturnType<typeof tenantDb>, orgId: string, 
       try {
         const result = printDriver.printProcess === "large-format"
           ? await stopLargePrint(db, orgId, {connection_id:job.connection_id,device_id:job.target_device})
-          : await controlResinPrinter(db, orgId, printDriver, job.target_device, "stop", job.connection_id);
+          : await resinStop(db, orgId, printDriver, job.target_device, job.connection_id);
         if (!result.ok) return reply(502, { error: { code: "cancel_failed", message: result.detail ?? "The printer did not confirm Stop." } });
       } catch (e) {
         return reply(502, { error: { code: "cancel_failed", message: plainDriverError(e, "the printer", "stopping the print") } });

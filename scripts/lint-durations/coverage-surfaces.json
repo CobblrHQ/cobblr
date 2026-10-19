@@ -5,6 +5,8 @@
     "e2e"
   ],
   "ms": 642,
+  "readMB": 19.1,
+  "readTreeMB": 80.1,
   "recorded": "2026-09-30",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
 }

@@ -8,7 +8,6 @@ import type { Kysely } from "kysely";
 import { platform, readJsonArg } from "@cobblr/platform-contract";
 import type { DigifabDB } from "../db.js";
 import { ReviewRequired } from "../drivers/job-review.js";
-import { recordCutterOutcome } from "../cutter-actions.js";
 import { recordLargePrintOutcome } from "../large-format/actions.js";
 import { familyStationRun } from "../core/families.js";
 
@@ -26,7 +25,6 @@ export function registerStationRunAction(): void {
       const operation = z.enum(STATION_RUN_OPERATIONS).parse(args.operation);
       const id = z.string().uuid().parse(args.id);
       const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<DigifabDB>;
-      if (operation === "cutter_outcome") return await recordCutterOutcome(db, ctx.orgId, id, ctx.userId, fields);
       if (operation === "large_format_outcome") return await recordLargePrintOutcome(db, ctx.orgId, id, ctx.userId, fields);
       const family = familyStationRun(operation);
       if (!family) return { ok: false, error: `No machine family answers ${operation} here.` };

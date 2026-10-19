@@ -459,10 +459,12 @@ function PrinterModal({
   // Bridges already registered in this workspace, so an address is PICKED rather
   // than retyped per printer. That was the whole complaint: the address existed
   // in three places and matched in none of them.
+  // The bridge list is Digital Fabrication's; with it off the list would be refused (#7519).
+  const digifabOn = !!useEnabledModules(slug)?.has("digifab");
   const bridgesQ = useQuery({
     queryKey: ["edge-bridges", slug],
     queryFn: () => api.listEdgeBridges(slug),
-    enabled: !!slug,
+    enabled: !!slug && digifabOn,
     staleTime: 30_000,
   });
   const knownBridges = bridgesQ.data?.direct ?? [];

@@ -4,10 +4,10 @@ import { platform } from "@cobblr/platform-contract";
 import type { DigifabDB } from "./db.js";
 import type { JobApproval, JobReview } from "./drivers/types.js";
 import { ReviewRequired } from "./drivers/job-review.js";
-import { claimCncStock } from "./cnc-start.js";
+import { familyOfReviewKind } from "./core/families.js";
 import { LaserMaterialSchema, materialFromFields, materialMismatch, preparedSheetAreaMismatch } from "./laser-material.js";
 
-import { layoutOf, layoutMismatch, libraryForJob, laserBed } from "./laser-plans.js";
+import { layoutOf, layoutMismatch, libraryForJob, laserBed } from "./sheet-layout.js";
 
 const permits = new WeakSet<object>();
 export interface StationPermit { readonly fileId: string; readonly projectHash: string }
@@ -32,8 +32,9 @@ export async function authorizeLaserStart(db: Kysely<DigifabDB>, orgId: string, 
     .where("revoked_at", "is", null).executeTakeFirst();
   if (!station) throw new ReviewRequired("This screen is not approved for this machine. Approve at the machine's station.");
   await requireLaserBedReady(db, job);
-  if (printReview?.project.kind === "cnc") {
-    await claimCncStock(db, orgId, job, approval, printReview, station.id);
+  const familyStart = familyOfReviewKind(printReview?.project.kind)?.start;
+  if (familyStart && printReview) {
+    await familyStart.authorize({ db, orgId, job, approval, review: printReview, stationId: station.id });
     const permit = Object.freeze({ fileId: approval.fileId, projectHash: approval.projectHash });
     permits.add(permit);
     return permit;

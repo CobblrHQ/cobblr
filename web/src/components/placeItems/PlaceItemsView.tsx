@@ -287,7 +287,11 @@ export function PlaceItemsView({
         // On a phone the drawer covers the plan: a thing picked up from it
         // needs the plan in view to be put down (#4436). The bar it folds to
         // says what is picked up, and opens again to pick more.
-        if (pickingUp && from === "rail" && !isDesktop) setSheetOpen(false);
+        if (pickingUp && from === "rail" && !isDesktop) {
+          // Folding the sheet exposes the plan to this tap's browser click.
+          swallowNextClick();
+          setSheetOpen(false);
+        }
       }
     };
     window.addEventListener("pointermove", move);

@@ -25,6 +25,7 @@ import { scanReader } from "../services/scan-reader.js";
 import { autoRankCatalogPhoto, readPhotoRankEnabled } from "../services/auto-rank.js";
 import { runReceiptBackfill } from "../services/receipt-backfill.js";
 import { attachPaperwork } from "../services/attach-paperwork.js";
+import { confirmReceiptAndItsOrder } from "../services/receipt-answers.js";
 import { landedFills, planKnownFill, sayFilled, writeKnownFill, type KnownFill } from "../services/fill-known.js";
 
 let registered = false;
@@ -53,21 +54,7 @@ export function registerScanHandlers(): void {
     // mark-arrived: run from a receipt's own context, no args needed.
     const batchId = args.batch_id ?? (ctx.entity?.id || undefined);
     if (!batchId) return { ok: true, skipped: "no receipt in scope" };
-    const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreScanDB>;
-    const row = await db
-      .selectFrom("core_scan_batches")
-      .select(["id", "shipment_confirmed_at"])
-      .where("id", "=", batchId)
-      .executeTakeFirst();
-    if (!row) return { ok: false, error: "receipt not found" };
-    // Idempotent: two devices, or a stale card, answering twice is harmless.
-    if (row.shipment_confirmed_at) return { ok: true, skipped: "already confirmed" };
-    await db
-      .updateTable("core_scan_batches")
-      .set({ shipment_confirmed_at: new Date() })
-      .where("id", "=", batchId)
-      .execute();
-    return { ok: true, confirmed: true };
+    return confirmReceiptAndItsOrder(ctx, batchId);
   });
 
   platform().actions.registerHandler("core-scan.attach-paperwork", async (ctx) => {

@@ -19,6 +19,11 @@
 //            changed file that is not code also reaches the tests that name one
 //            of its directories ("bundles/", "migrations/"), and the tests in its
 //            own directory or above it (a fixture a test reads with readdirSync).
+//   READS    it reads a file by a path built from its own directory: `join(import.meta.dirname, "../index.ts")`,
+//            `resolve(__dirname, "..", "x.json")`. A source-reading safety check names its file by a relative
+//            path, which the NAMES rule cannot match when the basename is common (index.ts), so a pull request
+//            that moved api/src/index.ts's boot passes merged without running the one test that read that file
+//            for them, and turned main red (#7412, 2026-10-19). A read of a directory reaches every change under it.
 //   LISTS    it lists a directory (readdirSync, globSync) and filters it by a
 //            pattern the changed file matches: a regex with a literal prefix
 //            (`/^lint-.*\.ts$/`) against its name, or a glob string
@@ -26,6 +31,11 @@
 //            "every lint obeys X" tests: they name no file, so neither rule
 //            above reaches them, and a pull request adding a lint that broke
 //            one merged green and turned main red (#4614, 2026-10-02).
+//   SCANS    it reaches the repo's lister of test files (TEST_LISTER) through its imports, and any test file changed:
+//            it indexes every test in the repo (where-test ranks them by their words), so one more test anywhere can
+//            change its answer. #7434 added a test whose words outranked build-gate.test.ts in where-test's
+//            real-repo control; main's affected run never chose where-test.test.ts, and main read green over a
+//            red (2026-10-19).
 // and a changed test file always runs itself.
 //
 // FULL on any doubt: no base to diff against, a change to anything the runner or
@@ -257,6 +267,45 @@ export function namedBy(path, tests, testSources, basenameCount) {
   return out;
 }
 
+// `join(` or `resolve(` with the test's own directory first, then string-literal segments.
+const READ_CALL = /\b(?:join|resolve)\s*\(\s*(?:import\.meta\.dirname|__dirname)\s*((?:,\s*(["'`])[^"'`\n$]+\2\s*)+)\)/g;
+
+/** PURE. The repo paths a test reads by a path built from its own directory (READS). */
+export function readsOf(test, src) {
+  const dir = test.slice(0, test.lastIndexOf("/"));
+  const out = new Set();
+  for (const m of stripComments(src).matchAll(READ_CALL)) {
+    const segs = [...m[1].matchAll(/(["'`])([^"'`\n]+)\1/g)].map((x) => x[2]);
+    const p = posixJoin(dir, segs.join("/"));
+    if (p) out.add(p);
+  }
+  return out;
+}
+
+/**
+ * The tests that READ the changed path, or a directory holding it.
+ * @param {string} path
+ * @param {string[]} tests
+ * @param {Map<string, string>} testSources
+ */
+export function readBy(path, tests, testSources) {
+  const out = new Set();
+  for (const t of tests) {
+    for (const r of readsOf(t, testSources.get(t) ?? "")) {
+      if (r === path || path.startsWith(`${r}/`)) {
+        out.add(t);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** The module that lists every test file in the repo; a test reaching it reads the whole test tree (SCANS). */
+export const TEST_LISTER = "scripts/lib/unit-test-files.mjs";
+/** A test file of any suite: unit, api (`api/tests`) or e2e. */
+export const ANY_TEST = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
 export const LISTS = /\breaddirSync\s*\(|\breaddir\s*\(|\bglobSync\s*\(|\bglob\s*\(/;
 // A regex literal with a real literal prefix: `/^lint-.*\.ts$/`, not `/^\d+$/`.
 export const PREFIX_REGEX = /\/\^([A-Za-z][\w-]{2,}(?:[^/\n\\]|\\.)*)\/([dgimsuy]*)/g;
@@ -326,6 +375,13 @@ export function selectUnitTests({ changed, tests, sources, packages, basenameCou
     for (const f of dependents(graph, seeds, packages)) if (testSet.has(f) && !why.has(f)) why.set(f, `imports ${p}`);
     for (const t of namedBy(p, tests, testSources, basenameCount)) if (!why.has(t)) why.set(t, `names ${p}`);
     for (const t of listedBy(p, tests, testSources)) if (!why.has(t)) why.set(t, `lists files like ${p}`);
+    for (const t of readBy(p, tests, testSources)) if (!why.has(t)) why.set(t, `reads ${p}`);
+  }
+  const aTest = paths.find((p) => ANY_TEST.test(p));
+  if (aTest) {
+    for (const f of dependents(graph, keysOfChanged(TEST_LISTER, packages, versionOnly), packages)) {
+      if (testSet.has(f) && !why.has(f)) why.set(f, `scans every test file, and ${aTest} is one`);
+    }
   }
   const selected = tests.filter((t) => why.has(t));
   return {

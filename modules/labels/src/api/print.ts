@@ -67,7 +67,8 @@ const RenderBody = z.object({
   item_ids: z.array(z.string().uuid()).optional(),
 });
 
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — writes nothing; renders label images for the person's
+// browser or printer to print. The assistant queues labels through labels:print
 printRouter.post(
   "/render",
   asyncHandler(async (req, res) => {
@@ -200,7 +201,8 @@ const RecordPrinted = z.object({
 // whole queue: a partial batch (printer jammed at row 7) must leave the
 // unprinted rows queued. The paper is the source of truth, so this records what
 // physically exists and forgets the rest.
-// AI-REACH: drives a device or a preview surface, or is an operator/self-test probe
+// AI-REACH: exempt — the print path reporting which labels physically came out
+// of the printer; only the printer's side knows, and the paper is the truth
 printRouter.post(
   "/record",
   asyncHandler(async (req, res) => {

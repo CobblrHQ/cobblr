@@ -2,7 +2,7 @@
 // rather than entities.
 
 import { OFF_WHILE_LENT, lentWhy, loanOfFields } from "@cobblr/platform-contract/loan";
-import type { ActionUndoStep, ActionUndoer, ActionUndoContext } from "@cobblr/platform-contract/action-undo";
+import { isActionStep, onTheSameRecord, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type {
   ActionPlan,
   ActionPlanner,
@@ -144,8 +144,17 @@ export async function undoFor(actionId: string, result: unknown, ctx: ActionUndo
   if (!undoer) return null;
   const steps = await undoer(result, ctx);
   const list = steps === null ? [] : Array.isArray(steps) ? steps : [steps];
-  return list.length ? list : null;
+  if (!list.length) return null;
+  // A step that names a record action but no record runs on the record this
+  // action ran on: an undoer that forgot to say so would otherwise hand Undo a
+  // step that refuses ("runs on a record, but was invoked without one").
+  const bare = list.filter((st) => isActionStep(st) && !st.entity_id).map((st) => (st as { action_id: string }).action_id);
+  const entityScoped = bare.length && ctx.entity
+    ? new Set((await meta.selectFrom("entity_actions").select(["id", "scope"]).where("id", "in", bare).execute()).filter((r) => r.scope !== "workspace").map((r) => r.id))
+    : new Set<string>();
+  return onTheSameRecord(list, ctx.entity, entityScoped);
 }
+
 
 /** The owners whose actions a workspace can run: the modules it has turned
  *  on, and the kernel's own. A module's ROUTES already refuse a workspace that

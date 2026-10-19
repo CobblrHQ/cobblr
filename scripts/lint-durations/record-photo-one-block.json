@@ -5,6 +5,8 @@
     "generic-web-component"
   ],
   "ms": 500,
+  "readMB": 21.0,
+  "readTreeMB": 80.1,
   "recorded": "2026-10-01",
   "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
 }

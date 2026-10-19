@@ -8,7 +8,7 @@ import { DISPOSITIONS, DISPOSITION_LABELS } from "@cobblr/platform-contract/disp
 
 export default defineModule({
   name: "machines",
-  version: "0.5.3",
+  version: "0.6.0",
   displayName: "Machines",
   description:
     "The machines you run, with a specialisation for each type (3D printers, laser cutters, CNC machines) that adds the details that type needs.",
@@ -74,6 +74,16 @@ export default defineModule({
           // in Desk drawer"). Derived on read, so a search or the assistant can
           // say where it is.
           { name: "location_name", type: "text", readOnly: true },
+          // What it runs. Its driver reports these when it can; a person types
+          // them when it cannot. The source and last-seen are the module's:
+          // a reading nobody has seen for a while is never counted current.
+          { name: "firmware_version", type: "text", label: "Firmware" },
+          { name: "software_version", type: "text", label: "Software" },
+          { name: "controller", type: "text", label: "Firmware family" },
+          { name: "firmware_source", type: "text", label: "Firmware from", readOnly: true },
+          { name: "firmware_seen_at", type: "date", label: "Firmware last seen", readOnly: true },
+          { name: "software_source", type: "text", label: "Software from", readOnly: true },
+          { name: "software_seen_at", type: "date", label: "Software last seen", readOnly: true },
         ],
         // Public face — identifying + display fields. Manufacturer is
         // public (you'd want to see "Voron" / "Bambu" on a label) but
@@ -108,6 +118,9 @@ export default defineModule({
       "machines.machine.updated",
       "machines.machine.state_changed",
       "machines.machine.deleted",
+      // A machine's use was recorded: { orgId, machine: { kind, id }, prints,
+      // hours, cycles }. What is installed in it wears by the same amounts.
+      "machines.usage.recorded",
     ],
     actions: [
       {
@@ -119,7 +132,7 @@ export default defineModule({
         undoable: true,
         label: "Record machine usage",
         description:
-          "Add to a machine's lifetime usage counters (run_hours, print_count, print_hours). Digifab completion events supply the finished job's hours on its linked machine: the foundation for maintenance-by-usage ('nozzle due at 500 prints'). Args: { machineId, prints?, hours? }; machineId falls back to the event's linkedMachineId.",
+          "Add to a machine's lifetime usage counters (run_hours, print_count, print_hours, cycles), and the same use to every tool installed in it, so a schedule on the machine or on a tool comes due by use ('nozzle due at 500 prints', 'suction cups every 200,000 picks'). Digifab completion events supply the finished job's hours on its linked machine, and a robot arm's cycles. Args: { machineId, prints?, hours?, cycles? }; machineId falls back to the event's linkedMachineId.",
         appliesTo: { kinds: ["machines:machine"] },
         invokeHandler: "machines.record-usage",
         userInvokable: false,
@@ -127,6 +140,7 @@ export default defineModule({
           machineId: { label: "Machine id", type: "text" },
           prints: { label: "Prints to add", type: "number" },
           hours: { label: "Hours to add", type: "number" },
+          cycles: { label: "Cycles to add", type: "number" },
         },
       },
       // One record standing for N identical machines, any of them given an
@@ -193,10 +207,29 @@ export default defineModule({
         userInvokable: false,
         argsSchema: { parent_id: { label: "One unit of (machine id)", type: "text", required: true } },
       },
+      {
+        group: "service",
+        // UI-SCREEN: /machines
+        id: "machines:set-version-target",
+        changes: "workspace",
+        // ADMIN-ONLY: the target is what every machine in the cohort is judged against; the versions page offers it to admins alone.
+        runBy: "admin",
+        examples: ["our MK4s should all be on firmware 6.1.3", "set the Voron target to Klipper v0.12.0"],
+        label: "Set the version a cohort should run",
+        description: "Say which firmware and software version one cohort of machines (a model on one firmware family, such as Prusa MK4 · PrusaLink) should be on. The versions view then counts each machine in it as current, behind or unknown against it. Args: { cohort: the cohort's name as the versions view shows it, firmware_target?: string, software_target?: string }; an empty target clears it.",
+        scope: "workspace",
+        invokeHandler: "machines.set-version-target",
+        userInvokable: true,
+        argsSchema: {
+          cohort: { label: "Cohort", type: "text", required: true },
+          firmware_target: { label: "Firmware version", type: "text" },
+          software_target: { label: "Software version", type: "text" },
+        },
+      },
     ],
   },
 
-  subscribes: ["digifab.print.completed", "digifab.print.reversed"],
+  subscribes: ["digifab.print.completed", "digifab.print.reversed", "digifab.device.versions_reported"],
 
   // A completed print accrues usage on the machine it ran on (the event's
   // linkedMachineId). The wire belongs to machines: it owns the action. Inert

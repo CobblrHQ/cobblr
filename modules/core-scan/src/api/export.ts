@@ -214,7 +214,8 @@ const PostBody = z.object({
 });
 
 // The rich export the modal drives: an explicit selection + chosen photo mode.
-// AI-REACH: takes or produces a file (multipart or binary), which an action cannot carry
+// AI-REACH: exempt — produces a download for the person's browser; the
+// assistant reads the same records through list_records
 exportRouter.post(
   "/export",
   asyncHandler(async (req, res) => {

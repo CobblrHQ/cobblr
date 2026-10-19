@@ -1554,8 +1554,9 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
   });
-  // Pictures for records made without one (#3818): suggested by default, and
-  // this puts the top match on the record instead. No AI either way.
+  // Pictures for records made without one (#3818): off until the workspace
+  // turns it on (#7447, an update never opts anyone in); then suggested, or
+  // the top match put on the record. No AI either way.
   const suggestCfg = useQuery({
     queryKey: ["photo-suggest-config", slug],
     queryFn: () => api.photoSuggestConfig(slug),
@@ -1563,15 +1564,24 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
     staleTime: 60_000,
   });
   const saveSuggest = useMutation({
-    mutationFn: (autoApply: boolean) => api.setPhotoSuggestConfig(slug, autoApply),
-    onSuccess: (r) => {
-      toast.success(r.auto_apply ? `New records get the photo ${productName()} finds` : "New records are offered a photo to accept");
+    mutationFn: (patch: { suggest_on?: boolean; auto_apply?: boolean }) => api.setPhotoSuggestConfig(slug, patch),
+    onSuccess: (r, patch) => {
+      toast.success(
+        patch.suggest_on === true
+          ? `${productName()} looks up photos for records without one, a few a minute`
+          : patch.suggest_on === false
+            ? "Records are no longer looked up for photos"
+            : r.auto_apply
+              ? `New records get the photo ${productName()} finds`
+              : "New records are offered a photo to accept",
+      );
       void qc.invalidateQueries({ queryKey: ["photo-suggest-config", slug] });
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't save that"),
   });
   if (!canEdit) return null;
   const on = cfg.data?.enabled === true;
+  const suggestOn = suggestCfg.data?.suggest_on === true;
   const autoApply = suggestCfg.data?.auto_apply === true;
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
@@ -1601,12 +1611,29 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
           </span>
         </span>
       </label>
-      <label className="mt-3 flex items-start gap-3 cursor-pointer" data-testid="photo-suggest-auto-apply">
+      <label className="mt-3 flex items-start gap-3 cursor-pointer" data-testid="photo-suggest-on">
+        <input
+          type="checkbox"
+          checked={suggestOn}
+          disabled={saveSuggest.isPending || suggestCfg.isLoading}
+          onChange={(e) => saveSuggest.mutate({ suggest_on: e.target.checked })}
+          className="mt-0.5 h-4 w-4 accent-cobble-600 shrink-0"
+        />
+        <span className="min-w-0">
+          <span className="text-sm text-content dark:text-mortar-100">Look up photos for records without one</span>
+          <span className="block text-xs text-faint dark:text-slate-400">
+            Off by default. On, a record without a photo, however it was made, is looked up on the web and
+            offered a Suggested photo to accept or turn down; records you already have are looked up a few a
+            minute. A suggestion is not added to Files until you choose Use it. No AI.
+          </span>
+        </span>
+      </label>
+      <label className={`mt-3 flex items-start gap-3 ${suggestOn ? "cursor-pointer" : "opacity-60"}`} data-testid="photo-suggest-auto-apply">
         <input
           type="checkbox"
           checked={autoApply}
-          disabled={saveSuggest.isPending || suggestCfg.isLoading}
-          onChange={(e) => saveSuggest.mutate(e.target.checked)}
+          disabled={!suggestOn || saveSuggest.isPending || suggestCfg.isLoading}
+          onChange={(e) => saveSuggest.mutate({ auto_apply: e.target.checked })}
           className="mt-0.5 h-4 w-4 accent-cobble-600 shrink-0"
         />
         <span className="min-w-0">
@@ -1614,9 +1641,8 @@ function AutoPickPhotosSection({ slug, canEdit }: { slug: string; canEdit: boole
             Put the photo {productName()} finds on new records
           </span>
           <span className="block text-xs text-faint dark:text-slate-400">
-            Off by default. A record made without a photo, however it was made, is looked up on the web
-            and offered a Suggested photo to accept or turn down. On, the top match goes straight onto the
-            record instead. No AI either way, and a photo someone chose is never replaced.
+            Off by default, and only while photos are looked up. On, the top match goes straight onto the
+            record instead of waiting as a suggestion. A photo someone chose is never replaced.
           </span>
         </span>
       </label>

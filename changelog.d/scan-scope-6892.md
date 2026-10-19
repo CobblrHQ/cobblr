@@ -3,6 +3,7 @@ type: feature
 scope: core-scan
 date: 2026-10-17
 docs_target: docs/user-guide/scan.md#3.20 Scan inbox (`core-scan`, stock)
+docs_published: 2026-10-19
 ---
 
 Scanning within one product opens its own unit when another product shares the serial, with no question, and each scan rule shows how often its key matched more than one thing in the last 30 days.

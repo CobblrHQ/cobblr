@@ -102,22 +102,23 @@ export function BindingsPage() {
           </ErrorBoundary>
         )}
         <ul className={"space-y-2 " + (view === "graph" ? "hidden" : "")}>
-          {bindings.data?.items.map((b) => (
-            <li key={b.id}>
+          {bindings.data?.items.map((b) => {
+            const said = wireSentence(b);
+            return (
+            // The row opens the wire and its switch turns it on or off: two
+            // controls side by side, never one inside the other (#7514).
+            <li key={b.id} className="flex items-start rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 hover:border-cobble-300 dark:hover:border-cobble-700 transition group">
               <button
                 type="button"
                 onClick={() => setSelected(b)}
-                className="w-full text-left rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm hover:border-cobble-300 dark:hover:border-cobble-700 transition group"
+                className="flex-1 min-w-0 text-left p-4 text-sm rounded-xl"
               >
-                {(() => {
-                  const said = wireSentence(b);
-                  return said.headline ? (
-                    <div className="mb-1">
-                      <div className="text-sm text-content dark:text-mortar-100" data-testid="wire-said">{said.headline}</div>
-                      {said.given && <div className="text-xs text-muted dark:text-slate-400" data-testid="wire-given">{said.given}</div>}
-                    </div>
-                  ) : null;
-                })()}
+                {said.headline && (
+                  <div className="mb-1">
+                    <div className="text-sm text-content dark:text-mortar-100" data-testid="wire-said">{said.headline}</div>
+                    {said.given && <div className="text-xs text-muted dark:text-slate-400" data-testid="wire-given">{said.given}</div>}
+                  </div>
+                )}
                 <div className="flex items-baseline gap-2 flex-wrap">
                   <span className="font-mono text-xs text-accent dark:text-cobble-300">{b.source_kind}</span>
                   <span className="text-faint">→</span>
@@ -134,18 +135,6 @@ export function BindingsPage() {
                     <span className="text-[11px] text-muted dark:text-slate-400" data-testid="wire-narrowing">{narrowingLine(b)}</span>
                   )}
                   <div className="flex-1" />
-                  <label
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={b.enabled}
-                      onChange={() => toggle.mutate(b)}
-                      className="accent-cobble-500"
-                    />
-                    enabled
-                  </label>
                   <ChevronRight size={14} className="text-faint dark:text-slate-600 group-hover:text-accent transition" />
                 </div>
                 {b.never_runs && (
@@ -169,8 +158,19 @@ export function BindingsPage() {
                   </div>
                 )}
               </button>
+              <label className="shrink-0 flex items-center gap-1 min-h-11 mt-2 mr-2 px-2 text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={b.enabled}
+                  onChange={() => toggle.mutate(b)}
+                  aria-label={`Enabled: ${said.headline || b.action_id}`}
+                  className="accent-cobble-500"
+                />
+                enabled
+              </label>
             </li>
-          ))}
+            );
+          })}
         </ul>
       </div>
 

@@ -26,6 +26,8 @@ export interface SessionClaims {
    *  requireAuth to clamp app tokens to the Tier-B allowlist server-side
    *  (defense-in-depth — not just the client-side mediator). */
   aud?: string;
+  /** An app token's record kinds its app declares it edits (`edits`). */
+  edits?: string[];
   /** The instance that minted a relay grant (instanceOfGrants), when it says. */
   ins?: string;
 }
@@ -55,10 +57,11 @@ const APP_TOKEN_TTL_SECONDS = 30 * 60; // 30 minutes
 export async function signAppToken(
   userId: string,
   appSlug: string,
+  editKinds: readonly string[],
 ): Promise<{ token: string; expires_in: number }> {
   const now = Math.floor(Date.now() / 1000);
   const exp = now + APP_TOKEN_TTL_SECONDS;
-  const token = await new SignJWT({})
+  const token = await new SignJWT({ edits: [...editKinds] })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
     .setSubject(userId)
@@ -214,5 +217,6 @@ export async function verifySession(token: string): Promise<SessionClaims> {
     exp: payload.exp as number,
     aud: typeof payload.aud === "string" ? payload.aud : Array.isArray(payload.aud) ? payload.aud[0] : undefined,
     ...(typeof payload.ins === "string" ? { ins: payload.ins } : {}),
+    ...(Array.isArray(payload.edits) ? { edits: payload.edits.filter((k): k is string => typeof k === "string") } : {}),
   };
 }

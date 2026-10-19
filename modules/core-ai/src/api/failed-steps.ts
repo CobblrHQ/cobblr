@@ -75,6 +75,8 @@ export function stepSaid(call: ToolCall, actionLabel?: (id: string) => string | 
       return "Adding the record";
     case "put_back_scan_item":
       return "Putting the inbox item back";
+    case "change_scan_item":
+      return "Changing the inbox item";
     case "create_records": {
       const n = Array.isArray(a.records) ? a.records.length : 0;
       return n === 1 ? "Adding one record" : `Adding ${n} at once`;

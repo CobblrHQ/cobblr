@@ -18,7 +18,8 @@
 // go so they can be tested. Nothing in lib may read credentials or argv at
 // module scope; that is what makes it importable.
 //
-//   npx tsx scripts/lint-test-imports-script.ts
+//   npx tsx scripts/lint-test-imports-script.ts [--candidates]
+import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -76,9 +77,40 @@ function readsCredentialsAtImport(file: string): string | null {
   return null;
 }
 
+// THE TESTS THAT IMPORT FROM scripts/, PICKED BY git grep. Reading every test file to find the few that do grew with
+// the suite past this lint's read budget: 3,981 files, 17.1 MB on 2026-10-19 against the 7.1 MB recorded on 09-29,
+// and #7020's re-check went red on it with no test failing. git grep reads the tree in C and hands back only the
+// candidates; --untracked keeps a new, not yet committed test in view. Without git, the walk below.
+const IMPORTS_SCRIPTS = "(from|import)[[:space:]]+['\"][^'\"]*scripts/";
+function candidates(): string[] {
+  try {
+    const out = execFileSync("git", ["grep", "-l", "--untracked", "-E", IMPORTS_SCRIPTS, "--", "*.test.ts", "*.test.tsx", "*.test.mts", "*.test.mjs"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    return out
+      .split("\n")
+      .filter(Boolean)
+      .filter((f) => !f.split("/").some((seg) => SKIP.has(seg) || seg.startsWith(".")))
+      .map((f) => join(ROOT, f));
+  } catch (e) {
+    // git grep exits 1 when nothing matches: none to judge.
+    if ((e as { status?: number }).status === 1) return [];
+    return testFiles(ROOT);
+  }
+}
+
+// --candidates: the files it would read, one per line (its test holds them to every test that imports from scripts/).
+if (process.argv.includes("--candidates")) {
+  for (const f of candidates()) console.log(relative(ROOT, f));
+  process.exit(0);
+}
+
 const offenders: string[] = [];
-for (const file of testFiles(ROOT)) {
-  const src = readFileSync(file, "utf8");
+for (const file of candidates()) {
+  let src: string;
+  try {
+    src = readFileSync(file, "utf8");
+  } catch {
+    continue; // a test's scratch file, gone between the list and the read
+  }
   for (const m of src.matchAll(/(?:from|import)\s+["']([^"']+)["']/g)) {
     const spec = m[1]!;
     if (!/(^|\/)scripts\//.test(spec)) continue;

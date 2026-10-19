@@ -11,6 +11,12 @@
 // match to be applied instead. A picture a person set is never replaced, and
 // No thanks is remembered until the record's name changes.
 //
+// OFF until a workspace turns it on (#7447): an update never opts anyone in,
+// and on upgrade the backfill had searched the web for every existing record.
+// A suggested picture is held here, in the suggestion store, and is not a
+// file in Files until someone says Use it; it had been stored as a file the
+// moment it was found, so Files doubled and a No thanks kept the file.
+//
 // Background and trickled: the request that made the record never waits, and
 // a 500-row import is 500 queued rows, looked at three per workspace per
 // round, never 500 searches at once.
@@ -23,7 +29,7 @@ import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { ENTITY_SAVED_EVENT, type EntitySavedEvent } from "@cobblr/platform-contract/entity-saved";
 import type { CoreScanDB } from "../db.js";
-import { derivedQueryFor, fetchAndStoreImage, imagePathForFile } from "./entity-image.js";
+import { derivedQueryFor, fetchImage, imagePathForFile, storeFetchedImage, type FetchedImage } from "./entity-image.js";
 import { pictureOptions } from "./picture-options.js";
 import { pickPhotoOf } from "./shows-the-thing.js";
 import { scanTargetsForOrg } from "./scan-target.js";
@@ -80,7 +86,7 @@ export function subscribeRecordPhotos(
  *  the round itself takes three, the rest following the drain cadence. */
 const NUDGE_AFTER_MS = 2_000;
 const nudges = new Map<string, ReturnType<typeof setTimeout>>();
-function nudge(orgId: string): void {
+export function nudge(orgId: string): void {
   if (nudges.has(orgId)) return;
   const t = setTimeout(() => {
     nudges.delete(orgId);
@@ -102,11 +108,17 @@ export interface SuggestionStore {
   queued(limit: number): Promise<Array<{ entity_kind: string; entity_id: string; attempts: number }>>;
   /** Write only a row still queued: a No thanks or a picture set while the
    *  search was out is never overwritten. */
-  settle(kind: string, id: string, set: { status: "queued" | "suggested" | "none" | "applied"; attempts?: number; file_id?: string; source_url?: string; query?: string }): Promise<void>;
+  settle(kind: string, id: string, set: { status: "queued" | "suggested" | "none" | "applied"; attempts?: number; file_id?: string; source_url?: string; query?: string; held?: FetchedImage }): Promise<void>;
   autoApply(): Promise<boolean>;
+  /** Whether this workspace looks for pictures at all (#7447): off until it
+   *  turns it on. */
+  enabled(): Promise<boolean>;
   /** Whether this workspace's existing records were queued already. */
   backfilled(): Promise<boolean>;
   markBackfilled(): Promise<void>;
+  /** The workspace's settings row, made if missing, every setting at its
+   *  default (suggestions off): what a workspace is born with. */
+  ensureConfig(): Promise<void>;
   /** Queue a record not seen before; one already known is left as it is. */
   queueIfAbsent(kind: string, id: string, name: string): Promise<boolean>;
   /** A person asked: search this record again, whatever it was. */
@@ -124,7 +136,7 @@ export function kyselyStore(db: Db): SuggestionStore {
       (await db.selectFrom(T).select(["status", "name"]).where("entity_id", "=", id).orderBy("updated_at", "desc").executeTakeFirst()) ?? null,
     queue: async (e) => {
       const name = (e.title ?? "").trim();
-      const fresh = { name, status: "queued" as const, file_id: null, source_url: null, attempts: 0, updated_at: new Date() };
+      const fresh = { name, status: "queued" as const, file_id: null, source_url: null, held_bytes: null, held_type: null, held_name: null, attempts: 0, updated_at: new Date() };
       const moved = await db.updateTable(T).set(fresh).where("entity_id", "=", e.id).executeTakeFirst();
       if (Number(moved.numUpdatedRows ?? 0) > 0) return;
       await db
@@ -139,16 +151,17 @@ export function kyselyStore(db: Db): SuggestionStore {
     // Newest first: the record someone made a moment ago is the one they are
     // looking at, and an import's backlog trickles in behind it.
     queued: (limit) => db.selectFrom(T).select(["entity_kind", "entity_id", "attempts"]).where("status", "=", "queued").orderBy("updated_at", "desc").limit(limit).execute(),
-    settle: async (kind, id, set) => {
+    settle: async (kind, id, { held, ...set }) => {
       await db
         .updateTable(T)
-        .set({ ...set, updated_at: new Date() })
+        .set({ ...set, ...(held ? { held_bytes: Buffer.from(held.bytes), held_type: held.mimeType, held_name: held.filename } : {}), updated_at: new Date() })
         .where("entity_kind", "=", kind)
         .where("entity_id", "=", id)
         .where("status", "=", "queued")
         .execute();
     },
     autoApply: () => readAutoApply(db),
+    enabled: () => readSuggestOn(db),
     backfilled: async () => {
       const row = await db.selectFrom("core_scan_photo_suggest_config").select("backfilled_at").executeTakeFirst().catch(() => undefined);
       return !!row?.backfilled_at;
@@ -159,6 +172,9 @@ export function kyselyStore(db: Db): SuggestionStore {
         .values({ id: true, backfilled_at: new Date() })
         .onConflict((oc) => oc.column("id").doUpdateSet({ backfilled_at: new Date(), updated_at: new Date() }))
         .execute();
+    },
+    ensureConfig: async () => {
+      await db.insertInto("core_scan_photo_suggest_config").values({ id: true }).onConflict((oc) => oc.column("id").doNothing()).execute();
     },
     queueIfAbsent: async (kind, id, name) => {
       // Known under any kind name is known.
@@ -175,7 +191,7 @@ export function kyselyStore(db: Db): SuggestionStore {
     requeue: async (kind, id) => {
       const r = await db
         .updateTable(T)
-        .set({ status: "queued", attempts: 0, file_id: null, source_url: null, updated_at: new Date() })
+        .set({ status: "queued", attempts: 0, file_id: null, source_url: null, held_bytes: null, held_type: null, held_name: null, updated_at: new Date() })
         .where("entity_kind", "=", kind)
         .where("entity_id", "=", id)
         .executeTakeFirst();
@@ -213,6 +229,8 @@ export async function searchAgain(orgId: string, store: SuggestionStore, kind: s
 export async function noteSaved(store: SuggestionStore, e: EntitySavedEvent): Promise<boolean> {
   const decision = queueDecision(e, await store.get(e.kind, e.id));
   if (decision === "leave") return false;
+  // Off: nothing new is queued for a search nobody turned on.
+  if (decision === "queue" && !(await store.enabled())) return false;
   if (decision === "forget") {
     await store.forget(e.kind, e.id);
     return false;
@@ -244,6 +262,19 @@ export async function readAutoApply(db: Db): Promise<boolean> {
   return row?.auto_apply === true;
 }
 
+export async function readSuggestOn(db: Db): Promise<boolean> {
+  const row = await db.selectFrom("core_scan_photo_suggest_config").select("suggest_on").executeTakeFirst().catch(() => undefined);
+  return row?.suggest_on === true;
+}
+
+export async function writeSuggestOn(db: Db, on: boolean): Promise<void> {
+  await db
+    .insertInto("core_scan_photo_suggest_config")
+    .values({ id: true, suggest_on: on })
+    .onConflict((oc) => oc.column("id").doUpdateSet({ suggest_on: on, updated_at: new Date() }))
+    .execute();
+}
+
 export async function writeAutoApply(db: Db, on: boolean): Promise<void> {
   await db
     .insertInto("core_scan_photo_suggest_config")
@@ -257,7 +288,11 @@ export interface SuggestDeps {
   /** "refused" when the engine turned the ask away: that says nothing about
    *  the record, so it costs the record no try and ends the round. */
   find: (orgId: string, kind: string, id: string) => Promise<{ url: string; query: string } | null | "refused">;
-  store: (orgId: string, url: string) => Promise<string | null>;
+  /** Fetch the picture found, storing nothing: a suggestion holds it. */
+  fetch: (url: string) => Promise<FetchedImage | null>;
+  /** Write a held picture into Files: only when the workspace asked for the
+   *  top match to be applied, or a person said Use it. */
+  keep: (orgId: string, image: FetchedImage, url: string, query: string) => Promise<string | null>;
   hasNoPicture: (orgId: string, kind: string, id: string) => Promise<boolean | null>;
   apply: (orgId: string, orgSlug: string, kind: string, id: string, fileId: string) => Promise<boolean>;
   /** The records that already exist without a picture, for the one backfill. */
@@ -290,7 +325,8 @@ export async function findPictureFor(
 
 const REAL: SuggestDeps = {
   find: (orgId, kind, id) => findPictureFor(orgId, kind, id),
-  store: fetchAndStoreImage,
+  fetch: async (url) => (await fetchImage(url)).image,
+  keep: (orgId, image, url, query) => storeFetchedImage(orgId, image, { kind: "web", original_url: url, query, at: new Date().toISOString() }),
   hasNoPicture: recordHasNoPicture,
   apply: putPictureOn,
   existingWithoutPicture: async (orgId, limit) => {
@@ -327,6 +363,8 @@ export async function backfillExisting(orgId: string, store: SuggestionStore, de
 /** One round for one workspace: look at the oldest queued records, up to
  *  PER_ROUND. Answers whether more are waiting. */
 export async function suggestRound(orgId: string, orgSlug: string, store: SuggestionStore, deps: SuggestDeps = REAL): Promise<boolean> {
+  // Off: no backfill, no search, nothing written (#7447).
+  if (!(await store.enabled())) return false;
   await backfillExisting(orgId, store, deps).catch((err) =>
     console.error(`[core-scan] org ${orgId}: queueing existing records for pictures failed:`, (err as Error).message),
   );
@@ -351,15 +389,22 @@ export async function suggestRound(orgId: string, orgSlug: string, store: Sugges
         tally.refused = true;
         break;
       }
-      const fileId = found ? await deps.store(orgId, found.url) : null;
-      if (!found || !fileId) {
+      const image = found ? await deps.fetch(found.url) : null;
+      if (!found || !image) {
         await store.settle(q.entity_kind, q.entity_id, { attempts: tried, status: giveUp ? "none" : "queued", ...(found ? { query: found.query } : {}) });
         if (giveUp) tally.none++;
         else tally.again++;
         continue;
       }
-      const applied = autoApply && (await deps.apply(orgId, orgSlug, q.entity_kind, q.entity_id, fileId));
-      await store.settle(q.entity_kind, q.entity_id, { status: applied ? "applied" : "suggested", file_id: fileId, source_url: found.url, query: found.query });
+      // Held, not filed: only a workspace that asked for the top match to be
+      // applied gets a file now, and only when it lands on the record.
+      const fileId = autoApply ? await deps.keep(orgId, image, found.url, found.query) : null;
+      const applied = !!fileId && (await deps.apply(orgId, orgSlug, q.entity_kind, q.entity_id, fileId));
+      await store.settle(
+        q.entity_kind,
+        q.entity_id,
+        applied ? { status: "applied", file_id: fileId!, source_url: found.url, query: found.query } : { status: "suggested", held: image, source_url: found.url, query: found.query },
+      );
       if (applied) tally.applied++;
       else tally.suggested++;
     } catch (err) {
@@ -381,6 +426,11 @@ export async function suggestRound(orgId: string, orgSlug: string, store: Sugges
  *  only; the rounds do the searching, so an enable never waits on the web.
  *  Answers how many were queued. */
 export async function photosOnEnable(orgId: string, store: SuggestionStore, deps: SuggestDeps = REAL): Promise<number> {
+  // Off for every workspace until it turns suggestions on (#7447): enabling
+  // the module queues nothing, and the workspace is born with its settings
+  // row (off), the same as one that existed before.
+  await store.ensureConfig();
+  if (!(await store.enabled())) return 0;
   return backfillExisting(orgId, store, deps);
 }
 

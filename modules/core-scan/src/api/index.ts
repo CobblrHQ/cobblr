@@ -6,6 +6,7 @@ import { readPersonalDocumentLocally } from "../services/personal-document.js";
 
 import { Router } from "express";
 import { startReceiptTrackingSweeper } from "../services/receipt-tracking-sweeper.js";
+import { startReceiptAnswerSync } from "../services/receipt-answers.js";
 import { startPicturesSweeper } from "../services/pictures-sweeper.js";
 import { inboxRouter } from "./inbox.js";
 import { lineUnitsRouter } from "./line-units.js";
@@ -54,6 +55,8 @@ platform().scan.registerOfferIntake(offerIntake);
 // Follow parcels whose receipt is still in the inbox — filing should not
 // be the price of being told your delivery arrived.
 startReceiptTrackingSweeper();
+// An order marked arrived (its button, its page) settles the receipt made it.
+startReceiptAnswerSync();
 // A pending row with no picture is asked again on its own; something is
 // better than nothing, and finding it is not the person's job.
 startPicturesSweeper();

@@ -133,8 +133,8 @@ export const PLACEMENT: PlacementRow[] = [
     id: "assistant-tool",
     what: "a tool the assistant (and the MCP server) can call: its name, description and parameters",
     keywords: ["tool", "workspace tool", "assistant tool", "mcp tool", "tool description", "list_records"],
-    dir: "packages/workspace-tools/src/",
-    exemplar: "packages/workspace-tools/src/tools.ts",
+    dir: "packages/workspace-tools/src/tools/",
+    exemplar: "packages/workspace-tools/src/tools/list-records.ts",
     why: "Every tool's description is sent to the model on every turn, so a description carries only what a model needs to choose and call it; the why goes in a comment above it.",
     lints: ["lint:tool-descriptions", "lint:mcp-readme", "lint:escort-claims"],
     notes: [
@@ -240,7 +240,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "A capability two modules would otherwise each hand-roll belongs in the kernel, declared on the platform contract so modules reach it without importing each other.",
     lints: ["lint:isolation", "lint:background-loops", "lint:credential-slot-kind", "lint:pg-clients-born-guarded", "lint:contract-sibling-imports"],
     notes: [
-      "Declare it on `packages/platform-contract/src/index.ts` and wire it in `api/src/index.ts`; both halves or modules cannot see it.",
+      "Declare it in its surface's file under `packages/platform-contract/src/` (re-exported from `index.ts`) and wire it in `api/src/index.ts`; both halves or modules cannot see it.",
       "Import the db handle lazily inside the function — an eager import drags cobblr_meta into every unit test that imports an adopting file.",
     ],
   },
@@ -266,7 +266,7 @@ export const PLACEMENT: PlacementRow[] = [
     why: "Signup only enables and migrates what existed the day a workspace was made, so anything an OLDER workspace also needs is silently missing there and the platform, not the user, has to close that gap.",
     lints: ["lint:heal-shims", "lint:test-support-doors-scoped", "lint:boot-pass-born-with"],
     notes: [
-      "Wire it into `boot()` in api/src/index.ts, in the existing reconcile chain.",
+      "Register it as a file in api/src/platform/boot/ (`export default bootPass({ name, phase, run })`, api/src/platform/boot-passes.ts) with the phase it belongs in and any pass it must run `after`; never an import and a call in api/src/index.ts (lint:boot-passes-register-themselves).",
       "Head the file with `DONE WHEN: <the checkable condition>` for a one-shot, or `PERMANENT RECONCILE`. Delete a one-shot once its condition reads true on prod, staging and dev.",
       "Cheap on the happy path (one pre-loaded cobblr_meta read, no tenant pool for a workspace that is already fine), per-row try/catch so one workspace never blocks the rest, and `evictTenantPool` in a finally if you did open one.",
       "Put the DECISION in a pure exported function and call it from the sweep, so a test can assert the rule without a database.",
@@ -494,7 +494,7 @@ export const PLACEMENT: PlacementRow[] = [
     lints: ["lint:ci-sink", "lint:driver-hooks-live", "lint:doc-shots-prod-look", "lint:scan-fixture-category", "lint:materialize-reads-its-answer", "lint:e2e-visible-probe-filters-first", "lint:shot-guard"],
     notes: [
       "Checking a UI change before a pull request needs no new script: `node scripts/walk.mjs` (one-off flags, or a JSON spec with steps) asserts a page at 390 and 1440 px and prints a pass/fail table. Write an e2e/ script only for a check that must stay and gate.",
-      "A new kind of walk check or action is a new file, scripts/walk/checks/<key>.mjs (export key and judge) or scripts/walk/actions/<key>.mjs (export key and act), found by a directory read; never a branch in scripts/walk.mjs (lint:walk-kinds-in-their-files, #7384). `node scripts/walk.mjs --kinds` lists them.",
+      "A new kind of walk check or action is a new file, scripts/walk/checks/<key>.mjs (export key, describe and judge) or scripts/walk/actions/<key>.mjs (export key and act), found by a directory read; never a branch in scripts/walk.mjs or a name in scripts/lib/walk-lib.mjs (lint:walk-kinds-in-their-files, #7384). `node scripts/walk.mjs --kinds` lists them.",
       "Add it to scripts/run-e2e-yardsticks.sh to make it gate; otherwise nobody runs it.",
       "Seed the data the assertion needs. A sweep over an empty list passes vacuously — assert a positive control first.",
       "Reach a control by a hook the product declares (data-testid, a placeholder), never by its tag or styling: the hook is checked against the source at PR time, the tag is not.",

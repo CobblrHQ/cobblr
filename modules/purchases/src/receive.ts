@@ -66,7 +66,7 @@ export async function receiveIfArrived(db: Kysely<PurchasesDB>, orgId: string, o
 
 type ReceivedLine = { id: string; part_id: string; qty: string | null; unit_cost: string | null; line_amount: string | null; description: string | null; stock_withdrawn_at?: Date | string | null };
 
-async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: string, it: ReceivedLine, addsStock = true): Promise<void> {
+async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: string, it: ReceivedLine, addsStock = true, spendTold = false): Promise<void> {
   const operationId = crypto.randomUUID();
   const qty = Number(it.qty ?? 0);
   const unitCost = it.unit_cost == null ? null : Number(it.unit_cost);
@@ -74,7 +74,8 @@ async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: st
   const lineCost = it.line_amount != null ? Number(it.line_amount) : unitCost == null ? null : amountOf(centsFromAmount(unitCost * qty));
   // Received once already and taken back (unreceiveOrderLines): its spend was
   // told the first time, so this receive moves the shelf and nothing else.
-  const counted = !!it.stock_withdrawn_at;
+  // A refused receipt told its spend before the stock write said no (0019).
+  const counted = !!it.stock_withdrawn_at || spendTold;
   const payload: OrderItemReceived = {
     orgId,
     operationId,
@@ -88,30 +89,42 @@ async function queueReceived(db: Kysely<PurchasesDB>, orgId: string, orderId: st
     lineCost: counted ? null : lineCost,
     reason: `Order arrived (${it.description ?? "item"})`,
     description: it.description,
+    // Stock that arrived: the shelf dates it as a lot of its own (#7511).
+    restock: true,
   };
+  // Due to the retry sweep a minute on: the request that queued it delivers
+  // it first, and a sweep reaching it mid-request held its lock, so the
+  // request answered "still pending" for a delivery that was going fine.
   await db.insertInto("purchases_receive_outbox").values({
     id: operationId, order_id: orderId, line_id: it.id, payload,
     completed_at: null, last_error: null,
+    next_attempt_at: sql`now() + interval '1 minute'`,
   }).execute();
 }
 
 /** A person settles one line whose stock may never have been added: "add"
  *  tells the stock wire now, "counted" only clears the question. The flag is
  *  cleared in the statement that reads the line, so a double press, or two
- *  people at once, adds it once. Answers whether this call settled it. */
-export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: string, lineId: string, decision: "add" | "counted"): Promise<boolean> {
+ *  people at once, adds it once. A line whose stock write was refused (0019)
+ *  already told its spend, so its add moves the shelf only; refused again
+ *  (the part is still gone), it waits again and `refused` says why. Answers
+ *  whether this call settled it. */
+export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: string, lineId: string, decision: "add" | "counted"): Promise<{ settled: boolean; refused: string | null }> {
   const settled = await db.transaction().execute(async trx => {
-    const rows = await sql<ReceivedLine & { order_id: string }>`
-      update purchases_order_items set receipt_unconfirmed = false
-       where id = ${lineId} and receipt_unconfirmed
-       returning id, order_id, part_id, qty, unit_cost, line_amount, description`.execute(trx);
+    const rows = await sql<ReceivedLine & { order_id: string; was_refused: string | null }>`
+      update purchases_order_items i set receipt_unconfirmed = false, receipt_refused = null
+        from (select id, receipt_refused as was_refused from purchases_order_items where id = ${lineId}) before
+       where i.id = before.id and i.receipt_unconfirmed
+       returning i.id, i.order_id, i.part_id, i.qty, i.unit_cost, i.line_amount, i.description, before.was_refused`.execute(trx);
     const it = rows.rows[0];
     if (!it) return false;
-    if (decision === "add" && it.part_id) await queueReceived(trx, orgId, it.order_id, it);
+    if (decision === "add" && it.part_id) await queueReceived(trx, orgId, it.order_id, it, true, it.was_refused !== null);
     return true;
   });
   await flushReceipts(db, orgId, { lineId });
-  return settled;
+  if (!settled || decision !== "add") return { settled, refused: null };
+  const after = await db.selectFrom("purchases_order_items").select(["receipt_unconfirmed", "receipt_refused"]).where("id", "=", lineId).executeTakeFirst();
+  return after?.receipt_unconfirmed ? { settled: false, refused: after.receipt_refused ?? null } : { settled: true, refused: null };
 }
 
 /** Take back the receive of every line of an order that was received with
@@ -124,14 +137,18 @@ export async function settleUnconfirmedLine(db: Kysely<PurchasesDB>, orgId: stri
 export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string, orderId: string, reason: string): Promise<number> {
   await flushReceipts(db, orgId, { orderId });
   const adds = await orderAddsStock(db, orderId);
-  const rows = await sql<ReceivedLine & { part_id: string | null }>`
-    update purchases_order_items
-       set received_at = null, stock_withdrawn_at = now()
-     where order_id = ${orderId}
-       and received_at is not null
-    returning id, part_id, qty, unit_cost, line_amount, description`.execute(db);
+  // A line whose stock write was refused (0019) put nothing on the shelf, so
+  // taking it back takes nothing off; its question goes with the receive.
+  const rows = await sql<ReceivedLine & { part_id: string | null; was_refused: string | null }>`
+    update purchases_order_items i
+       set received_at = null, stock_withdrawn_at = now(),
+           receipt_unconfirmed = case when before.was_refused is null then i.receipt_unconfirmed else false end,
+           receipt_refused = null
+      from (select id, receipt_refused as was_refused from purchases_order_items where order_id = ${orderId} and received_at is not null) before
+     where i.id = before.id
+    returning i.id, i.part_id, i.qty, i.unit_cost, i.line_amount, i.description, before.was_refused`.execute(db);
   for (const it of rows.rows) {
-    if (!it.part_id || !adds) continue;
+    if (!it.part_id || !adds || it.was_refused !== null) continue;
     const qty = Number(it.qty ?? 0);
     const payload: OrderItemReceived = {
       orgId,
@@ -145,6 +162,7 @@ export async function unreceiveOrderLines(db: Kysely<PurchasesDB>, orgId: string
       lineCost: null,
       reason: `${reason} (${it.description ?? "item"})`,
       description: it.description,
+      restock: false,
     };
     await platform().events.emit("purchases.order_item.unreceived", payload);
   }
@@ -187,6 +205,7 @@ export async function flushReceipts(db: Kysely<PurchasesDB>, orgId: string, scop
       const row = await db.selectFrom("purchases_receive_outbox").selectAll().where("id", "=", id).where("completed_at", "is", null).executeTakeFirst();
       if (!row) return;
       const completed = [...row.completed_recipients];
+      const refusals: string[] = [];
       try {
         await platform().events.emit("purchases.order_item.received", { ...row.payload, orgId }, {
           id, completed,
@@ -194,17 +213,35 @@ export async function flushReceipts(db: Kysely<PurchasesDB>, orgId: string, scop
             completed.push(key);
             await db.updateTable("purchases_receive_outbox").set({ completed_recipients: sql`${JSON.stringify(completed)}::jsonb` }).where("id", "=", id).execute();
           },
+          // The stock write said no for good (the part is gone or deleted):
+          // retrying cannot change that, so the line waits for a person.
+          refused: async (_key, message) => { refusals.push(refusalSentence(message)); },
         });
-        await db.updateTable("purchases_receive_outbox").set({ completed_at: new Date(), last_error: null }).where("id", "=", id).execute();
+        await db.transaction().execute(async trx => {
+          if (refusals.length) {
+            await trx.updateTable("purchases_order_items").set({ receipt_unconfirmed: true, receipt_refused: refusals.join(" ").slice(0, 500) }).where("id", "=", row.line_id).execute();
+          }
+          await trx.updateTable("purchases_receive_outbox").set({ completed_at: new Date(), last_error: refusals.length ? refusals.join(" ").slice(0, 1000) : null }).where("id", "=", id).execute();
+        });
       // pass-catch: save the failure on the receipt, then throw ReceiptPending after the remaining deliveries.
       } catch (err) {
-        await db.updateTable("purchases_receive_outbox").set({ last_error: (err as Error).message.slice(0, 1000), next_attempt_at: new Date(Date.now() + 60_000) }).where("id", "=", id).execute();
+        await db.updateTable("purchases_receive_outbox").set({
+          last_error: (err as Error).message.slice(0, 1000),
+          attempts: sql`attempts + 1`,
+          next_attempt_at: sql`now() + least(interval '1 minute' * power(2, attempts), interval '6 hours')`,
+        }).where("id", "=", id).execute();
         deliveryFailed = true;
       }
     });
     failed ||= !run.ran || deliveryFailed;
   }
   if (failed) throw new ReceiptPending();
+}
+
+/** The stock write's refusal as the person reads it: a deleted part answers
+ *  with a code, a part marked gone with its own sentence. */
+function refusalSentence(message: string): string {
+  return message === "part_not_found" || message === "missing_part" ? "That part was deleted, so there is nothing to add its stock to." : message;
 }
 
 export function registerReceiptRetries(): void {

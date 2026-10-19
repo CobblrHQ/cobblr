@@ -33,3 +33,8 @@ kiosk/assets/*.y4m
 bench-cache/
 bench-out/
 _retained/
+
+# what the assistant can reach: written by `pnpm run registry`, never committed (every route changed it, 127 regenerated merges a week)
+docs/architecture/ai-capability-registry.md
+# the coverage matrix's rows: made by whoever reads them (lib/coverage-client.mjs surfaces()), never committed (59 regenerated merges a week)
+scripts/coverage-matrix/surfaces.generated.json
