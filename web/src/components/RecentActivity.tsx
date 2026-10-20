@@ -13,6 +13,7 @@ import { activityKind } from "../lib/activityKind";
 import { AUTOMATION_ACTIONS, activityVerb, actorWords, automationWords, recentActivityRows } from "../lib/activity-words";
 import { ActivitySentence, ActivityThumbnail, ACTIVITY_FEED_LAYOUT, pickString, type KindLabels } from "./ActivitySentence";
 import { SubjectLink } from "./SubjectLink";
+import { RECENT_ACTIVITY_PAGE } from "@cobblr/platform-contract/dashboard-sections";
 // ──────────────────────── recent activity ───────────────────────────
 
 // Provisioning/plumbing entity-types that mean nothing to a user ("tenant
@@ -32,7 +33,7 @@ export function RecentActivity({ slug, editing = false, heading }: { slug: strin
       const items: ActivityEntry[] = [];
       let before: number | null | undefined;
       for (let page = 0; page < ACTIVITY_PAGES; page++) {
-        const r = await api.orgActivity(slug, 100, before);
+        const r = await api.orgActivity(slug, RECENT_ACTIVITY_PAGE, before);
         items.push(...r.items);
         before = r.next_before;
         if (!before || groupActivity(recentActivityRows(items)).length > ACTIVITY_LINES_WANTED) break;
@@ -181,7 +182,7 @@ function ActivityGroupRow({ group, labels }: { group: ActivityGroup; labels: Kin
         <summary className="list-none cursor-pointer px-3 py-2 hover:bg-subtle dark:hover:bg-slate-800/40 transition">
           {rowContent}
         </summary>
-        <ul className="border-t border-line dark:border-slate-800 bg-mortar-25 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
+        <ul className="border-t border-line dark:border-slate-800 bg-mortar-50 dark:bg-slate-800/20 divide-y divide-line dark:divide-slate-800/40">
           {group.items.map((e) => (
             <ActivityRow key={e.id} entry={e} labels={labels} />
           ))}

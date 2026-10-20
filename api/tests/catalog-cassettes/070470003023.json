@@ -1,0 +1,2325 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "mountain blueberry",
+    "brand": "Yoplait original",
+    "model": null,
+    "description": "",
+    "category": "Blueberry yogurts",
+    "image_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.400.jpg",
+    "raw": {
+      "_id": "0070470003023",
+      "_keywords": [
+        "artificial",
+        "blueberry",
+        "calcium",
+        "color",
+        "coloring",
+        "dairie",
+        "dairy",
+        "dessert",
+        "fat",
+        "fermented",
+        "flavor",
+        "food",
+        "fruit",
+        "gluten",
+        "high",
+        "in",
+        "kosher",
+        "low",
+        "milk",
+        "mountain",
+        "natural",
+        "no",
+        "or",
+        "original",
+        "product",
+        "with",
+        "yogurt",
+        "yoplait"
+      ],
+      "added_countries_tags": [],
+      "additives_n": 2,
+      "additives_original_tags": [
+        "en:e428",
+        "en:e440"
+      ],
+      "additives_tags": [
+        "en:e428",
+        "en:e440"
+      ],
+      "allergens": "milk",
+      "allergens_from_user": "(en) en:milk",
+      "allergens_hierarchy": [
+        "en:milk"
+      ],
+      "allergens_lc": "en",
+      "allergens_tags": [
+        "en:milk"
+      ],
+      "amino_acids_prev_tags": [],
+      "amino_acids_tags": [],
+      "brand_owner": "GENERAL MILLS SALES INC.",
+      "brand_owner_imported": "GENERAL MILLS SALES INC.",
+      "brands": "Yoplait original",
+      "brands_tags": [
+        "Yoplait original"
+      ],
+      "categories": "Blueberry yogurts",
+      "categories_hierarchy": [
+        "en:dairies",
+        "en:fermented-foods",
+        "en:fermented-milk-products",
+        "en:desserts",
+        "en:dairy-desserts",
+        "en:fermented-dairy-desserts",
+        "en:fermented-dairy-desserts-with-fruits",
+        "en:yogurts",
+        "en:fruit-yogurts",
+        "en:blueberry-yogurts"
+      ],
+      "categories_lc": "en",
+      "categories_properties": {
+        "agribalyse_proxy_food_code:en": "19592",
+        "ciqual_food_code:en": "19682"
+      },
+      "categories_properties_tags": [
+        "all-products",
+        "categories-known",
+        "agribalyse-food-code-unknown",
+        "agribalyse-proxy-food-code-19592",
+        "agribalyse-proxy-food-code-known",
+        "ciqual-food-code-19682",
+        "ciqual-food-code-known",
+        "agribalyse-known",
+        "agribalyse-19592"
+      ],
+      "categories_tags": [
+        "en:dairies",
+        "en:fermented-foods",
+        "en:fermented-milk-products",
+        "en:desserts",
+        "en:dairy-desserts",
+        "en:fermented-dairy-desserts",
+        "en:fermented-dairy-desserts-with-fruits",
+        "en:yogurts",
+        "en:fruit-yogurts",
+        "en:blueberry-yogurts"
+      ],
+      "category_properties": {
+        "ciqual_food_name:en": "Yogurt, fermented milk or dairy specialty, w fruits or flavoured -average-",
+        "ciqual_food_name:fr": "Yaourt, lait fermenté ou spécialité laitière, aromatisé ou aux fruits -aliment moyen-"
+      },
+      "checkers_tags": [],
+      "ciqual_food_name_tags": [
+        "yogurt-fermented-milk-or-dairy-specialty-w-fruits-or-flavoured-average"
+      ],
+      "cities_tags": [],
+      "code": "0070470003023",
+      "codes_tags": [
+        "code-13",
+        "conflict-with-upc-12",
+        "0070470003xxx",
+        "007047000xxxx",
+        "00704700xxxxx",
+        "0070470xxxxxx",
+        "007047xxxxxxx",
+        "00704xxxxxxxx",
+        "0070xxxxxxxxx",
+        "007xxxxxxxxxx",
+        "00xxxxxxxxxxx",
+        "0xxxxxxxxxxxx"
+      ],
+      "compared_to_category": "en:blueberry-yogurts",
+      "complete": 0,
+      "completeness": 0.8875,
+      "correctors_tags": [
+        "tacinte",
+        "bdwyer",
+        "upcbot",
+        "yuka.YktzTVBha0duc0JSdmZjUW9Band3STBsNnM2YlJEbXdCdnNJSVE9PQ",
+        "beniben",
+        "org-database-usda",
+        "inf",
+        "yuka.sY2b0xO6T85zoF3NwEKvlhJLDtn9pTaaDjvlm2e7z9K3NbO1WPh1_q7Yaqo",
+        "kiliweb",
+        "vaporous",
+        "packbot",
+        "yuka.sY2b0xO6T85zoF3NwEKvlkdOX_Tb_hD9NAXgpXW51_uEM8XqWNR45NP2Kag",
+        "macrofactor",
+        "foodless",
+        "municorn-calorie-counter-app"
+      ],
+      "countries": "France, United States",
+      "countries_debug_tags": [],
+      "countries_hierarchy": [
+        "en:france",
+        "en:united-states"
+      ],
+      "countries_lc": "en",
+      "countries_tags": [
+        "en:france",
+        "en:united-states"
+      ],
+      "created_t": 1421617706,
+      "creator": "tacinte",
+      "data_quality_bugs_tags": [],
+      "data_quality_completeness_tags": [
+        "en:photo-and-data-to-be-checked-by-an-experienced-contributor",
+        "en:ingredients-en-photo-selected",
+        "en:ingredients-en-completed",
+        "en:ingredients-completed-at-least-for-one-language",
+        "en:ingredients-fr-photo-selected",
+        "en:ingredients-fr-completed",
+        "en:nutrition-photo-selected",
+        "en:categories-completed",
+        "en:nutrition-completed",
+        "en:packaging-photo-to-be-selected",
+        "en:packagings-completed",
+        "en:traceability-codes-to-be-completed",
+        "en:front-photo-selected",
+        "en:product-name-completed",
+        "en:quantity-completed",
+        "en:brands-completed",
+        "en:expiration-date-completed"
+      ],
+      "data_quality_dimensions": {
+        "accuracy": {
+          "overall": "0.00"
+        },
+        "completeness": {
+          "general_information": "1.00",
+          "ingredients": "1.00",
+          "nutrition": "1.00",
+          "overall": "0.87",
+          "packaging": "0.33"
+        }
+      },
+      "data_quality_errors_tags": [],
+      "data_quality_info_tags": [
+        "en:packaging-data-incomplete",
+        "en:ingredients-percent-analysis-ok",
+        "en:food-groups-1-known",
+        "en:food-groups-2-known",
+        "en:food-groups-3-unknown"
+      ],
+      "data_quality_tags": [
+        "en:photo-and-data-to-be-checked-by-an-experienced-contributor",
+        "en:ingredients-en-photo-selected",
+        "en:ingredients-en-completed",
+        "en:ingredients-completed-at-least-for-one-language",
+        "en:ingredients-fr-photo-selected",
+        "en:ingredients-fr-completed",
+        "en:nutrition-photo-selected",
+        "en:categories-completed",
+        "en:nutrition-completed",
+        "en:packaging-photo-to-be-selected",
+        "en:packagings-completed",
+        "en:traceability-codes-to-be-completed",
+        "en:front-photo-selected",
+        "en:product-name-completed",
+        "en:quantity-completed",
+        "en:brands-completed",
+        "en:expiration-date-completed",
+        "en:packaging-data-incomplete",
+        "en:ingredients-percent-analysis-ok",
+        "en:food-groups-1-known",
+        "en:food-groups-2-known",
+        "en:food-groups-3-unknown",
+        "en:ingredients-en-ending-comma",
+        "en:high-in-calcium-label-claim-but-calcium-below-0.24",
+        "en:environmental-score-origins-of-ingredients-origins-are-100-percent-unknown",
+        "en:environmental-score-packaging-unspecified-shape",
+        "en:environmental-score-production-system-no-label"
+      ],
+      "data_quality_warnings_tags": [
+        "en:ingredients-en-ending-comma",
+        "en:high-in-calcium-label-claim-but-calcium-below-0.24",
+        "en:environmental-score-origins-of-ingredients-origins-are-100-percent-unknown",
+        "en:environmental-score-packaging-unspecified-shape",
+        "en:environmental-score-production-system-no-label"
+      ],
+      "data_sources": "App - yuka, Apps, Databases, database-usda, App - InFood, App - macrofactor, App - caloriecounterapp",
+      "data_sources_imported": "Databases, database-usda",
+      "data_sources_tags": [
+        "app-yuka",
+        "apps",
+        "databases",
+        "database-usda",
+        "app-infood",
+        "app-macrofactor",
+        "app-caloriecounterapp"
+      ],
+      "debug_param_sorted_langs": [
+        "en",
+        "fr"
+      ],
+      "ecoscore_data": {
+        "adjustments": {
+          "origins_of_ingredients": {
+            "aggregated_origins": [
+              {
+                "epi_score": 0,
+                "origin": "en:unknown",
+                "percent": 100,
+                "transportation_score": 0
+              }
+            ],
+            "epi_score": 0,
+            "epi_value": -5,
+            "origins_from_categories": [
+              "en:unknown"
+            ],
+            "origins_from_origins_field": [
+              "en:unknown"
+            ],
+            "transportation_score": 0,
+            "transportation_scores": {
+              "ad": 0,
+              "al": 0,
+              "at": 0,
+              "ax": 0,
+              "ba": 0,
+              "be": 0,
+              "bg": 0,
+              "ch": 0,
+              "cy": 0,
+              "cz": 0,
+              "de": 0,
+              "dk": 0,
+              "dz": 0,
+              "ee": 0,
+              "eg": 0,
+              "es": 0,
+              "fi": 0,
+              "fo": 0,
+              "fr": 0,
+              "gg": 0,
+              "gi": 0,
+              "gr": 0,
+              "hr": 0,
+              "hu": 0,
+              "ie": 0,
+              "il": 0,
+              "im": 0,
+              "is": 0,
+              "it": 0,
+              "je": 0,
+              "lb": 0,
+              "li": 0,
+              "lt": 0,
+              "lu": 0,
+              "lv": 0,
+              "ly": 0,
+              "ma": 0,
+              "mc": 0,
+              "md": 0,
+              "me": 0,
+              "mk": 0,
+              "mt": 0,
+              "nl": 0,
+              "no": 0,
+              "pl": 0,
+              "ps": 0,
+              "pt": 0,
+              "ro": 0,
+              "rs": 0,
+              "se": 0,
+              "si": 0,
+              "sj": 0,
+              "sk": 0,
+              "sm": 0,
+              "sy": 0,
+              "tn": 0,
+              "tr": 0,
+              "ua": 0,
+              "uk": 0,
+              "us": 0,
+              "va": 0,
+              "world": 0,
+              "xk": 0
+            },
+            "transportation_value": 0,
+            "transportation_values": {
+              "ad": 0,
+              "al": 0,
+              "at": 0,
+              "ax": 0,
+              "ba": 0,
+              "be": 0,
+              "bg": 0,
+              "ch": 0,
+              "cy": 0,
+              "cz": 0,
+              "de": 0,
+              "dk": 0,
+              "dz": 0,
+              "ee": 0,
+              "eg": 0,
+              "es": 0,
+              "fi": 0,
+              "fo": 0,
+              "fr": 0,
+              "gg": 0,
+              "gi": 0,
+              "gr": 0,
+              "hr": 0,
+              "hu": 0,
+              "ie": 0,
+              "il": 0,
+              "im": 0,
+              "is": 0,
+              "it": 0,
+              "je": 0,
+              "lb": 0,
+              "li": 0,
+              "lt": 0,
+              "lu": 0,
+              "lv": 0,
+              "ly": 0,
+              "ma": 0,
+              "mc": 0,
+              "md": 0,
+              "me": 0,
+              "mk": 0,
+              "mt": 0,
+              "nl": 0,
+              "no": 0,
+              "pl": 0,
+              "ps": 0,
+              "pt": 0,
+              "ro": 0,
+              "rs": 0,
+              "se": 0,
+              "si": 0,
+              "sj": 0,
+              "sk": 0,
+              "sm": 0,
+              "sy": 0,
+              "tn": 0,
+              "tr": 0,
+              "ua": 0,
+              "uk": 0,
+              "us": 0,
+              "va": 0,
+              "world": 0,
+              "xk": 0
+            },
+            "value": -5,
+            "values": {
+              "ad": -5,
+              "al": -5,
+              "at": -5,
+              "ax": -5,
+              "ba": -5,
+              "be": -5,
+              "bg": -5,
+              "ch": -5,
+              "cy": -5,
+              "cz": -5,
+              "de": -5,
+              "dk": -5,
+              "dz": -5,
+              "ee": -5,
+              "eg": -5,
+              "es": -5,
+              "fi": -5,
+              "fo": -5,
+              "fr": -5,
+              "gg": -5,
+              "gi": -5,
+              "gr": -5,
+              "hr": -5,
+              "hu": -5,
+              "ie": -5,
+              "il": -5,
+              "im": -5,
+              "is": -5,
+              "it": -5,
+              "je": -5,
+              "lb": -5,
+              "li": -5,
+              "lt": -5,
+              "lu": -5,
+              "lv": -5,
+              "ly": -5,
+              "ma": -5,
+              "mc": -5,
+              "md": -5,
+              "me": -5,
+              "mk": -5,
+              "mt": -5,
+              "nl": -5,
+              "no": -5,
+              "pl": -5,
+              "ps": -5,
+              "pt": -5,
+              "ro": -5,
+              "rs": -5,
+              "se": -5,
+              "si": -5,
+              "sj": -5,
+              "sk": -5,
+              "sm": -5,
+              "sy": -5,
+              "tn": -5,
+              "tr": -5,
+              "ua": -5,
+              "uk": -5,
+              "us": -5,
+              "va": -5,
+              "world": -5,
+              "xk": -5
+            },
+            "warning": "origins_are_100_percent_unknown"
+          },
+          "packaging": {
+            "non_recyclable_and_non_biodegradable_materials": 1,
+            "packagings": [
+              {
+                "environmental_score_material_score": 72,
+                "environmental_score_shape_ratio": 1,
+                "food_contact": 1,
+                "material": "en:heavy-aluminium",
+                "recycling": "en:recycle",
+                "shape": "en:pot"
+              },
+              {
+                "environmental_score_material_score": 0,
+                "environmental_score_shape_ratio": 1,
+                "food_contact": 0,
+                "material": "en:plastic",
+                "non_recyclable_and_non_biodegradable": "maybe",
+                "shape": "en:unknown"
+              }
+            ],
+            "score": -28,
+            "value": -13,
+            "warning": "unspecified_shape"
+          },
+          "production_system": {
+            "labels": [],
+            "value": 0,
+            "warning": "no_label"
+          },
+          "threatened_species": {}
+        },
+        "agribalyse": {
+          "agribalyse_proxy_food_code": "19592",
+          "co2_agriculture": 1,
+          "co2_consumption": 0.00683,
+          "co2_distribution": 0.0369,
+          "co2_packaging": 0.422,
+          "co2_processing": 0.154,
+          "co2_total": 1.89,
+          "co2_transportation": 0.269,
+          "code": "19592",
+          "dqr": "1.2702715306959722",
+          "ef_agriculture": 0.117,
+          "ef_consumption": 0.00259,
+          "ef_distribution": 0.00938,
+          "ef_packaging": 0.0326,
+          "ef_processing": 0.0299,
+          "ef_total": 0.211,
+          "ef_transportation": 0.0201,
+          "is_beverage": 0,
+          "name_en": "Yogurt, fermented milk or dairy specialty, with fruits, with sugar, fortified with vitamin D",
+          "name_fr": "Yaourt, lait fermenté ou spécialité laitière, aux fruits, sucré, enrichi en vitamine D",
+          "score": 88,
+          "version": "3.2"
+        },
+        "grade": "b",
+        "grades": {
+          "ad": "b",
+          "al": "b",
+          "at": "b",
+          "ax": "b",
+          "ba": "b",
+          "be": "b",
+          "bg": "b",
+          "ch": "b",
+          "cy": "b",
+          "cz": "b",
+          "de": "b",
+          "dk": "b",
+          "dz": "b",
+          "ee": "b",
+          "eg": "b",
+          "es": "b",
+          "fi": "b",
+          "fo": "b",
+          "fr": "b",
+          "gg": "b",
+          "gi": "b",
+          "gr": "b",
+          "hr": "b",
+          "hu": "b",
+          "ie": "b",
+          "il": "b",
+          "im": "b",
+          "is": "b",
+          "it": "b",
+          "je": "b",
+          "lb": "b",
+          "li": "b",
+          "lt": "b",
+          "lu": "b",
+          "lv": "b",
+          "ly": "b",
+          "ma": "b",
+          "mc": "b",
+          "md": "b",
+          "me": "b",
+          "mk": "b",
+          "mt": "b",
+          "nl": "b",
+          "no": "b",
+          "pl": "b",
+          "ps": "b",
+          "pt": "b",
+          "ro": "b",
+          "rs": "b",
+          "se": "b",
+          "si": "b",
+          "sj": "b",
+          "sk": "b",
+          "sm": "b",
+          "sy": "b",
+          "tn": "b",
+          "tr": "b",
+          "ua": "b",
+          "uk": "b",
+          "us": "b",
+          "va": "b",
+          "world": "b",
+          "xk": "b"
+        },
+        "missing": {
+          "labels": 1,
+          "origins": 1,
+          "packagings": 1
+        },
+        "missing_data_warning": 1,
+        "previous_data": {
+          "agribalyse": {
+            "agribalyse_proxy_food_code": "19592",
+            "co2_agriculture": 1.5208069,
+            "co2_consumption": 0.0066736979,
+            "co2_distribution": 0.035969873,
+            "co2_packaging": 0.18031662,
+            "co2_processing": 0.14843828,
+            "co2_total": 2.1281156609,
+            "co2_transportation": 0.23591029,
+            "code": "19592",
+            "dqr": "3.61",
+            "ef_agriculture": 0.17534576,
+            "ef_consumption": 0.002442269,
+            "ef_distribution": 0.0089059516,
+            "ef_packaging": 0.01501622,
+            "ef_processing": 0.029665545,
+            "ef_total": 0.2498756086,
+            "ef_transportation": 0.018499863,
+            "is_beverage": 0,
+            "name_en": "Yogurt, fermented milk or dairy specialty, with fruits, with sugar, fortified with vitamin D",
+            "name_fr": "Yaourt, lait fermenté ou spécialité laitière, aux fruits, sucré, enrichi en vitamine D",
+            "score": 84,
+            "version": "3.1.1"
+          },
+          "grade": "b",
+          "score": 66
+        },
+        "score": 70,
+        "scores": {
+          "ad": 70,
+          "al": 70,
+          "at": 70,
+          "ax": 70,
+          "ba": 70,
+          "be": 70,
+          "bg": 70,
+          "ch": 70,
+          "cy": 70,
+          "cz": 70,
+          "de": 70,
+          "dk": 70,
+          "dz": 70,
+          "ee": 70,
+          "eg": 70,
+          "es": 70,
+          "fi": 70,
+          "fo": 70,
+          "fr": 70,
+          "gg": 70,
+          "gi": 70,
+          "gr": 70,
+          "hr": 70,
+          "hu": 70,
+          "ie": 70,
+          "il": 70,
+          "im": 70,
+          "is": 70,
+          "it": 70,
+          "je": 70,
+          "lb": 70,
+          "li": 70,
+          "lt": 70,
+          "lu": 70,
+          "lv": 70,
+          "ly": 70,
+          "ma": 70,
+          "mc": 70,
+          "md": 70,
+          "me": 70,
+          "mk": 70,
+          "mt": 70,
+          "nl": 70,
+          "no": 70,
+          "pl": 70,
+          "ps": 70,
+          "pt": 70,
+          "ro": 70,
+          "rs": 70,
+          "se": 70,
+          "si": 70,
+          "sj": 70,
+          "sk": 70,
+          "sm": 70,
+          "sy": 70,
+          "tn": 70,
+          "tr": 70,
+          "ua": 70,
+          "uk": 70,
+          "us": 70,
+          "va": 70,
+          "world": 70,
+          "xk": 70
+        },
+        "status": "known"
+      },
+      "ecoscore_grade": "b",
+      "ecoscore_score": 70,
+      "ecoscore_tags": [
+        "b"
+      ],
+      "editors": [
+        "tacinte",
+        "bdwyer",
+        "upcbot"
+      ],
+      "editors_tags": [
+        "bdwyer",
+        "beniben",
+        "ecoscore-impact-estimator",
+        "foodless",
+        "inf",
+        "kiliweb",
+        "macrofactor",
+        "municorn-calorie-counter-app",
+        "new-nutrition-bot",
+        "openfoodfacts-contributors",
+        "org-database-usda",
+        "packbot",
+        "roboto-app",
+        "tacinte",
+        "upcbot",
+        "vaporous",
+        "yuka.YktzTVBha0duc0JSdmZjUW9Band3STBsNnM2YlJEbXdCdnNJSVE9PQ",
+        "yuka.sY2b0xO6T85zoF3NwEKvlhJLDtn9pTaaDjvlm2e7z9K3NbO1WPh1_q7Yaqo",
+        "yuka.sY2b0xO6T85zoF3NwEKvlkdOX_Tb_hD9NAXgpXW51_uEM8XqWNR45NP2Kag",
+        "yuka.sY2b0xO6T85zoF3NwEKvllYYXubepQzKBiDQmkSMze-DFLjnZ8hb79T-a6s"
+      ],
+      "emb_codes": "",
+      "emb_codes_20141016": "",
+      "emb_codes_debug_tags": [],
+      "emb_codes_hierarchy": [],
+      "emb_codes_lc": "en",
+      "emb_codes_orig": "",
+      "emb_codes_tags": [],
+      "entry_dates_tags": [
+        "2015-01-18",
+        "2015-01",
+        "2015"
+      ],
+      "expiration_date": "20/05/2018",
+      "expiration_date_debug_tags": [],
+      "food_groups": "en:milk-and-yogurt",
+      "food_groups_tags": [
+        "en:milk-and-dairy-products",
+        "en:milk-and-yogurt"
+      ],
+      "forest_footprint_2026": {
+        "grade": "a",
+        "primary_ingredients": {},
+        "summary": "without_primary_ingredients_or_other_risky_ingredients",
+        "total_footprint_per_kg": 0
+      },
+      "fruits-vegetables-nuts_100g_estimate": 0,
+      "generic_name": "",
+      "generic_name_en": "",
+      "generic_name_en_debug_tags": [],
+      "generic_name_fr": "Original Mountain Blueberry",
+      "generic_name_fr_debug_tags": [],
+      "id": "070470003023",
+      "image_front_small_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.200.jpg",
+      "image_front_thumb_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.100.jpg",
+      "image_front_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.400.jpg",
+      "image_ingredients_small_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.200.jpg",
+      "image_ingredients_thumb_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.100.jpg",
+      "image_ingredients_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.400.jpg",
+      "image_nutrition_small_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.200.jpg",
+      "image_nutrition_thumb_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.100.jpg",
+      "image_nutrition_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.400.jpg",
+      "image_small_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.200.jpg",
+      "image_thumb_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.100.jpg",
+      "image_url": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.400.jpg",
+      "images": {
+        "1": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 74
+            },
+            "400": {
+              "h": 400,
+              "w": 297
+            },
+            "full": {
+              "h": 4208,
+              "w": 3120
+            }
+          },
+          "uploaded_t": 1421617707,
+          "uploader": "tacinte"
+        },
+        "2": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 74
+            },
+            "400": {
+              "h": 400,
+              "w": 297
+            },
+            "full": {
+              "h": 4208,
+              "w": 3120
+            }
+          },
+          "uploaded_t": 1421617768,
+          "uploader": "tacinte"
+        },
+        "3": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 74
+            },
+            "400": {
+              "h": 400,
+              "w": 297
+            },
+            "full": {
+              "h": 4208,
+              "w": 3120
+            }
+          },
+          "uploaded_t": 1421617775,
+          "uploader": "tacinte"
+        },
+        "4": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 74
+            },
+            "400": {
+              "h": 400,
+              "w": 297
+            },
+            "full": {
+              "h": 4208,
+              "w": 3120
+            }
+          },
+          "uploaded_t": 1421617783,
+          "uploader": "tacinte"
+        },
+        "5": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 75
+            },
+            "400": {
+              "h": 400,
+              "w": 300
+            },
+            "full": {
+              "h": 1200,
+              "w": 901
+            }
+          },
+          "uploaded_t": "1525657684",
+          "uploader": "kiliweb"
+        },
+        "6": {
+          "sizes": {
+            "100": {
+              "h": 75,
+              "w": 100
+            },
+            "400": {
+              "h": 300,
+              "w": 400
+            },
+            "full": {
+              "h": 1200,
+              "w": 1600
+            }
+          },
+          "uploaded_t": "1525657689",
+          "uploader": "kiliweb"
+        },
+        "7": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 64
+            },
+            "400": {
+              "h": 400,
+              "w": 256
+            },
+            "full": {
+              "h": 1200,
+              "w": 769
+            }
+          },
+          "uploaded_t": 1612659140,
+          "uploader": "kiliweb"
+        },
+        "8": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 74
+            },
+            "400": {
+              "h": 400,
+              "w": 297
+            },
+            "full": {
+              "h": 840,
+              "w": 624
+            }
+          },
+          "uploaded_t": 1612659141,
+          "uploader": "kiliweb"
+        },
+        "9": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 79
+            },
+            "400": {
+              "h": 400,
+              "w": 316
+            },
+            "full": {
+              "h": 475,
+              "w": 375
+            }
+          },
+          "uploaded_t": 1644606851,
+          "uploader": "kiliweb"
+        },
+        "10": {
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 53
+            },
+            "400": {
+              "h": 400,
+              "w": 211
+            },
+            "full": {
+              "h": 4080,
+              "w": 2152
+            }
+          },
+          "uploaded_t": 1763913995,
+          "uploader": "foodless"
+        },
+        "front_en": {
+          "imgid": 10,
+          "rev": 49,
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 53
+            },
+            "200": {
+              "h": 200,
+              "w": 105
+            },
+            "400": {
+              "h": 400,
+              "w": 211
+            },
+            "full": {
+              "h": 4080,
+              "w": 2152
+            }
+          }
+        },
+        "front_fr": {
+          "coordinates_image_size": "400",
+          "imgid": "5",
+          "rev": "23",
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 63
+            },
+            "200": {
+              "h": 200,
+              "w": 126
+            },
+            "400": {
+              "h": 400,
+              "w": 251
+            },
+            "full": {
+              "h": 1031,
+              "w": 648
+            }
+          },
+          "x1": 51,
+          "x2": 267,
+          "y1": 38,
+          "y2": 382
+        },
+        "ingredients_en": {
+          "imgid": "3",
+          "rev": "9",
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 80
+            },
+            "200": {
+              "h": 200,
+              "w": 161
+            },
+            "400": {
+              "h": 400,
+              "w": 321
+            },
+            "full": {
+              "h": 968,
+              "w": 777
+            }
+          }
+        },
+        "ingredients_fr": {
+          "angle": 90,
+          "coordinates_image_size": "400",
+          "imgid": "6",
+          "rev": "24",
+          "sizes": {
+            "100": {
+              "h": 43,
+              "w": 100
+            },
+            "200": {
+              "h": 85,
+              "w": 200
+            },
+            "400": {
+              "h": 171,
+              "w": 400
+            },
+            "full": {
+              "h": 369,
+              "w": 865
+            }
+          },
+          "x1": 60,
+          "x2": 276,
+          "y1": 147,
+          "y2": 240
+        },
+        "nutrition_en": {
+          "imgid": "9",
+          "rev": "38",
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 79
+            },
+            "200": {
+              "h": 200,
+              "w": 158
+            },
+            "400": {
+              "h": 400,
+              "w": 316
+            },
+            "full": {
+              "h": 475,
+              "w": 375
+            }
+          }
+        },
+        "nutrition_fr": {
+          "coordinates_image_size": "400",
+          "imgid": "4",
+          "rev": "25",
+          "sizes": {
+            "100": {
+              "h": 100,
+              "w": 43
+            },
+            "200": {
+              "h": 200,
+              "w": 87
+            },
+            "400": {
+              "h": 400,
+              "w": 174
+            },
+            "full": {
+              "h": 2083,
+              "w": 905
+            }
+          },
+          "x1": 100,
+          "x2": 186,
+          "y1": 122,
+          "y2": 320
+        }
+      },
+      "informers_tags": [
+        "tacinte",
+        "bdwyer",
+        "upcbot",
+        "yuka.YktzTVBha0duc0JSdmZjUW9Band3STBsNnM2YlJEbXdCdnNJSVE9PQ",
+        "openfoodfacts-contributors",
+        "beniben",
+        "org-database-usda",
+        "inf",
+        "roboto-app",
+        "macrofactor",
+        "municorn-calorie-counter-app",
+        "new-nutrition-bot"
+      ],
+      "ingredients": [
+        {
+          "id": "en:pasteurized grade a reduced fat milk",
+          "is_in_taxonomy": 0,
+          "percent_estimate": 55,
+          "percent_max": 100,
+          "percent_min": 10,
+          "text": "pasteurized grade a reduced fat milk"
+        },
+        {
+          "ciqual_proxy_food_code": "31016",
+          "ecobalyse_code": "8f075c25-9ebf-430c-b41d-51d165c6e0d8",
+          "id": "en:sugar",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 9.5,
+          "percent_max": 19,
+          "percent_min": 0,
+          "text": "sugar",
+          "vegan": "maybe",
+          "vegetarian": "yes"
+        },
+        {
+          "ciqual_food_code": "13028",
+          "ecobalyse_code": "b193fd9e-99ab-4d1b-8e81-3b38bab2eacf",
+          "id": "en:blueberry",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 9.5,
+          "percent_max": 19,
+          "percent_min": 0,
+          "text": "blueberries",
+          "vegan": "yes",
+          "vegetarian": "yes"
+        },
+        {
+          "ciqual_food_code": "9510",
+          "id": "en:modified-corn-starch",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 9.5,
+          "percent_max": 19,
+          "percent_min": 0,
+          "text": "modified corn starch",
+          "vegan": "yes",
+          "vegetarian": "yes"
+        },
+        {
+          "id": "en:e428",
+          "is_in_taxonomy": 1,
+          "labels": "en:kosher",
+          "percent_estimate": 8.25,
+          "percent_max": 19,
+          "percent_min": 0,
+          "text": "gelatin",
+          "vegan": "no",
+          "vegetarian": "no"
+        },
+        {
+          "id": "en:natural-flavouring",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 2.5,
+          "percent_max": 5,
+          "percent_min": 0,
+          "text": "natural flavor",
+          "vegan": "maybe",
+          "vegetarian": "maybe"
+        },
+        {
+          "id": "en:e440a",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 2.5,
+          "percent_max": 5,
+          "percent_min": 0,
+          "text": "pectin",
+          "vegan": "yes",
+          "vegetarian": "yes"
+        },
+        {
+          "id": "en:yogurt-culture",
+          "ingredients": [
+            {
+              "id": "en:lactobacillus-bulgaricus",
+              "is_in_taxonomy": 1,
+              "percent_estimate": 0.8125,
+              "percent_max": 5,
+              "percent_min": 0,
+              "text": "lactobacillus bulgaricus",
+              "vegan": "maybe",
+              "vegetarian": "yes"
+            },
+            {
+              "id": "en:streptococcus-thermophilus",
+              "is_in_taxonomy": 1,
+              "percent_estimate": 0.40625,
+              "percent_max": 2.5,
+              "percent_min": 0,
+              "text": "streptococcus thermophilus",
+              "vegan": "maybe",
+              "vegetarian": "yes"
+            },
+            {
+              "id": "en:lactobacillus-acidophilus",
+              "is_in_taxonomy": 1,
+              "percent_estimate": 0.40625,
+              "percent_max": 1.66666666666667,
+              "percent_min": 0,
+              "text": "lactobacillus acidophilus",
+              "vegan": "maybe",
+              "vegetarian": "yes"
+            }
+          ],
+          "is_in_taxonomy": 1,
+          "percent_estimate": 1.625,
+          "percent_max": 5,
+          "percent_min": 0,
+          "text": "yogurt cultures",
+          "vegan": "maybe",
+          "vegetarian": "yes"
+        },
+        {
+          "id": "en:retinyl-acetate",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 0.8125,
+          "percent_max": 5,
+          "percent_min": 0,
+          "text": "vitamin a acetate",
+          "vegan": "maybe",
+          "vegetarian": "maybe"
+        },
+        {
+          "id": "en:cholecalciferol",
+          "is_in_taxonomy": 1,
+          "percent_estimate": 0.8125,
+          "percent_max": 5,
+          "percent_min": 0,
+          "text": "vitamin d3",
+          "vegan": "maybe",
+          "vegetarian": "maybe"
+        }
+      ],
+      "ingredients_analysis": {
+        "en:non-vegan": [
+          "en:e428"
+        ],
+        "en:non-vegetarian": [
+          "en:e428"
+        ],
+        "en:vegan-status-unknown": [
+          "en:pasteurized grade a reduced fat milk"
+        ],
+        "en:vegetarian-status-unknown": [
+          "en:pasteurized grade a reduced fat milk"
+        ]
+      },
+      "ingredients_analysis_tags": [
+        "en:palm-oil-free",
+        "en:non-vegan",
+        "en:non-vegetarian"
+      ],
+      "ingredients_debug": [
+        "Cultured Pasteurized Grad A Low Fat _Milk_",
+        ",",
+        null,
+        null,
+        null,
+        " Sugar",
+        ",",
+        null,
+        null,
+        null,
+        " Blueberries",
+        ",",
+        null,
+        null,
+        null,
+        " Modified Corn Starch",
+        ",",
+        null,
+        null,
+        null,
+        " Nonfat _Milk_",
+        ",",
+        null,
+        null,
+        null,
+        " Kosher Gelatin",
+        ",",
+        null,
+        null,
+        null,
+        " Citric Acid",
+        ",",
+        null,
+        null,
+        null,
+        " Tricalcium Phosphate",
+        ",",
+        null,
+        null,
+        null,
+        " Pectin",
+        ",",
+        null,
+        null,
+        null,
+        " ",
+        ":",
+        ":",
+        null,
+        null,
+        " Natural Flavor ",
+        ":",
+        ":",
+        null,
+        null,
+        " ",
+        ",",
+        null,
+        null,
+        null,
+        " Colored with Beet Juice Concentrate",
+        ",",
+        null,
+        null,
+        null,
+        " Vitamin A Acetate",
+        ",",
+        null,
+        null,
+        null,
+        " Vitamin D3."
+      ],
+      "ingredients_from_or_that_may_be_from_palm_oil_n": 0,
+      "ingredients_from_palm_oil_n": 0,
+      "ingredients_from_palm_oil_tags": [],
+      "ingredients_hierarchy": [
+        "en:pasteurized grade a reduced fat milk",
+        "en:sugar",
+        "en:added-sugar",
+        "en:disaccharide",
+        "en:blueberry",
+        "en:fruit",
+        "en:berries",
+        "en:modified-corn-starch",
+        "en:starch",
+        "en:corn-starch",
+        "en:modified-starch",
+        "en:e428",
+        "en:natural-flavouring",
+        "en:flavouring",
+        "en:e440a",
+        "en:yogurt-culture",
+        "en:ferment",
+        "en:microbial-culture",
+        "en:lactic-ferments",
+        "en:retinyl-acetate",
+        "en:vitamins",
+        "en:vitamin-a",
+        "en:cholecalciferol",
+        "en:vitamin-d",
+        "en:lactobacillus-bulgaricus",
+        "en:lactobacillus",
+        "en:streptococcus-thermophilus",
+        "en:lactobacillus-acidophilus"
+      ],
+      "ingredients_ids_debug": [
+        "cultured-pasteurized-grad-a-low-fat-milk",
+        "sugar",
+        "blueberries",
+        "modified-corn-starch",
+        "nonfat-milk",
+        "kosher-gelatin",
+        "citric-acid",
+        "tricalcium-phosphate",
+        "pectin",
+        "natural-flavor",
+        "colored-with-beet-juice-concentrate",
+        "vitamin-a-acetate",
+        "vitamin-d3"
+      ],
+      "ingredients_lc": "en",
+      "ingredients_n": 13,
+      "ingredients_n_tags": [
+        "13",
+        "11-20"
+      ],
+      "ingredients_non_nutritive_sweeteners_n": 0,
+      "ingredients_original_tags": [
+        "en:pasteurized grade a reduced fat milk",
+        "en:sugar",
+        "en:blueberry",
+        "en:modified-corn-starch",
+        "en:e428",
+        "en:natural-flavouring",
+        "en:e440a",
+        "en:yogurt-culture",
+        "en:retinyl-acetate",
+        "en:cholecalciferol",
+        "en:lactobacillus-bulgaricus",
+        "en:streptococcus-thermophilus",
+        "en:lactobacillus-acidophilus"
+      ],
+      "ingredients_percent_analysis": 1,
+      "ingredients_sweeteners_n": 0,
+      "ingredients_tags": [
+        "en:pasteurized grade a reduced fat milk",
+        "en:sugar",
+        "en:added-sugar",
+        "en:disaccharide",
+        "en:blueberry",
+        "en:fruit",
+        "en:berries",
+        "en:modified-corn-starch",
+        "en:starch",
+        "en:corn-starch",
+        "en:modified-starch",
+        "en:e428",
+        "en:natural-flavouring",
+        "en:flavouring",
+        "en:e440a",
+        "en:yogurt-culture",
+        "en:ferment",
+        "en:microbial-culture",
+        "en:lactic-ferments",
+        "en:retinyl-acetate",
+        "en:vitamins",
+        "en:vitamin-a",
+        "en:cholecalciferol",
+        "en:vitamin-d",
+        "en:lactobacillus-bulgaricus",
+        "en:lactobacillus",
+        "en:streptococcus-thermophilus",
+        "en:lactobacillus-acidophilus"
+      ],
+      "ingredients_text": "pasteurized grade a reduced fat milk, sugar, blueberries, modified corn starch, kosher gelatin, natural flavor, pectin, yogurt cultures (l bulgaricus, s thermophilus, l acidophilus), vitamin a acetate, vitamin d3,",
+      "ingredients_text_debug": "Cultured Pasteurized Grad A Low Fat _Milk_, Sugar, Blueberries, Modified Corn Starch, Nonfat _Milk_, Kosher Gelatin, Citric Acid, Tricalcium Phosphate, Pectin, : Natural Flavor : , Colored with Beet Juice Concentrate, Vitamin A Acetate, Vitamin D3.",
+      "ingredients_text_en": "pasteurized grade a reduced fat milk, sugar, blueberries, modified corn starch, kosher gelatin, natural flavor, pectin, yogurt cultures (l bulgaricus, s thermophilus, l acidophilus), vitamin a acetate, vitamin d3,",
+      "ingredients_text_en_imported": "Pasteurized grade a reduced fat milk, sugar, blueberries, modified corn starch, kosher gelatin, natural flavor, pectin, yogurt cultures (l. bulgaricus, s. thermophilus, l. acidophilus), vitamin a acetate, vitamin d3.",
+      "ingredients_text_fr": "_Lait_ pasteurisé écrémé, sucre, myrtilles, amidon modifié de maïs, gélatine kasher, arôme naturel, pectine, ferments du yaourt (L. bulgarius, S. thermophilus, L. acidophilus), acétate de vitamine A, vitamine D3.",
+      "ingredients_text_fr_debug_tags": [],
+      "ingredients_text_with_allergens": "pasteurized grade a reduced fat milk, sugar, blueberries, modified corn starch, kosher gelatin, natural flavor, pectin, yogurt cultures (l bulgaricus, s thermophilus, l acidophilus), vitamin a acetate, vitamin d3,",
+      "ingredients_text_with_allergens_en": "pasteurized grade a reduced fat milk, sugar, blueberries, modified corn starch, kosher gelatin, natural flavor, pectin, yogurt cultures (l bulgaricus, s thermophilus, l acidophilus), vitamin a acetate, vitamin d3,",
+      "ingredients_text_with_allergens_fr": "<span class=\"allergen\">Lait</span> pasteurisé écrémé, sucre, myrtilles, amidon modifié de maïs, gélatine kasher, arôme naturel, pectine, ferments du yaourt (L. bulgarius, S. thermophilus, L. acidophilus), acétate de vitamine A, vitamine D3.",
+      "ingredients_that_may_be_from_palm_oil_n": 0,
+      "ingredients_that_may_be_from_palm_oil_tags": [],
+      "ingredients_with_specified_percent_n": 0,
+      "ingredients_with_specified_percent_sum": 0,
+      "ingredients_with_unspecified_percent_n": 12,
+      "ingredients_with_unspecified_percent_sum": 100,
+      "ingredients_without_ciqual_codes": [
+        "en:cholecalciferol",
+        "en:e428",
+        "en:e440a",
+        "en:lactobacillus-acidophilus",
+        "en:lactobacillus-bulgaricus",
+        "en:natural-flavouring",
+        "en:pasteurized grade a reduced fat milk",
+        "en:retinyl-acetate",
+        "en:streptococcus-thermophilus",
+        "en:yogurt-culture"
+      ],
+      "ingredients_without_ciqual_codes_n": 10,
+      "ingredients_without_ecobalyse_ids": [
+        "en:cholecalciferol",
+        "en:e428",
+        "en:e440a",
+        "en:lactobacillus-acidophilus",
+        "en:lactobacillus-bulgaricus",
+        "en:modified-corn-starch",
+        "en:natural-flavouring",
+        "en:pasteurized grade a reduced fat milk",
+        "en:retinyl-acetate",
+        "en:streptococcus-thermophilus",
+        "en:yogurt-culture"
+      ],
+      "ingredients_without_ecobalyse_ids_n": 11,
+      "interface_version_created": "20120622",
+      "interface_version_modified": "20150316.jqm2",
+      "known_ingredients_n": 12,
+      "labels": "Low fat, No gluten, Kosher, No artificial flavors, High in calcium, natural colorings, natural flavors, No artificial colors",
+      "labels_hierarchy": [
+        "en:low-or-no-fat",
+        "en:low-fat",
+        "en:no-gluten",
+        "en:kosher",
+        "en:no-artificial-flavors",
+        "en:high-in-calcium",
+        "en:natural-colorings",
+        "en:natural-flavors",
+        "en:no-artificial-colors"
+      ],
+      "labels_lc": "en",
+      "labels_tags": [
+        "en:low-or-no-fat",
+        "en:low-fat",
+        "en:no-gluten",
+        "en:kosher",
+        "en:no-artificial-flavors",
+        "en:high-in-calcium",
+        "en:natural-colorings",
+        "en:natural-flavors",
+        "en:no-artificial-colors"
+      ],
+      "lang": "en",
+      "languages": {
+        "en:english": 5,
+        "en:french": 6
+      },
+      "languages_codes": {
+        "en": 5,
+        "fr": 6
+      },
+      "languages_hierarchy": [
+        "en:english",
+        "en:french"
+      ],
+      "languages_tags": [
+        "en:english",
+        "en:french",
+        "en:2",
+        "en:multilingual"
+      ],
+      "last_edit_dates_tags": [
+        "2026-06-01",
+        "2026-06",
+        "2026"
+      ],
+      "last_editor": "municorn-calorie-counter-app",
+      "last_image_dates_tags": [
+        "2025-11-23",
+        "2025-11",
+        "2025"
+      ],
+      "last_image_t": 1763913996,
+      "last_modified_by": "municorn-calorie-counter-app",
+      "last_modified_t": 1780320244,
+      "last_updated_t": 1790161934,
+      "lc": "en",
+      "lc_imported": "en",
+      "link": "http://www.generalmillscf.com/products/yogurt/cup/yoplait-original/blueberry",
+      "link_debug_tags": [],
+      "main_countries_tags": [],
+      "manufacturing_places": "",
+      "manufacturing_places_debug_tags": [],
+      "manufacturing_places_hierarchy": [],
+      "manufacturing_places_lc": "en",
+      "manufacturing_places_tags": [],
+      "max_imgid": 10,
+      "minerals_prev_tags": [],
+      "minerals_tags": [],
+      "misc_tags": [
+        "en:environmental-score-changed",
+        "en:environmental-score-computed",
+        "en:environmental-score-missing-data-labels",
+        "en:environmental-score-missing-data-origins",
+        "en:environmental-score-missing-data-packagings",
+        "en:environmental-score-missing-data-warning",
+        "en:nutrients-not-estimated-from-ingredients-too-few-ingredients-with-nutrition-data",
+        "en:nutriscore-2021-b-2023-c",
+        "en:nutriscore-2021-better-than-2023",
+        "en:nutriscore-2021-different-from-2023",
+        "en:nutriscore-computed",
+        "en:nutriscore-missing-fiber",
+        "en:nutrition-data-per-100g",
+        "en:nutrition-data-per-serving",
+        "en:nutrition-fruits-vegetables-legumes-estimate-from-ingredients",
+        "en:nutrition-fruits-vegetables-nuts-estimate-from-ingredients",
+        "en:nutrition-no-fiber-or-fruits-vegetables-nuts",
+        "en:packagings-not-complete",
+        "en:packagings-not-empty",
+        "en:packagings-not-empty-but-not-complete",
+        "en:packagings-number-of-components-2",
+        "en:main-countries-old-product-without-scans-in-2020",
+        "en:forest-footprint-computed",
+        "en:forest-footprint-grade-a"
+      ],
+      "nova_group": 4,
+      "nova_group_debug": "",
+      "nova_groups": "4",
+      "nova_groups_markers": {
+        "3": [
+          [
+            "ingredients",
+            "en:starch"
+          ],
+          [
+            "ingredients",
+            "en:sugar"
+          ]
+        ],
+        "4": [
+          [
+            "additives",
+            "en:e428"
+          ],
+          [
+            "additives",
+            "en:e440"
+          ],
+          [
+            "ingredients",
+            "en:flavouring"
+          ],
+          [
+            "ingredients",
+            "en:modified-starch"
+          ]
+        ]
+      },
+      "nova_groups_tags": [
+        "en:4-ultra-processed-food-and-drink-products"
+      ],
+      "nucleotides_prev_tags": [],
+      "nucleotides_tags": [],
+      "nutrient_levels": {
+        "fat": "low",
+        "salt": "low",
+        "saturated-fat": "low",
+        "sugars": "moderate"
+      },
+      "nutrient_levels_tags": [
+        "en:fat-in-low-quantity",
+        "en:saturated-fat-in-low-quantity",
+        "en:sugars-in-moderate-quantity",
+        "en:salt-in-low-quantity"
+      ],
+      "nutriments": {
+        "added-sugars": 7.64705882352941,
+        "added-sugars_100g": 7.64705882352941,
+        "added-sugars_serving": 13,
+        "added-sugars_unit": "g",
+        "added-sugars_value": 7.64705882352941,
+        "caffeine": 0,
+        "caffeine_100g": 0,
+        "caffeine_serving": 0,
+        "caffeine_unit": "g",
+        "caffeine_value": 0,
+        "calcium": 0.111764705882353,
+        "calcium_100g": 0.111764705882353,
+        "calcium_serving": 0.19,
+        "calcium_unit": "g",
+        "calcium_value": 0.111764705882353,
+        "carbohydrates": 15.8823529411765,
+        "carbohydrates_100g": 15.8823529411765,
+        "carbohydrates_serving": 27,
+        "carbohydrates_unit": "g",
+        "carbohydrates_value": 15.8823529411765,
+        "cholesterol": 0.006,
+        "cholesterol_100g": 0.006,
+        "cholesterol_serving": 0.0102,
+        "cholesterol_unit": "g",
+        "cholesterol_value": 0.006,
+        "choline": 0,
+        "choline_100g": 0,
+        "choline_serving": 0,
+        "choline_unit": "g",
+        "choline_value": 0,
+        "copper": 0,
+        "copper_100g": 0,
+        "copper_serving": 0,
+        "copper_unit": "g",
+        "copper_value": 0,
+        "energy": 352.647058823529,
+        "energy-from-fat": 37.0588235294118,
+        "energy-from-fat_100g": 37.0588235294118,
+        "energy-from-fat_serving": 63,
+        "energy-from-fat_unit": "g",
+        "energy-from-fat_value": 37.0588235294118,
+        "energy-kcal": 82.3529411764706,
+        "energy-kcal_100g": 82.3529411764706,
+        "energy-kcal_serving": 140,
+        "energy-kcal_unit": "kcal",
+        "energy-kcal_value": 82.3529411764706,
+        "energy-kj": 352.647058823529,
+        "energy-kj_100g": 352.647058823529,
+        "energy-kj_modifier": "~",
+        "energy-kj_serving": 599,
+        "energy-kj_unit": "kJ",
+        "energy-kj_value": 352.647058823529,
+        "energy_100g": 352.647058823529,
+        "energy_modifier": "~",
+        "energy_serving": 599,
+        "energy_unit": "kJ",
+        "energy_value": 352.647058823529,
+        "fat": 0.882352941176471,
+        "fat_100g": 0.882352941176471,
+        "fat_serving": 1.5,
+        "fat_unit": "g",
+        "fat_value": 0.882352941176471,
+        "fruits-vegetables-legumes-estimate-from-ingredients_100g": 9.5,
+        "fruits-vegetables-nuts-estimate-from-ingredients_100g": 9.5,
+        "iron": 0,
+        "iron_100g": 0,
+        "iron_serving": 0,
+        "iron_unit": "g",
+        "iron_value": 0,
+        "magnesium": 0,
+        "magnesium_100g": 0,
+        "magnesium_serving": 0,
+        "magnesium_unit": "g",
+        "magnesium_value": 0,
+        "manganese": 0,
+        "manganese_100g": 0,
+        "manganese_serving": 0,
+        "manganese_unit": "g",
+        "manganese_value": 0,
+        "nova-group": 2.35294117647059,
+        "nova-group_100g": 2.35294117647059,
+        "nova-group_serving": 2.35294117647059,
+        "nova-group_unit": "",
+        "nova-group_value": 2.35294117647059,
+        "phosphorus": 0,
+        "phosphorus_100g": 0,
+        "phosphorus_serving": 0,
+        "phosphorus_unit": "g",
+        "phosphorus_value": 0,
+        "potassium": 0.141176470588235,
+        "potassium_100g": 0.141176470588235,
+        "potassium_serving": 0.24,
+        "potassium_unit": "g",
+        "potassium_value": 0.141176470588235,
+        "proteins": 2.94117647058824,
+        "proteins_100g": 2.94117647058824,
+        "proteins_serving": 5,
+        "proteins_unit": "g",
+        "proteins_value": 2.94117647058824,
+        "salt": 0.125,
+        "salt_100g": 0.125,
+        "salt_serving": 0.212,
+        "salt_unit": "g",
+        "salt_value": 0.125,
+        "saturated-fat": 0.588235294117647,
+        "saturated-fat_100g": 0.588235294117647,
+        "saturated-fat_serving": 1,
+        "saturated-fat_unit": "g",
+        "saturated-fat_value": 0.588235294117647,
+        "selenium": 0,
+        "selenium_100g": 0,
+        "selenium_serving": 0,
+        "selenium_unit": "g",
+        "selenium_value": 0,
+        "sodium": 0.05,
+        "sodium_100g": 0.05,
+        "sodium_serving": 0.085,
+        "sodium_unit": "g",
+        "sodium_value": 0.05,
+        "starch": 0,
+        "starch_100g": 0,
+        "starch_serving": 0,
+        "starch_unit": "g",
+        "starch_value": 0,
+        "sugars": 11.1764705882353,
+        "sugars_100g": 11.1764705882353,
+        "sugars_serving": 19,
+        "sugars_unit": "g",
+        "sugars_value": 11.1764705882353,
+        "vitamin-a": 0.0000622837370242212,
+        "vitamin-a_100g": 0.0000622837370242212,
+        "vitamin-a_serving": 0.000106,
+        "vitamin-a_unit": "g",
+        "vitamin-a_value": 0.0000622837370242212,
+        "vitamin-c": 0,
+        "vitamin-c_100g": 0,
+        "vitamin-c_serving": 0,
+        "vitamin-c_unit": "g",
+        "vitamin-c_value": 0,
+        "vitamin-d": 0.00000176470588235294,
+        "vitamin-d_100g": 0.00000176470588235294,
+        "vitamin-d_serving": 0.000003,
+        "vitamin-d_unit": "g",
+        "vitamin-d_value": 0.00000176470588235294,
+        "vitamin-e": 0,
+        "vitamin-e_100g": 0,
+        "vitamin-e_serving": 0,
+        "vitamin-e_unit": "g",
+        "vitamin-e_value": 0,
+        "vitamin-k": 0,
+        "vitamin-k_100g": 0,
+        "vitamin-k_serving": 0,
+        "vitamin-k_unit": "g",
+        "vitamin-k_value": 0,
+        "zinc": 0,
+        "zinc_100g": 0,
+        "zinc_serving": 0,
+        "zinc_unit": "g",
+        "zinc_value": 0
+      },
+      "nutriscore": {
+        "2021": {
+          "category_available": 1,
+          "data": {
+            "energy": 352.647058823529,
+            "energy_points": 1,
+            "energy_value": 352.6,
+            "fiber": 0,
+            "fiber_points": 0,
+            "fiber_value": 0,
+            "fruits_vegetables_nuts_colza_walnut_olive_oils": 9.5,
+            "fruits_vegetables_nuts_colza_walnut_olive_oils_points": 0,
+            "fruits_vegetables_nuts_colza_walnut_olive_oils_value": 9.5,
+            "is_beverage": 0,
+            "is_cheese": 0,
+            "is_fat": 0,
+            "is_water": 0,
+            "negative_points": 3,
+            "positive_points": 1,
+            "proteins": 2.94117647058824,
+            "proteins_points": 1,
+            "proteins_value": 2.94,
+            "saturated_fat": 0.588235294117647,
+            "saturated_fat_points": 0,
+            "saturated_fat_value": 0.6,
+            "sodium": 50,
+            "sodium_points": 0,
+            "sodium_value": 50,
+            "sugars": 11.1764705882353,
+            "sugars_points": 2,
+            "sugars_value": 11.18
+          },
+          "estimated": 0,
+          "grade": "b",
+          "nutrients_available": 1,
+          "nutriscore_applicable": 1,
+          "nutriscore_computed": 1,
+          "preparation": "as_sold",
+          "score": 2
+        },
+        "2023": {
+          "category_available": 1,
+          "data": {
+            "components": {
+              "negative": [
+                {
+                  "id": "energy",
+                  "points": 1,
+                  "points_max": 10,
+                  "unit": "kJ",
+                  "value": 352.65
+                },
+                {
+                  "id": "sugars",
+                  "points": 3,
+                  "points_max": 15,
+                  "unit": "g",
+                  "value": 11.18
+                },
+                {
+                  "id": "saturated_fat",
+                  "points": 0,
+                  "points_max": 10,
+                  "unit": "g",
+                  "value": 0.59
+                },
+                {
+                  "id": "salt",
+                  "points": 0,
+                  "points_max": 20,
+                  "unit": "g",
+                  "value": 0.12
+                }
+              ],
+              "positive": [
+                {
+                  "id": "proteins",
+                  "points": 1,
+                  "points_max": 7,
+                  "unit": "g",
+                  "value": 2.94
+                },
+                {
+                  "id": "fiber",
+                  "points": 0,
+                  "points_max": 5,
+                  "unit": "g",
+                  "value": null
+                },
+                {
+                  "id": "fruits_vegetables_legumes",
+                  "points": 0,
+                  "points_max": 5,
+                  "unit": "%",
+                  "value": 9.5
+                }
+              ]
+            },
+            "count_proteins": 1,
+            "count_proteins_reason": "negative_points_less_than_11",
+            "is_beverage": 0,
+            "is_cheese": 0,
+            "is_fat_oil_nuts_seeds": 0,
+            "is_red_meat_product": 0,
+            "is_water": 0,
+            "negative_points": 4,
+            "negative_points_max": 55,
+            "positive_nutrients": [
+              "proteins",
+              "fiber",
+              "fruits_vegetables_legumes"
+            ],
+            "positive_points": 1,
+            "positive_points_max": 17
+          },
+          "estimated": 0,
+          "grade": "c",
+          "nutrients_available": 1,
+          "nutriscore_applicable": 1,
+          "nutriscore_computed": 1,
+          "preparation": "as_sold",
+          "score": 3
+        }
+      },
+      "nutriscore_2021_tags": [
+        "b"
+      ],
+      "nutriscore_2023_tags": [
+        "c"
+      ],
+      "nutriscore_data": {
+        "components": {
+          "negative": [
+            {
+              "id": "energy",
+              "points": 1,
+              "points_max": 10,
+              "unit": "kJ",
+              "value": 352.65
+            },
+            {
+              "id": "sugars",
+              "points": 3,
+              "points_max": 15,
+              "unit": "g",
+              "value": 11.18
+            },
+            {
+              "id": "saturated_fat",
+              "points": 0,
+              "points_max": 10,
+              "unit": "g",
+              "value": 0.59
+            },
+            {
+              "id": "salt",
+              "points": 0,
+              "points_max": 20,
+              "unit": "g",
+              "value": 0.12
+            }
+          ],
+          "positive": [
+            {
+              "id": "proteins",
+              "points": 1,
+              "points_max": 7,
+              "unit": "g",
+              "value": 2.94
+            },
+            {
+              "id": "fiber",
+              "points": 0,
+              "points_max": 5,
+              "unit": "g",
+              "value": null
+            },
+            {
+              "id": "fruits_vegetables_legumes",
+              "points": 0,
+              "points_max": 5,
+              "unit": "%",
+              "value": 9.5
+            }
+          ]
+        },
+        "count_proteins": 1,
+        "count_proteins_reason": "negative_points_less_than_11",
+        "grade": "c",
+        "is_beverage": 0,
+        "is_cheese": 0,
+        "is_fat_oil_nuts_seeds": 0,
+        "is_red_meat_product": 0,
+        "is_water": 0,
+        "negative_points": 4,
+        "negative_points_max": 55,
+        "positive_nutrients": [
+          "proteins",
+          "fiber",
+          "fruits_vegetables_legumes"
+        ],
+        "positive_points": 1,
+        "positive_points_max": 17,
+        "score": 3
+      },
+      "nutriscore_grade": "c",
+      "nutriscore_score": 3,
+      "nutriscore_score_opposite": -3,
+      "nutriscore_tags": [
+        "c"
+      ],
+      "nutriscore_version": "2023",
+      "nutrition_data": "on",
+      "nutrition_data_per": "100g",
+      "nutrition_data_per_imported": "100g",
+      "nutrition_data_prepared_per": "100g",
+      "nutrition_data_prepared_per_debug_tags": [],
+      "nutrition_data_prepared_per_imported": "100g",
+      "nutrition_grade_fr": "c",
+      "nutrition_grades": "c",
+      "nutrition_grades_tags": [
+        "c"
+      ],
+      "nutrition_score_beverage": 0,
+      "nutrition_score_debug": "",
+      "nutrition_score_warning_fruits_vegetables_legumes_estimate_from_ingredients": 1,
+      "nutrition_score_warning_fruits_vegetables_legumes_estimate_from_ingredients_value": 9.5,
+      "nutrition_score_warning_fruits_vegetables_nuts_estimate_from_ingredients": 1,
+      "nutrition_score_warning_fruits_vegetables_nuts_estimate_from_ingredients_value": 9.5,
+      "nutrition_score_warning_no_fiber": 1,
+      "origins": "",
+      "origins_hierarchy": [],
+      "origins_lc": "en",
+      "origins_tags": [],
+      "other_nutritional_substances_tags": [],
+      "packaging": "Metal, Plastic, Pot, Recyclable Metals, Aluminium, Fresh",
+      "packaging_hierarchy": [
+        "en:metal",
+        "en:plastic",
+        "en:pot",
+        "en:recyclable-metals",
+        "en:aluminium",
+        "en:fresh"
+      ],
+      "packaging_lc": "en",
+      "packaging_materials_tags": [
+        "en:aluminium",
+        "en:plastic"
+      ],
+      "packaging_old": "Metal, Plastic, Pot, Recyclable Metals, Aluminium, Fresh",
+      "packaging_old_before_taxonomization": "frais,pot,plastique,métal,aluminium",
+      "packaging_recycling_tags": [
+        "en:recycle"
+      ],
+      "packaging_shapes_tags": [
+        "en:pot"
+      ],
+      "packaging_tags": [
+        "en:metal",
+        "en:plastic",
+        "en:pot",
+        "en:recyclable-metals",
+        "en:aluminium",
+        "en:fresh"
+      ],
+      "packagings": [
+        {
+          "food_contact": 1,
+          "material": "en:aluminium",
+          "recycling": "en:recycle",
+          "shape": "en:pot"
+        },
+        {
+          "food_contact": 0,
+          "material": "en:plastic"
+        }
+      ],
+      "packagings_materials": {
+        "all": {},
+        "en:metal": {},
+        "en:plastic": {}
+      },
+      "packagings_n": 2,
+      "photographers_tags": [
+        "tacinte",
+        "kiliweb",
+        "foodless"
+      ],
+      "pnns_groups_1": "Milk and dairy products",
+      "pnns_groups_1_tags": [
+        "milk-and-dairy-products",
+        "known"
+      ],
+      "pnns_groups_2": "Milk and yogurt",
+      "pnns_groups_2_tags": [
+        "milk-and-yogurt",
+        "known"
+      ],
+      "popularity_key": 10,
+      "popularity_tags": [
+        "top-75-percent-scans-2023",
+        "top-80-percent-scans-2023",
+        "top-85-percent-scans-2023",
+        "top-90-percent-scans-2023",
+        "top-10000-us-scans-2023",
+        "top-50000-us-scans-2023",
+        "top-100000-us-scans-2023",
+        "top-country-us-scans-2023",
+        "top-75-percent-scans-2024",
+        "top-80-percent-scans-2024",
+        "top-85-percent-scans-2024",
+        "top-90-percent-scans-2024",
+        "top-50000-us-scans-2024",
+        "top-100000-us-scans-2024",
+        "top-country-us-scans-2024",
+        "top-75-percent-scans-2025",
+        "top-80-percent-scans-2025",
+        "top-85-percent-scans-2025",
+        "top-90-percent-scans-2025",
+        "top-10000-us-scans-2025",
+        "top-50000-us-scans-2025",
+        "top-100000-us-scans-2025",
+        "top-country-us-scans-2025"
+      ],
+      "product_name": "mountain blueberry",
+      "product_name_en": "mountain blueberry",
+      "product_name_en_imported": "Yoplait Original Mountain Blueberry Low Fat Yogurt",
+      "product_name_fr": "Myrtille de Montagne",
+      "product_name_fr_debug_tags": [],
+      "product_quantity": 170.09713875,
+      "product_quantity_unit": "g",
+      "product_type": "food",
+      "purchase_places": "Chicago, Illinois, USA",
+      "purchase_places_debug_tags": [],
+      "purchase_places_hierarchy": [
+        "Chicago",
+        "Illinois",
+        "USA"
+      ],
+      "purchase_places_lc": "en",
+      "purchase_places_tags": [
+        "Chicago",
+        "Illinois",
+        "USA"
+      ],
+      "quantity": "6 oz / 170 g",
+      "quantity_debug_tags": [],
+      "removed_countries_tags": [],
+      "rev": 53,
+      "scans_n": 5,
+      "schema_version": 998,
+      "selected_images": {
+        "front": {
+          "display": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.400.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_fr.23.400.jpg"
+          },
+          "small": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.200.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_fr.23.200.jpg"
+          },
+          "thumb": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_en.49.100.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/front_fr.23.100.jpg"
+          }
+        },
+        "ingredients": {
+          "display": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.400.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_fr.24.400.jpg"
+          },
+          "small": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.200.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_fr.24.200.jpg"
+          },
+          "thumb": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_en.9.100.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/ingredients_fr.24.100.jpg"
+          }
+        },
+        "nutrition": {
+          "display": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.400.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_fr.25.400.jpg"
+          },
+          "small": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.200.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_fr.25.200.jpg"
+          },
+          "thumb": {
+            "en": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_en.38.100.jpg",
+            "fr": "https://images.openfoodfacts.org/images/products/007/047/000/3023/nutrition_fr.25.100.jpg"
+          }
+        }
+      },
+      "serving_quantity": 170,
+      "serving_quantity_unit": "g",
+      "serving_size": "1 container (170 g)",
+      "serving_size_imported": "1 container (170 g)",
+      "sortkey": 1594952108,
+      "sources": [
+        {
+          "fields": [
+            "product_name_en",
+            "brand_owner",
+            "data_sources",
+            "serving_size",
+            "ingredients_text_en",
+            "nutrients.calcium_unit",
+            "nutrients.calcium_value",
+            "nutrients.carbohydrates_value",
+            "nutrients.cholesterol_value",
+            "nutrients.fat_value",
+            "nutrients.fiber_unit",
+            "nutrients.fiber_value",
+            "nutrients.iron_unit",
+            "nutrients.iron_value",
+            "nutrients.phosphorus_unit",
+            "nutrients.phosphorus_value",
+            "nutrients.proteins_value",
+            "nutrients.salt_unit",
+            "nutrients.salt_value",
+            "nutrients.saturated-fat_value",
+            "nutrients.sugars_value",
+            "nutrients.vitamin-a_unit",
+            "nutrients.vitamin-a_value",
+            "nutrients.vitamin-c_unit",
+            "nutrients.vitamin-c_value"
+          ],
+          "id": "database-usda",
+          "images": [],
+          "import_t": 1587660550,
+          "manufacturer": null,
+          "name": "database-usda",
+          "url": null
+        }
+      ],
+      "sources_fields": {
+        "org-database-usda": {
+          "available_date": "2019-03-25T00:00:00Z",
+          "fdc_category": "Yogurt/Yogurt Substitutes",
+          "fdc_data_source": "GDSN",
+          "fdc_id": "760274",
+          "modified_date": "2019-03-25T00:00:00Z",
+          "publication_date": "2020-02-27T00:00:00Z"
+        }
+      },
+      "states": "To be completed, Nutrition facts completed, Ingredients completed, Expiration date completed, Packaging code to be completed, Characteristics to be completed, Origins to be completed, Categories completed, Brands completed, Packaging completed, Quantity completed, Product name completed, Photos to be validated, Packaging photo to be selected, Nutrition photo selected, Ingredients photo selected, Front photo selected, Photos uploaded",
+      "states_hierarchy": [
+        "en:to-be-completed",
+        "en:nutrition-facts-completed",
+        "en:ingredients-completed",
+        "en:expiration-date-completed",
+        "en:packaging-code-to-be-completed",
+        "en:characteristics-to-be-completed",
+        "en:origins-to-be-completed",
+        "en:categories-completed",
+        "en:brands-completed",
+        "en:packaging-completed",
+        "en:quantity-completed",
+        "en:product-name-completed",
+        "en:photos-to-be-validated",
+        "en:packaging-photo-to-be-selected",
+        "en:nutrition-photo-selected",
+        "en:ingredients-photo-selected",
+        "en:front-photo-selected",
+        "en:photos-uploaded"
+      ],
+      "states_tags": [
+        "en:to-be-completed",
+        "en:nutrition-facts-completed",
+        "en:ingredients-completed",
+        "en:expiration-date-completed",
+        "en:packaging-code-to-be-completed",
+        "en:characteristics-to-be-completed",
+        "en:origins-to-be-completed",
+        "en:categories-completed",
+        "en:brands-completed",
+        "en:packaging-completed",
+        "en:quantity-completed",
+        "en:product-name-completed",
+        "en:photos-to-be-validated",
+        "en:packaging-photo-to-be-selected",
+        "en:nutrition-photo-selected",
+        "en:ingredients-photo-selected",
+        "en:front-photo-selected",
+        "en:photos-uploaded"
+      ],
+      "stores": "Walgreens",
+      "stores_debug_tags": [],
+      "stores_hierarchy": [
+        "Walgreens"
+      ],
+      "stores_lc": "en",
+      "stores_tags": [
+        "Walgreens"
+      ],
+      "traces": "",
+      "traces_debug_tags": [],
+      "traces_from_user": "(en) ",
+      "traces_hierarchy": [],
+      "traces_lc": "en",
+      "traces_tags": [],
+      "unique_scans_n": 4,
+      "unknown_ingredients_n": 1,
+      "unknown_nutrients_tags": [],
+      "update_key": "forestfootprint20260921",
+      "vitamins_prev_tags": [
+        "en:cholecalciferol"
+      ],
+      "vitamins_tags": [
+        "en:retinyl-acetate",
+        "en:cholecalciferol"
+      ],
+      "weighers_tags": [],
+      "via": "direct"
+    },
+    "via": "direct"
+  }
+}

@@ -552,7 +552,7 @@ function display(v: Value): string {
 }
 
 /** A value shaped for the field it is going into, or undefined with a reason. */
-function fitValue(v: Value, type: string, money: MoneyStorage | null = null): { value: unknown } | { misfit: string } {
+function fitValue(v: Value, type: string, money: MoneyStorage | null = null, written?: string): { value: unknown } | { misfit: string } {
   if (v === null) return { value: undefined };
   // Money lands in its column's shape: "$4,300" is 4300 in an amount column
   // and 430000 in a cents one (what an export wrote reads back the same).
@@ -575,6 +575,10 @@ function fitValue(v: Value, type: string, money: MoneyStorage | null = null): { 
   if (type === "boolean") {
     return typeof v === "boolean" ? { value: v } : { misfit: `"${display(v)}" is not yes or no` };
   }
+  // A text field keeps the cell as the sheet writes it. The column's values
+  // may have read as numbers, but a serial 000123 is not the number 123
+  // (#7614): only a field whose type is a number takes the number.
+  if (written && (type === "text" || type === "long-text") && typeof v !== "object") return { value: written };
   return { value: display(v) };
 }
 
@@ -881,7 +885,7 @@ export function planSheet(input: PlanInput): SheetPlan {
         }
         case "field":
         case "new-field": {
-          const fitted = fitValue(v, fieldType.get(c.dest.field) ?? "text", fieldMoney.get(c.dest.field) ?? (c.dest.to === "new-field" && c.dest.type === "money" ? "amount" : null));
+          const fitted = fitValue(v, fieldType.get(c.dest.field) ?? "text", fieldMoney.get(c.dest.field) ?? (c.dest.to === "new-field" && c.dest.type === "money" ? "amount" : null), r.texts?.[c.column]);
           if ("misfit" in fitted) {
             // Kept as written in a field of its own name rather than dropped.
             problems.push(`${c.header}: ${fitted.misfit}, kept as text`);

@@ -78,6 +78,10 @@ export interface UnderstoodRow {
   /** 1-based row number as the spreadsheet shows it. */
   row: number;
   values: Value[];
+  /** Each cell as the sheet writes it, "" for an empty one: what a text
+   *  field keeps, whatever the column's values looked like (a serial 000123
+   *  in a column of numbers stays 000123, #7614). */
+  texts?: string[];
 }
 
 /** `excluded`: a person left the row out in the dry run. `not-owned`: the
@@ -102,7 +106,6 @@ export interface SummaryFact {
 export interface UnderstoodSheet {
   name: string;
   hidden: boolean;
-  truncated: boolean;
   empty: boolean;
   title: string | null;
   /** 1-based; null for an empty sheet or one with no header row. */
@@ -708,7 +711,6 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
   const base: UnderstoodSheet = {
     name: raw.name,
     hidden: raw.hidden,
-    truncated: raw.truncated,
     empty: true,
     title: null,
     header_row: null,
@@ -861,6 +863,10 @@ export function understandSheet(raw: RawSheet, opts: UnderstandOptions = {}): Un
   base.rows = dataRows.map((d, i) => ({
     row: d.row,
     values: base.columns.map((col, k) => valueOf(drafts[k]!.cells[i] ?? null, col)),
+    texts: base.columns.map((_, k) => {
+      const c = drafts[k]!.cells[i];
+      return c ? textOf(c) : "";
+    }),
   }));
   base.empty = dataRows.length === 0;
   return base;

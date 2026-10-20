@@ -7,8 +7,8 @@
 //
 // The page reads the pair through GET /family on the TYPE collection, adds a
 // thing under a type (or a new type) through POST /family/children, and a
-// heal on every read repairs the two shapes a scan used to leave: a type row
-// that is really one physical thing, and a thing with no type.
+// heal (heal-families.ts) repairs the two shapes a scan used to leave: a type
+// row that is really one physical thing, and a thing with no type.
 // See docs/design-decisions/holdings-and-units.md ("One page for a type and
 // its things").
 
@@ -161,7 +161,7 @@ export async function addType(db: Kysely<InventoryDB>, orgId: string, fam: Famil
   return row as unknown as Row;
 }
 
-// ── heal: the shapes a scan used to leave, repaired on every read ──
+// ── heal: the shapes a scan used to leave (heal-families.ts says which) ──
 
 /** One heal never makes more than this many things from one type row. */
 const MOST_FROM_ONE_ROW = 50;

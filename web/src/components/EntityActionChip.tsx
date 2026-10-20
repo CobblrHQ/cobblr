@@ -89,7 +89,7 @@ export function EntityActionChip({
             : { actionId: action!.id, label, argsSchema: action!.args_schema, invokeRoute: action!.invoke_route, invokeHandler: action!.invoke_handler },
         );
       }}
-      className="inline-flex items-center gap-1 rounded-md border border-current/30 px-2 py-0.5 text-xs font-medium hover:bg-black/5 transition disabled:opacity-50"
+      className="inline-flex items-center gap-1 rounded-md border border-[color-mix(in_srgb,currentColor_30%,transparent)] px-2 py-0.5 text-xs font-medium hover:bg-black/5 transition disabled:opacity-50"
     >
       {pending ? <Loader2 size={12} className="animate-spin" /> : icon}
       {label}

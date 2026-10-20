@@ -129,7 +129,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
             {preview.errors.length > 0 && (
               <div className="rounded-md bg-ember-50 border border-ember-100 px-3 py-2 text-xs text-ember-600 dark:text-ember-400">
                 <div className="flex items-center gap-1.5 font-medium mb-1">
-                  <AlertTriangle size={12} /> {preview.errors.length} row{preview.errors.length === 1 ? "" : "s"} skipped
+                  <AlertTriangle size={12} /> {countOf(preview.errors.length, "row")} will not be imported
                 </div>
                 <ul className="space-y-0.5 font-mono">
                   {preview.errors.slice(0, 5).map((e, i) => (
@@ -143,6 +143,7 @@ export function ImportDialog({ onClose }: { onClose: (importedCount: number) => 
                 </ul>
               </div>
             )}
+            <ImportNotes preview={preview} />
             <div className="rounded-md border border-line dark:border-slate-700 max-h-[280px] overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="bg-mortar-100 dark:bg-slate-800 sticky-in-scroller">
@@ -208,6 +209,40 @@ function DetectedHeaders({ headers }: { headers: Record<string, string | null> }
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/** What the import does that the file did not say outright: a row's value it
+ *  read differently (a category it has no such name for), and every column
+ *  it does not read. Said before Import, never only after. */
+function ImportNotes({ preview }: { preview: ImportResponse }) {
+  const noted = preview.rows.flatMap((r) => r.warnings.map((w) => ({ row: r.row_number, text: w })));
+  const unread = preview.unread_columns ?? [];
+  if (noted.length === 0 && unread.length === 0) return null;
+  return (
+    <div role="status" className="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-800 dark:text-amber-300 space-y-1">
+      {noted.length > 0 && (
+        <>
+          <div className="flex items-center gap-1.5 font-medium">
+            <AlertTriangle size={12} /> Check {countOf(noted.length, "note")} before importing
+          </div>
+          <ul className="space-y-0.5">
+            {noted.slice(0, 5).map((n, i) => (
+              <li key={i}>
+                row {n.row}: {n.text}
+              </li>
+            ))}
+            {noted.length > 5 && <li>…and {noted.length - 5} more</li>}
+          </ul>
+        </>
+      )}
+      {unread.length > 0 && (
+        <div>
+          <span className="font-medium">Not read from the file:</span>{" "}
+          {unread.map((c) => `${c.header} (${c.reason})`).join(", ")}
+        </div>
+      )}
     </div>
   );
 }

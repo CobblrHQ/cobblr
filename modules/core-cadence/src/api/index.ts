@@ -21,6 +21,7 @@ import {
 import { requireRole } from "./util.js";
 import { recordCadenceEvent, RecordBody } from "../record.js";
 import { registerCadenceActionHandlers } from "./action-handlers.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // Side effect on import: the record-event action handler.
 registerCadenceActionHandlers();
@@ -40,7 +41,7 @@ router.post("/events", async (req: Request, res: Response, next) => {
     const parsed = RecordBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

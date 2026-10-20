@@ -9,7 +9,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "labels",
-  version: "0.27.0",
+  version: "0.27.2",
   displayName: "Labels",
   description:
     "Make QR labels for your things and shelves, print them, and scan one to open or act on what it names.",

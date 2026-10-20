@@ -99,6 +99,10 @@ const handouts = new Map<string, number>();
 // with a sentence instead of a dead socket.
 const deleting = new Set<string>();
 
+export function workspaceIsDeleting(orgId: string): boolean {
+  return deleting.has(orgId);
+}
+
 export class WorkspaceDeletingError extends Error {
   readonly code = "workspace_deleting";
   constructor(orgId: string) {

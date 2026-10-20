@@ -134,6 +134,11 @@ export interface EntityViewer {
    *  member): it also sees the kind's assistantReadableFields on records of
    *  the person's own workspace. */
   assistant?: boolean;
+  /** The person exporting their own workspace's collection to a file: they
+   *  read every field their own table shows, not only the kind's exposable
+   *  fields, and their field read scopes and secret masking still apply. Set
+   *  only by the export, never for a linked workspace or an assistant. */
+  export?: boolean;
 }
 
 /** The reader for internal logic that must decide from the truth: an undo

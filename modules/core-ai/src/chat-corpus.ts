@@ -463,11 +463,14 @@ const RAW_CORPUS: CorpusCase[] = [
     "take the fragile tag off the Kossel Mini",
   ]),
   // A note about a machine needing a part is a comment on it or a maintenance
-  // entry about it; the workspace records it either way, and the twin phrasing
-  // below already accepted both. Judging the same intent by two different
-  // claims made the nightly report a good answer as a miss for a week.
-  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}", [
+  // entry about it: a logged one, or a repair opened with what is wrong in its
+  // notes (the action whose own description says exactly that). The workspace
+  // records it every way. Both phrasings are ONE case with ONE claim: twins
+  // judged by two claims reported a good answer as a miss for a week, and a
+  // claim that knew two of the three doors called the third a miss (#7628).
+  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}|action:core-maintenance:needs-repair{notes=nozzle}", [
     "leave a note on the X1 Carbon that it needs a new nozzle",
+    "the X1 needs a new nozzle, note that on it",
   ]),
   ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=belt}", [
     "comment on the Kossel Mini: belt is loose",
@@ -602,10 +605,6 @@ const RAW_CORPUS: CorpusCase[] = [
     ai: "clarify",
     says: ["CubePro #9", "CubePro #10"],
   },
-  // "note that on it" is a comment or a maintenance note; both are notes on it.
-  ...ph("workshop", neverOffer, "action:core-discussion:post-comment{body=nozzle}|action:core-maintenance:log{name=nozzle}", [
-    "the X1 needs a new nozzle, note that on it",
-  ]),
   ...ph("workshop", neverOffer, "action:platform:remove-field{field=colour}", [
     "bin the Colour field on machines",
   ]),

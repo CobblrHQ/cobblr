@@ -1199,7 +1199,12 @@ function RelaySnapshotFill({ slug, connId, deviceId, name, live }: { slug: strin
 /** Camera-wall fill for a printer whose camera rides the LAN bridge (Bambu
  *  hybrid): the same /camera frame-grab the cockpit uses, polled gently. The
  *  server-cached snapshot paints first so the tile is never blank. */
-function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: string; connId: string; deviceId: string; name: string; live: boolean; klass: DigifabDeviceClass }) {
+function LanCameraFill({ slug, connId, deviceId, name, live, klass, address }: {
+  slug: string; connId: string; deviceId: string; name: string; live: boolean; klass: DigifabDeviceClass;
+  /** The frames come from a camera address saved for the machine, which the
+   *  server fetches itself: no bridge is involved in a failure. */
+  address?: boolean;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   // Only consulted once a frame-grab has FAILED: the bridge's live status turns
@@ -1209,7 +1214,7 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
   const edge = useQuery({
     queryKey: ["edge-status", slug],
     queryFn: () => api.getEdgeStatus(slug),
-    enabled: !!slug && failed,
+    enabled: !!slug && failed && !address,
     refetchInterval: failed ? 30_000 : false,
     staleTime: 15_000,
   });
@@ -1237,7 +1242,10 @@ function LanCameraFill({ slug, connId, deviceId, name, live, klass }: { slug: st
       const staleMs = edge.data?.stale_after_ms ?? 60_000;
       const agents = edge.data?.agents ?? [];
       const bridgeUp = agents.some((a) => a.last_seen_ms < staleMs);
-      if (edge.isLoading) {
+      if (address) {
+        msg = "camera unreachable";
+        hint = "no picture came from the camera address saved for it; check it is a snapshot or MJPEG address on your network";
+      } else if (edge.isLoading) {
         msg = "camera unreachable";
         hint = "checking the bridge…";
       } else if (!bridgeUp) {
@@ -1424,11 +1432,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           {d.snapshot_relay ? (
             <RelaySnapshotFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} />
           ) : d.lan_camera ? (
-            <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} />
-          ) : d.camera_url ? (
-            // EXTERNAL-IMAGE-OK: the printer's own LAN camera URL, not a stored file.
-            // photo-frame: a live frame from the printer's camera, not a stored photo
-            <img src={d.camera_url} alt={`${d.name} camera`} draggable={false} className="w-full h-full object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />
+            <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live={d.klass === "printing" || d.klass === "paused"} klass={d.klass} address={d.camera_source === "address"} />
           ) : d.linked_machine?.image_path ? (
             <MachinePhotoFill src={d.linked_machine.image_path} alt={`${title ?? d.name} photo`} />
           ) : (
@@ -1521,9 +1525,9 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       {/* Cockpit camera. A relayed snapshot shows the last frame frozen and only
           live-refreshes while the printer is working (printing/paused) — no
           constant bandwidth on an idle bed, but the last image stays visible. A
-          direct camera_url is a continuous MJPEG stream, so it's only embedded
-          while working; otherwise it'd stream 24/7. Either way the live feed is
-          one click away in the detail modal (mounts on open). */}
+          saved camera address is read by the server (the /camera route, #7056),
+          never by the page, and only while working; otherwise it'd poll 24/7.
+          Either way the live feed is one click away in the detail modal. */}
       {d.snapshot_relay ? (
         <RelaySnapshot
           slug={slug}
@@ -1532,14 +1536,10 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           name={d.name}
           live={d.klass === "printing" || d.klass === "paused"}
         />
-      ) : (d.klass === "printing" || d.klass === "paused") && d.camera_url ? (
-        // photo-frame: a live frame from the printer's camera, not a stored photo
-        <img
-          src={d.camera_url}
-          alt={`${d.name} camera`}
-          className="mb-1.5 w-full h-24 object-cover rounded bg-black/30"
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-        />
+      ) : (d.klass === "printing" || d.klass === "paused") && d.camera_url && d.lan_camera ? (
+        <div className="relative mb-1.5 w-full h-24 overflow-hidden rounded bg-black/30 flex items-center justify-center">
+          <LanCameraFill slug={slug} connId={connId} deviceId={d.id} name={d.name} live klass={d.klass} address={d.camera_source === "address"} />
+        </div>
       ) : null}
       <div className="flex items-center gap-1.5">
         <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
@@ -2603,9 +2603,9 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* LEFT — watch. */}
             <div className="space-y-3 min-w-0">
-              {(detail.data?.lan?.camera || machineImg) && (
+              {(detail.data?.lan?.camera || device.lan_camera || machineImg) && (
                 <div className="relative">
-                  {detail.data?.lan?.camera ? (
+                  {detail.data?.lan?.camera || device.lan_camera ? (
                     <LanCameraView slug={slug} connId={connId} deviceId={device.id} name={device.name} onZoom={setLightbox} />
                   ) : (
                     <button type="button" className="block w-full cursor-zoom-in" onClick={() => setLightbox(machineImg!)} aria-label={`Zoom ${device.name}`} title={`Zoom ${device.name}`}>

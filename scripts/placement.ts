@@ -66,7 +66,8 @@ function show(row: PlacementRow): void {
 
 const argv = process.argv.slice(2);
 if (argv.includes("--list")) {
-  for (const r of PLACEMENT) console.log(`${r.id.padEnd(24)} ${r.dir}`);
+  // One write of the whole list (about 2 KB) into an empty pipe is taken at once; exit then drops nothing (#7576).
+  process.stdout.write(PLACEMENT.map((r) => `${r.id.padEnd(24)} ${r.dir}\n`).join(""));
   process.exit(0);
 }
 

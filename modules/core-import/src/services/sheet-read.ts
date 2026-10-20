@@ -27,8 +27,6 @@ export interface RawSheet {
   /** Hidden in the workbook (still read, flagged so a person can decide). */
   hidden: boolean;
   rows: Array<Array<Cell | null>>;
-  /** Rows past the reading cap were not read. */
-  truncated: boolean;
 }
 
 export const MAX_ROWS_PER_SHEET = 20_000;
@@ -54,12 +52,45 @@ export function formatOf(filename: string): SheetFormat | null {
   return null;
 }
 
-function decodeText(buf: Uint8Array): string {
-  const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-  // A file saved by an old spreadsheet in a Western code page decodes with
-  // replacement characters; latin1 is the honest second reading.
-  const text = utf8.includes("�") ? new TextDecoder("latin1").decode(buf) : utf8;
-  return text.replace(/^﻿/, "");
+/** Which text encoding a file is in. A byte order mark says so; without one,
+ *  a file of UTF-16 has a zero byte beside nearly every Latin letter, which
+ *  no UTF-8 or Western code page text has. */
+export function encodingOf(buf: Uint8Array): "utf-8" | "utf-16le" | "utf-16be" {
+  if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) return "utf-8";
+  if (buf[0] === 0xff && buf[1] === 0xfe) return "utf-16le";
+  if (buf[0] === 0xfe && buf[1] === 0xff) return "utf-16be";
+  const n = Math.min(buf.length - (buf.length % 2), 4096);
+  let even = 0;
+  let odd = 0;
+  for (let i = 0; i < n; i += 2) {
+    if (buf[i] === 0) even++;
+    if (buf[i + 1] === 0) odd++;
+  }
+  const pairs = n / 2;
+  if (pairs >= 2 && odd >= pairs * 0.3 && even === 0) return "utf-16le";
+  if (pairs >= 2 && even >= pairs * 0.3 && odd === 0) return "utf-16be";
+  return "utf-8";
+}
+
+/** A text file as the text it holds, or a refusal. An Excel "Unicode text"
+ *  file is UTF-16, and read as UTF-8 it became names of letters and zero
+ *  bytes and a record nobody wrote (#7615). */
+export function decodeText(buf: Uint8Array): string {
+  const encoding = encodingOf(buf);
+  let text: string;
+  if (encoding === "utf-8") {
+    const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+    // A file saved by an old spreadsheet in a Western code page decodes with
+    // replacement characters; latin1 is the honest second reading.
+    text = utf8.includes("\uFFFD") ? new TextDecoder("latin1").decode(buf) : utf8;
+  } else {
+    text = new TextDecoder(encoding, { fatal: false }).decode(buf);
+  }
+  text = text.replace(/^\uFEFF/, "");
+  if (text.includes("\u0000")) {
+    throw new SheetReadError("unreadable", "That file isn't plain text: it has zero bytes in it. Save it from your spreadsheet as CSV UTF-8 and upload it again.");
+  }
+  return text;
 }
 
 /** A date cell as the calendar day it shows, at UTC midnight (the parser's
@@ -114,10 +145,27 @@ export function readWorkbook(buf: Uint8Array, filename: string): RawSheet[] {
     if (!ws) return;
     const hidden = Boolean(wb.Workbook?.Sheets?.[i]?.Hidden);
     const data = ((ws as unknown as { "!data"?: Array<Array<XLSX.CellObject | undefined> | undefined> })["!data"] ?? []);
-    const truncated = data.length > MAX_ROWS_PER_SHEET;
+    // Past a cap the sheet is refused, never read in part: a plan of the
+    // first 20,000 rows looked like the whole file, and the rest were simply
+    // gone (#7616).
+    // A CSV has one sheet, which only a workbook names.
+    const what = textFile ? "That file" : `The sheet "${name}"`;
+    if (data.length > MAX_ROWS_PER_SHEET) {
+      throw new SheetReadError(
+        "too-big",
+        `${what} has more than ${MAX_ROWS_PER_SHEET.toLocaleString("en-US")} rows. Split it into smaller files and bring each one in.`,
+      );
+    }
     const rows: Array<Array<Cell | null>> = [];
-    for (let r = 0; r < Math.min(data.length, MAX_ROWS_PER_SHEET); r++) {
+    for (let r = 0; r < data.length; r++) {
       const src = data[r] ?? [];
+      const past = src.slice(MAX_COLUMNS).findIndex((c) => cellOf(c) !== null);
+      if (past >= 0) {
+        throw new SheetReadError(
+          "too-big",
+          `${what} has values past its ${MAX_COLUMNS}th column (row ${r + 1}, column ${MAX_COLUMNS + past + 1}). Move them into fewer columns, or split it, and bring it in again.`,
+        );
+      }
       const row: Array<Cell | null> = [];
       for (let c = 0; c < Math.min(src.length, MAX_COLUMNS); c++) {
         const cell = cellOf(src[c]);
@@ -140,7 +188,7 @@ export function readWorkbook(buf: Uint8Array, filename: string): RawSheet[] {
         }
       }
     }
-    out.push({ name, hidden, rows, truncated });
+    out.push({ name, hidden, rows });
   });
   return out;
 }

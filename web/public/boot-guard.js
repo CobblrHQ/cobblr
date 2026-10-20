@@ -107,6 +107,23 @@
   window.__cobblrIsChunkError = function (err) {
     return !!err && (err.name === "ChunkLoadError" || CHUNK.test(String(err.message || err)));
   };
+  // A chunk that did not arrive, asked for once more under an address this
+  // page has not used (#7676): WebKit keeps a network failure for the address
+  // it failed at, even across a reload, so Retry never reached the server.
+  // The build hands every import of the app's own chunks here on a failure
+  // (web/src/lib/import-again.ts). A page imported from two places (its route's
+  // prefetch and the page itself) shares one second try, so it is one module,
+  // never two copies; one that failed may be tried afresh. `load` is for a test.
+  var asking = {};
+  window.__cobblrImportAgain = function (err, url, load) {
+    if (!window.__cobblrIsChunkError(err)) return Promise.reject(err);
+    if (asking[url]) return asking[url];
+    var again = url + (url.indexOf("?") < 0 ? "?" : "&") + "again=" + Date.now();
+    var p = (load ? load(again) : import(again));
+    asking[url] = p;
+    p.then(null, function () { if (asking[url] === p) delete asking[url]; });
+    return p;
+  };
   // The app started: a later page may still fail, so the count is kept (it
   // lapses after a minute) and only the start-up watch stops.
   window.__cobblrStarted = function () {
@@ -125,6 +142,10 @@
   window.addEventListener("error", function (e) {
     var t = e && e.target;
     if (!t || t === window) return;
+    // A route's preload is a hint (vite.config.ts, data-route-hint): the page's
+    // own import asks again at a new address, so a hint that failed is no
+    // reason to reload, and counted as one it spent a retry (#7676).
+    if (t.hasAttribute && t.hasAttribute("data-route-hint")) return;
     if (t.tagName === "SCRIPT" || (t.tagName === "LINK" && /modulepreload/.test(t.rel || ""))) {
       // The app's own code: a root-relative path or this origin, never a
       // third-party script (an analytics tag that failed is not the app).

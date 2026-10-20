@@ -105,7 +105,7 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
               {r.picture && <span className="shrink-0">{r.picture}</span>}
               <span className="min-w-0 flex-1">
                 <span className="flex items-baseline gap-2">
-                  {/* Up to four lines, not an ellipsis: "CubePro #1 (Modded)" and "CubePro #2 (Stock)" must not read alike, and Safari sets a long name wider than Chrome does, so three cut "Custom CoreXY with the enclosed chamber and dual extruder" short. */}
+                  {/* Up to four lines (PHONE_RECORD_NAME_LINES; the row's height bound, PHONE_RECORD_ROW_MAX_PX, is every spec's), not an ellipsis: "CubePro #1 (Modded)" and "CubePro #2 (Stock)" must not read alike, and Safari sets a long name wider than Chrome does, so three cut "Custom CoreXY with the enclosed chamber and dual extruder" short. */}
                   <span data-testid="phone-record-name" className="min-w-0 flex-1 line-clamp-4 break-words text-sm font-medium leading-snug text-content dark:text-mortar-100">
                     {r.name}
                   </span>

@@ -22,6 +22,7 @@ import { sql } from "kysely";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { isTheCloud, trustedPeers } from "./cloud.js";
 import { meta } from "../db/meta.js";
+import { outboxDelete } from "./share-outbox-rows.js";
 import { encryptCreds } from "../db/crypto.js";
 import { provisionOrgForUser } from "../routes/auth.js";
 import { shapeShareSpace } from "./reconcile-share-spaces.js";
@@ -477,7 +478,7 @@ export async function revokeShareLink(orgId: string, linkId: string): Promise<bo
 async function endLink(link: ShareLinkRow, opts: { keepSpaceToTell?: boolean } = {}): Promise<void> {
   await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date(), invite_code_hash: null }).where("id", "=", link.id).execute();
   // Nothing else is said over an ended share.
-  await meta.deleteFrom("share_outbox").where("link_id", "=", link.id).where("sent_at", "is", null).where("op", "!=", REVOKED_OP).execute();
+  await outboxDelete((q) => q.where("link_id", "=", link.id).where("sent_at", "is", null).where("op", "!=", REVOKED_OP)).execute();
   if (link.side === "share") {
     const org = await orgOf(link.org_id);
     if (org?.kind !== "share") return;

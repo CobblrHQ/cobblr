@@ -12,6 +12,7 @@ import { qrSvg } from "./qr.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { SIZES } from "../print/layout.js";
 import { renderRowsToPdf } from "../print/render-queue.js";
+import { planRecord } from "../print/record-sent.js";
 import { assignCodes, freezePrintedGroups, getOverlayForRefs } from "../services/codes.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
@@ -93,7 +94,8 @@ printRouter.post(
     try {
       const base = await qrBaseFor(req);
       const { pdf, sheets, warnings, labels } = await renderRowsToPdf(db, org.id, base, rows as never, size_key);
-      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels, warnings });
+      // Each row and its copies as rendered: a send of this PDF records exactly these (#7593).
+      res.json({ pdf_base64: pdf.toString("base64"), sheets, labels, rendered: rows.map((r) => ({ id: r.id, qty: r.qty })), warnings });
     } catch (e) {
       res.status(400).json({ error: { code: "render_failed", message: (e as Error).message } });
     }
@@ -185,8 +187,12 @@ printRouter.post(
 );
 
 const RecordPrinted = z.object({
-  // Queue row ids the CLIENT has already put on paper.
-  item_ids: z.array(z.string().min(1).max(120)).min(1).max(500),
+  // The send this confirms, minted when it went to the printer: the same
+  // confirmation twice records it once.
+  send_id: z.string().uuid(),
+  // The queue rows the CLIENT put on paper, each with the copies it SENT: a row
+  // can change between Send and confirm, and the paper holds what was sent (#7593).
+  items: z.array(z.object({ id: z.string().min(1).max(120), qty: z.number().int().min(1).max(1000) })).min(1).max(500),
 });
 
 // POST /print/record — bookkeeping for a print the SERVER did not perform.
@@ -197,15 +203,23 @@ const RecordPrinted = z.object({
 // and their codes were never frozen — so a queue printed over Bluetooth invited
 // a second press and a second roll of labels.
 //
-// Deliberately takes the ids that actually printed rather than clearing the
+// Deliberately takes the rows that actually printed rather than clearing the
 // whole queue: a partial batch (printer jammed at row 7) must leave the
-// unprinted rows queued. The paper is the source of truth, so this records what
-// physically exists and forgets the rest.
+// unprinted rows queued. And each with the copies that were sent, not the
+// row's count now: copies raised from three to five while the confirmation
+// was open are two nobody printed, and recording the row by id alone took
+// them too (#7593). The paper is the source of truth, so this records what
+// physically exists and keeps the rest queued. A body of bare ids is an older
+// page that cannot say what it sent: refused, nothing recorded.
 // AI-REACH: exempt — the print path reporting which labels physically came out
 // of the printer; only the printer's side knows, and the paper is the truth
 printRouter.post(
   "/record",
   asyncHandler(async (req, res) => {
+    if (req.body && typeof req.body === "object" && "item_ids" in req.body && !("items" in req.body)) {
+      res.status(400).json({ error: { code: "reload_to_record", message: "This page is out of date and cannot say which copies it printed. Reload it, then mark the batch printed again. Nothing was recorded." } });
+      return;
+    }
     const parsed = RecordPrinted.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const db = tenantDb(req);
@@ -213,29 +227,34 @@ printRouter.post(
     const ctx = tenantContext(req);
     const base = await qrBaseFor(req);
 
-    // Scope to this user's own rows: an id from another session must not let
-    // someone clear a queue that isn't theirs.
-    const items = await db
-      .selectFrom("labels_queue")
-      .selectAll()
-      .where("user_id", "=", session.id)
-      .where("id", "in", parsed.data.item_ids)
-      .orderBy("created_at")
-      .execute();
-    if (items.length === 0) {
+    // Read, decide and write in one transaction with the rows locked, so a copy
+    // count changed while this runs is either all before it or all after.
+    const done = await db.transaction().execute(async (trx) => {
+      // Scope to this user's own rows: an id from another session must not let
+      // someone clear a queue that isn't theirs.
+      const items = await trx
+        .selectFrom("labels_queue")
+        .selectAll()
+        .where("user_id", "=", session.id)
+        .where("id", "in", parsed.data.items.map((i) => i.id))
+        .orderBy("created_at")
+        .forUpdate()
+        .execute();
+      const plan = planRecord(items, parsed.data.items);
       // Already recorded (a retry, or a double submit). Not an error: the
-      // labels exist either way and the caller wants the queue clean.
-      res.json({ batch_id: null, recorded: 0 });
-      return;
-    }
-
-    const batchId = await db.transaction().execute(async (trx) => {
+      // labels exist either way and the caller wants the queue clean. The
+      // send's unique index decides a repeat: its batch is never inserted twice.
+      if (plan.printed.length === 0) return null;
       const batch = await trx
         .insertInto("labels_batches")
-        .values({ user_id: session.id, printed_at: new Date() })
+        .values({ user_id: session.id, printed_at: new Date(), send_id: parsed.data.send_id })
+        .onConflict((oc) => oc.columns(["user_id", "send_id"]).where("send_id", "is not", null).doNothing())
         .returning("id")
-        .executeTakeFirstOrThrow();
-      for (const it of items) {
+        .executeTakeFirst();
+      if (!batch) return null;
+      const byId = new Map(items.map((it) => [it.id, it]));
+      for (const p of plan.printed) {
+        const it = byId.get(p.id)!;
         await trx
           .insertInto("labels_prints")
           .values({
@@ -245,33 +264,36 @@ printRouter.post(
             entity_id: it.entity_id,
             qr_payload: liveQrUrl(it.qr_payload, base),
             description: it.description,
-            qty: it.qty,
+            qty: p.qty,
           })
           .execute();
       }
-      await trx
-        .deleteFrom("labels_queue")
-        .where("user_id", "=", session.id)
-        .where(
-          "id",
-          "in",
-          items.map((i) => i.id),
-        )
-        .execute();
-      return batch.id;
+      for (const k of plan.keep) {
+        await trx.updateTable("labels_queue").set({ qty: k.qty }).where("user_id", "=", session.id).where("id", "=", k.id).execute();
+      }
+      if (plan.remove.length) {
+        await trx.deleteFrom("labels_queue").where("user_id", "=", session.id).where("id", "in", plan.remove).execute();
+      }
+      return { batchId: batch.id, plan, items };
     });
+    if (!done) {
+      res.json({ batch_id: null, recorded: 0 });
+      return;
+    }
+    const { batchId, plan, items } = done;
 
     // Same guarantee as the server path: a printed sticker cannot change, so
     // lock the prefixes these labels used.
-    const printRefs = items.map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id }));
+    const printed = new Set(plan.printed.map((p) => p.id));
+    const printRefs = items.filter((it) => printed.has(it.id)).map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id }));
     await freezePrintedGroups(db, printRefs);
 
     platform().events.emit("labels.print.completed", {
       orgId: ctx.org.id,
       batchId,
-      count: items.reduce((n, it) => n + (it.qty ?? 1), 0),
+      count: plan.printed.reduce((n, p) => n + p.qty, 0),
     });
 
-    res.json({ batch_id: batchId, recorded: items.length });
+    res.json({ batch_id: batchId, recorded: plan.printed.length });
   }),
 );

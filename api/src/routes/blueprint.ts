@@ -31,6 +31,7 @@ import { enableModuleForOrg, premigrateModules } from "../modules/enable.js";
 import { PartRefusal, setPart } from "../platform/module-parts.js";
 import { listInstances, getInstance, createInstance } from "../platform/instances.js";
 import { validateBundle, applyValidatedBundle } from "./bundles.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // ── Minimal tenant-DB shape (the columns we read/write) ──────────────
 // The full schemas live in modules/core-views + modules/core-public-surfaces.
@@ -637,13 +638,13 @@ blueprintRouter.post("/install", requireAuth, withTenant, async (req, res, next)
     const Body = z.object({ manifest: z.unknown(), confirm: z.boolean().optional() });
     const body = Body.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: { code: "invalid_blueprint", message: "Bad request body", details: body.error.issues } });
+      res.status(400).json({ error: { code: "invalid_blueprint", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
       return;
     }
     const parsed = BlueprintManifest.safeParse(body.data.manifest);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_blueprint", message: "Blueprint manifest failed validation", details: parsed.error.issues },
+        error: { code: "invalid_blueprint", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

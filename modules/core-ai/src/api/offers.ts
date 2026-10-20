@@ -214,11 +214,28 @@ export async function readConversation(db: Kysely<CoreAiDB>, userId: string): Pr
 
 export async function writeConversation(db: Kysely<CoreAiDB>, userId: string, messages: unknown[]): Promise<string> {
   const now = new Date();
-  await db
-    .insertInto("core_ai_conversations")
-    .values({ user_id: userId, messages: JSON.stringify(messages), updated_at: now } as never)
-    .onConflict((oc) => oc.column("user_id").doUpdateSet({ messages: JSON.stringify(messages), updated_at: now } as never))
-    .execute();
+  await db.transaction().execute(async (tx) => {
+    await tx
+      .insertInto("core_ai_conversations")
+      .values({ user_id: userId, messages: JSON.stringify(messages), updated_at: now } as never)
+      .onConflict((oc) => oc.column("user_id").doUpdateSet({ messages: JSON.stringify(messages), updated_at: now } as never))
+      .execute();
+    // Delivery is durable only when the conversation and its Undo handles are kept together.
+    const ids: string[] = [];
+    const add = (value: unknown) => { if (typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)) ids.push(value); };
+    for (const value of messages) {
+      if (!value || typeof value !== "object") continue;
+      const message = value as Record<string, unknown>;
+      if (!message.commandPending) add(message.commandRunId);
+      if (message.sections && typeof message.sections === "object") {
+        for (const section of Object.values(message.sections)) {
+          if (section && typeof section === "object" && !(section as Record<string, unknown>).pending) add((section as Record<string, unknown>).commandRunId);
+        }
+      }
+    }
+    if (ids.length) await tx.updateTable("core_ai_command_runs").set({ delivered_at: now })
+      .where("id", "in", ids).where("user_id", "=", userId).where("status", "=", "done").execute();
+  });
   return now.toISOString();
 }
 

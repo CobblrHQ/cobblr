@@ -1,7 +1,8 @@
+import { randomId } from "@cobblr/platform-contract/random-id";
 import type { ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import type { AiConnectionTest, AiDefaultJobId, AiReportedModels } from "@cobblr/platform-contract";
 import type { ProposalValue } from "../proposal-values";
-import { idsThatFitAUrl, lookupInBody, request } from "./client";
+import { ApiError, idsThatFitAUrl, lookupInBody, request } from "./client";
 import type { AiChainAnswer } from "../ai-chain";
 import type { AiProviderDef } from "./integrations";
 
@@ -62,6 +63,37 @@ export interface PlanSectionOffer {
   /** How many operations it is (a new list's create counts). */
   operations: number;
   note?: string;
+}
+
+export interface CommandRunResult {
+  run_id: string;
+  ok: boolean;
+  done: number;
+  failed: number;
+  message: string;
+  pending?: boolean;
+  recorded?: true;
+  pendingRequest?: Pick<CommandRun, "command_id" | "request"> & { durable?: true };
+  section?: string;
+  ledger_ids?: string[];
+  undoable?: boolean;
+  destination?: { kind: string; label: string };
+  touched?: Array<{ kind: string; id: string; label: string }>;
+}
+
+export interface CommandRun {
+  id: string;
+  command_id: string;
+  request: { message: string; selection_ids?: string[]; section?: string };
+  status: "running" | "done";
+  result: (CommandRunResult & { error?: { message: string } }) | null;
+}
+
+export interface PendingCommandRun extends CommandRun { replayable: boolean }
+
+export function unknownCommandOutcome(runId: string): CommandRunResult {
+  return { run_id: runId, ok: false, done: 0, failed: 0, pending: true,
+    message: "The command's outcome is still unknown. I'm checking for its result and Undo." };
 }
 
 /** Result of the no-AI basic-mode matcher (POST …/core-ai/basics/answer). */
@@ -229,9 +261,10 @@ export interface MyAiDefaults {
     id: AiDefaultJobId;
     title: string;
     steps: Array<{ credential_id: string; model: string; model_label?: string; label: string; provider_id: string | null; usable: boolean }>;
-    /** Workspaces that chose for this job themselves, and which of its
-     *  capabilities they chose for. */
-    own_order_in: Array<{ org_id: string; slug: string; name: string; can_change: boolean; capabilities: string[] }>;
+    /** Workspaces that chose for this job themselves: which of its
+     *  capabilities they pinned, and whether they keep their own order for
+     *  the job on their AI page. */
+    own_order_in: Array<{ org_id: string; slug: string; name: string; can_change: boolean; capabilities: string[]; own_order: boolean }>;
   }>;
   connections: Array<{
     id: string;
@@ -579,24 +612,41 @@ export const aiApi = {
       "POST",
       `/orgs/${slug}/modules/core-ai/chat/undo-turn/${encodeURIComponent(turnId)}${force ? "?force=1" : ""}`,
     ),
-  runCommand: (slug: string, id: string, message: string, selectionIds?: string[], section?: string) =>
-    request<{
-      ok: boolean;
-      done: number;
-      failed: number;
-      message: string;
-      /** The section that ran, when one was named. */
-      section?: string;
-      ledger_ids?: string[];
-      undoable?: boolean;
-      destination?: { kind: string; label: string };
-      /** The records it changed, named, so the result's sentence opens them. */
-      touched?: Array<{ kind: string; id: string; label: string }>;
-    }>(
-      "POST",
-      `/orgs/${slug}/modules/core-ai/basics/commands/${id}/run`,
-      { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}), ...(section ? { section } : {}) },
-    ),
+  commandRuns: (slug: string) =>
+    request<{ items: CommandRun[] }>("GET", `/orgs/${slug}/modules/core-ai/basics/command-runs`),
+  runCommand: async (slug: string, id: string, message: string, selectionIds?: string[], section?: string, runId: string = randomId()): Promise<CommandRunResult> => {
+    const input = { message, ...(selectionIds?.length ? { selection_ids: selectionIds } : {}), ...(section ? { section } : {}) };
+    const unknown = (): CommandRunResult => ({ ...unknownCommandOutcome(runId), pendingRequest: { command_id: id, request: input, durable: true } });
+    try {
+      // Older APIs ignore run_id on /run; this path must refuse there before any write.
+      const out = await request<CommandRunResult | { status: "running" }>(
+        "POST", `/orgs/${slug}/modules/core-ai/basics/commands/${encodeURIComponent(id)}/runs`,
+        { run_id: runId, ...input },
+      );
+      return "status" in out ? unknown() : { ...out, ...(out.run_id === runId ? { recorded: true as const } : {}) };
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 0 || error.status >= 500) && error.code !== "session_changed") return unknown();
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) return {
+        run_id: runId, ok: false, done: 0, failed: 1,
+        // 404-is: an-older-api: the durable execution door is absent until the API updates
+        message: error.status === 404 ? "That command isn't available. Refresh the page and try again." : error.message,
+      };
+      throw error;
+    }
+  },
+  recoverCommandRun: async (slug: string, pending: PendingCommandRun): Promise<CommandRun | null> => {
+    try {
+      return (await request<{ run: CommandRun }>("GET", `/orgs/${slug}/modules/core-ai/basics/command-runs/${encodeURIComponent(pending.id)}`)).run;
+    } catch (error) {
+      // quiet: a missing legacy receipt leaves the outcome unknown and must never repeat its writes
+      // 404-is: a-state: a saved request can predate durable receipts and have no recorded run
+      if (!(error instanceof ApiError) || error.status !== 404) throw error;
+    }
+    if (!pending.replayable) return null;
+    const input = pending.request;
+    const result = await aiApi.runCommand(slug, pending.command_id, input.message, input.selection_ids, input.section, pending.id);
+    return result.recorded ? { ...pending, status: "done", result } : null;
+  },
 
   // core-ai — provider config + capability defaults + usage. See
   // docs/modules/core-ai.md.

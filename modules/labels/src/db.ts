@@ -30,6 +30,9 @@ export interface LabelsBatchesTable {
   user_id: string | null;
   created_at: Generated<Date>;
   printed_at: Date | null;
+  /** The send a browser-confirmed print came from (0014): a repeat of the same
+   *  confirmation records nothing (#7593). */
+  send_id: string | null;
   /** An auto-printed batch's dispatch (0013): pending until its print job is
    *  scheduled, then scheduled; null for a batch printed by hand. */
   dispatch_state: "pending" | "scheduled" | null;

@@ -259,7 +259,28 @@ export function slotValues(cmd: Pick<LearnedCommand, "pattern" | "slots">, messa
   cmd.slots.forEach((s, i) => {
     values[s.name] = (m[i + 1] ?? "").trim();
   });
+  // A blank is open-ended, so the last one swallows whatever follows it: "make
+  // Shelf 1 through 3 in Audit room then add a place called Blue bin" bound
+  // the whole second instruction as the container's name, and Do it failed
+  // every row (#7590). A blank holding another instruction is not a fit.
+  if (cmd.slots.some((s) => s.kind !== "number" && splitInstructions(values[s.name] ?? "").length > 1)) return null;
   return values;
+}
+
+/** Where one instruction ends and the next begins: "then", "after that", a
+ *  semicolon or a new sentence. Not a bare "and": "nuts and bolts" is a name. */
+const NEXT_INSTRUCTION = /\s*(?:[;.!?]\s+|,?\s+(?:and\s+)?then\s+|,?\s+after\s+that,?\s+)/i;
+
+/** What Cobb says to several instructions sent at once with no AI: each one
+ *  is run on its own, so it names them in order to send separately. */
+export function oneAtATimeReply(steps: string[]): string {
+  const list = steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  return `That message gives more than one instruction. Without AI connected I run one at a time, so send each on its own:\n\n${list}`;
+}
+
+/** A message's instructions, in order; one element when it gives one. */
+export function splitInstructions(message: string): string[] {
+  return message.trim().replace(/[.!?]+$/, "").split(NEXT_INSTRUCTION).map((p) => p.trim()).filter(Boolean);
 }
 
 /** `{blank}`s in a string, filled from the values; an unknown blank stays. */

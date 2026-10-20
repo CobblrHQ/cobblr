@@ -47,5 +47,5 @@ export function ReflowCard({ slug, order, api }: { slug: string; order: Assembly
  </section>;
 }
 export function ReflowReport({ run }: { run: AssemblyReflow }) {
- return <div className="space-y-2"><p role="status" className={run.report?.in_spec ? "text-success" : "text-ember-700 dark:text-ember-300"}>{run.report?.in_spec ? "Within recorded limits" : "Needs inspection review"}</p>{run.report?.problems.map((p, i) => <p key={i} className="text-sm">{p}</p>)}<p className="text-sm">Recorded by {run.source} · peak {run.report?.peak_c} C · time above liquidus {run.report?.above_liquidus_s} s</p></div>;
+ return <div className="space-y-2"><p role="status" className={run.report?.in_spec ? "text-moss-700 dark:text-moss-300" : "text-ember-700 dark:text-ember-300"}>{run.report?.in_spec ? "Within recorded limits" : "Needs inspection review"}</p>{run.report?.problems.map((p, i) => <p key={i} className="text-sm">{p}</p>)}<p className="text-sm">Recorded by {run.source} · peak {run.report?.peak_c} C · time above liquidus {run.report?.above_liquidus_s} s</p></div>;
 }

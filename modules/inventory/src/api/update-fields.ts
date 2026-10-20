@@ -14,12 +14,13 @@ import { splitFieldsForUpdate } from "@cobblr/platform-contract/entity-metadata"
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import type { InventoryDB } from "../db.js";
 import { holdingsCtxForPart, spreadIdentity } from "./holdings.js";
+import { PART_NAME_MAX } from "../part-limits.js";
 
 const STOCK_FIELDS = ["qty", "unit", "approximate_qty", "archived", "state"] as const;
 
 const EditableNative = z
   .object({
-    name: z.string().min(1).max(160),
+    name: z.string().min(1).max(PART_NAME_MAX),
     description: z.string().max(8_000).nullable(),
     category_id: z.string().uuid().nullable(),
     location_id: z.string().uuid().nullable(),

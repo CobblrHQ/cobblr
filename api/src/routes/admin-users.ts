@@ -34,6 +34,7 @@ import { ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { canActOnRole } from "../auth/capability.js";
 import { makeIpLimiter, rateLimited } from "../platform/ip-limiter.js";
 import { MEMBER_PAIR_CODE_TTL_MS, mintPairCode, pairMintRefusal, revokeMemberPairCodes } from "../platform/pair-codes.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const adminUsersRouter = Router({ mergeParams: true });
 
@@ -84,7 +85,7 @@ adminUsersRouter.post(
       const parsed = CreateBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -226,7 +227,7 @@ adminUsersRouter.post(
       const parsed = RegenPasswordBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }

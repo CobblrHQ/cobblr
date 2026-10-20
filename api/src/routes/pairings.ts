@@ -17,6 +17,7 @@ import { createPairing, deletePairing, updatePairing } from "../platform/pairing
 import { listOverrides } from "../platform/entity-kind-overrides.js";
 import { familiesFromOverrides } from "../platform/families.js";
 import { resolveKind } from "../platform/entities.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const pairingsRouter = Router({ mergeParams: true });
 
@@ -146,7 +147,7 @@ pairingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
     const parsed = PairingCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad pairing payload", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -177,7 +178,7 @@ pairingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => 
     const parsed = PairingPatch.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

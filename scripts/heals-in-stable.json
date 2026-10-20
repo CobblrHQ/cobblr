@@ -1,0 +1,12 @@
+{
+  "tag": "2026.8.1",
+  "heals": [
+    "api/src/platform/backfill-bundle-claims.ts",
+    "api/src/platform/heal-mention-entity-ref.ts",
+    "api/src/platform/merge-labels-qr.ts",
+    "api/src/platform/migrate-bookshelf-to-instance.ts",
+    "api/src/platform/migrate-location-to-placement.ts",
+    "api/src/platform/repair-replay-truncated-names.ts",
+    "modules/core-cadence/src/heal-instance-kinds.ts"
+  ]
+}

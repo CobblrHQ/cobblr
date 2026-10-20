@@ -28,6 +28,7 @@ import { planSheet, scoreTargets, chooseTarget, type Destination, type SheetOver
 import { existingRecords, newCollectionTarget, workspacePicture } from "../services/sheet-workspace.js";
 import { nameColumnsWithAi } from "../services/sheet-ai-names.js";
 import { selfOrigin } from "@cobblr/platform-contract/self-api";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const sheetsRouter = Router({ mergeParams: true });
 
@@ -241,7 +242,7 @@ sheetsRouter.post("/sheets/understand", (req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "bad_body", message: "expected { file_b64, filename } or { url }", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "bad_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     if ("filename" in parsed.data && !formatOf(parsed.data.filename)) {
@@ -266,7 +267,7 @@ sheetsRouter.post("/sheets/plan", (req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = PlanBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "bad_body", message: "expected { file_b64, filename } or { url }, with optional overrides", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "bad_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     if ("filename" in parsed.data && !formatOf(parsed.data.filename)) {
@@ -310,7 +311,7 @@ sheetsRouter.post("/sheets/import", (req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = PlanBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "bad_body", message: "expected { file_b64, filename } or { url }, with optional overrides", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "bad_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const ctx = ctxOf(req);

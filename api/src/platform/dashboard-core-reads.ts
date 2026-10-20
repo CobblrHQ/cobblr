@@ -9,6 +9,7 @@
 // section, and the walk the-dashboard-arrives-at-once-from-one-request.json
 // says which.
 import { registerDashboardRead } from "@cobblr/platform-contract/dashboard-reads";
+import { RECENT_ACTIVITY_PAGE } from "@cobblr/platform-contract/dashboard-sections";
 
 interface Instance {
   instance_name: string;
@@ -25,7 +26,7 @@ export function registerCoreDashboardReads(): void {
       `/orgs/${slug}/entity-kind-overrides`,
       `/orgs/${slug}/dashboard-layout`,
       `/orgs/${slug}/hosted-panels`,
-      `/orgs/${slug}/activity?limit=50`,
+      `/orgs/${slug}/activity?limit=${RECENT_ACTIVITY_PAGE}`,
       `/orgs/${slug}/attention?today=${today}`,
       ...(upNext ? [`/orgs/${slug}/calendar/events?from=${upNext.from}&to=${upNext.to}`] : []),
     ],

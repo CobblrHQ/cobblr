@@ -368,10 +368,20 @@ fleetRouter.get(
               // neither the camera wall nor the relay pulls the same stream the
               // detector already owns (the single-owner rule).
               camera_url: managedByDetector ? null : (setting?.camera_url ?? d.camera_url ?? null),
-              // The bridge can grab frames from this printer's own camera (the
-              // cockpit /camera route) — lets the camera wall show it without a
-              // manual URL or the snapshot relay.
-              lan_camera: !managedByDetector && (d.camera_available === true || lanCameras.has(d.id)),
+              // The server answers this printer's frames on the cockpit /camera
+              // route: the bridge grabs its own camera, or the server fetches the
+              // camera address saved or reported for it. Every screen polls that
+              // route then, never the address itself: an http camera on the shop
+              // network is blocked on an https page and unreachable off it (#7056).
+              lan_camera: !managedByDetector && (d.camera_available === true || lanCameras.has(d.id) || !!(setting?.camera_url ?? d.camera_url)),
+              // Which of those the route reads, in cameraSourceFor's order, so a
+              // screen whose frames fail names the right thing to check.
+              camera_source: managedByDetector ? null
+                : lanCameras.has(d.id) ? "bridge"
+                : setting?.camera_url ? "address"
+                : d.camera_available === true ? "manager"
+                : d.camera_url ? "address"
+                : null,
               // Snapshot relay (opt-in, off by default). When on AND a fresh
               // agent-pushed frame exists, the web auth-fetches it from the
               // /snapshot route (remote-viewable) instead of the LAN camera_url.
@@ -947,7 +957,12 @@ fleetRouter.get(
     const lan = await familyPreferredDriver(orgId, req.params.connectionId!, req.params.deviceId!);
     const setting = await tenantDb(req).selectFrom("digifab_device_settings").select("camera_url")
       .where("connection_id", "=", req.params.connectionId!).where("remote_device_id", "=", req.params.deviceId!).executeTakeFirst();
-    const source = await cameraSourceFor(lan, setting?.camera_url, () => buildDriverById(tenantDb(req), orgId, req.params.connectionId!));
+    const source = await cameraSourceFor(
+      lan,
+      setting?.camera_url,
+      () => buildDriverById(tenantDb(req), orgId, req.params.connectionId!),
+      async (driver) => (await fetchDevicesCached(tenantDb(req), driver, req.params.connectionId!)).devices.find((x) => x.id === req.params.deviceId)?.camera_url,
+    );
     if (!source) return void res.status(501).json({ error: { code: "no_camera", message: "no camera address saved for this machine" } });
     if ("address" in source) {
       const frame = await frameFromAddress(source.address);

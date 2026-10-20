@@ -1356,6 +1356,10 @@ export default defineModule({
       // to ball) has its records still on the old default follow it.
       const { registerDefaultUnitFollows } = await import("./default-unit-follows.js");
       registerDefaultUnitFollows();
+      // A type collection and its things (Filament Types + Spools): a scanned
+      // spool left in the types table, and a spool with no type, put back.
+      const { registerFamiliesHeal } = await import("./heal-families.js");
+      registerFamiliesHeal();
       // Parts from before measured values were read get read once, so an old
       // "4k7" answers a search for 4.7 kΩ (heal-measure-readings.ts).
       const { registerMeasureReadingsHeal } = await import("./heal-measure-readings.js");
@@ -1367,6 +1371,16 @@ export default defineModule({
       // life, and by the warm one when it comes out (cold-redate.ts).
       const { registerColdRedate } = await import("./cold-redate.js");
       registerColdRedate();
+      // Catalog instances the camera sheet latched to the stock face go back to
+      // the catalog face. One-shot and idempotent; meta-only for a workspace
+      // with nothing to heal. Awaited rather than fired off: it is a few
+      // queries, and a half-healed workspace serving its first request is worse
+      // than a boot that takes a moment longer.
+      const { healCatalogStockLatch } = await import("./heal-catalog-stock-latch.js");
+      const unlatched = await healCatalogStockLatch();
+      if (unlatched > 0) {
+        console.log(`[inventory] ${unlatched} catalog instance(s) returned to the catalog face`);
+      }
     },
     onShutdown: async () => {
       const { stopBurnRateSweeper } = await import("./burn-rate.js");

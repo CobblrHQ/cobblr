@@ -52,11 +52,25 @@ export function primeReads(snapshot: Record<string, SnapshotEntry>, ticket: numb
   return true;
 }
 
-/** Drop every primed answer: a write happened, or the page went away. */
+/** Drop every primed answer, and make a snapshot already on its way stale:
+ *  a write happened, or another account is answering. */
 export function clearPrimedReads(): void {
   entries = new Map();
   until = 0;
   generation++;
+}
+
+/** The page that asked went away: drop what is primed, but leave a snapshot
+ *  on its way good, and its reads still waiting for it (it lands within its
+ *  cap). Nothing it said was changed, and the page that takes over may be the
+ *  same one drawn again: a dashboard drawn a second time
+ *  during its first load asked (or shared) its snapshot under the current
+ *  ticket, then the first one's cleanup moved the ticket on, so the snapshot
+ *  was thrown away when it landed and every section asked for itself, 26
+ *  reads in the nightly (#7622). */
+export function releasePrimedReads(): void {
+  entries = new Map();
+  until = 0;
 }
 
 /** Until `done` settles, a GET under `/orgs/<slug>/` waits for it: all but

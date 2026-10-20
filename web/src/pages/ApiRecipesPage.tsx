@@ -330,7 +330,7 @@ export function ApiRecipesPage() {
             : "border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 hover:border-cobble-400")
         }
       >
-        <span className={"mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md " + (on ? "bg-cobble-600 text-white" : "bg-panel dark:bg-slate-900 text-cobble-500")}>
+        <span className={"mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md " + (on ? "bg-cobble-600 text-white" : "bg-surface dark:bg-slate-900 text-cobble-500")}>
           {on ? <Check size={14} /> : <Icon size={14} />}
         </span>
         <span className="min-w-0 flex-1">
@@ -348,7 +348,7 @@ export function ApiRecipesPage() {
     <div key={id}>
       <div className="mb-1.5 text-sm font-medium text-content dark:text-slate-200">{title}</div>
       <div className="relative">
-        <button onClick={() => copy(id, code)} className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-panel/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content">
+        <button onClick={() => copy(id, code)} className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-surface/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content">
           {copied === id ? "Copied" : "Copy"}
         </button>
         <pre className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 text-xs leading-relaxed text-slate-200"><code>{code}</code></pre>
@@ -462,7 +462,7 @@ export function ApiRecipesPage() {
               ) : (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {scopes.map((s) => (
-                    <span key={s} className="rounded border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 font-mono text-xs text-cobble-500">{s}</span>
+                    <span key={s} className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 font-mono text-xs text-cobble-500">{s}</span>
                   ))}
                 </div>
               )}

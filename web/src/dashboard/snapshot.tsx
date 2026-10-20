@@ -16,7 +16,7 @@
 // never kept while viewing as someone else, and signing out forgets it.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { dehydrate, hydrate, useIsFetching, useQueryClient } from "@tanstack/react-query";
-import { clearPrimedReads, holdPrimedReads, primeReads, primeTicket } from "@cobblr/platform-web";
+import { holdPrimedReads, primeReads, primeTicket, releasePrimedReads } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { api } from "../lib/api";
 import { getImpersonationToken } from "../lib/impersonation";
@@ -131,7 +131,9 @@ export function DashboardSnapshotGate({
     void code.loaded.then(() => live && setCodeReady(true));
     return () => {
       live = false;
-      clearPrimedReads();
+      // Leaving is not a write: a gate drawn again takes over the same
+      // snapshot (#7622). A write still makes it stale (primedRead).
+      releasePrimedReads();
     };
   }, [start, code]);
 

@@ -2,10 +2,11 @@
 # Postgres. It is in no registry; each CI box builds it locally (the A6's
 # health tick rebuilds it when missing, and the bake builds it on a box that
 # has never had it), and the nightly bake turns it into cobblr-ci-pg-pool:22.04.
-# This file is the source of truth for every box.
+# This file is the source of truth for every box. ffmpeg: docs-shots measures each shot for blankness with it,
+# and the tours film with it; without it docs-shots crashed every night (#6400, run 54985).
 FROM catthehacker/ubuntu:act-22.04
 RUN apt-get update -qq \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client psmisc tesseract-ocr poppler-utils \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends postgresql postgresql-client psmisc tesseract-ocr poppler-utils ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 # THE BROWSERS (#6551, 2026-10-14): the walks run here (the ci-e2e label is the pool image baked from this
 # one) on Chromium and WebKit, a real phone's engine. Baked for the repository's Playwright, held equal to

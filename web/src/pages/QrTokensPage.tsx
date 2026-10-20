@@ -10,7 +10,10 @@ import { Copy, ExternalLink, QrCode, Ban, Globe, Download } from "lucide-react";
 import { ApiError, api, type QrToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { useConfirm, useToast, usePageTitle, downloadBlob, EntityChip } from "@cobblr/platform-web";
+import { useConfirm, useToast, usePageTitle, downloadBlob, EntityChip, WorkspaceLink } from "@cobblr/platform-web";
+
+/** The kind an action label's token names: the label itself, not a record. */
+const ACTION_LABEL_KIND = "labels:action-label";
 
 export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle("QR codes");
@@ -29,7 +32,7 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeQrToken(activeSlug, id),
     onSuccess: () => {
-      toast.success("Token revoked - scanning it now 404s");
+      toast.success("Label turned off. Scanning it now says it no longer works.");
       void qc.invalidateQueries({ queryKey: ["qr-tokens", activeSlug] });
     },
     onError: (e: unknown) =>
@@ -233,11 +236,16 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                 <QrCode size={15} className="text-accent mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <EntityChip kind={t.entity_kind} id={t.entity_id} />
-                    <Pill
-                      text={t.mode === "action" ? `action${t.action_id ? `:${t.action_id}` : ""}` : "navigate"}
-                      tone="cobble"
-                    />
+                    {t.entity_kind === ACTION_LABEL_KIND ? (
+                      // An action label is not a record any entity door opens: it
+                      // is named by its own title and lives in Action labels (#7608).
+                      <WorkspaceLink slug={activeSlug} to="/labels/action" className="text-sm font-medium text-accent hover:underline" data-testid="qr-action-label">
+                        {typeof t.config?.title === "string" && t.config.title ? t.config.title : "Action label"}
+                      </WorkspaceLink>
+                    ) : (
+                      <EntityChip kind={t.entity_kind} id={t.entity_id} />
+                    )}
+                    <Pill text={t.mode === "action" ? "Action label" : "Item label"} tone="cobble" />
                     <Pill
                       text={t.auth}
                       tone={t.auth === "public" ? "amber" : "slate"}
@@ -290,8 +298,8 @@ export function QrTokensPage({ embedded = false }: { embedded?: boolean } = {}) 
                       aria-label="Revoke"
                       onClick={async () => {
                         const ok = await confirm({
-                          title: "Revoke this QR token?",
-                          message: `Any printed label pointing at ${t.entity_kind} stops resolving immediately.`,
+                          title: "Turn off this label?",
+                          message: "The printed label stops working as soon as you confirm: scanning it says it was turned off. This cannot be undone; print a new label to replace it.",
                           confirmLabel: "Revoke",
                           destructive: true,
                         });

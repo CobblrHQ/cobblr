@@ -8,7 +8,7 @@ import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type Mo
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo, useEffect, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useState, useMemo, useEffect, type CSSProperties, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { dayHere, dayLabel, daysUntilField } from "@cobblr/platform-contract/day";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
@@ -23,7 +23,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { SelectBox, rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
@@ -1050,12 +1050,7 @@ function RecordCard({
       data-record-card=""
       data-testid={testId}
       className={(className ?? "") + (href ? " cursor-pointer" : "")}
-      onClick={(e: MouseEvent<HTMLElement>) => {
-        if (!href || e.defaultPrevented) return;
-        const own = (e.target as HTMLElement).closest("a, button, input, select, textarea, label, [role='button']");
-        if (own && e.currentTarget.contains(own)) return;
-        navigate(href);
-      }}
+      onClick={rowOpen(() => { if (href) navigate(href); })}
     >
       {children}
     </Tag>
@@ -1293,7 +1288,7 @@ function VendingTile({
 }) {
   const title = row.title ?? "";
   const stepper =
-    "flex-1 rounded-md border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 py-2.5 text-lg font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition";
+    "flex-1 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 py-2.5 text-lg font-bold text-content dark:text-slate-100 disabled:opacity-40 active:scale-95 transition";
   return (
     <RecordCard
       row={row}
@@ -1308,10 +1303,10 @@ function VendingTile({
       {/* Every slot is the same 4:3 box whatever its photo: the frame sizes it
           before the picture arrives, so a tall bag cannot stretch its row. */}
       <RecordLink row={row} className={"relative block " + (out ? "opacity-60" : "")}>
-        <EntityPhoto src={image} alt={title} aspect="4/3" className="bg-panel dark:bg-slate-900">
+        <EntityPhoto src={image} alt={title} aspect="4/3" className="bg-surface dark:bg-slate-900">
           <span className={`absolute right-2 top-2 h-3 w-3 rounded-full ring-2 ring-white/80 dark:ring-slate-900/80 ${dot}`} aria-hidden />
           {qty !== null && !out && (
-            <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-panel dark:bg-slate-900 px-2 py-0.5 text-sm font-bold shadow-sm text-content dark:text-slate-100">
+            <span className="absolute bottom-2 right-2 rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-0.5 text-sm font-bold shadow-sm text-content dark:text-slate-100">
               ×{qty}
             </span>
           )}

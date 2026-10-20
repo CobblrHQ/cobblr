@@ -78,6 +78,7 @@ import { signupsBySource } from "../platform/signups-by-source.js";
 import { recentViolations } from "../platform/csp-reports.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const superAdminRouter = Router();
 
@@ -213,7 +214,7 @@ superAdminRouter.post("/demos", async (req, res, next) => {
   try {
     const parsed = DemoBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad demo payload", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const target = await meta
@@ -1044,7 +1045,7 @@ superAdminRouter.post("/signup-invites", async (req, res, next) => {
   try {
     const parsed = MintInvite.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad invite", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
@@ -1170,7 +1171,7 @@ superAdminRouter.post("/waitlist/ingest", async (req, res, next) => {
   try {
     const parsed = IngestWaitlist.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad signup", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const email = parsed.data.email.toLowerCase().trim();
@@ -1311,7 +1312,7 @@ superAdminRouter.post("/waitlist/:id/approve", async (req, res, next) => {
   try {
     const parsed = ApproveWaitlist.safeParse(req.body ?? {});
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad approval", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const entry = await meta
@@ -1874,7 +1875,7 @@ superAdminRouter.post("/feedback/ingest", async (req, res, next) => {
   try {
     const parsed = IngestFeedback.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad ticket", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     // Pull the screenshots down NOW. Discord's CDN links are signed and expire
@@ -1989,7 +1990,7 @@ superAdminRouter.post("/feedback/append", async (req, res, next) => {
   try {
     const parsed = AppendFeedback.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad follow-up", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     if (!parsed.data.text && parsed.data.images.length === 0) {
@@ -2240,7 +2241,7 @@ superAdminRouter.post("/feedback/resolve-by-thread", async (req, res, next) => {
   try {
     const parsed = ResolveByThread.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const fb = await meta
@@ -2272,7 +2273,7 @@ superAdminRouter.patch("/feedback/:id", async (req, res, next) => {
   try {
     const parsed = UpdateFeedback.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad update", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const patch: Record<string, unknown> = { updated_at: new Date() };
@@ -2410,7 +2411,7 @@ superAdminRouter.post("/feedback/batch-resolve", async (req, res, next) => {
   try {
     const parsed = BatchResolveBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad batch", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const { status, items, reply_message, notify_reporter } = parsed.data;
@@ -2769,7 +2770,7 @@ superAdminRouter.patch("/announce-settings/:category", async (req, res, next) =>
   try {
     const parsed = AnnounceSettingPatch.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad update", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     await setAnnounceSetting(req.params.category, parsed.data);
@@ -2799,7 +2800,7 @@ superAdminRouter.post("/announce", async (req, res, next) => {
   try {
     const parsed = ComposeAnnounce.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad announcement", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     if (!isComposable(parsed.data.category)) {
@@ -2848,7 +2849,7 @@ superAdminRouter.post("/impersonations", async (req, res, next) => {
   try {
     const parsed = StartImpersonation.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const { org_id, target_user_id, reason } = parsed.data;
@@ -2880,7 +2881,7 @@ superAdminRouter.patch("/impersonations/:id", async (req, res, next) => {
   try {
     const parsed = PatchImpersonation.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const sess = await meta
@@ -2987,7 +2988,7 @@ superAdminRouter.post("/notices", async (req, res, next) => {
   try {
     const parsed = NoticeBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad notice", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const { org_ids = [], user_ids = [], subject, message, link_url } = parsed.data;
@@ -3178,7 +3179,7 @@ superAdminRouter.post("/scan-eval", async (req, res, next) => {
   try {
     const parsed = ScanEvalBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad scan-eval request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const userId = req.session?.id;
@@ -3346,7 +3347,7 @@ superAdminRouter.post("/authoring-eval", async (req, res, next) => {
   try {
     const parsed = AuthoringEvalBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad authoring-eval request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const userId = req.session?.id;

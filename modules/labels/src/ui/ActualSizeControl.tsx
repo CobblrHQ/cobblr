@@ -40,13 +40,15 @@ export function ActualSizeControl({
   }
 
   return (
-    <div className="mt-2 flex items-center gap-3 text-xs">
+    // Wraps on a phone: beside the fixed 8 cm ruler the switch was squeezed
+    // and "Actual size" ran past it, with the help clipped (#7602).
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
       <button
         type="button"
         onClick={onToggle}
         aria-pressed={actual}
         title="Show the label at its true physical size on screen"
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
+        className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 transition ${
           actual
             ? "border-cobble-500 bg-cobble-600 text-white"
             : "border-line dark:border-slate-600 text-muted dark:text-slate-400 hover:border-cobble-400"

@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 ABB OmniCore arms connect over Robot Web Services 2.0, with the controller's certificate pinned.

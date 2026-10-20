@@ -12,11 +12,14 @@
 // card whose parts can be taken one at a time (2026-09-13).
 
 import { Check, RotateCcw } from "lucide-react";
-import type { PlanSectionOffer } from "../lib/api";
+import type { CommandRunResult, PlanSectionOffer } from "../lib/api";
 import { ChatRefChip } from "./ChatRefChip";
 
 /** What one section's run came back with, kept on the message. */
 export interface SectionRun {
+  commandRunId?: string;
+  pending?: boolean;
+  commandRequest?: CommandRunResult["pendingRequest"];
   ok: boolean;
   /** The run's own sentence, past tense ("Moved 1 record into Groceries."). */
   message: string;
@@ -31,7 +34,7 @@ export type SectionRuns = Record<string, SectionRun>;
 
 /** The sections that have not run, or ran and failed: what Do all does next. */
 export function sectionsLeft(sections: PlanSectionOffer[], runs: SectionRuns | undefined): PlanSectionOffer[] {
-  return sections.filter((s) => !runs?.[s.key]?.ok);
+  return sections.filter((s) => !runs?.[s.key]?.ok && !runs?.[s.key]?.pending);
 }
 
 export function PlanSections({
@@ -109,7 +112,7 @@ export function PlanSections({
                 reader never matches sentences to buttons. */}
             {run && (
               <div className={`mt-0.5 text-[11px] ${run.ok ? faint : "text-ember-600 dark:text-ember-400"} break-words`} role="status">
-                {(run.ok ? "✓ " : "✗ ") + run.message}
+                {(run.pending ? "" : run.ok ? "✓ " : "✗ ") + run.message}
               </div>
             )}
             {run?.ok && run.undoResult && (
@@ -117,7 +120,7 @@ export function PlanSections({
             )}
             {mode === "card" && (
               <div className="mt-1 flex items-center gap-2">
-                {!done && onRun && (
+                {!done && !run?.pending && onRun && (
                   <button
                     type="button"
                     onClick={() => onRun(s.key)}

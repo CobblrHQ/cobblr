@@ -507,7 +507,7 @@ function Row({
       data-testid={`module-row-${m.name}`}
       className={
         (compact
-          ? "rounded-md border border-line dark:border-slate-700 bg-mortar-25 dark:bg-slate-800/40 p-2.5"
+          ? "rounded-md border border-line dark:border-slate-700 bg-mortar-50 dark:bg-slate-800/40 p-2.5"
           : "p-3") +
         (framed && !compact ? " rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900" : "") +
         " flex items-start gap-2"

@@ -164,9 +164,24 @@ const stem = (w: string): string => {
  *  TITLE still counts; it describes the product. */
 const SELLER_KEY = /^(merchant|merchants|seller|sellers|store|stores|shop|shops|retailer|retailers|vendor|domain|link|links|url|urls|href)$/i;
 const LINK = /^(https?:\/\/|www\.)/i;
-/** The JSON.stringify replacer for the haystack: seller keys and links out. */
-const aboutTheThing = (key: string, value: unknown): unknown =>
-  SELLER_KEY.test(key) || (typeof value === "string" && LINK.test(value)) ? undefined : value;
+/** The metadata as the haystack reads it: the values a catalog states, never
+ *  the names of its slots, with seller keys and links out. Every Open Food
+ *  Facts record carries "is_cheese", "is_water" and "sugars" as keys of its
+ *  nutrition-score bookkeeping, so a can of WD-40 matched three Groceries
+ *  words and filed as food (#7658). */
+function aboutTheThing(v: unknown, depth = 0): string {
+  if (depth > 6 || v == null) return "";
+  if (typeof v === "string") return LINK.test(v) ? "" : v;
+  if (typeof v === "number") return String(v);
+  if (Array.isArray(v)) return v.map((x) => aboutTheThing(x, depth + 1)).filter(Boolean).join(" ");
+  if (typeof v === "object")
+    return Object.entries(v as Record<string, unknown>)
+      .filter(([k]) => !SELLER_KEY.test(k))
+      .map(([, x]) => aboutTheThing(x, depth + 1))
+      .filter(Boolean)
+      .join(" ");
+  return "";
+}
 
 /** A table whose noun says what its things ARE (spice, plant, tea, book),
  *  against an aisle whose noun says nothing (Groceries' "item", a catch-all's
@@ -185,12 +200,21 @@ export const GENERIC_NOUNS = new Set([
   "blend", "mix", "kit", "bundle", "combo", "assortment", "variety", "collection",
 ]);
 
+/** Words that name a property nearly every made thing has, so a table's
+ *  keyword on one is never evidence the thing belongs there. Vehicles
+ *  declared "make" and "model", and an iPhone box whose catalog name ends
+ *  "DE Model iOS" and whose attributes say "processormodel" was offered
+ *  Vehicles on them (#7658). A table still matches on its fields' labels. */
+export const GENERIC_KEYWORDS = new Set([
+  "model", "make", "brand", "maker", "type", "size", "color", "colour", "style", "series", "version", "edition", "number",
+]);
+
 export function makeLexicalScorer(item: FitItem): {
   hay: string;
   scoreEntry: (entry: FitTable) => LexicalEvidence;
 } {
   const hay = `${item.name ?? ""} ${item.description ?? ""} ${item.category ?? ""} ${item.notes ?? ""} ${
-    item.metadata ? JSON.stringify(item.metadata, aboutTheThing) : ""
+    item.metadata ? aboutTheThing(item.metadata) : ""
   }`
     .toLowerCase()
     // "a BAG of screws" / "3 BOXES of nails": the container word describes the
@@ -342,8 +366,19 @@ export function makeLexicalScorer(item: FitItem): {
   // lookup that identified it. A title is often silent about its kind — a book's
   // title is the one place the word "book" never appears — so a table whose noun
   // IS the category is the strongest signal there is for that item.
+  // A category path's LAST step is its claim about the thing (the steps
+  // before it are broader shelves), and each phrase of that step names a kind
+  // by its last word: "Spices, Seasonings" names spices, while "... Kitchen
+  // Tools & Utensils > Kitchen Organizers > Spice Organizers" names
+  // organizers. A pasta UPCitemdb filed there was offered Spices on the
+  // modifier, and Tooling on an ancestor (#7658).
   const catStems = new Set(
-    (item.category ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem),
+    ((item.category ?? "").split(">").pop() ?? "")
+      .toLowerCase()
+      .split(/[,&/;|]|\band\b/)
+      .map((phrase) => phrase.split(/[^a-z0-9]+/).filter((w) => w.length >= 3).pop())
+      .filter((w): w is string => !!w)
+      .map(stem),
   );
   const categoryIs = (phrase: string): boolean => {
     const p = phrase.toLowerCase();
@@ -457,6 +492,7 @@ export function makeLexicalScorer(item: FitItem): {
     // the same tokens.
     const usedTokens = new Set<string>();
     for (const term of entry.scan_keywords ?? []) {
+      if (term && GENERIC_KEYWORDS.has(term.trim().toLowerCase())) continue;
       if (term && kwHit(term)) {
         const matched = matchedTokens(term);
         // The dedupe suppresses the COUNT, never what the keyword IS. A Tea

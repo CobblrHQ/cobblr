@@ -590,7 +590,7 @@ export function SortingPlanView({
         (() => {
           const view = planErrorView(errorCode, reviewNeeded, error, !!onReviewItems);
           if (view.kind === "error") {
-            return <div className="py-6 text-center text-sm text-bad">{view.message}</div>;
+            return <div className="py-6 text-center text-sm text-danger">{view.message}</div>;
           }
           const n = view.count;
           return (

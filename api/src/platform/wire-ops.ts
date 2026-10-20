@@ -32,6 +32,11 @@ export const BindingTarget = z.union([
   }),
 ]);
 
+const clearableWireObjects = {
+  filter: z.record(z.unknown()).nullish(),
+  args: z.record(z.unknown()).nullish(),
+};
+
 export const BindingCreate = z
   .object({
     source_kind: z.string(),
@@ -49,8 +54,7 @@ export const BindingCreate = z
      *  every other trigger type. See wires-and-bundles.md Q4. */
     trigger_schedule: z.string().nullish(),
     template: z.string().max(2000).nullish(),
-    filter: z.record(z.unknown()).optional(),
-    args: z.record(z.unknown()).optional(),
+    ...clearableWireObjects,
     /** A button's own label and what it asks before it runs (binding-ask.ts). */
     label: BindingLabel.nullish(),
     ask: BindingAsk.nullish(),
@@ -114,8 +118,7 @@ export const BindingPatch = z.object({
   trigger_event: z.string().nullish(),
   trigger_schedule: z.string().nullish(),
   template: z.string().max(2000).nullable().optional(),
-  filter: z.record(z.unknown()).nullable().optional(),
-  args: z.record(z.unknown()).nullable().optional(),
+  ...clearableWireObjects,
   target: BindingTarget.optional(),
   enabled: z.boolean().optional(),
   label: BindingLabel.nullish(),

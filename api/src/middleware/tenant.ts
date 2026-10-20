@@ -13,7 +13,8 @@ import type { NextFunction, Request, Response } from "express";
 import type { Kysely } from "kysely";
 import { sql } from "kysely";
 import { meta } from "../db/meta.js";
-import { getTenantDb, WorkspaceDeletingError } from "../db/tenant.js";
+import { getTenantDb } from "../db/tenant.js";
+import { answerTenantTeardown } from "./tenant-errors.js";
 import { verifyImpersonation } from "../auth/jwt.js";
 import { currentActor } from "../lib/request-context.js";
 import { noteActiveDay } from "../platform/product-events.js";
@@ -256,12 +257,7 @@ export async function withTenant(
     }
     next();
   } catch (err) {
-    if (err instanceof WorkspaceDeletingError) {
-      res.status(409).json({
-        error: { code: "workspace_deleting", message: "This workspace is being deleted." },
-      });
-      return;
-    }
+    if (await answerTenantTeardown(err, row.org_id, res)) return;
     res.status(500).json({
       error: { code: "tenant_unavailable", message: (err as Error).message },
     });
@@ -356,10 +352,7 @@ async function resolveImpersonatedTenant(
     await protectSecretResponses(req, res, next);
     next();
   } catch (err) {
-    if (err instanceof WorkspaceDeletingError) {
-      res.status(409).json({ error: { code: "workspace_deleting", message: "This workspace is being deleted." } });
-      return;
-    }
+    if (await answerTenantTeardown(err, row.org_id, res)) return;
     res.status(500).json({ error: { code: "tenant_unavailable", message: (err as Error).message } });
   }
 }

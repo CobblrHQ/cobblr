@@ -28,6 +28,7 @@ import { RUNTIME_INSTALL_DIR, loadOneSandboxedModule, uninstallSandboxedModule }
 import { mountNewlyRegistered } from "../modules/mount.js";
 import { fetchGithubJson, fetchGithubBuffer } from "../lib/github-registry.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 export const sandboxInstallRouter = Router();
 sandboxInstallRouter.use(requireAuth, requirePlatformAdmin);
 
@@ -101,7 +102,7 @@ sandboxInstallRouter.post("/install", async (req, res, next) => {
     const parsed = InstallBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "name + version required", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

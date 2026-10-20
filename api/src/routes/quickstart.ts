@@ -31,6 +31,7 @@ import { resolveFieldDefsForKind } from "../platform/field-defs.js";
 import { currentBundleId, humaniseBundleId } from "../lib/bundle-aliases.js";
 import { runSerialised } from "../platform/exclusive.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const quickstartRouter = Router({ mergeParams: true });
 
@@ -263,7 +264,7 @@ quickstartRouter.post("/materialize", requireAuth, withTenant, async (req, res, 
     if (!(await requireCapability(req, res, "platform:install-bundle"))) return;
     const parsed = MaterializeBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const token = bearerOf(req);

@@ -16,6 +16,7 @@ import {
   removeNavMember,
   updateNavHeading,
 } from "../platform/nav-headings.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const navHeadingsRouter = Router({ mergeParams: true });
 
@@ -55,7 +56,7 @@ navHeadingsRouter.post("/", requireAuth, withTenant, async (req, res, next) => {
     if (!(await requireCapability(req, res, "core-presentation:group-nav"))) return;
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const created = await createNavHeading({
@@ -76,7 +77,7 @@ navHeadingsRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) 
     if (!requireOwnerOrAdmin(req, res)) return;
     const parsed = UpdateBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const ok = await updateNavHeading(req.tenant!.org.id, req.params.id!, parsed.data);
@@ -108,7 +109,7 @@ navHeadingsRouter.post("/:id/members", requireAuth, withTenant, async (req, res,
     if (!(await requireCapability(req, res, "core-presentation:group-nav"))) return;
     const parsed = MemberBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     await addNavMember({

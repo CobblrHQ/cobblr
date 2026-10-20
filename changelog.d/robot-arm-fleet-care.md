@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 Machines show their alarms with escalation, observed use with how much was seen, the tools installed in them with their wear, and their spare parts.

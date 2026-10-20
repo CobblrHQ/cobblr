@@ -32,7 +32,7 @@ export function FoundDevices({slug,bridges}:{slug:string;bridges:EdgeBridge[]}){
   <BridgePicker slug={slug} value={bridge} onChange={setBridge}/>
   <button type="button" className="rounded border border-line px-4 py-3 min-h-12" disabled={!connected||found.isFetching} onClick={()=>void found.refetch()}>{found.isFetching?"Looking for machines…":"Scan for machines"}</button>
   {!connected&&<p className="text-sm text-muted">Connect this bridge to look for machines on its bench and network.</p>}
-  {found.error&&<p role="alert" className="text-sm text-error">{found.error instanceof Error?found.error.message:"This bridge could not scan for devices."}</p>}
+  {found.error&&<p role="alert" className="text-sm text-danger">{found.error instanceof Error?found.error.message:"This bridge could not scan for devices."}</p>}
   {found.data?.warnings.map(warning=><p key={warning} className="text-sm text-muted">{warning}</p>)}
   {found.data&&items.length===0&&<p className="text-sm text-muted">No devices were found. Some controllers need their address entered manually. Plug USB machines into the computer running this bridge.</p>}
   <ul className="space-y-2">{items.map(device=><li key={device.id} className="rounded-lg border border-line p-3 space-y-2">

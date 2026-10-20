@@ -2,6 +2,7 @@
 // The platform calls these in-process when another module / the UI
 // / a wire triggers a labels action.
 
+import { randomUUID } from "node:crypto";
 import type { Kysely } from "kysely";
 import { platform, requireActionEntity, ActionRefusal } from "@cobblr/platform-contract";
 import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
@@ -153,9 +154,10 @@ export function registerLabelsHandlers(): void {
       ui: {
         print: {
           content: { qrPayload: qr_payload, caption: description },
-          // Our own bookkeeping endpoint: clears the row, records history,
-          // freezes the code. The platform just calls it back.
-          record: { path: "/modules/labels/print/record", ids: [inserted.id] },
+          // Our own bookkeeping endpoint: records history, freezes the code
+          // and takes the one copy this prints off the row. The platform just
+          // posts this body back; more copies stay queued (#7593).
+          record: { path: "/modules/labels/print/record", body: { send_id: randomUUID(), items: [{ id: inserted.id, qty: 1 }] } },
         },
       },
     };

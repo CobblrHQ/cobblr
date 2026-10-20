@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 ABB IRC5 arms connect over Robot Web Services: programs load, start once or forever and stop from Cobblr, with the controller's write lock given back after every command.

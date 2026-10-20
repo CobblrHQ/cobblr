@@ -15,6 +15,7 @@ import { confirmServiceJob, confirmTriggerView, proposeConfirmTrigger, withdrawC
 import { ServiceRefused } from "../platform/service-gate.js";
 import { currentVia } from "../lib/request-context.js";
 import type { ServiceDoor } from "@cobblr/platform-contract/services";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 /** Which door this request came through, from how it was authenticated, never
  *  from anything the caller sent: the assistant's grant is Cobb, an MCP
@@ -96,7 +97,7 @@ servicesRouter.post("/:slug/services/jobs", requireAuth, withTenant, async (req,
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const b = Invoke.safeParse(req.body ?? {});
     if (!b.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "capability and input are required", details: b.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(b.error.issues), details: b.error.issues } });
       return;
     }
     const job = await invokeAs(

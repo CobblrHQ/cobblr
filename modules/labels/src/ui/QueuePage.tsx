@@ -48,7 +48,10 @@ import { isWebSerialAvailable, NO_WEB_SERIAL, printBatchOverSerial, ConnectPrint
   isLocalBridgePrinter, readLocalBridgeStatus, setPrinterStatus, bridgeInstanceInfo, printerDisplayName, reportedMedia, needsReportedRemember, BatteryGauge, printerConnectionLabel, printerReach, allowLocalAccess } from "@cobblr/platform-web";
 import { rememberedSelection, needsRemember, byRecentlyUsed, recentSizeKeys, sizeByPaper, withSizeForPaper, withRememberedPaper } from "../printer-memory";
 import { assessScannability } from "../print/qr-overlay";
-import type { CustomLabelSize, Printable } from "./api";
+import type { CustomLabelSize, Printable, SentLabels } from "./api";
+import { sendOf, sentFrom } from "./api";
+import { printingWords, sentWords } from "./print-words";
+import { sendPdfToPrinter } from "./send-to-printer";
 import { NewSizeModal } from "./NewSizeModal";
 import { AutoPrintModal } from "./AutoPrintModal";
 import { PrinterConfigModal } from "./PrinterConfigModal";
@@ -614,6 +617,7 @@ export function QueuePage() {
           const code = overlayOn ? codeMap[it.entity_id] : undefined;
           const payload = liveUrl(it.qr_payload);
           return {
+            queue_id: it.id,
             description: it.description,
             qr_svg: await svgFor(payload, !!code),
             center_code: code,
@@ -669,13 +673,14 @@ export function QueuePage() {
     const printables = previewQr.data ?? [];
     if (!printables.length) return;
     window.print();
-    const itemIds = items.map((it) => it.id);
-    const count = itemIds.length;
-    toast.action(`Printing ${count} label${count === 1 ? "" : "s"}. Mark printed once the paper looks right?`, {
+    // What this sheet holds, counted now: copies added to a row after this
+    // print stay queued when it is confirmed (#7593).
+    const sent = sentFrom(printables.map((p) => ({ id: p.queue_id })));
+    toast.action(printingWords(sent), {
       actionLabel: "Mark printed",
       onAction: async () => {
         try {
-          await api.recordPrinted(itemIds);
+          await api.recordPrinted(sent);
           void qc.invalidateQueries({ queryKey: ["labels-queue"] });
           toast.success("Batch recorded");
         } catch (e) {
@@ -790,7 +795,7 @@ export function QueuePage() {
         let recordError: string | null = null;
         if (res.printed.length > 0) {
           try {
-            await api.recordPrinted(res.printed.map((p) => p.id).filter((id): id is string => !!id));
+            await api.recordPrinted(sentFrom(res.printed));
           } catch (e) {
             recordError = e instanceof Error ? e.message : String(e);
           }
@@ -818,15 +823,13 @@ export function QueuePage() {
       // shows the job the same way a taskbar does. Cleared in onSettled.
       const netTotal = items.reduce((n, it) => n + it.qty, 0);
       setPrintProgress({ done: 0, total: netTotal, deviceName: printer.name });
-      const { pdf_base64, warnings } = await api.renderPdf(sizeKey);
-      const job = await api.printToPrinter(printer.id, {
-        document_base64: pdf_base64,
-        content_type: "application/pdf",
-        filename: "labels.pdf",
-        job_name: "labels",
-      });
+      const { pdf_base64, warnings, rendered } = await api.renderPdf(sizeKey);
+      // A printer on a bridge on this machine is sent from this browser; the
+      // server cannot reach it (#7607).
+      const job = await sendPdfToPrinter(printer, pdf_base64, api.printToPrinter);
       // Hold the queue — the async confirm records + clears once it looks right.
-      return { printer, job, itemIds: items.map((it) => it.id), warnings: warnings ?? [] };
+      // What the PDF holds, as the server rendered it: what "Mark batch printed" records (#7593).
+      return { printer, job, sent: sendOf(rendered), warnings: warnings ?? [] };
     },
     onSuccess: (r) => {
       if ("bluetooth" in r && r.bluetooth) {
@@ -858,7 +861,7 @@ export function QueuePage() {
         void qc.invalidateQueries({ queryKey: ["labels-queue"] });
         return;
       }
-      const nr = r as { printer: { name: string }; job: { jobId: string; state: string }; itemIds: string[]; warnings: { code: string }[] };
+      const nr = r as { printer: { name: string }; job: { jobId: string; state: string }; sent: SentLabels; warnings: { code: string }[] };
       if (nr.warnings.length) {
         const codes = nr.warnings.map((w) => w.code).join(", ");
         toast.error(`Heads up: code${nr.warnings.length === 1 ? "" : "s"} ${codes} may be too long to scan reliably. Shorten the prefix or use a larger label.`);
@@ -866,12 +869,11 @@ export function QueuePage() {
       // Async print: dispatched, not yet confirmed on paper. Hold the queue and
       // raise a non-blocking action-toast; "Mark batch printed" records + clears
       // those items once the physical output looks right.
-      const count = nr.itemIds.length;
-      toast.action(`Sent ${count} to ${nr.printer.name}. Mark printed once it looks right?`, {
+      toast.action(sentWords(nr.sent, nr.printer.name), {
         actionLabel: "Mark batch printed",
         onAction: async () => {
           try {
-            await api.recordPrinted(nr.itemIds);
+            await api.recordPrinted(nr.sent);
             void qc.invalidateQueries({ queryKey: ["labels-queue"] });
             toast.success("Batch recorded");
           } catch (e) {

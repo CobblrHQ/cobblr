@@ -52,6 +52,7 @@ import {
   type NormalizedImportItem,
   type ParsedImport,
 } from "../services/import.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const importRouter = Router({ mergeParams: true });
 
@@ -489,7 +490,7 @@ importRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const q = QuerySchema.safeParse(req.query);
     if (!q.success) {
-      res.status(400).json({ error: { code: "bad_query", message: "bad query params", details: q.error.issues } });
+      res.status(400).json({ error: { code: "bad_query", message: invalidBodyMessage(q.error.issues), details: q.error.issues } });
       return;
     }
     const dryRun = q.data.dry_run === "true";

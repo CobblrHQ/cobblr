@@ -656,7 +656,7 @@ authRouter.post("/signup", async (req, res, next) => {
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({
-        error: { code: "invalid_body", message: "Bad signup payload", details: err.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(err.issues), details: err.issues },
       });
     }
     if (err instanceof ProvisionAppError) {
@@ -798,7 +798,7 @@ authRouter.post("/login", async (req, res, next) => {
   } catch (err) {
     if (err instanceof z.ZodError) {
       return res.status(400).json({
-        error: { code: "invalid_body", message: "Bad login payload", details: err.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(err.issues), details: err.issues },
       });
     }
     return next(err);
@@ -1138,7 +1138,7 @@ authRouter.post("/identity/callback", async (req, res, next) => {
     return res.status(out.status).json(out.body);
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: { code: "invalid_body", message: "Bad callback payload", details: err.issues } });
+      return res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(err.issues), details: err.issues } });
     }
     return next(err);
   }
@@ -1174,7 +1174,7 @@ authRouter.post("/identity/exchange", async (req, res, next) => {
     return res.json(await buildAuthResponse(user.id));
   } catch (err) {
     if (err instanceof z.ZodError) {
-      return res.status(400).json({ error: { code: "invalid_body", message: "Bad exchange payload", details: err.issues } });
+      return res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(err.issues), details: err.issues } });
     }
     return next(err);
   }
@@ -1221,6 +1221,7 @@ import { publicBaseUrl } from "@cobblr/platform-contract/public-url";
 import { hashPairCode, mintPairCode, pairMintRefusal, PAIR_CODE_TTL_MS } from "../platform/pair-codes.js";
 import { vapidKeys } from "../platform/push-keys.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 /** True when this instance has its Web Push key pair, false when it has none,
  *  null when the answer could not be read (said in the log, never a false). */
@@ -1260,7 +1261,7 @@ authRouter.post("/magic/request", async (req, res, next) => {
     const parsed = MagicRequest.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -1360,7 +1361,7 @@ authRouter.post("/magic/consume", async (req, res, next) => {
     const parsed = MagicConsume.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -1547,7 +1548,7 @@ authRouter.post("/password/forgot", async (req, res, next) => {
     }
     const parsed = PasswordForgot.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const email = parsed.data.email.toLowerCase().trim();
@@ -1612,7 +1613,7 @@ authRouter.post("/password/reset", async (req, res, next) => {
     if (overLimit(passwordResetLimiter, req)) return rateLimited(res);
     const parsed = PasswordReset.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const hash = hashToken(parsed.data.token);
@@ -1763,7 +1764,7 @@ authRouter.post("/verify-email", async (req, res, next) => {
     }
     const parsed = VerifyEmail.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const hash = hashToken(parsed.data.token);

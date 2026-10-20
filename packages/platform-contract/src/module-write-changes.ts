@@ -61,6 +61,7 @@ export const MODULE_WRITES: Record<string, { records: readonly string[]; workspa
     records: [
       "POST /basics/answer",
       "POST /basics/commands/:x/run",
+      "POST /basics/commands/:x/runs",
       "POST /basics/commands/match",
       "POST /basics/peek",
       "POST /chat",

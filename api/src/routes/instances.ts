@@ -32,6 +32,7 @@ import {
 } from "../platform/entity-kind-overrides.js";
 import { mergeOverrideConfig } from "../platform/override-config-merge.js";
 import { intakeFiles, type FileIntakeDecl } from "../platform/instance-file-intake.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const instancesRouter = Router({ mergeParams: true });
 export const overridesRouter = Router({ mergeParams: true });
@@ -177,7 +178,7 @@ instancesRouter.post(
         res.status(400).json({
           error: {
             code: "invalid_body",
-            message: "Bad request body",
+            message: invalidBodyMessage(parsed.error.issues),
             details: parsed.error.issues,
           },
         });
@@ -231,7 +232,7 @@ instancesRouter.post(
       const parsed = PromoteBody.safeParse(req.body);
       if (!parentInstance || !parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad request body", details: parsed.error?.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error?.issues), details: parsed.error?.issues },
         });
         return;
       }
@@ -284,7 +285,7 @@ instancesRouter.post(
       const parsed = DemoteBody.safeParse(req.body);
       if (!instanceName || !parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad request body", details: parsed.error?.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error?.issues), details: parsed.error?.issues },
         });
         return;
       }
@@ -429,7 +430,7 @@ overridesRouter.put(
         res.status(400).json({
           error: {
             code: "invalid_body",
-            message: "Bad request body",
+            message: invalidBodyMessage(parsed.error.issues),
             details: parsed.error.issues,
           },
         });

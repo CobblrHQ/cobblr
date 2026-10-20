@@ -37,7 +37,7 @@ export function SurfacesPage() {
   const revoke = useMutation({
     mutationFn: (id: string) => api.revokeSurface(activeSlug, id),
     onSuccess: () => {
-      toast.success("Surface revoked - URL is now 404");
+      toast.success("Surface turned off. Its link no longer opens.");
       void qc.invalidateQueries({ queryKey: ["surfaces", activeSlug] });
     },
     onError: (e: unknown) => toast.error(`Couldn't revoke that: ${e instanceof ApiError ? e.message : String(e)}`),
@@ -140,7 +140,7 @@ export function SurfacesPage() {
                 onClick={async () => {
                   const ok = await confirm({
                     title: "Revoke this surface?",
-                    message: `${s.name}: the public URL will 404 immediately.`,
+                    message: `${s.name}: its public link stops opening as soon as you confirm.`,
                     confirmLabel: "Revoke",
                     destructive: true,
                   });

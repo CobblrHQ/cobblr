@@ -73,6 +73,27 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "box:backup-copy",
+    what: "a backup beside a box file is made by backup_copy: declared for a week in the box's leftovers manifest, the newest three kept",
+    why: "every install wrote a .bak beside its script and nothing removed one; thirty aged in /opt/ci-health and five paged the owner as undeclared leftovers (2026-10-20, core #3204)",
+    owner: "scripts/lib/backup-copy.sh",
+    scope: ["scripts/**/*.sh"],
+    detect: /^(?!\s*(#|echo\b|printf\b)).*\bcp\b[^\n]*\.bak[-.]/,
+    use: ". scripts/lib/backup-copy.sh; backup_copy <file> [tag] [why]",
+  },
+  {
+    kind: "owns",
+    id: "shell:epoch-date",
+    what: "an epoch is turned into a date by epoch_date, which reads it the GNU way (-d @) and the BSD way (-r) alike",
+    why: "promote-public.sh ran `date -r <epoch>`, the BSD form; GNU date reads -r as a FILE, so every release on the Linux box printed `date: 1792474924: No such file or directory` and an empty target time (2026-10-20)",
+    owner: "scripts/lib/epoch-date.sh",
+    scope: ["scripts/**/*.sh"],
+    // Comments only are skipped: the bug sat inside an echo, as $(date -r ...).
+    detect: /^(?!\s*#).*\bdate\b[^|;\n]*\s(-r\s|-d\s*"?@|--date[= ]"?@)/,
+    use: ". scripts/lib/epoch-date.sh; epoch_date <epoch> [+format] (prefix TZ=... or add -u as with date)",
+  },
+  {
+    kind: "owns",
     id: "ci:workflow-dispatch",
     what: "a workflow is dispatched through lib/forge-dispatch.mjs: once while a run of it on the commit waits or runs, never from a test to the real forge",
     why: "the merge queue's tests ran a real dispatch with the ops token and queued 33 docker-builds of one commit in five minutes (#7564, 2026-10-20)",
@@ -82,8 +103,6 @@ export const CAPABILITIES: Capability[] = [
     use: "dispatchOnce({ workflow, ref, inputs, repo, token, base }) from scripts/lib/forge-dispatch.mjs, or `node scripts/lib/forge-dispatch.mjs <workflow> --ref R [--repo O/R] [--input k=v]` from a shell script",
     except: {
       "scripts/lib/deploy-lag.mjs": "a sentence telling a person which dispatch to make, never a call",
-      "scripts/release-daily.sh": "the 04:00 cut's dispatches, moved through the door in #7565, not hours before a cut",
-      "scripts/cut-release.sh": "the release's dispatches, moved through the door in #7565, not hours before a cut",
     },
   },
   {
@@ -95,6 +114,26 @@ export const CAPABILITIES: Capability[] = [
     scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
     detect: /requires one of: \$\{/i,
     use: "message: roleRefusal(allowed) from @cobblr/platform-contract/org-roles",
+  },
+  {
+    kind: "owns",
+    id: "digifab:camera-frames-through-the-server",
+    what: "a machine's camera shows on a page from the frames the server's /camera route fetches, never from its address in an <img>",
+    why: "the fleet card and the detail screen loaded a saved http camera address in the browser, which an https page blocks and a page away from the shop never reaches (#7056)",
+    owner: "modules/digifab/src/api/fleet.ts",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /src=\{[^}]*camera_url/,
+    use: "<LanCameraFill> / <LanCameraView> in web/src/features/digifab/fleet.tsx, which poll api.digifabCameraPath",
+  },
+  {
+    kind: "owns",
+    id: "share:outbox-rows-in-id-order",
+    what: "the share outbox's rows are changed and removed through outboxUpdate / outboxDelete, which lock the rows they pick in id order",
+    why: "Sync now's pull-forward and a running flush's mark-as-sent locked the same outbox rows in opposite orders, and Sync now answered 500 deadlock detected (#7036)",
+    owner: "api/src/platform/share-outbox-rows.ts",
+    scope: ["api/src/**/*.ts", "modules/*/src/**/*.ts"],
+    detect: /\b(updateTable|deleteFrom)\(\s*["']share_outbox["']/,
+    use: "outboxUpdate((q) => q.where(...), { ... }).execute() or outboxDelete((q) => q.where(...)).execute() from api/src/platform/share-outbox-rows.ts",
   },
   {
     kind: "owns",

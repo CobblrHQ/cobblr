@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 Cells: a CNC and the arm that unloads it run as one job on the shop bridge, started at the cell, with every step recorded, its parts counted into stock and its operators told when it pauses.

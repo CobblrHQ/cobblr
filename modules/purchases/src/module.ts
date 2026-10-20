@@ -38,6 +38,9 @@ export default defineModule({
       registerUnreceivedArrivalsHeal();
       const { registerReceiptRetries } = await import("./receive.js");
       registerReceiptRetries();
+      // Orders that list each receipt line twice: see heal-doubled-receipt-lines.ts for when this goes.
+      const { registerDoubledReceiptLinesHeal } = await import("./heal-doubled-receipt-lines.js");
+      registerDoubledReceiptLinesHeal();
     },
   },
   schema: {

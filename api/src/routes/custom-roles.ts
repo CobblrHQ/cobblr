@@ -14,6 +14,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
 import { optionalText } from "@cobblr/platform-contract/optional-fields";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const customRolesRouter = Router({ mergeParams: true });
 
@@ -110,7 +111,7 @@ customRolesRouter.post(
       const parsed = CreateRole.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -174,7 +175,7 @@ customRolesRouter.patch(
       const parsed = UpdateRole.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -283,7 +284,7 @@ customRolesRouter.post(
       const parsed = AssignmentBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -337,7 +338,7 @@ customRolesRouter.delete(
       const parsed = AssignmentBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }

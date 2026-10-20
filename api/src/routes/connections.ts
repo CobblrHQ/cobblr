@@ -36,6 +36,7 @@ import {
   workspaceOwnerIds,
   type CredentialRoute,
 } from "../platform/user-credentials.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const connectionsRouter = Router();
 export const workspaceAiSharesRouter = Router({ mergeParams: true });
@@ -312,7 +313,7 @@ connectionsRouter.post("/me/connections", requireAuth, async (req, res, next) =>
   try {
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const provider = connectionProviders.getProvider(parsed.data.provider_id);
@@ -387,7 +388,7 @@ connectionsRouter.patch("/me/connections/:id", requireAuth, async (req, res, nex
     }
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const routedOrgs = routedOrgIds(parsed.data);

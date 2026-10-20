@@ -73,7 +73,10 @@ export function BulkActionBar({ count, actions, onClear, onAskCobb, records }: P
         <span className="hidden sm:inline fc-bar-words"> selected</span>
       </span>
       <span className="shrink-0 text-faint dark:text-slate-600">·</span>
-      <div ref={actionsRef} className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar">
+      {/* The actions keep their size and the middle scrolls: shrunk to a
+          finger's 44 px, "Send 2 to…", "Set field…" and "What's still here?"
+          drew their words over their neighbours on a phone (#7601). */}
+      <div ref={actionsRef} className="flex min-w-0 items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar [&>*]:shrink-0">
         {records && <SendRecords kind={records.kind} ids={records.ids} onDone={onClear} onOpenChange={setSendOpen} />}
         {actions}
         {onAskCobb && (

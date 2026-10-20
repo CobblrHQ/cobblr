@@ -282,7 +282,8 @@ export function CustomFieldsPanel({
               })}
               className="w-full flex items-center gap-1.5 text-left text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 border-b border-line dark:border-slate-700 pb-1 hover:text-content dark:hover:text-slate-200 transition"
             >
-              <span aria-hidden className={"inline-block transition-transform " + (open ? "rotate-90" : "")}>›</span>
+              {/* A square box, so the mark turned a quarter stays inside the button (#7620). */}
+              <span aria-hidden className={"inline-flex h-3 w-3 shrink-0 items-center justify-center leading-none transition-transform " + (open ? "rotate-90" : "")}>›</span>
               <span className="flex-1">{s.name}</span>
               {!open && <span className="normal-case tracking-normal text-faint dark:text-slate-500">{fs.length} field{fs.length === 1 ? "" : "s"}</span>}
             </button>

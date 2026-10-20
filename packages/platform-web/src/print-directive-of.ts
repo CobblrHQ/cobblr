@@ -14,9 +14,6 @@ export function printDirectiveOf(result: unknown): PrintDirective | null {
   const c = d.content as Partial<LabelContent>;
   if (typeof c.qrPayload !== "string" || c.qrPayload === "") return null;
   const rec = d.record;
-  const record =
-    rec && typeof rec.path === "string" && Array.isArray(rec.ids)
-      ? { path: rec.path, ids: rec.ids.filter((i): i is string => typeof i === "string") }
-      : undefined;
+  const record = rec && typeof rec.path === "string" && rec.body !== undefined ? { path: rec.path, body: rec.body } : undefined;
   return { content: { qrPayload: c.qrPayload, caption: c.caption }, record };
 }

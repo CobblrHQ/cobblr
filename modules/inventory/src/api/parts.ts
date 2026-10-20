@@ -35,6 +35,7 @@ import { isLowStock, modelIsLow, modelOfUnit, onHandCount, openUnitsFor, openUni
 import { consumptionUnitOf } from "../consumption-unit.js";
 import { attachHoldings, holdingsCtx, liftHoldingsToCards, releaseForDelete, spreadIdentity } from "./holdings.js";
 import { annotateInstalled } from "./installed.js";
+import { PART_NAME_MAX } from "../part-limits.js";
 
 export const partsRouter = Router({ mergeParams: true });
 
@@ -159,8 +160,8 @@ partsRouter.get(
   }),
 );
 
-const PartCreate = z.object({
-  name: z.string().min(1).max(160),
+export const PartCreate = z.object({
+  name: z.string().min(1).max(PART_NAME_MAX),
   description: z.string().max(8_000).nullable().optional(),
   category_id: z.string().uuid().nullable().optional(),
   location_id: z.string().uuid().nullable().optional(),
@@ -826,6 +827,7 @@ partsRouter.get(
         "p.manufacturer",
         "p.serial_number",
         "p.model_number",
+        "p.assigned_to",
         "p.supplier_url",
         "p.notes",
         "p.warranty_expires",
@@ -929,6 +931,7 @@ partsRouter.get(
       "manufacturer",
       "serial_number",
       "model_number",
+      "assigned_to",
       "supplier_url",
       // Where a scan looks for the product's code, written back by the
       // importer's barcode column. A table with its own barcode field writes
@@ -970,6 +973,7 @@ partsRouter.get(
         r.manufacturer ?? "",
         r.serial_number ?? "",
         r.model_number ?? "",
+        r.assigned_to ?? "",
         r.supplier_url ?? "",
         ...(ownFields.some((f) => f.name === "barcode") ? [] : [String((r.metadata as Record<string, unknown> | null)?.barcode ?? "")]),
         r.warranty_expires ?? "",

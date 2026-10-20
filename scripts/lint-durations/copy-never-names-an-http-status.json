@@ -1,0 +1,10 @@
+{
+  "lint": "lint:copy-never-names-an-http-status",
+  "run": "node scripts/lint-copy-never-names-an-http-status.ts",
+  "rows": [
+    "page-level-module-ui"
+  ],
+  "ms": 566,
+  "recorded": "2026-10-20",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

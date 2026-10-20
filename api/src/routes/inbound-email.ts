@@ -40,6 +40,7 @@ import {
   recordInboundOutcome,
   type InboundPayload,
 } from "../platform/inbound-archive.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const inboundEmailRouter = Router();
 
@@ -118,7 +119,7 @@ inboundEmailRouter.post("/inbound-email", async (req, res, next) => {
     }
     const parsed = InboundEmail.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad payload", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const payload: InboundPayload = parsed.data;

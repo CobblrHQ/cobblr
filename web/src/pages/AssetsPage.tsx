@@ -850,7 +850,7 @@ export function AssetDetailModal({
                   : editFieldItem("serial_number", { label: fp.label("serial_number", "Serial number"), value: a.serial_number ?? "", onCommit: (v) => update.mutate({ serial_number: v || null }) })
                 : null,
               !fp.hidden("purchased_at") ? editFieldItem("purchased_at", { label: fp.label("purchased_at", "Purchased at"), value: a.purchased_at ?? "", type: "date", onCommit: (v) => update.mutate({ purchased_at: v || null }) }) : null,
-              !fp.hidden("purchase_price_cents")
+              !fp.hidden("purchase_price_cents") && "purchase_price_cents" in a
                 ? moneyFieldItem("purchase_price_cents", {
                     // Once parts are installed in it, what was paid for it is the
                     // rest of its value: the parts are counted as themselves, and

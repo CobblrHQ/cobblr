@@ -2,6 +2,15 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-20
+
+### Improvements
+- An install that cannot reach the European Central Bank can read exchange rates from a file, and a failed rate download is retried within the hour
+
+### Fixes
+- Ask Cobb keeps recovered commands from repeating changes during an update.
+- Ask Cobb now recovers completed commands and their Undo controls after a lost reply or reload.
+
 ## 2026-10-19
 
 ### Fixes

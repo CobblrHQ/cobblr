@@ -13,6 +13,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { createPerson, listPeople, personForUser, updatePerson } from "../platform/people.js";
 import { thingsOfPerson } from "../platform/person-things.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const peopleRouter = Router({ mergeParams: true });
 
@@ -102,7 +103,7 @@ peopleRouter.patch("/:id", requireAuth, withTenant, async (req, res, next) => {
     if (!(await requireCapability(req, res, "platform:edit-person"))) return;
     const parsed = PersonBody.partial().safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const r = await updatePerson(req.tenant!.org.id, req.params.id!, parsed.data);

@@ -10,7 +10,7 @@ export function BrowserLaserOption(){
   <h2 className="text-sm font-semibold">One USB GRBL laser from this browser</h2>
   <p className="text-sm text-muted">For a small setup, Chrome or Edge on a laptop or Chromebook can connect directly to a USB GRBL laser. Keep this tab open and awake for the whole job. A bridge is recommended for long jobs.</p>
   {!supported&&<p className="text-sm text-muted">This browser has no USB Web Serial. Chrome on Android, iPad browsers, Safari and Firefox need a bridge on a nearby computer.</p>}
-  {state.error&&<p role="alert" className="text-sm text-error">{state.error}</p>}
+  {state.error&&<p role="alert" className="text-sm text-danger">{state.error}</p>}
   {state.machine?<div className="flex flex-wrap items-center gap-3"><Link className="rounded bg-accent text-white px-4 py-3 disabled:opacity-50 inline-flex items-center min-h-12" to={`/station/machine/${state.machine.connectionId}/gcode-laser`}>Open this machine station</Link><button type="button" className="rounded border border-line px-4 py-3 min-h-12" onClick={()=>void state.disconnect()}>Stop and disconnect USB</button></div>:<button type="button" className="rounded bg-accent text-white px-4 py-3 disabled:opacity-50 min-h-12" disabled={!supported||state.busy} onClick={()=>void state.connect()}>{state.busy?"Connecting USB laser…":"Connect USB GRBL in this tab"}</button>}
  </section>;
 }

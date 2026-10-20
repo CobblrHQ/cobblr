@@ -39,15 +39,20 @@ export async function frameFromAddress(url: string, timeoutMs = 6000, headers: R
 }
 
 /** Where a machine's camera frame comes from: a Bambu's own camera over the LAN, then an address someone
- *  typed for it, then the camera its manager names. A typed address wins over the manager's, so a person
- *  can always point the card at the camera they mean; the manager is not even asked then. */
+ *  typed for it, then the camera its manager names: grabbed by the manager when it can, else fetched here
+ *  from the address the manager reports for it. A typed address wins over the manager's, so a person can
+ *  always point the card at the camera they mean; the manager is not even asked then. */
 export async function cameraSourceFor(
   lan: MachineDriver | null,
   typed: string | null | undefined,
   manager: () => Promise<MachineDriver | null>,
+  reported: (driver: MachineDriver) => Promise<string | null | undefined> = async () => null,
 ): Promise<{ driver: MachineDriver } | { address: string } | null> {
   if (lan?.getCameraFrame) return { driver: lan };
   if (typed) return { address: typed };
   const driver = await manager();
-  return driver?.getCameraFrame ? { driver } : null;
+  if (!driver) return null;
+  if (driver.getCameraFrame) return { driver };
+  const address = await reported(driver);
+  return address ? { address } : null;
 }

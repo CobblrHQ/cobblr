@@ -11,3 +11,9 @@ export const DASHBOARD_SECTION_TITLE: Record<DashboardSectionId, string> = {
   scan_inbox: "from your scanner",
   recent_activity: "recent activity",
 };
+
+/** How many entries Recent activity reads a page at a time. The dashboard's
+ *  snapshot reads the same page, so the section is answered by it: the
+ *  snapshot read 50 while the section asked for 100, and every dashboard load
+ *  sent the activity read itself (#7622). */
+export const RECENT_ACTIVITY_PAGE = 100;

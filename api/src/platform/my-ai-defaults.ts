@@ -18,6 +18,7 @@ import { getTenantDb } from "../db/tenant.js";
 import * as aiImpl from "./ai.js";
 import * as activity from "./activity.js";
 import { listMyAiJobDefaults, setMyAiJobSteps, type StoredAiJobStep } from "./ai-job-defaults.js";
+import { listWorkspaceAiJobSteps } from "./workspace-ai-job-steps.js";
 
 /** How many steps one job may list: more than a call ever asks is a list
  *  nobody can reason about. */
@@ -40,7 +41,7 @@ export async function myAiDefaultsView(userId: string, opts: { fresh?: boolean }
     id: AiDefaultJobId;
     title: string;
     steps: Array<{ credential_id: string; model: string; model_label?: string; label: string; provider_id: string | null; usable: boolean }>;
-    own_order_in: Array<{ org_id: string; slug: string; name: string; can_change: boolean; capabilities: string[] }>;
+    own_order_in: Array<{ org_id: string; slug: string; name: string; can_change: boolean; capabilities: string[]; own_order: boolean }>;
   }>;
   connections: Array<{
     id: string;
@@ -91,9 +92,12 @@ export async function myAiDefaultsView(userId: string, opts: { fresh?: boolean }
   );
   const connById = new Map(connections.map((c) => [c.id, c]));
 
-  // Which jobs each workspace chose for itself. A workspace without the AI
-  // module's table has chosen nothing.
+  // Which capabilities each workspace pinned for itself, and which jobs it
+  // keeps its own order for on its AI page (core_ai_job_steps, #5622): both
+  // answer there before a person's own defaults. A workspace without the AI
+  // module's tables has chosen nothing.
   const chosen = new Map<string, Set<string>>();
+  const ownOrder = new Map<string, Set<string>>();
   await Promise.all(
     orgs.map(async (o) => {
       try {
@@ -103,6 +107,7 @@ export async function myAiDefaultsView(userId: string, opts: { fresh?: boolean }
       } catch {
         chosen.set(o.id, new Set());
       }
+      ownOrder.set(o.id, new Set((await listWorkspaceAiJobSteps(o.id)).map((s) => s.job)));
     }),
   );
 
@@ -137,8 +142,9 @@ export async function myAiDefaultsView(userId: string, opts: { fresh?: boolean }
           name: o.name,
           can_change: roleSatisfies(o.role, ["admin"]),
           capabilities: (j.capabilities as readonly string[]).filter((cap) => chosen.get(o.id)?.has(cap)),
+          own_order: !!ownOrder.get(o.id)?.has(j.id),
         }))
-        .filter((o) => o.capabilities.length > 0),
+        .filter((o) => o.capabilities.length > 0 || o.own_order),
     })),
     connections,
     model_labels,

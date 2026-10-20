@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 Every finished print knows what it cost, from the spool it used, with cost per day in Job history

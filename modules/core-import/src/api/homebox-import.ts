@@ -20,6 +20,7 @@ import { z } from "zod";
 import { requireRole } from "./util.js";
 import { parseHomebox, homeboxMetadata, locationPathKey, type HomeboxItem, type HomeboxParse } from "../services/homebox.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const homeboxRouter = Router({ mergeParams: true });
 
@@ -95,7 +96,7 @@ homeboxRouter.post("/homebox/preview", (req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "bad_body", message: "expected { csv }", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "bad_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     res.json(summarize(parseHomebox(parsed.data.csv)));
@@ -149,7 +150,7 @@ homeboxRouter.post("/homebox", (req, res, next) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "bad_body", message: "expected { csv }", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "bad_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const slug = slugOf(req);

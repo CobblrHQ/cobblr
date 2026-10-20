@@ -20,7 +20,11 @@ const MAX_DESCRIPTION_CHARS = 1000;
 // the smallest description that lets a model pick it), a capability the owner
 // asked for (#3787: "what does Alex own"). The set had 23 chars of room, so any
 // new tool needed this; the next one should first make room by tightening.
-const MAX_TOTAL_SCHEMA_CHARS = 17_300;
+// Raised to 17,450 on 2026-10-20 (#7589): list_records' group_by and
+// group_keys went out as "any object" and now say the fields they take,
+// which is what lets a schema-following model call them at all. Its two
+// descriptions were tightened first; the shape itself is the rest.
+const MAX_TOTAL_SCHEMA_CHARS = 17_450;
 // Tools sent only when the workspace can use them (`sentWhen`) are not on
 // every turn, so they have their own, smaller budget instead of taking room
 // from the set that is. The service tools (list_services, invoke_service,

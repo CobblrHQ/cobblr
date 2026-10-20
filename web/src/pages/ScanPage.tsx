@@ -3080,7 +3080,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             onClick={() => void bulkDiscard()}
             title="Discard the selection"
             aria-label="Discard the selection"
-            className="rounded border border-line dark:border-slate-600 p-1 text-bad hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
+            className="rounded border border-line dark:border-slate-600 p-1 text-danger hover:bg-subtle dark:hover:bg-slate-700 transition disabled:opacity-50"
           >
             <Trash2 size={14} className="shrink-0" />
           </button>

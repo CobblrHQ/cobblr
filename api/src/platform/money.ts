@@ -1,4 +1,5 @@
 // EGRESS-FILE: vendor-fixed - the European Central Bank's published rates, written in the code
+import { readFile } from "node:fs/promises";
 import { sql } from "kysely";
 import { platform, type DatedMoney, type PlatformMoney } from "@cobblr/platform-contract";
 import { totalMoney, type ExchangeRates } from "@cobblr/platform-contract/money";
@@ -17,18 +18,35 @@ export function readEcbRates(xml: string): ExchangeRates {
   return out;
 }
 
+/** An ECB-format file the rates are read from instead of the ECB, for an
+ *  install that cannot reach the internet, and for a test stack whose totals
+ *  must not wait on a download or on a runner's way out (#7623). */
+function ratesFile(): string {
+  return process.env.COBBLR_EXCHANGE_RATES_FILE || "";
+}
+
+export async function feedXml(fullHistory: boolean): Promise<string> {
+  const file = ratesFile();
+  if (file) return readFile(file, "utf8");
+  const url = fullHistory ? "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml" : "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml";
+  const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`Exchange-rate feed refused (${response.status})`);
+  return response.text();
+}
+
 export async function refreshExchangeRates(): Promise<void> {
   const { meta } = await import("../db/meta.js");
   // Locked across processes even when called by an operator instead of a sweep.
   const result = await platform().exclusive.run("platform.ecb-fetch", async () => {
-    const recent = await sql<{ fresh: boolean }>`select exists(select 1 from exchange_rate_fetches
-      where id = 'ecb' and fetched_at > now() - interval '23 hours') as fresh`.execute(meta);
-    if (recent.rows[0]?.fresh) return;
+    // A local file is read every time: it costs nothing, and it is what the
+    // operator says the rates are.
+    if (!ratesFile()) {
+      const recent = await sql<{ fresh: boolean }>`select exists(select 1 from exchange_rate_fetches
+        where id = 'ecb' and fetched_at > now() - interval '23 hours') as fresh`.execute(meta);
+      if (recent.rows[0]?.fresh) return;
+    }
     const covered = await sql<{ recent: boolean }>`select exists(select 1 from exchange_rate_fetches where id = 'ecb' and fetched_at > now() - interval '80 days') as recent`.execute(meta);
-    const url = covered.rows[0]?.recent ? "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml" : "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.xml";
-    const response = await fetch(url, { signal: AbortSignal.timeout(30000) });
-    if (!response.ok) throw new Error(`Exchange-rate feed refused (${response.status})`);
-    const dates = Object.entries(readEcbRates(await response.text()));
+    const dates = Object.entries(readEcbRates(await feedXml(!covered.rows[0]?.recent)));
     await meta.transaction().execute(async (db) => {
       for (let start = 0; start < dates.length; start += 250) {
         const batch = dates.slice(start, start + 250);
@@ -45,7 +63,12 @@ export async function refreshExchangeRates(): Promise<void> {
 
 export function registerExchangeRates(): void {
   platform().sweeps.register({
-    name: "platform.exchange-rates", everyMs: 24 * 60 * 60 * 1000, firstAfterMs: 1000,
+    // Hourly, though the feed is read once a day: refreshExchangeRates asks the
+    // ECB only when its last fetch is 23 hours old, so a fetch that failed (a
+    // timeout on the full history, no way out yet) is tried again within the
+    // hour, not a day later with every foreign price left out of every total
+    // until then (#7623).
+    name: "platform.exchange-rates", everyMs: 60 * 60 * 1000, firstAfterMs: 1000,
     // The shared feed needs no tenant pool. The gate does the work once.
     candidates: async () => { await refreshExchangeRates(); return []; },
     visit: async () => {},

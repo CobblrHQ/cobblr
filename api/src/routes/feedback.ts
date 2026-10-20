@@ -18,6 +18,7 @@ import { pokeTriage } from "../platform/triage-trigger.js";
 import { notifyOperators } from "../platform/operator-alert.js";
 import { verifyReplyToken } from "../platform/feedback-reply.js";
 import { inboundSecretOk } from "../platform/inbound-secret.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const feedbackRouter = Router();
 feedbackRouter.use(requireAuth);
@@ -135,7 +136,7 @@ feedbackRouter.post("/", async (req, res, next) => {
     const parsed = SubmitFeedback.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad feedback", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -307,7 +308,7 @@ feedbackRouter.post("/:id/reply", async (req, res, next) => {
     const userId = (req as unknown as { session?: { id: string } }).session?.id;
     const parsed = ReplyBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Empty reply", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const fb = await meta

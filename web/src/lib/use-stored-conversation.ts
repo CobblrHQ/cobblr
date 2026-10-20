@@ -9,7 +9,7 @@
 // its effects, the write saw "loaded" beside still-empty messages and removed
 // the stored conversation (every page load in development, where StrictMode
 // reconnects on mount).
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { slimForStore, type StoredChatMessage } from "./chat-store";
 import { forgetUnownedChat, personalChatKey } from "./personal-chat-store";
 
@@ -41,7 +41,7 @@ export function useStoredConversation<M extends StoredChatMessage>(
   slug: string | null | undefined,
   max: number,
   remote?: ConversationRemote,
-): [M[], Dispatch<SetStateAction<M[]>>] {
+): [M[], Dispatch<SetStateAction<M[]>>, () => void] {
   const scope = owner && slug ? `${owner}/${slug}` : null;
   const [messages, setMessages] = useState<M[]>([]);
   const [messagesFor, setMessagesFor] = useState<string | null>(null);
@@ -113,11 +113,22 @@ export function useStoredConversation<M extends StoredChatMessage>(
     } catch {
       /* private mode */
     }
+    let clearedAt = "";
+    try {
+      clearedAt = localStorage.getItem(personalChatKey("chat.cleared", owner, slug)!) ?? "";
+    } catch {
+      /* private mode */
+    }
     void r
       .read()
       .then((kept) => {
-        if (cancelled) return;
-        if (kept && kept.messages.length && (!loaded.length || kept.updated_at > localAt)) setMessages(kept.messages as M[]);
+        if (cancelled || !kept) return;
+        // A newer copy wins, an empty one too: another device cleared it. An
+        // empty device takes the server's copy only when it was not cleared
+        // after it: a clear whose write a reload cut off is still a clear (#7597).
+        const newer = kept.updated_at > localAt;
+        const unseen = !loaded.length && kept.messages.length > 0 && kept.updated_at > clearedAt;
+        if (newer || unseen) setMessages(kept.messages as M[]);
       })
       .catch(() => {
         /* offline: this device's copy stands */
@@ -131,5 +142,27 @@ export function useStoredConversation<M extends StoredChatMessage>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
-  return [messages, setMessages];
+  /** Clear the conversation for good: here, at once on the server rather
+   *  after the usual pause (a reload in that pause cancelled the write, and
+   *  the old conversation came back), and marked on this device so a reload
+   *  never reads the cleared one back in (#7597). */
+  const clear = useCallback(() => {
+    setMessages([]);
+    try {
+      const at = personalChatKey("chat.cleared", owner, slug);
+      if (at) localStorage.setItem(at, new Date().toISOString());
+      const key = chatStoreKey(owner, slug);
+      if (key) localStorage.removeItem(key);
+    } catch {
+      /* private mode: the server write below still clears it */
+    }
+    const r = remoteRef.current;
+    if (r && owner && scope && remoteReadFor === scope) {
+      void r.write([], owner).catch(() => {
+        /* offline: the mark above keeps it cleared here, and the next change writes again */
+      });
+    }
+  }, [owner, slug, scope, remoteReadFor]);
+
+  return [messages, setMessages, clear];
 }

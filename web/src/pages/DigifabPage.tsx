@@ -1004,7 +1004,7 @@ function DetectorsModal({ slug, onClose }: { slug: string; onClose: () => void }
             {detectors.map((d) => <DetectorCard key={d.id} slug={slug} det={d} cat={cat} onChanged={invalidate} />)}
           </div>
         )}
-        <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3 space-y-2">
+        <div className="rounded-lg border border-line/70 dark:border-slate-700 p-3 space-y-2">
           <div className={detLbl}>Add a detector</div>
           <select aria-label="Detector service" value={key} onChange={(e) => { setKey(e.target.value); const c = cat.find((x) => x.key === e.target.value); if (c) setLabel((l) => l || c.name); }} className={input}>
             <option value=""> - choose a service - </option>
@@ -1090,10 +1090,10 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
 
   const input = "input !py-1 !text-xs w-full";
   return (
-    <div className="rounded-lg border border-line/70 dark:border-mortar-700 p-3">
+    <div className="rounded-lg border border-line/70 dark:border-slate-700 p-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="font-medium text-content dark:text-mortar-100">{det.label}</span>
-        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-mortar-100 dark:bg-mortar-800 text-faint">{det.key}</span>
+        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-mortar-100 dark:bg-slate-800 text-faint">{det.key}</span>
         {!det.enabled && <span className="text-[9px] text-faint">(disabled)</span>}
         <div className="ml-auto flex items-center gap-2">
           <button type="button" onClick={() => test.mutate()} disabled={test.isPending} className="text-cobble-600 dark:text-cobble-400 hover:underline">Test</button>
@@ -1118,7 +1118,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
         <input type="checkbox" checked={det.enabled} onChange={(e) => toggle.mutate(e.target.checked)} /> Enabled
       </label>
       {editing && (
-        <div className="mt-2 space-y-2 border-t border-line/60 dark:border-mortar-700 pt-2">
+        <div className="mt-2 space-y-2 border-t border-line/60 dark:border-slate-700 pt-2">
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" className={input} />
           {!onConnection && (
             <>
@@ -1171,7 +1171,7 @@ function DetectorCard({ slug, det, cat, onChanged }: { slug: string; det: Digifa
             </label>
           )}
           {isWatcher && owns && (printers.data?.printers.length ?? 0) > 0 && (
-            <div className="rounded border border-line/60 dark:border-mortar-700 p-2 space-y-0.5">
+            <div className="rounded border border-line/60 dark:border-slate-700 p-2 space-y-0.5">
               <div className={detLbl}>PrintGuard print state</div>
               {printers.data!.printers.map((p) => (
                 <div key={p.id} className="text-[10px] flex items-center gap-1.5">
@@ -1225,7 +1225,7 @@ function PrinterRegister({ slug, detId, fleet, onDone }: { slug: string; detId: 
 
   const input = "input !py-1 !text-xs w-full";
   return (
-    <div className="border-t border-line/60 dark:border-mortar-700 pt-2">
+    <div className="border-t border-line/60 dark:border-slate-700 pt-2">
       <button type="button" onClick={() => setOpen((v) => !v)} className="text-[10px] text-cobble-600 dark:text-cobble-400 hover:underline">
         {open ? "− Add a printer to the detector" : "+ Add a printer to the detector"}
       </button>

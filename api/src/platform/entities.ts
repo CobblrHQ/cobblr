@@ -288,6 +288,16 @@ export async function moduleEnabledForOrg(orgId: string, moduleName: string): Pr
   }
 }
 
+/** Whether a kind's resolver may run against this workspace. A registered
+ *  kind's module may be off there, and then it has no tables: its resolver can
+ *  only raise `relation "<x>" does not exist`, which /healthz and deploy-gap
+ *  count as a failing resolver (#7579). Every read path asks here, its own
+ *  workspace and each linked source alike. A kind found only as an instance is
+ *  org-scoped by its fallback already. */
+async function kindModuleOn(orgId: string, kind: string, registered: boolean): Promise<boolean> {
+  return !registered || (await moduleEnabledForOrg(orgId, kind.split(":")[0]!));
+}
+
 // One-time deprecation warning per kind that's still on the legacy
 // (null) whitelist. Avoids log spam on hot paths.
 const legacyWarnedKinds = new Set<string>();
@@ -320,7 +330,16 @@ async function viewerReadScope(orgId: string, fieldReadScopes: Record<string, st
  *  lets that assistant read too (a part's notes, #4798). Never used for a
  *  linked workspace's records, which keep the plain whitelist. */
 async function ownWhitelist(orgId: string, kind: string, whitelist: string[] | null, viewer?: EntityViewer): Promise<string[] | null> {
-  if (!viewer?.assistant || whitelist === null) return whitelist;
+  if (whitelist === null) return whitelist;
+  // A person exporting their own collection gets every field their table
+  // shows them, not the narrower set a foreign module may read: an export
+  // through the whitelist wrote a Notes column with every cell blank (#7630).
+  // Read scopes and secret masking still apply after this.
+  if (viewer?.export && !viewer.assistant) {
+    const record = (await listKindsForOrg(orgId)).find((k) => k.id === kind);
+    return [...new Set([...whitelist, ...(record?.fields ?? []).map((f) => f.name)])];
+  }
+  if (!viewer?.assistant) return whitelist;
   const base = await baseKindOf(orgId, kind).catch(() => kind);
   const extra = assistantReadableFieldsOf(kind) ?? assistantReadableFieldsOf(base) ?? [];
   return extra.length ? [...new Set([...whitelist, ...extra])] : whitelist;
@@ -743,9 +762,10 @@ export async function lookup(
   const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
   const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
 
+  const registered = resolvers.has(kind);
   // Own workspace first — common case, no cross-workspace traffic.
   try {
-    const resolved = await resolver(orgId, id);
+    const resolved = (await kindModuleOn(orgId, kind, registered)) ? await resolver(orgId, id) : null;
     if (resolved) {
       // Compute AFTER projection: the template renders over exactly what the
       // reader is allowed to see (exposable natives + `metadata`, minus any
@@ -780,6 +800,7 @@ export async function lookup(
   const linkedSources = await activeLinkedSources(orgId, kind, viewer?.userId);
   for (const src of linkedSources) {
     try {
+      if (!(await kindModuleOn(src.id, kind, registered))) continue;
       const resolved = await resolver(src.id, id);
       if (!resolved) continue;
       const policy = await linkedProjection(src.id, kind);
@@ -839,7 +860,7 @@ export async function lookupMany(
       // sibling read paths disagreed: a batched read of an instance record
       // returned nothing while a single read of the same record worked.
       const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
-      if (!resolver) return [] as ResolvedEntity[];
+      if (!resolver || !(await kindModuleOn(orgId, kind, resolvers.has(kind)))) return [] as ResolvedEntity[];
       const whitelist = await getExposableFields(kind);
       const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
       const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
@@ -1049,8 +1070,7 @@ export async function list(
   // directly and were still probing every disabled kind on every scan.
   // Guarding the chokepoint covers them and anyone who shows up next.
   // Instance kinds are already org-scoped by instanceFallbackResolver.
-  const baseModule = listResolvers.has(kind) ? kind.split(":")[0] : undefined;
-  if (baseModule && !(await moduleEnabledForOrg(orgId, baseModule))) return { items: [], unlisted: "module-off" };
+  if (!(await kindModuleOn(orgId, kind, listResolvers.has(kind)))) return { items: [], unlisted: "module-off" };
   const whitelist = await getExposableFields(kind);
   const fieldReadScopes = await getFieldReadScopes(kind, orgId, viewer);
   const readScope = await viewerReadScope(orgId, fieldReadScopes, viewer);
@@ -1156,6 +1176,7 @@ export async function list(
   if (by.length && linkedSources.length) throw new GroupingError("Grouped views of linked workspaces are not available yet.");
   for (const src of linkedSources) {
     try {
+      if (!(await kindModuleOn(src.id, kind, listResolvers.has(kind)))) continue;
       const result = await resolver(src.id, query);
       const policy = await linkedProjection(src.id, kind);
       for (const r of result.items) {

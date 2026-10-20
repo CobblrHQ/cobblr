@@ -264,7 +264,9 @@ export function QrResolvePage() {
         {state === "error"
           ? "Check your connection and try again."
           : result?.status === "revoked"
-            ? "Scanning it does nothing now, and nothing was changed. If it should still work, someone in the workspace can turn it back on in Action labels."
+            ? result.mode === "action"
+              ? "Scanning it does nothing now, and nothing was changed. If it should still work, someone in the workspace can turn it back on in Action labels."
+              : "Scanning it does nothing now, and nothing was changed. To label this item again, someone in the workspace can print it a new label from the item's page."
             : "The label may have been revoked or expired. Ask a workspace admin if you think that's a mistake."}
       </p>
     </>,

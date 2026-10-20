@@ -43,7 +43,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const CASSETTES = "api/tests/catalog-cassettes";
-const LANES = [".forgejo/workflows/ci.yml", ".forgejo/workflows/ci-main.yml", ".forgejo/workflows/ci-tracker.yml"];
+const LANES = [".forgejo/workflows/ci.yml", ".forgejo/workflows/ci-main.yml", ".forgejo/workflows/ci-tracker.yml", ".forgejo/workflows/nightly-tour.yml"];
 const ENV_LINE = /^\s*COBBLR_CATALOG_REPLAY_DIR:\s*\$\{\{\s*github\.workspace\s*\}\}\/api\/tests\/catalog-cassettes\s*$/m;
 
 interface Violation {
@@ -86,11 +86,11 @@ const violations: Violation[] = [];
 for (const lane of LANES) {
   const src = readFileSync(lane, "utf8");
   if (!ENV_LINE.test(src)) {
-    violations.push({ file: lane, line: 1, what: "the api test lane does not set COBBLR_CATALOG_REPLAY_DIR to api/tests/catalog-cassettes, so its barcode lookups reach live catalogs" });
+    violations.push({ file: lane, line: 1, what: "this lane does not set COBBLR_CATALOG_REPLAY_DIR to api/tests/catalog-cassettes, so its barcode lookups reach live catalogs" });
   }
 }
 
-const cassettes = new Set(existsSync(CASSETTES) ? readdirSync(CASSETTES).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)) : []);
+const cassettes = new Set(existsSync(CASSETTES) ? readdirSync(CASSETTES).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5).replace(/\.book$/, "")) : []);
 for (const name of readdirSync("api/tests").filter((f) => /\.test\.ts$/.test(f))) {
   const file = join("api/tests", name);
   const lines = readFileSync(file, "utf8").split("\n");
@@ -107,10 +107,29 @@ for (const name of readdirSync("api/tests").filter((f) => /\.test\.ts$/.test(f))
   }
 }
 
+// The nightly walks scan through the same door, so their real codes replay too:
+// Open Food Facts dropped Nutella's traces on 2026-10-19 and a walk that read the
+// live record went red for a day (#7627).
+for (const name of readdirSync("e2e/walks").filter((f) => /\.json$/.test(f))) {
+  const file = join("e2e/walks", name);
+  const lines = readFileSync(file, "utf8").split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (/CATALOG-MISS:/.test(line)) continue;
+    for (const m of line.matchAll(/"barcode":\s*"([0-9A-Za-z -]+)"/g)) {
+      const code = m[1]!.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      if (!looksReal(code)) continue;
+      if (!cassettes.has(code)) {
+        violations.push({ file, line: i + 1, what: `walks real code ${code} with no ${CASSETTES}/${code}.json; record one (COBBLR_CATALOG_REPLAY_RECORD=1)` });
+      }
+    }
+  }
+}
+
 if (violations.length) {
   console.error(`lint:catalog-replay - ${violations.length} violation(s):`);
   for (const v of violations) console.error(`  ${v.file}:${v.line}  ${v.what}`);
-  console.error("A test's catalog is a fixture, not a service: record the answer once and replay it.");
+  console.error("A test's or a walk's catalog is a fixture, not a service: record the answer once and replay it.");
   process.exit(1);
 }
 console.log(`lint:catalog-replay OK (${LANES.length} lanes replay from ${CASSETTES}; ${cassettes.size} cassette(s))`);

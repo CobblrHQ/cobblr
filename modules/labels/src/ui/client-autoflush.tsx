@@ -22,6 +22,7 @@ import { flushDecision } from "../flush-policy.js";
 import { liveQrUrl } from "../live-qr-url.js";
 import { useLabels } from "./context.js";
 import type { LabelsApi } from "./api.js";
+import { sentFrom } from "./api.js";
 
 const POLL_MS = 3000;
 
@@ -71,8 +72,9 @@ async function tick(): Promise<void> {
     const res = await printBatchOverBluetooth(batch, settings);
     // Only the rows that actually reached paper leave the queue — a jam mid-batch
     // leaves the rest to retry on the next tick.
-    const printedIds = res.printed.map((p) => p.id).filter((id): id is string => !!id);
-    if (printedIds.length > 0) await api.recordPrinted(printedIds);
+    // With the copies each row sent, so a count raised meanwhile stays queued (#7593).
+    const sent = sentFrom(res.printed);
+    if (sent.items.length > 0) await api.recordPrinted(sent);
   } catch {
     // quiet: a transient BLE/network error must not wedge the loop. The next
     // tick retries; a dropped session simply no-ops (heldPrinterName goes null).

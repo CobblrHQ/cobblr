@@ -249,9 +249,13 @@ export interface DigifabFleetDevice {
   /** What an hour of this printer costs, when set; null otherwise. */
   hour_rate?: { amount: number; currency: string } | null;
   snapshot_fresh: boolean;
-  /** The bridge can grab this printer's own camera (the cockpit /camera route) —
-   *  the camera wall shows it with no manual URL and no relay. */
+  /** The server answers this printer's frames on the cockpit /camera route (its
+   *  bridge, the address saved or reported for it, or its manager's camera):
+   *  every screen polls that route, never camera_url itself (#7056). */
   lan_camera?: boolean;
+  /** Where /camera reads this machine's frames: the bridge, the address saved
+   *  or reported for it, or the manager's own camera. */
+  camera_source?: "bridge" | "address" | "manager" | null;
   /** AI failure-watch: live rolling score while printing + whether it auto-paused. */
   failure?: { score: number; watching: boolean; paused: boolean } | null;
   /** An external detector owns this printer's detection + camera — Cobblr stands

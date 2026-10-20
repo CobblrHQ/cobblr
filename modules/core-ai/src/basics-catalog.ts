@@ -34,23 +34,39 @@ export interface BasicRule {
   replyWhenAiOn?: string;
 }
 
-const CAPABILITIES = `Right now AI chat isn't connected, so I can't search your data or make changes for you — but I can point you to the right place:
+// What works with no AI at all: the built-in commands run here, on the
+// server, from a sentence that fits one, so they are offered with Do it and
+// undone with "undo" (#7591). Every quoted command below is checked against
+// the commands that really bind, so this list cannot promise one that is gone.
+export const NO_AI_COMMAND_EXAMPLES = [
+  "make Shelf 1 through 3 in Garage",
+  "add a place called Blue bin in Shelf 1",
+  "delete duplicates",
+] as const;
 
-- **Add stuff** — use **+ New** on any list (parts, printers, orders…), or **Scan** to add by barcode/photo.
-- **Build your workspace** — the **Build** page turns a plain-English description into fields and modules.
-- **Find things** — the search box up top spans every module.
-- **Low stock, due dates, etc.** — open the list and sort or filter by that column.
+const CAPABILITIES = `Without AI connected I can still make some changes for you. Type one of these, check what I say I will do, and press **Do it**:
 
-Connect AI and I can do these *for* you from here — just ask.`;
+- **"${NO_AI_COMMAND_EXAMPLES[0]}"** makes a numbered run of places.
+- **"${NO_AI_COMMAND_EXAMPLES[1]}"** makes one place inside another.
+- **"${NO_AI_COMMAND_EXAMPLES[2]}"** removes the extra copies of places with the same name in the same spot.
+
+Say **"undo"** to put a change back. For anything else:
+
+- **Add stuff**: use **+ New** on any list (parts, printers, orders…), or **Scan** to add by barcode or photo.
+- **Build your workspace**: the **Build** page turns a plain-English description into fields and modules.
+- **Find things**: the search box up top spans every module.
+- **Low stock, due dates and the like**: open the list and sort or filter by that column.
+
+Open questions about your data, and changes I have no command for, need AI connected.`;
 
 // The same question in a workspace that HAS a provider. Asking "what can you
 // do?" with AI connected used to get nothing back, because the only answer on
 // file opened by saying AI was not connected.
 const CAPABILITIES_AI = `Ask me about your workspace and I will go and look, or tell me to do something and I will do it:
 
-- **Questions** — "how many parts do I have?", "what's low on stock?", "where is the label printer?"
-- **Changes** — "add a part called Widget", "make racks 1-8 in the Garage", "move the drill to Shelf B".
-- **Getting set up** — the **Build** page turns a plain-English description into fields and modules.
+- **Questions**: "how many parts do I have?", "what's low on stock?", "where is the label printer?"
+- **Changes**: "add a part called Widget", "make racks 1-8 in the Garage", "move the drill to Shelf B".
+- **Getting set up**: the **Build** page turns a plain-English description into fields and modules.
 
 Every change I make is tracked, so you can undo it. Ask, and I will show you what I am about to do first.`;
 
@@ -84,7 +100,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "who / what is Cobb",
     keywords: ["who are you", "what are you", "your name", "are you cobb", "who is cobb"],
     reply:
-      "I'm Cobb, the workshop assistant. I help you set up and run your workspace. With AI connected I can dig through your data and make changes; without it I can still help you find your way around.",
+      "I'm Cobb, the workshop assistant. I help you set up and run your workspace. Without AI I run built-in commands like **\"make Shelf 1 through 3 in Garage\"** and help you find your way around; with AI connected I can also dig through your data and make any change you ask for.",
   },
   {
     key: "add-item",
@@ -92,7 +108,7 @@ export const BUILTIN_BASICS: BasicRule[] = [
     keywords: ["how do i add", "how do i create", "add a part", "add an item", "new part", "new item", "add something", "add"],
     offerOnlyAsQuestion: true,
     reply:
-      "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. Once AI's connected you can just tell me here (\"add a part called Widget\") and I'll do it.",
+      "Use **+ New** at the top of the relevant list (Parts, Printers, Orders…), or hit **Scan** to add something by its barcode or a photo. I can add a place right now: type \"add a place called Blue bin in Shelf 1\". Once AI's connected you can just tell me any of it (\"add a part called Widget\") and I'll do it.",
   },
   {
     key: "scan",
@@ -307,11 +323,12 @@ export const BUILTIN_BASICS: BasicRule[] = [
     intent: "greeting",
     keywords: ["hi", "hey", "hello", "yo", "howdy", "sup", "hiya", "heya", "good morning", "good afternoon", "good evening", "greetings"],
     reply:
-      "Hey. I'm Cobb. AI chat isn't wired up here yet, so I can't rummage through your workspace, but I can help you find your way around. Try **\"what can you do\"**.",
+      "Hey. I'm Cobb. AI isn't connected here yet, so I can't rummage through your workspace, but I can run a few built-in commands and help you find your way around. Try **\"what can you do\"**.",
+    replyWhenAiOn: "Hey. I'm Cobb. Ask me about your workspace, or tell me what to change.",
   },
 ];
 
 /** Returned (and shown) when nothing matches, so the chat still closes the loop
  *  gracefully instead of inventing an answer. */
 export const NO_MATCH_REPLY =
-  "I can only handle the basics without AI connected — try **\"what can you do\"**. For anything about your actual data (or to have me make changes), connect AI using the link at the top and I'll take it from there.";
+  "Without AI connected I answer the basics and run a few built-in commands; try **\"what can you do\"** to see them. For anything else about your data, or a change I have no command for, connect AI using the link at the top and I'll take it from there.";

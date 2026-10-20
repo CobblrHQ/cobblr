@@ -61,6 +61,7 @@ import {
 } from "../platform/bundle-claims.js";
 import { bumpWorkspaceShape } from "../platform/workspace-shape.js";
 import { bundleInstallSummary } from "../lib/bundle-install-summary.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // Cross-module table type for the tenant-DB writes. core-views owns
 // `core_views_views`; bundles install rows into it tagged with
@@ -1703,7 +1704,7 @@ bundlesRouter.post(
       });
       const body = Body.safeParse(req.body);
       if (!body.success) {
-        res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: body.error.issues } });
+        res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
         return;
       }
       const result = await validateBundle(req.tenant!.org.id, body.data.manifest, {
@@ -2996,7 +2997,7 @@ bundlesRouter.post(
       if (!(await requireCapability(req, res, "platform:install-bundle"))) return;
       const body = ManifestBody.safeParse(req.body);
       if (!body.success) {
-        res.status(400).json({ error: { code: "invalid_bundle", message: "Bad request body", details: body.error.issues } });
+        res.status(400).json({ error: { code: "invalid_bundle", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
         return;
       }
       const r = await installBundleDoor(req.tenant!.org.id, sessionActor(req), body.data);
@@ -3219,7 +3220,7 @@ bundlesRouter.patch(
       const Body = z.object({ enabled_features: z.array(z.string()) });
       const body = Body.safeParse(req.body);
       if (!body.success) {
-        res.status(400).json({ error: { code: "invalid_body", message: "enabled_features: string[] required", details: body.error.issues } });
+        res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
         return;
       }
       const r = await changeBundleFeatures(req.tenant!.org.id, sessionActor(req), req.params.id ?? "", body.data.enabled_features);

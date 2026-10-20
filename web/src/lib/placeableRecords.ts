@@ -77,6 +77,34 @@ export function isUnplaced(r: PlaceableRecord): boolean {
   return placesOf(r).length === 0;
 }
 
+interface ListedPage {
+  items: ListedRow[];
+  next_cursor?: string | null;
+  complete?: boolean;
+}
+
+async function listPlaceableRows(path: string, signal: AbortSignal): Promise<{ items: ListedRow[] }> {
+  const items: ListedRow[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  for (;;) {
+    signal.throwIfAborted();
+    const query = new URLSearchParams({ limit: "100", offset: String(items.length) });
+    if (cursor) query.set("cursor", cursor);
+    const page = await api.request<ListedPage>("GET", `${path}${path.includes("?") ? "&" : "?"}${query}`);
+    items.push(...page.items);
+    if (page.next_cursor) {
+      if (cursors.has(page.next_cursor)) throw new Error("The list returned the same page twice.");
+      cursors.add(page.next_cursor);
+      cursor = page.next_cursor;
+    } else if (page.complete === false && page.items.length > 0) {
+      cursor = null;
+    } else {
+      return { items };
+    }
+  }
+}
+
 /** `fresh`: ask again whenever the surface opens (the place-items view, where
  *  a thing listed a moment ago on another page must be there to place). */
 export function usePlaceableRecords(slug: string, opts: { fresh?: boolean } = {}): {
@@ -94,10 +122,10 @@ export function usePlaceableRecords(slug: string, opts: { fresh?: boolean } = {}
   const lists = useQueries({
     queries: kinds.map((k) => ({
       queryKey: ["kind-list", slug, k.id],
-      queryFn: () =>
-        api.request<{ items: ListedRow[] }>(
-          "GET",
+      queryFn: ({ signal }) =>
+        listPlaceableRows(
           `/orgs/${slug}/${k.instance_name ? `instances/${k.instance_name}` : `modules/${k.module_name}`}${k.endpoints!.list}`,
+          signal,
         ),
       staleTime: 30_000,
       // An action on one of these records refreshes the list wherever it is

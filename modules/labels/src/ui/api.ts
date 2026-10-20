@@ -1,6 +1,7 @@
 // Labels module client. Exposed alongside the UI so other modules
 // (inventory's web UI) can import + call it directly.
 
+import { randomId } from "@cobblr/platform-contract/random-id";
 import { noteWorkspaceWrite, walkPages, workspaceFetch } from "@cobblr/platform-web";
 import type { StationTagClient } from "@cobblr/platform-web";
 import type { ScanStation, StationCommand } from "@cobblr/platform-contract/scan-station";
@@ -24,7 +25,28 @@ export interface QueueItem {
   kind_label?: string | null;
 }
 
+/** Queue rows as they were SENT to a printer: confirming the print records
+ *  these copies, never the row's count now, and the same send once (#7593). */
+export interface SentLabels {
+  send_id: string;
+  items: Array<{ id: string; qty: number }>;
+}
+
+/** One send of these rows, named so its confirmation counts once. */
+export function sendOf(items: Array<{ id: string; qty: number }>): SentLabels {
+  return { send_id: randomId(), items };
+}
+
+/** One send of what a sheet or a printer run holds, counted per queue row. */
+export function sentFrom(copies: ReadonlyArray<{ id?: string | null; copies?: number }>): SentLabels {
+  const n = new Map<string, number>();
+  for (const c of copies) if (c.id) n.set(c.id, (n.get(c.id) ?? 0) + Math.max(1, c.copies ?? 1));
+  return sendOf([...n].map(([id, qty]) => ({ id, qty })));
+}
+
 export interface Printable {
+  /** The queue row this copy comes from, so confirming a print records what was on the sheet. */
+  queue_id?: string;
   description: string;
   qr_svg: string;
   /** Human-readable code drawn in the QR center (m1, p42, …), when assigned. */
@@ -249,8 +271,8 @@ export class LabelsApi {
   setAutoflush = (b: AutoflushConfig) => this.request<AutoflushConfig>("PUT", "/autoflush", b);
   /** Bookkeeping for labels the BROWSER printed (Bluetooth): record them in
    *  history, freeze their codes, and drop just those rows from the queue. */
-  recordPrinted = (item_ids: string[]) =>
-    this.request<{ batch_id: string | null; recorded: number }>("POST", "/print/record", { item_ids });
+  recordPrinted = (items: SentLabels) =>
+    this.request<{ batch_id: string | null; recorded: number }>("POST", "/print/record", items);
 
   /** Browse — the labelable instances the workspace has (tabs) + their rows. */
   listLabelableTabs = () =>
@@ -274,6 +296,8 @@ export class LabelsApi {
       pdf_base64: string;
       sheets: number;
       labels: number;
+      /** Each queue row the PDF holds and its copies: what a send of it puts on paper. */
+      rendered: Array<{ id: string; qty: number }>;
       warnings?: Array<{ kind: string; code: string; reason: string; coveredFraction: number }>;
     }>("POST", "/print/render", { size_key, item_ids });
 

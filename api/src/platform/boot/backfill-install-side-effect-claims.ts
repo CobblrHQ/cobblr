@@ -6,6 +6,7 @@ import { backfillInstallSideEffectClaims } from "../backfill-install-side-effect
 export default bootPass({
   name: "backfillInstallSideEffectClaims",
   phase: "workspaces",
+  after: ["healListRenames"],
   run: () => backfillInstallSideEffectClaims(),
   report: (r) => (r > 0 ? `install side-effect claims backfilled: ${r}` : null),
 });

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser, type OrgRole } from "../db.js";
 import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 /** Wrap an async handler so thrown rejections route to next(err)
  *  instead of becoming an unhandled rejection. */
@@ -21,7 +22,7 @@ export function asyncHandler<R extends Request = Request>(
 
 /** Translate a Zod validation failure into the platform's standard
  *  { error: { code, message, details } } shape. */
-export function badBody(res: Response, err: z.ZodError, message = "Bad request body"): void {
+export function badBody(res: Response, err: z.ZodError, message = invalidBodyMessage(err.issues)): void {
   res.status(400).json({
     error: {
       code: "invalid_body",

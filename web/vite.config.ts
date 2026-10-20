@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withImportAgain } from "./src/lib/import-again";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -13,7 +14,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  *  on a slow phone link is half a second or more. This writes a few lines into
  *  index.html that read the address and preload that section's chunk and the
  *  chunks it imports, beside the shell. The sections are the table in
- *  src/lib/route-prefetch.ts, read here so the two cannot disagree. */
+ *  src/lib/route-prefetch.ts, read here so the two cannot disagree. Each link
+ *  says it is a hint (data-route-hint): one that fails is not the app failing
+ *  to start, so the boot guard does not reload for it (#7676). */
 function routePreload(): Plugin {
   const table = readFileSync(resolve(HERE, "src/lib/route-prefetch.ts"), "utf8");
   const rows = [...table.matchAll(/\["(\/[^"]*)", \(\) => ([^\n]+)\],/g)].map((m) => ({
@@ -83,7 +86,7 @@ function routePreload(): Plugin {
         // nor a nonce would hold. The csp-shell CI check loads the built shell under the enforced
         // policy, so the next inline script fails a pull request instead of a promotion.
         const source = `(function(){var m=/^\\/w\\/[^/]+(\\/[^?#]*)?/.exec(location.pathname);if(!m)return;var p=m[1]||"/";var F=${JSON.stringify(files)},T=${JSON.stringify(map)},I=${JSON.stringify(instance)},best=null;for(var i=0;i<T.length;i++){var x=T[i][0];var hit=x==="/"?p==="/"||p===""
-:p===x||p.indexOf(x+"/")===0;if(hit&&(!best||x.length>best[0].length))best=T[i];}var files=best?best[1]:(/^\\/[^/]+\\/?$/.test(p)?I:[]);for(var j=0;j<files.length;j++){var l=document.createElement("link");l.rel="modulepreload";l.crossOrigin="";l.href=F[files[j]];document.head.appendChild(l);}})();`;
+:p===x||p.indexOf(x+"/")===0;if(hit&&(!best||x.length>best[0].length))best=T[i];}var files=best?best[1]:(/^\\/[^/]+\\/?$/.test(p)?I:[]);for(var j=0;j<files.length;j++){var l=document.createElement("link");l.rel="modulepreload";l.crossOrigin="";l.setAttribute("data-route-hint","");l.href=F[files[j]];document.head.appendChild(l);}})();`;
         const fileName = `static/route-preload-${createHash("sha256").update(source).digest("hex").slice(0, 10)}.js`;
         bundle[fileName] = {
           type: "asset",
@@ -97,6 +100,20 @@ function routePreload(): Plugin {
         } as (typeof bundle)[string];
         return html.replace("</head>", `<script src="/${fileName}"></script>\n</head>`);
       },
+    },
+  };
+}
+
+/** Every import of the app's own chunks asks once more, under a new address,
+ *  when the first try did not arrive (src/lib/import-again.ts, #7676). */
+function importAgain(): Plugin {
+  return {
+    name: "cobblr-import-again",
+    apply: "build",
+    enforce: "post",
+    renderChunk(code) {
+      const out = withImportAgain(code);
+      return out === null ? null : { code: out, map: null };
     },
   };
 }
@@ -138,7 +155,7 @@ function serviceWorker(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), serviceWorker(), routePreload()],
+  plugins: [react(), serviceWorker(), routePreload(), importAgain()],
   // occt-import-js is an Emscripten/WASM module (the STEP-preview CAD kernel).
   // esbuild's dev pre-bundler mangles Emscripten glue + can't see the `?url`
   // wasm import, so exclude it — it's lazy-loaded only when a STEP is opened.

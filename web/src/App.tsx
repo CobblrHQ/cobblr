@@ -11,7 +11,7 @@ import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 import { installRoutePrefetch } from "./lib/route-prefetch";
 import { OfflineScreen } from "./components/OfflineScreen";
 import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ComponentProps } from "react";
 import { lazyShellHost } from "./lib/lazyShellHost";
 const VaultPage = lazy(() => import("./pages/VaultPage").then((m) => ({ default: m.VaultPage })));
 const RecentlyDeletedPage = lazy(() => import("./pages/RecentlyDeletedPage").then((m) => ({ default: m.RecentlyDeletedPage })));
@@ -43,7 +43,16 @@ import { ActiveOrgProvider, useActiveOrg, pickDefaultOrg, urlHandleFor } from ".
 import {BrowserLaserProvider} from "./features/digifab/BrowserLaser";
 import { shellForRole } from "@cobblr/platform-contract/org-roles";
 import { deepPathAfterWorkspace } from "./lib/deep-path";
-import { AuthPage } from "./pages/AuthPage";
+// Drawn only signed out, so it is not in the shell a signed-in first load
+// downloads (#5822); it arrives behind the boot scrim a sign-in already shows.
+const LazyAuthPage = lazy(() => import("./pages/AuthPage").then((m) => ({ default: m.AuthPage })));
+function AuthPage(props: ComponentProps<typeof LazyAuthPage>) {
+  return (
+    <Suspense fallback={<BootScrim />}>
+      <LazyAuthPage {...props} />
+    </Suspense>
+  );
+}
 const MagicConsumePage = lazy(() => import("./pages/AuthPage").then((m) => ({ default: m.MagicConsumePage })));
 const IdentityCallbackPage = lazy(() => import("./pages/AuthPage").then((m) => ({ default: m.IdentityCallbackPage })));
 const OidcSignInPage = lazy(() => import("./pages/OidcSignInPage").then((m) => ({ default: m.OidcSignInPage })));

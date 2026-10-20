@@ -17,7 +17,9 @@ import { ProposalValues } from "./ProposalValues";
 import { withoutValue } from "../lib/proposal-values";
 import { PlanSections, sectionsLeft, type SectionRuns } from "./PlanSections";
 import { historyToSend } from "../lib/chat-store";
-import { chatStoreKey, useStoredConversation } from "../lib/use-stored-conversation";
+import { useStoredConversation } from "../lib/use-stored-conversation";
+import { basicFailureReply, tooLongForBasics } from "../lib/basic-send";
+import { personalCommandRequestsToRecover, recoverCommandMessages } from "../lib/command-run-recovery";
 import { personalChatKey } from "../lib/personal-chat-store";
 import { useAuth } from "../auth/AuthContext";
 import { applyOfferStates, offerIdsToRefresh, offerOutcomeWords, type OfferOutcome } from "../lib/offer-sync";
@@ -29,7 +31,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Send, Check, Eye, PencilLine, Trash2, Wand2, Cpu, ChevronDown, Bookmark } from "lucide-react";
 import { SaveAnswerSheet, type SavedAnswer } from "./SaveAnswerSheet";
 import { createPortal } from "react-dom";
-import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
+import { api, ApiError, type AiChatProposal, type AiChatResponse, type BasicCommandOffer, type CommandRunResult, type BundleValidationPreview, type ChatModelMenu, type ChatModelOption, type ChatPrefsInput } from "../lib/api";
 import { readSse } from "../lib/sse";
 import { Cobb, CobbBust, COBB_POSES, type CobbPose } from "./Cobb";
 import { useNavigate } from "react-router-dom";
@@ -60,10 +62,6 @@ import { ContextChip, PopoverLayer, useEscapeToClose, useCloseOnPageScroll } fro
 import { ServiceJobCard } from "./ServiceJobCard";
 
 import { countOf } from "@cobblr/platform-contract/plural";
-// Shown only if the basic-mode endpoint itself is unreachable (network error) —
-// the server otherwise always returns a reply (its own no-match nudge).
-const BASIC_FALLBACK =
-  "I couldn't reach the assistant just now. For anything about your workspace, connect AI using the link at the top.";
 
 // Chat history is cached per-workspace in localStorage so a page refresh doesn't
 // wipe the conversation: every message as it was shown, cards and their state
@@ -73,6 +71,9 @@ const BASIC_FALLBACK =
 const CHAT_STORE_MAX = 100;
 
 interface Msg {
+  commandRunId?: string;
+  commandPending?: boolean;
+  commandRequest?: CommandRunResult["pendingRequest"];
   role: "user" | "assistant";
   content: string;
   /** What was in context when this was SENT. A message reads differently once
@@ -509,7 +510,7 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         : undefined,
     [activeSlug],
   );
-  const [messages, setMessages] = useStoredConversation<Msg>(me, activeSlug, CHAT_STORE_MAX, conversationRemote);
+  const [messages, setMessages, clearStoredConversation] = useStoredConversation<Msg>(me, activeSlug, CHAT_STORE_MAX, conversationRemote);
   // The cards are the offers the server keeps: whenever the set of offers the
   // conversation names changes (a load, a reload, another tab's turn), they
   // are read back and redrawn as they now stand.
@@ -525,6 +526,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   // effect that resubscribes to an open turn).
   const messagesRef = useRef<Msg[]>([]);
   messagesRef.current = messages;
+
+
   const [input, setInput] = useState("");
   const [documentFile, setDocumentFile] = useState<File | null>(null);
   const documentInput = useRef<HTMLInputElement>(null);
@@ -571,6 +574,33 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!open || !me || !activeSlug || busy) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const recover = async () => {
+      try {
+        const { items } = await api.commandRuns(activeSlug);
+        if (cancelled) return;
+        for (const missing of personalCommandRequestsToRecover(me, activeSlug, items)) {
+          const run = await api.recoverCommandRun(activeSlug, missing);
+          if (cancelled) return;
+          if (run) items.push(run);
+        }
+        if (items.length) {
+          if (recoverCommandMessages(messagesRef.current, items) !== messagesRef.current && items.some((run) => run.status === "done")) workspaceChanged();
+          setMessages((current) => recoverCommandMessages(current, items));
+        }
+      } catch {
+        // quiet: the server keeps undelivered results until this conversation can be saved
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void recover(), 2000);
+      }
+    };
+    void recover();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [open, me, activeSlug, busy]);
+
   usePasteImage(composer, { enabled: open && !busy, accept: "application/pdf,image/*", onFiles: ([file]) => { if (file) setDocumentFile(file); } });
   const [error, setError] = useState<string | null>(null);
   // DEV ONLY — which Cobb pose this panel draws. Cobb normally only reaches
@@ -660,19 +690,11 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   }
 
   function clearChat() {
-    setMessages([]);
+    clearStoredConversation();
     setError(null);
     // A new conversation starts on nothing in particular. (Sending does NOT do
     // this — the context belongs to the conversation, not to one message.)
     clearChatSelection();
-    const key = chatStoreKey(me, activeSlug);
-    if (key) {
-      try {
-        localStorage.removeItem(key);
-      } catch {
-        /* ignore */
-      }
-    }
   }
 
   /** Turn one chat response into messages. Shared by the legacy blocking
@@ -792,6 +814,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       const out = await api.runCommand(activeSlug, m.command.id, m.command.message, getChatSelection()?.ids, key);
       if (out.ok) workspaceChanged();
       patchSection(i, key, () => ({
+        commandRunId: out.run_id,
+        pending: out.pending,
+        commandRequest: out.pendingRequest,
         ok: out.ok,
         message: out.message,
         ledgerIds: out.ledger_ids ?? [],
@@ -844,7 +869,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         if (at) copy[i] = { ...at, resolved: true };
         return [...copy, {
           role: "assistant",
-          content: (out.ok ? "✓ " : "✗ ") + out.message,
+          commandRunId: out.run_id,
+          commandPending: out.pending,
+          commandRequest: out.pendingRequest,
+          content: (out.pending ? "" : out.ok ? "✓ " : "✗ ") + out.message,
           // Kept so "do that again" and "undo" can point here later.
           ...(out.ok ? { ranCommand: { id: m.command!.id, message: m.command!.message } } : {}),
           // The records it changed, as chips in the sentence that says so.
@@ -1004,7 +1032,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         ...next,
         {
           role: "assistant",
-          content: (out.ok ? "✓ " : "✗ ") + out.message,
+          commandRunId: out.run_id,
+          commandPending: out.pending,
+          commandRequest: out.pendingRequest,
+          content: (out.pending ? "" : out.ok ? "✓ " : "✗ ") + out.message,
           // The free path writes to the workspace like any other path, so it
           // owes the same undo. Without this, the ONE way of changing things
           // that never involves a model was also the only one you could not
@@ -1036,6 +1067,13 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
         setDocumentFile(null); setInput("");
       } catch (error) { if (generation === documentGeneration.current) setError(error instanceof Error ? error.message : "The document could not be read."); }
       finally { setBusy(false); }
+      return;
+    }
+    // Past what the no-AI path reads, say so and keep the words to shorten,
+    // rather than send them to be refused (#7599).
+    const tooLong = aiOff ? tooLongForBasics(text) : null;
+    if (tooLong) {
+      setError(tooLong);
       return;
     }
     setInput("");
@@ -1096,13 +1134,16 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           setMessages([...next, { role: "assistant", content: r.reply }]);
           if (act.kind === "run-command") {
             const out = await api.runCommand(activeSlug, act.id, act.message, getChatSelection()?.ids).catch(
-              (e: unknown) => ({ ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledger_ids: [] as string[], undoable: false, destination: undefined as { kind: string; label: string } | undefined }),
+              (e: unknown) => ({ run_id: undefined, pending: false, pendingRequest: undefined, ok: false, message: e instanceof ApiError ? e.message : "That didn't work.", ledger_ids: [] as string[], undoable: false, destination: undefined as { kind: string; label: string } | undefined }),
             );
             if (out.ok) workspaceChanged();
             consume((m) => !!m.command && !m.resolved, { resolved: true });
             setMessages((prev) => [...prev, {
               role: "assistant",
-              content: (out.ok ? "✓ " : "✗ ") + out.message,
+              commandRunId: out.run_id,
+              commandPending: out.pending,
+              commandRequest: out.pendingRequest,
+              content: (out.pending ? "" : out.ok ? "✓ " : "✗ ") + out.message,
               ...(out.ok ? { ranCommand: { id: act.id, message: act.message } } : {}),
               ...(out.ledger_ids?.length ? { resolved: true, ledgerIds: out.ledger_ids, undoable: out.undoable !== false, ...(out.destination ? { destination: out.destination } : {}) } : {}),
             }]);
@@ -1135,8 +1176,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
             ...(r.command ? { command: { ...r.command, message: text } } : {}),
           },
         ]);
-      } catch {
-        setMessages([...next, { role: "assistant", content: BASIC_FALLBACK }]);
+      } catch (e) {
+        setMessages([...next, { role: "assistant", content: basicFailureReply(e) }]);
       } finally {
         setBusy(false);
       }
@@ -1889,13 +1930,16 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
                 <Cobb pose={devPose} size={150} title="Cobb" className="cobb-lift" />
                 <p className="text-xs text-faint dark:text-slate-500 leading-relaxed mt-2">
                   {aiOff ? (
-                    <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan".{" "}
+                    <>Ask me the basics - "what can you do", "how do I add a part", "where do I scan". Some changes work
+                    right now: type "make Shelf 1 through 3 in Garage", press Do it, and "undo" puts it back.{" "}
                     {/* "connect AI up top" is only true when there is something to
                         connect. With the operator switch off the notice above says
-                        so and offers no link, and this line must not contradict it. */}
+                        so and offers no link, and this line must not contradict it.
+                        The built-in commands run without AI (#7591), so neither
+                        line says changes need it. */}
                     {aiStatusLine(aiStatus)?.cta
-                      ? "For questions about your actual data or to have me make changes, connect AI up top."
-                      : "Questions about your actual data, and changes, need AI, which is off here."}</>
+                      ? "For open questions about your data, connect AI up top."
+                      : "Open questions about your data need AI, which is off here."}</>
                   ) : (
                     // The last line must match the write-mode chip: "I'll check
                     // with you" is only true in ASK mode — in AUTO, changes apply

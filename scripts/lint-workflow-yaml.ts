@@ -15,6 +15,12 @@
  *
  * A second pair of eyes does not catch this; the second author is usually not
  * looking at the trigger block at all. A parser is the only thing that does.
+ *
+ * AND NO PLAIN VALUE HOLDS ": " (2026-10-20, #6400). A value written bare, not
+ * quoted and not a `|` / `>` block, ends YAML's mapping at its first ": ", so
+ * `run: ... echo "::warning::no ffmpeg: installing it"` is no workflow at all:
+ * Forgejo failed both of #7659's e2e-suite runs with no job and no log, and every
+ * regex-reading test of the file still passed. Quote the value or use `run: |`.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -71,6 +77,32 @@ function duplicateKeys(src: string): Array<{ line: number; key: string; first: n
   return out;
 }
 
+/** A key's bare (plain-scalar) value that holds ": ", which ends the mapping there: the file does not parse. */
+function colonInPlainValue(src: string): Array<{ line: number; key: string }> {
+  const out: Array<{ line: number; key: string }> = [];
+  let blockIndent: number | null = null;
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i]!;
+    if (!raw.trim()) continue;
+    const indent = raw.length - raw.trimStart().length;
+    if (blockIndent !== null) {
+      if (indent > blockIndent) continue;
+      blockIndent = null;
+    }
+    if (/^\s*#/.test(raw)) continue;
+    const m = /^(\s*)(-\s+)?(["']?)([A-Za-z_][\w.\-/]*)\3\s*:\s+(.*)$/.exec(raw);
+    if (!m) continue;
+    const value = m[5]!.replace(/\s+#.*$/, "");
+    if (/^[|>][-+]?\d*$/.test(value)) {
+      blockIndent = indent + (m[2]?.length ?? 0);
+      continue;
+    }
+    if (/^["'\[{&*!|>]/.test(value)) continue;
+    if (/: /.test(value)) out.push({ line: i + 1, key: m[4]! });
+  }
+  return out;
+}
 
 const problems: string[] = [];
 const files = readdirSync(DIR).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
@@ -82,9 +114,17 @@ for (const f of files) {
     );
   }
 }
+for (const f of files) {
+  for (const d of colonInPlainValue(readFileSync(join(DIR, f), "utf8"))) {
+    problems.push(
+      `.forgejo/workflows/${f}:${d.line} the bare value of "${d.key}" holds ": ", which ends the mapping there: the file does not parse.\n` +
+        `      Forgejo fails the whole workflow with no job and no log. Quote the value, or write it as a block (${d.key}: |).`,
+    );
+  }
+}
 if (problems.length) {
   console.error("lint:workflow-yaml FAILED\n");
   for (const p of problems) console.error(`  ✗ ${p}\n`);
   process.exit(1);
 }
-console.log(`lint:workflow-yaml OK (${files.length} workflow file(s), no duplicate sibling keys)`);
+console.log(`lint:workflow-yaml OK (${files.length} workflow file(s), no duplicate sibling keys, no \": \" in a bare value)`);

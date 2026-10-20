@@ -23,6 +23,7 @@ import { z } from "zod";
 import { tenantContext, tenantDb } from "../db.js";
 import { asyncHandler } from "./util.js";
 import { PURCHASED_STATUSES, summarizePriceHistory, type PricePoint } from "../price-stats.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const itemsRouter = Router({ mergeParams: true });
 
@@ -51,7 +52,7 @@ itemsRouter.get(
     const parsed = Query.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_query", message: "Bad query", details: parsed.error.issues },
+        error: { code: "invalid_query", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

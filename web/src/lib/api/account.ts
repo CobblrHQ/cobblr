@@ -108,6 +108,9 @@ export interface ApiTokenListItem {
   org_slug?: string | null;
 }
 
+/** The zone this page last told the account (syncTimeZone). */
+let sentTimeZone: string | null = null;
+
 export const accountApi = {
   // Mint an API token (plaintext returned ONCE). Used by the edge-bridge setup to
   // generate a least-privilege devices:edge token in-flow, and by the API Recipes
@@ -182,7 +185,11 @@ export const accountApi = {
    *  "today" on what it dates for them is then their day. Null when the browser names no zone. */
   syncTimeZone: (known: string | null) => {
     const tz = browserTimeZone();
-    return tz && tz !== known ? request<{ user: { time_zone: string | null } }>("PATCH", "/me", { time_zone: tz }) : Promise.resolve(null);
+    // Once per page for a zone: the shell drawn a second time during a load
+    // sent the same PATCH twice (#7622).
+    if (!tz || tz === known || tz === sentTimeZone) return Promise.resolve(null);
+    sentTimeZone = tz;
+    return request<{ user: { time_zone: string | null } }>("PATCH", "/me", { time_zone: tz });
   },
   setTourSeen: (tour_seen: boolean) =>
     request<{ user: { tour_seen_at: string | null } }>("PATCH", "/me", { tour_seen }),

@@ -40,6 +40,8 @@ import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
 import { PART_FIELD_LABELS } from "../part-field-labels";
+import { PART_NAME_MAX } from "../part-limits";
+import { refusesField } from "@cobblr/platform-contract/invalid-body";
 
 interface NewPartDialogProps {
   onClose: (created: boolean) => void;
@@ -175,6 +177,7 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
   const [printLabel, setPrintLabel] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   // Required fields left empty: asked about once, then saved anyway if the
   // person says so. A create is never refused for them (capture first).
   const [askedMissing, setAskedMissing] = useState<string[] | null>(null);
@@ -340,7 +343,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         navigate(`${basePath}/parts/${part.id}`);
       }
     } catch (err) {
-      setError(err instanceof InventoryApiError ? err.message : `Couldn't create ${itemNoun.toLowerCase()}`);
+      // A refusal of the name is said beside the Name field; anything else below the form.
+      if (err instanceof InventoryApiError && refusesField(err.details, "name")) setNameError(err.message);
+      else setError(err instanceof InventoryApiError ? err.message : `Couldn't create ${itemNoun.toLowerCase()}`);
     } finally {
       setBusy(false);
     }
@@ -384,10 +389,20 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             autoFocus
             required
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            maxLength={PART_NAME_MAX}
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby={nameError || name.length > PART_NAME_MAX - 20 ? "new-part-name-note" : undefined}
+            onChange={(e) => { setName(e.target.value); setNameError(null); }}
             placeholder={matched ? matched.title : `Name this ${itemNoun.toLowerCase()}`}
             className="input"
           />
+          {/* The limit is said before it is reached, and a refusal that names
+              this field is said here, beside it (#7592). */}
+          {nameError ? (
+            <p id="new-part-name-note" role="alert" data-testid="name-error" className="mt-1 text-xs text-ember-600 dark:text-ember-300">{nameError}</p>
+          ) : name.length > PART_NAME_MAX - 20 ? (
+            <p id="new-part-name-note" className="mt-1 text-xs text-muted dark:text-slate-400">{name.length} of {PART_NAME_MAX} characters</p>
+          ) : null}
         </Field>
         {/* Everything below the name is packed from what each field needs
             (#3067): a wide modal uses its width, a phone gets two columns,

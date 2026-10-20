@@ -126,7 +126,7 @@ export function ConnectAssistantPage() {
               <button
                 type="button"
                 onClick={() => copy(c.id, c.snippet!)}
-                className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-panel/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content"
+                className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-surface/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content"
               >
                 {copied === c.id ? "Copied" : "Copy"}
               </button>

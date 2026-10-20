@@ -21,6 +21,7 @@ import { meta } from "../db/meta.js";
 import { DashboardLayoutShape, saveDashboardLayout } from "../platform/dashboard-layout.js";
 import { composeDashboardSnapshot } from "../platform/dashboard-snapshot.js";
 import { todayFrom } from "../lib/due-day.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -66,7 +67,7 @@ dashboardRouter.put(
       const parsed = DashboardLayoutShape.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad dashboard layout", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }

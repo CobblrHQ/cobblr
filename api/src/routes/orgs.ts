@@ -44,6 +44,7 @@ import { describeChanges } from "../platform/history-describe.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
 import { encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { markRequestReadOnly } from "../lib/request-context.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const orgsRouter = Router();
 
@@ -536,7 +537,7 @@ orgsRouter.patch("/:slug/app-mode", requireAuth, withTenant, async (req, res, ne
     }
     const parsed = AppModeBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     let appMode: { app: string; home_path: string; label: string } | null = null;
@@ -583,7 +584,7 @@ orgsRouter.patch("/:slug/focused", requireAuth, withTenant, async (req, res, nex
     if (!(await requireCapability(req, res, "platform:set-simple-mode"))) return;
     const parsed = FocusedBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     await meta
@@ -628,7 +629,7 @@ orgsRouter.patch("/:slug", requireAuth, withTenant, async (req, res, next) => {
     }
     const parsed = RenameBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const orgId = req.tenant!.org.id;
@@ -693,7 +694,7 @@ orgsRouter.post("/:slug/import-app", requireAuth, withTenant, async (req, res, n
     if (!(await requireCapability(req, res, "platform:import-app"))) return;
     const parsed = ImportAppBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const r = await importFromOwnApp(req.tenant!.org.id, req.session!.id, parsed.data.source_slug);
@@ -718,7 +719,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
     const parsed = CreateOrgBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -780,7 +781,7 @@ orgsRouter.post("/", requireAuth, async (req, res, next) => {
       const bp = BlueprintManifest.safeParse(parsed.data.blueprint);
       if (!bp.success) {
         res.status(400).json({
-          error: { code: "invalid_blueprint", message: "Blueprint manifest failed validation", details: bp.error.issues },
+          error: { code: "invalid_blueprint", message: invalidBodyMessage(bp.error.issues), details: bp.error.issues },
         });
         return;
       }
@@ -825,7 +826,7 @@ orgsRouter.post("/provision-app", requireAuth, async (req, res, next) => {
   try {
     const parsed = ProvisionAppBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const ent = await checkEntitlement({ orgId: "", feature: "workspaces.create", userId: req.session!.id });

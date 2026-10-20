@@ -53,7 +53,10 @@ export async function resolveQrToken(token: string): Promise<ResolveResult> {
     .where("token", "=", token)
     .executeTakeFirst();
   if (!row) return { ok: false, status: "not_found" };
-  if (row.revoked_at) return { ok: false, status: "revoked" };
+  // Which kind of label was turned off decides how it comes back: an action
+  // label is turned on again in Action labels, an item's label is replaced by a
+  // new one (#7603). The kind says nothing about the record it named.
+  if (row.revoked_at) return { ok: false, status: "revoked", mode: row.mode };
   if (row.expires_at && row.expires_at < new Date()) return { ok: false, status: "expired" };
 
   const orgRow = await meta

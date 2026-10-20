@@ -41,7 +41,9 @@ if (!snap) {
 
 // A date must always be PASSED to the publish workflow. Its own fallback is UTC,
 // so a dispatch that omits it silently reopens the split this lint exists to close.
-if (!/inputs["']?\s*:\s*\{[^}]*\bdate\b/.test(daily.replace(/\n/g, " "))) {
+// Through the dispatch door (lib/forge-dispatch.mjs, #7565) the publish passes it as `--input "date=$SNAP_DATE"`.
+const passesDate = /inputs["']?\s*:\s*\{[^}]*\bdate\b/.test(daily.replace(/\n/g, " ")) || /forge_dispatch publish-selfhost-images\.yml[^\n]*--input "date=\$SNAP_DATE"/.test(daily);
+if (!passesDate) {
   failures.push(
     "scripts/release-daily.sh dispatches without passing `date`. The workflow falls back to UTC,\n" +
       "    which is the split this lint closes. Pass SNAP_DATE on every dispatch.",

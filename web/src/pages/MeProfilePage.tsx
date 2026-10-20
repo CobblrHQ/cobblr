@@ -622,7 +622,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
           type="button"
           onClick={() => signOutAll.mutate()}
           disabled={signOutAll.isPending}
-          className="shrink-0 px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 hover:bg-mist-50 dark:hover:bg-slate-800 disabled:opacity-50"
+          className="shrink-0 px-3 py-1.5 text-sm rounded border border-line dark:border-slate-600 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50"
         >
           {signOutAll.isPending ? "signing out…" : "Sign out everywhere"}
         </button>

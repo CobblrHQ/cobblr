@@ -110,7 +110,7 @@ export function StartAppPage() {
   const identityDoor = identityHref && (
     <a
       href={identityHref}
-      className="block w-full text-center rounded-md border border-mortar-300 dark:border-mortar-600 hover:bg-mortar-100 dark:hover:bg-mortar-800 text-sm font-medium px-3 py-2.5 transition"
+      className="block w-full text-center rounded-md border border-mortar-300 dark:border-slate-600 hover:bg-mortar-100 dark:hover:bg-slate-800 text-sm font-medium px-3 py-2.5 transition"
     >
       Continue with your {cfg?.identity?.name ?? productName()} account
     </a>

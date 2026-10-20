@@ -11,7 +11,8 @@
 // a half-made one (it starts from a clean slate). provisionOrgForUser (every
 // door that makes a workspace) tries it twice and, if it still fails, removes
 // the row and throws WorkspaceNotProvisioned, which every route answers as a
-// plain "try again" with nothing kept.
+// plain "try again" with nothing kept. The heal below finishes the workspaces
+// the old code already left half made.
 //
 // meta and the heavier imports are lazy so the pure rule can be unit tested.
 
@@ -96,4 +97,16 @@ export async function provisionWholeOrRemove(
       throw new WorkspaceNotProvisioned(orgName, err);
     }
   }
+}
+
+export interface HalfMade {
+  id: string;
+  created_at: Date | string;
+  owners: number;
+}
+
+/** Which half-made workspaces to finish now. One made in the last ten minutes
+ *  may be a signup still in flight, and is left to it. Pure. */
+export function halfMadeToFinish(rows: HalfMade[], nowMs: number): HalfMade[] {
+  return rows.filter((r) => nowMs - new Date(r.created_at).getTime() > 10 * 60_000);
 }

@@ -22,6 +22,7 @@ import {
   viewRequest,
   withdrawApprovalRequest,
 } from "../platform/approvals.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const approvalRequestsRouter = Router({ mergeParams: true });
 
@@ -61,7 +62,7 @@ approvalRequestsRouter.post("/describe", requireAuth, withTenant, async (req, re
     // ROLE: any member (a read: the explanation a refusal carries)
     const parsed = DescribeBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const t = orgOf(req);
@@ -101,7 +102,7 @@ approvalRequestsRouter.post("/", requireAuth, withTenant, async (req, res, next)
     // ROLE: any member (asking for more is how a member gets it)
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const t = orgOf(req);
@@ -156,7 +157,7 @@ approvalRequestsRouter.post("/:id/decide", requireAuth, withTenant, async (req, 
     // ROLE: owner or admin, checked by decideApprovalRequest (mayDecide)
     const parsed = DecideBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const t = orgOf(req);
@@ -230,7 +231,7 @@ approvalRequestsRouter.post("/:id/complete", requireAuth, withTenant, async (req
     // ROLE: the requester, checked by the request it completes
     const parsed = CompleteBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const row = await completeApprovalRequest(req.params.id!, userOf(req).id, parsed.data);

@@ -230,6 +230,13 @@ async function setFloorplan(db: Db, id: string, fp: Record<string, unknown> | nu
     .execute();
 }
 
+/** Whether a body the page sent is the saved one, compared as a draft keeps
+ *  it; one that is not a draft body at all is not the saved one. */
+export function sameDraftBody(confirmed: unknown, saved: DraftBody): boolean {
+  const parsed = DraftBody.safeParse(confirmed);
+  return parsed.success && stableJson(parsed.data) === stableJson(DraftBody.parse(saved));
+}
+
 /** JSON with object keys in one order, so two equal bodies compare equal
  *  however each was built. */
 function stableJson(v: unknown): string {
@@ -249,8 +256,10 @@ export async function applyDraft(orgId: string, id: string, userId: string | nul
   if (draft.applied_at) throw new DraftRefused(`${draft.name} has already been applied.`);
   // The layout the person confirmed, when the page sends it, must be the one
   // saved: a save that failed left the page showing a newer layout than the
-  // one this would have made real (#7156).
-  if (confirmed !== undefined && stableJson(confirmed) !== stableJson(draft.body)) {
+  // one this would have made real (#7156). Both are read through DraftBody,
+  // so the page's spelling of the saved layout (a rect drawn with
+  // wall_mounted, which a draft does not keep) is the same layout (#7595).
+  if (confirmed !== undefined && !sameDraftBody(confirmed, draft.body)) {
     throw new DraftRefused(`${draft.name} has changes that are not saved yet. Save them, then apply.`);
   }
   const room = await db.selectFrom("core_locations_locations").select(["id", "name"]).where("id", "=", draft.location_id).executeTakeFirst();

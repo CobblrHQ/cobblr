@@ -88,6 +88,7 @@ import { addressLookup, LOOKUP_MIN_CHARS, LOOKUP_TIMEOUT_MS } from "../platform/
 import type { AddressValue } from "@cobblr/platform-contract/address";
 import { optionalField, optionalUuid } from "@cobblr/platform-contract/optional-fields";
 import { currentVia, watchingWrites, type WriteWatch } from "../lib/request-context.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 /** The person's own assistant reading for them: an MCP client or the relay
  *  (the session's ai_door), or Cobb's read tools (x-cobblr-reader). It may
@@ -764,7 +765,7 @@ platformOrgRouter.post(
       const parsed = PlanBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad plan payload", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -857,7 +858,7 @@ platformOrgRouter.post(
       const parsed = InvokeBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad invoke payload", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -1337,7 +1338,7 @@ platformOrgRouter.post(
       const parsed = BindingCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad binding payload", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -1372,7 +1373,7 @@ platformOrgRouter.patch(
       const parsed = BindingPatch.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -1612,7 +1613,7 @@ platformOrgRouter.post("/:slug/field-sections", requireAuth, withTenant, async (
     if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = SectionCreate.safeParse(req.body);
     if (!p.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad section", details: p.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(p.error.issues), details: p.error.issues } });
       return;
     }
     const orgId = req.tenant!.org.id;
@@ -1642,7 +1643,7 @@ platformOrgRouter.patch("/:slug/field-sections/:id", requireAuth, withTenant, as
     if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = SectionPatch.safeParse(req.body);
     if (!p.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad patch", details: p.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(p.error.issues), details: p.error.issues } });
       return;
     }
     const patch: Record<string, unknown> = { updated_at: new Date() };
@@ -1694,7 +1695,7 @@ platformOrgRouter.post("/:slug/field-defs/reorder", requireAuth, withTenant, asy
     if (!(await requireCapability(req, res, "platform:group-fields"))) return;
     const p = FieldReorder.safeParse(req.body);
     if (!p.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad reorder", details: p.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(p.error.issues), details: p.error.issues } });
       return;
     }
     const orgId = req.tenant!.org.id;
@@ -1984,7 +1985,7 @@ platformOrgRouter.put(
       if (!(await requireCapability(req, res, "platform:edit-field"))) return;
       const parsed = NativeFieldOverrideBody.safeParse(req.body);
       if (!parsed.success) {
-        res.status(400).json({ error: { code: "invalid_body", message: "Bad override", details: parsed.error.issues } });
+        res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
         return;
       }
       const d = parsed.data;
@@ -2191,7 +2192,7 @@ platformOrgRouter.post(
       const parsed = FieldDefCreate.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad field def", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -2235,7 +2236,7 @@ platformOrgRouter.patch(
       const parsed = FieldDefPatch.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -2682,7 +2683,7 @@ platformOrgRouter.put(
         res.status(400).json({
           error: {
             code: "invalid_body",
-            message: "Bad predicate override",
+            message: invalidBodyMessage(parsed.error.issues),
             details: parsed.error.issues,
           },
         });

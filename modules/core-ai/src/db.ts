@@ -100,6 +100,7 @@ export interface CoreAiDB {
   core_ai_basics: CoreAiBasicsTable;
   core_ai_basics_misses: CoreAiBasicsMissesTable;
   core_ai_commands: CoreAiCommandsTable;
+  core_ai_command_runs: CoreAiCommandRunsTable;
   core_ai_chat_prefs: CoreAiChatPrefsTable;
   core_ai_chat_writes: CoreAiChatWritesTable;
   core_ai_chat_turns: CoreAiChatTurnsTable;
@@ -282,4 +283,17 @@ export interface CoreAiConversationsTable {
   user_id: string;
   messages: Generated<unknown>;
   updated_at: Generated<Date>;
+}
+
+export interface CoreAiCommandRunsTable {
+  id: string;
+  user_id: string;
+  command_id: string;
+  request: unknown;
+  status: Generated<"running" | "done">;
+  result: unknown | null;
+  status_code: Generated<number>;
+  created_at: Generated<Date>;
+  finished_at: Date | null;
+  delivered_at: Date | null;
 }

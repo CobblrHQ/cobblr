@@ -403,6 +403,14 @@ input[type="datetime-local"]::-webkit-date-and-time-value {
   :where(button, a[href], [role="button"], summary):not(.min-w-min, .min-w-fit, .min-w-max) {
     min-width: 44px !important;
   }
+  /* A control whose words never wrap (whitespace-nowrap) keeps their width as
+     its floor: 44 px in its place let "Add a serial" and "Scan within this"
+     shrink below their words in a row that does not wrap, and the words ran
+     30 and 44 px past their buttons (#7620). One that truncates on purpose
+     (truncate, min-w-0) clips instead, as it asked to. */
+  :where(button, a[href], [role="button"], summary).whitespace-nowrap:not(.truncate, .min-w-0) {
+    min-width: max-content !important;
+  }
   /* A checkbox's label is the box a finger presses: as wide as it is tall. */
   :where(label:has(> input[type="checkbox"]:only-child)) {
     min-width: 44px !important;

@@ -65,6 +65,7 @@ import { ORG_ROLES, ORG_ROLE_RANK, roleSatisfies, type OrgRoleName } from "@cobb
 import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contract/keyset-cursor";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const meRouter = Router();
 
@@ -125,7 +126,7 @@ meRouter.patch("/me/workspaces/order", requireAuth, async (req, res, next) => {
   try {
     const parsed = ReorderBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const userId = req.session!.id;
@@ -170,7 +171,7 @@ meRouter.patch("/me/default-workspace", requireAuth, async (req, res, next) => {
   try {
     const parsed = DefaultBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const userId = req.session!.id;
@@ -267,7 +268,7 @@ meRouter.patch("/me", requireAuth, async (req, res, next) => {
     const parsed = MeUpdate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad patch", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -373,7 +374,7 @@ meRouter.post("/me/password", requireAuth, async (req, res, next) => {
     const parsed = PasswordChange.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -868,7 +869,7 @@ meRouter.put("/me/delivery-windows", requireAuth, async (req, res, next) => {
     const parsed = WindowBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -1359,7 +1360,7 @@ meRouter.post(
       const parsed = ChannelBindingBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad subscription payload", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -1503,7 +1504,7 @@ meRouter.post("/me/notifications/self-test", requireAuth, async (req, res, next)
     const parsed = SelfTestBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -1699,7 +1700,7 @@ meRouter.post("/me/api-tokens", requireAuth, async (req, res, next) => {
     const parsed = TokenCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -1858,7 +1859,7 @@ meRouter.post("/me/links", requireAuth, async (req, res, next) => {
     const parsed = LinkCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -2041,7 +2042,7 @@ meRouter.patch("/me/links/:id", requireAuth, async (req, res, next) => {
     const parsed = LinkPatch.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad patch body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -2294,7 +2295,7 @@ meRouter.post("/me/signup-invites", requireAuth, async (req, res, next) => {
     }
     const parsed = FriendInvite.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad invite", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     // Cap unused invites per user so an account can't mint unbounded signups.
@@ -2738,7 +2739,7 @@ meRouter.put("/me/communication-prefs", requireAuth, async (req, res, next) => {
   try {
     const parsed = PutPrefBody.safeParse(req.body ?? {});
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad preference", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const { notification_type, channel, enabled } = parsed.data;

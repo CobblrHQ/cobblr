@@ -55,6 +55,7 @@ import { withArticle } from "@cobblr/platform-contract/plural";
 import { putPart, type PartPlace } from "./move-part";
 import { PART_FIELD_LABELS } from "../part-field-labels";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
+import { PART_NAME_MAX } from "../part-limits";
 
 // The part-detail body. Rendered inside PartDetailModal (below) — the
 // detail view is a modal over the list now (consistent with machines),
@@ -1034,6 +1035,7 @@ function EditableTitle({
     return (
       <input aria-label="Name"
         autoFocus
+        maxLength={PART_NAME_MAX}
         // DRAFT-OK: mounted when the field opens for editing and gone when it closes; for its whole life the person is the one changing it.
         defaultValue={value}
         onBlur={(e) => {

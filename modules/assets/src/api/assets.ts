@@ -8,7 +8,7 @@ import { DISPOSITION_KEY, dispositionOf, readRecordDisposition } from "@cobblr/p
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { forViewer, maySeeSerials, refuseSerialWrite, withoutSerial } from "./serial-scope.js";
+import { forViewer, hiddenOnRegister, maySeeSerials, refuseCostWrite, refuseSerialWrite, withoutSerial } from "./serial-scope.js";
 import { routeUnknownToMetadata, refuseUnknownFields, coerceMetadata, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 
 export const assetsRouter = Router({ mergeParams: true });
@@ -101,25 +101,34 @@ assetsRouter.get(
       ])
       .where("instance", "=", instanceOf(req))
       .executeTakeFirst();
-    const main = await platform().money.currency(tenantContext(req).org.id);
-    const priced = await db.selectFrom("assets_assets").select(["purchase_price_cents", "metadata", "purchased_at", "created_at"])
-      .where("instance", "=", instanceOf(req)).where("archived_at", "is", null).where("purchase_price_cents", "is not", null).execute();
-    const total = await platform().money.total(tenantContext(req).org.id, priced.map((r) => ({
-      value: { amount: amountOf(r.purchase_price_cents as import("@cobblr/platform-contract/money").Cents), currency: fieldCurrency(r.metadata, "purchase_price_cents", main) },
-      day: fieldDay(r.purchased_at) || fieldDay(r.created_at) || "",
-    })), main);
+    // The paid total is made of prices: someone who may not see costs gets
+    // no total either, not one the kernel cannot recognise as a price.
+    const costsHidden = (await hiddenOnRegister(req, kindOf(req))).has("purchase_price_cents");
+    const paid = costsHidden ? null : await paidTotal(req);
     const answer = pagedAnswer(rows, page);
     // Person and relation fields read as names (assigned_to_label).
     res.json({
       ...answer,
       items: await forViewer(req, await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items)),
       can_see_serials: await maySeeSerials(req),
+      can_see_costs: !costsHidden,
       archived_count: Number(put?.n ?? 0),
-      paid_total_cents: centsFromAmount(total.amount),
-      money_total: total,
+      ...(paid ? { paid_total_cents: centsFromAmount(paid.amount), money_total: paid } : {}),
     });
   }),
 );
+
+/** What the register's assets still held cost, in the workspace's currency. */
+async function paidTotal(req: Parameters<typeof tenantDb>[0]) {
+  const db = tenantDb(req);
+  const main = await platform().money.currency(tenantContext(req).org.id);
+  const priced = await db.selectFrom("assets_assets").select(["purchase_price_cents", "metadata", "purchased_at", "created_at"])
+    .where("instance", "=", instanceOf(req)).where("archived_at", "is", null).where("purchase_price_cents", "is not", null).execute();
+  return platform().money.total(tenantContext(req).org.id, priced.map((r) => ({
+    value: { amount: amountOf(r.purchase_price_cents as import("@cobblr/platform-contract/money").Cents), currency: fieldCurrency(r.metadata, "purchase_price_cents", main) },
+    day: fieldDay(r.purchased_at) || fieldDay(r.created_at) || "",
+  })), main);
+}
 
 assetsRouter.get(
   "/:id",
@@ -150,6 +159,7 @@ assetsRouter.post(
   "/",
   asyncHandler(async (req, res) => {
     if (await refuseSerialWrite(req, res, req.body)) return;
+    if (await refuseCostWrite(req, res, req.body, kindOf(req))) return;
     await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetCreate.safeParse(routed);
@@ -207,6 +217,7 @@ assetsRouter.patch(
       return;
     }
     if (await refuseSerialWrite(req, res, req.body)) return;
+    if (await refuseCostWrite(req, res, req.body, kindOf(req))) return;
     await refuseUnknownFields(req, req.body, ASSET_NATIVE_KEYS, "assets:asset");
     const routed = routeUnknownToMetadata(req.body, ASSET_NATIVE_KEYS);
     const parsed = AssetUpdate.safeParse(routed);

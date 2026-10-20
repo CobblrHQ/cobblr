@@ -66,7 +66,8 @@ export function YourAiDefaults({ connections }: { connections: UserConnection[] 
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const useMineThere = useMutation({
-    mutationFn: async ({ slug, capabilities }: { slug: string; capabilities: string[] }) => {
+    mutationFn: async ({ slug, job, capabilities, ownOrder }: { slug: string; job: string; capabilities: string[]; ownOrder: boolean }) => {
+      if (ownOrder) await api.clearWorkspaceAiOrder(slug, job);
       for (const c of capabilities) await api.deleteAiCapabilityDefault(slug, c);
     },
     onSuccess: () => refresh(),
@@ -128,7 +129,7 @@ export function YourAiDefaults({ connections }: { connections: UserConnection[] 
               highlight={highlight}
               onHighlight={(id) => setHighlight((h) => (h === id ? null : id))}
               onSave={(steps) => save.mutate({ job: g.id, steps })}
-              onUseMineThere={(slug, capabilities) => useMineThere.mutate({ slug, capabilities })}
+              onUseMineThere={(slug, capabilities, ownOrder) => useMineThere.mutate({ slug, job: g.id, capabilities, ownOrder })}
             />
           );
         })}
@@ -174,7 +175,7 @@ export function JobRow({
   highlight: string | null;
   onHighlight: (credentialId: string) => void;
   onSave: (steps: Step[]) => void;
-  onUseMineThere: (slug: string, capabilities: string[]) => void;
+  onUseMineThere: (slug: string, capabilities: string[], ownOrder: boolean) => void;
   /** Drag-to-reorder; the shell's lazily loaded kit unless a test hands one in. */
   kit?: SortKit;
   /** Shown, not changed: a member reading a workspace's order. */
@@ -374,7 +375,7 @@ export function JobRow({
           {o.can_change && job.steps.length > 0 && (
             <>
               {" · "}
-              <button type="button" disabled={pending} onClick={() => onUseMineThere(o.slug, o.capabilities)} className="text-accent hover:underline disabled:opacity-50">
+              <button type="button" disabled={pending} onClick={() => onUseMineThere(o.slug, o.capabilities, o.own_order)} className="text-accent hover:underline disabled:opacity-50">
                 Use my defaults there
               </button>
             </>

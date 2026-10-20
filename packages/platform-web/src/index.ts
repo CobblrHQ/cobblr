@@ -18,6 +18,7 @@ export {
   type FlowRegistry,
 } from "./context";
 export { useCan, useCapabilities, useRoleAtLeast, capabilityAllows, myCapabilitiesKey, type MyCapabilities, type CapabilitySource } from "./can";
+export { rowOpen, ROW_OWN_CONTROLS } from "./row-open";
 export { EntityActionsBar } from "./EntityActionsBar";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { AllergenPills, allergenWords } from "./AllergenPills";
@@ -278,6 +279,7 @@ export {
   runPrintDirective, printDirectiveOf,
   type PrintDirective, type PrintDirectiveResult,
 } from "./print-directive";
+export { localBridgeOf } from "./local-bridge";
 
 // Serial (Web Serial) printing — for Bluetooth CLASSIC / SPP label printers a
 // browser cannot reach over Web Bluetooth. Shares renderLabelBitmap +
@@ -393,7 +395,7 @@ export { useStationWakeLock } from "./station-wake-lock";
 export { ConnectCobblr } from "./ConnectCobblr";
 export type { OwnConnections } from "./ConnectCobblr";
 export { GUEST_NOT_SHARED, makesBackgroundWrites, mayRead, refusedForGuest, rememberRole, roleIn, workspaceFetch } from "./acting-role";
-export { PRIMED_FOR_MS, clearPrimedReads, holdPrimedReads, primeReads, primeTicket, primedRead, resetPrimedReads } from "./primed-reads";
+export { PRIMED_FOR_MS, clearPrimedReads, holdPrimedReads, primeReads, primeTicket, primedRead, releasePrimedReads, resetPrimedReads } from "./primed-reads";
 export { resetSharedReads, sharedRead } from "./shared-reads";
 export { StatusRow, type StatusRowProps } from "./StatusRow";
 export { configureProductName, productName } from "./product-name";

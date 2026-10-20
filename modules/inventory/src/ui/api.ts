@@ -284,6 +284,8 @@ export interface ImportResponse {
   rows: ImportRow[];
   errors: { row_number: number; message: string }[];
   detected_headers: Record<string, string | null>;
+  /** Columns of the file the import does not read, and why. */
+  unread_columns?: { header: string; reason: string }[];
   committed: number;
   ids?: string[];
 }

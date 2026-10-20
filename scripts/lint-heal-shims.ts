@@ -31,10 +31,22 @@
 // today. A heal whose rows carry a marker only the old code set says so with
 // `// SINCE BY MARKER: <why>`.
 //
+// Fifth: a heal is deleted only after a stable release has carried it (#7679).
+// "Clean on all six" is OUR deployments, which run the nightly; an install that
+// jumps from one stable release to the next never ran a heal added in between.
+// A change that deletes a file whose header states DONE WHEN, and that the latest
+// stable tag did not ship (scripts/heals-in-stable.json), is refused. The list is
+// regenerated at each cut (scripts/heals-in-stable.mjs --write <tag>) and held to
+// the tag here, so it cannot go stale.
+//
 // Run: npx tsx scripts/lint-heal-shims.ts
+//   HEAL_RETIRE_RANGE=<base>..<head>  judges the deletions in that range instead of origin/main...HEAD
+import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { isEmbeddedPayload } from "./lib/embedded-payloads.mjs";
+import { healsRetiredTooEarly, isHealPath, isHealSource } from "./lib/heal-retirement.mjs";
+import { latestStableTag, read as readStable } from "./heals-in-stable.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const SRC = join(ROOT, "api", "src");
@@ -151,9 +163,36 @@ for (const [key, by] of recordedKeys) {
   if (!states) failures.push(`${by}: records heal shim "${key}", which is not a file carrying DONE WHEN (renamed, or retired without its recording)`);
 }
 
+const git = (...args: string[]): string => execFileSync("git", args, { cwd: ROOT, encoding: "utf8", maxBuffer: 256 << 20, stdio: ["ignore", "pipe", "pipe"] });
+let retirementNote = "";
+{
+  const stable = readStable() as { tag: string; heals: string[] };
+  const newest = latestStableTag();
+  if (newest === null) retirementNote = "; retirements not judged against a tag (this clone has none)";
+  const range = process.env.HEAL_RETIRE_RANGE || "origin/main...HEAD";
+  const [from, to] = range.includes("...") ? range.split("...") : range.split("..");
+  try {
+    const base = range.includes("...") ? git("merge-base", from!, to!).trim() : from!;
+    const deleted = git("diff", "--name-only", "--diff-filter=D", base, to!).split("\n").filter(Boolean);
+    const olds = deleted.map((path) => ({ path, oldSource: git("show", `${base}:${path}`) }));
+    const refused = healsRetiredTooEarly(olds, stable.heals);
+    // The list is the latest cut's. Behind a newer tag it would refuse a heal that tag carried, so a
+    // change that deletes a heal says to refresh it; one that deletes none is not held up by the cut.
+    const behind = newest !== null && newest !== stable.tag;
+    if (behind && olds.some((o) => isHealPath(o.path) && isHealSource(o.oldSource))) {
+      failures.push(`scripts/heals-in-stable.json lists the heals of ${stable.tag}, and ${newest} has been cut: run node scripts/heals-in-stable.mjs --write ${newest} and commit it first, so a heal ${newest} carried may be retired`);
+    }
+    for (const m of refused) failures.push(m);
+    if (behind) retirementNote += `; scripts/heals-in-stable.json is behind ${newest} (run heals-in-stable.mjs --write ${newest})`;
+  } catch (e) {
+    // No origin/main to compare with (a bare checkout): say so; CI always has it.
+    retirementNote ||= `; retirements not judged (${(e as Error).message.split("\n")[0]})`;
+  }
+}
+
 if (failures.length) {
   console.error(`[lint:heal-shims] ${failures.length} heal-shim problem(s):`);
   for (const f of failures) console.error(`  ${f}`);
   process.exit(1);
 }
-console.log(`[lint:heal-shims] OK — every heal shim states DONE WHEN / PERMANENT RECONCILE, and every DONE WHEN is recorded (${recordedKeys.size}), and every per-workspace shim is gated`);
+console.log(`[lint:heal-shims] OK — every heal shim states DONE WHEN / PERMANENT RECONCILE, and every DONE WHEN is recorded (${recordedKeys.size}), and every per-workspace shim is gated, and no heal was deleted before a stable release carried it${retirementNote}`);

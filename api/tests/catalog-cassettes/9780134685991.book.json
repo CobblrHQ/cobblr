@@ -1,0 +1,29 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openlibrary",
+    "title": "Effective Java",
+    "brand": "Addison-Wesley Professional",
+    "model": "9780134685991",
+    "description": null,
+    "category": "Books",
+    "image_url": "https://covers.openlibrary.org/b/id/12420356-M.jpg",
+    "raw": {
+      "openlibrary": {
+        "key": "/books/OL31838212M",
+        "url": "http://openlibrary.org/books/OL31838212M/Effective_Java",
+        "authors": "Joshua Bloch",
+        "isbn": "9780134685991",
+        "publish_date": "December 27, 2017"
+      }
+    },
+    "fields": {
+      "isbn": "9780134685991",
+      "title": "Effective Java",
+      "author": "Joshua Bloch",
+      "year": 2017,
+      "publisher": "Addison-Wesley Professional"
+    },
+    "decoder_id": "isbn"
+  }
+}

@@ -7,8 +7,11 @@
 //
 // See docs/design-decisions/no-ai-chat-training.md.
 
+import { BASICS_MESSAGE_MAX } from "@cobblr/platform-contract/basics-limits";
 import { requireAPerson } from "@cobblr/platform-contract/person-door";
-import { Router } from "express";
+import { Router, type Request } from "express";
+import { isDeepStrictEqual } from "node:util";
+import { randomUUID } from "node:crypto";
 import { groupWritesByRequest } from "./group-writes.js";
 import { z } from "zod";
 import { sql } from "kysely";
@@ -19,7 +22,7 @@ import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import { getTool, unitsCounted, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, fillSlots, slotValues, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
+import { bindCommand, deriveCommand, fillSlots, oneAtATimeReply, slotValues, splitInstructions, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
@@ -63,7 +66,7 @@ async function guideAnswerFor(
 
 const Keywords = z.array(z.string().trim().min(1).max(80)).min(1).max(40);
 const AnswerBody = z.object({
-  message: z.string().min(1).max(2000),
+  message: z.string().min(1).max(BASICS_MESSAGE_MAX),
   selection_ids: z.array(z.string().max(64)).max(200).optional(),
   /** The prior turn, summarised by the client (which keeps the conversation) so
    *  control words — yes, again, undo — can point at something. Bounded, and
@@ -71,8 +74,8 @@ const AnswerBody = z.object({
    *  endpoints that re-validate (see control-context.ts). */
   prior: z
     .object({
-      offered: z.object({ id: z.string().max(64), message: z.string().max(2000) }).optional(),
-      ran: z.object({ id: z.string().max(64), message: z.string().max(2000) }).optional(),
+      offered: z.object({ id: z.string().max(64), message: z.string().max(BASICS_MESSAGE_MAX) }).optional(),
+      ran: z.object({ id: z.string().max(64), message: z.string().max(BASICS_MESSAGE_MAX) }).optional(),
       ledger_ids: z.array(z.string().uuid()).max(50).optional(),
     })
     .optional(),
@@ -162,6 +165,21 @@ basicsRouter.post(
           operations: command.operations.length,
           summary: command.summary ?? describeOps(command.operations),
         },
+      });
+      return;
+    }
+    // Two instructions in one sentence bind to no command (#7590). When the
+    // first one alone would, say so, rather than a keyword answer about
+    // whichever word happened to match.
+    const steps = splitInstructions(parsed.data.message);
+    if (steps.length > 1 && (await matchCommand(db, steps[0]!, tenantContext(req).org.id).catch(() => null))) {
+      res.json({
+        matched: true,
+        intent: "one instruction at a time",
+        key: null,
+        score: 99,
+        candidates: [],
+        reply: oneAtATimeReply(steps),
       });
       return;
     }
@@ -679,7 +697,7 @@ basicsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const body = z
       .object({
-        message: z.string().min(1).max(2000),
+        message: z.string().min(1).max(BASICS_MESSAGE_MAX),
         // What the user is pointing at, so "delete duplicates" can mean the
         // ones in THIS rack rather than every one in the workspace.
         selection_ids: z.array(z.string().max(64)).max(200).optional(),
@@ -880,16 +898,13 @@ basicsRouter.get(
 // what the user typed, never the operations. Each write goes through
 // performWrite, so a command a workspace taught itself is ledgered and undoable
 // exactly like one an AI performed.
-// AI-REACH: exempt — this module IS the assistant; running its own learned
-// commands is a person confirming, not a tool the assistant reaches for
-basicsRouter.post(
-  "/commands/:id/run",
-  asyncHandler(async (req, res) => {
+const runConfirmedCommand = asyncHandler(async (req, res) => {
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     if (!(await requireAPerson(req, res))) return;
     const body = z
       .object({
-        message: z.string().min(1).max(2000),
+        message: z.string().min(1).max(BASICS_MESSAGE_MAX),
+        run_id: z.string().uuid().optional(),
         selection_ids: z.array(z.string().max(64)).max(200).optional(),
         /** One section of a computed plan (its key), when the card offered
          *  the destinations one at a time. Absent: the whole plan. */
@@ -897,6 +912,70 @@ basicsRouter.post(
       })
       .safeParse(req.body);
     if (!body.success) return badBody(res, body.error);
+    const db = tenantDb(req);
+    const userId = sessionUserId(req)!;
+    const runId = body.data.run_id ?? randomUUID();
+    const { run_id: _runId, ...input } = body.data;
+    const claimed = await db.insertInto("core_ai_command_runs").values({
+      id: runId, user_id: userId, command_id: req.params.id!, request: JSON.stringify(input),
+    }).onConflict((oc) => oc.column("id").doNothing()).returning("id").executeTakeFirst();
+    if (!claimed) {
+      const run = await db.selectFrom("core_ai_command_runs").selectAll().where("id", "=", runId).where("user_id", "=", userId).executeTakeFirst();
+      if (!run || run.command_id !== req.params.id || !isDeepStrictEqual(run.request, input)) {
+        res.status(409).json({ error: { code: "run_conflict", message: "That run belongs to a different instruction." } });
+        return;
+      }
+      if (run.status === "done") res.status(run.status_code).json(run.result);
+      else res.status(202).json({ run_id: runId, status: "running" });
+      return;
+    }
+    let outcome: { status: number; body: Record<string, unknown> };
+    try {
+      outcome = await executeCommand(req, input, runId);
+    } catch (error) {
+      console.error("[core-ai] command run interrupted", runId, error);
+      const writes = await db.selectFrom("core_ai_chat_writes").select(["id", "tool"]).where("turn_id", "=", runId).where("user_id", "=", userId).execute();
+      outcome = { status: 200, body: {
+        ok: false, done: writes.length, failed: 1,
+        message: "The command stopped before I could confirm its full outcome. Check the records before asking again.",
+        ledger_ids: writes.map((w) => w.id), undoable: writes.every((w) => w.tool !== "action"),
+      } };
+    }
+    const result = { ...outcome.body, run_id: runId };
+    await db.updateTable("core_ai_command_runs").set({
+      result: JSON.stringify(result), status_code: outcome.status, status: "done", finished_at: new Date(),
+    } as never).where("id", "=", runId).execute();
+    res.status(outcome.status).json(result);
+});
+
+// AI-REACH: exempt internal: a person confirms their command; the assistant cannot confirm its own writes
+// UI-REACH: compatibility for older clients; the current panel uses /commands/:id/runs
+basicsRouter.post("/commands/:id/run", runConfirmedCommand);
+// AI-REACH: exempt internal: a person confirms their command; the assistant cannot confirm its own writes
+basicsRouter.post("/commands/:id/runs", runConfirmedCommand);
+
+// AI-REACH: exempt internal: a person recovers their own confirmed command and its Undo handles
+basicsRouter.get("/command-runs", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await requireAPerson(req, res))) return;
+  const items = await tenantDb(req).selectFrom("core_ai_command_runs").selectAll()
+    .where("user_id", "=", sessionUserId(req)!).where("delivered_at", "is", null).orderBy("created_at").execute();
+  res.json({ items });
+}));
+
+// AI-REACH: exempt internal: a person reads the outcome of their own confirmed command
+basicsRouter.get("/command-runs/:id", asyncHandler(async (req, res) => {
+  if (!requireRole(req, res, "owner", "admin", "member")) return;
+  if (!(await requireAPerson(req, res))) return;
+  const id = z.string().uuid().safeParse(req.params.id);
+  if (!id.success) return badBody(res, id.error);
+  const run = await tenantDb(req).selectFrom("core_ai_command_runs").selectAll()
+    .where("id", "=", id.data).where("user_id", "=", sessionUserId(req)!).executeTakeFirst();
+  if (!run) { res.status(404).json({ error: { code: "not_found", message: "That command run is not available." } }); return; }
+  res.json({ run });
+}));
+
+async function executeCommand(req: Request, body: { message: string; selection_ids?: string[]; section?: string }, runId: string): Promise<{ status: number; body: Record<string, unknown> }> {
     const db = tenantDb(req);
     const wanted = req.params.id!;
     // A shipped command has no row in the tenant: it belongs to a module, and
@@ -919,32 +998,29 @@ basicsRouter.post(
     if (wanted.startsWith("computed:")) {
       const computed = COMPUTED_COMMANDS.find((c) => c.id === wanted.slice("computed:".length));
       if (!computed) {
-        res.status(404).json({ error: { code: "unknown_command", message: "No such command." } });
-        return;
+        return { status: 404, body: { error: { code: "unknown_command", message: "No such command." } } };
       }
       const wsApiC = chatWorkspaceApi(ctxOf(req));
       const plan = await computed.plan({
         wsApi: wsApiC,
         // The same sentence the offer was made for, so the re-computation is
         // of the SAME request rather than of the command in the abstract.
-        message: body.data.message,
-        ...(body.data.selection_ids?.length ? { selectionIds: body.data.selection_ids } : {}),
+        message: body.message,
+        ...(body.selection_ids?.length ? { selectionIds: body.selection_ids } : {}),
       });
       if (!plan?.operations.length) {
-        res.json({ ok: true, done: 0, failed: 0, message: "Nothing to do: there are no duplicates now." });
-        return;
+        return { status: 200, body: { ok: true, done: 0, failed: 0, message: "Nothing to do: there are no duplicates now." } };
       }
       // One destination of several: only its operations, re-computed like the
       // rest, so a section that is no longer there (the page changed, or it
       // already ran) is refused by name rather than run as something else.
       let operations = plan.operations;
-      if (body.data.section) {
-        const section = plan.sections?.find((s) => s.key === body.data.section);
+      if (body.section) {
+        const section = plan.sections?.find((s) => s.key === body.section);
         if (!section) {
-          res.status(409).json({
+          return { status: 409, body: {
             error: { code: "section_gone", message: "That part of the plan is not there any more: the page has changed since it was offered. Nothing was changed." },
-          });
-          return;
+          } };
         }
         operations = section.operations;
       }
@@ -952,10 +1028,11 @@ basicsRouter.post(
       const outs = await performWrites(wsApiC, db, uid, operations.map(writeOf), {
         auto: false,
         orgId: tenantContext(req).org.id,
-        prompt: body.data.message,
+        prompt: body.message,
+        turnId: runId,
       });
-      res.json({
-        ...(body.data.section ? { section: body.data.section } : {}),
+      return { status: 200, body: {
+        ...(body.section ? { section: body.section } : {}),
         ok: outs.ok,
         done: outs.count,
         failed: outs.failed.length,
@@ -968,8 +1045,7 @@ basicsRouter.post(
         ...(outs.destination ? { destination: outs.destination } : {}),
         // The records it changed, named, so the result's sentence opens them.
         ...(outs.touched?.length ? { touched: outs.touched } : {}),
-      });
-      return;
+      } };
     }
     if (wanted.startsWith("shipped:")) {
       const id = wanted.slice("shipped:".length);
@@ -983,15 +1059,13 @@ basicsRouter.post(
         .executeTakeFirst();
     }
     if (!row || !row.enabled) {
-      res.status(404).json({ error: { code: "not_found", message: "No such command." } });
-      return;
+      return { status: 404, body: { error: { code: "not_found", message: "No such command." } } };
     }
-    const ops = bindCommand(asLearned(row), body.data.message);
+    const ops = bindCommand(asLearned(row), body.message);
     if (!ops?.length) {
-      res.status(400).json({
+      return { status: 400, body: {
         error: { code: "no_match", message: `That does not fit "${row.template}", so I have not done anything.` },
-      });
-      return;
+      } };
     }
     const wsApi = chatWorkspaceApi(ctxOf(req));
     const userId = sessionUserId(req) ?? "";
@@ -1000,11 +1074,11 @@ basicsRouter.post(
     const reqs = ops.map(writeOf);
     const outcomes: WriteOutcome[] = [];
     for (const r of reqs) {
-      outcomes.push(await performWrite(wsApi, db, userId, r, { auto: false, prompt: body.data.message, orgId: tenantContext(req).org.id }));
+      outcomes.push(await performWrite(wsApi, db, userId, r, { auto: false, prompt: body.message, turnId: runId, orgId: tenantContext(req).org.id }));
     }
     const done = outcomes.filter((o) => o.ok);
     const failed = outcomes.filter((o) => !o.ok);
-    res.json({
+    const result = {
       ok: failed.length === 0,
       done: done.length,
       failed: failed.length,
@@ -1013,7 +1087,7 @@ basicsRouter.post(
       undoable: done.every((d) => d.undoable !== false),
       ...(done.find((d) => d.destination)?.destination ? { destination: done.find((d) => d.destination)!.destination } : {}),
       ...(touchedBy(done).length ? { touched: touchedBy(done) } : {}),
-    });
+    };
     if (done.length && !wanted.startsWith("shipped:")) {
       await db
         .updateTable("core_ai_commands")
@@ -1022,8 +1096,8 @@ basicsRouter.post(
         .execute()
         .catch(() => {});
     }
-  }),
-);
+    return { status: 200, body: result };
+}
 
 /** Fields the tool result will carry per kind: native declared fields plus
  *  this workspace's custom ones. exposableFields is applied by the route the
@@ -1131,7 +1205,7 @@ basicsRouter.post(
     if (!requireRole(req, res, "owner", "admin", "member")) return;
     const body = z
       .object({
-        message: z.string().min(1).max(2000),
+        message: z.string().min(1).max(BASICS_MESSAGE_MAX),
         // Which of Cobb's two worlds to answer in. The client already holds
         // this (it renders the whole panel differently either way), and all
         // that rides on it is WHICH true sentence gets shown — not worth an

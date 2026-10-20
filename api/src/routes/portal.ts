@@ -15,6 +15,7 @@ import { meta } from "../db/meta.js";
 import { grantCapability, grantableActions } from "../platform/capability-grants.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import * as activity from "../platform/activity.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const portalRouter = Router({ mergeParams: true });
 
@@ -115,7 +116,7 @@ portalRouter.put(
       const parsed = PortalConfigShape.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad portal config", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -225,7 +226,7 @@ portalRouter.post(
       const parsed = GrantBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad grant", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -263,7 +264,7 @@ portalRouter.delete(
       const parsed = GrantBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
-          error: { code: "invalid_body", message: "Bad grant", details: parsed.error.issues },
+          error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
         });
         return;
       }
@@ -342,7 +343,7 @@ portalRouter.put("/:slug/field-scopes", requireAuth, withTenant, async (req, res
     if (!adminOnly(req, res)) return;
     const parsed = FieldScopeBody.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     await meta

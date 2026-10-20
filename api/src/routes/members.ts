@@ -29,6 +29,7 @@ import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from ".
 import { handOffThings, type HandOffResult } from "../platform/person-things.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { withWorkspaceLock } from "../platform/workspace-lock.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const membersRouter = Router({ mergeParams: true });
 // /accept-invite/:token doesn't have a tenant slug in the path so it
@@ -116,7 +117,7 @@ membersRouter.patch("/:userId", requireAuth, withTenant, async (req, res, next) 
     const parsed = RolePatch.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -395,7 +396,7 @@ membersRouter.post("/invites", requireAuth, withTenant, async (req, res, next) =
     const parsed = InviteCreate.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }
@@ -777,7 +778,7 @@ invitesRootRouter.post("/invites/:token/accept-signup", async (req, res, next) =
     }
     const parsed = AcceptSignup.safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad request body", details: parsed.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues } });
       return;
     }
     const email = parsed.data.email.toLowerCase().trim();

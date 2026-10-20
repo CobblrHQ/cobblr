@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from "express";
 import type { z } from "zod";
 import { roleSatisfies, roleRefusal } from "@cobblr/platform-contract/org-roles";
 import type { OrgRoleName as OrgRole } from "@cobblr/platform-contract/org-roles";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 type AsyncHandler = (req: Request, res: Response) => Promise<unknown>;
 
@@ -15,7 +16,7 @@ export function asyncHandler(fn: AsyncHandler) {
 
 export function badBody(res: Response, error: z.ZodError): void {
   res.status(400).json({
-    error: { code: "invalid_body", message: "Bad request body", details: error.issues },
+    error: { code: "invalid_body", message: invalidBodyMessage(error.issues), details: error.issues },
   });
 }
 

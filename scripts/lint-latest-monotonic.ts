@@ -2,21 +2,13 @@
 /**
  * lint:latest-monotonic — `:latest` may only ever ADVANCE to a newer commit.
  *
- * Main's image builds run one at a time now (one group per ref, #3551), but a
- * workflow_dispatch, a re-run or a build that outlives its successor can still
- * finish out of order. That is only safe because the push step refuses to move
- * `:latest` backwards: it reads the commit timestamp off the image `:latest`
- * currently points at and skips its own push when that one is newer. (From
- * 2026-09-09 to 2026-09-23 main built one group PER COMMIT, which made
- * overlapping builds the normal case; the guard predates both.)
+ * :latest is what staging, the canary's web and the cloud overlay's rebuild pull. Since 2026-10-20 it is a judged
+ * commit's image: builds push only :<sha>, and the deploy (deploy-when-ready.mjs) moves :latest to the commit whose
+ * test passed, forward only by commit time against what :latest points at now (lib/registry-latest.mjs). Before
+ * that, :latest was pushed at build, and with main tested once for each set the merge queue lands it ran ahead of
+ * the verdict: staging pulled d21deb10, which no test had judged.
  *
- * Take the guard away and nothing fails, nothing goes red, and the fleet
- * quietly starts deploying whichever build happened to finish last — which on
- * two boxes of different speeds is regularly the older one. Deploy-trigger
- * cannot save you either: it carries no version, it just tells Watchtower to
- * pull `:latest`, so a wrong `:latest` IS a wrong deploy.
- *
- * This checks the guard is still there and still compares before pushing.
+ * This checks no build pushes :latest, and the deploy's guard is still there and runs before it triggers.
  */
 import { readFileSync } from "node:fs";
 
@@ -25,24 +17,30 @@ const FILE = ".forgejo/workflows/docker-build.yml";
 const src = readFileSync(`${ROOT}/${FILE}`, "utf8");
 
 const problems: string[] = [];
-const needs: Array<[RegExp, string]> = [
-  [/cobblr\.commit-ts/, "reads the `cobblr.commit-ts` label off the current :latest"],
-  [/MY_TS=\$\(git show -s --format=%ct HEAD\)/, "reads this commit's timestamp (MY_TS)"],
-  [/\[\s*"\$CUR_TS"\s*-gt\s*"\$MY_TS"\s*\]/, "compares :latest's timestamp against this commit's"],
-  [/not regressing it to/, "says plainly, in the log, when it declines to move :latest"],
-];
-for (const [re, what] of needs) {
-  if (!re.test(src)) problems.push(`${FILE} no longer ${what}.`);
+// SINCE 2026-10-20 :latest is a judged commit's image. A build pushes only :<sha>; the deploy moves :latest to the
+// commit whose test passed (scripts/deploy-when-ready.mjs), forward only, against what :latest points at now
+// (scripts/lib/registry-latest.mjs latestMove). A build that pushed :latest again would put an unjudged commit on
+// staging the moment it finished (d21deb10 on 2026-10-20).
+if (/-t "[^"]*:latest"/.test(src) || /docker push "[^"]*:latest"/.test(src)) {
+  problems.push(`${FILE} tags or pushes :latest at build again: only the deploy moves it, to a judged commit.`);
 }
-// The comparison must GUARD the push, not merely appear somewhere in the file.
-const guardIdx = src.search(/\[\s*"\$CUR_TS"\s*-gt\s*"\$MY_TS"\s*\]/);
-const pushIdx = src.search(/docker push "\$IMG:latest"/);
-if (guardIdx < 0 || pushIdx < 0 || guardIdx > pushIdx) {
-  problems.push(`${FILE}: the :latest push is not behind the timestamp comparison.`);
+const LIB = "scripts/lib/registry-latest.mjs";
+const lib = readFileSync(`${ROOT}/${LIB}`, "utf8");
+if (!/export function latestMove\(judgedTs, currentTs\)/.test(lib) || !/currentTs > judgedTs/.test(lib)) {
+  problems.push(`${LIB} no longer compares the judged commit's time against what :latest points at now.`);
+}
+const DEPLOY = "scripts/deploy-when-ready.mjs";
+const deploy = readFileSync(`${ROOT}/${DEPLOY}`, "utf8");
+const moveIdx = deploy.search(/await moveLatest\(/);
+const triggerIdx = deploy.search(/\n {2}await trigger\(\);/);
+if (moveIdx < 0 || triggerIdx < 0 || moveIdx > triggerIdx) {
+  problems.push(`${DEPLOY}: the deploy does not move :latest to the judged commit before it triggers.`);
 }
 // One build at a time, the latest waiting (#3551). A per-commit group lets a
-// burst of merges build concurrently for commits main has already passed.
-if (!/^\s*group: docker-build-\$\{\{ github\.ref \}\}\s*$/m.test(src)) {
+// burst of merges build concurrently for commits main has already passed. A judged commit's own pinned build
+// (inputs.sha, 2026-10-20) has a group of its own, so the next push neither cancels it nor is cancelled by it;
+// every push still shares the one per ref.
+if (!/^\s*group: docker-build-\$\{\{ github\.ref \}\}(?:\$\{\{ inputs\.sha && format\('-\{0\}', inputs\.sha\) \|\| '' \}\})?\s*$/m.test(src)) {
   problems.push(`${FILE}: the build group is no longer one per ref, so a burst of merges builds every commit at once (#3551). If that is deliberate, it is the owner's call to reverse; read this lint's header.`);
 }
 if (!/context:"image \/ superseded"/.test(src)) {
@@ -52,8 +50,7 @@ if (!/context:"image \/ superseded"/.test(src)) {
 if (problems.length) {
   console.error("lint:latest-monotonic FAILED\n");
   for (const p of problems) console.error(`  ✗ ${p}`);
-  console.error("\n  Two merges can build concurrently on two boxes and finish in either order.");
-  console.error("  Without this guard the later-finishing OLDER build wins :latest, and Watchtower deploys it.");
+  console.error("\n  :latest is what staging, the canary's web and the cloud overlay pull: it must be a judged commit, moving forward.");
   process.exit(1);
 }
-console.log("lint:latest-monotonic OK (:latest advances only, and the push is behind the check)");
+console.log("lint:latest-monotonic OK (no build pushes :latest; the deploy moves it forward to a judged commit)");

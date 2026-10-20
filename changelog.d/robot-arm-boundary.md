@@ -3,6 +3,7 @@ type: feature
 scope: digifab
 date: 2026-10-17
 docs_target: docs/user-guide/digifab.md#3.19 Digital Fabrication (`digifab`, stock)
+docs_published: 2026-10-20
 ---
 
 Robot arms get guided software updates read back from the controller, licences on the machine page, and a written safety boundary linked from every arm and cell page.

@@ -166,7 +166,10 @@ export async function pinnedRedirectingFetch(args: PinnedFetchArgs): Promise<Pin
         ...(body !== undefined ? { body } : {}),
       });
     } catch (err) {
-      await dispatcher?.close().catch(() => {});
+      // destroy, not close: close waits for the connection still being dialed,
+      // so an aborted fetch to a host that never answers came back only when
+      // the dial itself gave up, seconds past the caller's own deadline (#7056).
+      await dispatcher?.destroy().catch(() => {});
       throw err;
     }
 

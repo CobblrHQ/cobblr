@@ -17,11 +17,19 @@
 # proxy join the user's tailnet as its own virtual node and serve
 # https://<name>.<tailnet>.ts.net — a real cert, nothing exposed, and no
 # Tailscale install on the box (only an auth key).
-FROM caddy:2-builder AS builder
-RUN xcaddy build \
+#
+# CROSS-COMPILED, NEVER EMULATED (2026-10-20). The builder runs on the build machine's own platform and Go builds for
+# the target's: the arm64 image's caddy used to compile under QEMU, 30+ minutes of one core for the tailscale plugin
+# alone, holding the one release runner while the cut's other images waited. The last line proves the binary is
+# for the image it goes into, since a wrong-architecture caddy would pass every manifest check.
+FROM --platform=$BUILDPLATFORM caddy:2-builder AS builder
+ARG TARGETOS
+ARG TARGETARCH
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH xcaddy build \
     --with github.com/caddy-dns/duckdns \
     --with github.com/caddy-dns/cloudflare \
-    --with github.com/tailscale/caddy-tailscale
+    --with github.com/tailscale/caddy-tailscale \
+ && go version -m /usr/bin/caddy | grep -E "^[[:space:]]+build[[:space:]]+GOARCH=$TARGETARCH$"
 
 FROM caddy:2-alpine
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy

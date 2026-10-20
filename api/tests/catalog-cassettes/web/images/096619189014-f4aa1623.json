@@ -1,0 +1,21 @@
+{
+  "query": "096619189014",
+  "results": [
+    {
+      "url": "https://fig-product-images.s3.amazonaws.com/096619189014.png",
+      "thumb": "https://tse3.mm.bing.net/th/id/OIP.2-UFl-5Yeg5lcRbuK1JXfgHaJ4?r=0&pid=Api",
+      "title": "Kirkland Signature Organic Cane Sugar | Fig App",
+      "source": "foodisgood.com",
+      "width": 600,
+      "height": 800
+    },
+    {
+      "url": "https://foodisgood.com/_next/image/?url=https:%2F%2Ffig-product-images.s3.amazonaws.com%2F096619189014.png&w=750&q=75",
+      "thumb": "https://tse1.mm.bing.net/th/id/OIP.jiu-6y7peQbHpPIgaP_wfgHaJ4?r=0&pid=Api",
+      "title": "Kirkland Signature Organic Cane Sugar | Fig App",
+      "source": "foodisgood.com",
+      "width": 600,
+      "height": 800
+    }
+  ]
+}

@@ -21,6 +21,7 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { SERVICE_AUTH_SKEW_S, signServiceRequest, verifyServiceRequest, parseServiceKey } from "@cobblr/platform-contract/service-auth";
 import { meta } from "../db/meta.js";
+import { outboxDelete, outboxUpdate } from "./share-outbox-rows.js";
 import { decryptCreds } from "../db/crypto.js";
 import { runExclusive } from "./exclusive.js";
 
@@ -207,7 +208,7 @@ export async function flushShareLink(linkId: string): Promise<{ sent: number; er
       const ops = due.map((r) => ({ key: r.key, op: r.op, payload: (typeof r.payload === "string" ? JSON.parse(r.payload) : r.payload) as Record<string, unknown> }));
       try {
         await deliver(link, ops);
-        await meta.updateTable("share_outbox").set({ sent_at: new Date(), last_error: null }).where("id", "in", due.map((r) => r.id)).execute();
+        await outboxUpdate((q) => q.where("id", "in", due.map((r) => r.id)), { sent_at: new Date(), last_error: null }).execute();
         await meta.updateTable("share_links").set({ last_synced_at: new Date(), last_error: null, last_error_at: null }).where("id", "=", linkId).execute();
         sent += ops.length;
       } catch (err) {
@@ -215,17 +216,13 @@ export async function flushShareLink(linkId: string): Promise<{ sent: number; er
         error = e.message;
         const attempts = due[0]!.attempts + 1;
         const wait = e.needsUpdate ? 6 * 3600 : retryAfterS(attempts);
-        await meta
-          .updateTable("share_outbox")
-          .set({ attempts, next_at: new Date(Date.now() + wait * 1000), last_error: e.message })
-          .where("id", "=", due[0]!.id)
-          .execute();
+        await outboxUpdate((q) => q.where("id", "=", due[0]!.id), { attempts, next_at: new Date(Date.now() + wait * 1000), last_error: e.message }).execute();
         await meta.updateTable("share_links").set({ last_error: e.message, last_error_at: new Date() }).where("id", "=", linkId).execute();
         if (e.gone) {
           // The other side already ended it: nothing more to send, and an
           // ended-notice has nothing left to say.
           await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date() }).where("id", "=", linkId).execute();
-          await meta.updateTable("share_outbox").set({ sent_at: new Date() }).where("link_id", "=", linkId).where("sent_at", "is", null).execute();
+          await outboxUpdate((q) => q.where("link_id", "=", linkId).where("sent_at", "is", null), { sent_at: new Date() }).execute();
         }
         // A failure stops this flush; what is left retries on its own schedule.
         flushAgain.delete(linkId);
@@ -253,7 +250,7 @@ export async function flushShareLinkNow(linkId: string, waitMs = 15_000): Promis
   for (;;) {
     // A person asking is a reason to try now, whatever pause a failure set,
     // including one a flush that was running set a moment ago.
-    await meta.updateTable("share_outbox").set({ next_at: new Date() }).where("link_id", "=", linkId).where("sent_at", "is", null).execute();
+    await outboxUpdate((q) => q.where("link_id", "=", linkId).where("sent_at", "is", null), { next_at: new Date() }).execute();
     const r = await flushShareLink(linkId);
     sent += r.sent;
     if (!r.busy || Date.now() > until) return { sent, error: r.error };
@@ -276,7 +273,7 @@ export async function flushDueShareLinks(): Promise<void> {
   for (const { link_id } of due) await flushShareLink(link_id).catch((err) => console.error(`[share] flush of ${link_id} failed:`, err));
   // Delivered changes are kept a week for the record, nonces as long as a
   // signature could be replayed.
-  await meta.deleteFrom("share_outbox").where("sent_at", "<", new Date(Date.now() - 7 * 86_400_000)).execute();
+  await outboxDelete((q) => q.where("sent_at", "<", new Date(Date.now() - 7 * 86_400_000))).execute();
   await meta.deleteFrom("share_nonces").where("seen_at", "<", new Date(Date.now() - 2 * SERVICE_AUTH_SKEW_S * 1000)).execute();
 }
 

@@ -8,6 +8,7 @@ import { parseWantedList } from "../services/wanted-list.js";
 import { parseOrderCsv } from "../services/order-csv.js";
 import { diffWantedList, type LoadInventoryParts } from "../services/diff.js";
 import { registerBricklinkHandlers } from "./action-handlers.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // Register the Lego/BrickLink action handlers (disassemble-kit) at module load.
 registerBricklinkHandlers();
@@ -27,7 +28,7 @@ router.post("/parse-wanted-list", (req, res) => {
   const parsed = ParseWantedBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
-      error: { code: "invalid_body", message: "xml is required", details: parsed.error.issues },
+      error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
     });
     return;
   }
@@ -58,7 +59,7 @@ router.post("/parse-order", (req, res) => {
   const parsed = ParseOrderBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
-      error: { code: "invalid_body", message: "csv is required", details: parsed.error.issues },
+      error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
     });
     return;
   }
@@ -100,7 +101,7 @@ router.post("/diff-wanted-list", async (req, res, next) => {
     const parsed = DiffBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
-        error: { code: "invalid_body", message: "items array required", details: parsed.error.issues },
+        error: { code: "invalid_body", message: invalidBodyMessage(parsed.error.issues), details: parsed.error.issues },
       });
       return;
     }

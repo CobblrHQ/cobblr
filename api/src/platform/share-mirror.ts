@@ -294,14 +294,19 @@ async function mirrorPass(link: { id: string; org_id: string; settings: unknown 
     const changedSince: Record<string, unknown> = {};
     for (const h of held.get(k) ?? []) {
       const into = h.in_metadata ? p.metadata : p.fields;
-      if (!(h.field in into)) continue;
+      // The copy takes its name from the title (mirror.upsert), so a held
+      // name is held in the title too.
+      const titled = !h.in_metadata && h.field === "name";
+      if (!(h.field in into) && !titled) continue;
+      const owners = titled ? p.title : into[h.field];
       // The owner changed it after the friend did: a conflict now (#4692).
-      if (h.status === "pending" && JSON.stringify(into[h.field] ?? null) !== JSON.stringify(h.base ?? null)) {
-        await meta.updateTable("share_suggestions").set({ status: "conflict", owner_before: JSON.stringify(into[h.field] ?? null) as never }).where("id", "=", h.id).where("status", "=", "pending").execute();
+      if (h.status === "pending" && JSON.stringify(owners ?? null) !== JSON.stringify(h.base ?? null)) {
+        await meta.updateTable("share_suggestions").set({ status: "conflict", owner_before: JSON.stringify(owners ?? null) as never }).where("id", "=", h.id).where("status", "=", "pending").execute();
         h.status = "conflict";
       }
-      if (h.status === "conflict") changedSince[h.field] = into[h.field];
+      if (h.status === "conflict") changedSince[h.field] = owners;
       into[h.field] = h.proposed;
+      if (titled && typeof h.proposed === "string") p.title = h.proposed;
     }
     let photo: { mime: string; data: string } | null = null;
     let photoDigest: string | null = null;
@@ -558,8 +563,16 @@ async function recordCopyBase(
 export type ApplyPoint = "before-write" | "after-write" | "owner-pass" | "edits-pass" | "owner-edit-write";
 const applyHolds = new Map<string, { at: ApplyPoint; ms: number }>();
 const holdsReached = new Map<string, number>();
+// Taking a hold away lets a pass already waiting in it go at once: a test
+// that releases it never pays the rest of the hold's time.
+const heldPasses = new Map<string, Set<() => void>>();
+const release = (orgId: string) => {
+  for (const go of heldPasses.get(orgId) ?? []) go();
+  heldPasses.delete(orgId);
+};
 export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; ms: number } | null): void {
   if (!h) {
+    for (const orgId of [...heldPasses.keys()]) release(orgId);
     applyHolds.clear();
     holdsReached.clear();
     return;
@@ -569,6 +582,7 @@ export function setMirrorApplyHoldForTests(h: { orgId: string; at: ApplyPoint; m
     holdsReached.set(h.orgId, 0);
   } else {
     applyHolds.delete(h.orgId);
+    release(h.orgId);
   }
 }
 /** How often a hold was reached: one workspace's, or every workspace's together. */
@@ -578,7 +592,17 @@ export async function holdForTests(orgId: string, at: ApplyPoint): Promise<void>
   const h = applyHolds.get(orgId);
   if (!h || h.at !== at) return;
   holdsReached.set(orgId, (holdsReached.get(orgId) ?? 0) + 1);
-  await new Promise((r) => setTimeout(r, h.ms));
+  await new Promise<void>((resolve) => {
+    const waiting = heldPasses.get(orgId) ?? new Set<() => void>();
+    heldPasses.set(orgId, waiting);
+    const go = () => {
+      clearTimeout(timer);
+      waiting.delete(go);
+      resolve();
+    };
+    const timer = setTimeout(go, h.ms);
+    waiting.add(go);
+  });
 }
 
 async function baseOf(link: ShareLinkRow, originKind: string, originId: string): Promise<Bags | null> {

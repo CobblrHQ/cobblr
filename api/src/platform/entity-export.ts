@@ -107,8 +107,11 @@ export async function exportColumns(
   }
   if (has("location_id") && shown("location_id")) all.push({ label: "Location", field: "location_id", cell: field("location_name") });
   if (has("category_id") && shown("category_id")) all.push({ label: "Category", field: "category_id", cell: field("category_name") });
-  const seen = new Set<string>();
+  // A field already a column (Quantity above) is not a second one: a machine's
+  // file had two Quantity columns, and a spreadsheet maps one header once (#7631).
+  const seen = new Set<string>(all.map((c) => c.field));
   for (const f of record.fields) {
+    if (seen.has(f.name)) continue;
     if (!isWritableNativeField(f) || !shown(f.name)) continue;
     seen.add(f.name);
     const money = moneyStorageOf(f);
@@ -151,7 +154,7 @@ export async function exportEntitiesCsv(
   const rows: unknown[][] = [];
   const exported = new Set<string>();
   // SYSTEM-READ: an explicitly requested owner/admin export reads encrypted values internally before writing its audited CSV.
-  const readViewer = includeSecrets ? SYSTEM_VIEWER : viewer;
+  const readViewer = includeSecrets ? SYSTEM_VIEWER : { ...viewer, export: true };
   const values = async (items: ResolvedEntity[]) => {
     if (!includeSecrets) return items;
     for (const row of items) exported.add(row.id);

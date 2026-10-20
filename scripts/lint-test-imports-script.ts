@@ -82,29 +82,46 @@ function readsCredentialsAtImport(file: string): string | null {
 // and #7020's re-check went red on it with no test failing. git grep reads the tree in C and hands back only the
 // candidates; --untracked keeps a new, not yet committed test in view. Without git, the walk below.
 const IMPORTS_SCRIPTS = "(from|import)[[:space:]]+['\"][^'\"]*scripts/";
+// HOW IT LOOKED, SAID (#7576): run 54906's test of this lint found a modules/ test missing from the candidates once in
+// CI and never again, and nothing said whether git grep or the walk had picked them. Each pick now says which, and
+// how many, so the next miss names its own path.
+let how = "";
 function candidates(): string[] {
   try {
     const out = execFileSync("git", ["grep", "-l", "--untracked", "-E", IMPORTS_SCRIPTS, "--", "*.test.ts", "*.test.tsx", "*.test.mts", "*.test.mjs"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    return out
+    const files = out
       .split("\n")
       .filter(Boolean)
       .filter((f) => !f.split("/").some((seg) => SKIP.has(seg) || seg.startsWith(".")))
       .map((f) => join(ROOT, f));
+    how = `git grep listed ${files.length} test(s) importing from scripts/`;
+    return files;
   } catch (e) {
+    const err = e as { status?: number; stderr?: string | Buffer; message?: string };
     // git grep exits 1 when nothing matches: none to judge.
-    if ((e as { status?: number }).status === 1) return [];
-    return testFiles(ROOT);
+    if (err.status === 1) {
+      how = "git grep matched no test";
+      return [];
+    }
+    const files = testFiles(ROOT);
+    how = `git grep failed (status ${err.status ?? "?"}: ${String(err.stderr ?? err.message ?? "").trim().split("\n")[0]}); the walk read ${files.length} test(s)`;
+    return files;
   }
 }
 
 // --candidates: the files it would read, one per line (its test holds them to every test that imports from scripts/).
-if (process.argv.includes("--candidates")) {
-  for (const f of candidates()) console.log(relative(ROOT, f));
-  process.exit(0);
+// THE LIST ENDS WHEN IT IS READ (#7576): stdout into a pipe is written behind node's back, and process.exit() dropped
+// whatever the pipe had not taken yet. At load 26 the reader took 332 of 435 lines and the test named a test the
+// lint "would not read". It ends by running out of work instead, and says its count for the reader to hold it to.
+const listOnly = process.argv.includes("--candidates");
+const picked = candidates();
+if (listOnly) {
+  process.stdout.write(picked.map((f) => relative(ROOT, f) + "\n").join(""));
+  console.error(`candidates: ${how}`);
 }
 
 const offenders: string[] = [];
-for (const file of candidates()) {
+for (const file of listOnly ? [] : picked) {
   let src: string;
   try {
     src = readFileSync(file, "utf8");
@@ -132,6 +149,5 @@ for (const file of candidates()) {
 if (offenders.length) {
   console.error(`lint:test-imports-script FAILED (${offenders.length})`);
   for (const o of offenders) console.error(o);
-  process.exit(1);
-}
-console.log("✓ test-imports-script: no test imports a script that reads credentials on import");
+  process.exitCode = 1;
+} else if (!listOnly) console.log("✓ test-imports-script: no test imports a script that reads credentials on import");

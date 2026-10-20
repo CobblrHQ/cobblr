@@ -128,9 +128,11 @@ export function UnitsPanel({ partId, partName }: { partId: string; partName?: st
         </ul>
       )}
       <MutationError mutation={assign} className="block" />
-      <form onSubmit={submit} className="flex gap-2 pt-1">
+      {/* Wraps on a phone: the serial field and three buttons in one line left
+          "Add a serial" and "Scan within this" narrower than their words (#7620). */}
+      <form onSubmit={submit} className="flex flex-wrap gap-2 pt-1">
         <input
-          className="input !w-full text-sm"
+          className="input !w-auto flex-1 min-w-[12rem] text-sm"
           value={serial}
           placeholder="Serial number (optional)"
           onChange={(e) => setSerial(e.target.value)}

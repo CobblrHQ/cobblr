@@ -63,6 +63,7 @@ import * as activity from "../platform/activity.js";
 import { captureBlueprint, applyBlueprint, type BlueprintManifestT } from "./blueprint.js";
 import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from "./backup-limits.js";
 import { capturePlatformRows, platformIdMap, restorePlatformRows, swapIds, type PlatformRows } from "../platform/backup-platform-rows.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 // Tables the generic dump/restore must never touch:
 //  - `migrations`  — the tenant migration runner's bookkeeping; the fresh
@@ -723,7 +724,7 @@ backupRouter.post("/destinations", requireAuth, withTenant, async (req, res, nex
     if (!requireRole(req, res, "owner", "admin")) return;
     const body = DestCreate.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad destination", details: body.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
       return;
     }
     const driver = getBackupDriver(body.data.driver);
@@ -769,7 +770,7 @@ backupRouter.patch("/destinations/:id", requireAuth, withTenant, async (req, res
     if (!requireRole(req, res, "owner", "admin")) return;
     const body = DestPatch.safeParse(req.body);
     if (!body.success) {
-      res.status(400).json({ error: { code: "invalid_body", message: "Bad patch", details: body.error.issues } });
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(body.error.issues), details: body.error.issues } });
       return;
     }
     const orgId = req.tenant!.org.id;

@@ -55,6 +55,52 @@ const OUT_RECHECK_FIRST_RULES = join(ROOT, ".forgejo/workflows/ci-recheck-first-
 export const LANE = { "pr-check": "light-main", "ci-test": "ci-main" };
 export const FAST_LANE = { "pr-check": "fast-light", "ci-test": "fast-test" };
 
+const DEPLOY_STEP = "Deploy if the images are pushed (else the image side deploys)";
+export const DEPLOY_JOB = [
+  "  # Main's deploy, after its test (gen-ci-main.mjs MAIN.transform): the test job only tests, so it can run on a",
+  "  # test-only box. deploy-when-ready.mjs reads the test's verdict and the images' state; whichever side is last deploys.",
+  "  deploy:",
+  "    runs-on: light-main",
+  "    needs: [test]",
+  "    if: always() && (github.event_name == 'push' || github.event.inputs.set_tip == 'true') && github.ref_name == 'main'",
+  "    timeout-minutes: 10",
+  "    steps:",
+  "      - uses: https://github.com/actions/checkout@v4",
+  "        with:",
+  "          fetch-depth: 1",
+  "      - name: Deploy if the images are pushed (else the image side deploys)",
+  "        continue-on-error: true",
+  "        env:",
+  "          SHA: ${{ github.sha }}",
+  "          REPO: ${{ github.repository }}",
+  "          SERVER: ${{ github.server_url }}",
+  "          TEST_RESULT: ${{ needs.test.result }}",
+  "          GATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+  "          CLOUD_DISPATCH_TOKEN: ${{ secrets.CLOUD_DISPATCH_TOKEN }}",
+  "          WATCHTOWER_TOKEN: ${{ secrets.WATCHTOWER_TOKEN }}",
+  "          # Moves :latest to this judged commit's images (lib/registry-latest.mjs); lint:registry-token-only-where-it-writes.",
+  "          REGISTRY_USER: ${{ github.actor }}",
+  "          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}",
+  "        run: |",
+  "          set -o pipefail",
+  "          node scripts/deploy-when-ready.mjs --side test 2>&1 | tee -a /tmp/ci-job.out",
+  "      # It moves :latest: what it did is read from the sink, since Forgejo drops a share of job logs (run 55142).",
+  "      - name: Ship the job log to the sink (Forgejo has no log API)",
+  "        if: always()",
+  "        run: |",
+  "          [ -s /tmp/ci-job.out ] || echo \"(no output: the job failed before the deploy ran, e.g. checkout)\" > /tmp/ci-job.out",
+  "          curl -s --max-time 25 -X POST \\",
+  "            -H \"x-ci-run: ${{ github.run_number }}\" \\",
+  "            -H \"x-ci-sha: ${{ github.sha }}\" \\",
+  "            -H \"x-ci-workflow: ${{ github.workflow }}\" \\",
+  "            -H \"x-ci-job: deploy\" \\",
+  "            -H \"x-ci-status: ${{ job.status }}\" \\",
+  "            -H \"x-ci-ref: ${{ github.ref_name }}\" \\",
+  "            --data-binary @/tmp/ci-job.out \\",
+  "            http://workshop:8767/ci-log \\",
+  "            && echo \"shipped log to sink\" || echo \"(sink POST failed, non-fatal)\"",
+];
+
 const MAIN = {
   lane: LANE,
   branches: "[main, 'bisect/**']",
@@ -69,6 +115,11 @@ const MAIN = {
     "        required: false",
     "        default: \"\"",
   ],
+  // MAIN'S TEST JOB ONLY TESTS (2026-10-20). ci-main runs on a second, test-only home too (the b550: a box with a
+  // fenced DRAM fault never ships an image or a deploy), so the deploy that was a step of the test job is a job of its
+  // own on light-main, after it. ci.yml keeps the step: on a pull request it never runs, and a job there would be
+  // scheduled on a runner for every pull request just to skip.
+  transform: (body) => [...withoutTrailingComment(trimEnd(dropSteps(body, [DEPLOY_STEP]))), "", ...DEPLOY_JOB],
   // THE SET'S TIP (lib/set-tip.mjs): how many pull requests the queue is about to land (a push to main stands
   // down while more are coming), and whether this run is the set's tip run the queue dispatched once they had.
   env: ["env:", "  QUEUE_LANDING: ${{ vars.COBBLR_QUEUE_LANDING }}", "  CI_SET_TIP: ${{ github.event.inputs.set_tip }}"],
@@ -483,6 +534,13 @@ export function generate(ci, kind = MAIN) {
     ...kind.tail,
     ...(kind.tail.length ? [""] : []),
   ].join("\n");
+}
+
+/** The comment block a dropped last step leaves at the job's end (ci.yml's "A STEP, not a job" note). */
+function withoutTrailingComment(lines) {
+  let e = lines.length;
+  while (e > 0 && /^ {6}#/.test(lines[e - 1])) e--;
+  return trimEnd(lines.slice(0, e));
 }
 
 function trimEnd(lines) {

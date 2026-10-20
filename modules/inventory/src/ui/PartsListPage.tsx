@@ -23,7 +23,7 @@ import { HoldingRows, RollupLine } from "./HoldingRows";
 import { CombineSuggestionsBanner } from "./CombineSuggestions";
 import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
-import { noteOf, TableConnectorImport, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
+import { noteOf, rowOpen, TableConnectorImport, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { CARD_NATIVE_FIELDS } from "./card-native-fields";
 import { useDisclosure } from "./useDisclosure";
@@ -1261,7 +1261,7 @@ function PartsTable({
           {items.map((p) => (
             <Fragment key={p.id}>
             <tr
-              onClick={() => navigate(`${basePath}/parts/${p.id}`)}
+              onClick={rowOpen(() => navigate(`${basePath}/parts/${p.id}`))}
               className="group/row border-t border-line dark:border-slate-700 hover:bg-subtle dark:hover:bg-slate-800/70 transition cursor-pointer"
             >
               <td className="px-3 py-2 w-8" onClick={(e) => e.stopPropagation()}>
@@ -1513,7 +1513,7 @@ function PartsTable({
         {items.map((p) => (
           <div
             key={p.id}
-            onClick={() => navigate(`${basePath}/parts/${p.id}`)}
+            onClick={rowOpen(() => navigate(`${basePath}/parts/${p.id}`))}
             className="group/row rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
           >
             <div className="flex items-start gap-3">

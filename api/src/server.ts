@@ -1,5 +1,6 @@
 import { startRequest } from "./platform/compute-ledger.js";
 import { answerServerError } from "./lib/server-error.js";
+import { tenantTeardownErrors } from "./middleware/tenant-errors.js";
 import { appliedBudget, connectionRefusals } from "./db/connection-budget.js";
 import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
@@ -661,6 +662,7 @@ export function completeApp(app: Application): void {
     res.status(404).json({ error: { code: "not_found", message: "Not found" } });
   });
 
+  app.use(tenantTeardownErrors);
   app.use(
     (err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
       // Postgres 22P02 (invalid_text_representation) means a malformed

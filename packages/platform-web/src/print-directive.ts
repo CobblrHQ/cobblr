@@ -11,7 +11,7 @@
 // printed". The platform owns the radio and the printer list; the module owns
 // what a label says and its own bookkeeping. Neither learns the other's job.
 //
-//   ui: { print: { content: {...}, record: { path, ids } } }
+//   ui: { print: { content: {...}, record: { path, body } } }
 //
 // A directive is a REQUEST, not a command: if no browser-driven printer is the
 // default, this does nothing at all and the module's normal path (the queue)
@@ -24,19 +24,20 @@ import {
   type LabelContent,
 } from "./bluetooth-label";
 import { isWebSerialAvailable, printOneOverSerial } from "./serial-printer.js";
+import { localBridgeOf } from "./local-bridge";
 import { renderLabelPng } from "./bluetooth-label";
 import {
   EdgeBridgeClient,
   httpBridgeTransport,
-  type BridgePrinterSettings,
 } from "@cobblr/platform-contract/edge-bridge-client";
 
 /** What a module asks the platform to put on paper. */
 export interface PrintDirective {
   content: LabelContent;
-  /** Where to report what reached paper. The module owns this endpoint; the
-   *  platform just calls it. Omit and nothing is reported. */
-  record?: { path: string; ids: string[] };
+  /** Where to report what reached paper, and what to send it. The module owns
+   *  the endpoint and the body; the platform posts the body verbatim once the
+   *  label is out, and never reads it. Omit and nothing is reported. */
+  record?: { path: string; body: unknown };
 }
 
 export interface PrintDirectiveResult {
@@ -78,7 +79,7 @@ export async function runPrintDirective(
   // A printer whose settings carry a LOCAL bridge address is browser-driven
   // whatever its nominal driver: the bridge is on this user's machine, so only
   // this browser can reach it. The server-side driver refuses it by design.
-  const bridgeSettings = ((target?.settings ?? {}) as { bridge?: BridgePrinterSettings }).bridge;
+  const bridgeSettings = localBridgeOf(target);
   if (target && bridgeSettings?.bridgeUrl) {
     if (!bridgeSettings.instance) return { printed: false, skipped: "no-bridge-instance" };
     // The PROTOCOL comes from the shared client — the same code the server-side
@@ -130,9 +131,9 @@ async function recordAndReturn(
   deviceName: string,
 ): Promise<PrintDirectiveResult> {
   let recordError: string | undefined;
-  if (directive.record && directive.record.ids.length > 0) {
+  if (directive.record) {
     try {
-      await deps.post(directive.record.path, { item_ids: directive.record.ids });
+      await deps.post(directive.record.path, directive.record.body);
     } catch (e) {
       recordError = e instanceof Error ? e.message : String(e);
     }
