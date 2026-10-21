@@ -10,6 +10,7 @@ import { registerLocationsResolvers } from "./resolvers.js";
 import { registerLocationsWriter } from "./sync-writer.js";
 import { registerLocationsHandlers } from "./handlers.js";
 import { registerPlaceParent } from "./place-parent.js";
+import { registerPlacesOffTheTreeHeal } from "../heal-places-off-the-tree.js";
 import { lightsRouter } from "./lights.js";
 import { planDraftsRouter, registerPlanDraftHandlers } from "./plan-drafts.js";
 import { floorplanFileRouter, registerFloorplanFileHandlers } from "./floorplan-file.js";
@@ -44,5 +45,7 @@ registerPlanDraftHandlers();
 registerFloorplanFileHandlers();
 // Side-effect: a place's parent place, for "where is this" across placements.
 registerPlaceParent();
+// Side-effect: a place a crossed move left in a loop goes back to the top.
+registerPlacesOffTheTreeHeal();
 
 export default router;

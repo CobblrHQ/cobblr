@@ -693,10 +693,11 @@ superAdminRouter.get("/usage-stats", async (req, res, next) => {
 
 // GET /super-admin/compute-stats — what each route costs this deployment since the api started: wall
 // time, CPU, memory growth and calls per workspace per day (platform/compute-ledger.ts, #5424). Counts and
-// distributions, never a workspace; readable with an ops:read token. `?limit=` (default 60, at most 400).
+// distributions, never a workspace; readable with an ops:read token. `?limit=` (default 60, at most every route kept, 2,000);
+// `?route=` keeps the routes whose shape contains it ("[digifab:" for the digifab actions).
 superAdminRouter.get("/compute-stats", (req, res) => {
   const limit = Number(req.query.limit) || 60;
-  res.json(computeStats(limit));
+  res.json(computeStats(limit, typeof req.query.route === "string" ? req.query.route : undefined));
 });
 
 // GET /super-admin/product-metrics — the thesis dashboard (2026-07 audit F2)

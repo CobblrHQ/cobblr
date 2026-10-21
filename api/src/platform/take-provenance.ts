@@ -18,14 +18,14 @@
  *  (`madeBy`, from the log), names something they made, or names no example
  *  at all. One that names only examples goes with them. */
 export function leaveOut<T extends { row_count: number }>(
-  dataFiles: Array<{ jsonl: string; index: T }>,
+  dataFiles: Array<{ lines: string[]; index: T }>,
   opts: { omit?: ReadonlySet<string>; stockUntil?: Date; madeBy?: ReadonlySet<string> },
 ): Set<string> {
   type Row = { line: string; id: string | null; own: boolean; out: boolean };
   const until = opts.stockUntil?.getTime();
   const madeBy = opts.madeBy ?? new Set<string>();
   const tables: Row[][] = dataFiles.map((d) =>
-    (d.jsonl ? d.jsonl.split("\n") : []).map((line) => {
+    d.lines.map((line) => {
       const r = JSON.parse(line) as { id?: unknown; created_at?: unknown };
       const id = r.id == null ? null : String(r.id);
       const made = typeof r.created_at === "string" ? Date.parse(r.created_at) : NaN;
@@ -71,7 +71,7 @@ export function leaveOut<T extends { row_count: number }>(
   }
   dataFiles.forEach((d, i) => {
     const keep = tables[i]!.filter((r) => !r.out).map((r) => r.line);
-    d.jsonl = keep.join("\n");
+    d.lines = keep;
     d.index = { ...d.index, row_count: keep.length };
   });
   return new Set(all.filter((r) => r.out && r.id).map((r) => r.id!));

@@ -10,6 +10,7 @@ import { DuplicateRecordError, findRowIdByKey, imageId, platform, restoreRow, sn
 import { sql, type Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
+import { movePlace } from "./place-move.js";
 
 let registered = false;
 
@@ -92,11 +93,9 @@ export function registerLocationsWriter(): void {
       if (fields.metadata !== undefined) {
         patch.metadata = sql`${JSON.stringify(fields.metadata ?? {})}::jsonb`;
       }
-      if (fields.parent_id !== undefined) {
-        const parentId = asStr(fields.parent_id);
-        patch.parent_id = parentId;
-        patch.depth = await depthFor(db, parentId);
-      }
+      // A move goes through the one seam that refuses a loop (place-move.ts);
+      // the throw reaches the assistant, which says why the room stayed put.
+      if (fields.parent_id !== undefined) await movePlace(db, id, asStr(fields.parent_id));
       await db
         .updateTable("core_locations_locations")
         .set(patch as never)

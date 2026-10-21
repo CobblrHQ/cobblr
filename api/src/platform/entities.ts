@@ -1245,13 +1245,12 @@ export async function listAll(
   return walkListPages((limit, offset) => list(orgId, kind, { ...query, limit, offset }, viewer), opts);
 }
 
+/** The kind registry is written only by the boot's registry sync, so one
+ *  request reads it once: a page that asked per module and per kind read the
+ *  whole table 40 times a call (#7716). Each caller gets its own copy. */
 export async function listKinds(): Promise<EntityKindRecord[]> {
-  const rows = await meta
-    .selectFrom("entity_kinds")
-    .selectAll()
-    .orderBy("id")
-    .execute();
-  return rows.map(rowToKindRecord);
+  const rows = await perRequest("entity-kinds:all", () => meta.selectFrom("entity_kinds").selectAll().orderBy("id").execute());
+  return structuredClone(rows).map(rowToKindRecord);
 }
 
 /** Find the NAMED (non-default) instance an id lives in, resolving the entity
@@ -1502,12 +1501,8 @@ async function loadKindsForOrg(orgId: string): Promise<EntityKindRecord[]> {
 }
 
 export async function getKind(kind: string): Promise<EntityKindRecord | null> {
-  const row = await meta
-    .selectFrom("entity_kinds")
-    .selectAll()
-    .where("id", "=", kind)
-    .executeTakeFirst();
-  return row ? rowToKindRecord(row) : null;
+  const row = await perRequest(`entity-kind:${kind}`, () => meta.selectFrom("entity_kinds").selectAll().where("id", "=", kind).executeTakeFirst());
+  return row ? rowToKindRecord(structuredClone(row)) : null;
 }
 
 // Server-managed field names per (org, kind). Values live in metadata, but a

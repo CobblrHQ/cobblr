@@ -21,7 +21,7 @@ import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreLocationsDB } from "../db.js";
 import { deletePlace, restoreDeletedPlace } from "./place-delete.js";
-import { rebuildDescendantDepths } from "./locations.js";
+import { movePlace, PlaceMoveRefused } from "./place-move.js";
 
 const LOCATION = "core-locations:location";
 type Db = Kysely<CoreLocationsDB>;
@@ -71,15 +71,12 @@ async function isInside(db: Db, id: string, ancestor: string): Promise<boolean> 
 }
 
 async function reparent(db: Db, id: string, parentId: string | null): Promise<void> {
-  const parent = parentId
-    ? await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst()
-    : null;
-  await db
-    .updateTable("core_locations_locations")
-    .set({ parent_id: parentId, depth: parent ? parent.depth + 1 : 0, updated_at: new Date() } as never)
-    .where("id", "=", id)
-    .execute();
-  await rebuildDescendantDepths(db, id);
+  try {
+    await movePlace(db, id, parentId);
+  } catch (e) {
+    if (e instanceof PlaceMoveRefused) throw new MoveRefused(e.message);
+    throw e;
+  }
 }
 
 /** Move what is kept in `fromId` into `toId` (a place's id, or a holder's

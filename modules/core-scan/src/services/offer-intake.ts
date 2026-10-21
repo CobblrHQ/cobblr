@@ -240,7 +240,7 @@ export const offerIntake: OfferIntake = {
 
   async state(orgId, inboxId) {
     const db = await dbFor(orgId);
-    const row = await db.selectFrom("core_scan_inbox_items").select(["status", "target_module", "target_kind", "target_entity_id"]).where("id", "=", inboxId).executeTakeFirst();
+    const row = await db.selectFrom("core_scan_inbox_items").select(["status", "target_module", "target_kind", "target_entity_id", "suggested_metadata"]).where("id", "=", inboxId).executeTakeFirst();
     if (!row || row.status === "discarded") return { status: "gone" };
     if (row.status === "resolved") {
       // The row keeps the kind bare ("asset") beside its module; the record's
@@ -249,7 +249,8 @@ export const offerIntake: OfferIntake = {
       const kind = row.target_kind && !row.target_kind.includes(":") && row.target_module ? `${row.target_module}:${row.target_kind}` : row.target_kind;
       return kind && row.target_entity_id ? { status: "filed", record: { kind, id: row.target_entity_id } } : { status: "gone" };
     }
-    return { status: "waiting" };
+    const offerId = (metaOf(row.suggested_metadata)[INBOX_OFFER_KEY] as { offer_id?: unknown } | undefined)?.offer_id;
+    return typeof offerId === "string" ? { status: "waiting", offer_id: offerId } : { status: "waiting" };
   },
 
   async mark(orgId, inboxId, state) {

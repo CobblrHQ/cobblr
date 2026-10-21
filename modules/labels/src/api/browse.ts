@@ -32,24 +32,29 @@ export interface LabelableKind {
   icon: string | null;
 }
 
-/** The first entity kind of `moduleName` that `labels:print` applies to in this
- *  org (per-org appliesTo overrides included), or null if the module owns no
- *  labelable kind. Cached per request by the caller. Shared with the codes route,
- *  which lists a suggested code for every labelable list up front. */
-export async function labelableKindForModule(
-  moduleName: string,
+/** The first entity kind of each module that `labels:print` applies to in
+ *  this org (per-org appliesTo overrides included), or null for a module that
+ *  owns no labelable kind. Asked for every module at once, so a page listing
+ *  them reads the workspace's part of the question once (#7716). Shared with
+ *  the codes route, which lists a suggested code for every labelable list. */
+export async function labelableKindsForModules(
+  moduleNames: readonly string[],
   orgId: string,
-): Promise<LabelableKind | null> {
-  const kinds = (await platform().entities.listKinds()).filter((k) =>
-    k.id.startsWith(`${moduleName}:`),
+): Promise<Map<string, LabelableKind | null>> {
+  const all = await platform().entities.listKinds();
+  const wanted = [...new Set(moduleNames)];
+  const kindsOf = wanted.map((m) => all.filter((k) => k.id.startsWith(`${m}:`)));
+  const firsts = await platform().actions.firstWhereApplies(LABELS_ACTION, kindsOf.map((ks) => ks.map((k) => k.id)), orgId);
+  return new Map(
+    wanted.map((m, i) => {
+      const k = kindsOf[i]!.find((x) => x.id === firsts[i]);
+      return [m, k ? { kind: k.id, label: k.display_name_plural ?? k.display_name, icon: k.icon ?? null } : null];
+    }),
   );
-  for (const k of kinds) {
-    const actions = await platform().actions.listApplicable(k.id, orgId);
-    if (actions.some((a) => a.id === LABELS_ACTION)) {
-      return { kind: k.id, label: k.display_name_plural ?? k.display_name, icon: k.icon ?? null };
-    }
-  }
-  return null;
+}
+
+export async function labelableKindForModule(moduleName: string, orgId: string): Promise<LabelableKind | null> {
+  return (await labelableKindsForModules([moduleName], orgId)).get(moduleName) ?? null;
 }
 
 /** The kind to LIST an instance's items through the generic entity layer:
@@ -72,13 +77,8 @@ browseRouter.get(
     const modulesWithNamed = new Set(
       instances.filter((i) => !i.is_default).map((i) => i.module_name),
     );
-    const kindCache = new Map<string, LabelableKind | null>();
-    const labelable = async (moduleName: string) => {
-      if (!kindCache.has(moduleName)) {
-        kindCache.set(moduleName, await labelableKindForModule(moduleName, org.id));
-      }
-      return kindCache.get(moduleName) ?? null;
-    };
+    const kindCache = await labelableKindsForModules(instances.map((i) => i.module_name), org.id);
+    const labelable = async (moduleName: string) => kindCache.get(moduleName) ?? null;
 
     const tabs: { id: string; label: string; count: number | null }[] = [];
     for (const inst of instances) {

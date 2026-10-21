@@ -130,8 +130,9 @@ export interface OfferIntake {
   room?(orgId: string, as: { userId: string; orgSlug: string }, p: { count: number; bytes: number }): Promise<string[]>;
   file?(orgId: string, inboxId: string, as: { userId: string; orgSlug: string }): Promise<{ kind: string; id: string }>;
   retarget?(orgId: string, inboxId: string, record: {kind: string; id: string}): Promise<string[]>;
-  /** Where an inbox row stands: waiting, filed as a record, or gone. */
-  state(orgId: string, inboxId: string): Promise<{ status: "waiting" | "filed" | "gone"; record?: { kind: string; id: string } }>;
+  /** Where an inbox row stands: waiting, filed as a record, or gone; and the
+   *  offer it came as, which the row holds from the moment it exists. */
+  state(orgId: string, inboxId: string): Promise<{ status: "waiting" | "filed" | "gone"; record?: { kind: string; id: string }; offer_id?: string }>;
   /** Set the offer state an inbox row shows. */
   mark(orgId: string, inboxId: string, state: OfferState): Promise<void>;
   /** Take a row that is still waiting out of the inbox (kept, discarded).

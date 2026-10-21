@@ -23,7 +23,7 @@ import {
   setCodeConfig,
   setGroupOverlay,
 } from "../services/codes.js";
-import { labelableKindForModule, type LabelableKind } from "./browse.js";
+import { labelableKindsForModules, type LabelableKind } from "./browse.js";
 
 export const codesRouter = Router({ mergeParams: true });
 
@@ -193,11 +193,8 @@ codesRouter.get(
     const groupFieldFor = new Map(cfg.map((c) => [c.entity_kind, c.group_field]));
     const instances = await platform().instances.list(ctx.org.id).catch(() => []);
     const modulesWithNamed = new Set(instances.filter((i) => !i.is_default).map((i) => i.module_name));
-    const lkCache = new Map<string, LabelableKind | null>();
-    const lkFor = async (m: string) => {
-      if (!lkCache.has(m)) lkCache.set(m, await labelableKindForModule(m, ctx.org.id).catch(() => null));
-      return lkCache.get(m) ?? null;
-    };
+    const lkCache = await labelableKindsForModules(instances.map((i) => i.module_name), ctx.org.id).catch(() => new Map<string, LabelableKind | null>());
+    const lkFor = async (m: string) => lkCache.get(m) ?? null;
     const suggestions: Array<{ group_key: string; entity_kind: string; prefix: string; group_label: string }> = [];
     for (const inst of instances) {
       if (inst.is_default && modulesWithNamed.has(inst.module_name)) continue; // superseded default

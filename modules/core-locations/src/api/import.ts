@@ -19,6 +19,15 @@ import { csvCell } from "@cobblr/platform-contract/csv";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { planByKey, planByName, PATH_SEPARATOR } from "./import-plan.js";
+import { lockTree, placesOffTheTree } from "./place-move.js";
+
+class ImportLoop extends Error {
+  readonly names: string[];
+  constructor(names: string[]) {
+    super("import makes a loop");
+    this.names = names;
+  }
+}
 
 export const locationsImportRouter = Router({ mergeParams: true });
 
@@ -165,7 +174,9 @@ locationsImportRouter.post(
     let created = 0;
     let updated = 0;
 
-    await db.transaction().execute(async (trx) => {
+    const offTree = await db.transaction().execute(async (trx) => {
+      await lockTree(trx);
+      const lostBefore = new Set((await placesOffTheTree(trx)).map((p) => p.id));
       const idOfRow = new Map<number, string>();
       for (const i of plan.order) {
         const p = plan.rows[i]!;
@@ -190,16 +201,28 @@ locationsImportRouter.post(
           created++;
         }
       }
+      // A row may move a place under one that is inside it; the whole file
+      // is refused then, before any of it lands (place-move.ts).
+      const lost = (await placesOffTheTree(trx)).filter((p) => !lostBefore.has(p.id));
+      if (lost.length > 0) throw new ImportLoop(lost.slice(0, 5).map((p) => p.name));
+      await trx.executeQuery(sql`
+        with recursive tree as (
+          select id, 0 as d from core_locations_locations where parent_id is null
+          union all
+          select c.id, t.d + 1 from core_locations_locations c join tree t on c.parent_id = t.id
+        )
+        update core_locations_locations l set depth = tree.d from tree where tree.id = l.id
+      `.compile(trx));
+    }).then((): string[] => []).catch((e: unknown) => {
+      if (e instanceof ImportLoop) return e.names;
+      throw e;
     });
-    // Recompute depths after the parent links land (cheap recursive pass).
-    await db.executeQuery(sql`
-      with recursive tree as (
-        select id, 0 as d from core_locations_locations where parent_id is null
-        union all
-        select c.id, t.d + 1 from core_locations_locations c join tree t on c.parent_id = t.id
-      )
-      update core_locations_locations l set depth = tree.d from tree where tree.id = l.id
-    `.compile(db)).catch(() => {});
+    if (offTree.length > 0) {
+      res.status(409).json({
+        error: { code: "cycle", message: `This file puts ${offTree.join(", ")} inside a place that is inside it, so nothing was imported.` },
+      });
+      return;
+    }
 
     await platform().activity.log({ orgId: ctx.org.id, userId: session.id, action: "locations_imported", ref: { module: "core-locations", entityType: "location", entityId: "" }, diff: { created, updated, match_on } }).catch(() => {});
     res.json({ committed: created + updated, created, updated, errors });

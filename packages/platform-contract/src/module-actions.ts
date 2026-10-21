@@ -245,7 +245,11 @@ export interface PlatformActions {
    *  module-declared default, and only modules the workspace has turned on
    *  count; `alsoOn` names modules the caller is about to turn on (a bundle
    *  install that enables what it requires), so their actions count too. */
-  listApplicable(kind: string, orgId?: string, opts?: { alsoOn?: readonly string[] }): Promise<EntityActionRecord[]>;
+  listApplicable(kind: string, orgId?: string, opts?: { alsoOn?: readonly string[]; /** Judge this one action alone. */ only?: string }): Promise<EntityActionRecord[]>;
+  /** For each list of candidate kinds, the first one `actionId` applies to in
+   *  the workspace (null when none does), by listApplicable's rule, with the
+   *  workspace's part of the question read once for every list. */
+  firstWhereApplies(actionId: string, candidates: ReadonlyArray<readonly string[]>, orgId: string): Promise<Array<string | null>>;
   /** Invoke an action programmatically. Throws if no handler is
    *  registered for the action's invoke_handler key. */
   invoke(actionId: string, ctx: ActionInvokeContext): Promise<unknown>;

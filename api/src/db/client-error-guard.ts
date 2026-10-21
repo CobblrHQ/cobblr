@@ -2,6 +2,7 @@ import { Client, Pool, types } from "pg";
 import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
 import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
 import { currentRequestScope, noteCommittedWrite, noteMetaStatement } from "../lib/request-context.js";
+import { noteBackgroundWork } from "../platform/compute-ledger.js";
 
 /**
  * Every pg client this process opens listens for 'error' from the moment it
@@ -97,6 +98,8 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
         LAST.set(this, { text, at: Date.now() });
         // Counted against the request that asked, for the per-request bound (#4876).
         if (label === "meta-pool") noteMetaStatement(text);
+        const scope = currentRequestScope();
+        if (!scope || scope.answered) noteBackgroundWork();
         noteWriteOf(this, text);
         return query(...a);
       };
@@ -194,14 +197,40 @@ export function poolRequests(pool: Pool, top = 8): string[] {
     .map(([k, v]) => `${v} × ${k}`);
 }
 
+/** The code that took a client outside any request: its first frame of our own (not a dependency, not this file),
+ *  preferring one outside the database layer, as "<function> (<file>)". Run 55631 (#7719) had 33 of 80 clients held
+ *  by "a timer or a boot pass" and nothing said which; this names the sweep or the pass. */
+export function checkoutSite(stack: string | undefined): string | null {
+  const ours: Array<{ fn: string; file: string }> = [];
+  for (const line of String(stack ?? "").split("\n").slice(1)) {
+    const m = /^\s*at (?:async )?(?:(\S+) \()?(?:file:\/\/)?([^():]+):\d+:\d+\)?$/.exec(line);
+    if (!m || /node_modules|node:|client-error-guard/.test(m[2]!)) continue;
+    ours.push({ fn: (m[1] ?? "<anonymous>").replace(/^Object\./, ""), file: m[2]! });
+  }
+  const pick = ours.find((f) => !/\/db\//.test(f.file)) ?? ours[0];
+  return pick ? `${pick.fn} (${pick.file.split("/").pop()})` : null;
+}
+
 function traceCheckouts(pool: Pool): void {
   const connect = pool.connect as (...a: unknown[]) => unknown;
   (pool as unknown as { connect: unknown }).connect = function tracedConnect(this: Pool, ...a: unknown[]) {
     const site: { stack?: string } = {};
     Error.captureStackTrace(site, tracedConnect);
-    const by = currentRequestScope()?.label ?? "no request (a timer or a boot pass)";
+    // A checkout outside a request is named by its code only when someone reads the name (a wait, a report): the
+    // stack is formatted then, not on every checkout a sweep makes.
+    const scope = currentRequestScope()?.label;
+    let named: string | undefined;
+    const nameOf = (): string => {
+      if (scope) return scope;
+      if (named === undefined) {
+        const where = checkoutSite(site.stack);
+        named = where ? `no request: ${where}` : "no request (a timer or a boot pass)";
+      }
+      return named;
+    };
     const max = this.options.max ?? 10;
     const waits = this.idleCount === 0 && this.totalCount >= max;
+    const by = waits ? nameOf() : "";
     let queue = WAITING.get(this);
     if (!queue) WAITING.set(this, (queue = new Map()));
     if (waits) queue.set(by, (queue.get(by) ?? 0) + 1);
@@ -216,7 +245,7 @@ function traceCheckouts(pool: Pool): void {
     };
     const note = (client: unknown) => {
       leave();
-      if (client && typeof client === "object") TAKEN.set(client, { at: Date.now(), site, by });
+      if (client && typeof client === "object") TAKEN.set(client, { at: Date.now(), site, get by() { return nameOf(); } });
     };
     const cb = a[0];
     if (typeof cb === "function") {

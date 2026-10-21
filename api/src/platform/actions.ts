@@ -16,6 +16,7 @@ import { requiredArgsRefusal, typedArgs } from "@cobblr/platform-contract/action
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { ActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { meta } from "../db/meta.js";
+import { readingOnly } from "../lib/request-context.js";
 import { actionPart, enabledOwnersWithParts, partOffRefusal, partOwner } from "./module-parts.js";
 import { listEntries } from "../modules/registry.js";
 import { facesForKind } from "./faces.js";
@@ -269,8 +270,82 @@ export function belongsOnEntity(
 export async function listApplicable(
   kind: string,
   orgId?: string,
-  opts: { alsoOn?: readonly string[] } = {},
+  opts: { alsoOn?: readonly string[]; only?: string } = {},
 ): Promise<EntityActionRecord[]> {
+  return applicableIn(await actionScene(orgId, opts), kind, orgId);
+}
+
+/** For each list of candidate kinds, the first one action applies to here
+ *  (null when none does), by listApplicable's rule. A page asking it of every
+ *  collection it lists ("which kind of this module takes a label?") reads the
+ *  workspace's part of the question (its modules, the action, its override)
+ *  once for the page, not once per kind (#7716). */
+export function firstWhereApplies(actionId: string, candidates: ReadonlyArray<readonly string[]>, orgId: string): Promise<Array<string | null>> {
+  return readingOnly(async () => {
+    const scene = await actionScene(orgId, { only: actionId });
+    const out: Array<string | null> = [];
+    for (const kinds of candidates) {
+      let hit: string | null = null;
+      for (const kind of kinds) {
+        if ((await applicableIn(scene, kind, orgId)).some((a) => a.id === actionId)) {
+          hit = kind;
+          break;
+        }
+      }
+      out.push(hit);
+    }
+    return out;
+  });
+}
+
+type ActionScene = {
+  allActions: Awaited<ReturnType<typeof readActionRows>>;
+  overrides: Map<string, ActionAppliesToDecl>;
+  on: Set<string> | null;
+  alsoOn?: readonly string[];
+};
+
+const readActionRows = (only?: string) =>
+  meta
+    .selectFrom("entity_actions")
+    .selectAll()
+    .$if(only !== undefined, (q) => q.where("id", "=", only!))
+    .orderBy("id")
+    .execute();
+
+/** The workspace's part of which actions apply: the same for every kind. */
+async function actionScene(orgId: string | undefined, opts: { alsoOn?: readonly string[]; only?: string }): Promise<ActionScene> {
+  // `only`: one action's question ("does Print label apply here?") reads that
+  // action's row, never the whole catalogue: a page asking it per kind parsed
+  // every action of every module each time, over 1 s at p95 (#7716).
+  const allActions = await readActionRows(opts.only);
+  // Per-org overrides on appliesTo. Pull all of them for this org in
+  // one query; map to action_id so the per-action filter is cheap.
+  const overrideRows = orgId
+    ? await meta
+        .selectFrom("entity_action_org_overrides")
+        .select(["action_id", "applies_to_override"])
+        .where("org_id", "=", orgId)
+        .$if(opts.only !== undefined, (q) => q.where("action_id", "=", opts.only!))
+        .execute()
+    : [];
+  const overrides = new Map<string, ActionAppliesToDecl>();
+  for (const r of overrideRows) {
+    overrides.set(r.action_id, r.applies_to_override as ActionAppliesToDecl);
+  }
+  // Only the actions of modules this workspace has turned on (#3255), and the
+  // ones the caller is about to turn on: a bundle install enables what it
+  // requires AFTER it has checked its wires, so judging those wires against
+  // today's modules refused every bundle whose wire needed a module the
+  // workspace did not have yet, which is most first installs.
+  const on = orgId ? await enabledActionOwners(orgId) : null;
+  if (on) for (const m of opts.alsoOn ?? []) on.add(m);
+  return { allActions, overrides, on, alsoOn: opts.alsoOn };
+}
+
+async function applicableIn(scene: ActionScene, kind: string, orgId?: string): Promise<EntityActionRecord[]> {
+  const { allActions, overrides, on } = scene;
+  const opts = { alsoOn: scene.alsoOn };
   // An INSTANCE kind ("supplies:item") is synthesized per-org and never lands
   // in entity_kinds, so getKind missed it and every caller got zero actions —
   // no error, just an empty Do… dropdown in the wire composer and an action-less
@@ -287,24 +362,6 @@ export async function listApplicable(
     kindRecord = (await listKindsForOrg(orgId)).find((k) => k.id === kind) ?? null;
   }
   if (!kindRecord) return [];
-  const allActions = await meta
-    .selectFrom("entity_actions")
-    .selectAll()
-    .orderBy("id")
-    .execute();
-  // Per-org overrides on appliesTo. Pull all of them for this org in
-  // one query; map to action_id so the per-action filter is cheap.
-  const overrideRows = orgId
-    ? await meta
-        .selectFrom("entity_action_org_overrides")
-        .select(["action_id", "applies_to_override"])
-        .where("org_id", "=", orgId)
-        .execute()
-    : [];
-  const overrides = new Map<string, ActionAppliesToDecl>();
-  for (const r of overrideRows) {
-    overrides.set(r.action_id, r.applies_to_override as ActionAppliesToDecl);
-  }
   // An explicit `appliesTo.kinds` allowlist names MODULE kinds, so match it
   // against the base — otherwise "supplies:item" fails an ["inventory:part"]
   // allowlist. Traits and fields still come from the instance's own record
@@ -324,13 +381,6 @@ export async function listApplicable(
   // an org there is no collection, so the declaration stands.
   const verdict = orgId ? await facesForKind(orgId, kind) : null;
   const traits = verdict ? (verdict.traits as Record<string, unknown>) : kindRecord.traits;
-  // Only the actions of modules this workspace has turned on (#3255), and the
-  // ones the caller is about to turn on: a bundle install enables what it
-  // requires AFTER it has checked its wires, so judging those wires against
-  // today's modules refused every bundle whose wire needed a module the
-  // workspace did not have yet, which is most first installs.
-  const on = orgId ? await enabledActionOwners(orgId) : null;
-  if (on) for (const m of opts.alsoOn ?? []) on.add(m);
   const eligible = allActions
     .filter((a) => !on || (on.has(a.module_name) && (opts.alsoOn?.includes(a.module_name) || on.has(actionOwner(a)))))
     .map(rowToActionRecord)

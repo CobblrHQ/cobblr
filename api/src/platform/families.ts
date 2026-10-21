@@ -16,6 +16,7 @@
 // Meta-side only: the declaration lives in the instance override rows.
 
 import { listOverrides } from "./entity-kind-overrides.js";
+import { perReadRequest } from "../lib/request-context.js";
 
 export interface FamilyLink {
   /** The type collection's instance name ("filament-types"). */
@@ -60,7 +61,7 @@ export function familiesFromOverrides(rows: ReadonlyArray<{ target_kind: string;
 }
 
 export async function familiesOf(orgId: string): Promise<FamilyLink[]> {
-  return familiesFromOverrides(await listOverrides(orgId));
+  return familiesFromOverrides(await perReadRequest(`families:${orgId}`, () => listOverrides(orgId)));
 }
 
 /** Is this kind (`<instance>:item`) a family's type collection? */

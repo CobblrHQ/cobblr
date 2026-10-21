@@ -1,3 +1,4 @@
+import { nameRequest } from "../platform/compute-ledger.js";
 import { wiresSaid } from "../platform/wire-said.js";
 import { editableFieldsOf } from "../platform/update-record-fields.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
@@ -862,6 +863,8 @@ platformOrgRouter.post(
         });
         return;
       }
+      // Priced under its own name in the compute ledger (#5424), once it has run.
+      nameRequest(res, parsed.data.actionId);
       // A Tier-B app-scoped token may fire capability-gated MODULE actions but
       // never a kernel workspace-config one (`platform:*`), and a kernel record
       // verb only on a kind its app declares it edits. requireCapability below

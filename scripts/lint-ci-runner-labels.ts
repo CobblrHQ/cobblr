@@ -53,8 +53,9 @@ const KNOWN = new Set([
   "ci-test",
   "ci-test-full",
   "ci-e2e",
+  // The nightly walk's shards (#7640): cobblr-test-a6-full and cobblr-light-b550, two at a time.
+  "ci-walk",
   "bake-a6",
-  "bake-aurora",
   "docker-build",
   "light-main",
   "ci-main",
@@ -72,9 +73,55 @@ const KNOWN = new Set([
 // it makes may leave the box: no artifact upload, no image push, no release asset, no publish script, since a
 // flipped bit would ship. nightly-tour's `record` job made the homepage's published media on `ci-test`, a
 // label the b550 carries. A deliberate exception says why on the runs-on line: `# b550-ok: <why>`.
-const B550_LABELS = new Set(["ci-test", "bake-b550"]);
+const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk"]);
 // One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
 const PUBLISHES = /actions\/upload-artifact|\bdocker push\b|buildx build[^\n]*--push|--push\b|\/releases\/[^\s]*assets|publish-[\w-]+\.(?:py|sh|mjs)\b|\bgh release\b|\bgit push\b|\b(?:npm|pnpm) publish\b|\bcrane push\b|\bskopeo copy\b|\boras push\b/;
+/** The first line that publishes and does not say why it may (`# b550-ok: <why>` on that line). */
+function publishesIn(body: string): string | undefined {
+  for (const l of body.split("\n")) {
+    const m = PUBLISHES.exec(l);
+    if (m && !/# b550-ok: \S/.test(l)) return m[0];
+  }
+  return undefined;
+}
+/** A matrix key's values: `key: [a, b]`, or one per `include:` entry, each with the entry's other keys (its leg). */
+function matrixValues(src: string, key: string): { value: string; leg: Record<string, string> }[] | null {
+  const list = new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`, "m").exec(src);
+  if (list) return list[1]!.split(",").map((v) => ({ value: v.trim().replace(/^["']|["']$/g, ""), leg: {} })).filter((v) => v.value);
+  const out: { value: string; leg: Record<string, string> }[] = [];
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const inc = /^(\s*)include:\s*$/.exec(lines[i]!);
+    if (!inc) continue;
+    let leg: Record<string, string> | null = null;
+    const flush = () => leg?.[key] && out.push({ value: leg[key]!, leg });
+    for (let j = i + 1; j < lines.length && (lines[j]!.startsWith(`${inc[1]} `) || !lines[j]!.trim()); j++) {
+      const kv = /^\s*(-\s+)?([A-Za-z_][\w-]*):\s*["']?([^"'#\s]+)["']?\s*(?:#.*)?$/.exec(lines[j]!);
+      if (!kv) continue;
+      if (kv[1]) {
+        flush();
+        leg = {};
+      }
+      if (leg) leg[kv[2]!] = kv[3]!;
+    }
+    flush();
+  }
+  return out.length ? out : null;
+}
+/** A job body with the steps a matrix leg never runs taken out: an `if:` that asks for another value of a key
+ *  (`matrix.part == 'tours'`, `startsWith(matrix.part, 'walk-')`) and has no `||` to let this leg in. */
+function legBody(body: string, leg: Record<string, string>): string {
+  const steps = body.split(/\n(?= {6}- )/);
+  return steps
+    .filter((step) => {
+      const cond = /^ {8}if:\s*(.+)$/m.exec(step)?.[1];
+      if (!cond || cond.includes("||")) return true;
+      for (const m of cond.matchAll(/(!?)matrix\.([A-Za-z_][\w-]*)\s*==\s*'([^']*)'/g)) if (!m[1] && leg[m[2]!] != null && leg[m[2]!] !== m[3]) return false;
+      for (const m of cond.matchAll(/(!?)startsWith\(matrix\.([A-Za-z_][\w-]*),\s*'([^']*)'\)/g)) if (!m[1] && leg[m[2]!] != null && !leg[m[2]!]!.startsWith(m[3]!)) return false;
+      return true;
+    })
+    .join("\n");
+}
 /** The job body that starts at `runs-on` line i: up to the next job header (two-space indent). */
 function jobBody(lines: string[], i: number): string {
   const out: string[] = [];
@@ -99,7 +146,7 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     const mx = /^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/.exec(label);
     if (mx) {
       const key = mx[1]!;
-      const vals = new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`, "m").exec(src);
+      const vals = matrixValues(src, key);
       if (!vals) {
         errors.push(
           `.forgejo/workflows/${f}:${i + 1} runs-on is \`${label}\` but no \`${key}: [ … ]\` matrix was found in the file — ` +
@@ -107,10 +154,14 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
         );
         return;
       }
-      for (const raw of vals[1]!.split(",")) {
-        const v = raw.trim().replace(/^["']|["']$/g, "");
-        if (!v) continue;
+      for (const { value: v, leg } of vals) {
         seen.set(v, [...(seen.get(v) ?? []), `${f}:${i + 1}`]);
+        // A leg on a label the b550 carries is judged by the steps that leg runs (#7640: the walk shards share
+        // their job with the tours, whose published media stay on ci-e2e).
+        if (B550_LABELS.has(v) && !/# b550-ok: \S/.test(line)) {
+          const what = publishesIn(legBody(jobBody(src.split("\n"), i), leg));
+          if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} matrix leg ${JSON.stringify(leg)} runs on "${v}", which the test-only b550 carries (bad RAM), and a step that leg runs publishes (${what}): a flipped bit would ship. Guard the step to the other legs, or say why on its line: # b550-ok: <why>.`);
+        }
         if (!KNOWN.has(v)) {
           errors.push(
             `.forgejo/workflows/${f}:${i + 1} matrix ${key} includes runner label "${v}", which no runner carries. ` +
@@ -123,7 +174,7 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     if (label.startsWith("$")) return; // some other expression; not ours to judge
     seen.set(label, [...(seen.get(label) ?? []), `${f}:${i + 1}`]);
     if (B550_LABELS.has(label) && !/# b550-ok: \S/.test(line)) {
-      const what = PUBLISHES.exec(jobBody(src.split("\n"), i))?.[0];
+      const what = publishesIn(jobBody(src.split("\n"), i));
       if (what) errors.push(`.forgejo/workflows/${f}:${i + 1} runs on "${label}", which the test-only b550 carries (bad RAM), and the job publishes (${what}): a flipped bit would ship. Run it on an A6-only label (ci-e2e for the test image), or say why on the line: # b550-ok: <why>.`);
     }
     const inLane = RELEASE_LANE_WORKFLOWS.includes(f);
@@ -182,8 +233,7 @@ function labelsOf(src: string): { label: string; line: number }[] {
     const label = m[1]!.replace(/^["']|["']$/g, "");
     const mx = /^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/.exec(label);
     if (mx) {
-      const vals = new RegExp(`^\\s*${mx[1]}:\\s*\\[([^\\]]*)\\]`, "m").exec(src)?.[1] ?? "";
-      for (const v of vals.split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean)) out.push({ label: v, line: i + 1 });
+      for (const { value } of matrixValues(src, mx[1]!) ?? []) out.push({ label: value, line: i + 1 });
     } else if (!label.startsWith("$")) out.push({ label, line: i + 1 });
   });
   return out;

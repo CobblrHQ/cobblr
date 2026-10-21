@@ -226,15 +226,31 @@ export async function offerInboxItems(
   return { ok: true, offered: items.length };
 }
 
+/** The offer an inbox row came as. The row is in the inbox before its offer
+ *  records where it landed (routing it comes between), and a person can
+ *  answer it in that gap (#7711). The row carries its offer's id from the
+ *  moment it exists, so one look finds the offer either way: landed here, or
+ *  not landed yet, when the landing is recorded here. Two looks, by the
+ *  landing and then among offers not landed, missed one whose landing was
+ *  recorded between them (#7743). */
 async function inRowFor(orgId: string, inboxId: string) {
-  return meta
+  const offerId = (await intake().state(orgId, inboxId)).offer_id;
+  await heldAt(orgId, "decide");
+  const row = await meta
     .selectFrom("share_offers as o")
     .innerJoin("share_links as l", "l.id", "o.link_id")
     .select(["o.id", "o.link_id", "o.peer_offer_id", "o.status", "o.landed", "l.side", "l.peer_name"])
     .where("o.direction", "=", "in")
     .where("l.org_id", "=", orgId)
-    .where(sql<string>`o.landed->>'inbox_id'`, "=", inboxId)
+    .where((eb) => {
+      const here = eb(sql<string>`o.landed->>'inbox_id'`, "=", inboxId);
+      return offerId ? eb.or([here, eb.and([eb("o.id", "=", offerId), eb("o.landed", "is", null)])]) : here;
+    })
     .executeTakeFirst();
+  if (!row || row.landed) return row;
+  const at: Landed = { org_id: orgId, inbox_id: inboxId };
+  await meta.updateTable("share_offers").set({ landed: JSON.stringify(at) as never }).where("id", "=", row.id).where("landed", "is", null).execute();
+  return { ...row, landed: at };
 }
 
 const open = (s: string) => s === "offered" || s === "maybe";
@@ -493,6 +509,39 @@ function injectedFailure(orgId: string, step: HandOverStep): void {
   throw new Error(`the hand-over's ${step} failed (a test's injected failure)`);
 }
 
+/** Test-only: a hand-over waits up to `ms` at one point, as a slow box
+ *  does: "landing", an offer in a workspace's inbox before it records where
+ *  it landed (#7711); "decide", an answer to it after it read the inbox row
+ *  and before it finds the offer (#7743). 0 lets every waiting one go at
+ *  once. Says how many wait there now. */
+export type HandOverHold = "landing" | "decide";
+const handOverHolds = new Map<string, { until: number; waiting: Set<() => void> }>();
+export function holdHandOverForTests(orgId: string, at: HandOverHold, ms: number): number {
+  const key = `${orgId}/${at}`;
+  const held = handOverHolds.get(key);
+  if (ms > 0) {
+    handOverHolds.set(key, { until: Date.now() + ms, waiting: held?.waiting ?? new Set() });
+    return held?.waiting.size ?? 0;
+  }
+  handOverHolds.delete(key);
+  for (const go of held?.waiting ?? []) go();
+  return 0;
+}
+async function heldAt(orgId: string, at: HandOverHold): Promise<void> {
+  const held = handOverHolds.get(`${orgId}/${at}`);
+  const left = held ? held.until - Date.now() : 0;
+  if (!held || left <= 0) return;
+  await new Promise<void>((resolve) => {
+    const go = () => {
+      clearTimeout(timer);
+      held.waiting.delete(go);
+      resolve();
+    };
+    const timer = setTimeout(go, left);
+    held.waiting.add(go);
+  });
+}
+
 /** Whether the giver still holds this record: it is not marked given away,
  *  sold or gone. What a hand-over step reads so that a retry does only the
  *  part that is not done yet. */
@@ -534,6 +583,7 @@ export function registerShareOfferOps(): void {
       acquiredOn: await platform().accounts.dayFor(null),
       as: await routeAs(link.org_id),
     });
+    await heldAt(link.org_id, "landing");
     if (landed) await meta.updateTable("share_offers").set({ landed: JSON.stringify({ org_id: link.org_id, inbox_id: landed.inbox_id }) as never }).where("id", "=", row.id).execute();
   });
 

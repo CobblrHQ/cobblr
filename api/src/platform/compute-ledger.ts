@@ -7,7 +7,8 @@
 // Counts and distributions only: a workspace is a key in a per-day tally and never leaves this file.
 //
 // CPU is the process's, so a request that overlapped another is charged for both. Each request knows
-// whether anything else ran while it did; `cpu_ms` is read from the ones that ran alone, and
+// whether anything else ran while it did, another request or background work (a statement no open
+// request owns: a timer, a sweep, or work a request left running after it answered, #7716); `cpu_ms` is read from the ones that ran alone, and
 // `cpu_ms_overlapped` from the rest (an upper bound). Worker threads (nesting) are in the process's CPU.
 //
 // A route's share of CPU is its own cost, measured alone, times its calls: never the process's CPU while
@@ -21,7 +22,10 @@
 // its CPU on 2026-10-14 with a median of 0 ms a call. A route whose median call is held open (HELD_WALL_MS)
 // and spends nothing (HELD_CPU_MS) is marked `held_open`, has no share and is left out of the total.
 
-const MAX_ROUTES = 400;
+// Room for every route shape and every action by name: the nightly recording's shards see about 1,300 between
+// them, and at 400 one shard put 1,793 calls in "other". Production sees about 160; a tally holds at most 1,500
+// samples, and most hold a handful.
+const MAX_ROUTES = 2000;
 export const HELD_WALL_MS = 5_000;
 export const HELD_CPU_MS = 1;
 const SAMPLES = 500;
@@ -43,6 +47,7 @@ const routes = new Map<string, RouteTally>();
 let since = new Date();
 let inFlight = 0;
 let started = 0;
+let background = 0;
 
 /** A route's shape, not its address: ids, numbers and the workspace become placeholders. */
 export function routeTemplate(method: string, url: string): string {
@@ -73,25 +78,44 @@ const keep = (a: number[], v: number) => {
   else a.push(v);
 };
 
-/** Start timing one request; the returned function records it when the response is done. */
-export function startRequest(method: string, url: string): (status: number) => void {
+/** Note that work ran outside any open request: a timer, a sweep, or work a request left running
+ *  after it answered (a PDF read started from an attach). */
+export function noteBackgroundWork(): void {
+  background++;
+}
+
+// AN ACTION IS PRICED BY ITS NAME (2026-10-21). Every action shares POST /actions/invoke, so laser nesting, the
+// heaviest work #5424 asked about, was one call among 2,280 of everything. A handler names its request
+// (nameRequest: the action's id) and the key gains it in brackets, only for a request that ran (status under 400)
+// and a name that is a code name, so a refused or made-up one cannot grow the table or carry anyone's words.
+const DETAIL = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+
+/** Name what this request did, past its route's shape (an action's id); read by the timing middleware. */
+export function nameRequest(res: { locals: Record<string, unknown> }, detail: string): void {
+  res.locals.computeDetail = detail;
+}
+
+/** Start timing one request; the returned function records it when the response is done, with its name if it has one. */
+export function startRequest(method: string, url: string): (status: number, detail?: unknown) => void {
   const t0 = process.hrtime.bigint();
   const c0 = process.cpuUsage();
   const r0 = process.memoryUsage.rss();
   const startedBefore = started++;
+  const backgroundBefore = background;
   const alone = inFlight === 0;
   inFlight++;
   let done = false;
-  return (status: number) => {
+  return (status: number, detail?: unknown) => {
     if (done) return;
     done = true;
     inFlight--;
-    const overlapped = !alone || started - startedBefore > 1;
+    const overlapped = !alone || started - startedBefore > 1 || background !== backgroundBefore;
     const wallMs = Number(process.hrtime.bigint() - t0) / 1e6;
     const c = process.cpuUsage(c0);
     const cpuMs = (c.user + c.system) / 1000;
     const growth = Math.max(0, process.memoryUsage.rss() - r0);
-    record(routeTemplate(method, url), workspaceOf(url), { wallMs, cpuMs, overlapped, rssGrowth: growth, failed: status >= 500 });
+    const named = status < 400 && typeof detail === "string" && DETAIL.test(detail) ? ` [${detail}]` : "";
+    record(routeTemplate(method, url) + named, workspaceOf(url), { wallMs, cpuMs, overlapped, rssGrowth: growth, failed: status >= 500 });
   };
 }
 
@@ -161,7 +185,7 @@ export interface ComputeRow {
 }
 
 /** Every route seen since the api started, the heaviest by total CPU first. */
-export function computeStats(limit = 60): { since: string; uptime_s: number; routes_seen: number; cpu_total_ms: number; cpu_estimated_ms: number; rows: ComputeRow[] } {
+export function computeStats(limit = 60, route?: string): { since: string; uptime_s: number; routes_seen: number; cpu_total_ms: number; cpu_estimated_ms: number; rows: ComputeRow[] } {
   const held = (t: RouteTally) => {
     const median = (a: number[]) => pct([...a].sort((x, y) => x - y), 0.5);
     const cpu = t.cpuSolo.length ? t.cpuSolo : t.cpuOverlapped;
@@ -170,6 +194,7 @@ export function computeStats(limit = 60): { since: string; uptime_s: number; rou
   const estimate = (t: RouteTally) => (t.soloN && !held(t) ? (t.soloSum / t.soloN) * t.calls : null);
   const total = [...routes.values()].reduce((s, t) => s + (estimate(t) ?? 0), 0);
   const rows = [...routes.entries()]
+    .filter(([key]) => !route || key.includes(route))
     .map(([route, t]): ComputeRow => {
       const perDay = [...t.perWorkspaceDay.values()].flatMap((d) => [...d.values()]).sort((a, b) => a - b);
       return {
@@ -187,7 +212,7 @@ export function computeStats(limit = 60): { since: string; uptime_s: number; rou
       };
     })
     .sort((a, b) => (b.cpu_share ?? -1) - (a.cpu_share ?? -1) || b.calls - a.calls)
-    .slice(0, Math.max(1, Math.min(400, limit)));
+    .slice(0, Math.max(1, Math.min(MAX_ROUTES, limit)));
   return { since: since.toISOString(), uptime_s: Math.round(process.uptime()), routes_seen: routes.size, cpu_total_ms: Math.round(processCpuMs()), cpu_estimated_ms: Math.round(total), rows };
 }
 
@@ -204,5 +229,6 @@ export function resetComputeLedger(): void {
   since = new Date();
   cpuAtStart = process.cpuUsage();
   inFlight = 0;
+  background = 0;
   started = 0;
 }

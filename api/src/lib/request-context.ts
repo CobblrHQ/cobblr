@@ -92,6 +92,9 @@ export interface RequestScope {
   label?: string;
   /** Test-only cold measurement: TTL caches belong to this request. */
   coldTtlCaches?: boolean;
+  /** Set once the response is sent: work still running in this scope is
+   *  background now (the compute ledger counts it so, #7716). */
+  answered?: boolean;
 }
 const scopeStorage = new AsyncLocalStorage<RequestScope>();
 
@@ -154,6 +157,15 @@ export function forgetPerRequest(match: (key: string) => boolean): void {
 export function markRequestReadOnly(): void {
   const scope = scopeStorage.getStore();
   if (scope) scope.readOnly = true;
+}
+
+/** Run fn, a judgement that only reads, in a memo of its own marked
+ *  read-only: a question it asks once per kind is asked once, and nothing it
+ *  remembers outlives it, so the request around it (which may write) never
+ *  reads a remembered answer. Its statements still count to the request. */
+export function readingOnly<T>(fn: () => Promise<T>): Promise<T> {
+  const parent = scopeStorage.getStore();
+  return scopeStorage.run({ memo: new Map(), meta: parent?.meta ?? new Map(), readOnly: true, label: parent?.label, coldTtlCaches: parent?.coldTtlCaches }, fn);
 }
 
 /** `perRequest`, but only in a request that said it only reads. Otherwise the

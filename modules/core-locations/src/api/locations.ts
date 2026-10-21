@@ -11,6 +11,7 @@ import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js
 import { deletePlace, hasPlacesInside, restoreDeletedPlace, whatGoesWith } from "./place-delete.js";
 import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { movePlace, PlaceMoveRefused } from "./place-move.js";
 
 export const locationsRouter = Router({ mergeParams: true });
 
@@ -299,8 +300,6 @@ locationsRouter.patch(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
 
-    // If parent_id changes we have to re-compute depth for THIS row
-    // and every descendant. Cheap: walk the tree once.
     const patch: Record<string, unknown> = { updated_at: new Date() };
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
     if (parsed.data.short_name !== undefined) patch.short_name = parsed.data.short_name;
@@ -312,57 +311,9 @@ locationsRouter.patch(
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
     if (parsed.data.image_path !== undefined) patch.image_path = parsed.data.image_path;
 
-    if (parsed.data.parent_id !== undefined) {
-      // Reject cycle: new parent_id can't be self or a descendant.
-      if (parsed.data.parent_id === id) {
-        res.status(400).json({
-          error: { code: "cycle", message: "A place cannot go inside itself." },
-        });
-        return;
-      }
-      let newDepth = 0;
-      if (parsed.data.parent_id) {
-        // Walk up from candidate parent; if we hit `id`, that's a cycle.
-        let cursor: string | null = parsed.data.parent_id;
-        const seen = new Set<string>();
-        while (cursor) {
-          if (cursor === id) {
-            res.status(400).json({
-              error: { code: "cycle", message: "A place cannot go inside a place that is inside it." },
-            });
-            return;
-          }
-          if (seen.has(cursor)) break;
-          seen.add(cursor);
-          const parent: { parent_id: string | null; depth: number } | undefined =
-            await db
-              .selectFrom("core_locations_locations")
-              .select(["parent_id", "depth"])
-              .where("id", "=", cursor)
-              .executeTakeFirst();
-          if (!parent) {
-            res.status(400).json({
-              error: { code: "invalid_parent", message: "parent_id not found" },
-            });
-            return;
-          }
-          if (parent.parent_id === null) {
-            newDepth = parent.depth + 1;
-            break;
-          }
-          cursor = parent.parent_id;
-        }
-        // newDepth set above only when we hit a root via cursor.
-        // If parent's depth is known directly, use that.
-        const parentRow = await db
-          .selectFrom("core_locations_locations")
-          .select("depth")
-          .where("id", "=", parsed.data.parent_id)
-          .executeTakeFirstOrThrow();
-        newDepth = parentRow.depth + 1;
-      }
-      patch.parent_id = parsed.data.parent_id;
-      patch.depth = newDepth;
+    if (parsed.data.parent_id === id) {
+      res.status(400).json({ error: { code: "cycle", message: "A place cannot go inside itself." } });
+      return;
     }
 
     // A rename arrives at the same bad state from the other side: calling this
@@ -399,6 +350,19 @@ locationsRouter.patch(
 
     // The row as it was: the log says what this edit changed (#4517).
     const before = await db.selectFrom("core_locations_locations").selectAll().where("id", "=", id).executeTakeFirst();
+    if (!before) {
+      res.status(404).json({ error: { code: "not_found", message: "location not found" } });
+      return;
+    }
+    if (parsed.data.parent_id !== undefined) {
+      try {
+        await movePlace(db, id, parsed.data.parent_id);
+      } catch (e) {
+        if (!(e instanceof PlaceMoveRefused)) throw e;
+        res.status(400).json({ error: { code: e.code, message: e.message } });
+        return;
+      }
+    }
     const updated = await db
       .updateTable("core_locations_locations")
       .set(patch)
@@ -408,11 +372,6 @@ locationsRouter.patch(
     if (!updated) {
       res.status(404).json({ error: { code: "not_found", message: "location not found" } });
       return;
-    }
-    // If parent changed, re-depth descendants. Simple BFS using the
-    // depth field already maintained on every row.
-    if (parsed.data.parent_id !== undefined) {
-      await rebuildDescendantDepths(db, id);
     }
     void platform().events.emit("core-locations.location.updated", {
       orgId: ctx.org.id,
@@ -552,51 +511,3 @@ locationsRouter.post(
     }
   }),
 );
-
-/** Walk descendants of `rootId` and rewrite their depth so they
- *  stay consistent after a reparent. Iterative BFS — no recursion
- *  budget, no SQL recursion required. */
-export async function rebuildDescendantDepths(
-  db: ReturnType<typeof tenantDb>,
-  rootId: string,
-): Promise<void> {
-  const root = await db
-    .selectFrom("core_locations_locations")
-    .select("depth")
-    .where("id", "=", rootId)
-    .executeTakeFirst();
-  if (!root) return;
-  // Queue holds [id, depth] pairs.
-  let frontier: Array<{ id: string; depth: number }> = [
-    { id: rootId, depth: root.depth },
-  ];
-  while (frontier.length > 0) {
-    const parentIds = frontier.map((f) => f.id);
-    const children = await db
-      .selectFrom("core_locations_locations")
-      .select(["id", "parent_id"])
-      .where("parent_id", "in", parentIds)
-      .execute();
-    if (children.length === 0) break;
-    const byParent = new Map<string, Array<{ id: string }>>();
-    for (const c of children) {
-      const arr = byParent.get(c.parent_id!) ?? [];
-      arr.push({ id: c.id });
-      byParent.set(c.parent_id!, arr);
-    }
-    const next: Array<{ id: string; depth: number }> = [];
-    for (const f of frontier) {
-      const cs = byParent.get(f.id) ?? [];
-      for (const c of cs) {
-        const childDepth = f.depth + 1;
-        await db
-          .updateTable("core_locations_locations")
-          .set({ depth: childDepth })
-          .where("id", "=", c.id)
-          .execute();
-        next.push({ id: c.id, depth: childDepth });
-      }
-    }
-    frontier = next;
-  }
-}

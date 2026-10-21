@@ -568,6 +568,7 @@ async function boot() {
       registerUndo: actions.registerUndo,
       registerRequester: actions.registerRequester,
       listApplicable: actions.listApplicable,
+      firstWhereApplies: actions.firstWhereApplies,
       invoke: actions.invoke,
       undoFor: actions.undoFor,
       argChoices: argChoicesFor,

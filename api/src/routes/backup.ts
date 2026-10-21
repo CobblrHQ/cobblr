@@ -59,9 +59,11 @@ import {
   GOOGLE_TOKEN_URL,
 } from "../platform/backup-destinations.js";
 import { randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
 import * as activity from "../platform/activity.js";
 import { captureBlueprint, applyBlueprint, type BlueprintManifestT } from "./blueprint.js";
 import { makeUncompressedBudget, readEntryBounded, BackupTooLargeError } from "./backup-limits.js";
+import { backupBudget, BackupBusyError, BACKUP_BUSY_RETRY_SEC } from "./backup-heavy-slot.js";
 import { capturePlatformRows, platformIdMap, restorePlatformRows, swapIds, type PlatformRows } from "../platform/backup-platform-rows.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
@@ -136,12 +138,57 @@ async function listTenantTables(tdb: Kysely<unknown>): Promise<string[]> {
   return r.rows.map((x) => x.table_name).filter((t) => t !== "migrations");
 }
 
+/** A table's rows as JSON lines, read a page at a time through a cursor.
+ *  Kept as lines and never joined: one table past V8's longest string (about
+ *  512 MB) threw "Invalid string length" and the whole backup failed (#7704). */
+async function tableLines(tdb: Kysely<unknown>, table: string, budget: ReturnType<typeof backupBudget>): Promise<string[]> {
+  return tdb.transaction().execute(async (trx) => {
+    await sql`declare backup_rows no scroll cursor for select * from ${sql.ref(table)}`.execute(trx);
+    const lines: string[] = [];
+    for (;;) {
+      const page = (await sql<Record<string, unknown>>`fetch 500 from backup_rows`.execute(trx)).rows;
+      if (page.length === 0) return lines;
+      let bytes = 0;
+      for (const r of page) {
+        const line = JSON.stringify(captureBackupSecrets(r));
+        lines.push(line);
+        bytes += line.length;
+      }
+      await budget.charge(bytes);
+    }
+  });
+}
+
+const JSONL_CHUNK_CHARS = 8 * 1024 * 1024;
+
+/** The lines of one .jsonl entry, handed to the zip in pieces of about 8 MB. */
+function jsonlEntry(lines: readonly string[]): Readable {
+  return Readable.from(
+    (function* () {
+      let part: string[] = [];
+      let size = 0;
+      for (let i = 0; i < lines.length; i++) {
+        part.push(i === 0 ? lines[i]! : `\n${lines[i]!}`);
+        size += lines[i]!.length;
+        if (size >= JSONL_CHUNK_CHARS) {
+          yield Buffer.from(part.join(""));
+          part = [];
+          size = 0;
+        }
+      }
+      if (part.length) yield Buffer.from(part.join(""));
+    })(),
+  );
+}
+
 export const backupRouter = Router({ mergeParams: true });
 
 // ── Build the backup zip (reused by GET /export AND the destinations cron) ──
 /** Snapshot a workspace into a backup zip buffer: manifest.json (the blueprint
  *  + data_index) + data/<table>.jsonl (every row) + files/<id> (original bytes).
- *  Personal-scale: buffered in memory; a streaming dump is a future option. */
+ *  Buffered in memory, so a large one takes the box's one slot for large
+ *  backups (backup-heavy-slot.ts): `whenBusy` says whether it then waits its
+ *  turn (a background build) or refuses (a person's download). */
 export async function buildBackupZip(
   orgId: string,
   slug: string,
@@ -153,7 +200,22 @@ export async function buildBackupZip(
     stockUntil?: Date;
     /** What the person made, from the log: what makes a later row theirs. */
     madeBy?: ReadonlySet<string>;
+    whenBusy?: "refuse" | "wait";
   } = {},
+): Promise<{ buffer: Buffer; filename: string }> {
+  const budget = backupBudget(orgId, opts.whenBusy ?? "wait");
+  try {
+    return await buildWithin(orgId, slug, opts, budget);
+  } finally {
+    budget.release();
+  }
+}
+
+async function buildWithin(
+  orgId: string,
+  slug: string,
+  opts: { omit?: ReadonlySet<string>; stockUntil?: Date; madeBy?: ReadonlySet<string> },
+  budget: ReturnType<typeof backupBudget>,
 ): Promise<{ buffer: Buffer; filename: string }> {
   const blueprint = await captureBlueprint(orgId);
   const tdb = (await getTenantDb(orgId)) as unknown as Kysely<BackupTenantDB>;
@@ -161,13 +223,13 @@ export async function buildBackupZip(
   const hasFiles = allTables.includes(FILES_TABLE);
   const tables = allTables.filter((t) => t !== FILES_TABLE);
 
-  const dataFiles: Array<{ file: string; jsonl: string; index: DataIndexTable }> = [];
+  const dataFiles: Array<{ file: string; lines: string[]; index: DataIndexTable }> = [];
   for (const table of tables) {
-    const rows = (await sql<Record<string, unknown>>`select * from ${sql.ref(table)}`.execute(tdb as unknown as Kysely<unknown>)).rows;
+    const lines = await tableLines(tdb as unknown as Kysely<unknown>, table, budget);
     dataFiles.push({
       file: `data/${table}.jsonl`,
-      jsonl: rows.map((r) => JSON.stringify(captureBackupSecrets(r))).join("\n"),
-      index: { table, file: `data/${table}.jsonl`, row_count: rows.length },
+      lines,
+      index: { table, file: `data/${table}.jsonl`, row_count: lines.length },
     });
   }
 
@@ -182,6 +244,7 @@ export async function buildBackupZip(
   for (const f of fileRows) {
     const got = await platform().files.read(orgId, f.id, "original");
     if (!got) continue;
+    await budget.charge(got.bytes.length);
     fileBlobs.push({
       name: `files/${f.id}`,
       bytes: Buffer.from(got.bytes),
@@ -192,9 +255,10 @@ export async function buildBackupZip(
   const platformRows = await capturePlatformRows(orgId);
   const platformFiles = [...platformRows].map(([table, rows]) => ({
     file: `platform/${table}.jsonl`,
-    jsonl: rows.map((r) => JSON.stringify(captureBackupSecrets(r))).join("\n"),
+    lines: rows.map((r) => JSON.stringify(captureBackupSecrets(r))),
     index: { table, file: `platform/${table}.jsonl`, row_count: rows.length },
   }));
+  await budget.charge(platformFiles.reduce((n, p) => n + p.lines.reduce((m, l) => m + l.length, 0), 0));
 
   // The blueprint's own name says "blueprint" and its description "No data",
   // which a backup carrying every record was calling itself (#4217). A
@@ -222,8 +286,8 @@ export async function buildBackupZip(
     archive.on("error", reject);
   });
   archive.append(JSON.stringify(manifest, null, 2), { name: "manifest.json" });
-  for (const d of dataFiles) archive.append(d.jsonl, { name: d.file });
-  for (const p of platformFiles) archive.append(p.jsonl, { name: p.file });
+  for (const d of dataFiles) archive.append(jsonlEntry(d.lines), { name: d.file });
+  for (const p of platformFiles) archive.append(jsonlEntry(p.lines), { name: p.file });
   for (const b of fileBlobs) archive.append(b.bytes, { name: b.name });
   await archive.finalize();
   await done;
@@ -238,12 +302,17 @@ export async function buildBackupZip(
 backupRouter.get("/export", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin")) return;
-    const { buffer, filename } = await buildBackupZip(req.tenant!.org.id, req.tenant!.org.slug);
+    const { buffer, filename } = await buildBackupZip(req.tenant!.org.id, req.tenant!.org.slug, { whenBusy: "refuse" });
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.send(buffer);
   } catch (err) {
+    if (err instanceof BackupBusyError) {
+      res.setHeader("Retry-After", String(BACKUP_BUSY_RETRY_SEC));
+      res.status(503).json({ error: { code: err.code, message: err.message } });
+      return;
+    }
     next(err);
   }
 });
@@ -304,6 +373,21 @@ interface ParsedBackup {
   files: Map<string, Buffer>;
 }
 
+/** A .jsonl entry's rows, split on the bytes: the entry can be longer than one
+ *  string can hold, though no line of it is (#7704). A newline byte never sits
+ *  inside a multi-byte UTF-8 character, so each slice decodes whole. */
+function jsonlRows(buf: Buffer): Array<Record<string, unknown>> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (let at = 0; at < buf.length; ) {
+    const nl = buf.indexOf(10, at);
+    const end = nl === -1 ? buf.length : nl;
+    const line = buf.toString("utf8", at, end);
+    if (line.trim()) rows.push(JSON.parse(line) as Record<string, unknown>);
+    at = end + 1;
+  }
+  return rows;
+}
+
 /** Reads the archive where it lies: a path (an upload, streamed to disk by the
  *  upload door) is opened in place, never read into memory whole. */
 async function parseBackupZip(src: Buffer | string): Promise<ParsedBackup> {
@@ -333,22 +417,10 @@ async function parseBackupZip(src: Buffer | string): Promise<ParsedBackup> {
       manifest = JSON.parse((await readEntry(entry)).toString("utf8"));
     } else if (entry.path.startsWith("data/") && entry.path.endsWith(".jsonl")) {
       const table = entry.path.slice("data/".length, -".jsonl".length);
-      const text = (await readEntry(entry)).toString("utf8");
-      const rows = text
-        .split("\n")
-        .filter((l) => l.trim())
-        .map((l) => JSON.parse(l) as Record<string, unknown>);
-      tables.set(table, rows);
+      tables.set(table, jsonlRows(await readEntry(entry)));
     } else if (entry.path.startsWith("platform/") && entry.path.endsWith(".jsonl")) {
       const table = entry.path.slice("platform/".length, -".jsonl".length);
-      const text = (await readEntry(entry)).toString("utf8");
-      shared.set(
-        table,
-        text
-          .split("\n")
-          .filter((l) => l.trim())
-          .map((l) => JSON.parse(l) as Record<string, unknown>),
-      );
+      shared.set(table, jsonlRows(await readEntry(entry)));
     } else if (entry.path.startsWith("files/")) {
       files.set(entry.path.slice("files/".length), await readEntry(entry));
     }

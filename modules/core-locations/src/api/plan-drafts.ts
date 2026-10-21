@@ -24,7 +24,7 @@ import type { Kysely } from "kysely";
 import { Router, type Response } from "express";
 import { z } from "zod";
 import { sessionUser, tenantContext, type CoreLocationsDB } from "../db.js";
-import { rebuildDescendantDepths } from "./locations.js";
+import { movePlace, PlaceMoveRefused } from "./place-move.js";
 import { deletePlace } from "./place-delete.js";
 import { siblingNamed } from "./siblings.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
@@ -208,13 +208,12 @@ export async function deleteDraft(orgId: string, id: string): Promise<boolean> {
 }
 
 async function reparent(db: Db, id: string, parentId: string | null): Promise<void> {
-  const parent = parentId ? await db.selectFrom("core_locations_locations").select("depth").where("id", "=", parentId).executeTakeFirst() : null;
-  await db
-    .updateTable("core_locations_locations")
-    .set({ parent_id: parentId, depth: parent ? parent.depth + 1 : 0, updated_at: new Date() } as never)
-    .where("id", "=", id)
-    .execute();
-  await rebuildDescendantDepths(db, id);
+  try {
+    await movePlace(db, id, parentId);
+  } catch (e) {
+    if (e instanceof PlaceMoveRefused) throw new DraftRefused(e.message);
+    throw e;
+  }
 }
 
 function floorplanOf(metadata: unknown): Record<string, unknown> {

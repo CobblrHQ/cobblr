@@ -377,6 +377,52 @@ testSupportRouter.post("/test-support/hand-over-fails", async (req, res, next) =
     next(err);
   }
 });
+// A hand-over waits `ms` at one point (#7711, #7743): "landing", before an
+// offer records where it landed in a workspace's inbox; "decide", an answer
+// to it between reading the inbox row and finding the offer. ms 0 lets it go.
+// Body: { slug, at, ms }; answers how many wait there.
+testSupportRouter.post("/test-support/hand-over-hold", async (req, res, next) => {
+  try {
+    const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || (at !== "landing" && at !== "decide") || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + at (landing|decide) + ms required" } });
+      return;
+    }
+    const { holdHandOverForTests } = await import("../platform/share-offers.js");
+    res.json({ ok: true, waiting: holdHandOverForTests(o.id, at, ms) });
+  } catch (err) {
+    next(err);
+  }
+});
+// A workspace's backup counts as large from `line` bytes (0: always; null: the
+// real line), and one that takes the box's slot holds it up to `hold_ms`; 0
+// lets it go (#7715). GET says which workspace holds the slot.
+testSupportRouter.post("/test-support/backup-heavy", async (req, res, next) => {
+  try {
+    const { slug, line, hold_ms } = (req.body ?? {}) as { slug?: string; line?: number | null; hold_ms?: number };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || (line !== undefined && line !== null && typeof line !== "number") || (hold_ms !== undefined && typeof hold_ms !== "number")) {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + line (bytes or null) and/or hold_ms required" } });
+      return;
+    }
+    const { setHeavyBackupForTests } = await import("./backup-heavy-slot.js");
+    setHeavyBackupForTests(o.id, { line, holdMs: hold_ms });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+testSupportRouter.get("/test-support/backup-heavy", async (_req, res, next) => {
+  try {
+    const { heavyBackupHolder } = await import("./backup-heavy-slot.js");
+    const id = heavyBackupHolder();
+    const o = id ? await meta.selectFrom("orgs").select("slug").where("id", "=", id).executeTakeFirst() : undefined;
+    res.json({ holder: o?.slug ?? null });
+  } catch (err) {
+    next(err);
+  }
+});
 // Hold all but `leave` of a workspace's connections for `ms` (#7326), as a
 // busy workspace does: two taps must still pay for one term with what is left.
 testSupportRouter.post("/test-support/hold-tenant-connections", async (req, res, next) => {

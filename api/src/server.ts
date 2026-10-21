@@ -244,8 +244,8 @@ export function createApp(): AppHandles {
   // day (platform/compute-ledger.ts, read by GET /super-admin/compute-stats, #5424).
   app.use((req, res, next) => {
     const done = startRequest(req.method, req.originalUrl);
-    res.on("finish", () => done(res.statusCode));
-    res.on("close", () => done(res.statusCode));
+    res.on("finish", () => done(res.statusCode, res.locals.computeDetail));
+    res.on("close", () => done(res.statusCode, res.locals.computeDetail));
     next();
   });
 
@@ -266,6 +266,9 @@ export function createApp(): AppHandles {
     runRequestScope(() => {
       const scope = currentRequestScope();
       if (scope) scope.label = requestLabel(req.method, req.path, req.header("x-test-file"));
+      res.on("finish", () => {
+        if (scope) scope.answered = true;
+      });
       if (probe && /^[\w-]{1,64}$/.test(probe)) {
         if (scope && env.COBBLR_TEST_ORG_POOL && req.header("x-meta-probe-cold") === "1") scope.coldTtlCaches = true;
         res.on("finish", () => {
