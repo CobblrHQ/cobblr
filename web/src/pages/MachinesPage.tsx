@@ -418,6 +418,18 @@ export function MachinesPage({
         hint={hint} kind={instance ? `${instance}:item` : ENTITY_KIND}
         filters={
           <>
+        {/* First: it is there from the first paint, and the controls after it
+            (Gone, the lens, states) wait for the machines. Ahead of it, the
+            states button arriving pushed it 85 px along under a finger
+            (#7788). */}
+        {(instance || !lensName) && (
+          <SegmentedChoice
+            label="What to show"
+            value={pageTab}
+            onChange={setPageTab}
+            options={[{ value: "items", label: nounPlural }, { value: "versions", label: "Versions" }, ...(showContributedTabs ? contributedTabs.map((p) => ({ value: p.id, label: p.title })) : [])]}
+          />
+        )}
         {((machines.data?.gone_count ?? 0) > 0 || showGone) && (
           <button
             type="button"
@@ -490,14 +502,6 @@ export function MachinesPage({
               </>
             )}
           </div>
-        )}
-        {(instance || !lensName) && (
-          <SegmentedChoice
-            label="What to show"
-            value={pageTab}
-            onChange={setPageTab}
-            options={[{ value: "items", label: nounPlural }, { value: "versions", label: "Versions" }, ...(showContributedTabs ? contributedTabs.map((p) => ({ value: p.id, label: p.title })) : [])]}
-          />
         )}
         {!instance && !lensName && availableLenses.length > 0 && (
           <select

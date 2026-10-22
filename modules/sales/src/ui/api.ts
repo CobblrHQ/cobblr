@@ -82,6 +82,7 @@ export interface SalesOrderDetail extends SalesOrder {
   total: number;
   /** Lines with no price; the total covers only the priced ones. */
   unpriced_lines?: number;
+  other_currency_totals?: Record<string, number>;
   work_orders?: WorkOrderView[];
   availability?: LineAvailability[];
 }

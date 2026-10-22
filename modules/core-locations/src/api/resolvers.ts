@@ -36,7 +36,7 @@ export function registerLocationsResolvers(): void {
       const limit = Math.min(query.limit ?? 50, 200);
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_locations_locations").selectAll();
-      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "kind"], json: ["metadata"] })!);
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "short_name", "kind"], json: ["metadata"] })!);
       if (query.filter) {
         for (const [key, val] of Object.entries(query.filter)) {
           if (val === undefined || val === null) continue;

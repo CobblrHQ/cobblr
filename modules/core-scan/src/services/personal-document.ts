@@ -390,7 +390,10 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   }
   const raw = input.mime === "image/svg+xml" ? new TextDecoder().decode(input.bytes) : "";
   const geometry = /^(?:svg|g|path|circle|line|rect|ellipse|polygon|polyline|defs|clipPath|mask|linearGradient|radialGradient|stop)$/;
-  const vectorDrawing = !forcePersonal && !text.trim() && /^\s*<svg\b/.test(raw)
+  // A drawing of only geometry is a picture: its source holds no words, and
+  // what OCR reads in its rendering is judged as a photo's is. A bolt hole read
+  // as "o" is not writing; outlined text that spells an ID or a page still is (#7786).
+  const vectorDrawing = !forcePersonal && /^\s*<svg\b/.test(raw)
     && !/<[!?]|\b(?:href|aria-label|on\w+)\s*=/i.test(raw) && !personalIn(raw)
     && [...raw.matchAll(/<\s*\/?\s*([\w:-]+)/g)].every((tag) => geometry.test(tag[1]!));
   // Source code (Python, OpenSCAD, G-code and the like) is not a document a
@@ -403,7 +406,7 @@ export async function readPersonalDocumentLocally(input: DocumentInput): Promise
   // them from shared Files was the strict rule's cost.
   // OCR of a scanned page is no full read, so only a real text layer counts.
   const fullyRead = !forcePersonal && (/^text\//.test(input.mime) || (pdf && seen.layer === true));
-  const privacy = vectorDrawing ? "normal" : code || fullyRead ? (personalIn(text) ? "personal" : "normal") : wholePhoto && !forcePersonal ? photoPrivacy(text) : classifyPersonalText(text, forcePersonal);
+  const privacy = vectorDrawing ? photoPrivacy(text) : code || fullyRead ? (personalIn(text) ? "personal" : "normal") : wholePhoto && !forcePersonal ? photoPrivacy(text) : classifyPersonalText(text, forcePersonal);
   const fields = privacy === "personal" ? extractPersonalFields(text) : {};
   const sources: PersonalDocumentRead["sources"] = Object.fromEntries(Object.keys(fields).map((key) => [key, "code"]));
   let sentTo: string | null = null;

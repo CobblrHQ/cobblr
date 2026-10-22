@@ -26,20 +26,38 @@ function RemoveStrip({ slug, inst }: { slug: string; inst: ModuleInstance }) {
   const run = useRunAction();
   const name = inst.display_name || inst.instance_name;
 
+  // What the page of the list being removed has asked for: its items, facets
+  // and the rest are keyed by the list's kind (`<list>:item`) or its name. The
+  // server is about to take them away, so a read that starts after is a 404;
+  // they are cancelled and forgotten before anything else is refreshed (#7916).
+  const retire = async () => {
+    const ofThisList = (q: { queryKey: readonly unknown[] }) => q.queryKey.some((k) => k === inst.instance_name || k === `${inst.instance_name}:item`);
+    await qc.cancelQueries({ predicate: ofThisList });
+    qc.removeQueries({ predicate: ofThisList });
+  };
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["instances", slug] });
     void qc.invalidateQueries({ queryKey: ["nav-modules", slug] });
   };
   const remove = async () => {
+    // Off the list's page before the server takes the list away: the action
+    // refreshes what is open, and the page would read its own items, facets
+    // and offers again from a list that no longer exists (#7916).
+    navigate("/");
+    // A turn for the page to unmount: its queries stop being watched.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const out = await run({ actionId: "platform:remove-list", entityKind: "", entityId: "", args: { list: inst.instance_name } }, { undo: "shown-here" });
     const r = out.result as { ok?: boolean; summary?: string; error?: string } | null;
-    refresh();
     if (!r?.ok) {
+      navigate(-1);
+      refresh();
       toast.error(r?.error ?? "The list was not removed.");
       return;
     }
     const steps = (Array.isArray(out.undo) ? out.undo : out.undo ? [out.undo] : []) as Undo;
-    navigate("/");
+    // Whatever of the list is still cached is gone with it.
+    await retire();
+    refresh();
     toast.action(r.summary ?? `Removed the ${name} list.`, {
       actionLabel: "Undo",
       onAction: async () => {

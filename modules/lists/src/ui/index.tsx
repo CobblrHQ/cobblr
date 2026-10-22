@@ -10,7 +10,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
-import { RunningLowOffer } from "./RunningLowOffer.js";
+import { RunningLowOffer, useRunningLowKnown } from "./RunningLowOffer.js";
 import { PickToLight } from "@cobblr/platform-web";
 
 
@@ -57,6 +57,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
     queryKey: ["lists", orgSlug],
     queryFn: () => api.listLists(),
   });
+  const offerKnown = useRunningLowKnown();
 
   const createList = useMutation({
     mutationFn: (title: string) => api.createList({ title }),
@@ -92,15 +93,18 @@ export function ListsUI({ orgSlug, getToken }: Props) {
         </button>
       </div>
 
-      {lists.data && <RunningLowOffer lists={lists.data.items} />}
-      {lists.isLoading && <div className="text-sm text-muted">Loading…</div>}
+      {/* The offer above the lists answers on its own: drawn as it came, it
+          pushed every list 114 px down under a finger (#7788). The lists wait
+          for it and the page draws once. */}
+      {lists.data && offerKnown && <RunningLowOffer lists={lists.data.items} />}
+      {(lists.isLoading || (lists.data && !offerKnown)) && <div className="text-sm text-muted">Loading…</div>}
       {lists.isError && <QueryError what="your lists" onRetry={() => void lists.refetch()} />}
-      {lists.data?.items.length === 0 && (
+      {offerKnown && lists.data?.items.length === 0 && (
         <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {lists.data?.items.map((l) => (
+        {offerKnown && lists.data?.items.map((l) => (
           <ListCard key={l.id} list={l} onOpen={() => setOpen(l.id)} onDelete={async () => {
             if (await confirm({ title: `Delete "${l.title}"?`, message: "This removes the list and its items.", confirmLabel: "Delete", destructive: true })) {
               deleteList.mutate(l.id);

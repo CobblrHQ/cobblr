@@ -48,6 +48,7 @@ export default defineModule({
         createEndpoint: "/parts",
         updateEndpoint: "/parts/{id}",
         deleteEndpoint: "/parts/{id}",
+        deleteBy: "admin",
         displayName: "Part",
         displayNamePlural: "Parts",
         icon: "boxes",
@@ -1311,19 +1312,9 @@ export default defineModule({
         trigger_type: "event",
         trigger_event: "digifab.print.completed",
       },
-      // F-13 — the reverse: a print SCRAPPED at the bed-clear step fires
-      // digifab.print.reversed carrying { partId, delta: +grams }, adding the
-      // filament back that print.completed optimistically deducted. Same handler,
-      // mirrored payload. Inert when the scrapped print declared no material.
-      {
-        source_kind: "digifab:job",
-        action_id: "inventory:adjust-stock",
-        trigger_type: "event",
-        trigger_event: "digifab.print.reversed",
-      },
-      // A print's grams off each spool loaded on its printer (and back on for
-      // a scrapped print): one event per spool, in grams, converted to the
-      // spool's own unit by adjust-stock.
+      // A print's grams off each spool loaded on its printer: one event per
+      // spool, in grams, converted to the spool's own unit by adjust-stock. A
+      // scrapped print keeps them off: it melted its filament either way (#7890).
       {
         source_kind: "digifab:job",
         action_id: "inventory:adjust-stock",

@@ -34,7 +34,7 @@ import { BookDoorUnavailable, classifyScanCode, resolveIsbn, resolveAsin, isbnFi
 import { readScanFrameLot } from "./scan-frame-label.js";
 import { crossCheckScanPhoto, identifyImage, parsePackSize, refreshCatalogImageByName, type PendingReplaced } from "./enrich-photo.js";
 import { identityMeta, mergeMeta, CATALOG_PICTURE_NOT_PERSONS } from "./metadata.js";
-import { allergenMeta } from "./open-facts-allergens.js";
+import { allergenMeta, asksOpenFoodFacts, openFoodFactsTags } from "./open-facts-allergens.js";
 import { nameFromAmazonLabel } from "./fnsku-label.js";
 import { looksNonEnglish } from "./catalog-normalize.js";
 import { trimCatalogMarginsWithVerdict } from "./trim-margins.js";
@@ -1162,6 +1162,17 @@ async function enrichCode(ctx: EnrichContext): Promise<void> {
   if (isbnFields && !hit.fields && typeof isbnFields.author === "string") {
     hit = { ...hit, fields: isbnFields, decoder_id: hit.decoder_id ?? ISBN_DECODER_ID };
     await cacheHit(ctx, hit);
+  }
+  // What a food contains is Open Food Facts' own record, and a food another
+  // catalog named arrives without it: behind the box resolver, Nutella and
+  // an Oreo said nothing (#7804). Asked once and kept with the hit the same
+  // way, so an answer of none is not asked again.
+  if (!isbnFields && codeClass.type === "upc" && hit.title && asksOpenFoodFacts(hit)) {
+    const tags = await openFoodFactsTags(codeClass.code);
+    if (tags) {
+      hit = { ...hit, raw: { ...hit.raw, ...tags } };
+      await cacheHit(ctx, hit);
+    }
   }
 
   await ctx.db

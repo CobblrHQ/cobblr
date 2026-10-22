@@ -17,6 +17,8 @@ const tool: WorkspaceTool = {
     const kinds = await fetchKinds(api);
     const path = resolveDeletePath(kind, String(args.id ?? ""), kinds);
     if (!path) return toolFail(`records of "${kind}" can't be deleted this way (no delete route declared)`);
+    const rec = kinds.find((k) => k.id === kind);
+    if (rec?.can_delete === false) return toolFail(rec.delete_refused ?? "this person may not delete records of this kind");
     const res = await api.request("DELETE", `/${path}`);
     if (res.status >= 400) return toolFail(apiErrorMessage(res, "delete failed"));
     // Over a connection from outside Cobblr the delete waits for the person:

@@ -331,6 +331,7 @@ entriesRouter.delete(
  *  completed. An occurrence of a schedule rolls the schedule forward
  *  and makes the next one (#3876). */
 // AI-ACTION: core-maintenance:complete
+// UI-SCREEN: /maintenance (the screens press the action of this name, so the press carries its Undo)
 entriesRouter.post(
   "/:id/complete",
   asyncHandler(async (req, res) => {

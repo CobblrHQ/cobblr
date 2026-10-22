@@ -47,13 +47,20 @@ interface Props {
   overflowActionIds?: string[];
 }
 
-export function EntityActionsBar({ entityKind, entityId, entityLabel, className, excludeActionIds, headerChips, overflowActionIds }: Props) {
+/** The kind's actions, as the bar reads them. A page that draws its header
+ *  once the bar's answer is in waits on this, from the same cache (#7791). */
+export function useRecordActions(entityKind: string) {
   const { api, orgSlug } = usePlatformWeb();
-  const { data } = useQuery({
+  return useQuery({
     queryKey: ["platform-actions", orgSlug, entityKind],
     queryFn: () => api.listActions(orgSlug, entityKind),
     staleTime: 60_000,
   });
+}
+
+export function EntityActionsBar({ entityKind, entityId, entityLabel, className, excludeActionIds, headerChips, overflowActionIds }: Props) {
+  const { api, orgSlug } = usePlatformWeb();
+  const { data, isLoading } = useRecordActions(entityKind);
   const rawActions = data?.items ?? [];
   const bindings = data?.bindings ?? [];
   // What an off module would add here: a door each, after the real actions.
@@ -97,6 +104,9 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   useEscapeToClose(!!open, panel, () => setOpen(null));
   const menuDefaults = Object.fromEntries((overflowActionIds ?? []).filter((id) => data?.pins?.[id] === undefined && data?.layout?.actions[id]?.primary === undefined).map((id) => [id, false]));
   const { primaries, menus } = groupRecordActions(surface.items, data?.layout, { ...menuDefaults, ...data?.pins });
+  // A phone folds every menu into one button, so it carries every menu's badge
+  // ("Actions ▾ · Vic"): a shared or lent record says so before a menu opens.
+  const badges = menus.flatMap((g) => g.items.map((a) => a.badge).filter(Boolean));
   const pin = async (item: RecordActionDescriptor, pinned: boolean) => {
     try {
       await api.setRecordActionPin!(orgSlug, entityKind, item.id, pinned);
@@ -115,9 +125,14 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
       {!primary && item.description && <p className="mt-1 text-xs text-muted">{firstActionSentence(item.description)}</p>}
     </div>
   );
+  // One row held while the record's actions are asked for, then the whole
+  // bar at once: drawn piece by piece, the pinned actions arrived before the
+  // menus and pushed Actions and Share along, and the page down a row, under a
+  // finger (#7781).
   return (
     <RecordActionProvider value={surface}>
-      <div ref={bar} data-testid="record-actions-bar" className={`flex flex-wrap items-center gap-2 ${className ?? ""}`}>
+      <div ref={bar} data-testid="record-actions-bar" aria-busy={isLoading || undefined} className={`flex flex-wrap items-center gap-2 ${isLoading ? "min-h-11 sm:min-h-8 " : ""}${className ?? ""}`}>
+        {!isLoading && <>
         <RecordSuggestions kind={entityKind} id={entityId} />
         <RecordShareNote kind={entityKind} id={entityId} />
         {ask}
@@ -139,10 +154,11 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
             {open === group.id && anchor && createPortal(<><BackdropLayer className="z-[60]" onClick={() => setOpen(null)} /><PopoverLayer ref={panel} style={{ left: anchor.left, top: anchor.bottom + 6, width: 320 }} flipAbove={anchor.top} id={`record-menu-${entityId}-${group.id}`} role="region" aria-label={`${group.label} actions`} className="z-[61] max-h-[70vh] overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-lg">{group.items.map((item) => entry(item))}</PopoverLayer></>, document.body)}
           </div>
         ))}
-        {menus.length > 0 && <button type="button" className="rounded border border-line px-3 py-1.5 text-xs text-content sm:hidden" onClick={() => { setOpen(null); setSheet(true); }}>Actions ▾</button>}
+        {menus.length > 0 && <button type="button" className="rounded border border-line px-3 py-1.5 text-xs text-content sm:hidden" onClick={() => { setOpen(null); setSheet(true); }}>Actions ▾{badges.length > 0 && <span className="text-muted"> · {badges.join(" · ")}</span>}</button>}
         <Modal open={sheet} onClose={() => setSheet(false)} title="Record actions" size="sm">
           {sheet && menus.map((group) => <section key={group.id} className="mb-4"><h3 className="px-2 text-sm font-medium text-content">{group.label}{group.items.some((a) => a.badge) && <span className="text-muted"> · {group.items.map((a) => a.badge).filter(Boolean).join(" · ")}</span>}</h3>{group.items.map((item) => entry(item))}</section>)}
         </Modal>
+        </>}
       </div>
     </RecordActionProvider>
   );

@@ -87,6 +87,11 @@ export const EntityKind = z
     // Module-relative DELETE endpoint for one record (e.g. "/entries/{id}").
     // Declaring it makes the kind deletable by generic callers.
     deleteEndpoint: z.string().optional(),
+    // Who may delete one: a role floor ("member", "admin") or a capability
+    // id. Required with deleteEndpoint. The kernel holds every DELETE on the
+    // endpoint to it, and /entity-kinds answers can_delete per viewer from
+    // it, so the record's button, the assistant and the door read one rule.
+    deleteBy: z.string().optional(),
     // THE module's primary kind — the entity its instance-scoped item routes
     // (/orgs/:slug/instances/:name/items) dispatch to (primaryRouter). At most
     // one kind per module declares it. Instance-kind synthesis copies the

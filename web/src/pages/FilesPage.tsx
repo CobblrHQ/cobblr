@@ -196,11 +196,11 @@ export function FilesPage() {
       <div className="flex flex-wrap items-center gap-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 mr-2">Files</h1>
         <Link className="text-xs text-muted underline" to="/configuration/recently-deleted?kind=core-files:file">Recently deleted</Link>
-        {usage.data && (
-          <span className="text-xs text-muted tabular-nums" data-testid="files-usage">
-            {formatBytes(usage.data.bytes_used)} {usage.data.quota_bytes ? `of ${formatBytes(usage.data.quota_bytes)}` : "used"}
-          </span>
-        )}
+        {/* Its place is kept while the figure comes: arriving, it reflowed the
+            row and moved New folder 184 px under a finger (#7788). */}
+        <span className="inline-block min-w-[7rem] text-xs text-muted tabular-nums" data-testid="files-usage">
+          {usage.data ? `${formatBytes(usage.data.bytes_used)} ${usage.data.quota_bytes ? `of ${formatBytes(usage.data.quota_bytes)}` : "used"}` : "…"}
+        </span>
         <div className="flex-1" />
         <SearchInput value={search} onChange={setSearch} placeholder="Find a file by name" aria-label="Find a file by name" wrapperClassName="w-44 sm:w-56" />
         {newFolder === null ? (

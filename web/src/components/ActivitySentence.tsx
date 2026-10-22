@@ -14,13 +14,13 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { withArticle } from "@cobblr/platform-contract/plural";
 import type { ActivityEntry } from "../lib/api";
-import { AUTOMATION_ACTIONS, activityVerb, automationWords, updatedFieldsWords } from "../lib/activity-words";
+import { AUTOMATION_ACTIONS, activityVerb, automationWords, updatedFieldsWords, viaWords } from "../lib/activity-words";
 import { activityKind } from "../lib/activityKind";
 import { openSheetImport } from "../lib/sheet-import";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import type { useKindLabels } from "../lib/useKindLabels";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ACTOR_CELL, ActorVia, ITEM_CELL } from "./ActorVia";
+import { ACTOR_CELL, ActorVia, ITEM_CELL, ViaChip } from "./ActorVia";
 
 export type KindLabels = ReturnType<typeof useKindLabels>;
 
@@ -58,10 +58,15 @@ export function ActivitySentence({ entry: e, labels }: { entry: ActivityEntry; l
   // The record, when it is still there (the server resolved its collection):
   // the row names it AND opens it, the way every other mention of a record does.
   const href = !auto && e.entity_kind && e.entity_id ? routeFor(e.entity_kind, e.entity_id) : null;
+  // The API's sentence says who and what; how (a label, a token, Cobb) is the
+  // chip after it, as on the Activity page (#3833). Dropped from this branch,
+  // a press through a label read as a plain "You took one of BANANAS" (#7768).
+  const via = viaWords(e);
   if (e.summary && e.subject) return (
     <span className="min-w-0 line-clamp-2 text-content" data-testid="activity-item">
       <SubjectLink href={e.subject.href} className="hover:underline" testId="activity-item-link">{e.summary}</SubjectLink>
       {(e.repeats ?? 1) > 1 && <span> ×{e.repeats}</span>}
+      {via && <>{" "}<span className="inline-flex min-w-0 max-w-full align-baseline"><ViaChip via={via} /></span></>}
     </span>
   );
   return (

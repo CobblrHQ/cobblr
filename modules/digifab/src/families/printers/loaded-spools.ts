@@ -144,26 +144,3 @@ export function registerMaterialRecovery(): void {
     },
   });
 }
-
-/** A scrapped print puts back what it drew from each loaded spool. */
-export async function putBackDrawn(orgId: string, job: { id: string; material_drawn: unknown }): Promise<number> {
-  const drawn = Array.isArray(job.material_drawn) ? (job.material_drawn as Draw[]) : [];
-  let n = 0;
-  for (const d of drawn) {
-    if (!d || typeof d.part_id !== "string" || !(Number(d.grams) > 0)) continue;
-    await platform().events.emit("digifab.print.consumed", {
-      orgId,
-      jobId: job.id,
-      partId: d.part_id,
-      delta: Number(d.grams),
-      unit: "g",
-      once: true,
-      slot: d.slot,
-      reason: "Scrapped print",
-      sourceKind: "digifab:job",
-      sourceId: job.id,
-    });
-    n++;
-  }
-  return n;
-}

@@ -1,4 +1,4 @@
-import { RecordFormModal, Modal, isShortcut, useImageSrc, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, Modal, isShortcut, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
 // The floor plan — a location's children drawn where they physically stand.
 // Third lens on the same hierarchy the tree and the scanner use; every rect
 // IS a location record. Spec: docs/design-decisions/location-floor-plan.md.
@@ -75,7 +75,9 @@ function outlineFor(loc: Location, attachments: TagAttachment[], tags: TagRecord
     : attached.find((t) => t.color) ?? attached[0];
   if (tag) return { key: tag.id, label: tag.name, colour: tag.color, border: "border-2 border-slate-400 dark:border-slate-500", swatch: "bg-slate-400 dark:bg-slate-500", tagId: tag.id };
   const colour = planColourOf(loc.metadata);
-  return colour ? { key: `custom:${colour}`, label: "Custom", colour: null, border: `border-2 ${PLAN_COLOUR_STYLE[colour].border}`, swatch: PLAN_COLOUR_STYLE[colour].swatch } : null;
+  // Named by its colour, never "Custom": two custom colours would read the
+  // same, and the swatch beside the name is not read aloud.
+  return colour ? { key: `custom:${colour}`, label: colour[0]!.toUpperCase() + colour.slice(1), colour: null, border: `border-2 ${PLAN_COLOUR_STYLE[colour].border}`, swatch: PLAN_COLOUR_STYLE[colour].swatch } : null;
 }
 
 const [placeModule, placeType] = LOCATION_KIND.split(":") as [string, string];
@@ -128,6 +130,9 @@ export function FloorPlan({ room, slug }: { room: Location; slug: string }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newFloor, setNewFloor] = useState(false);
 
+  // Whether this place splits into floors is known from the places: until
+  // then neither shape is drawn, or one would replace the other.
+  if (locs.isPending) return <p aria-busy="true" className="text-sm text-faint dark:text-slate-500">loading the plan…</p>;
   if (!bound && floors.length > 0) {
     const active = floors.find((f) => f.id === activeId) ?? floors[0]!;
     return (
@@ -323,7 +328,7 @@ function PlanFor({
   // ── entity occupants: the ratchet in the drawer, not just the drawer ──
   // Every placeable record, from the one shared read (placeableRecords): the
   // place-items rail and the per-place counts read the same list.
-  const { records: placeable, kinds: placeableKinds } = usePlaceableRecords(slug);
+  const { records: placeable, kinds: placeableKinds, isLoading: placeableLoading } = usePlaceableRecords(slug);
   const routeFor = useDetailRoute(slug);
   const occupants = useMemo(() => {
     const all: PlanEntity[] = placeable.map((r) => ({
@@ -428,13 +433,13 @@ function PlanFor({
   // Grouping the pinned things by one of their own fields (a drawer by
   // drive): the fields come from the kinds pinned here, never named.
   const pinKinds = useMemo(() => [...new Set(pins.map((t) => fieldKindOf(t)))].sort(), [pins]);
-  const kindDefs = useQueries({
+  const { items: kindDefs, pending: kindDefsPending } = useQueries({
     queries: pinKinds.map((k) => ({
       queryKey: ["field-defs", slug, k],
       queryFn: () => api.listFieldDefs(slug, k),
       staleTime: 60_000,
     })),
-    combine: (rs) => rs.flatMap((r) => r.data?.items ?? []),
+    combine: (rs) => ({ items: rs.flatMap((r) => r.data?.items ?? []), pending: rs.some(stillAsking) }),
   });
   const groupable = useMemo(() => groupableFields(kindDefs), [kindDefs]);
   const groupField = groupable.find((f) => f.name === bound?.group_by) ?? null;
@@ -2021,11 +2026,23 @@ function PlanFor({
     </div>
   );
 
+  // Drawn once everything it draws has answered: drawn from the places
+  // alone, the drawers, the things in them and their sizes arrived one by one
+  // and moved what is on the plan and below it (#7791).
+  const waiting = [locs, tags, held, holders, ...attachedTags].some(stillAsking) || placeableLoading || kindDefsPending || sized.pending;
+  // Laid out all the same, invisible, so the drawing is measured at its real
+  // width and shows already laid out.
+  const shown = (
+    <div className="relative">
+      {waiting && <p aria-busy="true" className="absolute inset-x-0 top-0 text-sm text-faint dark:text-slate-500">loading the plan…</p>}
+      <div className={waiting ? "invisible" : undefined} aria-hidden={waiting || undefined}>{content}</div>
+    </div>
+  );
   return bare ? (
-    content
+    shown
   ) : (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-      {content}
+      {shown}
     </section>
   );
 }

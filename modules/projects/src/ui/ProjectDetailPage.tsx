@@ -7,7 +7,7 @@ import { useLayoutEffect, useRef, useState, type ComponentProps, type FormEvent 
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
-import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
+import { ContributedDetailPanels, EntityActionsBar, CustomFieldsPanel, MutationError, OnceQuiet, PresentationGate, useConfirm, useFieldDraft, usePageTitle, useUnits } from "@cobblr/platform-web";
 import { describeInterval } from "@cobblr/platform-contract/interval";
 import { TaskSheet, checklistProgress, dueState, localToday } from "./TaskSheet";
 import { useProjects } from "./context";
@@ -209,6 +209,11 @@ export function ProjectDetailPage() {
         <ArrowLeft size={12} /> back to {backLabel}
       </Link>
 
+      {/* The header's actions and fields, the pattern's needs, its files and
+          materials each fill in from answers of their own: drawn as each
+          came, a line arriving pushed Add a yarn or Reserve down under a
+          finger. Shown together once the page stops asking (#7790). */}
+      <OnceQuiet key={project.data.id} className="space-y-5">
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">
           <ProjectInput
@@ -385,6 +390,7 @@ export function ProjectDetailPage() {
         baseTarget="projects:project"
         ctx={{ slug: orgSlug, entityId: project.data.id, entityTitle: project.data.name }}
       />
+      </OnceQuiet>
       {openTaskId && <TaskSheet taskId={openTaskId} onClose={() => openTask(null)} />}
     </div>
   );

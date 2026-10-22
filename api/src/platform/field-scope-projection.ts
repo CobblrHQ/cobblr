@@ -19,6 +19,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { csvCellAsWritten } from "@cobblr/platform-contract/csv";
+import { UNREADABLE_FIELDS } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 
@@ -46,6 +47,86 @@ export async function hiddenFieldsFor(orgId: string, userId: string, role: strin
   const held = await effectiveCapabilities(orgId, userId, role);
   if (held.all) return new Set();
   return new Set(gated.filter((g) => !held.caps.has(g.capability)).map((g) => g.field));
+}
+
+/** A filter, search, sort or grouping that names a field its reader may
+ *  not read. Answered with the field it named and nothing about its values:
+ *  a filter that ran would say, by which records came back, what the field
+ *  holds (#7838). */
+export class FieldNotReadableError extends Error {
+  readonly status = 403;
+  readonly code = "field_not_readable";
+  constructor(readonly field: string) {
+    super(`"${field}" is hidden from you, so it can't be filtered, sorted or grouped by.`);
+  }
+  toJSON() {
+    return { error: { code: this.code, message: this.message, field: this.field } };
+  }
+}
+
+/** Every field a list read names to match, order or group by. */
+export function fieldsNamedBy(q: {
+  filter?: Record<string, unknown>;
+  where?: Array<{ col: string; ref_col?: string | null }>;
+  sort?: readonly string[];
+  group_by?: unknown;
+}): string[] {
+  const groups = (Array.isArray(q.group_by) ? q.group_by : q.group_by === undefined ? [] : [q.group_by]).map((g) => (typeof g === "string" ? g : (g as { field?: unknown })?.field)).filter((g): g is string => typeof g === "string");
+  return [
+    ...Object.keys(q.filter ?? {}).filter((k) => !k.startsWith("_")),
+    ...(q.where ?? []).flatMap((p) => [p.col, ...(p.ref_col ? [p.ref_col] : [])]),
+    ...(q.sort ?? []).map((f) => f.replace(/^-/, "")),
+    ...groups,
+  ];
+}
+
+/** A module route's query string without the parts that name a field hidden
+ *  from its reader, and the fields it took out. A module list can be asked by
+ *  a saved view its author wrote (the inventory page opened on "Under $50"),
+ *  so the parts are left out rather than the read refused: what comes back is
+ *  then the same whatever the hidden field holds. */
+export function queryWithoutUnreadable(query: Record<string, unknown>, hidden: ReadonlySet<string>): { query: Record<string, unknown>; dropped: string[] } {
+  const dropped = new Set<string>();
+  const out: Record<string, unknown> = { ...query };
+  const parse = (v: unknown): { value: unknown; text: boolean } => {
+    if (typeof v !== "string") return { value: v, text: false };
+    try { return { value: JSON.parse(v), text: true }; } catch { return { value: v, text: false }; }
+  };
+  const back = (value: unknown, text: boolean) => (text ? JSON.stringify(value) : value);
+  const objectWithout = (key: string) => {
+    const { value, text } = parse(out[key]);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const kept = Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([f]) => !(hidden.has(f) && dropped.add(f))));
+    out[key] = back(kept, text);
+  };
+  for (const key of ["filter", "contains", "not_contains", "presence"]) objectWithout(key);
+  const where = parse(out.where);
+  if (Array.isArray(where.value)) {
+    out.where = back((where.value as Array<{ col?: unknown; ref_col?: unknown }>).filter((p) => {
+      const named = [p?.col, p?.ref_col].filter((f): f is string => typeof f === "string" && hidden.has(f));
+      named.forEach((f) => dropped.add(f));
+      return named.length === 0;
+    }), where.text);
+  }
+  if (typeof out.sort === "string" || Array.isArray(out.sort)) {
+    const parts = (Array.isArray(out.sort) ? out.sort.map(String) : String(out.sort).split(",")).filter((f) => !(hidden.has(f.trim().replace(/^-/, "")) && dropped.add(f.trim().replace(/^-/, ""))));
+    out.sort = Array.isArray(out.sort) ? parts : parts.join(",");
+  }
+  for (const key of ["group_by", "group"]) {
+    const named = fieldsNamedBy({ group_by: typeof out[key] === "string" ? String(out[key]).split(",").map((g) => g.trim()) : parse(out[key]).value });
+    if (named.some((g) => hidden.has(g))) {
+      named.filter((g) => hidden.has(g)).forEach((g) => dropped.add(g));
+      delete out[key];
+      delete out.group_keys;
+    }
+  }
+  return { query: out, dropped: [...dropped] };
+}
+
+/** Refuse the read when it names a field hidden from its reader. */
+export function refuseUnreadableFields(named: readonly string[], hidden: ReadonlySet<string>): void {
+  const field = named.find((f) => hidden.has(f));
+  if (field) throw new FieldNotReadableError(field);
 }
 
 const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v) && !(v instanceof Date) && !Buffer.isBuffer(v);
@@ -126,6 +207,17 @@ export async function projectFieldScopes(req: Request, res: Response, next: Next
     const userId = req.session?.id;
     if (!t || !userId) return next();
     const hidden = await hiddenFieldsFor(t.org.id, userId, t.role);
+    // The module's own search reads these (unreadableFieldsOf), and what a
+    // query names of them to match, order or group by is taken out before
+    // the module runs it, and named in a header (#7838).
+    (req as unknown as Record<symbol, ReadonlySet<string>>)[UNREADABLE_FIELDS] = hidden;
+    if (hidden.size > 0) {
+      const { query, dropped } = queryWithoutUnreadable(req.query as Record<string, unknown>, hidden);
+      if (dropped.length) {
+        req.query = query as typeof req.query;
+        res.set("Unreadable-Fields", dropped.join(","));
+      }
+    }
     const json = res.json.bind(res);
     res.json = ((body: unknown) => json(withoutHiddenFields(body, hidden))) as typeof res.json;
     if (hidden.size > 0) {

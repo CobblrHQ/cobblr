@@ -1,0 +1,19 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "openfoodfacts",
+    "title": "oreo cookies shelf",
+    "brand": null,
+    "model": null,
+    "description": null,
+    "category": null,
+    "image_url": null,
+    "raw": {
+      "allergens_tags": [
+        "en:gluten",
+        "en:soybeans"
+      ],
+      "traces_tags": []
+    }
+  }
+}

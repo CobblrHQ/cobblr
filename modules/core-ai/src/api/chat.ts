@@ -13,13 +13,14 @@ import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
-import { missingActionArgs, reconcileActionArgs } from "./action-args-guard.js";
+import { missingActionArgs, undeclaredActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { destinationNotThere, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
 import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
+import { nothingToRepeat } from "./nothing-to-repeat.js";
 import { misreportedWrites } from "./reported-truthfully.js";
 import { chatModelMenu, type ReportedModels, type RoutedConnection } from "./chat-model-menu.js";
 import { describedInsteadOfActing } from "./act-dont-describe.js";
@@ -705,6 +706,9 @@ async function proposalOf(
       if (!kind || !id || !resolveDeletePath(kind, id, kinds)) {
         return { error: `Records of "${kind || "that"}" can't be deleted from chat yet.` };
       }
+      // Never a card the person cannot confirm: their role's answer first.
+      const rec = kinds.find((k) => k.id === kind);
+      if (rec?.can_delete === false) return { error: rec.delete_refused ?? "You can't delete records of this kind here." };
       const label = await labelOf(wsApi, kind, id);
       return {
         summary: `Delete “${label}” (permanent)`,
@@ -858,6 +862,10 @@ async function answerTurn(
   // via chatWorkspaceApi); write tool calls stop the loop and become the
   // proposals below. Tool-less providers never emit tool_calls, so the loop
   // degrades to exactly one model call → the legacy JSON-move parse.
+  // "do it again" with nothing before it: code asks what to do, no model is
+  // asked (nothing-to-repeat.ts).
+  const nothing = nothingToRepeat(parsed.data.messages);
+  if (nothing) return { type: "reply", text: nothing };
   const wsApi = chatWorkspaceApi(c);
   const askedFor = [...parsed.data.messages].reverse().find((m) => m.role === "user")?.content ?? "";
   // The user's tool consent gates everything downstream: which tool defs the
@@ -1052,6 +1060,8 @@ async function answerTurn(
         if (fixed) a.args = fixed.args;
         const missing = missingActionArgs(real ?? typed, schema, a.args);
         if (missing) return missing;
+        const extra = undeclaredActionArgs(real ?? typed, schema, a.args);
+        if (extra) return extra;
         // The arguments are all there; can a plan be made from them? An action
         // that knows how to say what it will touch is asked now, before a
         // card exists, and its reason ("no list called tea", "pass ids not

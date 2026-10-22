@@ -195,6 +195,15 @@ export interface EntityListQuery {
    *  fields read them as {{ inputs.<name> }} (#6897). Read-only, never
    *  stored; a resolver passes them by, only the computed layer reads them. */
   inputs?: Record<string, string | number>;
+  /** Kernel-set, never read from HTTP: the fields this reader may not read
+   *  (a field read scope they lack). A resolver's search never matches them
+   *  (textSearchWhere takes it), and the kernel refuses a filter, sort or
+   *  grouping that names one before the resolver is asked (#7838). */
+  unreadable?: ReadonlySet<string>;
+  /** A saved view's own query, read by someone who may read less than its
+   *  author: a predicate, sort or grouping on a field hidden from them is
+   *  left out and reported in `unapplied`, rather than refused. */
+  dropUnreadable?: boolean;
 }
 
 /** The query a saved view asks for, read off its config the ONE way every

@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Check } from "lucide-react";
-import { useToast, NumberField, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
+import { useStillAsking, useToast, NumberField, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
 import { ApiError, api, WORKSPACE_SOURCE_KIND, type ActionArgSpec, type PlatformBinding } from "../lib/api";
 import {
   STOCK_CHANGED_EVENT,
@@ -316,6 +316,12 @@ export function WireComposer({
     (recordless || wireRecordsReady(records)) &&
     (needs !== "schedule" || buildRRule(recurrence).length > 0);
 
+  // The form draws once it knows the tables and their events: drawn first, a
+  // wire started from a record grew its field list a moment later and moved
+  // the choices under it 100 to 500 px under a finger (#7788).
+  const asking = useStillAsking(kinds, wireEvents);
+  if (asking) return <div className="text-xs text-faint">loading…</div>;
+
   return (
     <form
       onSubmit={(e) => {
@@ -334,6 +340,9 @@ export function WireComposer({
       <div className="rounded-lg border-l-2 border-accent/40 bg-subtle/60 dark:bg-slate-800/40 px-3 py-2">
         <span className={L}>Preview</span>
         <p className="text-sm italic text-muted dark:text-slate-300">{preview}</p>
+        {/* Its line is held while the count is asked for: arriving, it pushed
+            the field buttons under it 20 px under a finger (#7788). */}
+        {reach.isLoading && <p aria-hidden className="mt-1 h-8 sm:h-4 text-xs invisible">counting…</p>}
         {reach.data && reach.data.count !== null && (
           <p data-testid="wire-reach" className="mt-1 text-xs text-muted dark:text-slate-400">
             {countOf(reach.data.count, kind?.display_name?.toLowerCase() || "record")}

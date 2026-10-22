@@ -203,6 +203,9 @@ export interface PlatformWebApi {
   /** Write a collection's override config (PUT /:slug/entity-kind-overrides);
    *  the faces row uses it to turn a face on. */
   upsertOverride?(slug: string, body: { target_kind: "instance" | "entity_kind" | "bundle"; target_id: string; config?: Record<string, unknown> }): Promise<unknown>;
+  /** The workspace's kinds as the viewer may use them (GET /:slug/entity-kinds):
+   *  can_delete is the kind's own delete rule answered for them. */
+  listEntityKinds?(slug: string): Promise<{ items: Array<{ id: string; can_delete?: boolean }> }>;
   listActions(slug: string, kind: string): Promise<{
     layout?: import("@cobblr/platform-contract/action-groups").RecordActionLayout;
     pins?: import("@cobblr/platform-contract/action-groups").RecordActionPins;

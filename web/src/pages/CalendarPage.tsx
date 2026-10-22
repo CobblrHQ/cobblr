@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy, MapPin } from "lucide-react";
 import { api, type CalendarEvent } from "../lib/api";
 import { CALENDAR_FEED_MANAGERS } from "@cobblr/platform-contract/org-roles";
@@ -14,7 +14,7 @@ import { useRoleAtLeast } from "../lib/can";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { AddressView, usePageTitle, useToast } from "@cobblr/platform-web";
+import { AddressView, stillAsking, usePageTitle, useToast } from "@cobblr/platform-web";
 import { WEEKDAYS, MONTHS, isoLocal as iso, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { dayLabel } from "@cobblr/platform-contract/day";
@@ -59,6 +59,8 @@ export function CalendarPage() {
     queryKey: ["calendar-events", slug, iso(gridStart), iso(gridEnd)],
     queryFn: () => api.calendarEvents(slug, iso(gridStart), iso(gridEnd)),
     enabled: !!slug,
+    // The month just left stays drawn while the next one is asked for.
+    placeholderData: keepPreviousData,
   });
 
   const byDay = useMemo(() => {
@@ -107,6 +109,12 @@ export function CalendarPage() {
         <span className="text-[10px] font-mono text-faint dark:text-slate-500">{Object.values(byDay).reduce((n, list) => n + list.length, 0)} events</span>
       </div>
 
+      {/* The grid, the filters and "Where to be" come with the month's events,
+          all at once: drawn first and filled in after, the places list
+          arrived above Enable feed and pushed it 200 px down under a finger
+          (#7790). The two settings below them wait too, or the grid would
+          land on top of them. */}
+      {stillAsking(events) ? <div aria-busy="true" className="text-sm text-faint dark:text-slate-500">loading…</div> : <>
       <SourceFilters events={events.data?.items ?? []} hidden={hiddenSources} onChange={setHiddenSources} />
 
       {/* month grid */}
@@ -159,6 +167,7 @@ export function CalendarPage() {
 
       <WarrantyReminders slug={slug} />
       <SubscribeBar slug={slug} />
+      </>}
     </div>
   );
 }

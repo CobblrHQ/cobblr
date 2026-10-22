@@ -40,34 +40,15 @@ import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
+import { fetchDevicesCached, withTimeout } from "./fleet-device-cache.js";
 
 export const fleetRouter = Router({ mergeParams: true });
 
 const TERMINAL = ["completed", "failed", "cancelled"];
 
-// F-11 — back-pressure on the per-connection listDevices fan-out. At 50 direct
-// connections, a naive Promise.all hits 50 managers every 12s poll, in one
-// request, with no cap and no fallback for a slow one. Three guards:
-//   1. a short-TTL per-connection cache (a rapid re-poll / second viewer reuses
-//      the last fetch instead of re-hitting the manager),
-//   2. a per-call timeout so one slow manager can't stall the whole response,
-//   3. a concurrency cap so the burst is bounded regardless of fleet size.
-// The cache key is the connection id (a globally-unique uuid → tenant-safe);
-// device *state* may be up to TTL stale, which is fine on an already-snapshot
-// view (jobs/links/attention are still read fresh from the DB each request).
-const DEVICE_CACHE_TTL_MS = 10_000;
-const LIST_TIMEOUT_MS = 8_000;
+// F-11 — the fan-out's third guard: at most this many managers asked at once,
+// however big the fleet (the cache and the timeout live in fleet-device-cache.ts).
 const MAX_CONCURRENT_LISTS = 6;
-type DeviceCacheEntry = { at: number; devices: RemoteDevice[] };
-const deviceCache = new Map<string, DeviceCacheEntry>();
-
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  let t: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    t = setTimeout(() => reject(new Error(label)), ms);
-  });
-  return Promise.race([p.finally(() => clearTimeout(t)), timeout]);
-}
 
 /** The driver to use for on-machine FILE ops (list / info / print-existing).
  *  A Bambu connection's CLOUD driver can't touch files — those go over the LAN
@@ -82,93 +63,6 @@ async function fileDriverFor(
 ): Promise<MachineDriver | null> {
   const lan = await familyPreferredDriver(orgId, connId, deviceId);
   return lan ?? (await buildDriverById(db, orgId, connId));
-}
-
-/** Persist one connection's last-good device list (survives process restarts —
- *  the durable half of the stale-while-revalidate below). */
-async function putDeviceCacheRow(db: Kysely<DigifabDB>, connId: string, devices: RemoteDevice[], at: number): Promise<void> {
-  try {
-    await db
-      .insertInto("digifab_fleet_device_cache")
-      .values({ connection_id: connId, devices: JSON.stringify(devices) as never, fetched_at: new Date(at) })
-      .onConflict((oc) => oc.column("connection_id").doUpdateSet({ devices: JSON.stringify(devices) as never, fetched_at: new Date(at) }))
-      .execute();
-  } catch (err) {
-    console.warn(`[digifab] fleet device-cache write failed for ${connId}:`, (err as Error).message);
-  }
-}
-
-// One in-flight background refresh per connection — a burst of stale-serves
-// must not stack N live fetches onto one slow manager.
-const refreshing = new Set<string>();
-
-/** Cached + timeout-bounded device fetch for one connection, served
- *  STALE-WHILE-REVALIDATE so the fleet answers instantly:
- *    fresh memory hit (≤10s) → serve it.
- *    anything older — the memory entry, or the DURABLE per-connection row
- *    (survives restarts) → serve it IMMEDIATELY (marked stale) and kick ONE
- *    detached live refresh; the next poll gets fresh state.
- *    nothing cached at all (first ever look) → block on the live fetch.
- *  Live-fetch error → last-good cache if any, else rethrow so the caller
- *  renders the connection's error card. */
-async function fetchDevicesCached(
-  db: Kysely<DigifabDB>,
-  driver: MachineDriver,
-  connId: string,
-  finishedAt = 0,
-): Promise<{ devices: RemoteDevice[]; at: number; stale: boolean }> {
-  const now = Date.now();
-  const hit = deviceCache.get(connId);
-  if (hit && hit.at > finishedAt && now - hit.at < DEVICE_CACHE_TTL_MS) return { devices: hit.devices, at: hit.at, stale: false };
-
-  const liveFetch = async (): Promise<{ devices: RemoteDevice[]; at: number }> => {
-    const at = Date.now();
-    const devices = await withTimeout(driver.listDevices(), LIST_TIMEOUT_MS, "listDevices timed out");
-    const entry = { at, devices };
-    if (!deviceCache.has(connId) || deviceCache.get(connId)!.at <= at) deviceCache.set(connId, entry);
-    void putDeviceCacheRow(db, connId, devices, at);
-    return entry;
-  };
-
-  // A stale memory entry, or the durable row from before a restart → serve it
-  // now, refresh detached.
-  let stale = hit ?? null;
-  if (!stale) {
-    try {
-      const row = await db
-        .selectFrom("digifab_fleet_device_cache")
-        .select(["devices", "fetched_at"])
-        .where("connection_id", "=", connId)
-        .executeTakeFirst();
-      if (row) {
-        const devices = (typeof row.devices === "string" ? JSON.parse(row.devices) : row.devices) as RemoteDevice[];
-        if (Array.isArray(devices)) stale = { at: new Date(row.fetched_at).getTime(), devices };
-      }
-    } catch {
-      /* unreadable row → treat as no cache */
-    }
-  }
-  if (stale && stale.at > finishedAt) {
-    if (!refreshing.has(connId)) {
-      refreshing.add(connId);
-      void liveFetch()
-        .catch(() => {})
-        .finally(() => refreshing.delete(connId));
-    }
-    // Seed memory for the stale-on-error window — but never clobber an entry a
-    // just-finished background refresh may have written.
-    if (!deviceCache.has(connId)) deviceCache.set(connId, stale);
-    return { devices: stale.devices, at: stale.at, stale: true };
-  }
-
-  // First ever look at this connection — nothing to serve, wait for live.
-  try {
-    return { ...(await liveFetch()), stale: false };
-  } catch (err) {
-    const fallback = deviceCache.get(connId);
-    if (fallback && fallback.at > finishedAt) return { devices: fallback.devices, at: fallback.at, stale: true };
-    throw err;
-  }
 }
 
 /** Run `fn` over `items` with at most `limit` in flight at once. */
@@ -304,7 +198,9 @@ fleetRouter.get(
           if (!driver) {
             return { connection_id: c.id, label: c.label, type: c.type, error: "driver unavailable", fetched_at: null, devices: [] };
           }
-          const { devices, at, stale } = await fetchDevicesCached(db, driver, c.id, finishedByConnection.get(c.id));
+          const { devices, at, stale, unreachable } = await fetchDevicesCached(db, driver, c.id, finishedByConnection.get(c.id));
+          // The manager stopped answering: every device below is its last word, said at `at`.
+          const outOfContact = unreachable ? { last_contact: new Date(at).toISOString(), error: unreachable } : null;
           // For a cloud Bambu, prefer the live MQTT telemetry the pump caches
           // (real-time temps/progress/state) over the slower HTTP list.
           const bambuLive = await familyFleetLive(db, c);
@@ -333,6 +229,9 @@ fleetRouter.get(
               state,
               klass: classify(state),
               enabled: d.enabled,
+              // Out of contact (#7902): its state, temperatures and progress are
+              // the last reading, not now. The card says so, with the time.
+              out_of_contact: outOfContact,
               ...familyFleetFields(d),
               laser_backend: d.raw?.laserBackend ?? null,
               laser_setup: d.raw?.laserSetup === true,
@@ -409,7 +308,7 @@ fleetRouter.get(
               next_job: next ? { id: next.id, file_ref: next.file_ref, metadata: next.metadata, pooled: !!next.target_pool } : null,
             };
           });
-          return { connection_id: c.id, label: c.label, type: c.type, bridge, error: null, fetched_at: new Date(at).toISOString(), stale, devices: mapped };
+          return { connection_id: c.id, label: c.label, type: c.type, bridge, error: null, fetched_at: new Date(at).toISOString(), stale, unreachable, devices: mapped };
         } catch (err) {
           return {
             connection_id: c.id,
@@ -448,9 +347,9 @@ fleetRouter.get(
 // the assign worker. The verdict drives the per-effect policy (F-13):
 //   good     → emit digifab.print.confirmed → the linked task closes now (the
 //              consequential effect we deliberately held back from `completed`).
-//   scrapped → emit digifab.print.reversed → undo the optimistic effects that
-//              already fired on `completed` (add the filament back, un-accrue the
-//              machine usage). The task is NOT closed.
+//   scrapped → emit digifab.print.reversed → the machine's print count comes
+//              back off; its hours and the filament the print used stay spent.
+//              The task is NOT closed.
 // Only a *completed*-print attention has effects to confirm/reverse; a
 // failed-print attention just gets cleared (a failed print fired nothing).
 // `good` / `scrap` counts (in builds) split a plate that came out partly good:
@@ -510,7 +409,7 @@ fleetRouter.post(
       await recordJobOutcome(db, orgId, att.job_id, outcome === "good" ? "good" : "scrap", "bed-clear", counts);
       const job = await db
         .selectFrom("digifab_jobs")
-        .select(["id", "linked_task_id", "linked_machine_id", "material_part_id", "material_grams", "material_drawn", "material_plan", "resin_print"])
+        .select(["id", "linked_task_id", "linked_machine_id"])
         .where("id", "=", att.job_id)
         .executeTakeFirst();
       if (job) {
@@ -526,23 +425,15 @@ fleetRouter.post(
             linkedMachineId: job.linked_machine_id,
           });
         } else {
-          // Reverse the optimistic effects. The reverse event mirrors the
-          // forward payload shape so the SAME inventory/machines handlers run:
-          // +grams back on the spool, −1 off the machine's print count.
-          const grams = job.material_grams != null ? Number(job.material_grams) : null;
-          // Awaited for the same reason: grams back on the spool and the
-          // print count off the machine are what the page reads next.
+          // A scrapped print still melted its filament: no grams go back on any
+          // spool (#7890). Only the print count comes back off the machine.
+          // Awaited: the count is what the page reads next.
           await platform().events.emit("digifab.print.reversed", {
             orgId,
             jobId: job.id,
-            ...(!job.material_plan && !job.resin_print && job.material_part_id && grams && grams > 0
-              ? { partId: job.material_part_id, delta: grams, unit: "g", once: true, reason: "Scrapped print", sourceKind: "digifab:job", sourceId: job.id }
-              : {}),
             linkedMachineId: job.linked_machine_id,
             prints: -1,
           });
-          // And the grams it drew from the spools loaded on the printer.
-          if (!job.resin_print) await requireFamilyPrinting().putBack(orgId, job);
         }
       }
     }

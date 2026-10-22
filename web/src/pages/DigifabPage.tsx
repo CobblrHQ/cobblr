@@ -803,13 +803,15 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
         <div className="text-[10px] text-faint tabular-nums">
           {h ? (
             <span className="text-content dark:text-mortar-100">
-              {fmtDay(h.date)} · <span className="text-moss-600">{h.completed} ok</span>
+              {fmtDay(h.date)} · <span className="text-moss-600">{h.completed - (h.scrapped ?? 0)} done</span>
+              {h.scrapped ? <> · <span className="text-amber-600">{h.scrapped} scrapped</span></> : null}
               {h.failed ? <> · <span className="text-ember-600 dark:text-ember-400">{h.failed} failed</span></> : null}
               {h.filament_g ? ` · ${h.filament_g}g` : ""}
             </span>
           ) : (
             <span className="inline-flex items-center gap-2">
               <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-moss-500" /> Completed</span>
+              <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-amber-500" /> Scrapped</span>
               <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-[2px] bg-ember-500" /> Failed</span>
             </span>
           )}
@@ -818,19 +820,22 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
       <div className="flex items-end gap-[2px]" style={{ height: H }} onMouseLeave={() => setHover(null)}>
         {series.map((d, i) => {
           const n = d.completed + d.failed;
-          const okH = Math.round((d.completed / max) * H);
+          const scrapped = d.scrapped ?? 0;
+          const okH = Math.round(((d.completed - scrapped) / max) * H);
+          const scrapH = Math.round((scrapped / max) * H);
           const failH = Math.round((d.failed / max) * H);
           return (
             <div
               key={d.date}
               className="flex-1 min-w-[2px] h-full flex flex-col justify-end cursor-default"
               onMouseEnter={() => setHover(i)}
-              title={`${fmtDay(d.date)}: ${d.completed} completed${d.failed ? `, ${d.failed} failed` : ""}${d.filament_g ? `, ${d.filament_g}g` : ""}`}
+              title={`${fmtDay(d.date)}: ${d.completed} completed${scrapped ? `, ${scrapped} of them scrapped` : ""}${d.failed ? `, ${d.failed} failed` : ""}${d.filament_g ? `, ${d.filament_g}g` : ""}`}
             >
               {failH > 0 && <div className="rounded-t-[3px] bg-ember-500" style={{ height: failH, opacity: hover == null || hover === i ? 1 : 0.4 }} />}
+              {scrapH > 0 && <div className={"bg-amber-500 " + (failH > 0 ? "mt-[2px]" : "rounded-t-[3px]")} style={{ height: scrapH, opacity: hover == null || hover === i ? 1 : 0.4 }} />}
               {okH > 0 && (
                 <div
-                  className={"bg-moss-500 " + (failH > 0 ? "mt-[2px]" : "rounded-t-[3px]")}
+                  className={"bg-moss-500 " + (failH > 0 || scrapH > 0 ? "mt-[2px]" : "rounded-t-[3px]")}
                   style={{ height: okH, opacity: hover == null || hover === i ? 1 : 0.4 }}
                 />
               )}
@@ -1292,13 +1297,17 @@ function PrintHistorySection({ slug }: { slug: string }) {
   // "Print again" from a history row — same clone-and-send as the cockpit.
   const askReprint = useReprint(slug, [["digifab-jobs", slug]]);
   const s = hist.data?.summary;
-  const rate = s && s.total ? Math.round((s.completed / s.total) * 100) : null;
-  const stat = (label: string, value: string) => (
+  // Success is the bed-clear verdict, never the machine finishing (#7891).
+  const rate = s?.success ?? null;
+  const stat = (label: string, value: string, note?: string | null) => (
     <div className="rounded border border-line dark:border-slate-700 px-2.5 py-1.5">
       <div className="text-[10px] uppercase tracking-widest text-faint">{label}</div>
       <div className="text-lg font-semibold text-content dark:text-mortar-100">{value}</div>
+      {note && <div className="text-[10px] text-faint">{note}</div>}
     </div>
   );
+  const verdictNote = (c: { scrapped?: number; unjudged?: number }) =>
+    [c.scrapped ? `${c.scrapped} scrapped` : null, c.unjudged ? `${c.unjudged} not judged` : null].filter(Boolean).join(" · ") || null;
   return (
     <div className="pt-2">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-sm font-semibold text-content dark:text-mortar-100">
@@ -1316,7 +1325,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
             <>
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                 {stat("Jobs", String(s.total))}
-                {stat("Success", rate == null ? "—" : `${rate}%`)}
+                {stat("Success", rate == null ? "—" : `${rate}%`, verdictNote(s))}
                 {stat("Filament", s.filament_g ? `${Math.round(s.filament_g)} g` : "—")}
                 {stat("Run time", s.hours ? `${s.hours} h` : "—")}
                 <div className="rounded border border-line dark:border-slate-700 px-2.5 py-1.5">
@@ -1334,14 +1343,14 @@ function PrintHistorySection({ slug }: { slug: string }) {
                     {[...hist.data!.by_device]
                       .sort((a, b) => b.total - a.total)
                       .map((d, i) => {
-                        const dr = d.total ? Math.round((d.completed / d.total) * 100) : null;
+                        const dr = d.success ?? null;
                         return (
                           <li key={i} className="flex gap-2">
                             <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
                             {dr != null && (
                               <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600 dark:text-ember-400")}>{dr}%</span>
                             )}
-                            <span className="text-faint shrink-0">{d.completed}/{d.total}{d.failed ? ` · ${d.failed} failed` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}{d.cost != null ? ` · ${printMoney(d.cost, hist.data?.currency)}` : d.completed ? " · not priced" : ""}</span>
+                            <span className="text-faint shrink-0">{d.good ?? 0} good of {d.total}{d.scrapped ? ` · ${d.scrapped} scrapped` : ""}{d.failed ? ` · ${d.failed} failed` : ""}{d.unjudged ? ` · ${d.unjudged} not judged` : ""}{d.filament_g ? ` · ${Math.round(d.filament_g)}g` : ""}{d.cost != null ? ` · ${printMoney(d.cost, hist.data?.currency)}` : d.completed ? " · not priced" : ""}</span>
                           </li>
                         );
                       })}
@@ -1364,14 +1373,15 @@ function PrintHistorySection({ slug }: { slug: string }) {
                             // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
                             <EntityPhoto src={r.cover} alt="" size={36} className="rounded" placeholder={null} />
                           ) : (
-                            <span className={"w-9 h-9 rounded shrink-0 flex items-center justify-center " + (r.status === "completed" ? "bg-moss-500/15" : r.status === "failed" ? "bg-ember-500/15" : "bg-subtle")}>
-                              <span className={"w-1.5 h-1.5 rounded-full " + (r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
+                            <span className={"w-9 h-9 rounded shrink-0 flex items-center justify-center " + (r.outcome === "scrap" ? "bg-amber-500/15" : r.status === "completed" ? "bg-moss-500/15" : r.status === "failed" ? "bg-ember-500/15" : "bg-subtle")}>
+                              <span className={"w-1.5 h-1.5 rounded-full " + (r.outcome === "scrap" ? "bg-amber-500" : r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
                             </span>
                           )}
                           <span className="flex-1 min-w-0">
                             <span className="block truncate text-content dark:text-mortar-100" title={jobDisplayName(r)}>{jobDisplayName(r)}</span>
                             {r.sub_label && r.sub_label !== jobDisplayName(r) && <span className="block truncate text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
                           </span>
+                          {r.outcome === "scrap" && <span className="text-amber-600 dark:text-amber-400 shrink-0">scrapped</span>}
                           <span className="text-faint truncate max-w-[22%] shrink-0" title={r.device}>{r.device}</span>
                           {dur && <span className="text-faint shrink-0">{dur}</span>}
                           {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}

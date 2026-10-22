@@ -32,14 +32,14 @@ export function registerBuildsResolvers(): void {
       if (native.has(key)) q = q.where(key as never, value === null ? "is" : "=", value as never);
       else q = q.where(sql<boolean>`metadata ->> ${key} = ${String(value)}`);
     }
-    if (query.q?.trim()) q = q.where(eb => textSearchWhere(eb, query.q, { text: ["serial_code", "notes", "status"] })!);
+    if (query.q?.trim()) q = q.where(eb => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["serial_code", "notes", "status"] })!);
     const rows = await q.orderBy("inspected_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map(row => ({ kind: "builds:inspection", id: row.id, title: row.serial_code || `Board ${row.ordinal}`, detailUrl: `/builds/inspections/${row.id}`, fields: { name: row.serial_code || `Board ${row.ordinal}`, status: row.status, serial_code: row.serial_code, ordinal: row.ordinal, order_id: row.order_id, metadata: row.metadata } })) };
   });
   platform().entities.registerListResolver("builds:work-order", async (orgId, query) => {
     const db = await platform().tenants.getDb(orgId) as Kysely<BuildsDB>;
     let q = db.selectFrom("builds_planned").selectAll().where("assembly", "is not", null);
-    if (query.q?.trim()) q = q.where(eb => textSearchWhere(eb, query.q, { text: ["notes", "status"] })!);
+    if (query.q?.trim()) q = q.where(eb => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["notes", "status"] })!);
     const rows = await q.orderBy("created_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map(row => ({ kind: "builds:work-order", id: row.id, title: countOf(Number(row.qty), "board"), detailUrl: `/builds/${row.build_id}?order=${row.id}`, fields: { name: countOf(Number(row.qty), "board"), state: row.assembly!.state } })) };
   });
@@ -55,7 +55,7 @@ export function registerBuildsResolvers(): void {
   platform().entities.registerListResolver("builds:build", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<BuildsDB>;
     let q = db.selectFrom("builds_builds").selectAll();
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "notes"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description", "notes"] })!);
     const rows = (await groupListRows(db, q .orderBy("name", "asc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 200))
       .offset(query.offset ?? 0)

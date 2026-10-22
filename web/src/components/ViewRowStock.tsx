@@ -13,7 +13,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { withCount, type CountedRow } from "@cobblr/inventory/stock-derived";
-import { useFaces, refreshAfterStockChange } from "@cobblr/platform-web";
+import { useStillAsking, useFaces, useFieldPresentation, refreshAfterStockChange } from "@cobblr/platform-web";
 import { api, type ViewDataResponse } from "../lib/api";
 import { fieldVal } from "../lib/view-group-key";
 import { StockStepper } from "@cobblr/platform-web";
@@ -69,8 +69,23 @@ export function useCountedCollection(slug: string, kind: string): { instance: st
   }, [kinds.data, overrides.data, kind, verdict]);
 }
 
+/** Whether the answer above is known yet: the kinds, the table's words and,
+ *  for an inventory table, its faces have all answered (or failed). */
+function useCountedKnown(slug: string, kind: string): boolean {
+  const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
+  const overrides = useQuery({ queryKey: ["entity-kind-overrides", slug], queryFn: () => api.listOverrides(slug), enabled: !!slug });
+  const faces = useFaces(kind);
+  // How the table shows its fields decides what a row draws beside its name.
+  const fields = useFieldPresentation(kind);
+  const k = (kinds.data?.items ?? []).find((x) => x.id === kind);
+  const inventory = !!k && k.module_name === "inventory";
+  const asking = useStillAsking(kinds, overrides, fields, ...(inventory ? [faces] : []));
+  return !asking;
+}
+
 export function RowStockProvider({ slug, kind, children }: { slug: string; kind: string; children: ReactNode }) {
   const counted = useCountedCollection(slug, kind);
+  const known = useCountedKnown(slug, kind);
   const qc = useQueryClient();
   const stock = useMemo<RowStock>(() => {
     if (!counted) return NONE;
@@ -107,5 +122,9 @@ export function RowStockProvider({ slug, kind, children }: { slug: string; kind:
     };
     return { on: true, stepper };
   }, [counted, slug, qc]);
+  // The rows wait for the answer: drawn before it, each counted row grew its
+  // −/+ and its words a moment later, and every row below moved 28 to 88 px
+  // under a finger (#7788).
+  if (!known) return <div className="text-xs text-faint">loading…</div>;
   return <RowStockContext.Provider value={stock}>{children}</RowStockContext.Provider>;
 }

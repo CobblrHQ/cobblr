@@ -24,6 +24,14 @@
 // makes the homepage's: three of its flows hung on networkidle after two
 // months unrun, and the docs went stale behind them (2026-10-09).
 //
+// THE REST OF e2e/, A SECOND RULE (#7766). Since the bell and every
+// workspace page hold an event stream open, a signed-in page never reaches
+// networkidle at all: three scan yardsticks timed out on it every night.
+// e2e/networkidle-means-settled.mjs patches Playwright so that "networkidle"
+// waits for the settled signal instead, and shot-guard.mjs loads it. So an
+// e2e/ script that says networkidle must load one of the two; one that
+// loads neither waits out its timeout on every signed-in page.
+//
 //   npx tsx scripts/lint-no-networkidle-wait.ts   (pnpm lint no-networkidle-wait)
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -69,8 +77,18 @@ function check(file: string, src: string): Violation[] {
   return out;
 }
 
+/** An e2e/ script that waits for networkidle loads the patch that makes
+ *  that wait mean settled, itself or through shot-guard.mjs. */
+function checkE2e(file: string, src: string): Violation[] {
+  if (file === join("e2e", "networkidle-means-settled.mjs") || !/["'`]networkidle["'`]/.test(stripComments(src))) return [];
+  if (/import\s+(?:[^"']*from\s+)?["'][./]*(?:shot-guard|networkidle-means-settled)\.mjs["']/.test(src)) return [];
+  const line = stripComments(src).split("\n").findIndex((l) => /["'`]networkidle["'`]/.test(l)) + 1;
+  return [{ file, line, what: 'waits for networkidle without e2e/networkidle-means-settled.mjs: add import "./networkidle-means-settled.mjs" (or "./shot-guard.mjs"), or a signed-in page waits out the timeout' }];
+}
+
 const violations: Violation[] = [];
 for (const root of ROOTS) for (const file of walk(root)) if (onlyChanged(file)) violations.push(...check(file, readFileSync(file, "utf8")));
+for (const file of walk("e2e")) if (!file.startsWith(join("e2e", "docs-shots")) && onlyChanged(file)) violations.push(...checkE2e(file, readFileSync(file, "utf8")));
 
 if (violations.length) {
   console.error(`lint:no-networkidle-wait - ${violations.length} violation(s):`);

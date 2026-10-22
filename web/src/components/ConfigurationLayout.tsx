@@ -302,7 +302,7 @@ export function ConfigurationLayout() {
       <WhoAnswersSection />
     </Suspense>
   ) : null;
-  const page = pageOpenTo(location.pathname, role) ? <Outlet /> : <ManagedByAdmins page={destinationForPath(location.pathname)?.label}>{readable}</ManagedByAdmins>;
+  const page = pageOpenTo(location.pathname, role) ? <Outlet /> : <ManagedByAdmins page={configPageForPath(location.pathname)?.label}>{readable}</ManagedByAdmins>;
   // The hub and the section pages ARE navigation; a rail beside them would
   // just repeat the page.
   const onIndex =

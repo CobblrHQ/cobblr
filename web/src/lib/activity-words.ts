@@ -293,9 +293,11 @@ const ONE_ACT_MS = 2 * 60_000;
  *  record created, then updated with its place and photo), and the dashboard
  *  showed all three for one grocery (#4147). Consecutive rows by the same
  *  person about the same record within two minutes fold into one: the create,
- *  said as "scanned in" when a scan made it. The full activity log keeps
- *  every row; this is only what the dashboard shows. */
-export function foldOneThingsRows<T extends { action: string; entity_id: string; entity_type: string; diff: unknown; occurred_at: string; user_id: string | null; summary?: string; template?: string }>(items: T[]): T[] {
+ *  said as "scanned in" when a scan made it. A press through a label is its
+ *  own act, never folded: "took one of BANANAS via label …" made seconds
+ *  after the create vanished into "You created BANANAS" (#7768). The full
+ *  activity log keeps every row; this is only what the dashboard shows. */
+export function foldOneThingsRows<T extends { action: string; entity_id: string; entity_type: string; diff: unknown; occurred_at: string; user_id: string | null; summary?: string; template?: string; via_kind?: string | null }>(items: T[]): T[] {
   const out: T[] = [];
   let run: T[] = [];
   const flush = () => {
@@ -319,6 +321,8 @@ export function foldOneThingsRows<T extends { action: string; entity_id: string;
       head &&
       head.user_id === e.user_id &&
       recordOf(head) === recordOf(e) &&
+      head.via_kind !== "label" &&
+      e.via_kind !== "label" &&
       Math.abs(Date.parse(head.occurred_at) - Date.parse(e.occurred_at)) <= ONE_ACT_MS;
     if (!sameAct) flush();
     run.push(e);

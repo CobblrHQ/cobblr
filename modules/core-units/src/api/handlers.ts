@@ -17,16 +17,30 @@ import { CustomUnit } from "./units.js";
 import type { CoreUnitsDB } from "../db.js";
 import { BUILTIN_UNITS } from "../units-catalog.js";
 
+/** Strip a regular plural. Not a stemmer: "glass" and "bus" stay as they are. */
+function singular(w: string): string {
+  if (/(ss|us|is)$/i.test(w)) return w;
+  if (/ies$/i.test(w)) return w.slice(0, -3) + "y";
+  if (/(ches|shes|xes|zes|sses)$/i.test(w)) return w.slice(0, -2);
+  if (/s$/i.test(w)) return w.slice(0, -1);
+  return w;
+}
+
 /** The unit the arguments describe, read the same way for the plan and the
  *  run. A model will happily send "Fathom" or "fathoms" for a code the route
  *  requires to be lowercase and hyphenated; normalising here is kinder than
  *  bouncing the proposal back to the user with a regex. */
-function readUnitArgs(args: Record<string, unknown>): { unit: ReturnType<typeof CustomUnit.parse> } | { error: string } {
+export function readUnitArgs(args: Record<string, unknown>): { unit: ReturnType<typeof CustomUnit.parse> } | { error: string } {
+  const plural = typeof args.plural === "string" ? args.plural.trim() : "";
+  // A unit said only in the plural ("we measure filament in spools" fills
+  // every argument with "spools") is named, coded and shown in the singular.
+  const one = (v: string): string => (plural && v.toLowerCase() === plural.toLowerCase() ? singular(plural) : v);
+  const code = typeof args.code === "string" ? one(args.code.trim()) : "";
   const raw = {
-    code: typeof args.code === "string" ? args.code.trim().toLowerCase().replace(/\s+/g, "-") : "",
-    symbol: typeof args.symbol === "string" ? args.symbol.trim() : "",
-    name: typeof args.name === "string" ? args.name.trim() : "",
-    ...(typeof args.plural === "string" && args.plural.trim() ? { plural: args.plural.trim() } : {}),
+    code: code.toLowerCase().replace(/\s+/g, "-"),
+    symbol: typeof args.symbol === "string" ? one(args.symbol.trim()) : "",
+    name: typeof args.name === "string" ? one(args.name.trim()) : "",
+    ...(plural ? { plural } : {}),
     ...(typeof args.category === "string" && args.category.trim() ? { category: args.category.trim().toLowerCase() } : {}),
   };
   const parsed = CustomUnit.safeParse(raw);

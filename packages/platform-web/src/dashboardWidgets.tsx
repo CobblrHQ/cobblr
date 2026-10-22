@@ -11,7 +11,7 @@
 // `module`: the Dashboard only mounts widgets whose owning module is enabled
 // in the active workspace, so a registered-but-disabled module shows nothing.
 
-import { createContext, type ComponentType, type ReactNode, useContext, useEffect, useSyncExternalStore } from "react";
+import { createContext, type ComponentType, type ReactNode, useContext, useLayoutEffect, useSyncExternalStore } from "react";
 import { Link } from "react-router-dom";
 
 /** A workspace instance of a multi-instance module (e.g. inventory's "Yarn"),
@@ -163,7 +163,10 @@ export function DashboardTile({
   empty?: boolean;
 }) {
   const collapse = useContext(TileCollapseContext);
-  useEffect(() => {
+  // Before the browser paints: reported after it, the "Also enabled" line the
+  // reports build came a frame later and moved everything under the tiles
+  // 40 px on a dashboard drawn from this device's copy (#6881).
+  useLayoutEffect(() => {
     if (!collapse) return;
     collapse.reportEmpty(label, to, !!empty);
     // Pull our entry on unmount. A multi-instance module mounts its AGGREGATE

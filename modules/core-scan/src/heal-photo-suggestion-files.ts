@@ -21,6 +21,13 @@
 // to something, that a record now shows, or that is not the suggestion's own
 // download (a person's identical picture the writer handed back) stays where
 // it is. No byte is ever dropped.
+//
+// SINCE BY MARKER: only the code from before the fix ever stored an unaccepted
+// suggestion's picture as a file (fixed code holds it in the row until Use it),
+// so the shape alone is the broken row, whatever its date. A date limit missed
+// the rows an older nightly keeps writing until its box upgrades: 2026.8.1 →
+// nightly-2026-10-05 → the 2026.10.0 candidate doubled Files in the release
+// check (run 55860), its 10-05 rows dated after the fix.
 
 import type { Kysely } from "kysely";
 import { platform } from "@cobblr/platform-contract";
@@ -85,13 +92,12 @@ export function verdictFor(
 }
 
 /** Heal one workspace. Cheap on the happy path: one indexed select. */
-export async function healPhotoSuggestionFilesIn(orgId: string, db: Kysely<HealDB>, since: Date, seams: HealSeams = REAL): Promise<number> {
+export async function healPhotoSuggestionFilesIn(orgId: string, db: Kysely<HealDB>, seams: HealSeams = REAL): Promise<number> {
   const T = "core_scan_record_photo_suggestions" as const;
   const rows = await db
     .selectFrom(T)
     .select(["entity_kind", "entity_id", "status", "file_id", "source_url"])
-    // Rows from before the fix: after it, a suggestion names a file only once applied.
-    .where("created_at", "<", since)
+    // Fixed code names a file on a suggestion only once applied.
     .where("status", "<>", "applied")
     .where("file_id", "is not", null)
     .limit(PER_VISIT)
@@ -152,6 +158,6 @@ export function registerPhotoSuggestionFilesHeal(): void {
     since: "2026-10-20T00:00:00Z",
     shim: "modules/core-scan/src/heal-photo-suggestion-files.ts",
     module: "core-scan",
-    visit: ({ orgId, db, since }) => healPhotoSuggestionFilesIn(orgId, db as Kysely<HealDB>, since),
+    visit: ({ orgId, db }) => healPhotoSuggestionFilesIn(orgId, db as Kysely<HealDB>),
   });
 }

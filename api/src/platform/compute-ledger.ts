@@ -90,6 +90,18 @@ export function noteBackgroundWork(): void {
 // and a name that is a code name, so a refused or made-up one cannot grow the table or carry anyone's words.
 const DETAIL = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
 
+// AND BY ITS OPERATION (2026-10-22, #5424). An action with several operations takes `operation` in its args: laser
+// nesting is `digifab.laser-batch` with `operation: "nest"`, beside create_profile, plan, queue and discard, and the
+// recording's two laser-batch calls (4.8 ms) said nothing about nesting. Only a short code name is added, so free text
+// in an argument never becomes a ledger row.
+const OPERATION = /^[a-z][a-z0-9_-]{0,31}$/i;
+
+/** The name an action call is priced under: its id, and `:<operation>` when its args name one. */
+export function actionDetail(actionId: string, args: Record<string, unknown> | undefined): string {
+  const op = args?.operation;
+  return typeof op === "string" && OPERATION.test(op) ? `${actionId}:${op}` : actionId;
+}
+
 /** Name what this request did, past its route's shape (an action's id); read by the timing middleware. */
 export function nameRequest(res: { locals: Record<string, unknown> }, detail: string): void {
   res.locals.computeDetail = detail;

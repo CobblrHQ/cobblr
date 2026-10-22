@@ -27,6 +27,7 @@ import { PrintStation } from "../features/digifab/PrintStation";
 import {BrowserLaserStationNote} from "../features/digifab/BrowserLaserOption";
 import {StationInstall} from "../features/digifab/StationInstall";
 import {keepStationScreenAwake} from "../lib/station-screen";
+import { useCan } from "../lib/can";
 
 const button = "inline-flex items-center justify-center min-h-12 rounded border border-line px-4 py-3 text-base disabled:opacity-50";
 const errorText = (e: unknown) => e instanceof ApiError ? e.message : String(e);
@@ -34,7 +35,12 @@ const errorText = (e: unknown) => e instanceof ApiError ? e.message : String(e);
 export function MachineStationPage() {
   const { activeSlug: slug } = useActiveOrg();
   const { connectionId = "", deviceId = "" } = useParams();
-  const q = useQuery({ queryKey: ["digifab-station", slug, connectionId, deviceId, ""], queryFn: () => api.digifabStation(slug, connectionId, deviceId), refetchInterval: 4000 });
+  // A station is where its machine is run: the admin tier, or an operator
+  // (digifab:operate). Anyone else is told so, and the station is never
+  // asked for what it would refuse them (#7748).
+  const runsMachines = useCan("digifab:operate");
+  const q = useQuery({ queryKey: ["digifab-station", slug, connectionId, deviceId, ""], queryFn: () => api.digifabStation(slug, connectionId, deviceId), refetchInterval: 4000, enabled: runsMachines === true });
+  if (runsMachines === false) return <UnavailableMachineStation refused />;
   if (!q.data && !q.error) return <p>Loading the station…</p>;
   if (q.error && !q.data) return <UnavailableMachineStation error={q.error} />;
   const screenKind = q.data?.screen_kind === undefined ? q.data?.kind : q.data.screen_kind;
@@ -55,12 +61,12 @@ const stationTitles: Readonly<Record<string, string>> = {
   bench: "Bench station", laser: "Laser station", print: "Printer station", cutter: "Cutter station", resin: "Resin station",
   kiln: "Kiln station", cnc: "CNC station", embroidery: "Embroidery station", "large-format": "Large format station",
 };
-function UnavailableMachineStation({ kind, error }: { kind?: string | null; error?: unknown }) {
+function UnavailableMachineStation({ kind, error, refused }: { kind?: string | null; error?: unknown; refused?: boolean }) {
   const title = kind && Object.hasOwn(stationTitles, kind) ? stationTitles[kind]! : "Machine station";
   usePageTitle(title);
   return <><SkipToContent /><main id={MAIN_ID} className="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
     <h1 className="text-2xl font-semibold">{title}</h1>
-    {error ? <p role="alert">{errorText(error)}</p> : <p>This machine has no station screen yet.</p>}
+    {refused ? <p>Only an admin, or an operator who runs the machines here, can use a machine station.</p> : error ? <p role="alert">{errorText(error)}</p> : <p>This machine has no station screen yet.</p>}
     <Link className={button} to="/digifab">Exit to the fleet</Link>
   </main></>;
 }

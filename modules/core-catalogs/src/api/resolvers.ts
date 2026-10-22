@@ -99,7 +99,7 @@ export function registerCatalogsResolvers(): void {
       const limit = Math.min(query.limit ?? 50, 200);
       const offset = query.offset ?? 0;
       let q = db.selectFrom("core_catalogs_catalogs").selectAll();
-      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description"] })!);
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description"] })!);
       const rows = (await groupListRows(db, q.orderBy("name"), query)) ?? await q.orderBy("name").limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toCatalog(r)) };
     },
@@ -197,7 +197,7 @@ export function registerCatalogsResolvers(): void {
       if (exactId) q = q.where(sql<boolean>`lower(e.external_id) = ${exactId.toLowerCase()}`);
       // The whole payload as text, so a catalog whose title column is not
       // `name` still matches on it, and so does any other column.
-      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: [], json: ["e.payload"] })!);
+      if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: [], json: ["e.payload"] })!);
       const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
       return { items: rows.map((r) => toEntry(r)) };
     },

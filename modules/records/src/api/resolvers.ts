@@ -33,7 +33,7 @@ export function registerRecordsResolvers(): void {
     if (instance) q = q.where("instance", "=", instance as never);
     // A collection's own fields (a book's author, a wine's vintage) live in
     // metadata; a search that read the name only never found them.
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "notes"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "notes"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<RecordsDB["records_records"]>()(["location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {

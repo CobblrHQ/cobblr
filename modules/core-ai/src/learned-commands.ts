@@ -264,8 +264,15 @@ export function slotValues(cmd: Pick<LearnedCommand, "pattern" | "slots">, messa
   // the whole second instruction as the container's name, and Do it failed
   // every row (#7590). A blank holding another instruction is not a fit.
   if (cmd.slots.some((s) => s.kind !== "number" && splitInstructions(values[s.name] ?? "").length > 1)) return null;
+  // A blank holding only a pronoun names nothing: "make it required" would
+  // look for a field called "it". What "it" is lives in the conversation or
+  // on the screen, which is the model's to read, not a pattern's.
+  if (cmd.slots.some((s) => s.kind !== "number" && POINTS_AT_SOMETHING.test(values[s.name] ?? ""))) return null;
   return values;
 }
+
+/** A blank's whole value, when it is a word that points instead of naming. */
+const POINTS_AT_SOMETHING = /^(it|this|that|these|those|them|they|one|this one|that one|the one)$/i;
 
 /** Where one instruction ends and the next begins: "then", "after that", a
  *  semicolon or a new sentence. Not a bare "and": "nuts and bolts" is a name. */

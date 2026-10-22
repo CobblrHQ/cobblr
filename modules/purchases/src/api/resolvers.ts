@@ -116,7 +116,7 @@ export function registerPurchasesResolvers(): void {
       // (see the note there): a purchases table's lines must not double up
       // under the module's own kind.
       .where("i.instance", "=", "purchases");
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["i.description"], json: ["i.metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["i.description"], json: ["i.metadata"] })!);
     if (query.filter) {
       // Qualified refs: every one of these columns exists on BOTH joined
       // tables or would otherwise be ambiguous in SQL.
@@ -176,7 +176,7 @@ export function registerPurchasesResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("purchases_orders").selectAll().select(receiptPending().as("stock_pending"));
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["vendor", "order_number", "notes", "tracking_number"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["vendor", "order_number", "notes", "tracking_number"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<PurchasesDB["purchases_orders"]>()(["status", "vendor"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -294,7 +294,7 @@ export function registerPurchasesResolvers(): void {
   platform().entities.registerListResolver("purchases:vendor", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<PurchasesDB>;
     let q = db.selectFrom("purchases_vendors").selectAll();
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "website", "contact", "account_number", "notes"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "website", "contact", "account_number", "notes"], json: ["metadata"] })!);
     const order = parseSort(query.sort, VENDOR_SORTABLE);
     for (const { col, dir } of order) q = q.orderBy(col as never, dir);
     if (order.length === 0) q = q.orderBy("name");

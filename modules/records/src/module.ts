@@ -32,6 +32,7 @@ export default defineModule({
         createEndpoint: "/records",
         updateEndpoint: "/records/{id}",
         deleteEndpoint: "/records/{id}",
+        deleteBy: "member",
         displayName: "Record",
         displayNamePlural: "Records",
         icon: "album",

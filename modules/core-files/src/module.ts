@@ -60,6 +60,7 @@ export default defineModule({
         id: "core-files:file",
         updateEndpoint: "/files/{id}",
         deleteEndpoint: "/files/{id}",
+        deleteBy: "member",
         displayName: "File",
         displayNamePlural: "Files",
         icon: "image",

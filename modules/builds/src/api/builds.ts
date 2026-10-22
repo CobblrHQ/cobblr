@@ -34,6 +34,7 @@ import { resolveOutputPart } from "../output-part.js";
 import { addComponent, addStep, changePlan, changeStep, logStepCount, logStepTime, addPlannedBuild, removeComponent, removePlan, removeStep } from "./build-steps.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { shortageSentence } from "../shortage.js";
+import { buildUndoStep } from "../build-undo.js";
 
 export const buildsRouter = Router({ mergeParams: true });
 
@@ -611,7 +612,8 @@ buildsRouter.post(
 
     // Return the run + the fresh buildable so the UI updates without a round-trip.
     const { plan: _next, ...buildable } = await buildableOf(ctx.org.id, build.id);
-    res.status(201).json({ run, buildable, plan: planLines(plan) });
+    // The way back, as the build action hands it: the sheet offers it as an Undo.
+    res.status(201).json({ run, buildable, plan: planLines(plan), undo: buildUndoStep(build.id, qty) });
   }),
 );
 

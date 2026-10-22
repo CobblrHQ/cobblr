@@ -70,6 +70,8 @@ export interface InvFieldDef {
   field_role?: string | null;
   /** A person's new value is remembered as a choice (see field-choices). */
   learns?: boolean | null;
+  /** The Form layout section this field is filed under, if any. */
+  section_id?: string | null;
 }
 
 export interface Category {
@@ -541,7 +543,7 @@ export class InventoryApi {
    *  columns (label + renderer). Org-level endpoint, not module-scoped. */
   // `effective` applies the user override layer (relabel / hide / reorder) — forms
   // + lists pass it; Settings (config) reads the raw defs to manage them.
-  listFieldDefs = (kind: string, effective = false) => this.requestAbs<{ items: InvFieldDef[] }>(
+  listFieldDefs = (kind: string, effective = false) => this.requestAbs<{ items: InvFieldDef[]; sections?: Array<{ id: string; name: string; position: number }> }>(
     "GET",
     `/api/v1/orgs/${this.slug}/field-defs?kind=${encodeURIComponent(kind)}${effective ? "&effective=1" : ""}`,
   );

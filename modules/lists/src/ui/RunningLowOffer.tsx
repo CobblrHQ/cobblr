@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ShoppingCart } from "lucide-react";
-import { usePlatformWeb, useToast, type PlatformWire } from "@cobblr/platform-web";
+import { useStillAsking, usePlatformWeb, useToast, type PlatformWire } from "@cobblr/platform-web";
 import type { ListSummary } from "./api.js";
 
 export const RUNNING_LOW_EVENT = "inventory.stock.low";
@@ -24,6 +24,18 @@ export function runningLowWire(wires: PlatformWire[]): PlatformWire | undefined 
 function wireListName(w: PlatformWire, lists: ListSummary[]): string {
   const args = (w.args ?? {}) as { listId?: string; listTitle?: string };
   return lists.find((l) => l.id === args.listId)?.title ?? args.listTitle ?? "Shopping list";
+}
+
+/** Whether the offer's own reads have answered, so the page around it can draw
+ *  once instead of moving when the offer arrives (#7788). The same reads as
+ *  the offer's, so they are asked once. */
+export function useRunningLowKnown(): boolean {
+  const { api, orgSlug } = usePlatformWeb();
+  const can = !!api.listWires && !!api.createWire && !!api.deleteWire && !!api.listWireEvents;
+  const events = useQuery({ queryKey: ["wire-events", orgSlug], queryFn: () => api.listWireEvents!(orgSlug), enabled: can, staleTime: 60_000 });
+  const wires = useQuery({ queryKey: ["wires", orgSlug], queryFn: () => api.listWires!(orgSlug), enabled: can });
+  const asking = useStillAsking(events, wires);
+  return !can || !asking;
 }
 
 export function RunningLowOffer({ lists }: { lists: ListSummary[] }) {

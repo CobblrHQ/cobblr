@@ -5,7 +5,7 @@
 // is nothing to suggest.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { changeWorkspaceShape, useToast } from "@cobblr/platform-web";
+import { changeWorkspaceShape, useOnceQuiet, useToast } from "@cobblr/platform-web";
 import { Link2, Plus, X } from "lucide-react";
 import { api } from "../lib/api";
 import { FEATURED_BUNDLES, type FeaturedBundle } from "../lib/featured-bundles";
@@ -41,9 +41,13 @@ export function WorksWith({ module, orgSlug }: { module: string; orgSlug: string
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
 
+  // It sits under the page it is about, so it also waits for that page to
+  // stop asking: drawn first, the page's lists arrived above it and pushed
+  // its Add down under a finger (#7790). Once shown it stays.
+  const quiet = useOnceQuiet();
   // A suggestion waits for everything that could rule it out, so one is never
   // shown and then snatched away.
-  if (!modules.data || !bundles.data || !passed.data || !tips.loaded) return null;
+  if (!modules.data || !bundles.data || !passed.data || !tips.loaded || !quiet) return null;
   const recs = worksWithSuggestions({
     module,
     featured: FEATURED_BUNDLES,

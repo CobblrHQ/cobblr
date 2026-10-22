@@ -24,6 +24,8 @@ export interface FieldPresentation {
   /** The presentation is known; drawing fields now draws the collection's. */
   ready: boolean;
   isLoading: boolean;
+  /** Failed tries so far, for stillAsking. */
+  failureCount: number;
   /** The read failed; nothing is known, which is not the same as nothing set. */
   failed: boolean;
   retry: () => void;
@@ -48,10 +50,11 @@ export function useFieldPresentation(kind: string): FieldPresentation {
       configured: (name) => byName.has(name),
       ready: q.isSuccess,
       isLoading: q.isLoading,
+      failureCount: q.failureCount,
       failed: q.isError,
       retry: () => void q.refetch(),
     };
-  }, [q.data, q.isSuccess, q.isLoading, q.isError]);
+  }, [q.data, q.isSuccess, q.isLoading, q.isError, q.failureCount]);
 }
 
 /** An item's fields, drawn only once what governs them is known. Waiting is a

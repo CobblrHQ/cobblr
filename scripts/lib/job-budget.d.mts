@@ -1,5 +1,9 @@
 // Types for job-budget.mjs (plain ESM so configs and npm scripts use it with node).
-export declare const UNIT_MIB: { tsc: number; vitest: number; lint: number };
+export declare const UNIT_MIB: { tsc: number; tsgo: number; vitest: number; lint: number };
+export type Proc = { pid: number; ppid: number; comm: string; hwmKib: number; args?: string };
+export declare function descendantPeaks(procs: Proc[], root: number, comm: string): { pid: number; mib: number; args: string }[];
+export declare function outgrewUnit(peaks: { pid: number; mib: number; args: string }[], unitMib: number): { pid: number; mib: number; args: string }[];
+export declare function readProcs(): Proc[];
 export declare const SHARE: number;
 export declare const HEAP_NEED_MIB: { tsc: number };
 export declare function availableMib(): number | null;
@@ -11,10 +15,10 @@ export declare function roomUnderLimitMib(v: { limit: number; current: number; f
 export declare function shareOf(env?: Record<string, string | undefined>, capped?: boolean): number;
 export declare function splitShare(n: number, env?: Record<string, string | undefined>, capped?: boolean): Record<string, string>;
 export declare function width(
-  kind: "tsc" | "vitest" | "lint",
+  kind: "tsc" | "tsgo" | "vitest" | "lint",
   o?: { max?: number; cores?: number; memMib?: number | null; capped?: boolean; env?: Record<string, string | undefined> },
 ): number;
-export declare function unitMib(kind: "tsc" | "vitest" | "lint"): number;
+export declare function unitMib(kind: "tsc" | "tsgo" | "vitest" | "lint"): number;
 export declare function kindOfCommand(cmd: string): "tsc" | null;
 export declare const SUITE_MIN_FORKS: number;
 export declare const SUITE_FULL_WIDTH_MIB: number;

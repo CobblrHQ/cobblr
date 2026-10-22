@@ -15,7 +15,7 @@ import { slugifyFieldName } from "../lib/field-key";
 import { fieldFormReadiness } from "../lib/field-form";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { FieldDefDetail } from "../components/FieldDefDetail";
-import { FieldRenderer, UnitInput, changeWorkspaceShape, useToast, usePageTitle, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
+import { FieldRenderer, UnitInput, changeWorkspaceShape, useStillAsking, useToast, usePageTitle, SegmentedChoice, useSentWords } from "@cobblr/platform-web";
 import { FieldMeaningNotices } from "../components/FieldMeaningNotices";
 
 // `relation` is deliberately absent: user-authored relation fields (picking a
@@ -340,6 +340,14 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
         </ul>
       </div>
     ));
+
+  // The sets you can switch on sit above the form and come from their own
+  // read: drawn first, the form's choices dropped 148 px when they came
+  // (#7788). The page waits for them.
+  const asking = useStillAsking(presets);
+  if (asking) {
+    return <div className={embedded ? "space-y-5" : "space-y-5 max-w-4xl mx-auto"}><div className="text-xs text-faint">loading…</div></div>;
+  }
 
   return (
     <div className={embedded ? "space-y-5" : "space-y-5 max-w-4xl mx-auto"}>

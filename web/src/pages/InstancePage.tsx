@@ -91,7 +91,10 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       (wantView === "board" ? (pinnedViews.find((v) => v.view_type !== "table") ?? pinnedViews[0] ?? null) : null))
     : null;
 
-  if (instancesQ.isLoading) {
+  // The pinned views decide what the page opens on and add their tabs above
+  // it, so the page waits for them: drawn first, the table's controls dropped
+  // 42 px when the tabs came, or the page swapped to a board (#7781).
+  if (instancesQ.isLoading || (kindId && viewsQ.isLoading)) {
     return <div className="text-sm text-muted p-4">Loading…</div>;
   }
   const inst = (instancesQ.data?.items ?? []).find(

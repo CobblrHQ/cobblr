@@ -6,7 +6,8 @@
 
 import { describeGuestWrite } from "../platform/approvals.js";
 import { guestMayRead, guestMayWrite, guestRouteKey, portalShares } from "../auth/guest-reads.js";
-import { holdForAPerson } from "../platform/ai-held-changes.js";
+import { holdForAPerson, workspacePath } from "../platform/ai-held-changes.js";
+import { deleteRefusal, kindOfDeletePath } from "../platform/kind-delete.js";
 import { sandboxIsOver, trialIsOver } from "../platform/sandbox-over.js";
 import { sandboxEnabled } from "../platform/try-sandbox.js";
 import type { NextFunction, Request, Response } from "express";
@@ -249,6 +250,18 @@ export async function withTenant(
     // activation funnel is built on. Sessions only: an API token is an
     // integration or an edge device polling, not someone coming back.
     if (currentActor()?.authMethod === "session") noteActiveDay(row.org_id, req.session.id);
+    // A record's delete is its kind's own rule (kind-delete.ts), asked here
+    // before anything is held or run, so an assistant never asks a person to
+    // confirm a delete their role cannot make (#7909).
+    if (req.method === "DELETE") {
+      const rel = workspacePath(req.originalUrl, row.org_slug);
+      const hit = rel ? await kindOfDeletePath(row.org_id, rel) : null;
+      const refused = hit ? await deleteRefusal({ orgId: row.org_id, userId: req.session.id, role: row.role }, hit.kind) : null;
+      if (refused) {
+        res.status(403).json({ error: refused });
+        return;
+      }
+    }
     // An assistant's delete waits for its person (ai-held-changes.ts). Here,
     // because every workspace route passes this door.
     if (req.method === "DELETE" && req.session.ai_door) {

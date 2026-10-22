@@ -78,7 +78,7 @@ import { ScanPendingPictures } from "./ScanPendingPictures";
 import { ScanTwinsContext, twinsOf } from "./scanTwins";
 import { usePendingPictures } from "../lib/pendingPictures";
 import { } from "./scanNameEdit";
-import { useAiStatus, AiOffNotice, AiNoticeGiven, aiStatusLine } from "../components/AiStatusNotice";
+import { useAiStatus, useAiStatusAnswered, AiOffNotice, AiNoticeGiven, aiStatusLine } from "../components/AiStatusNotice";
 import { putawayWalkChip, sessionAddCaption } from "@cobblr/platform-contract/scan-copy";
 export { useAiStatus, AiOffNotice } from "../components/AiStatusNotice";
 import { decideLocationScan, filingLabel } from "../lib/scanFiling";
@@ -585,6 +585,7 @@ export function ScanPage() {
   // too: components/ScanPhotoPicker.tsx. Here uploads join the standing
   // upload session, or the `?batch=` this page is scoped to.
   const aiStatus = useAiStatus();
+  const aiAnswered = useAiStatusAnswered();
   const intake = useScanIntake(activeSlug, { session: "inbox", batchId: params.get("batch"), identifyAvailable: aiStatus?.identify_available });
   // ?pick=photos: the PWA shortcut's door (components/AddPhotosTile.tsx).
   const pickPhotos = params.get("pick") === "photos";
@@ -1816,6 +1817,24 @@ export function ScanPage() {
   // scanning burst settles) — "Put them away" should reveal a ready plan, not
   // start one. Server-side fingerprint dedupe makes repeats free.
   const unfiledCount = scanStatsQ.data?.unfiled ?? 0;
+  // The list, its counts and the put-away strip above it are drawn together,
+  // once all of them have answered: the strip arriving after the rows pushed
+  // each row's buttons down, the loading line leaving moved the strip's
+  // button up, and the tables' menu arriving gave every session its place,
+  // its Add and its caption at once, and the locations a place chip needs
+  // arrived after the rows (#7789).
+  // Waited for once: a count asked again under a new key (a facet, a batch)
+  // must not take the drawn rows back to "loading…".
+  const answeredOnce = useRef(false);
+  if (!countsQ.isLoading && !scanStatsQ.isLoading && !menuQ.isLoading && !modulesQ.isLoading && !locsQ.isLoading && aiAnswered) answeredOnce.current = true;
+  const inboxSettled = !list.isLoading && answeredOnce.current;
+  // What sits under the list waits, on the first load, for the rows above it
+  // to finish routing: a pack folding into short rows once routed took 816 px
+  // out from over Recently committed (#7789). Once, so a scanning burst later
+  // never hides it.
+  const quietOnce = useRef(false);
+  if (inboxSettled && !(list.data?.pages ?? []).some((p) => (p.items ?? []).some((it) => itemEnriching(it)))) quietOnce.current = true;
+  const listQuiet = inboxSettled && quietOnce.current;
   const readyCount = scanStatsQ.data?.ready ?? 0;
   useEffect(() => {
     if (!activeSlug || (unfiledCount === 0 && readyCount === 0)) return;
@@ -2410,7 +2429,11 @@ export function ScanPage() {
             reserves descender room the chips' centred text does not. The ask was
             always "align Inbox with the rest of the top row", and the row's
             currency is centres (reported 2026-08-08, again 2026-08-10). */}
-        <div className="flex items-center gap-2 shrink min-w-0">
+        {/* The counts change as rows are read, so they hold the row's slack
+            and nothing beside them moves when one arrives (#7789): on a phone
+            the group takes the spare width and the controls pack right; on a
+            desk the elastic search box comes straight after it. */}
+        <div className="flex items-center gap-2 shrink min-w-0 max-sm:flex-1 sm:order-[-2]">
         <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
@@ -2512,8 +2535,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </div>
 
         {/* Reviewing one session (?batch). Was a chip at the end of a wrapping
-            row, where it was the first thing to fall off. */}
-        {batchId && (
+            row, where it was the first thing to fall off. Its words come
+            from the rows, so it waits for them rather than growing after it
+            is shown; the elastic member beside it gives way (#7789). */}
+        {batchId && inboxSettled && (
           <Link
             to="/scan"
             title="Filtered to this scan session - tap to show everything pending"
@@ -2661,8 +2686,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // you could not see or change where the next scan files while
             // looking for something (#3996's sibling). Same control, two shapes.
             (omniOpen
-              ? "flex-1 min-w-[9rem] max-sm:order-last max-sm:basis-full"
-              : "flex-1 min-w-[9rem] hidden sm:flex") +
+              ? "flex-1 min-w-[9rem] sm:order-[-1] max-sm:order-last max-sm:basis-full"
+              : "flex-1 min-w-[9rem] sm:order-[-1] hidden sm:flex") +
             " " +
             (omniOpen ? "" : "cursor-text")
           }
@@ -2883,14 +2908,18 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         />
       </div>
 
-      <AiOffNotice status={aiStatus} needs="identify" />
-
-      <ScanDrivePanel drive={scanDrive} />
-      <div data-inbox-actions className="flex flex-wrap gap-x-4 gap-y-1">
+      {/* On a phone these two are in the page menu (ScanInboxMenu), so the
+          first card stays inside the first 320px (#7766). Above the notices,
+          which arrive with the list (#7789). */}
+      <div data-inbox-actions className="flex flex-wrap gap-x-4 gap-y-1 max-sm:hidden">
         <Link className="inline-block text-sm text-accent underline" to="/scan/stations">Scan stations</Link>
         {/* A tablet and a scanner as a station of its own (#4640). */}
         <Link className="inline-block text-sm text-accent underline" to="/configuration/devices?tab=stations">Open a station on a tablet</Link>
       </div>
+
+      {inboxSettled && <AiOffNotice status={aiStatus} needs="identify" />}
+
+      <ScanDrivePanel drive={scanDrive} />
 
       {/* When you arrived here from an instance's table ("Scan" on the Yarn
           page), confirms default into that instance. */}
@@ -2901,7 +2930,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </div>
       )}
 
-      {list.isLoading && <div className="text-sm text-faint">loading…</div>}
+      {!inboxSettled && <div className="text-sm text-faint">loading…</div>}
       {/* An error is NOT an empty inbox. Rendering the friendly empty state on
           a failed fetch told a user with 80 pending scans that they had none,
           and they re-scanned things they already had (2026-08-25 audit). */}
@@ -2928,7 +2957,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </OverlayLayer>
       )}
       <ScanPendingPictures slug={activeSlug} rowIds={visibleIds} />
-      {!list.isLoading && !list.isError && searchTokens.length === 0 && shownItems.length === 0 && Object.keys(rowlessSessions).length === 0 && pendingPictures.length === 0 && (
+      {inboxSettled && !list.isError && searchTokens.length === 0 && shownItems.length === 0 && Object.keys(rowlessSessions).length === 0 && pendingPictures.length === 0 && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <ScanLine size={28} className="mx-auto text-faint dark:text-slate-600 mb-2" />
           <div className="text-sm text-muted dark:text-slate-400">
@@ -2960,7 +2989,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       {/* The put-away front door on the page itself: a captured backlog is
           Guided Organize's native situation — ONE verb, preview-first
           (put-away.md §5). Live Sort lives where scanning starts instead. */}
-      {viewMode !== "plan" &&
+      {inboxSettled && viewMode !== "plan" &&
         ((scanStatsQ.data?.unfiled ?? 0) > 0 || (scanStatsQ.data?.ready ?? 0) > 0) && (
         // ONE line at every width: the count truncates before the button
         // moves. On a phone it was three lines and a large button, 82px
@@ -3247,7 +3276,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           How the list is grouped and how dense it is are properties OF THE
           LIST, so they sit with it rather than in the page header. That also
           takes four controls out of a row that had eighteen. */}
-      {items.length > 0 && (
+      {inboxSettled && items.length > 0 && (
         <div data-inbox-actions className="flex items-center gap-2 text-xs -mb-1">
           {(unfiledCount > 0 || readyCount > 0) && (
             <HeaderMenu
@@ -3349,6 +3378,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </div>
       )}
 
+      {inboxSettled && (
       <div className="space-y-2">
         {viewMode === "plan" && (unfiledCount > 0 || readyCount > 0) ? (
           // The sorting plan: the inbox re-expressed by DESTINATION. An inline
@@ -3568,6 +3598,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // and the label says when filing installs a table.
             const sessionAction = scanSessionAction(g.items, viewer);
             const readyIds = sessionAction.ids;
+            // Still being routed, with nothing ready: what the row will offer
+            // is not known yet, so the header holds only its name and "N
+            // finishing…", and its controls arrive together with File.
+            // Drawing some of them first moved them under a finger when File
+            // came in beside them (#7789).
+            const routing = busy > 0 && readyIds.length === 0;
             // Tables these items are routed to that the workspace does not have
             // yet. Filing installs them (see confirmItemsToTheirCandidate); the
             // tooltip says so, because installing a table is not something to
@@ -3695,7 +3731,9 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
             // line. Reachable in one more tap, never gone.
             const canReadAgain = isReceiptSession && !!g.batchId && !!g.sourceFileId;
             const canReviewPlan = busy === 0 && pendingInSession > 0 && g.isBatch && !!g.batchId;
-            const phoneTucks = !!batchId && (docChip || canReadAgain || canReviewPlan);
+            // Whether the ... is there does not wait on the read: it arriving
+            // when the read finished pushed the row's controls (#7789).
+            const phoneTucks = !!batchId && (docChip || canReadAgain || (pendingInSession > 0 && g.isBatch && !!g.batchId));
             // The email and parcel icons fold into ⋯ on a phone when that
             // frees a control, so the store's name gets the width (#6095).
             const emailIcon = !!source.addedBy && !(unreadDocName && source.addedBy.kind === "email");
@@ -3908,7 +3946,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         count={g.verdict.kind !== "failed" && g.verdict.kind !== "in_flight" ? g.items.length : null}
                       />
                     </SessionIdentity>
-                  {docChip && (
+                  {docChip && !routing && (
                     <SessionDocumentChip
                       phoneHidden={!!batchId}
                       slug={activeSlug}
@@ -3919,7 +3957,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     />
                   )}
                   {/* An unread email's headline already names its sender. */}
-                  {emailIcon && source.addedBy && (
+                  {emailIcon && source.addedBy && !routing && (
                     <span className={phoneFolds ? "contents max-sm:hidden" : "contents"}>
                       <SessionAddedByChip
                         by={source.addedBy}
@@ -3934,7 +3972,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       over with the actions, while the number it creates appears
                       next to the name, made the two look like different things
                       (reported 2026-08-21). */}
-                  {isReceiptSession && g.batchId && !unreadDocName && !g.orderRef && editingPo !== g.batchId && (
+                  {isReceiptSession && g.batchId && !unreadDocName && !g.orderRef && editingPo !== g.batchId && !routing && (
                     <button
                       type="button"
                       onClick={(e) => {
@@ -3999,7 +4037,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       session read as nagging). "Do these belong together?"
                       costs nothing until pressed; it also surfaces on its own
                       below, but only on evidence of a shared theme. */}
-                  {g.batchId && (themeOffer || mergeInto || phoneTucks || phoneFolds) && (
+                  {g.batchId && !routing && (themeOffer || mergeInto || phoneTucks || phoneFolds) && (
                     <HeaderMenu
                       width={264}
                       align="right"
@@ -4064,8 +4102,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           )}
                           {phoneTucks && (
                             <div className="sm:hidden">
-                              {canReviewPlan && (
-                                <MenuItem icon={<Zap size={13} />} label="Review plan" hint="What gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm." onClick={() => { close(); openPlan(); }} />
+                              {pendingInSession > 0 && g.isBatch && g.batchId && (
+                                <MenuItem icon={<Zap size={13} />} label="Review plan" hint={canReviewPlan ? "What gets added to things you already have, what is filed as new, what is left for you. Nothing is written until you confirm." : "Ready once every item here is read."} disabled={!canReviewPlan} onClick={() => { close(); openPlan(); }} />
                               )}
                               {docChip && (
                                 <MenuItem icon={<ReceiptText size={13} />} label={`Open ${source.docName}`} onClick={() => { close(); setViewSource(g.sourceFileId!); }} />
@@ -4108,6 +4146,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       receipt-only, so leaving them on the right made the trio
                       shift column depending on whether a session came from a
                       receipt or a scan. */}
+                  {!routing && (<>
                   {/* Edit the order/invoice #. Purchase-only — see isReceiptSession. */}
                   {isReceiptSession &&
                     (editingPo === g.batchId ? (
@@ -4408,6 +4447,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         )}
                       </span>
                     ))}
+                  </>)}
 
                   {/* A failed read, at a glance: the chip is the header's own
                       verdict and its Read again; the full sentence and the
@@ -4427,7 +4467,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       location only surfaced as a surprise question after the tap
                       (reported 2026-07-30). Now the missing half says so, and is one
                       tap from being set - set the location, then file. */}
-                  {busy === 0 && placeIds.length > 0 && !fileBin && hasLocations && (
+                  {!routing && placeIds.length > 0 && !fileBin && hasLocations && (
                     <SessionPlaceChip
                       total={placeIds.length}
                       missing={sessionLoc.missing}
@@ -4446,12 +4486,13 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   {/* The plan-first filer for this session: adds to what you
                       have where one thing matches, files the rest as new, leaves
                       the ambiguous. File all beside it still creates from each
-                      card's candidate; folding the two is a follow-up. Hidden
-                      while the AI is still deciding, like File all. */}
-                  {busy === 0 && pendingInSession > 0 && g.isBatch && g.batchId && (
+                      card's candidate; folding the two is a follow-up. Drawn
+                      while the AI is still deciding, and pressable once it is
+                      done, like File all: appearing then moved the row (#7789). */}
+                  {!routing && pendingInSession > 0 && g.isBatch && g.batchId && (
                     <button
                       type="button"
-                      disabled={bulkBusy}
+                      disabled={bulkBusy || busy > 0}
                       onClick={(e) => {
                         e.stopPropagation();
                         openPlan();
@@ -4472,7 +4513,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     </span>
                     </button>
                   )}
-                  {busy > 0 ? (
+                  {/* What is ready is drawn while the rest is read, and can be
+                      pressed once it is: "N finishing…" giving way to the
+                      button moved the row and the caption under it (#7789). */}
+                  {busy > 0 && readyIds.length === 0 ? (
                     <span
                       className="shrink-0 inline-flex items-center gap-1 rounded-full border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-accent"
                       title="The AI is still finalizing some items - names, covers and routing may still change"
@@ -4482,7 +4526,8 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   ) : readyIds.length > 0 ? (
                     <button
                       type="button"
-                      disabled={bulkBusy}
+                      disabled={bulkBusy || busy > 0}
+                      aria-busy={busy > 0 || undefined}
                       onClick={(e) => {
                         e.stopPropagation();
                         // No locations to pick from (module off, or none made
@@ -4499,7 +4544,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           void fileSession(readyIds, sessionCat.suggestion, filing.fallbackLocation);
                         }
                       }}
-                      title={
+                      title={busy > 0 ? `Ready once ${busy} more ${busy === 1 ? "is" : "are"} read - names, covers and routing may still change` : (
                         // Says what the label CANNOT. It used to restate the
                         // label back at you ("...then files all 4"), which is
                         // the one thing you can already read (reported
@@ -4518,7 +4563,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           : `Each goes where the AI matched it${
                               willInstallLabels.length ? `, installing ${willInstallLabels.join(" and ")} on the way` : ""
                             }${dupeClause}${placingClause}${fallbackClause}`
-                      }
+                      )}
                       className="group shrink-0 inline-flex items-center justify-center disabled:opacity-50"
                     >
                       <span className="inline-flex items-center gap-1 rounded-md bg-cobble-600 group-hover:bg-cobble-700 px-2 py-1 text-[11px] font-medium text-white">
@@ -4656,7 +4701,10 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                     // every destination, what turning a collection on means,
                     // and the session's place (#4577); and which order it is,
                     // its number the link to the purchase. One line (#6095).
-                    const caption = busy === 0 && readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : null;
+                    // While the read finishes, the line says what the
+                    // "finishing" chip's tooltip says, and holds the place the
+                    // caption arrives in (#7789).
+                    const caption = readyIds.length > 0 ? sessionAddCaption(readyIds.length, sessionAction.tables, sessionAction.off, placeForFilingLine(sessionLocName ? filingLabel(sessionLocName) : null, suggestedPlaces(placeItems))) : busy > 0 ? "Names, covers and where they go may still change" : null;
                     return (
                       <SessionMetaLine
                         parts={[
@@ -4792,6 +4840,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </>
         )}
       </div>
+      )}
 
       {wedgeBinAdjust && (
         <BinAdjustModal
@@ -4849,7 +4898,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
           );
         })()}
 
-      {recentlyDeleted.length > 0 && (
+      {listQuiet && recentlyDeleted.length > 0 && (
         <div className="mt-3">
           <button
             type="button"
@@ -4918,7 +4967,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
         </div>
       )}
 
-      {recentlyCommitted.length > 0 && (
+      {listQuiet && recentlyCommitted.length > 0 && (
         <div className="mt-3">
           <button
             type="button"

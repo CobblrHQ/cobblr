@@ -1,4 +1,4 @@
-import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
+import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -6,7 +6,7 @@ import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar,
 // tags, and a "what's in here" rollup that sweeps every module
 // with location-bearing entities.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { BinAdjustModal } from "../components/BinAdjustModal";
@@ -30,7 +30,7 @@ import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { deleteDialogMessage, deletedSentence, restoredSentence } from "../lib/placeDelete";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
-import { useCan } from "../lib/can";
+import { capabilitiesQuery, useCan } from "../lib/can";
 
 /** Where a kind's detail page lives. The placement endpoint answers WHAT is
  *  here; the registry is still how a kind says where to click through to. */
@@ -121,6 +121,10 @@ export function LocationDetailPage() {
   // Asked only by who may see costs: every member's room, shelf and bin
   // asked and was refused (#7552).
   const seesCosts = useCan("inventory:view-costs");
+  const recordActions = useRecordActions("core-locations:location");
+  // The answer itself, not just whether it allows: a refused or failed ask
+  // must still let the place be drawn.
+  const capabilities = useQuery({ ...capabilitiesQuery(activeSlug), enabled: !!activeSlug });
   const worth = useQuery({
     queryKey: ["placement-worth", activeSlug, id],
     queryFn: () => api.placementWorth(activeSlug, { kind: "core-locations:location", id: id! }),
@@ -183,8 +187,18 @@ export function LocationDetailPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change the photo. Try again."),
   });
 
+  // The place is drawn once everything that adds a part of it has answered
+  // or first failed: drawn as each came, the breadcrumb, the bin's count
+  // card, the actions bar, the insurance list and what's here each arrived
+  // above a control and pushed it under a finger (#7791). Worth is waited on
+  // only when the answer about who may see it says this person may. Once per
+  // place: opening a place inside this one waits for that one in turn.
+  const drawnFor = useRef<string | null>(null);
+  const asking = drawnFor.current !== id && [location, allLocations, binContents, contents, kinds, recordActions, capabilities, ...(seesCosts === true ? [worth] : [])].some(stillAsking);
+  if (!asking) drawnFor.current = id ?? null;
+
   if (!id) return <Navigate to="/locations" replace />;
-  if (location.isLoading) return <div className="text-sm text-faint">loading…</div>;
+  if (location.isLoading || asking) return <div className="text-sm text-faint">loading…</div>;
   if (location.error)
     return <div className="text-sm text-ember-500">{(location.error as Error).message}</div>;
   if (!location.data) return null;
@@ -337,6 +351,11 @@ export function LocationDetailPage() {
       {/* A drawer drawn on its toolbox's face, with nothing in it, has no
           layout to show: an empty "Layout" strip on every drawer was noise.
           A room, a standalone chest, or anything with things in it keeps it. */}
+      {/* The plan and everything under it fill in from answers of their own
+          (the plan's drawers and things, the fields, what other modules add,
+          the files): shown together once the page stops asking, so none of
+          them pushes Add, Move everything or Delete under a finger (#7791). */}
+      <OnceQuiet key={l.id} className="space-y-5">
       {(l.kind === "area" || children.length > 0 || hasOwnLayout(l.metadata) || !readRect(l.metadata)) && <FloorPlan room={l} slug={activeSlug} />}
 
       {/* ALWAYS rendered, even with no children. It used to appear only once a
@@ -510,6 +529,7 @@ export function LocationDetailPage() {
           <Trash2 size={12} /> Delete this location
         </button>
       </div>
+      </OnceQuiet>
 
       {editing && (
         <EditLocationModal location={l} onClose={() => setEditing(false)} />

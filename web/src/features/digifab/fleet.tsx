@@ -31,13 +31,14 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Trash2, Wifi, Printer, Send, RefreshCw, AlertTriangle, Layers, X, Ban, Camera, Pause, Play, Thermometer, Sliders, ShieldCheck } from "lucide-react";
 import { ApiError, api, fetchAuthBlobUrl, type DigifabFleet, type DigifabFleetDevice, type DigifabDeviceClass, type DigifabHistory, type DigifabDeviceDetail, type DigifabFileInfo } from "../../lib/api";
-import { deviceBucket, fleetStatusChip } from "../../lib/fleet-status";
+import { deviceBucket, fleetStatusChip, outOfContactLine } from "../../lib/fleet-status";
 import { BambuConnectWizard } from "../../components/BambuConnectWizard";
 import { BridgePicker } from "../../components/BridgePicker";
 import { HomeNetworkHint } from "../../components/HomeNetworkHint";
 import { useHosted } from "../../lib/useHosted";
 import { needsBridge } from "@cobblr/platform-contract/address-reach";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
+import { useCan } from "../../lib/can";
 import { useLater, Lightbox, SegmentedChoice, Modal, useToast, useConfirm, useImageSrc, relativeTime, EntityPhoto, SecretInput, AddressInput, NumberField } from "@cobblr/platform-web";
 import { Combobox } from "../../components/Combobox";
 import type { ModulePageTabCtx, EntityDetailPanelCtx } from "../../panels/types";
@@ -1286,6 +1287,9 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   const qc = useQueryClient();
   const toast = useToast();
   const laser = !!d.laser_backend || !!d.lightburn_readiness || d.id === "lightburn";
+  // A station is where its machine is run: offered to the admin tier and to
+  // an operator, never to someone it would only refuse (#7748).
+  const runsMachines = useCan("digifab:operate") === true;
   const st = KLASS_STYLE[d.klass];
   // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
   // (already 0–100, e.g. a Bambu print started from its own slicer).
@@ -1310,7 +1314,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         typeof v !== "string"
           ? `${title || d.linked_machine?.name || d.name} cleared: ${v.good} good, ${v.scrap} scrap`
           : v === "scrapped"
-            ? `${title || d.linked_machine?.name || d.name} cleared. Scrapped: filament and usage restored`
+            ? `${title || d.linked_machine?.name || d.name} cleared. Scrapped: the filament it used stays used`
             : `${title || d.linked_machine?.name || d.name} cleared, ready for the next job`,
       );
       setSplitOpen(false);
@@ -1381,6 +1385,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   // — so we lead with the harmless visible ones (light / nudge) to confirm it works.
   const [detailOpen, setDetailOpen] = useState(false);
   const att = d.needs_attention;
+  // Its manager stopped answering: everything below is its last reading (#7902).
+  const lost = outOfContactLine(d);
   const nozzle = tempLabel(d.temps?.nozzle);
   const bed = tempLabel(d.temps?.bed);
   const chamber = tempLabel(d.temps?.chamber);
@@ -1466,13 +1472,14 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           <span className="flex-1" />
           {pct != null && <span className="text-[10px] font-mono text-faint shrink-0">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</span>}
           {needsShort && <span className="text-[10px] text-amber-600 shrink-0">{needsShort}</span>}
+          {lost && !needsShort && <span className="text-[10px] text-amber-600 shrink-0" title={lost}>out of contact</span>}
         </div>
       </>
     );
     return (
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
         {startReview.sheet}
-        <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
+        <div className={`h-1 ${att || lost ? "bg-amber-500" : st.dot} ${d.klass === "printing" && !lost ? "animate-pulse" : ""}`} />
         {selecting ? <div className="block w-full text-left">{face}</div> : <button type="button" onClick={() => setDetailOpen(true)} className="block w-full text-left">{face}</button>}
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
       </div>
@@ -1485,7 +1492,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
     return (
       <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
         {startReview.sheet}
-        <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
+        <div className={`h-1 ${att || lost ? "bg-amber-500" : st.dot} ${d.klass === "printing" && !lost ? "animate-pulse" : ""}`} />
         <div className="p-1.5">
           <div className="flex items-center gap-1">
             {selecting && <input aria-label={`Select ${d.name}`} type="checkbox" checked={!!selected} readOnly className="shrink-0" />}
@@ -1500,9 +1507,10 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
                 <div className={`h-full ${job?.status === "paused" ? "bg-amber-500" : "bg-cobble-500"}`} style={{ width: `${pct}%` }} />
               </div>
               <div className="text-[9px] font-mono text-faint mt-0.5 truncate">{pct}%{doneBy ? ` · ~${doneBy}` : ""}</div>
+              {lost && <div className="text-[9px] text-amber-600 dark:text-amber-400 truncate" title={lost}>out of contact</div>}
             </>
           ) : (
-            <div className={`text-[9px] uppercase tracking-wider truncate ${st.text}`}>{needsShort ?? blocked ?? d.state}</div>
+            <div className={`text-[9px] uppercase tracking-wider truncate ${lost && !needsShort ? "text-amber-600 dark:text-amber-400" : st.text}`} title={lost ?? undefined}>{needsShort ?? (lost ? "out of contact" : null) ?? blocked ?? d.state}</div>
           )}
         </div>
         {detailOpen && <PrinterDetailModal slug={slug} connId={connId} device={d} onClose={() => setDetailOpen(false)} />}
@@ -1514,7 +1522,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
     <div className={rootCls} {...dragProps} onClick={selecting ? onToggleSelect : undefined}>
       {/* Status band — the farm-floor read: color says state before text does. */}
       {startReview.sheet}
-        <div className={`h-1 ${att ? "bg-amber-500" : st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
+        <div className={`h-1 ${att || lost ? "bg-amber-500" : st.dot} ${d.klass === "printing" && !lost ? "animate-pulse" : ""}`} />
       <div className="p-2.5">
       {selecting && (
         <div className="flex items-center gap-1.5 mb-1">
@@ -1542,7 +1550,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
         </div>
       ) : null}
       <div className="flex items-center gap-1.5">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot} ${d.klass === "printing" ? "animate-pulse" : ""}`} />
+        <span className={`w-2 h-2 rounded-full shrink-0 ${lost ? "bg-amber-500" : st.dot} ${d.klass === "printing" && !lost ? "animate-pulse" : ""}`} />
         <button type="button" onClick={(e) => { if (selecting) { e.stopPropagation(); onToggleSelect?.(); } else setDetailOpen(true); }} className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 break-words whitespace-normal leading-snug hover:text-accent text-left" title={`${title ?? d.name}: open details`}>{title ?? d.name}</button>
         <div className="flex-1" />
         <button
@@ -1556,12 +1564,12 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       </div>
       {subtitle && <div className="text-[10px] text-faint truncate">{subtitle}</div>}
       <div className="flex flex-wrap items-center gap-2 mt-0.5">
-        <span className={`text-[10px] uppercase tracking-wider ${st.text}`}>{laser ? laserState(d.state) : d.state}</span>
+        <span className={`text-[10px] uppercase tracking-wider ${lost ? "text-faint" : st.text}`} title={lost ? "Its last reported state" : undefined}>{lost ? "last: " : ""}{laser ? laserState(d.state) : d.state}</span>
         {d.stage && (
           <span className={`text-[10px] font-medium ${d.state === "unpaired" && d.station_kind === "print" ? "text-content break-words whitespace-normal" : "text-accent truncate"}`} title="current stage">{d.stage}</span>
         )}
         {!laser && (nozzle || bed || chamber) && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-mono text-faint" title="nozzle / bed / chamber (actual/target °C)">
+          <span className={`inline-flex items-center gap-1 text-[10px] font-mono text-faint ${lost ? "opacity-60" : ""}`} title={lost ? `${lost}: its last temperatures` : "nozzle / bed / chamber (actual/target °C)"}>
             <Thermometer size={10} />
             {nozzle && <span>N {nozzle}</span>}
             {bed && <span>B {bed}</span>}
@@ -1569,8 +1577,13 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           </span>
         )}
       </div>
+      {lost && (
+        <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-400" data-testid="out-of-contact">
+          {lost}. What it shows is from then; its print is not known to have finished or failed.
+        </div>
+      )}
       {/* An external detector (e.g. PrintGuard) owns this printer's detection + camera. */}
-      {!laser && <ToolTemperatures tools={d.temps?.tools} />}
+      {!laser && <div className={lost ? "opacity-60" : undefined}><ToolTemperatures tools={d.temps?.tools} /></div>}
       {d.state === "unpaired" && d.station_kind === "print" && <SnapmakerPairing slug={slug} connectionId={connId} onPaired={invalidateFleet} />}
       {d.managed_by_detector && (
         <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-faint" title={`An external detector owns this printer's detection and camera - ${productName()} isn't watching it or pulling its camera`}>
@@ -1600,7 +1613,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       ) : null}
       {d.lightburn_readiness && <div className="mt-2"><LightBurnReadiness readiness={d.lightburn_readiness} /></div>}
       {!laser && !dense && !selecting && d.linked_machine_id && <MachinePrintBatches slug={slug} machineId={d.linked_machine_id} />}
-      {(laser || d.station_kind) && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
+      {runsMachines && (laser || d.station_kind) && <Link className="inline-flex min-h-11 items-center mt-2 text-sm underline" to={`/station/machine/${connId}/${encodeURIComponent(d.id)}`}>Open machine station</Link>}
       {d.laser_backend && <DirectLaserControls slug={slug} connectionId={connId} deviceId={d.id} status={job?.status} state={d.state} />}
       {laser && !d.laser_backend && job && <p className="mt-2 text-xs text-muted">{job.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</p>}
       {blocked && <div className="mt-1 text-[10px] text-ember-600 dark:text-ember-500">{blocked}</div>}
@@ -1663,8 +1676,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
               {ready.isPending ? "…" : "Cleared, ready"}
             </button>
           ) : (
-            // F-13: the verdict. "Good" closes the linked task; "Scrapped" puts
-            // the filament + machine usage back. Both clear the bed.
+            // F-13: the verdict. "Good" closes the linked task; "Scrapped"
+            // leaves it open and the filament spent. Both clear the bed.
             <>
             <div className="mt-1 flex gap-1">
               <button
@@ -1734,12 +1747,12 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
               <span className="text-[9px] text-faint shrink-0" title={`auto-retry on fail (${job.attempts}/${job.max_attempts - 1} used)`}>↻{job.attempts}/{job.max_attempts - 1}</span>
             )}
             {/* Cockpit live-control: pause / resume the running print. */}
-            {!laser && job.status === "printing" && (
+            {!laser && !lost && job.status === "printing" && (
               <button aria-label="Pause print" onClick={() => ctrl.mutate("pause")} disabled={ctrl.isPending} title="Pause print" className="text-faint hover:text-accent transition p-0.5 disabled:opacity-50">
                 <Pause size={13} />
               </button>
             )}
-            {!laser && job.status === "paused" && (
+            {!laser && !lost && job.status === "paused" && (
               <button aria-label="Resume print" onClick={() => ctrl.mutate("resume")} disabled={ctrl.isPending} title="Resume print" className="text-amber-600 hover:text-amber-700 transition p-0.5 disabled:opacity-50">
                 <Play size={13} />
               </button>
@@ -2667,7 +2680,8 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
               )}
               {!laser && t && (
                 <div>
-                  <div className={lbl + " mb-1"}>Live</div>
+                  <div className={lbl + " mb-1"}>{device.out_of_contact ? "Last reading" : "Live"}</div>
+                  {outOfContactLine(device) && <div className="text-[11px] text-amber-700 dark:text-amber-400 mb-1">{outOfContactLine(device)}. These are its last temperatures.</div>}
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <TempStat label="Nozzle" actual={t.nozzle} target={t.nozzle_target} />
                     <TempStat label="Bed" actual={t.bed} target={t.bed_target} />
@@ -2736,6 +2750,13 @@ export function PrinterDetailModal({ slug, connId, device, onClose }: { slug: st
 }
 
 // A single print's detail — large cover (click to zoom) + the metadata.
+/** What a finished print came out as, in words: a machine finishing is not a good part (#7891). */
+export function printResult(r: Pick<DigifabHistory["recent"][number], "status" | "outcome" | "good_qty" | "scrap_qty">): string | null {
+  if (r.status !== "completed" || !r.outcome) return null;
+  if (r.outcome === "scrap") return "scrapped";
+  return r.scrap_qty ? `${r.good_qty ?? 0} good, ${r.scrap_qty} scrapped` : "came out good";
+}
+
 export function PrintDetailModal({ item, onClose, onZoom, onReprint, laser = false }: { laser?: boolean; item: DigifabHistory["recent"][number]; onClose: () => void; onZoom?: (src: string) => void; onReprint?: (r: DigifabHistory["recent"][number]) => void }) {
   const durMin = item.duration_s ? Math.round(item.duration_s / 60) : 0;
   const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
@@ -2749,7 +2770,7 @@ export function PrintDetailModal({ item, onClose, onZoom, onReprint, laser = fal
           <img src={item.cover} alt="" className="w-full max-h-72 object-contain rounded bg-subtle dark:bg-slate-800 cursor-zoom-in" onClick={() => onZoom?.(item.cover!)} />
         )}
         <div>
-          {row("Status", <span className={item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{laser ? laserState(item.status) : item.status}</span>)}
+          {row("Status", <span className={item.outcome === "scrap" ? "text-amber-600 dark:text-amber-400" : item.status === "completed" ? "text-moss-600" : item.status === "failed" ? "text-ember-600 dark:text-ember-400" : ""}>{laser ? laserState(item.status) : item.status}{printResult(item) ? `, ${printResult(item)}` : ""}</span>)}
           {row("Profile", item.sub_label)}
           {row("Machine", item.device)}
           {row("Filament", item.filament_g != null ? `${Math.round(item.filament_g)} g` : null)}

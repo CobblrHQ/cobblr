@@ -20,7 +20,7 @@ import { ProviderSetupSteps } from "../components/ProviderSetupSteps";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backupOffers, backupSummary, type BackupOffer } from "../lib/connection-backup";
 import { Pencil, Plug, Plus, Trash2, X } from "lucide-react";
-import { useToast, useConfirm, usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
+import { useStillAsking, useToast, useConfirm, usePageTitle, SegmentedChoice } from "@cobblr/platform-web";
 import { YourAiDefaults } from "../components/YourAiDefaults";
 import { TestConnectionButton, VerificationBadge, VerificationLine } from "../components/ConnectionState";
 import { keyRefusedBy, refusalDialog, verificationToast } from "../lib/connection-state";
@@ -73,6 +73,10 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
   });
   const catalogue = useQuery({ queryKey: ["conn-catalogue"], queryFn: api.connectionCatalogue });
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const hasAi = (conns.data?.items ?? []).some((c) => c.kind === "ai-provider");
+  // The same read YourAiDefaults makes, so the page can wait for it.
+  const aiDefaults = useQuery({ queryKey: aiAvailabilityKeys.myDefaults(), queryFn: () => api.getMyAiDefaults(), enabled: hasAi });
+  const asking = useStillAsking(conns, catalogue, me, ...(hasAi ? [aiDefaults] : []));
   // Which kind the add form opens on: Add a service starts on the service
   // kind, Add a connection on whatever leads the list.
   // Another page can send a person here to connect a service for one job
@@ -147,7 +151,11 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
         re-added per workspace. Secrets are stored encrypted and never shown again.
       </p>
 
-      {conns.isLoading && <div className="text-sm text-faint">loading…</div>}
+      {/* The page draws once its reads answer: drawn as each came, the AI
+          defaults and Add a service arrived above and beside Add a connection
+          and moved it 100 to 250 px under a finger (#7795). */}
+      {asking && <div className="text-sm text-faint">loading…</div>}
+      {!asking && <>
       {!conns.isLoading && (conns.data?.items.length ?? 0) === 0 && !adding && (
         <div className="rounded-md border border-dashed border-line dark:border-slate-700 p-8 text-center">
           <Plug size={26} className="mx-auto text-faint dark:text-slate-600 mb-2" />
@@ -323,6 +331,7 @@ export function ConnectionsPage({ startAdding = false }: { startAdding?: boolean
         canEnable={roleSatisfies(workspace.activeOrg.role, ["owner", "admin"])}
         offers={!!adding && adding.provider === "service"}
       />}
+      </>}
     </div>
   );
 }

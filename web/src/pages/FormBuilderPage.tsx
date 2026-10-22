@@ -20,7 +20,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Trash2, FolderPlus, Loader2, Check } from "lucide-react";
 import { api, ApiError, type FieldSection, type PlatformFieldDef } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, usePageTitle, useStillAsking } from "@cobblr/platform-web";
 
 export type Item =
   | { kind: "section"; id: string; name: string }
@@ -76,6 +76,9 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
   // The kinds in the person's words ("Part"), not their ids.
   const kindNames = useQuery({ queryKey: ["form-builder-kind-names", slug], queryFn: () => api.listEntityKinds(slug), enabled: !!slug });
   const kindLabels = kindOptionLabels(kindNames.data?.items ?? []);
+  // The picker is drawn once the kinds are named: it first read "inventory:part"
+  // and then "Part", and Add section moved with the width (#7901's walk).
+  const pickerAsking = useStillAsking(allDefs, kindNames);
   useEffect(() => {
     if (!kind && kinds.length) setKind(kinds[0]!);
   }, [kinds, kind]);
@@ -195,6 +198,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
         </div>
       )}
 
+      {!pickerAsking && (
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-2 text-sm text-muted">
           Form for
@@ -219,6 +223,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
           </button>
         </div>
       </div>
+      )}
 
       {kinds.length === 0 && !allDefs.isLoading && (
         <div className="text-sm text-faint italic">
@@ -241,12 +246,12 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
                           const name = e.target.value.trim();
                           if (name && name !== it.name) renameSection.mutate({ id: it.id.slice(2), name });
                         }}
-                        className="flex-1 bg-transparent font-semibold text-content dark:text-mortar-100 text-sm focus:outline-none border-b border-transparent focus:border-line"
+                        className="w-0 min-w-0 flex-1 bg-transparent font-semibold text-content dark:text-mortar-100 text-sm focus:outline-none border-b border-transparent focus:border-line"
                       />
-                      <span className="text-[10px] uppercase tracking-widest text-faint">section</span>
+                      <span className="shrink-0 text-[10px] uppercase tracking-widest text-faint">section</span>
                       <button
                         onClick={() => deleteSection.mutate(it.id.slice(2))}
-                        className="text-faint hover:text-red-500 transition"
+                        className="shrink-0 text-faint hover:text-red-500 transition"
                         aria-label="Delete section"
                         title="Delete section (its fields become ungrouped)"
                       >

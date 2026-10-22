@@ -10,18 +10,23 @@ import { Plus, X } from "lucide-react";
 import { useInventory } from "./context";
 import { LowStockAlerts } from "./LowStockAlerts.js";
 import { InventoryApiError, type InvFieldDef } from "./api";
-import { NounChoiceButtons, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError } from "@cobblr/platform-web";
+import { NounChoiceButtons, OnceQuiet, changeWorkspaceShape, nounChoiceHeading, usePageTitle, MutationError } from "@cobblr/platform-web";
 
 export function SettingsPage() {
   usePageTitle("Inventory settings");
   return (
-    <div className="grid gap-5 sm:grid-cols-2">
-      <LowStockAlerts />
+    // Each card fills in from answers of its own; drawn as each came, the
+    // fields arriving pushed the cards below them down under a finger. Shown
+    // together once the page stops asking (#7790).
+    <OnceQuiet className="grid gap-5 sm:grid-cols-2">
       <FieldsCard />
       <NounCard />
       <OfferedNounCard />
       <StockTrackingCard />
-    </div>
+      {/* Last: it draws nothing for a table with no minimum, so nothing
+          after it can move when it decides. */}
+      <LowStockAlerts />
+    </OnceQuiet>
   );
 }
 

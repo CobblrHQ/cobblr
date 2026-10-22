@@ -138,11 +138,11 @@ ordersRouter.get(
       .offset(page.offset)
       .execute();
     // Each order's total, the same sum its own page shows, from one read of the page's lines.
-    const lines = rows.length ? await tenantDb(req).selectFrom("sales_order_items").select(["order_id", "qty", "unit_price"]).where("order_id", "in", rows.map((r) => r.id)).execute() : [];
+    const lines = rows.length ? await tenantDb(req).selectFrom("sales_order_items").select(["order_id", "qty", "unit_price", "metadata"]).where("order_id", "in", rows.map((r) => r.id)).execute() : [];
     const shop = await platform().money.currency(tenantContext(req).org.id);
     const withTotals = rows.map((r) => {
       const sum = orderTotal(lines.filter((l) => l.order_id === r.id), fieldCurrency(r.metadata, "total", shop));
-      return { ...r, total: sum.amount, unpriced_lines: sum.unpriced };
+      return { ...r, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced };
     });
     res.json(pagedAnswer(withTotals, page));
   }),
@@ -168,7 +168,7 @@ ordersRouter.get(
     const makes = await makeIdsByWorkOrder(db, order.id);
     const work_orders = (await workOrdersFor(tenantContext(req).org.id, order.id)).map((w) => ({ ...w, make_id: makes.get(w.id) ?? null }));
     const availability = await orderAvailability(tenantContext(req).org.id, items.map((it) => ({ ...it, qty: Number(it.qty), qty_fulfilled: Number(it.qty_fulfilled) })), work_orders);
-    res.json({ ...order, items, total: sum.amount, unpriced_lines: sum.unpriced, work_orders, availability });
+    res.json({ ...order, items, total: sum.amount, other_currency_totals: sum.other, unpriced_lines: sum.unpriced, work_orders, availability });
   }),
 );
 

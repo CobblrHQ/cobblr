@@ -17,6 +17,10 @@ export interface KindRec {
   display_name_plural?: string | null;
   module_name?: string;
   endpoints?: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
+  /** Whether the asker may delete a record of this kind (the kind's own rule). */
+  can_delete?: boolean;
+  /** When they may not: the sentence the delete would be refused with. */
+  delete_refused?: string;
   /** Set on registry records synthesized for a workspace's named instances
    *  (`<instance>:item`): endpoints are then relative to
    *  /instances/<instance_name>, not /modules/<module_name>. */
@@ -162,7 +166,7 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
     ...hiddenFieldsOf(k),
     can_create: null as boolean | null, // filled by the tool with full kind context
     can_update: !!k.endpoints?.update,
-    can_delete: !!k.endpoints?.delete,
+    can_delete: k.can_delete ?? !!k.endpoints?.delete,
   };
 }
 

@@ -11,10 +11,11 @@ import {
   ApiError, api,
   type OrgMembership, type WorkspaceInvite, type WorkspaceMember, type WorkspacePerson,
 } from "../lib/api";
-import { Modal, SegmentedChoice, printJoinSheet, useToast, useConfirm, Code } from "@cobblr/platform-web";
+import { Modal, SegmentedChoice, printJoinSheet, useStillAsking, useToast, useConfirm, Code } from "@cobblr/platform-web";
 import { displaySlug } from "../lib/workspaceSlug";
 import { usePrefill } from "../lib/prefill";
 import { MySignupInvites } from "./MySignupInvites";
+import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -70,6 +71,10 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
     staleTime: 5 * 60_000,
   });
   const canInviteToPlatform = isOwner && config.data?.self_serve_invites === true;
+  // The same read MySignupInvites makes, so the page can wait for it too.
+  const { user } = useAuth();
+  const signupInvites = useQuery({ queryKey: ["my-signup-invites", user?.id], queryFn: () => api.listMySignupInvites(), enabled: open });
+  const asking = useStillAsking(members, invites, config, signupInvites);
 
   // ── invite create form ────────────────────────────────────────
   // Escort prefill (tier 1.5): Cobb can't invite anyone, but "invite Sam" walks
@@ -302,6 +307,10 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
 
   return (
     <Modal open={open} onClose={onClose} title="Members" subtitle={displaySlug(slug)} size="lg" inline={inline} chromeless={chromeless}>
+      {/* Drawn whole once its reads answer: drawn as each came, the invite
+          sections arrived above Close and moved it 600 px under a finger
+          (#7797). */}
+      {asking ? <div className="text-xs text-faint">loading…</div> : (
       <div className="space-y-5">
         <MySignupInvites enabled={open} />
         {/* Members list */}
@@ -702,6 +711,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
           </button>
         </div>
       </div>
+      )}
     </Modal>
   );
 }

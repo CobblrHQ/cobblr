@@ -1,4 +1,4 @@
-import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, SegmentedChoice, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, RecordFormModal, MoneyInput, SegmentedChoice, useConfirm, useToast, useRunWithUndo, usePageTitle } from "@cobblr/platform-web";
 // /configuration/maintenance — workspace-wide service log. The
 // core-maintenance module (foundational) attaches polymorphic
 // entries to any entity; the embedded UI on each entity's detail
@@ -24,6 +24,7 @@ export function MaintenancePage() {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const runWithUndo = useRunWithUndo();
   const [kind, setKind] = useState<Kind>("scheduled");
   const [dueWithin, setDueWithin] = useState<number | "any">("any");
   const [editFor, setEditFor] = useState<MaintenanceEntry | null>(null);
@@ -43,11 +44,9 @@ export function MaintenancePage() {
     void qc.invalidateQueries({ queryKey: ["maintenance", activeSlug] });
 
   const complete = useMutation({
-    mutationFn: (id: string) => api.completeMaintenance(activeSlug, id),
-    onSuccess: () => {
-      toast.success("Marked done");
-      invalidate();
-    },
+    // Through the action, so a tap made by mistake can be taken back.
+    mutationFn: (id: string) => runWithUndo({ actionId: "core-maintenance:complete", args: { entry_id: id } }, "Marked done"),
+    onSuccess: invalidate,
     onError: (e: unknown) =>
       toast.error(e instanceof ApiError ? e.message : "Couldn't complete"),
   });

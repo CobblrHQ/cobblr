@@ -213,8 +213,9 @@ export function ScanCountBlock({
   const save = useScanCountSave(itemId, match, onDone);
 
   const tone = MODE_TONE[mode];
-  // 40px floor: one-handed, at a shelf (#3339).
-  const step = "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 disabled:opacity-40";
+  // 40px floor: one-handed, at a shelf (#3339). In px, as the field below:
+  // sized in rem they grew with the text and ran off a 320px card at 150% (#7766).
+  const step = "inline-flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 disabled:opacity-40";
   return (
     <div
       data-testid="scan-count"
@@ -272,7 +273,7 @@ export function ScanCountBlock({
             onCommit: () => setText(shown(mode, value)),
             onRevert: (was) => put(was),
           }}
-          inputClassName="h-10 w-16 rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
+          inputClassName="h-[40px] w-[64px] rounded-md border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 text-center text-base font-semibold tabular-nums text-content dark:text-mortar-100"
           onChange={put}
         />
         <span data-testid="count-result" className={`min-w-0 text-sm ${tone.result}`}>

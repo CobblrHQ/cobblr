@@ -2887,8 +2887,10 @@ export function InboxCard({
             no longer allowed to set the card's height. The cap is 128px
             since the tools left the side rail (#3009): a portrait shot is
             still shown whole and recognisable at that height, and a quiet
-            row is no taller than its picture asks. */}
-        <div className="relative w-24 sm:w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-32 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
+            row is no taller than its picture asks. Below sm it is at most a
+            quarter of the screen: at 320px and 125% text a 6rem picture left
+            the name column narrower than the quantity stepper (#7766). */}
+        <div className="relative w-[min(6rem,24vw)] sm:w-28 shrink-0 self-stretch min-h-[4.5rem] max-h-32 rounded-l-xl border-r border-line dark:border-slate-700 bg-subtle dark:bg-slate-800 flex items-center justify-center overflow-hidden">
           {/* EAGER, not lazy: an EXTERNAL catalog URL (a user-picked web/dealer
               photo) with loading="lazy" stayed unloaded on the closed card. The
               intersection observer saw the card at 0-height on first render and

@@ -202,7 +202,9 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
       // A CSS var costs no render, so it updates for everyone. React state is
       // only for the auto-hide panel — setting it on every scroll frame would
       // re-render the whole app tree.
-      document.documentElement.style.setProperty("--app-header-bottom", `${bottom}px`);
+      // Never above the status bar: a phone's bar hidden on the way down
+      // leaves 0 here, and a sticky heading then sat under the clock (#7827).
+      document.documentElement.style.setProperty("--app-header-bottom", `max(var(--top-edge, 0px), ${bottom}px)`);
       if (trackHideTop) setHideTop(bottom);
     };
     const update = () => { if (!queued) queued = requestAnimationFrame(measure); };
@@ -257,7 +259,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
   useEffect(() => {
     const el = headerRef.current;
     if (!el || window.innerWidth >= 768) return;
-    document.documentElement.style.setProperty("--app-header-bottom", `calc(var(--top-chrome-height, 0px) + ${barHidden ? 0 : el.offsetHeight}px)`);
+    document.documentElement.style.setProperty("--app-header-bottom", barHidden ? "var(--top-edge, 0px)" : `calc(var(--top-chrome-height, 0px) + ${el.offsetHeight}px)`);
   }, [barHidden]);
   const { activeOrg } = useActiveOrg();
   // A record written elsewhere (MCP, another device) shows here (#6337).

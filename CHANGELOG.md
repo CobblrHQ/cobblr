@@ -2,6 +2,11 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-22
+
+### Improvements
+- Buttons no longer jump out from under your finger as a page finishes loading: a list's Share and floor-plan links, a record's actions and the low-stock offer now keep their place.
+
 ## 2026-10-20
 
 ### Improvements

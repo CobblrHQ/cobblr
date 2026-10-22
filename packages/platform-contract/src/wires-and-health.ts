@@ -65,6 +65,11 @@ export interface PlatformHealth {
    *  looked, one that found nothing included: silence is not zero. Never
    *  throws. */
   noteHealShim(shim: string, found: number, failed?: number): Promise<void>;
+  /** When this instance first ran a build carrying the heal pass (written the
+   *  first time, read back ever after; a pass it ran before the arrivals were
+   *  kept arrived with its merge). A heal's visit takes rows made before the
+   *  later of its merge and this (heal-pass.ts). Throws when it cannot read. */
+  healArrival(pass: { name: string; shim: string; since: Date }, bootedAt: Date): Promise<Date>;
   /** A heal, reconcile or sweep pass caught a failure for one workspace (or
    *  module) and carried on. Record it here, never only in a log line: it is
    *  kept for /healthz, /readyz and tests, so "nothing happened" can never

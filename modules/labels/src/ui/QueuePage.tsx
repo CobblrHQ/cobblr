@@ -1273,8 +1273,6 @@ export function QueuePage() {
         </div>
       )}
 
-      {/* Find things to label — tabbed by the kinds that support labels. */}
-      <BrowsePanel />
 
       {/* The queue and its live preview, kept together as the review-then-print
           unit. Side by side on a wide desktop (preview to the right); stacked on
@@ -1375,6 +1373,12 @@ export function QueuePage() {
           )}
         </div>
       )}
+
+      {/* Find things to label — tabbed by the kinds that support labels. Under
+          the queue, and once it is read: above it, the panel's own reads grew
+          it and pushed every queued label 160 px under a finger, and under the
+          queue's "loading…" line the tabs jumped 36 px when it went (#7788). */}
+      {!list.isLoading && <BrowsePanel />}
 
       <Modal
         open={codesOpen}
@@ -1694,6 +1698,12 @@ export function SheetPreview({
               QR {scan.moduleMm.toFixed(2)} mm/module{scan.rating !== "good" ? ` · ${scan.label}` : ""}
             </span>
           </span>
+        )}
+        {/* Its room is held until the size is known: arriving, the note wrapped
+            to a line of its own on a phone and moved Actual size 19 px under a
+            finger (#7788). */}
+        {!scan && (
+          <span aria-hidden className="invisible normal-case tracking-normal whitespace-nowrap">{" · "}● QR 0.00 mm/module</span>
         )}
       </div>
       <div

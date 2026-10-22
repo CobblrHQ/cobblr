@@ -1,4 +1,4 @@
-import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch } from "@cobblr/platform-web";
+import { SegmentedChoice, fieldNeed, FieldPack, RecordFormModal, MoneyInput, useConfirm, useToast, useRunWithUndo, MutationError, noteWorkspaceWrite, AddressPicker, AddressView, workspaceFetch } from "@cobblr/platform-web";
 import type { AddressValue } from "@cobblr/platform-contract/address";
 // Per-part maintenance panel — lists scheduled + history entries
 // from core-maintenance. Add an entry as "done now", "scheduled
@@ -83,18 +83,11 @@ export function MaintenancePanel({ entityModule, entityType, entityId }: Props) 
   const scheduled = items.filter((e) => e.scheduled_at && !e.performed_at);
   const history = items.filter((e) => e.performed_at);
 
+  // Through the action, so a tap made by mistake can be taken back.
+  const runWithUndo = useRunWithUndo();
   const complete = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await workspaceFetch(`${base}/${id}/complete`, {
-        method: "POST",
-        headers: { ...auth(), "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      noteWorkspaceWrite(`${base}/${id}/complete`, res);
-    },
+    mutationFn: (id: string) => runWithUndo({ actionId: "core-maintenance:complete", args: { entry_id: id } }, "Marked done."),
     onSuccess: () => {
-      toast.success("Marked done.");
       void qc.invalidateQueries({
         queryKey: ["maintenance", orgSlug, entityModule, entityType, entityId],
       });

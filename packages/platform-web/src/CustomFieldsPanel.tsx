@@ -34,6 +34,7 @@ import { noteKey, noteOf } from "./field-note";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { relativeTime } from "./relativeTime";
 import { useUnits } from "./useUnits";
+import { groupBySection } from "./field-sections";
 import { Link as RouterLink } from "react-router-dom";
 import { FIELD_PROVENANCE_KEY, fieldProvenanceOf, type FieldProvenance } from "@cobblr/platform-contract/acquisition-source";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
@@ -162,15 +163,8 @@ export function CustomFieldsPanel({
   // Group by form-builder section: ungrouped fields first (no heading), then
   // each section (in its saved order) under a heading that folds it away. A
   // section with no visible fields is skipped.
-  const sections = (data?.sections ?? []).slice().sort((a, b) => a.position - b.position);
-  // A field filed under a section this read did not bring (an older server,
-  // a section deleted under it) shows with the ungrouped ones: a heading can
-  // go missing, a field never does.
-  const known = new Set(sections.map((s) => s.id));
-  const sectionOf = (f: PlatformFieldDef) => (f.section_id && known.has(f.section_id) ? f.section_id : null);
-  const inSection = (sid: string | null) => visible.filter((f) => sectionOf(f) === sid);
-  const ungrouped = inSection(null);
-  const grouped = sections.map((s) => ({ s, fs: inSection(s.id) })).filter((g) => g.fs.length > 0);
+  const { ungrouped, groups } = groupBySection(visible, data?.sections);
+  const grouped = groups.map(({ section, fields }) => ({ s: section, fs: fields }));
 
   // The packer lays the fields out from what each needs and how wide the
   // panel is (field-pack.ts, #3067). This used to be one column on a phone:

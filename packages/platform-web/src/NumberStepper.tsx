@@ -28,8 +28,10 @@ import { Minus, Plus } from "lucide-react";
 import { TypeableNumber } from "./TypeableNumber";
 
 /** A finger's target on a phone or a touch screen, whatever the caller's own
- *  size: min sizes win over a caller's w-7 / min-h-9 (#5903, #6014). */
-const TOUCH_TARGET = "touch-manipulation max-sm:min-h-11 max-sm:min-w-11 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11";
+ *  size: min sizes win over a caller's w-7 / min-h-9 (#5903, #6014). In px,
+ *  not rem: a finger is the same size at any text size, and at 125% text a
+ *  rem target made a scan card's stepper 145px in a 117px column (#7766). */
+const TOUCH_TARGET = "touch-manipulation max-sm:min-h-[44px] max-sm:min-w-[44px] [@media(pointer:coarse)]:min-h-[44px] [@media(pointer:coarse)]:min-w-[44px]";
 /** How long a written number waits for the caller's value to reach it before
  *  it is taken as refused: a phone's write and the read after it, with room. */
 const CATCH_UP_MS = 6000;

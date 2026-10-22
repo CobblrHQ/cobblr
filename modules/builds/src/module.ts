@@ -52,6 +52,7 @@ export default defineModule({
         createEndpoint: "/builds",
         updateEndpoint: "/builds/{id}",
         deleteEndpoint: "/builds/{id}",
+        deleteBy: "member",
         displayName: "Build",
         displayNamePlural: "Builds",
         icon: "hammer",

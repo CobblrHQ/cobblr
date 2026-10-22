@@ -20,6 +20,8 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
+import { HoldsQuiet } from "./OnceQuiet";
+import { stillAsking } from "./still-asking";
 import { useFaces } from "./faces";
 
 /** Context for `surface: "entity-detail-panel"` — a panel inside the target
@@ -264,7 +266,11 @@ export function ContributedDetailPanels({
         const C = REGISTRY.get(p.id);
         if (!C) return null;
         return (
-          <Suspense key={p.id} fallback={spinner}>
+          // A row in a list draws nothing while a panel's code arrives: a
+          // "loading…" there pushed the row's buttons down and took them
+          // back up again (#7789). A record's own page keeps its spinner.
+          // Either way the page is not quiet until the code is in (OnceQuiet).
+          <Suspense key={p.id} fallback={<><HoldsQuiet />{universal ? spinner : null}</>}>
             <C ctx={{ ...ctx, kind: ctx.kind ?? target }} />
           </Suspense>
         );
@@ -283,22 +289,40 @@ function useContributedControls(surface: "view-toolbar" | "tag-toolbar", module:
     enabled: !!api.listContributedPanels && !!module,
     staleTime: 5 * 60_000,
   });
-  return (q.data ?? []).filter((p) => p.surface === surface && p.target === module && registered.includes(p.id));
+  return {
+    controls: (q.data ?? []).filter((p) => p.surface === surface && p.target === module && registered.includes(p.id)),
+    pending: stillAsking(q),
+  };
+}
+
+/** Whether the controls for a view of `module`'s records are still being
+ *  asked for. A view draws its header once they are in, so a control that
+ *  comes after never pushes the row along under a finger (#7790). */
+export function useViewToolbarPending(module: string | null | undefined): boolean {
+  return useContributedControls("view-toolbar", module).pending;
 }
 
 /** Render what enabled modules put in a saved view's header: the toolbar
  *  controls declared for the module that owns the view's records. The view
  *  names no contributor; `module` is the owner of its kind. */
-export function ContributedViewToolbar({ module, ctx }: { module: string | null | undefined; ctx: ViewToolbarCtx }) {
-  const controls = useContributedControls("view-toolbar", module);
+export function ContributedViewToolbar({ module, ctx, holdsPage }: {
+  module: string | null | undefined;
+  ctx: ViewToolbarCtx;
+  /** A control still loading its code suspends the page's own boundary, so
+   *  the page is drawn with it rather than before it. */
+  holdsPage?: boolean;
+}) {
+  const { controls } = useContributedControls("view-toolbar", module);
   if (!controls.length || !ctx.ids.length) return null;
   return (
     <>
       {controls.map((p) => {
         const C = REGISTRY.get(p.id) as unknown as ViewToolbarComponent | undefined;
         if (!C) return null;
-        return (
-          <Suspense key={p.id} fallback={null}>
+        return holdsPage ? (
+          <C key={p.id} ctx={ctx} />
+        ) : (
+          <Suspense key={p.id} fallback={<HoldsQuiet />}>
             <C ctx={ctx} />
           </Suspense>
         );
@@ -311,7 +335,7 @@ export function ContributedViewToolbar({ module, ctx }: { module: string | null 
  *  controls declared for the module that owns the group's records (a recount
  *  of the tagged things, #6819). The tag page names no contributor. */
 export function ContributedTagToolbar({ module, ctx }: { module: string | null | undefined; ctx: TagToolbarCtx }) {
-  const controls = useContributedControls("tag-toolbar", module);
+  const { controls } = useContributedControls("tag-toolbar", module);
   if (!controls.length || !ctx.ids.length) return null;
   return (
     <>
@@ -319,7 +343,7 @@ export function ContributedTagToolbar({ module, ctx }: { module: string | null |
         const C = REGISTRY.get(p.id) as unknown as TagToolbarComponent | undefined;
         if (!C) return null;
         return (
-          <Suspense key={p.id} fallback={null}>
+          <Suspense key={p.id} fallback={<HoldsQuiet />}>
             <C ctx={ctx} />
           </Suspense>
         );

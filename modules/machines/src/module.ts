@@ -35,6 +35,7 @@ export default defineModule({
         createEndpoint: "/machines",
         updateEndpoint: "/machines/{id}",
         deleteEndpoint: "/machines/{id}",
+        deleteBy: "member",
         displayName: "Machine",
         displayNamePlural: "Machines",
         icon: "wrench",

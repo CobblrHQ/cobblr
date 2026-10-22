@@ -39,6 +39,7 @@ export default defineModule({
         createEndpoint: "/tags",
         updateEndpoint: "/tags/{id}",
         deleteEndpoint: "/tags/{id}",
+        deleteBy: "core-tags:delete-tag",
         displayName: "Tag",
         displayNamePlural: "Tags",
         icon: "tag",

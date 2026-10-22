@@ -25,7 +25,9 @@ import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
 import { ttlCache } from "../lib/ttl-cache.js";
 import { statKey, statValue } from "@cobblr/platform-contract/stat-value";
-import { readVisibility } from "@cobblr/platform-contract/share-scope";
+import { projectRecord, readVisibility } from "@cobblr/platform-contract/share-scope";
+import { fieldsOf } from "../platform/share-mirror.js";
+import { hiddenFieldsFor } from "../platform/entities.js";
 import { countLabelScan, labelPublicRecord, pageFrame, pageIsLive, publicPageRecord, publicPageRecords, skinDocument } from "../platform/public-page.js";
 import { resolveQrToken } from "./qr-scan.js";
 
@@ -189,8 +191,27 @@ function curateItems(items: unknown, token: string): unknown {
  *  view's conditions, shows nothing rather than more than the owner chose. */
 export async function publicViewRows(orgId: string, view: { entity_kind: string; config: unknown }, limit: number): Promise<EntityListResult["items"]> {
   const today = await platform().accounts.dayFor(null);
-  const result = await platform().entities.list(orgId, view.entity_kind, { ...viewQuery((view.config as Record<string, unknown> | null) ?? {}, today), today, limit }, { publicRead: true });
-  return publicRows(result);
+  // The owner's query names what it names: a part on a field no reader of a
+  // public page may read is left out and reported, so publicRows shows none.
+  const result = await platform().entities.list(orgId, view.entity_kind, { ...viewQuery((view.config as Record<string, unknown> | null) ?? {}, today), today, limit, dropUnreadable: true }, { publicRead: true });
+  return publicFieldsOnly(orgId, view.entity_kind, publicRows(result));
+}
+
+/** What a signed-out reader may see of a public surface's records: never a
+ *  field the owner marked private, a field behind a read scope, a secret, or
+ *  a price, on any surface, as a public page shows them by default (#7830).
+ *  Hiding them in the page's drawing was not enough: the answer carried
+ *  them. Places stay, as these surfaces always showed them. */
+const PUBLIC_SURFACE_VISIBILITY = { prices: false, private_notes: false, places: true, restricted: [] as string[] };
+export async function publicFieldsOnly<T extends { fields?: unknown }>(orgId: string, kind: string, items: T[]): Promise<T[]> {
+  if (!items.length) return items;
+  const [defs, gated] = await Promise.all([fieldsOf(orgId, kind), hiddenFieldsFor(orgId, kind, {})]);
+  return items.map((it) => {
+    const fields = it?.fields;
+    if (!fields || typeof fields !== "object") return it;
+    const shown = projectRecord({ fields: fields as Record<string, unknown> }, defs, gated, PUBLIC_SURFACE_VISIBILITY);
+    return { ...it, fields: { ...shown.fields, metadata: shown.metadata } };
+  });
 }
 
 /** A public list's rows, or none when the list cannot vouch for them. */
@@ -402,7 +423,7 @@ async function surfacePayload(token: string | undefined): Promise<
     const kind = surface.scope_id.slice(0, lastSep);
     const entityId = surface.scope_id.slice(lastSep + 1);
     const entity = await platform().entities.lookup(tok.orgId, kind, entityId, { publicRead: true });
-    payload.entity = curateItem(entity, token!);
+    payload.entity = curateItem(entity ? (await publicFieldsOnly(tok.orgId, kind, [entity]))[0] : entity, token!);
   } else if (surface.scope_type === "view") {
     // scope_id is a core_views_views row id. Read the view, then
     // call platform.entities.list with its persisted config.
@@ -434,12 +455,13 @@ async function surfacePayload(token: string | undefined): Promise<
       where: (query.where as never) ?? undefined,
       sort: (query.sort as string[] | undefined) ?? undefined,
       limit: Math.min(Number(query.limit) || 50, 200),
+      dropUnreadable: true,
     }, { publicRead: true });
     payload.collection = {
       kind,
       query,
     };
-    payload.items = curateItems(publicRows(result), token!);
+    payload.items = curateItems(await publicFieldsOnly(tok.orgId, kind, publicRows(result)), token!);
   } else if (surface.scope_type === "board") {
     // Multi-column TV board: config.sections = [{ title, view_id }].
     // Each column resolves a saved view (same path as scope_type

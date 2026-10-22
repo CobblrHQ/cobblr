@@ -10,7 +10,7 @@ import type { RecordTemplate, ReceiptDraftConfig } from "@cobblr/platform-contra
 import type { ConnectorImportDecl } from "@cobblr/platform-contract";
 import { Routes, Route, NavLink, useLocation, useSearchParams } from "react-router-dom";
 import { Boxes } from "lucide-react";
-import { CollectionHeader } from "@cobblr/platform-web";
+import { CollectionHeader, stillAsking } from "@cobblr/platform-web";
 // Side-effect: registers the inventory "at a glance" dashboard tile through
 // platform-web's registerDashboardWidget seam when this UI bundle loads.
 import "./DashboardWidget";
@@ -180,13 +180,18 @@ function InventoryTabs({ listLabel: named }: { listLabel?: string }) {
   return (
     <>
       <NavLink to={base} end className={cls}>{listLabel}</NavLink>
+      <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
+      {/* After Settings, and both at once when both have answered: arriving
+          one by one before it, Find a sheet pushed Settings 117 px along the
+          row under a finger (#7790). */}
+      {!stillAsking(dated) && !stillAsking(sheets) && <>
       {(goingOff > 0 || onExpiring) && (
         <NavLink to={`${base}/expiring`} className={cls}>
           Going off{goingOff > 0 ? ` (${goingOff})` : ""}
         </NavLink>
       )}
       {hasSheets && <SheetSearch />}
-      <NavLink to={`${base}/settings`} className={cls}>Settings</NavLink>
+      </>}
     </>
   );
 }

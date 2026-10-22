@@ -41,6 +41,7 @@ export default defineModule({
         createEndpoint: "/catalogs",
         updateEndpoint: "/catalogs/{id}",
         deleteEndpoint: "/catalogs/{id}",
+        deleteBy: "admin",
         displayName: "Catalog",
         displayNamePlural: "Catalogs",
         icon: "library",

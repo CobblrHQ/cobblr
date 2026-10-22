@@ -2,7 +2,7 @@ import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
@@ -361,6 +361,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-part", id] }),
   });
 
+  const mayDelete = useMayDelete(entityKind);
   const remove = useMutation({
     mutationFn: () => api.deletePart(id!),
     onSuccess: () => {
@@ -942,7 +943,8 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
         >
           <ArrowRightLeft size={12} /> Move to another list…
         </button>
-        <button
+        {mayDelete && <button
+          data-testid="delete-part"
           onClick={async () => {
             const ok = await confirm({
               title: `Delete "${p.name}"?`,
@@ -955,7 +957,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           className="text-xs text-faint dark:text-slate-500 hover:text-ember-500 inline-flex items-center gap-1.5"
         >
           <Trash2 size={12} /> Delete this {itemNoun}
-        </button>
+        </button>}
       </StickyBottomBar>
 
       <MoveToInstanceModal

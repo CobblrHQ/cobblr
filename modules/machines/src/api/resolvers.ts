@@ -70,7 +70,7 @@ export function registerMachinesResolvers(): void {
     // or names the state itself (a "Sold" view does).
     const namesState = query.include_retired === true || query.filter?.state !== undefined;
     if (!namesState) q = q.where((eb) => eb.or([eb("state", "is", null), eb(sql<string>`lower(state)`, "not in", [...GONE_STATES])]));
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "type", "family", "notes", "state"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "short_name", "manufacturer", "type", "family", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<MachinesDB["machines_machines"]>()(["state", "family", "type", "manufacturer", "serial_number", "location_id"]);
       for (const [key, val] of Object.entries(query.filter)) {

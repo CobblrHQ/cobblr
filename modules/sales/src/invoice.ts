@@ -15,8 +15,8 @@ interface InvoiceOrder {
 
 /** What an order's lines add up to: the one sum the order page, the invoice
  *  and the CSV all read, so none of them calls a partial total complete. */
-export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_price: string | number | null }>, currency: string): LinesTotal {
-  return totalOfLines(items.map((it) => ({ qty: it.qty, price: it.unit_price })), currency);
+export function orderTotal(items: ReadonlyArray<{ qty: string | number; unit_price: string | number | null; metadata?: Record<string, unknown> }>, currency: string): LinesTotal {
+  return totalOfLines(items.map((it) => ({ qty: it.qty, price: it.unit_price, currency: fieldCurrency(it.metadata, "unit_price", currency) })), currency);
 }
 
 function invoice(order: InvoiceOrder, fallbackCurrency: string) {

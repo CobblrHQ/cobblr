@@ -119,8 +119,6 @@ export interface FamilyPrinting {
   planCompleted(db: Kysely<DigifabDB>, orgId: string, job: CompletedMaterialJob): Promise<MaterialPlan>;
   /** Take a finished print's planned material from stock. */
   drawCompleted(db: Kysely<DigifabDB>, orgId: string, job: { id: string }): Promise<void>;
-  /** Put back what a scrapped print drew; the grams put back. */
-  putBack(orgId: string, job: { id: string; material_drawn: unknown }): Promise<number>;
   /** Make's print steps: Print this, start the reviewed print, and a batch's next print, review and cancel. */
   startPrintThis(orgId: string, userId: string | null, ask: PrintThisAsk): Promise<PrintThisResult>;
   startPrint(orgId: string, userId: string | null, makeId: string, confirmHash?: string): Promise<PrintStepResult>;

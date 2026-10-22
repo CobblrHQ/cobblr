@@ -288,8 +288,10 @@ export function PlaceItemsView({
         // needs the plan in view to be put down (#4436). The bar it folds to
         // says what is picked up, and opens again to pick more.
         if (pickingUp && from === "rail" && !isDesktop) {
-          // Folding the sheet exposes the plan to this tap's browser click.
-          swallowNextClick();
+          // Folding the sheet exposes the plan to a finger's click, which the
+          // browser aims after this. A mouse's click has already been aimed,
+          // so swallowing would eat the person's own next click (#7767).
+          if (p.pointerType !== "mouse") swallowNextClick();
           setSheetOpen(false);
         }
       }

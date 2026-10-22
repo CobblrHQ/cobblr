@@ -10,6 +10,7 @@ import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
 import { consumePlan, explodeLeafComponents, planBuild, planLines } from "../build-engine.js";
 import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
+import { buildUndoStep } from "../build-undo.js";
 
 let registered = false;
 
@@ -400,7 +401,7 @@ function registerUndos(): void {
   platform().actions.registerUndo("builds.build-one", (result, ctx) => {
     const r = result as { ok?: unknown; buildId?: unknown; qtyBuilt?: unknown } | null;
     if (r?.ok !== true || typeof r.buildId !== "string" || typeof r.qtyBuilt !== "number") return null;
-    return { action_id: "builds:reverse-one", args: { build_id: r.buildId, qty: r.qtyBuilt }, ...on(ctx, r.buildId) };
+    return buildUndoStep(r.buildId, r.qtyBuilt, on(ctx, r.buildId).entity_id);
   });
   platform().actions.registerUndo("builds.reverse-one", (result, ctx) => {
     const r = result as { ok?: unknown; buildId?: unknown; qtyReversed?: unknown } | null;

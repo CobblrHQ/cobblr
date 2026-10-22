@@ -96,6 +96,8 @@ export interface BuildDetail {
 export interface BuildRunResult {
   run: { id: string; qty_built: string; built_at: string };
   buildable: Buildable;
+  /** The way back, as the build action hands it: run to take the build back. */
+  undo?: { action_id: string; args?: Record<string, unknown>; entity_kind?: string; entity_id?: string };
 }
 
 // Genealogy / traceability (rung 8)

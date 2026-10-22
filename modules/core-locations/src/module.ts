@@ -62,6 +62,7 @@ export default defineModule({
         createEndpoint: "/locations",
         updateEndpoint: "/locations/{id}",
         deleteEndpoint: "/locations/{id}",
+        deleteBy: "member",
         displayName: "Location",
         displayNamePlural: "Locations",
         // Two "Shelf 1"s in the same rack are one shelf entered twice; the same

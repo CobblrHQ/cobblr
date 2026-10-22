@@ -115,11 +115,14 @@ export function registerBuiltinResolvables(): void {
       // rows is an ambiguity the registry surfaces; this provider just reports
       // every row it found.
       for (const t of targets) {
-        for (const field of t.fields) {
+        // An identifier hidden from whoever asked is not asked about: a
+        // match on it would tell them the serial they guessed exists (#7824).
+        const hidden = ctx.viewer ? await entities.hiddenFieldsFor(orgId, t.kind, ctx.viewer) : new Set<string>();
+        for (const field of t.fields.filter((f) => !hidden.has(f))) {
           const res = await entities.list(orgId, t.kind, {
             filter: { [field]: value, ...(ctx.scope?.filter ?? {}) },
             limit: 5,
-          });
+          }, ctx.viewer);
           for (const item of res.items) {
             const detail = await detailPathFor(t.kind, item, routeCache);
             if (!detail) continue; // no reachable page — not a destination

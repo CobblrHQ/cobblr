@@ -1,7 +1,7 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, workspaceFetch } from "@cobblr/platform-web";
+import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -11,7 +11,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { WhatsStillHereButton, WhatsStillHereSheet } from "./WhatsStillHere";
 import { RecountButton } from "./RecountPage";
 import { AlertTriangle, Archive, ArrowRightLeft, ClipboardCheck, Download, ExternalLink, FileDown, FileUp, Plus, Printer, ScanLine, ShieldCheck, MoreHorizontal } from "lucide-react";
-import { BulkActionBar, BulkSetField, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
+import { BulkActionBar, BulkSetField, BulkGiveTo, BulkTagAction, EditableCell, EntityThumb, EntityTile, suggestedSrcFor, usePhotoSuggestions, MoveToInstanceModal, ViewModeToggle, useToast, useConfirm, usePageTitle, usePageWidth, useViewMode, usePlatformWeb, usePublishChatContext, makeAreaResolver, LOCATION_GROUP_KEY, type EditableCellDef, useAskCobbAboutSelection, useTickedRows, useUnits, useMayDelete, TILE_GRID, InboxWaitingStrip, SearchInput, QueryError, noteWorkspaceWrite } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 import { LowStockAlerts } from "./LowStockAlerts.js";
 import { nothingToFilter, offeredFilters, type ListFilter } from "./list-filters";
@@ -91,6 +91,8 @@ export function PartsListPage() {
   // Only the filters these records can answer, plus any already set
   // (list-filters.ts). On a phone they sit behind one Filter button.
   const facets = useQuery({ queryKey: ["inventory-facets", orgSlug, instance ?? "inventory"], queryFn: () => api.getPartFacets(), staleTime: 30_000 });
+  // What a row offers beside its count (Add to list) comes from the kind's actions.
+  const recordActions = useRecordActions(entityKind);
   const activeFilters = new Set<ListFilter>([
     ...(categoryId ? (["category"] as const) : []),
     ...(locationId ? (["location"] as const) : []),
@@ -390,6 +392,7 @@ export function PartsListPage() {
     setSelected(checked ? new Set(partItems.map((p) => p.id)) : new Set());
   }
   const allChecked = partItems.length > 0 && partItems.every((p) => selected.has(p.id));
+  const mayDelete = useMayDelete(entityKind);
   async function bulkDelete() {
     const ok = await confirm({
       title: `Delete ${countOf(selected.size, nounWords)}?`,
@@ -489,9 +492,17 @@ export function PartsListPage() {
     void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
   }
 
+  // Every answer that decides which buttons the bar holds, how wide they are
+  // and what sits above the list, in before any of it is drawn: drawn as each
+  // came, a Filter button or a count chip arriving pushed New, List view and
+  // Export along the bar under a finger (#7790). Only the first draw waits,
+  // and never through a failing read's retries (useStillAsking): a filter
+  // changed later asks again, and the search box must stay where it is.
+  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions);
+
   return (
     <div className="space-y-4">
-      <LowStockAlerts />
+      {!drawn ? <div aria-busy="true" className="text-sm text-faint dark:text-slate-500">loading…</div> : <>
       {strays.length > 0 && (
         <div className="rounded-xl border border-cobble-300 dark:border-cobble-700 bg-cobble-50 dark:bg-cobble-950/40 px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <span className="text-content dark:text-mortar-100">
@@ -961,6 +972,16 @@ export function PartsListPage() {
       {/* What is waiting in the scan inbox to come here, under the filed
           results: a thing just scanned is in no table until it is filed. */}
       <InboxWaitingStrip destination={instance ?? "inventory"} q={search} />
+      </>}
+      {/* Under the list, not over it, and shown once the list is there: the
+          offer shows when its answer comes, and above the list it pushed the
+          list's controls 218 px down under a finger; under a list still
+          loading, the list pushed it (#7781). Mounted from the start all the
+          same, so its reads start with the page's and a mount never re-asks
+          a read the page is showing as failed. */}
+      <div hidden={!drawn || parts.isLoading}>
+        <LowStockAlerts />
+      </div>
 
       {addingSeveral && <AddSeveralItems onClose={() => setAddingSeveral(false)} />}
       {adding && (
@@ -1036,13 +1057,13 @@ export function PartsListPage() {
               onMoved={clearTicks}
               listMove={otherLists ? { fromInstance: instance ?? "inventory" } : undefined}
             />
-            <button
+            {mayDelete && <button
               type="button"
               onClick={() => void bulkDelete()}
               className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-ember-600 dark:text-ember-400 hover:text-ember-700"
             >
               <AlertTriangle size={12} /> Delete
-            </button>
+            </button>}
           </>
         }
       />

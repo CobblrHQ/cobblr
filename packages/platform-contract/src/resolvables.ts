@@ -48,6 +48,10 @@ export interface ResolveContext {
   /** Narrow candidates to one kind (scan scope), applied by providers that honour it. */
   scope?: { kind: string; filter?: Record<string, string> };
   limit?: number;
+  /** Who asked, when a person did (search, the palette, a typed value): a
+   *  provider never matches on a field hidden from them, or the answer says
+   *  what the field holds (#7824). Absent for a scan pipeline's own lookup. */
+  viewer?: { userId?: string; role?: string };
 }
 
 export interface ResolvableProvider {

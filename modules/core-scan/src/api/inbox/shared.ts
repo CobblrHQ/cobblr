@@ -4,7 +4,7 @@ import { applyModelFacts } from "../../services/model-facts.js";
 import { linkInVault } from "../../services/vault-original.js";
 import { createMatchQueue } from "../../services/match-queue.js";
 import { withSellersApart } from "../../services/seller-split.js";
-import { onCatchAll, routeByGivenFields, routeByIdentity, routeBySameMaker, routeWhereKept, type KeptTable } from "../../services/kept-route.js";
+import { onCatchAll, routeByGivenFields, routeByIdentity, routeBySameMaker, routeWhereKept, tablesForGiven, type KeptTable, type TableFieldNames } from "../../services/kept-route.js";
 import { type AgentField } from "../../services/agent-fields.js";
 import { LOOKUP_GAVE_UP, retryHasRunOut } from "../../services/retry-lookup.js";
 import { asTitleFormat, formatTitleVariants, titleVariantsOf, type TitleFormat } from "@cobblr/platform-contract/display-identity";
@@ -1332,11 +1332,13 @@ export async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | nul
     // printer's, never refused because the model guessed Machines (#4591).
     // The record it already is still decides (kept-route.ts).
     const given = Object.keys(userFieldsOf(row.suggested_metadata)?.values ?? {});
-    if (given.length && !trackedStamp) {
-      const names = new Map(
-        await Promise.all(menu.map(async (e) => [e.kind, new Set((await agentFieldsFor(opts.orgId, e.kind, e.fields)).map((f) => f.name))] as const)),
-      );
-      const byFields = routeByGivenFields(candidates, menu, given, names);
+    const givenNames: TableFieldNames | null = given.length
+      ? new Map(await Promise.all(menu.map(async (e) => [e.kind, new Set((await agentFieldsFor(opts.orgId, e.kind, e.fields)).map((f) => f.name))] as const)))
+      : null;
+    // The lists below may move it only to one that keeps every given value.
+    const keepsGiven = (e: ScanMenuEntry) => !givenNames || tablesForGiven(given, [e], givenNames).length > 0;
+    if (givenNames && !trackedStamp) {
+      const byFields = routeByGivenFields(candidates, menu, given, givenNames);
       if (byFields) console.log(`[core-scan] ${opts.itemId}: routed to ${byFields.label}, the list the given values belong to`);
     }
     // A catch-all route yields to the one list that already holds the same
@@ -1351,7 +1353,7 @@ export async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | nul
     // card reads, so the stored route and the card agree.
     if (!trackedStamp && onCatchAll(candidates)) {
       const item = scanFitItem({ suggested_name: adoptName ? candName : row.suggested_name, suggested_manufacturer: row.suggested_manufacturer, suggested_metadata: row.suggested_metadata, suggested_candidates: candidates });
-      const byIdentity = routeByIdentity(candidates, menu, item, destinationTables(menu));
+      const byIdentity = routeByIdentity(candidates, menu, item, destinationTables(menu), keepsGiven);
       if (byIdentity) console.log(`[core-scan] ${opts.itemId}: routed to ${byIdentity.label}, the list for what it is`);
     }
     if (maker && !trackedStamp && onCatchAll(candidates)) {
@@ -1368,7 +1370,7 @@ export async function matchItemNow(opts: MatchItemOpts): Promise<unknown[] | nul
             if (page.items.some((r) => String(r.fields.manufacturer ?? "").trim().toLowerCase() === maker.toLowerCase())) holding.add(e.kind);
           }),
       );
-      const byMaker = routeBySameMaker(candidates, menu, holding);
+      const byMaker = routeBySameMaker(candidates, menu, holding, keepsGiven);
       if (byMaker) console.log(`[core-scan] ${opts.itemId}: routed to ${byMaker.label}, where the workspace keeps ${maker}'s things`);
     }
     // The values a person or their agent gave follow this route, and who it

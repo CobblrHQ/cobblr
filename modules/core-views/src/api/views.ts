@@ -323,6 +323,9 @@ viewsRouter.get(
       // request-level override layered on top is safe.
       ...viewQuery(view.config as Record<string, unknown>, today),
       ...(declared.length ? { inputs: inputs.values } : {}),
+      // Its author may read more than this reader: what it names that this
+      // reader may not read is left out and said, never refused (#7838).
+      dropUnreadable: true,
     };
     // H2 — viewer identity so the kernel applies per-field read-scope:
     // a member sees only the fields their capabilities permit (e.g.

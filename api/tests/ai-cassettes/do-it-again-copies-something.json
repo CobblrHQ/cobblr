@@ -1,0 +1,7 @@
+{
+  "match": "do it again",
+  "rounds": [
+    { "tool_calls": [{ "name": "create_record", "args": { "kind": "core-locations:location", "fields": { "name": "Birdhouse (Copy)", "kind": "container" } } }] },
+    { "content": "Done: I made another one." }
+  ]
+}

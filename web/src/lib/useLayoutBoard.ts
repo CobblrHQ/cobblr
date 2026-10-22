@@ -6,6 +6,7 @@
 import { useMemo } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
+import { stillAsking } from "@cobblr/platform-web";
 import { EMPTY_PLAN_DRAFT, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import { api, type Location } from "./api";
 import { buildBoard, type Board, type BoardRecord } from "./layoutBoard";
@@ -17,7 +18,7 @@ export function useLayoutBoard(slug: string, roomId: string, draft: PlanDraftBod
   const locs = useQuery({ queryKey: ["core-locations", slug], queryFn: () => api.listLocations(slug), enabled: !!slug });
   const places = useMemo(() => locs.data?.items ?? [], [locs.data]);
   const room = places.find((l) => l.id === roomId) ?? null;
-  const { records: placeable, kinds } = usePlaceableRecords(slug);
+  const { records: placeable, kinds, isLoading: placeableLoading } = usePlaceableRecords(slug);
 
   // The room, its racks and their shelves: where things stand now, in order.
   const watched = useMemo(() => {
@@ -25,20 +26,20 @@ export function useLayoutBoard(slug: string, roomId: string, draft: PlanDraftBod
     const racks = places.filter((l) => l.parent_id === room.id);
     return [room, ...racks, ...places.filter((l) => racks.some((r) => r.id === l.parent_id))];
   }, [places, room]);
-  const contents = useQueries({
+  const { items: contents, pending: contentsPending } = useQueries({
     queries: watched.map((l) => ({
       queryKey: ["location-contents", slug, l.id],
       queryFn: () => api.placementContents(slug, LOCATION_KIND, l.id),
       staleTime: 30_000,
     })),
-    combine: (rs) => rs.flatMap((r) => r.data?.items ?? []),
+    combine: (rs) => ({ items: rs.flatMap((r) => r.data?.items ?? []), pending: rs.some(stillAsking) }),
   });
   const positions = useMemo(() => new Map(contents.map((c) => [`${fieldKindOf(c)}:${c.id}`, c.position ?? null])), [contents]);
 
   const fieldKinds = useMemo(() => [...new Set(placeable.map((r) => fieldKindOf(r)))].sort(), [placeable]);
-  const defs = useQueries({
+  const { items: defs, pending: defsPending } = useQueries({
     queries: fieldKinds.map((k) => ({ queryKey: ["field-defs", slug, k], queryFn: () => api.listFieldDefs(slug, k), staleTime: 60_000 })),
-    combine: (rs) => rs.flatMap((r) => r.data?.items ?? []),
+    combine: (rs) => ({ items: rs.flatMap((r) => r.data?.items ?? []), pending: rs.some(stillAsking) }),
   });
   const byKey = useMemo(() => new Map(placeable.map((r) => [`${r.kind}:${r.id}`, r])), [placeable]);
 
@@ -59,7 +60,11 @@ export function useLayoutBoard(slug: string, roomId: string, draft: PlanDraftBod
     return buildBoard({ room, places, draft: draft ?? EMPTY_PLAN_DRAFT, records, positions, sizeOf, faceHeightPx, faceWidth });
   }, [room, places, draft, records, positions, sizeOf, faceHeightPx, faceWidth]);
 
-  return { board, room, places, placeable, kinds, sizeOf, loading: locs.isLoading, byKey } as {
+  // Loading until every part of the board has answered: drawn from the places
+  // alone, it was redrawn as the things, where they stand and their sizes came
+  // in, and the board shrank by a third under a finger (#7791).
+  const loading = locs.isLoading || placeableLoading || contentsPending || defsPending;
+  return { board, room, places, placeable, kinds, sizeOf, loading, byKey } as {
     board: Board | null;
     room: Location | null;
     places: Location[];

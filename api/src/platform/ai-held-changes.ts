@@ -21,13 +21,14 @@ import { dispatch } from "./notifications.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { productName } from "./product-name.js";
 import { HELD_CHANGE_TTL_MS } from "./ai-held-change-policy.js";
+import { kindOfDeletePath } from "./kind-delete.js";
 
 export const CONFIRM_HELD_CHANGE_ACTION = "platform:confirm-held-change";
 export const KEEP_HELD_CHANGE_ACTION = "platform:keep-held-change";
 const EVENT = "platform.assistant.change_held";
 
 /** The path under /api/v1/orgs/<slug>, or null for anything else. */
-function workspacePath(originalUrl: string, slug: string): string | null {
+export function workspacePath(originalUrl: string, slug: string): string | null {
   const path = originalUrl.split("?")[0] ?? "";
   const prefix = `/api/v1/orgs/${slug}`;
   return path.startsWith(`${prefix}/`) ? path.slice(prefix.length) : null;
@@ -37,17 +38,10 @@ function workspacePath(originalUrl: string, slug: string): string | null {
  *  a plain description when no kind claims it. */
 export async function describeDelete(orgId: string, rel: string): Promise<string> {
   try {
-    const kinds = await platform().entities.listKindsForOrg(orgId);
-    for (const k of kinds) {
-      const del = k.endpoints?.delete;
-      if (!del) continue;
-      const base = k.instance_name ? `/instances/${k.instance_name}` : `/modules/${k.module_name}`;
-      const template = `${base}/${del.replace(/^\//, "")}`;
-      // RECORD-LINK-OK: matches a DELETE request's API path to recognise the record; it builds no address to show anyone.
-      const pattern = new RegExp(`^${template.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace("{id}", "([^/]+)")}$`); // lint-allow-detail-substitution: an API delete endpoint turned into a matcher, not a detail route
-      const m = rel.match(pattern);
-      if (!m?.[1]) continue;
-      const rec = await platform().entities.lookup(orgId, k.id, decodeURIComponent(m[1])).catch(() => null);
+    const hit = await kindOfDeletePath(orgId, rel);
+    if (hit) {
+      const k = hit.kind as typeof hit.kind & { display_name?: string | null };
+      const rec = await platform().entities.lookup(orgId, k.id, hit.id).catch(() => null);
       const noun = (k.display_name ?? k.id).toLowerCase();
       return rec?.title ? `the ${noun} “${rec.title}”` : `a ${noun}`;
     }

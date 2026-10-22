@@ -144,12 +144,6 @@ export const maintenanceApi = {
       `/orgs/${slug}/modules/core-maintenance/entries/${id}`,
       body,
     ),
-  completeMaintenance: (slug: string, id: string, performed_at?: string) =>
-    request<MaintenanceEntry>(
-      "POST",
-      `/orgs/${slug}/modules/core-maintenance/entries/${id}/complete`,
-      performed_at ? { performed_at } : {},
-    ),
   deleteMaintenance: (slug: string, id: string) =>
     request<void>(
       "DELETE",
@@ -199,21 +193,6 @@ export const maintenanceApi = {
   endMaintenanceRenewal: (slug: string, id: string) => request<MaintenanceSchedule>("POST", `/orgs/${slug}/modules/core-maintenance/schedules/${id}/end`, {}),
   deleteMaintenanceSchedule: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/core-maintenance/schedules/${id}`),
-  /** Log a service. With a schedule_id it is that schedule's, which rolls it
-   *  forward to the next time. */
-  logMaintenance: (
-    slug: string,
-    body: {
-      entity_module: string;
-      entity_type: string;
-      entity_id: string;
-      name: string;
-      performed_at: string;
-      schedule_id?: string;
-      notes?: string | null;
-      cost_cents?: number | null;
-    },
-  ) => request<MaintenanceEntry>("POST", `/orgs/${slug}/modules/core-maintenance/entries`, body),
   /** What the ledger knows about an item: the learned rate, what is probably
    *  left, and what a purchase right now would MEAN (`repurchase_means`), which
    *  is what decides whether a re-scan needs the over-buy question. */

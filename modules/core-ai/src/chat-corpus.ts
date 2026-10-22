@@ -384,8 +384,13 @@ const RAW_CORPUS: CorpusCase[] = [
     "add a Purchase Date field to parts", "track a colour on every physical thing",
   ]),
   ...ph("workspace", neverOffer, "action:platform:edit-field", [
-    "hide the manufacturer field on parts", "make Purchase Date required",
+    "hide the manufacturer field on parts",
     "remove tea category from inventory, it is no longer a valid option",
+  ]),
+  // Bound in code by the platform's own command (#7750): asked of a model it
+  // answered with the way to Fields & forms one ask in three.
+  ...ph("workspace", command, "action:platform:edit-field", [
+    "make Purchase Date required",
   ]),
   // A choice added to or taken off a dropdown, said the one way people say
   // it, is a platform command (platform-commands.ts in the contract): the
@@ -489,7 +494,9 @@ const RAW_CORPUS: CorpusCase[] = [
   ...ph("workshop", answer("my-data"), "action:core-shipments:track", [
     "where is my parcel, tracking 1Z999AA10123456784",
   ]),
-  ...ph("workshop", neverOffer, "action:core-units:add-unit{name=spool}", [
+  // Bound in code by core-units' own command (#7750): asked of a model it
+  // renamed a list's items to spools two nights in three.
+  ...ph("workshop", command, "action:core-units:add-unit{name=spool}", [
     "we measure filament in spools",
   ]),
   ...ph("workshop", neverOffer, "action:platform:rename-workspace{name=garage}", [

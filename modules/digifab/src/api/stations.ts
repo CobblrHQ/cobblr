@@ -86,7 +86,8 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
     const linked=await tenantDb(req).selectFrom("digifab_device_links").select("machine_id").where("connection_id","=",req.params.connectionId!).where("remote_device_id","=",req.params.deviceId!).executeTakeFirst();
     return void res.json({kind:"bench",screen_kind:"bench",machine_id:linked?.machine_id || null,job:null,library:null,attention:null,sheets:[]});
   }
-  if (!requireRole(req, res, "owner", "admin")) return;
+  // The admin tier, or an operator: a station's screen is where its machine is run (#6672, #7748).
+  if (!(await requireCapability(req, res, "digifab:operate"))) return;
   const orgId = tenantContext(req).org.id;
   const db = tenantDb(req);
   const connection = req.params.connectionId!;

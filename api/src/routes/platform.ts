@@ -1,4 +1,4 @@
-import { nameRequest } from "../platform/compute-ledger.js";
+import { actionDetail, nameRequest } from "../platform/compute-ledger.js";
 import { wiresSaid } from "../platform/wire-said.js";
 import { editableFieldsOf } from "../platform/update-record-fields.js";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
@@ -57,6 +57,7 @@ import { facesForKind } from "../platform/faces.js";
 import { platformActionMinRole } from "../platform/platform-actions.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
+import { deleteRefusal } from "../platform/kind-delete.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "../platform/member-fields.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
@@ -157,10 +158,16 @@ platformOrgRouter.get(
       // (a machine record counting five identical printers), where the owning
       // module declares that its list never also returns those things. A count of records and a
       // count of things are different answers, and a reader needs both.
-      const items = (await platform().entities.listKindsForOrg(req.tenant!.org.id)).map((k) => {
+      // can_delete: whether THIS viewer may delete a record of the kind, from
+      // the kind's own rule (kind-delete.ts), the one the door applies, and
+      // when not, delete_refused: the sentence the door would answer.
+      const asker = { orgId: req.tenant!.org.id, userId: req.session!.id, role: req.tenant!.role };
+      const items = await Promise.all((await platform().entities.listKindsForOrg(req.tenant!.org.id)).map(async (k) => {
         const sc = getScannableForModule(k.module_name);
-        return sc?.qtyCountsThings && sc.qtyField ? { ...k, count_field: sc.qtyField } : k;
-      });
+        const counted = sc?.qtyCountsThings && sc.qtyField ? { ...k, count_field: sc.qtyField } : k;
+        const refused = k.endpoints?.delete ? await deleteRefusal(asker, k) : null;
+        return { ...counted, can_delete: !!k.endpoints?.delete && !refused, ...(refused ? { delete_refused: refused.message } : {}) };
+      }));
       // ?readable_by=me: the kinds as the asker may read them, for a screen that
       // builds something that will read these fields as them (the wire composer).
       // The fields behind a read scope they lack are left out and named in
@@ -863,8 +870,8 @@ platformOrgRouter.post(
         });
         return;
       }
-      // Priced under its own name in the compute ledger (#5424), once it has run.
-      nameRequest(res, parsed.data.actionId);
+      // Priced under its own name in the compute ledger (#5424), once it has run, and its operation when it names one.
+      nameRequest(res, actionDetail(parsed.data.actionId, parsed.data.args));
       // A Tier-B app-scoped token may fire capability-gated MODULE actions but
       // never a kernel workspace-config one (`platform:*`), and a kernel record
       // verb only on a kind its app declares it edits. requireCapability below

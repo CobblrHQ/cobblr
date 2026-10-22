@@ -58,6 +58,7 @@ import { applyRelationFields } from "./relation-fields.js";
 import { applyMemberFields } from "./member-fields.js";
 import { applyServedTitle } from "./served-title.js";
 import { normalizeEntitySort } from "./sort.js";
+import { fieldsNamedBy, refuseUnreadableFields } from "./field-scope-projection.js";
 import { effectiveCapabilities } from "../auth/effective-capabilities.js";
 import { ORG_ROLE_RANK } from "@cobblr/platform-contract/org-roles";
 import { ttlCache } from "../lib/ttl-cache.js";
@@ -1041,6 +1042,32 @@ export async function list(
   query: EntityListQuery = {},
   viewer?: EntityViewer,
 ): Promise<EntityListResult> {
+  // A field its reader may not read is never matched, ordered or grouped by:
+  // projected out of the answer, it still said, by which records came back,
+  // what it held (#7838). A search is told the same fields (textSearchWhere).
+  // A saved view's own query (dropUnreadable) was written by someone who may
+  // read more: the parts naming a hidden field are left out and said, as a
+  // filter the collection could not run, so the view still opens.
+  const hiddenUnrun: FilterPredicate[] = [];
+  if (viewer && !viewer.system && query.unreadable === undefined) {
+    const unreadable = await hiddenFieldsFor(orgId, kind, viewer);
+    if (query.dropUnreadable && unreadable.size) {
+      const hides = (p: FilterPredicate) => unreadable.has(p.col) || (!!p.ref_col && unreadable.has(p.ref_col));
+      // Said by field and kind of test only: the value the author compared
+      // against is about the field too.
+      hiddenUnrun.push(...(query.where ?? []).filter(hides).map((p) => ({ col: p.col, op: p.op })), ...Object.keys(query.filter ?? {}).filter((k) => unreadable.has(k)).map((col) => ({ col, op: "=" as const })));
+      const groups = fieldsNamedBy({ group_by: query.group_by });
+      query = {
+        ...query,
+        where: query.where?.filter((p) => !hides(p)),
+        filter: query.filter ? Object.fromEntries(Object.entries(query.filter).filter(([k]) => !unreadable.has(k))) : undefined,
+        sort: query.sort?.filter((f) => !unreadable.has(f.replace(/^-/, ""))),
+        ...(groups.some((g) => unreadable.has(g)) ? { group_by: undefined, group_keys: undefined } : {}),
+      };
+    }
+    refuseUnreadableFields(fieldsNamedBy(query), unreadable);
+    query = { ...query, unreadable };
+  }
   const valueFields = [...Object.keys(query.filter ?? {}), ...(query.sort ?? []).map((field) => field.replace(/^-/, "")), ...(query.where ?? []).filter((p) => p.op !== "empty" && p.op !== "not_empty").flatMap((p) => [p.col, ...(p.ref_col ? [p.ref_col] : [])])];
   if (valueFields.length) {
     const defs = await perRequest(`secret-defs:${orgId}:${kind}`, () => resolveFieldDefsForKind(orgId, kind));
@@ -1130,7 +1157,7 @@ export async function list(
   if (textUnrun.length) query = { ...query, where: query.where!.filter((p) => !isTextWhereOp(p.op)) };
   try {
     const result = await resolver(orgId, query);
-    const notRun = [...textUnrun, ...(result.unapplied ?? [])];
+    const notRun = [...hiddenUnrun, ...textUnrun, ...(result.unapplied ?? [])];
     unapplied = notRun.length ? notRun : undefined;
     // Compute AFTER projection (see lookup() — gated fields are stripped
     // before the template runs, so a computed field can't leak them).

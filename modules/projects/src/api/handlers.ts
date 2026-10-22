@@ -67,7 +67,7 @@ export function registerProjectsHandlers(): void {
     // A pattern's own words count too: the text of its PDF (pattern-text.ts).
     if (query.q?.trim()) {
       const words = query.q;
-      q = q.where((eb) => eb.or([textSearchWhere(eb, words, { text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]));
+      q = q.where((eb) => eb.or([textSearchWhere(eb, words, { unreadable: query.unreadable, text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]));
     }
     if (query.filter) {
       const NATIVE = columnSet<ProjectsDB["projects_projects"]>()(["status", "priority"]);
@@ -142,7 +142,7 @@ export function registerProjectsHandlers(): void {
     const limit = Math.min(query.limit ?? 50, 200);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("projects_tasks").selectAll();
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "description", "status"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["title", "description", "status"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<ProjectsDB["projects_tasks"]>()(["status", "project_id", "priority", "energy"]);
       for (const [key, val] of Object.entries(query.filter)) {

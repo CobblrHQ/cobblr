@@ -100,7 +100,7 @@ export function registerAssetsResolvers(): void {
     let q = db.selectFrom("assets_assets").selectAll();
     if (query.include_retired !== true) q = q.where("archived_at", "is", null);
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "short_name", "manufacturer", "model", "serial_number", "type", "notes", "state"], json: ["metadata"] })!);
     if (query.filter) {
       const NATIVE = columnSet<AssetsDB["assets_assets"]>()(["state", "location_id", "type", "manufacturer", "model", "serial_number"]);
       for (const [key, val] of Object.entries(query.filter)) {

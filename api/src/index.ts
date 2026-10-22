@@ -150,7 +150,7 @@ import { registerLoanCalendar } from "./platform/custody.js";
 import { registerCoreDashboardReads } from "./platform/dashboard-core-reads.js";
 import { registerHostedMcp } from "./platform/hosted-mcp.js";
 import { syncInstalledModules } from "./platform/installed-modules.js";
-import { noteHealShim } from "./platform/heal-shim-log.js";
+import { healArrival, noteHealShim } from "./platform/heal-shim-log.js";
 import { notePassFailure } from "./platform/pass-failures.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
 import { actionGateOf, gatePasses, capabilitiesHeldBy } from "./platform/action-gates.js";
@@ -600,6 +600,7 @@ async function boot() {
       registerProbe: health.registerProbe,
       snapshot: health.snapshot,
       noteHealShim: (shim, found, failed) => noteHealShim(shim, found, failed),
+      healArrival,
       notePassFailure,
     },
     recurrence: {
@@ -1041,6 +1042,18 @@ async function boot() {
           .where("target_kind", "=", targetKind)
           .where("target_id", "=", targetId)
           .where("relationship_kind", "=", relationshipKind)
+          .returning("id")
+          .execute();
+        return { removed: gone.length };
+      },
+      removeByTargets: async ({ orgId, targetKind, targetIds, relationshipKind }) => {
+        if (targetIds.length === 0) return { removed: 0 };
+        const gone = await meta
+          .deleteFrom("entity_pairings")
+          .where("org_id", "=", orgId)
+          .where("target_kind", "=", targetKind)
+          .where("relationship_kind", "=", relationshipKind)
+          .where("target_id", "in", targetIds)
           .returning("id")
           .execute();
         return { removed: gone.length };

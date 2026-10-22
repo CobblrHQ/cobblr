@@ -5,7 +5,7 @@ import { sql } from "kysely";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { z } from "zod";
 import { PRIORITIES, PROJECT_STATUSES } from "../vocab.js";
-import { platform, textSearchWhere } from "@cobblr/platform-contract";
+import { platform, textSearchWhere, unreadableFieldsOf } from "@cobblr/platform-contract";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
@@ -74,7 +74,7 @@ projectsRouter.get(
     let query = db.selectFrom("projects_projects").selectAll().where("instance", "=", instanceOf(req));
     if (words) {
       query = query.where((eb) =>
-        eb.or([textSearchWhere(eb, words, { text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]),
+        eb.or([textSearchWhere(eb, words, { unreadable: unreadableFieldsOf(req), text: ["name", "description", "status"], json: ["metadata"] }), patternTextMatches(words)]),
       );
     }
     const rows = await query.orderBy("created_at", "desc").execute();

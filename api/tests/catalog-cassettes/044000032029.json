@@ -1,0 +1,39 @@
+{
+  "outcome": "hit",
+  "hit": {
+    "source": "upcitemdb",
+    "title": "NABISCO OREO COOKIES 1X14.3 OZ",
+    "brand": "Oreo",
+    "model": "0004400003202",
+    "description": "INGREDIENTS: INGREDIENTS: UNBLEACHED ENRICHED FLOUR (WHEAT FLOUR, NIACIN, REDUCED IRON, THIAMINE MONONITRATE {VITAMIN B1}, RIBOFLAVIN {VITAMIN B2}, FOLIC ACID), SUGAR, PALM AND/OR CANOLA OIL, COCOA (PROCESSED WITH ALKALI), HIGH FRUCTOSE CORN SYRUP, LEAVENING (BAKING SODA AND/OR CALCIUM PHOSPHATE), SALT, SOY LECITHIN, CHOCOLATE, ARTIFICIAL FLAVOR.",
+    "category": "Food, Beverages & Tobacco > Food Items",
+    "image_url": null,
+    "raw": {
+      "ean": "0044000032029",
+      "upc": "044000032029",
+      "via": "direct",
+      "asin": "B0062Q5V32",
+      "elid": "334566519100",
+      "size": "",
+      "brand": "Oreo",
+      "color": "Stainless steel",
+      "model": "0004400003202",
+      "title": "NABISCO OREO COOKIES 1X14.3 OZ",
+      "images": [
+        "https://pics.walgreens.com/prodimg/491071/450.jpg",
+        "https://i5.walmartimages.com/asr/f5ad0505-6627-4e84-b264-b682835cabe7_1.eda12da44753c142ec5d73d29cb59385.jpeg?odnHeight=450&odnWidth=450&odnBg=ffffff",
+        "https://target.scene7.com/is/image/Target/GUEST_e57aca97-5825-4e05-b0b3-7bb2645e8da1?wid=1000&hei=1000",
+        "http://ct.mywebgrocer.com/legacy/productimagesroot/DJ/9/1075829.jpg",
+        "http://site.unbeatablesale.com/EB329/vlws2460.gif",
+        "https://tshop.r10s.com/76d/b52/8688/259b/e029/5ccf/7d1d/1178e9b0150242ac110003.jpg?_ex=512x512",
+        "https://jetimages.jetcdn.net/md5/4c7666440af777183d6221ab25ba3fbe.500",
+        "https://d29pz51ispcyrv.cloudfront.net/images/I/zMuEu76rKWMEGayY0.MD256.JPEG"
+      ],
+      "weight": "3.8 Pounds",
+      "category": "Food, Beverages & Tobacco > Food Items",
+      "dimension": "7.9 X 1.9 X 6.3 inches",
+      "description": "INGREDIENTS: INGREDIENTS: UNBLEACHED ENRICHED FLOUR (WHEAT FLOUR, NIACIN, REDUCED IRON, THIAMINE MONONITRATE {VITAMIN B1}, RIBOFLAVIN {VITAMIN B2}, FOLIC ACID), SUGAR, PALM AND/OR CANOLA OIL, COCOA (PROCESSED WITH ALKALI), HIGH FRUCTOSE CORN SYRUP, LEAVENING (BAKING SODA AND/OR CALCIUM PHOSPHATE), SALT, SOY LECITHIN, CHOCOLATE, ARTIFICIAL FLAVOR.",
+      "__fetched_at": 1792685869268
+    }
+  }
+}

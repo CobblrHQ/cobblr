@@ -18,7 +18,7 @@ export function registerTermResolvers(): void {
   platform().entities.registerListResolver("core-maintenance:term", async (orgId, query: EntityListQuery) => {
     const db = await dbOf(orgId);
     let q = db.selectFrom("core_maintenance_entries").selectAll().where("is_term", "=", true);
-    if (query.q) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "reference"], json: ["metadata"] })!);
+    if (query.q) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "reference"], json: ["metadata"] })!);
     for (const [key, value] of Object.entries(query.filter ?? {})) {
       if (value == null) continue;
       if (columns.has(key)) q = Array.isArray(value) ? q.where(key as never, "in", value as never) : q.where(key as never, "=", value as never);

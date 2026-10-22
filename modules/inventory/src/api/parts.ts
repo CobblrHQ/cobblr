@@ -15,7 +15,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
-import { daysUntilField, likeNeedle, platform, stockDisclosureFromConfig, valueSearchWhere, type FilterPredicate } from "@cobblr/platform-contract";
+import { daysUntilField, likeNeedle, platform, stockDisclosureFromConfig, unreadableFieldsOf, valueSearchWhere, type FilterPredicate } from "@cobblr/platform-contract";
 import { asMeasure, measureTokens } from "@cobblr/platform-contract/measure";
 import { formatMoneyPlain, moneyStorageOf, storedCents } from "@cobblr/platform-contract/money";
 import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
@@ -440,6 +440,20 @@ partsRouter.get("/dashboard", asyncHandler(async (req, res) => {
   res.json({ total: total.total, low });
 }));
 
+/** What search_blob holds, lower-cased (migrations 0005). */
+const BLOB_COLUMNS = ["name", "notes", "serial_number", "model_number", "manufacturer"] as const;
+const blobHides = (hidden: ReadonlySet<string> | undefined) => BLOB_COLUMNS.some((c) => hidden?.has(c));
+
+/** A search over the blob, or, when the reader may not read one of the
+ *  columns it holds (a serial behind assets' permission, notes behind a
+ *  workspace's own scope), over the columns they may read: the blob would
+ *  find a part by what the hidden column says (#7838). */
+function blobMatch(hidden: ReadonlySet<string> | undefined, like: string): RawBuilder<boolean> {
+  if (!blobHides(hidden)) return sql<boolean>`p.search_blob like ${like}`;
+  const readable = BLOB_COLUMNS.filter((c) => !hidden!.has(c));
+  return sql<boolean>`(${sql.join(readable.map((c) => sql`lower(coalesce(${sql.ref(`p.${c}`)}, '')) like ${like}`), sql` or `)})`;
+}
+
 partsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -494,13 +508,13 @@ partsRouter.get(
         // (±1%, in its unit) as well as by text, and never as the text of a
         // part holding that number in another unit (the 10 kHz crystal).
         const read = measureTokens(raw);
+        const hidden = unreadableFieldsOf(req);
         if (read) {
           query = query.where((eb) =>
-            valueSearchWhere(eb, read, { text: (w) => [sql<boolean>`p.search_blob like ${likeNeedle(w)}`], readings: "p.measures" }),
+            valueSearchWhere(eb, read, { text: (w) => [blobMatch(hidden, likeNeedle(w))], readings: blobHides(hidden) ? undefined : "p.measures" }),
           );
         } else {
-          const like = likeNeedle(raw);
-          query = query.where(sql<boolean>`p.search_blob like ${like}`);
+          query = query.where(blobMatch(hidden, likeNeedle(raw)));
         }
       }
     }
@@ -851,19 +865,17 @@ partsRouter.get(
       if (asset?.only) {
         query = query.where("p.asset_id", "=", asset.n);
       } else {
+        // Only the columns this reader may read (#7838).
+        const hidden = unreadableFieldsOf(req);
+        const searched = (["name", "serial_number", "model_number", "manufacturer"] as const).filter((c) => !hidden?.has(c));
         const words = (w: string) => {
           const like = likeNeedle(w);
-          return [
-            sql<boolean>`lower(p.name) like ${like}`,
-            sql<boolean>`lower(coalesce(p.serial_number,'')) like ${like}`,
-            sql<boolean>`lower(coalesce(p.model_number,'')) like ${like}`,
-            sql<boolean>`lower(coalesce(p.manufacturer,'')) like ${like}`,
-          ];
+          return searched.map((c) => sql<boolean>`lower(coalesce(${sql.ref(`p.${c}`)}, '')) like ${like}`);
         };
         // The same value-aware search as the list (valueSearchWhere).
         const read = measureTokens(raw);
         query = read
-          ? query.where((eb) => valueSearchWhere(eb, read, { text: words, readings: "p.measures" }))
+          ? query.where((eb) => valueSearchWhere(eb, read, { text: words, readings: blobHides(hidden) ? undefined : "p.measures" }))
           : query.where((eb) => eb.or([...(asset ? [eb("p.asset_id", "=", asset.n)] : []), ...words(raw)]));
       }
     }

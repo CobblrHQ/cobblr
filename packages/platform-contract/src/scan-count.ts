@@ -27,7 +27,10 @@ export type ScanCountReason = (typeof SCAN_COUNT_REASONS)[number];
 export function scanCountReasonsFor(change: number, opts: { stock: boolean; perishable: boolean }): ScanCountReason[] {
   if (!opts.stock) return [];
   if (change > 0) return ["replaced", "still_had"];
-  if (change < 0) return opts.perishable ? ["used_up", "went_bad", "tossed"] : ["used_up", "tossed"];
+  // Waste comes last: a card shows every face until the collection's answer
+  // arrives, and a reason that answer takes away must not move the ones
+  // before it under a finger (#7789).
+  if (change < 0) return opts.perishable ? ["used_up", "tossed", "went_bad"] : ["used_up", "tossed"];
   return [];
 }
 

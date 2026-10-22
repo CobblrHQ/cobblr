@@ -10,15 +10,16 @@ import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
 import { BellPushRow } from "../components/BellPushRow";
 import { Link, useNavigate } from "react-router-dom";
 import { notificationAction } from "../lib/notification-action";
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCheck, Mail, MailOpen, Trash2 } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { QueryError } from "../components/QueryError";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, type CrossOrgNotificationEntry } from "../lib/api";
 import { NotificationActionButtons } from "../components/NotificationActionButtons";
-import { Code, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Code, useStillAsking, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { notificationKeys } from "../lib/notification-keys";
+import { PUSH_QUERY_KEY } from "../lib/usePushHere";
 import { repeatsMessage } from "../lib/notification-lines";
 
 const PAGE = 50;
@@ -39,6 +40,7 @@ export function MeNotificationsPage() {
 
   // Filtered and paged on the server: filtering one fetched page here left
   // every older unread item out of reach, and counted only what was loaded.
+  const pushQ = useQuery({ queryKey: PUSH_QUERY_KEY, queryFn: () => api.mePush() });
   const q = useInfiniteQuery({
     queryKey: notificationKeys.page(unreadOnly, orgFilter),
     queryFn: ({ pageParam }) => api.meNotifications(PAGE, { before: pageParam || undefined, org: orgFilter || undefined, unread: unreadOnly }),
@@ -105,6 +107,20 @@ export function MeNotificationsPage() {
     const arr = byDay.get(day) ?? [];
     arr.push(n);
     byDay.set(day, arr);
+  }
+
+  // The offer above the list comes from this device's push read, and the list
+  // from its own: drawn as each came, Mark all read dropped 130 px under the
+  // offer and the link under the list dropped 230 px (#7795). The page waits
+  // for both and draws whole, the tabs above it standing.
+  const asking = useStillAsking(pushQ, q);
+  if (asking) {
+    return (
+      <div className="space-y-4">
+        <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
+        <div className="text-xs text-faint">loading…</div>
+      </div>
+    );
   }
 
   return (

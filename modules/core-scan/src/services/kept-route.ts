@@ -193,11 +193,12 @@ export function routeBySameMaker<C extends RouteCandidate>(
   candidates: C[],
   menu: readonly ScanMenuEntry[],
   listsWithMaker: ReadonlySet<string>,
+  keepsGiven: (e: ScanMenuEntry) => boolean = () => true,
 ): ScanMenuEntry | null {
   const top = candidates[0];
   if (!top || !onCatchAll(candidates)) return null;
   const guessed = top.basis !== "fallback";
-  const lists = menu.filter((e) => !!e.instance && listsWithMaker.has(e.kind) && (!guessed || e.module === top.module));
+  const lists = menu.filter((e) => !!e.instance && listsWithMaker.has(e.kind) && (!guessed || e.module === top.module) && keepsGiven(e));
   if (lists.length !== 1) return null;
   return liftTo(candidates, lists[0]!, "same-maker") ? lists[0]! : null;
 }
@@ -212,17 +213,24 @@ export function routeBySameMaker<C extends RouteCandidate>(
 // too). So a catch-all route yields to the list the identity fits, before the
 // same-maker rule is asked. Pure: the caller hands in the table the fit rule
 // chose.
+//
+// Neither rule moves a thing to a list with no field for a value it was given
+// (`keepsGiven`, tablesForGiven's test): "acquired at 3DPrintopia from Jai" on
+// a workspace whose Acquired from is Inventory's own field was routed there by
+// its values, then sent to 3D Printers for being a printer, and the card and
+// the assistant's answer both lost the event and the seller (#7766).
 export function routeByIdentity<C extends RouteCandidate>(
   candidates: C[],
   menu: readonly ScanMenuEntry[],
   item: FitItem,
   tables: readonly ScanResolverTable[],
+  keepsGiven: (e: ScanMenuEntry) => boolean = () => true,
 ): ScanMenuEntry | null {
   const [top] = candidates;
   if (!top || !onCatchAll(candidates)) return null;
   const fits = scanBetterTable(item, top.kind ?? null, tables, top.module ?? null);
   if (!fits?.instance_name) return null;
   const target = menu.find((e) => e.instance === fits.instance_name && (!fits.module_name || e.module === fits.module_name));
-  if (!target) return null;
+  if (!target || !keepsGiven(target)) return null;
   return liftTo(candidates, target, "identity") ? target : null;
 }

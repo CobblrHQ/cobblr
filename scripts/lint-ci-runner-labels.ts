@@ -55,6 +55,10 @@ const KNOWN = new Set([
   "ci-e2e",
   // The nightly walk's shards (#7640): cobblr-test-a6-full and cobblr-light-b550, two at a time.
   "ci-walk",
+  // A job past 15 minutes that is no lane's verdict (#7754): the b550 alone, which carries no reserved lane.
+  "ci-long",
+  // The nightly bench's own runner (#7754): cobblr-a6-2 alone, beside the dev rig it measures.
+  "bench-a6",
   "bake-a6",
   "docker-build",
   "light-main",
@@ -73,9 +77,11 @@ const KNOWN = new Set([
 // it makes may leave the box: no artifact upload, no image push, no release asset, no publish script, since a
 // flipped bit would ship. nightly-tour's `record` job made the homepage's published media on `ci-test`, a
 // label the b550 carries. A deliberate exception says why on the runs-on line: `# b550-ok: <why>`.
-const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk"]);
+const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long"]);
 // One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
-const PUBLISHES = /actions\/upload-artifact|\bdocker push\b|buildx build[^\n]*--push|--push\b|\/releases\/[^\s]*assets|publish-[\w-]+\.(?:py|sh|mjs)\b|\bgh release\b|\bgit push\b|\b(?:npm|pnpm) publish\b|\bcrane push\b|\bskopeo copy\b|\boras push\b/;
+// push-main-and-verify.sh is how the showcase site publishes (e2e-suite.yml): a test-only box must not run it either
+// (#7764, the yardsticks' two legs; the rule could not see it before).
+const PUBLISHES = /push-main-and-verify\.sh|actions\/upload-artifact|\bdocker push\b|buildx build[^\n]*--push|--push\b|\/releases\/[^\s]*assets|publish-[\w-]+\.(?:py|sh|mjs)\b|\bgh release\b|\bgit push\b|\b(?:npm|pnpm) publish\b|\bcrane push\b|\bskopeo copy\b|\boras push\b/;
 /** The first line that publishes and does not say why it may (`# b550-ok: <why>` on that line). */
 function publishesIn(body: string): string | undefined {
   for (const l of body.split("\n")) {

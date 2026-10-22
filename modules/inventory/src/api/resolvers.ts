@@ -97,7 +97,7 @@ export function registerInventoryResolvers(): void {
     const namesArchived =
       query.include_retired === true || query.filter?.archived !== undefined || (query.where ?? []).some((p) => p.col === "archived");
     if (!namesArchived) q = q.where("archived", "=", false);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"], readings: "measures" })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"], readings: "measures" })!);
     const unapplied: FilterPredicate[] = [];
     q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);

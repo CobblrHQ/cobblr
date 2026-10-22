@@ -95,12 +95,14 @@ export interface DigifabDetectorPrinter { id: string; name?: string; status?: st
 export interface DigifabHistory {
   days: number;
   /** Dense daily trend over the window (zero-filled) — jobs + Bambu cloud tasks. */
-  series?: { date: string; completed: number; failed: number; filament_g: number; cost?: number | null }[];
-  /** `cost` sums the priced prints in `currency`; `unpriced` counts the finished prints no price could be put on. */
-  summary: { total: number; completed: number; failed: number; cancelled: number; filament_g: number; hours: number; cost?: number | null; unpriced?: number };
+  series?: { date: string; completed: number; failed: number; scrapped?: number; filament_g: number; cost?: number | null }[];
+  /** `cost` sums the priced prints in `currency`; `unpriced` counts the finished prints no price could be put on.
+   *  `completed` is the machine finishing; `good` / `scrapped` are the bed-clear verdict, `unjudged` the completed
+   *  prints with none yet, and `success` good over the judged attempts (null with none). */
+  summary: { total: number; completed: number; failed: number; cancelled: number; good?: number; scrapped?: number; partly_scrapped?: number; unjudged?: number; success?: number | null; filament_g: number; hours: number; cost?: number | null; unpriced?: number };
   currency?: string;
-  by_device: { name: string; total: number; completed: number; failed: number; filament_g: number; cost?: number | null; unpriced?: number }[];
-  recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; filament_g: number | null; cost?: number | null; cost_currency?: string | null; at: string; duration_s?: number }[];
+  by_device: { name: string; total: number; completed: number; failed: number; good?: number; scrapped?: number; unjudged?: number; success?: number | null; filament_g: number; cost?: number | null; unpriced?: number }[];
+  recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; outcome?: "good" | "scrap" | null; good_qty?: number | null; scrap_qty?: number | null; filament_g: number | null; cost?: number | null; cost_currency?: string | null; at: string; duration_s?: number }[];
 }
 
 export interface DigifabLibraryItem {
@@ -218,6 +220,9 @@ export type BambuLoginResponse =
   | { status: "ready"; session: string; devices: BambuDiscoveredDevice[] };
 
 export interface DigifabFleetDevice {
+  /** Its manager stopped answering (#7902): state, temperatures and progress
+   *  are the last reading, taken at `last_contact`; `error` says why. */
+  out_of_contact?: { last_contact: string; error: string } | null;
   monitor_only?: boolean;
   print_process?: "resin" | null;
   station_kind?: "laser" | "print" | "cnc" | "cutter" | "bench" | "production-test";
@@ -291,6 +296,8 @@ export interface DigifabFleetConnection {
   fetched_at: string | null;
   /** Served from the last-good cache while a live refresh runs server-side. */
   stale?: boolean;
+  /** The last live refresh failed: why. Its devices are the manager's last word. */
+  unreachable?: string | null;
   devices: DigifabFleetDevice[];
 }
 

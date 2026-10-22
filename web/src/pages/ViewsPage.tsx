@@ -8,7 +8,7 @@ import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type Mo
 // v0.1 renders the 'list' view_type. Future kanban/calendar/table
 // renderers swap in here as they ship.
 
-import { useState, useMemo, useEffect, type CSSProperties, type ReactNode } from "react";
+import { Suspense, useState, useMemo, useEffect, type CSSProperties, type ReactNode } from "react";
 import { useKindLabels } from "../lib/useKindLabels";
 import { dayHere, dayLabel, daysUntilField } from "@cobblr/platform-contract/day";
 import { expiryPhrase, expiryState } from "@cobblr/platform-contract/expiry-grace";
@@ -23,8 +23,9 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
+import { kindOptionLabels } from "../lib/kind-option-labels";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
 import { useAreaResolver } from "../lib/useAreaResolver";
 import { useViewData, type ViewData } from "../lib/useViewData";
@@ -303,7 +304,7 @@ function groupingWords(raw: unknown): string {
 function ViewToolbar({ slug, view, ids }: { slug: string; view: SavedView; ids: string[] }) {
   const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), staleTime: 5 * 60_000 });
   const owner = kinds.data?.items.find((k) => k.id === view.entity_kind)?.module_name ?? null;
-  return <ContributedViewToolbar module={owner} ctx={{ slug, kind: view.entity_kind, ids, viewName: view.name }} />;
+  return <ContributedViewToolbar module={owner} holdsPage ctx={{ slug, kind: view.entity_kind, ids, viewName: view.name }} />;
 }
 
 /** The type-switched render of one saved view's rows — shared by the config
@@ -347,7 +348,7 @@ export function SavedViewBody({
       else n.add(id);
       return n;
     });
-  return (
+  const body = (
     <div className="space-y-2">
       {/* The collection's name and a plain view word. The kind id and the
           renderer id used to print here as chips; they are routing keys, not
@@ -470,6 +471,22 @@ export function SavedViewBody({
       <ViewMore data={data} />
     </div>
   );
+  // Over rows, the header holds what the module owning them contributes.
+  return items.length > 0 ? <WithItsToolbar slug={activeSlug} kind={view.entity_kind}>{body}</WithItsToolbar> : body;
+}
+
+/** A view over rows is drawn once the controls the module owning its records
+ *  puts in its header (inventory's What's still here?) and their code are in:
+ *  one arriving after wrapped the header onto a new line and pushed the rows
+ *  under a finger (#7790). Nothing to wait for where no module can add any. */
+function WithItsToolbar({ slug, kind, children }: { slug: string; kind: string; children: ReactNode }) {
+  const { api: platformApi } = usePlatformWeb();
+  const contributes = !!platformApi.listContributedPanels;
+  const kinds = useQuery({ queryKey: ["entity-kinds", slug], queryFn: () => api.listEntityKinds(slug), enabled: contributes, staleTime: 5 * 60_000 });
+  const pending = useViewToolbarPending(kinds.data?.items.find((k) => k.id === kind)?.module_name ?? null);
+  const loading = <div className="text-sm text-muted">Loading…</div>;
+  if (contributes && (stillAsking(kinds) || pending)) return loading;
+  return <Suspense fallback={loading}>{children}</Suspense>;
 }
 
 export function GroupTableFlow({ args, onClose }: { args: Record<string, unknown>; onClose: () => void }) {
@@ -1898,7 +1915,7 @@ function changedFromBundle(v: SavedView): boolean {
   return JSON.stringify([v.name, v.view_type, v.pinned, v.config]) !== JSON.stringify([b.name, b.view_type, b.pinned, b.config]);
 }
 
-function CreateViewModal({
+export function CreateViewModal({
   slug,
   onClose,
   onCreated,
@@ -1974,6 +1991,9 @@ function CreateViewModal({
     enabled: !!slug,
   });
 
+  // The collections in the words the person chose; an id only tells apart two that share a name.
+  const kindLabels = kindOptionLabels(kinds.data?.items ?? []);
+
   return (
     <Modal open onClose={onClose} title="New saved view">
       <form
@@ -2012,7 +2032,7 @@ function CreateViewModal({
         className="space-y-3"
       >
         <label className="block">
-          <div className="text-xs text-muted mb-1">Entity kind</div>
+          <div className="text-xs text-muted mb-1">Collection</div>
           <select
             value={entityKind}
             onChange={(e) => setEntityKind(e.target.value)}
@@ -2021,7 +2041,7 @@ function CreateViewModal({
           >
             {(kinds.data?.items ?? []).map((k) => (
               <option key={k.id} value={k.id}>
-                {k.display_name} ({k.id})
+                {kindLabels.get(k.id) ?? k.display_name}
               </option>
             ))}
           </select>

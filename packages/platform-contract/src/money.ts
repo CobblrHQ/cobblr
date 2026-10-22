@@ -322,18 +322,30 @@ export function moneyTotalNote(total: Pick<MoneyTotal, "excluded" | "conversions
 
 /** What priced lines add up to, and how many lines have no price. A total
  *  with an unpriced line is a total so far, never the total. */
-export interface LinesTotal { amount: number; currency: string; lines: number; unpriced: number; complete: boolean }
+export interface LinesTotal {
+  amount: number;
+  currency: string;
+  lines: number;
+  unpriced: number;
+  /** What lines priced in another currency add up to, kept apart: never added
+   *  into `amount`, which is in `currency` alone. */
+  other: Record<string, number>;
+  complete: boolean;
+}
 
-export function totalOfLines(lines: readonly { qty: unknown; price: unknown }[], currency: string): LinesTotal {
+export function totalOfLines(lines: readonly { qty: unknown; price: unknown; currency?: string }[], currency: string): LinesTotal {
   let amount = 0;
   let unpriced = 0;
+  const other: Record<string, number> = {};
   for (const line of lines) {
     const price = parseMoneyAmount(line.price);
     const qty = Number(line.qty);
     if (price === null || !Number.isFinite(qty)) unpriced++;
+    else if (line.currency && line.currency !== currency) other[line.currency] = (other[line.currency] ?? 0) + roundMoneyAmount(qty * price, line.currency);
     else amount += roundMoneyAmount(qty * price, currency);
   }
-  return { amount: roundMoneyAmount(amount, currency), currency, lines: lines.length, unpriced, complete: unpriced === 0 };
+  for (const c of Object.keys(other)) other[c] = roundMoneyAmount(other[c]!, c);
+  return { amount: roundMoneyAmount(amount, currency), currency, lines: lines.length, unpriced, other, complete: unpriced === 0 && Object.keys(other).length === 0 };
 }
 
 /** The label beside a lines total: "Total", "Total so far, 1 line unpriced",
@@ -352,6 +364,8 @@ export function linesTotalAmount(total: LinesTotal, opts: { locale?: string } = 
 /** "Total $8.20", "Total so far, 1 line unpriced: $8.20", or "Total not recorded, 2 lines unpriced". */
 export function linesTotalWords(total: LinesTotal, label = "Total", opts: { locale?: string } = {}): string {
   const money = linesTotalAmount(total, opts);
+  const others = Object.entries(total.other).map(([c, n]) => formatStoredMoney(n, "amount", { currency: c, locale: opts.locale }));
+  if (others.length) return `${label}: ${[...(total.amount > 0 || total.unpriced === 0 ? [money] : []), ...others].join(" + ")}${total.unpriced ? `, ${total.unpriced} ${total.unpriced === 1 ? "line" : "lines"} unpriced` : ""}`;
   if (total.complete) return `${label} ${money}`;
   return money === null ? linesTotalLabel(total, label) : `${linesTotalLabel(total, label)}: ${money}`;
 }

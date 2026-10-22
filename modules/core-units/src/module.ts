@@ -18,7 +18,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-units",
-  version: "0.3.0",
+  version: "0.3.1",
   displayName: "Units",
   description:
     "The units you count and measure in (grams, metres, pieces, your own), shown the way you like.",
@@ -39,6 +39,26 @@ export default defineModule({
 
   exposes: {
     events: [],
+    // "we measure filament in spools" is the action's own example said about
+    // another thing. Asked of a model it rolled between add-unit and renaming
+    // a list's items to spools, two nights in three (#7750); nothing about the
+    // sentence is ambiguous to a person, so it binds in code. The unit is said
+    // in the plural, and the handler names it in the singular.
+    commands: [
+      {
+        id: "core-units:measure-in",
+        template: "we measure {thing} in {unit}",
+        description: "Add {unit} as a unit",
+        plan: [
+          {
+            tool: "action" as const,
+            entityKind: "",
+            actionId: "core-units:add-unit",
+            payload: { code: "{unit}", name: "{unit}", plural: "{unit}", symbol: "{unit}" },
+          },
+        ],
+      },
+    ],
     actions: [
       {
         // WORKSPACE-scoped, and also the way back for add-unit.

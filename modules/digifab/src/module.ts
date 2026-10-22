@@ -10,7 +10,7 @@ import { FAMILY_ACTIONS, FAMILY_NOTIFICATIONS, FAMILY_PANELS, FAMILY_PARTS } fro
 
 export default defineModule({
   name: "digifab",
-  version: "0.45.1",
+  version: "0.45.2",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -99,6 +99,7 @@ export default defineModule({
         id: "digifab:job",
         updateEndpoint: "/jobs/{id}",
         deleteEndpoint: "/jobs/{id}",
+        deleteBy: "digifab:delete-job",
         displayName: "Machine job",
         displayNamePlural: "Machine jobs",
         icon: "printer",
@@ -129,6 +130,7 @@ export default defineModule({
         createEndpoint: "/makes",
         updateEndpoint: "/makes/{id}",
         deleteEndpoint: "/makes/{id}",
+        deleteBy: "admin",
         displayName: "Make",
         displayNamePlural: "Makes",
         icon: "sparkles",
@@ -195,7 +197,7 @@ export default defineModule({
     // reason only when the job named a material.
     eventPayloads: {
       "digifab.print.completed": ["jobId", "connectionId", "linkedMachineId", "linkedTaskId", "hours", "partId", "delta", "reason", "sourceKind", "sourceId"],
-      "digifab.print.reversed": ["jobId", "linkedMachineId", "prints", "partId", "delta", "reason"],
+      "digifab.print.reversed": ["jobId", "linkedMachineId", "prints"],
       "digifab.print.consumed": ["jobId", "partId", "delta", "unit", "once", "slot", "reason", "sourceKind", "sourceId"],
     },
     events: [

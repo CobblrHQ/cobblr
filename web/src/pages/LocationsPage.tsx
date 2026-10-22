@@ -420,7 +420,9 @@ export function LocationsPage() {
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 min-w-0 truncate">
           Locations
         </h1>
-        <span className="hidden sm:inline text-sm text-muted dark:text-slate-400 shrink-0">
+        {/* A width of its own: "0 places" becoming "1 place" as the list came
+            slid the Floor Plan / List switch after it along (#7791). */}
+        <span className="hidden sm:inline-block min-w-[5.5rem] tabular-nums text-sm text-muted dark:text-slate-400 shrink-0">
           {items.length} {items.length === 1 ? "place" : "places"}
         </span>
         {/* Floor Plan / List as a segmented control in the title row. They are

@@ -36,6 +36,8 @@ export function useFaces(kind: string): {
   on: ReadonlySet<FaceName>;
   worn: ReadonlySet<string>;
   isLoading: boolean;
+  /** Failed tries so far, for stillAsking. */
+  failureCount: number;
   verdict: FacesVerdict | null;
   ready: boolean;
   failed: boolean;
@@ -61,13 +63,14 @@ export function useFaces(kind: string): {
       // nothing a person is about to press disappears under them.
       worn: new Set<string>(verdict ? Object.values(verdict.traits) : q.isError ? [] : ["*"]),
       isLoading: q.isLoading,
+      failureCount: q.failureCount,
       verdict,
       // A host without the faces read shows every face, as it always has.
       ready: !api.listFaces || q.isSuccess,
       failed: q.isError,
       retry: () => void q.refetch(),
     };
-  }, [q.data, q.isLoading, q.isError, q.isSuccess, api.listFaces]);
+  }, [q.data, q.isLoading, q.isError, q.isSuccess, q.failureCount, api.listFaces]);
 }
 
 /** Faces a person opened on THIS screen before the collection's verdict

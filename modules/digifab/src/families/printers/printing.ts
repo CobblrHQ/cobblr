@@ -3,7 +3,7 @@
 // print steps.
 import type { FamilyPrinting } from "../../core/printing.js";
 import { gatherCandidates, loadedSpoolsForMachine } from "./api/printing-profiles.js";
-import { drawForCompletedJob, planCompletedMaterial, putBackDrawn } from "./loaded-spools.js";
+import { drawForCompletedJob, planCompletedMaterial } from "./loaded-spools.js";
 import { cancelBatch, reviewBatch, settleBatchForJob, startBatchPrint } from "./print-batch.js";
 import { recoverPrintThis, startPrint, startPrintThis } from "./print-this.js";
 import { printerMaterialRefusal } from "./printer-material.js";
@@ -14,7 +14,6 @@ export const printing: FamilyPrinting = {
   materialRefusal: printerMaterialRefusal,
   planCompleted: planCompletedMaterial,
   drawCompleted: drawForCompletedJob,
-  putBack: putBackDrawn,
   startPrintThis,
   startPrint,
   startBatch: startBatchPrint,

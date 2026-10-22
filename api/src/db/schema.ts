@@ -1654,6 +1654,12 @@ export interface HealShimRunsTable {
   zero_since: Date | null;
 }
 
+/** When this instance first ran a build carrying each heal pass (20261022-239). */
+export interface HealPassArrivalsTable {
+  name: string;
+  arrived_at: Date;
+}
+
 /** A workspace's say over one service capability (20260929-153). No row is
  *  the default: the capability's declared effect decides. */
 export interface ServiceCapabilityPoliciesTable {
@@ -2050,6 +2056,7 @@ export interface MetaDB {
   account_email_sends: AccountEmailSendsTable;
   notification_delivery_windows: NotificationDeliveryWindowsTable;
   heal_shim_runs: HealShimRunsTable;
+  heal_pass_arrivals: HealPassArrivalsTable;
   boot_sweep_marks: BootSweepMarksTable;
   notification_deferred: NotificationDeferredTable;
   push_vapid_keys: PushVapidKeysTable;

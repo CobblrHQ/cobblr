@@ -8,23 +8,23 @@
 // it makes restocks the record when checked off.
 
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ListPlus } from "lucide-react";
-import { Modal, undoStepsOf, usePlatformWeb, useRunAction, useToast } from "@cobblr/platform-web";
+import { Modal, undoStepsOf, useRecordActions, useRunAction, useToast } from "@cobblr/platform-web";
 
 const ADD_ITEM = "lists:add-item";
 
 type AddResult = { ok?: boolean; added?: boolean; skipped?: boolean; needs_list?: boolean; lists?: Array<{ id: string; title: string }>; summary?: string; error?: string };
 
 export function AddToListButton({ kind, id, compact }: { kind: string; id: string; compact?: boolean }) {
-  const { api, orgSlug } = usePlatformWeb();
   // PRESS-ARGS: add-item takes its title from the record; with no list it uses the one this record last went on, or answers needs_list and the button asks which.
   const runAction = useRunAction();
   const toast = useToast();
   const [choices, setChoices] = useState<Array<{ id: string; title: string }> | null>(null);
   const [newList, setNewList] = useState("");
   const [busy, setBusy] = useState(false);
-  const actions = useQuery({ queryKey: ["actions-for-kind", orgSlug, kind], queryFn: () => api.listActions(orgSlug, kind), staleTime: 60_000 });
+  // The kind's actions as its record bar reads them, from one cache: a list
+  // draws its rows once this is in, so the button never arrives after (#7790).
+  const actions = useRecordActions(kind);
   const available = (actions.data?.items ?? []).some((a) => a.id === ADD_ITEM);
   if (!available) return null;
 

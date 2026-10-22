@@ -31,6 +31,13 @@
 // today. A heal whose rows carry a marker only the old code set says so with
 // `// SINCE BY MARKER: <why>`.
 //
+// Sixth: no heal compares a row's made-at to a date of its own. The pass's
+// `since` is the later of its merge and this instance's first run of it
+// (heal-pass.ts); a date written into the heal is the merge alone, and a box on
+// 2026.8.1 or an older nightly wrote the broken shape after it, until it
+// upgraded (run 55860). A date that is a fact of history rather than "when the
+// fix merged" (the day a feature shipped) says so with `// DATE IS HISTORY: <why>`.
+//
 // Fifth: a heal is deleted only after a stable release has carried it (#7679).
 // "Clean on all six" is OUR deployments, which run the nightly; an install that
 // jumps from one stable release to the next never ran a heal added in between.
@@ -150,6 +157,24 @@ for (const f of [...files, ...moduleFiles]) {
   if (VISIT_TAKES_SINCE.test(src) || /^\/\/ SINCE BY MARKER: \S/m.test(src)) continue;
   failures.push(
     `${rel}: a heal pass whose visit never takes its since — read { since } in the visit and take only rows made before it (created_at < since, or the table's own made-at column), so the heal cannot rewrite a row fixed code made today (#7282); or say "// SINCE BY MARKER: <why>" when only the old code ever set what it selects on`,
+  );
+}
+
+const DATE_LITERAL = /new Date\(\s*["'`]20\d\d-|["'`]20\d\d-\d\d-\d\d/;
+const MADE_AT = /\b(?:created_at|made_at|madeBefore)\b/;
+for (const f of [...files, ...moduleFiles]) {
+  const rel = relative(ROOT, f);
+  if (rel.endsWith(".test.ts")) continue;
+  const src = sourceOf(f);
+  if (!/\bregisterHealPass\(\{/.test(src) || /^\/\/ DATE IS HISTORY: \S/m.test(src)) continue;
+  const code = src.split("\n").map((l) => l.replace(/\/\/.*$/, ""));
+  // A name the heal gave a literal date, compared later.
+  const dated = new Set<string>();
+  for (const l of code) for (const m of l.matchAll(/\b(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*([^;]*)/g)) if (DATE_LITERAL.test(m[2]!)) dated.add(m[1]!);
+  const hit = code.findIndex((l) => MADE_AT.test(l) && (DATE_LITERAL.test(l) || [...dated].some((n) => new RegExp(`\\b${n}\\b`).test(l))));
+  if (hit < 0) continue;
+  failures.push(
+    `${rel}:${hit + 1}: a heal that compares a row's made-at to a date of its own — take rows made before the visit's { since }, which is the later of the merge and this instance's first run of the heal; a date written here is the merge alone, and 2026.8.1 boxes wrote the broken shape after it (run 55860); or say "// DATE IS HISTORY: <why>" when the date is a fact of history, not when the fix merged`,
   );
 }
 

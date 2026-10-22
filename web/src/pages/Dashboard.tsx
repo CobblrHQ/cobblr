@@ -87,7 +87,7 @@ import { ParcelsInFlight } from "../components/ParcelsInFlight";
 // first paint, holding its grid cell meanwhile (#5971).
 const AddPhotosTile = lazyWithPreload(() => import("../components/AddPhotosTile").then((m) => ({ default: m.AddPhotosTile })));
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
-import { TipLine, pickTip, registeredTips } from "@cobblr/platform-web";
+import { TipLine, pickTip, registeredTips, useRunWithUndo } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
 import "../tips/install-tip";
 import { MetaParts } from "../components/MetaParts";
@@ -661,6 +661,7 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
   const qc = useQueryClient();
   const toast = useToast();
   const refresh = () => void qc.invalidateQueries({ queryKey: ["attention", slug] });
+  const runWithUndo = useRunWithUndo();
   const doneTask = useMutation({
     mutationFn: (id: string) => api.request("PATCH", `/orgs/${slug}/modules/projects/tasks/${id}`, { status: "done" }),
     onSuccess: () => { toast.success("Task done."); refresh(); },
@@ -669,8 +670,8 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
   // A scheduled service done from here rolls its schedule forward, the same as
   // marking it done on the record (#3876).
   const doneService = useMutation({
-    mutationFn: (id: string) => api.completeMaintenance(slug, id),
-    onSuccess: () => { toast.success("Service logged."); refresh(); },
+    mutationFn: (id: string) => runWithUndo({ actionId: "core-maintenance:complete", args: { entry_id: id } }, "Service logged."),
+    onSuccess: refresh,
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't log the service"),
   });
   const verdict = useMutation({

@@ -13,7 +13,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PlatformBinding } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ChevronRight } from "lucide-react";
-import { Modal, useToast, usePageTitle } from "@cobblr/platform-web";
+import { Modal, useStillAsking, useToast, usePageTitle } from "@cobblr/platform-web";
 import { WireDetailModal } from "../components/WireDetailModal";
 import { FEED_SCROLL } from "../lib/feed";
 import { WireComposer } from "../components/WireComposer";
@@ -48,6 +48,11 @@ export function BindingsPage() {
     enabled: !!slug,
   });
   const bundleName = new Map((bundles.data?.items ?? []).map((b) => [b.id, b.name]));
+  // The composer above waits for the readable tables and their events; the
+  // page waits with it, so the list under it is not pushed when it draws.
+  const composerKinds = useQuery({ queryKey: ["entity-kinds-readable", slug], queryFn: () => api.listEntityKindsReadable(slug), enabled: !!slug });
+  const composerEvents = useQuery({ queryKey: ["wire-events", slug], queryFn: () => api.listWireEvents(slug), enabled: !!slug });
+  const asking = useStillAsking(bindings, bundles, composerKinds, composerEvents);
 
   const toggle = useMutation({
     mutationFn: (b: PlatformBinding) => api.updateBinding(slug, b.id, { enabled: !b.enabled }),
@@ -71,6 +76,10 @@ export function BindingsPage() {
         }}
       />
 
+      {/* The wires and what they fired draw once the wires are known: drawn
+          first, the list arrived above the firings' all / failed and moved
+          them 2,200 px under a finger (#7788). */}
+      {asking ? <div className="text-xs text-faint">loading…</div> : <>
       <div>
         <div className="flex items-center gap-3 mb-2">
           <div className="text-[10px] uppercase tracking-widest text-accent">existing wires</div>
@@ -92,7 +101,6 @@ export function BindingsPage() {
             ))}
           </div>
         </div>
-        {bindings.isLoading && <div className="text-xs text-faint">loading…</div>}
         {bindings.data?.items.length === 0 && (
           <div className="text-xs text-faint dark:text-slate-500 italic">No wires yet.</div>
         )}
@@ -175,6 +183,7 @@ export function BindingsPage() {
       </div>
 
       <WireFiringsPanel slug={slug} />
+      </>}
 
       <WireDetailModal
         open={!!selected}

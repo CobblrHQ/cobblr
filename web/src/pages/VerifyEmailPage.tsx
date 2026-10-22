@@ -16,30 +16,24 @@ export function VerifyEmailPage() {
   const { token = "" } = useParams();
   const [state, setState] = useState<State>("working");
   const [detail, setDetail] = useState("");
-  // StrictMode double-invokes effects in dev; guard so we only consume once.
+  // A link is used once, so the token is consumed once. StrictMode cleans the
+  // effect up and runs it again in dev: the one answer must still land, so
+  // there is no cancelled flag to drop it (#7767).
   const ran = useRef(false);
 
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-    let cancelled = false;
     api
       .verifyEmail({ token })
       .then((r) => {
-        if (!cancelled) {
-          setState("ok");
-          setDetail(r.email);
-        }
+        setState("ok");
+        setDetail(r.email);
       })
       .catch((err) => {
-        if (!cancelled) {
-          setState("error");
-          setDetail(err instanceof ApiError ? err.message : "This verification link didn't work.");
-        }
+        setState("error");
+        setDetail(err instanceof ApiError ? err.message : "This verification link didn't work.");
       });
-    return () => {
-      cancelled = true;
-    };
   }, [token]);
 
   return (

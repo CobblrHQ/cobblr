@@ -10,7 +10,7 @@
 // the phone's version is the camera's Sort mode), Fill missing photos,
 // Export, Drive this screen, the Auto-pick and First-look
 // toggles, Same thing twice (docs/design-decisions/scan-inbox-device-split.md §3.1).
-import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, Sparkles, Tv, Upload, Wand2, Zap, Lock } from "lucide-react";
+import { Copy, Download, FileSpreadsheet, Image as ImageIcon, LayoutGrid, MonitorSmartphone, MoreHorizontal, ReceiptText, ScanBarcode, Sparkles, Tablet, Tv, Upload, Wand2, Zap, Lock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { HeaderMenu, MenuFilterLine, MenuHead, MenuItem, MenuSep } from "../components/HeaderMenu";
 import { ReceiptAddressMenuBlock } from "../components/ReceiptAddressChip";
@@ -208,6 +208,26 @@ export function ScanInboxMenu(p: ScanInboxMenuProps) {
               navigate("/scan/live");
             }}
           />
+          {/* The page's own row of station links is a desk's: on a phone it
+              cost the first card its place inside the first 320px (#7766). */}
+          <span className="sm:hidden">
+            <MenuItem
+              icon={<ScanBarcode size={14} />}
+              label="Scan stations"
+              onClick={() => {
+                close();
+                navigate("/scan/stations");
+              }}
+            />
+            <MenuItem
+              icon={<Tablet size={14} />}
+              label="Open a station on a tablet"
+              onClick={() => {
+                close();
+                navigate("/configuration/devices?tab=stations");
+              }}
+            />
+          </span>
           {handheld && (
             <>
               <MenuSep />

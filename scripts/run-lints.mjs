@@ -18,7 +18,7 @@
 //   node scripts/run-lints.mjs --only isolation,docs
 //   COBBLR_LINT_CONCURRENCY=4 pnpm run lint:all
 
-import { readPathMs, readQuietMs, readRecordedReadMB, readRecordedReadTreeMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
+import { lintLane, readPathMs, readQuietMs, readRecordedReadMB, readRecordedReadTreeMB, readRegistry, writeQuietMs } from "./lib/lint-durations.mjs";
 import { treeTextMB } from "./lib/tree-size.mjs";
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
@@ -67,8 +67,10 @@ function runOne(rawName, args) {
     return;
   }
   const quoted = args.map((a) => `'${String(a).replace(/'/g, `'\\''`)}'`).join(" ");
+  // Its slot, from its record (#7932): a lint of seconds takes the light lane, never the line behind the suites.
+  const slot = ["scripts/heavy-slot.sh", ...(lintLane(name) === "light" ? ["--light"] : [])];
   try {
-    execFileSync("bash", ["-c", `${lintCommand(cmd)}${quoted ? ` ${quoted}` : ""}`], { cwd: ROOT, stdio: "inherit", env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH ?? ""}` } });
+    execFileSync("bash", [...slot, "bash", "-c", `${lintCommand(cmd)}${quoted ? ` ${quoted}` : ""}`], { cwd: ROOT, stdio: "inherit", env: { ...process.env, PATH: `${join(ROOT, "node_modules", ".bin")}:${process.env.PATH ?? ""}` } });
   } catch (e) {
     process.exitCode = typeof e?.status === "number" ? e.status : 1;
   }

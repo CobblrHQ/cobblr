@@ -76,6 +76,26 @@ export async function noteHealShim(shim: string, found: number, failed = 0, now:
   }
 }
 
+/** When this instance first ran a build carrying the heal pass `name`, written the
+ *  first time it asks and read back ever after. A heal takes only rows made before the
+ *  later of its merge and this instant: a box on 2026.8.1 or an older nightly kept
+ *  writing the broken shape after the merge, until it upgraded (run 55860), and a row
+ *  made after this instant was made by this build, so a test, an import or a restore
+ *  made today is never rewritten (#7282). A pass this instance already ran before the
+ *  arrivals were kept (it has a heal_shim_runs row) arrived with its merge, which keeps
+ *  every deployment that ran it as it was. Throws when the platform database cannot
+ *  answer: a visit that cannot know its rows waits for the next round. */
+export async function healArrival(pass: { name: string; shim: string; since: Date }, bootedAt: Date): Promise<Date> {
+  const ranBefore = await meta.selectFrom("heal_shim_runs").select("shim").where("shim", "=", pass.shim).executeTakeFirst();
+  await meta
+    .insertInto("heal_pass_arrivals")
+    .values({ name: pass.name, arrived_at: ranBefore ? pass.since : bootedAt })
+    .onConflict((oc) => oc.column("name").doNothing())
+    .execute();
+  const row = await meta.selectFrom("heal_pass_arrivals").select("arrived_at").where("name", "=", pass.name).executeTakeFirstOrThrow();
+  return row.arrived_at;
+}
+
 let cache: { at: number; rows: HealShimRun[] } | null = null;
 const CACHE_MS = 5_000;
 

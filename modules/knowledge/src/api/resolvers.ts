@@ -31,7 +31,7 @@ export function registerKnowledgeResolvers(): void {
     if (typeof kind === "string") q = q.where("kind", "=", kind);
     const pinned = query.filter?.pinned;
     if (pinned === true || pinned === "true") q = q.where("pinned", "=", true);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["title", "body", "kind"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["title", "body", "kind"] })!);
     const rows = (await groupListRows(db, q .orderBy("updated_at", "desc"), query)) ?? await q
       .limit(Math.min(query.limit ?? 50, 500))
       .offset(query.offset ?? 0)

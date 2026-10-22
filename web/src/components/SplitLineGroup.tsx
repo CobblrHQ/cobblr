@@ -223,7 +223,10 @@ export function SplitLineGroup({
                     setAdding(false);
                   }
                 }}
-                className="inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-cobble-600 hover:bg-cobble-700 px-3 text-xs font-medium text-white disabled:opacity-50"
+                // First on its row: where they all go is known once the
+                // tables answer, and it arriving before this pushed it
+                // 99 px under a finger (#7789). The ⋯ holds the right end.
+                className="order-first inline-flex min-h-11 shrink-0 items-center whitespace-nowrap rounded-full bg-cobble-600 hover:bg-cobble-700 px-3 text-xs font-medium text-white disabled:opacity-50"
               >
                 Add all {waiting.length}
               </button>

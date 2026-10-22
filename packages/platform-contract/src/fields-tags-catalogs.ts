@@ -183,6 +183,17 @@ export interface PlatformPairings {
     targetId: string;
     relationshipKind: string;
   }): Promise<{ removed: number }>;
+  /** Remove every pairing of this relationship that points AT one of these
+   *  targets, whatever its source. For a module that deletes the targets it
+   *  owns (a catalog taking its entries with it) and must not leave links to
+   *  records that no longer exist. Same rule as `remove`: only links of the
+   *  named relationship, so another module's links are never touched. */
+  removeByTargets(args: {
+    orgId: string;
+    targetKind: string;
+    targetIds: string[];
+    relationshipKind: string;
+  }): Promise<{ removed: number }>;
   /** Insert many pairings at once. Used by bricklink.disassemble-kit
    *  to write hundreds of "matches" / "derived-from" rows efficiently. */
   createMany(

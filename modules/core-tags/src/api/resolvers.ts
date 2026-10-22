@@ -27,7 +27,7 @@ export function registerTagResolvers(): void {
     const limit = Math.min(query.limit ?? 100, 500);
     const offset = query.offset ?? 0;
     let q = db.selectFrom("core_tags_tags").selectAll();
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "color"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "color"] })!);
     const sortable = new Set(["name", "created_at", "updated_at"]);
     const specs = (query.sort ?? ["name"]).filter((s) => sortable.has(s.replace(/^-/, "")));
     let sortedQ = q;

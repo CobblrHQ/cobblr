@@ -741,7 +741,10 @@ export function configPageForPath(pathname: string): ConfigDestination | null {
  *  refusal on every save. Unknown role (still loading) opens it, as the nav
  *  does; the server is the real gate either way. */
 export function pageOpenTo(pathname: string, role: string | null | undefined): boolean {
-  const d = destinationForPath(pathname);
+  // A section's action page (New thing) is a page too, with the same default
+  // role: looked up by destination alone it opened for everyone, and a member
+  // filled in a form the server then refused (#7904).
+  const d = configPageForPath(pathname);
   if (!d) return true;
   // The page checks instance availability after loading; this guard answers only the role.
   return isDestinationVisible(d, { role, enabledModules: null, tidyAvailable: true });

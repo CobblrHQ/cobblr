@@ -562,6 +562,8 @@ export function registerPlatformActionHandlers(): void {
       ...(str(args.unit) ? { unit: str(args.unit) } : {}),
       ...(str(args.ref_kind) ? { ref_kind: str(args.ref_kind) } : {}),
       ...(args.without_meaning === true ? { without_meaning: true } : {}),
+      // What the card showed is what is saved (#7954).
+      ...(args.required === true ? { required: true } : {}),
     });
     if (!parsed.success) {
       return {

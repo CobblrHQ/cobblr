@@ -31,7 +31,9 @@ export interface HealVisit {
   orgId: string;
   /** The workspace's db, open for this visit (cast to the module's schema). */
   db: unknown;
-  /** The pass's `since`: the visit takes only rows made before it. */
+  /** The visit takes only rows made before this: the later of the pass's
+   *  merge (`since` on the pass) and the first time this instance ran a build
+   *  carrying it. Old code wrote the broken shape until its box upgraded. */
   since: Date;
 }
 
@@ -42,9 +44,13 @@ export interface HealPass {
   shim: string;
   /** Only workspaces with this module enabled. */
   module?: string;
-  /** When the fix merged, as an ISO instant. A row made after it was made by
-   *  fixed code, so the visit takes only rows made before it (`since` on the
-   *  visit), whatever their shape (#7282). Choosing rows by shape alone
+  /** When the fix merged, as an ISO instant. The visit takes only rows made
+   *  before the later of this and the first time this instance ran a build
+   *  carrying the pass (`since` on the visit), whatever their shape (#7282). A
+   *  box on 2026.8.1 or an older nightly kept writing the broken shape after the
+   *  merge, until it upgraded: a heal limited by the merge alone left those rows
+   *  (run 55860), so no heal compares a row's date to a date of its own
+   *  (lint:heal-shims). Choosing rows by shape alone
    *  rewrote rows a test, an import or a restore had just made in the shape
    *  the heal was written for: five of fifty-five freshly imported scans were
    *  renamed mid-test and main went red (be2d28370). Required, so a heal
@@ -66,9 +72,20 @@ export function registeredHealPasses(): string[] {
 }
 
 export function registerHealPass(pass: HealPass): void {
-  const since = new Date(pass.since);
-  if (Number.isNaN(since.getTime())) throw new Error(`[heal] ${pass.name}: since "${pass.since}" is not a date`);
+  const merged = new Date(pass.since);
+  if (Number.isNaN(merged.getTime())) throw new Error(`[heal] ${pass.name}: since "${pass.since}" is not a date`);
   healNames.add(pass.name);
+  // This boot is the first run of the pass here unless the platform remembers an earlier one.
+  const bootedAt = new Date();
+  let arrival: Promise<Date> | null = null;
+  const since = async (): Promise<Date> => {
+    arrival ??= platform().health.healArrival({ name: pass.name, shim: pass.shim, since: merged }, bootedAt).catch((err) => {
+      arrival = null;
+      throw err;
+    });
+    const arrived = await arrival;
+    return arrived > merged ? arrived : merged;
+  };
   /** Workspaces not reopened, with the rows each still holds that no visit
    *  can heal: carried into every report, so a skipped workspace never reads
    *  as a clean one. */
@@ -103,7 +120,7 @@ export function registerHealPass(pass: HealPass): void {
     visit: async ({ orgId, db }) => {
       const mine = round;
       try {
-        const out = await pass.visit({ orgId, db, since });
+        const out = await pass.visit({ orgId, db, since: await since() });
         const found = typeof out === "number" ? out : out.found;
         if (found === 0) settled.set(orgId, 0);
         else if (typeof out === "object" && out.settled) settled.set(orgId, found);

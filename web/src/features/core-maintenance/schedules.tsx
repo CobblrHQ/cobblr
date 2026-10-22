@@ -122,17 +122,16 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     queryFn: () => api.listMaintenance(ctx.slug, { kind: "history", entity_id: ctx.entityId, limit: 10 }),
   });
   const done = useMutation({
+    // Through the action, so the tap carries its Undo: a service marked done
+    // by mistake goes back to due, with the schedule's last-done date as it was.
     mutationFn: (s: MaintenanceSchedule) =>
-      api.logMaintenance(ctx.slug, {
-        entity_module: s.entity_module,
-        entity_type: s.entity_type,
-        entity_id: s.entity_id,
-        name: s.name,
-        performed_at: new Date().toISOString(),
-        schedule_id: s.id,
-      }),
-    onSuccess: (_e, s) => {
-      toast.success(`${s.name} done. The next one is scheduled.`);
+      runWithUndo({
+        actionId: "core-maintenance:log",
+        entityKind: `${s.entity_module}:${s.entity_type}`,
+        entityId: s.entity_id,
+        args: { name: s.name, performed_at: new Date().toISOString(), schedule_id: s.id },
+      }, `${s.name} done. The next one is scheduled.`),
+    onSuccess: () => {
       refresh();
       void qc.invalidateQueries({ queryKey: historyKey });
     },
@@ -164,13 +163,18 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     "rounded-md border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2.5 py-1.5 text-base text-content dark:text-slate-100";
 
   // Nothing scheduled and nothing done: one line until someone asks for the
-  // form, so an empty panel never grows the record (#6337).
-  if (!adding && !schedulesQ.isLoading && !historyQ.isLoading && schedules.length === 0 && (historyQ.data?.items.length ?? 0) === 0) {
+  // form, so an empty panel never grows the record (#6337). The same line
+  // holds while the answer is on its way: most records have none, and a card
+  // that opens tall and then folds to a line drops the page 48 px under a
+  // thumb already on its way down (#7289: the stocktake button, pressed as the
+  // shelf's page filled in, was missed on a phone).
+  const asking = schedulesQ.isLoading || historyQ.isLoading;
+  if (!adding && (asking || (schedules.length === 0 && (historyQ.data?.items.length ?? 0) === 0))) {
     return (
       <div data-testid="maintenance-schedules" className="flex flex-wrap items-center gap-x-2 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-4 py-2 text-sm">
         <CalendarClock size={14} aria-hidden className="text-muted" />
         <span className="font-medium text-content dark:text-slate-100">Service schedule</span>
-        <span className="text-muted dark:text-slate-400">none</span>
+        <span className="text-muted dark:text-slate-400">{asking ? "…" : "none"}</span>
         <button type="button" onClick={() => setAdding(true)} className="ml-auto min-h-11 px-2 text-accent hover:underline">
           Set one up
         </button>

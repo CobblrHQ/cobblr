@@ -33,6 +33,8 @@
 //           time for a lint that does not run)
 //   rows    placement rows that claim it, beside the arrays in the registry
 //   manual  why run-lints.mjs does NOT run it (a reason, never "not yet")
+//   lane    "light" for a manual lint, which has no time, that is seconds anyway (one API call): the slot
+//           lane `pnpm lint <name>` takes (lintLane, below). A timed lint's time decides its lane.
 //   tsx     why it runs under tsx rather than `node` (lib/lint-command.mjs):
 //           ~1.3 s of startup against ~0.1 s, so a lint pays it only for a
 //           reason, such as an import that uses a parameter property
@@ -59,7 +61,7 @@ export function durationPath(name, dir = DURATIONS_DIR) {
  *  second lint's name, is refused rather than read: the old map grew two
  *  lint entries at its top level beside `ms` (2026-09-22), where the budget
  *  never looked, so a hand-added time sat there reading as recorded. */
-export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "readTreeMB", "recorded", "source", "paths"];
+export const FILE_KEYS = ["lint", "run", "rows", "manual", "tsx", "ms", "readMB", "readTreeMB", "recorded", "source", "paths", "lane"];
 
 /** The map this directory replaced. It must not come back beside it. */
 export const LEGACY_MAP = join(ROOT, "scripts", "lint-durations.json");
@@ -89,6 +91,7 @@ function readOne(dir, file) {
   if (!(d.manual !== undefined && d.ms === undefined) && (!Number.isFinite(d.ms) || d.ms <= 0)) return { name: expected, problem: `${file} has ms ${JSON.stringify(d.ms)}, which is not a time` };
   if (typeof d.run !== "string" || !d.run.trim()) return { name: expected, problem: `${file} has no "run": a time for a lint with no command is a lint that never runs` };
   if (d.rows !== undefined && !(Array.isArray(d.rows) && d.rows.every((r) => typeof r === "string" && r))) return { name: expected, problem: `${file} has "rows" that is not a list of row ids` };
+  if (d.lane !== undefined && !(d.lane === "light" && d.ms === undefined)) return { name: expected, problem: `${file} has "lane" ${JSON.stringify(d.lane)}; only "light", and only on a lint with no time (a time decides its own lane)` };
   if (d.manual !== undefined && !(typeof d.manual === "string" && d.manual.trim().length >= 20)) return { name: expected, problem: `${file} has "manual" without a reason (a sentence saying why the runner skips it)` };
   const onTsx = /^tsx\s+\S+\.ts(\s|$)/.test(d.run);
   if (onTsx && !(typeof d.tsx === "string" && d.tsx.trim().length >= 20)) return { name: expected, problem: `${file} runs under tsx with no "tsx" reason; run it as \`node ${d.run.replace(/^tsx\s+/, "")}\` (Node strips the types, ~0.1 s to start against ~1.3 s), or say why it needs tsx` };
@@ -100,7 +103,7 @@ function readOne(dir, file) {
   // which it took with a `[lint-path] <name>` line, and is judged against that path's time.
   if (d.paths !== undefined && !(d.paths && typeof d.paths === "object" && !Array.isArray(d.paths) && Object.values(d.paths).every((v) => Number.isFinite(v) && v > 0)))
     return { name: expected, problem: `${file} has "paths" that is not an object of path name to a time` };
-  return { name: expected, ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), ...(d.readTreeMB !== undefined ? { readTreeMB: d.readTreeMB } : {}), ...(d.paths ? { paths: d.paths } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
+  return { name: expected, ...(d.lane ? { lane: d.lane } : {}), ...(d.ms !== undefined ? { ms: d.ms } : {}), ...(d.readMB !== undefined ? { readMB: d.readMB } : {}), ...(d.readTreeMB !== undefined ? { readTreeMB: d.readTreeMB } : {}), ...(d.paths ? { paths: d.paths } : {}), run: d.run, rows: d.rows ?? [], manual: d.manual };
 }
 
 /** Every registered lint, from its record: `{ name, run, rows, manual }`.
@@ -119,6 +122,27 @@ export function readRegistry(dir = DURATIONS_DIR) {
     if (r.run) out.push({ name: r.name, run: r.run, rows: r.rows, manual: r.manual });
   }
   return out;
+}
+
+/** Under this recorded time a lint is a check of seconds, and `pnpm lint <name>` runs it in heavy-slot.sh's light
+ *  lane rather than behind the 10-minute suites (#7932). The fleet VM measured the pre-push seconds tier at load 29
+ *  on 2026-10-22: node-resolves 5.1 s (recorded 11.9 s in CI), isolation 3.3 s, test-imports-script 1.1 s. Of 558
+ *  records, the 6 over this line run 16 to 27 s quiet: suites in their own right. */
+export const LIGHT_LINT_MS = 15_000;
+
+/** PURE. The slot lane a lint's record puts it in: "light" or "heavy". No record, or no time and no lane, is heavy. */
+export function laneOf(record) {
+  if (!record) return "heavy";
+  if (Number.isFinite(record.ms)) return record.ms < LIGHT_LINT_MS ? "light" : "heavy";
+  return record.lane === "light" ? "light" : "heavy";
+}
+
+/** The slot lane of the lint `name` (with or without its `lint:` prefix), from its record. */
+export function lintLane(name, dir = DURATIONS_DIR) {
+  const file = `${String(name).replace(/^lint:/, "")}.json`;
+  if (!existsSync(join(dir, file))) return "heavy";
+  const r = readOne(dir, file);
+  return r.problem ? "heavy" : laneOf(r);
 }
 
 /** Every recorded time, as the budget wants it: `{ "lint:x": 123 }`. A file

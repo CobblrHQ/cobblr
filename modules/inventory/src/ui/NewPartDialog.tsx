@@ -22,6 +22,7 @@ import {
   fieldControl,
   fieldNeed,
   fieldPackControlClass,
+  MIN_COL_PX,
   valueFromInput,
   useUnits,
   type CatalogTypeaheadHit,
@@ -36,6 +37,7 @@ import {
   MoneyValueInput,
 } from "@cobblr/platform-web";
 import { useInventory } from "./context";
+import { customFieldRows } from "./new-form-sections";
 import { useFieldPresentation } from "./useFieldPresentation";
 import { ParentPicker, type ParentRef } from "./ParentPicker";
 import { InventoryApiError, type InvFieldDef } from "./api";
@@ -351,6 +353,9 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
     }
   }
 
+  // The instance's own fields as the Form layout page arranged them, headings and all (#7894).
+  const customRows = customFieldRows(customFields, fieldDefs.data?.sections, barcode.barcodeName);
+
   return (
     <RecordFormModal open onClose={() => onClose(false)} title={`new ${itemNoun.toLowerCase()}`} dismissOnBackdrop={false}>
       <form onSubmit={submit} className="space-y-3">
@@ -475,7 +480,10 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
             // The instance's own fields, promoted into create (the whole point
             // of a skinned instance: fill yarn fields here, not after). Each
             // asks the packer for what its control needs.
-            ...customFields.filter((f) => f.name !== barcode.barcodeName).map((f) => ({
+            ...customRows.flatMap(({ f, heading }) => [
+              // A section's heading takes its own row, above its first field.
+              heading ? { need: { key: `section:${heading.id}`, minPx: MIN_COL_PX, full: true }, node: <SectionHeading name={heading.name} /> } : null,
+              {
                 need: fieldNeed(f.name, {
                   control: fieldControl({ type: f.type as FieldType, renderer: f.renderer as FieldRendererId | null, choices: f.choices, server_managed: f.server_managed }),
                   label: f.display_label,
@@ -483,7 +491,8 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
                   help: f.help,
                 }),
                 node: <CustomFieldInput key={f.id} def={f} value={meta[f.name]} onChange={(v) => setMeta((m) => ({ ...m, [f.name]: v }))} />,
-            })),
+              },
+            ]),
             // Brand + Price: natives that belong on the first create modal, not
             // buried in the full-size editor. Relabelled per instance via fp
             // (Yarn: "Brand" / "Price"); an instance can still hide either.
@@ -756,5 +765,14 @@ function ChoiceInput({
       />
       {help}
     </Field>
+  );
+}
+
+/** A Form layout section's heading over its fields, as the record panel draws it. */
+function SectionHeading({ name }: { name: string }) {
+  return (
+    <div data-testid="field-section-heading" className="mt-1 border-b border-line pb-1 text-[10px] uppercase tracking-widest text-muted dark:border-slate-700 dark:text-slate-400">
+      {name}
+    </div>
   );
 }

@@ -66,6 +66,32 @@ export interface TextSearchColumns<EB = unknown> {
   /** A jsonb array of the record's measured values read off its text
    *  (`measureReadings`), so a value still typed as text is found by value. */
   readings?: ColumnOf<EB>;
+  /** The fields the asker may not read (a field read scope they lack): never
+   *  matched, as a column or as a key of a json column, so a search is not a
+   *  way to learn what they hold (#7838). Required, so no search forgets it:
+   *  a resolver passes its query's `unreadable`, and `undefined` is only for
+   *  a read the system makes for itself. */
+  unreadable: ReadonlySet<string> | undefined;
+}
+
+/** The jsonpath to a json column's values the asker may read: every value,
+ *  or every value under a key they may read. */
+export function readableValuesPath(unreadable: ReadonlySet<string> | undefined): string {
+  if (!unreadable?.size) return "$.*";
+  return `$.keyvalue() ? (${[...unreadable].map((k) => `@.key != ${JSON.stringify(k)}`).join(" && ")}).value`;
+}
+
+const bare = (column: string) => column.slice(column.lastIndexOf(".") + 1);
+
+/** Where the kernel leaves, on a module route's request, the fields its
+ *  reader may not read (the field-scope middleware sets it before the
+ *  module's router runs). */
+export const UNREADABLE_FIELDS = Symbol.for("cobblr.unreadable-fields");
+
+/** The fields this request's reader may not read, for a module route that
+ *  searches its own rows: pass it to textSearchWhere as `unreadable`. */
+export function unreadableFieldsOf(req: object): ReadonlySet<string> | undefined {
+  return (req as Record<symbol, ReadonlySet<string> | undefined>)[UNREADABLE_FIELDS];
 }
 
 /** A set of column names checked against a table's row type, for the lists a
@@ -100,22 +126,29 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
   const needle = (q ?? "").trim();
   if (!needle) return null;
   const empty = eb.val("");
-  const anywhere = (text: string): any[] => {
-    const like = likeNeedle(text);
+  const hidden = columns.unreadable;
+  const text = columns.text.filter((c: string) => !hidden?.has(bare(c)));
+  // Readings are read off the record's text: with a column of it hidden, they
+  // could say what that column holds.
+  const readings = text.length === columns.text.length ? columns.readings : undefined;
+  const values = readableValuesPath(hidden);
+  const anywhere = (word: string): any[] => {
+    const like = likeNeedle(word);
     return [
-      ...columns.text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
-      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val("$.* ? (!exists(@.__cobblr_secret))")]), "text")]), "like", like)),
+      ...text.map((c: string) => eb(eb.fn("lower", [eb.fn.coalesce(c, empty)]), "like", like)),
+      ...(columns.json ?? []).map((c: string) => eb(eb.fn("lower", [eb.cast(eb.fn("jsonb_path_query_array", [c, eb.val(`${values} ? (!exists(@.__cobblr_secret))`)]), "text")]), "like", like)),
     ];
   };
   const exprs = anywhere(needle);
   if (exprs.length === 0) return null;
-  const hasValues = !!(columns.json?.length || columns.readings);
+  const hasValues = !!(columns.json?.length || readings);
   const read = hasValues && eb.and && eb.not ? measureTokens(needle) : null;
   if (!read) return eb.or(exprs);
   return valueSearchWhere(eb, read, {
     text: anywhere,
     fields: (columns.json ?? []) as readonly string[],
-    readings: columns.readings as string | undefined,
+    readings: readings as string | undefined,
+    unreadable: hidden,
   });
 }
 
@@ -131,7 +164,7 @@ export function textSearchWhere<EB extends LikeBuilder>(eb: EB, q: string | unde
 export function valueSearchWhere<EB extends LikeBuilder>(
   eb: EB,
   read: NonNullable<ReturnType<typeof measureTokens>>,
-  opts: { text: (word: string) => any[]; fields?: readonly string[]; readings?: string },
+  opts: { text: (word: string) => any[]; fields?: readonly string[]; readings?: string; unreadable?: ReadonlySet<string> },
 ): any {
   const at = (column: string, path: string, vars: string) =>
     // Untyped parameters: Postgres reads them as jsonpath and jsonb from the
@@ -141,8 +174,10 @@ export function valueSearchWhere<EB extends LikeBuilder>(
     const paths = measurePaths(m);
     const p = paths[which];
     if (!p) return [];
+    // Only the values under keys the asker may read.
+    const fields = p.fields.replace(/^\$\.\*/, readableValuesPath(opts.unreadable));
     return [
-      ...(opts.fields ?? []).map((c) => at(c, p.fields, paths.vars)),
+      ...(opts.fields ?? []).map((c) => at(c, fields, paths.vars)),
       ...(opts.readings ? [at(opts.readings, p.readings, paths.vars)] : []),
     ];
   };

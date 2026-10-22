@@ -19,7 +19,7 @@ import { PickToLight, SubjectLink } from "@cobblr/platform-web";
 import { shortageSentence } from "../shortage.js";
 import { BoardInspection } from "./Inspection.js";
 import { InspectionRegister } from "./InspectionRegister.js";
-import { useRunAction } from "@cobblr/platform-web";
+import { useRunAction, offerUndo } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { dayLabel } from "@cobblr/platform-contract/day";
 
@@ -105,10 +105,6 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
         </div>
       )}
 
-      {builds.data && builds.data.items.length > 0 && (
-        <SchedulePanel api={api} builds={builds.data.items} />
-      )}
-
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {builds.data?.items.map((b) => (
           <BuildCard
@@ -130,6 +126,13 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
           />
         ))}
       </div>
+
+      {/* Under the builds, not over them: the schedule's answer comes on its
+          own, and above the cards its "Loading…" line growing to a plan moved
+          every build's button 40 to 106 px under a finger (#7788). */}
+      {builds.data && builds.data.items.length > 0 && (
+        <SchedulePanel api={api} builds={builds.data.items} />
+      )}
 
       {creating && (
         <RecordFormModal open onClose={() => setCreating(false)} title="New build">
@@ -200,7 +203,7 @@ function BuildCard({ build, onOpen, onDelete }: { build: BuildSummary; onOpen: (
   );
 }
 
-function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string; api: BuildsApi; orgSlug: string; onClose: () => void }) {
+export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string; api: BuildsApi; orgSlug: string; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [qty, setQty] = useState(1);
@@ -211,6 +214,15 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["builds-detail", buildId] });
     void qc.invalidateQueries({ queryKey: ["builds"] });
+  };
+
+  // PRESS-ARGS: it only runs the step the build handed back, which carries every argument it needs.
+  const runBack = useRunAction();
+  const takeBack = async (b: Parameters<typeof runBack>[0]) => {
+    const outcome = await runBack(b, { undo: "is-undo" });
+    void qc.invalidateQueries({ queryKey: ["builds-runs", buildId] });
+    invalidate();
+    return outcome;
   };
 
   const addComponent = useMutation({
@@ -237,11 +249,11 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
     mutationFn: (v: { n: number; serial?: string }) => api.build(buildId, v.n, v.serial),
     onSuccess: (r) => {
       const out = detail.data?.output;
-      toast.success(
-        out?.name
-          ? `Built ${r.run.qty_built}: ${Number(r.run.qty_built) * (Number(detail.data?.build.output_qty) || 1)} added to ${out.name}, components taken from stock`
-          : `Built ${r.run.qty_built}: components taken from stock, nothing added (this build makes no part)`,
-      );
+      const done = out?.name
+        ? `Built ${r.run.qty_built}: ${Number(r.run.qty_built) * (Number(detail.data?.build.output_qty) || 1)} added to ${out.name}, components taken from stock`
+        : `Built ${r.run.qty_built}: components taken from stock, nothing added (this build makes no part)`;
+      // A build pressed by mistake can be taken back from the message.
+      if (!offerUndo(toast, takeBack, { undo: r.undo, result: null }, { entityKind: "builds:build", entityId: buildId }, done)) toast.success(done);
       setSerial("");
       void qc.invalidateQueries({ queryKey: ["builds-runs", buildId] });
       invalidate();
@@ -251,6 +263,11 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
   const setField = useMutation({
     mutationFn: (metadata: Record<string, unknown>) => api.updateBuild(buildId, { metadata }),
     onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
+  });
+  const setDetails = useMutation({
+    mutationFn: (v: { name: string; description: string | null; notes: string | null }) => api.updateBuild(buildId, v),
+    onSuccess: () => { toast.success("Saved."); invalidate(); },
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const setOutput = useMutation({
@@ -299,6 +316,12 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 
         {d && (
           <>
+            <BuildDetails
+              key={`${d.build.id}:${d.build.name}:${d.build.description ?? ""}:${d.build.notes ?? ""}`}
+              build={d.build}
+              pending={setDetails.isPending}
+              onSave={(v) => setDetails.mutate(v)}
+            />
             {d.build.metadata?.assembly
               ? <BoardRevisionCard slug={orgSlug} id={buildId} spec={d.build.metadata.assembly as BoardRevision} api={api} />
               : <>
@@ -470,6 +493,56 @@ function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: string;
 const STATUS_ORDER: OperationRow["status"][] = ["todo", "doing", "done"];
 /** What a Build press adds to stock, said before anything is consumed. A
  *  build that makes no part says so and offers the part named like it. */
+/** The build's own words: its name, what it is, and its notes. Reading shows
+ *  them; Edit opens the three fields, and Save writes only these. */
+function BuildDetails({ build, pending, onSave }: { build: BuildSummary; pending: boolean; onSave: (v: { name: string; description: string | null; notes: string | null }) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(build.name);
+  const [description, setDescription] = useState(build.description ?? "");
+  const [notes, setNotes] = useState(build.notes ?? "");
+  const field = "w-full rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm";
+  if (!editing) {
+    return (
+      <div data-testid="build-details" className="space-y-1 text-sm">
+        {build.description && <p className="text-content dark:text-mortar-100">{build.description}</p>}
+        {build.notes && <p className="text-muted whitespace-pre-wrap">{build.notes}</p>}
+        <button type="button" className="text-xs text-accent hover:underline" onClick={() => setEditing(true)}>
+          Edit name and notes
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form
+      data-testid="build-details"
+      className="rounded-lg border border-line dark:border-slate-700 p-3 text-sm space-y-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        onSave({ name: name.trim(), description: description.trim() || null, notes: notes.trim() || null });
+        setEditing(false);
+      }}
+    >
+      <label className="block space-y-1">
+        <span className="text-xs uppercase tracking-wide text-muted">Name</span>
+        <input aria-label="Build name" value={name} onChange={(e) => setName(e.target.value)} className={field} />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-xs uppercase tracking-wide text-muted">Description</span>
+        <input aria-label="Build description" value={description} onChange={(e) => setDescription(e.target.value)} className={field} />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-xs uppercase tracking-wide text-muted">Notes</span>
+        <textarea aria-label="Build notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className={field} />
+      </label>
+      <div className="flex gap-2">
+        <button type="submit" disabled={pending || !name.trim()} className="rounded bg-accent px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">Save</button>
+        <button type="button" className="rounded border border-line dark:border-slate-600 px-3 py-1.5 text-sm" onClick={() => { setName(build.name); setDescription(build.description ?? ""); setNotes(build.notes ?? ""); setEditing(false); }}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
 function OutputLine({
   output,
   buildName,

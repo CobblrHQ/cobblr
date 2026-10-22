@@ -84,7 +84,9 @@ export function CollectionHeader({
             controls ran past the edge (#4390). */}
         <div className="flex min-w-0 items-baseline gap-x-2 max-sm:basis-full" data-header-title>
           <h1 id={titleId} className="font-display text-2xl font-extrabold leading-9 text-content dark:text-mortar-100 page-title">{title}</h1>
-          {count != null && <span className="text-xs font-mono tabular-nums text-faint dark:text-slate-500">{count}</span>}
+          {/* Room for "22 of 22" from the start: "0 of 0" growing to it moved the
+              controls after the title 14 px along (#7788). */}
+          {count != null && <span className="inline-block min-w-[4.5rem] text-xs font-mono tabular-nums text-faint dark:text-slate-500">{count}</span>}
         </div>
         {nav && (
           <nav aria-labelledby={titleId} className="flex h-9 items-center gap-5 text-sm" data-header-controls>
@@ -113,9 +115,12 @@ export function CollectionHeader({
               {hint}
             </p>
           ) : null}
-          {kind ? <PlaceOnPlan kind={kind} /> : null}
           {kind ? <Link className="text-xs text-muted underline" to={`/configuration/recently-deleted?kind=${encodeURIComponent(kind)}`}>Recently deleted</Link> : null}
           {below}
+          {/* Last: it shows once the collection's faces answer, and arriving
+              ahead of Recently deleted pushed that link 155 px along under a
+              finger (#7781). At the end of the line it moves nothing. */}
+          {kind ? <PlaceOnPlan kind={kind} /> : null}
         </div>
       )}
     </div>

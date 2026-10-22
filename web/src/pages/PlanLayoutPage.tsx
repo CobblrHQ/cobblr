@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Plus, Printer, Trash2 } from "lucide-react";
-import { SearchInput, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { SearchInput, stillAsking, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { EMPTY_PLAN_DRAFT, PLANNED_PREFIX, bodyAsApplied, draftSummary, plannedRack, renamePlannedRack, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import { parseOuterSize } from "@cobblr/platform-contract/outer-size";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -321,7 +321,11 @@ export function PlanLayoutPage() {
       </Link>
       <h1 className="text-2xl font-semibold text-content dark:text-slate-100">Plan a layout{room ? `: ${room.name}` : ""}</h1>
 
-      <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Layout options">
+      {/* The options and New option together, once the saved options have
+          answered (the row held meanwhile): drawn before them, Option A
+          arrived ahead of New option and pushed it along under a finger (#7791). */}
+      <div className="flex min-h-8 flex-wrap items-center gap-2" role="tablist" aria-label="Layout options" aria-busy={stillAsking(drafts) || undefined}>
+        {!stillAsking(drafts) && <>
         {list.map((d) => (
           <button
             key={d.id}
@@ -338,6 +342,7 @@ export function PlanLayoutPage() {
         <button type="button" onClick={() => create.mutate(undefined)} className="inline-flex items-center gap-1 rounded-full border border-dashed border-line dark:border-slate-600 px-3 py-1 text-sm text-content dark:text-slate-200 hover:border-accent">
           <Plus size={14} /> {list.length ? "New option" : "Start a layout"}
         </button>
+        </>}
       </div>
 
       {!drafts.isLoading && !list.length && (

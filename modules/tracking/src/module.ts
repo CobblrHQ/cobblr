@@ -49,6 +49,7 @@ export default defineModule({
         createEndpoint: "/metrics",
         updateEndpoint: "/metrics/{id}",
         deleteEndpoint: "/metrics/{id}",
+        deleteBy: "admin",
       },
       {
         // AI-CRUD: none — measurements are append-only readings written via

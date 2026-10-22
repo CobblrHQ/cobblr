@@ -412,6 +412,13 @@ catalogsRouter.delete(
     }
     const db = tenantDb(req);
     const ctx = tenantContext(req);
+    // The entries go with the catalog, so the matches pointing at them go too:
+    // a link left behind makes every matched record ask for an entry that is
+    // gone (#7918).
+    const entryIds = (await db.selectFrom("core_catalogs_entries").select("id").where("catalog_id", "=", id).execute()).map((e) => e.id);
+    for (let i = 0; i < entryIds.length; i += 1000) {
+      await platform().pairings.removeByTargets({ orgId: ctx.org.id, targetKind: "core-catalogs:entry", targetIds: entryIds.slice(i, i + 1000), relationshipKind: "matches" });
+    }
     const result = await db
       .deleteFrom("core_catalogs_catalogs")
       .where("id", "=", id)

@@ -46,8 +46,11 @@ export function cassetteKey(code: string): string {
  *  ISBN, and Open Library's book, #3162), so the book door has a cassette
  *  of its own, `<code>.book.json`, and falls back to the code's one file
  *  when none was recorded: every cassette recorded before this reads as it
- *  did. The product chain keeps `<code>.json`. */
-export type CatalogDoor = "product" | "book";
+ *  did. The product chain keeps `<code>.json`. The food door is Open Food
+ *  Facts asked for what a food contains when another catalog named it
+ *  (#7804), `<code>.food.json`; it falls back to the product cassette only
+ *  when Open Food Facts answered that one. */
+export type CatalogDoor = "product" | "book" | "food";
 
 /** The catalogs that know BOOKS. An ISBN answered by any other source is a
  *  product catalog's stray entry until the book catalog has been asked
@@ -56,7 +59,7 @@ const BOOK_SOURCES = new Set(["openlibrary", "googlebooks", "isbndb", "worldcat"
 export const isBookSource = (source: string): boolean => BOOK_SOURCES.has(source);
 
 function cassetteFile(code: string, door: CatalogDoor): string {
-  return door === "book" ? `${cassetteKey(code)}.book.json` : `${cassetteKey(code)}.json`;
+  return door === "product" ? `${cassetteKey(code)}.json` : `${cassetteKey(code)}.${door}.json`;
 }
 
 /** The recorded answer for a code, or null when the dir is not set or holds
@@ -75,6 +78,7 @@ export function readCatalogCassette(code: string, door: CatalogDoor = "product")
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as CatalogCassette;
     if (fellBack && door === "book" && parsed.outcome === "hit" && !isBookSource(parsed.hit.source)) return null;
+    if (fellBack && door === "food" && (parsed.outcome !== "hit" || parsed.hit.source !== "openfoodfacts")) return null;
     return parsed && typeof parsed === "object" && "outcome" in parsed ? parsed : null;
   } catch {
     return null;

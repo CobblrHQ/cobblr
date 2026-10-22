@@ -14,15 +14,22 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 
 /** Is AI usable for this workspace/user? Cached well beyond a session —
  *  availability only changes when someone reconfigures. */
-export function useAiStatus(): AiStatus | null {
+function useAiStatusQuery() {
   const { activeSlug } = useActiveOrg();
-  const q = useQuery({
+  return useQuery({
     queryKey: aiAvailabilityKeys.status(activeSlug),
     queryFn: () => api.getAiStatus(activeSlug),
     enabled: !!activeSlug && mayRead(`/orgs/${activeSlug}/ai-status`),
     staleTime: 5 * 60_000,
   });
-  return q.data ?? null;
+}
+export function useAiStatus(): AiStatus | null {
+  return useAiStatusQuery().data ?? null;
+}
+/** Whether the status has answered (or failed, or will never be asked): a
+ *  page that draws its notice with the rest waits on this, not on a status. */
+export function useAiStatusAnswered(): boolean {
+  return !useAiStatusQuery().isLoading;
 }
 
 export type AiNeeds = "chat" | "identify";

@@ -8,7 +8,7 @@
 // the tag routes let write (owner, admin, member).
 import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Pencil, Pin, Tag as TagIcon, Trash2 } from "lucide-react";
 import { CustomFieldsPanel, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -107,7 +107,11 @@ export function TagDetailPage() {
     },
   });
 
-  if (tags.isLoading) return <div className="text-sm text-muted">Loading…</div>;
+  // The page draws once it knows what carries the tag and what those things
+  // are (on a first try; a failed read does not hold it): drawn first, the
+  // groups arrived and moved the controls under them 180 to 540 px (#7799).
+  const asking = [tags, attached, kinds].some((q) => q.isLoading && q.failureCount === 0);
+  if (asking) return <div className="text-sm text-muted">Loading…</div>;
   if (!tag) {
     return (
       <div className="space-y-3 max-w-3xl mx-auto">
@@ -202,7 +206,10 @@ export function TagDetailPage() {
         )}
         {groups.map((g) => (
           <div key={g.kind} className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 space-y-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+            {/* A finger's height held for what a module adds here: the recount
+                arrives a moment after the group, and on a phone it grew this
+                line and moved the records under it 28 px (#7799). */}
+            <div className="flex flex-wrap items-center justify-between gap-2 [@media(pointer:coarse)]:min-h-11">
               <div className="text-xs font-medium uppercase tracking-wide text-muted dark:text-slate-400">
                 {g.label} · {g.items.length}
               </div>
@@ -212,13 +219,7 @@ export function TagDetailPage() {
                 ctx={{ slug: activeSlug, kind: g.kind, collection: g.owner?.collection ?? null, ids: g.items.map((a) => a.source_id), tagName: tag.name }}
               />
             </div>
-            <ul className="flex flex-wrap gap-2">
-              {g.items.map((a) => (
-                <li key={a.id}>
-                  <TaggedRecord kind={g.kind} id={a.source_id} to={routeFor(g.kind, a.source_id)} />
-                </li>
-              ))}
-            </ul>
+            <TaggedRecords kind={g.kind} items={g.items} to={(sourceId) => routeFor(g.kind, sourceId)} />
           </div>
         ))}
       </section>
@@ -226,11 +227,13 @@ export function TagDetailPage() {
       {/* The tag's own fields, as a bundle or a person defines them. */}
       <CustomFieldsPanel entityKind="core-tags:tag" entityId={tag.id} values={tag.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
 
-      {/* Whatever enabled modules add to a tag's page; this page names none. */}
-      <ContributedDetailPanels target="core-tags:tag" ctx={{ slug: activeSlug, entityId: tag.id, entityTitle: tag.name }} />
-
-      {/* Files and notes on the tag; discussion and links come with the panels above, and a tag is not itself tagged. */}
+      {/* Files and notes on the tag; discussion and links come with the panels below, and a tag is not itself tagged. */}
       <EntityAttachments kind="core-tags:tag" entityId={tag.id} omit={["tags", "discussion", "pairings"]} />
+
+      {/* Whatever enabled modules add to a tag's page; this page names none.
+          Last: the panels come a moment after the page, and above the files
+          they moved Add 540 px under a finger (#7799). */}
+      <ContributedDetailPanels target="core-tags:tag" ctx={{ slug: activeSlug, entityId: tag.id, entityTitle: tag.name }} />
 
       {editing && (
         <EditTagModal
@@ -258,15 +261,33 @@ export function TagDetailPage() {
 
 /** One record that carries the tag, by its name, opening it. A record deleted
  *  since says so rather than showing an id. */
-function TaggedRecord({ kind, id, to }: { kind: string; id: string; to: string | null }) {
+/** A group's records, drawn once each has its name: a chip saying "…" and
+ *  growing to its name pushed the chips after it 44 to 58 px along under a
+ *  finger (#7799). */
+function TaggedRecords({ kind, items, to }: { kind: string; items: TagAttachment[]; to: (sourceId: string) => string | null }) {
   const { activeSlug } = useActiveOrg();
-  const q = useQuery({
-    queryKey: ["entity", activeSlug, kind, id],
-    queryFn: () => api.lookupEntity(activeSlug, kind, id),
-    enabled: !!activeSlug,
-    staleTime: 60_000,
-    retry: false,
+  const reads = useQueries({
+    queries: items.map((a) => ({
+      queryKey: ["entity", activeSlug, kind, a.source_id],
+      queryFn: () => api.lookupEntity(activeSlug, kind, a.source_id),
+      enabled: !!activeSlug,
+      staleTime: 60_000,
+      retry: false,
+    })),
   });
+  if (reads.some((q) => q.isLoading)) return <div className="h-8 [@media(pointer:coarse)]:h-11 text-xs text-faint">…</div>;
+  return (
+    <ul className="flex flex-wrap gap-2">
+      {items.map((a, i) => (
+        <li key={a.id}>
+          <TaggedRecord q={reads[i]!} to={to(a.source_id)} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TaggedRecord({ q, to }: { q: { isError: boolean; data?: { title?: string | null } | null }; to: string | null }) {
   const label = q.isError ? "(deleted)" : (q.data?.title ?? "…");
   const cls = "inline-flex rounded-md border border-line dark:border-slate-600 bg-subtle dark:bg-slate-800 px-2 py-1 text-sm text-content dark:text-slate-200";
   return to && !q.isError ? (

@@ -38,6 +38,7 @@ const GUARD_MODULES = [
   "field-choices",
   "groundless-answer",
   "move-not-create",
+  "nothing-to-repeat",
   "reported-truthfully",
 ];
 

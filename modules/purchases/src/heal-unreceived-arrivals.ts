@@ -34,6 +34,10 @@
 // (add_to_stock off). Lines flagged before this rule are withdrawn on the next
 // visit, so the question disappears without anyone answering it.
 
+//
+// DATE IS HISTORY: MARK_ARRIVED_SHIPPED is the day "Mark arrived" shipped. An
+// arrival on or after it may have gone through it, which decides whether a line
+// is asked about; the rows a visit takes are still those made before its since.
 import { sql, type Kysely } from "kysely";
 import { platform, countOf } from "@cobblr/platform-contract";
 import { registerHealPass } from "@cobblr/platform-contract/heal-pass";

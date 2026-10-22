@@ -1,4 +1,4 @@
-import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu, useStillAsking } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -174,6 +174,12 @@ export function RecordsPage({
       toast.error(e instanceof ApiError ? e.message : "Couldn't start the lookup."),
   });
 
+  // The header's buttons depend on the rows (fetch N missing images) and sit
+  // on one row with the search: drawn before the list, a button arriving
+  // pushed Group by and New along under a finger (#7790).
+  const asking = useStillAsking(list, fieldDefs, recordInstances);
+  if (asking) return <div className="text-sm text-muted">Loading…</div>;
+
   return (
     <div className="space-y-4">
       <CollectionHeader
@@ -184,17 +190,6 @@ export function RecordsPage({
         exportQuery={query}
         actions={
           <>
-            {missingCovers > 0 && (
-              <button
-                onClick={() => backfill.mutate()}
-                disabled={backfill.isPending}
-                title={`Look up an image for the ${countOf(missingCovers, words)} without one`}
-                className={`${headerButton("secondary")} text-xs text-muted hover:text-content disabled:opacity-50`}
-              >
-                <ImageIcon size={13} />
-                {backfill.isPending ? "starting…" : `fetch ${missingCovers} missing image${missingCovers === 1 ? "" : "s"}`}
-              </button>
-            )}
             <ViewModeToggle mode={viewMode} onChange={setViewMode} />
             <NewItemMenu kind="records:record" instance={instance}>
               <button onClick={() => setNewOpen(true)} className={headerButton("primary")}>
@@ -221,6 +216,21 @@ export function RecordsPage({
         <RecordsTiles rows={filtered} onOpen={openRecord} kind={instance ? `${instance}:item` : ENTITY_KIND} />
       ) : (
         <RecordsTable rows={filtered} customCols={customCols} onOpen={openRecord} kind={instance ? `${instance}:item` : ENTITY_KIND} />
+      )}
+      {/* Under the records, not in the header, and above the inbox strip that
+          answers after them: it shows with the records, and arriving among the
+          header's controls it pushed Group by and Export 175 px along under a
+          finger (#7788). */}
+      {missingCovers > 0 && (
+              <button
+                onClick={() => backfill.mutate()}
+                disabled={backfill.isPending}
+                title={`Look up an image for the ${countOf(missingCovers, words)} without one`}
+                className={`${headerButton("secondary")} text-xs text-muted hover:text-content disabled:opacity-50`}
+              >
+                <ImageIcon size={13} />
+                {backfill.isPending ? "starting…" : `fetch ${missingCovers} missing image${missingCovers === 1 ? "" : "s"}`}
+              </button>
       )}
       {/* What is waiting in the scan inbox to come here, under the filed
           results: a thing just scanned is in no table until it is filed. */}

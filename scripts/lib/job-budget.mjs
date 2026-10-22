@@ -29,16 +29,21 @@
 // Per-unit costs are measured peaks, rounded up (docs/operations/CI_DEPLOY.md,
 // "Job width follows the box"). COBBLR_<KIND>_CONCURRENCY still pins a width
 // when set (a person's decision beats the estimate).
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { getHeapStatistics } from "node:v8";
 import { fileURLToPath } from "node:url";
 
 /** Peak resident memory of one unit of each kind, MiB. */
 // tsgo (the Go compiler, TypeScript 7) has no node heap to set: its peak is
-// its own, 850 MiB for api's src program and 200 to 650 for the rest, measured
-// 2026-09-30.
-export const UNIT_MIB = { tsc: 900, tsgo: 900, vitest: 350, lint: 150 };
+// its own. 3072 MiB since 2026-10-22: api's tsconfig.tests.json peaks at 2508-2611
+// alone and its src at 1244 (measured at 1bdd0fa4, one at a time), with room for
+// a run's own wobble so the check below is never a false red. Counted at
+// 900 (its 2026-09-30 peak), main's typecheck ran two side by side at 2.46 and
+// 2.19 GiB under a 4.5 GiB cap and sat at it for 20 minutes (#7741). A run
+// reads each compiler's peak and fails by name when one outgrows this
+// (typecheck-tsgo.mjs, outgrewUnit), so it cannot go stale silently again.
+export const UNIT_MIB = { tsc: 900, tsgo: 3072, vitest: 350, lint: 150 };
 export const SHARE = 0.5;
 // The heap a node process of a kind needs, MiB: measured, not estimated. node
 // sets its default heap to HALF the cgroup's limit (920 MiB under 1792m, 1048
@@ -196,6 +201,54 @@ export function shareOf(env = process.env, capped = memoryRoom().capped) {
 export function splitShare(n, env = process.env, capped) {
   const share = shareOf(env, capped ?? memoryRoom().capped);
   return { [SHARE_ENV]: String(share / Math.max(1, n)) };
+}
+
+/**
+ * PURE. The peak resident memory of every process named `comm` that descends from `root`, from a /proc reading
+ * ({pid, ppid, comm, hwmKib: VmHWM, args}). Only descendants: on a workstation other worktrees' compilers run too.
+ * @param {{ pid: number, ppid: number, comm: string, hwmKib: number, args?: string }[]} procs
+ */
+export function descendantPeaks(procs, root, comm) {
+  const kids = new Map();
+  for (const p of procs) kids.set(p.ppid, [...(kids.get(p.ppid) ?? []), p]);
+  const out = [];
+  const walk = (pid) => {
+    for (const k of kids.get(pid) ?? []) {
+      if (k.comm === comm) out.push({ pid: k.pid, mib: Math.round(k.hwmKib / 1024), args: k.args ?? k.comm });
+      walk(k.pid);
+    }
+  };
+  walk(root);
+  return out;
+}
+
+/** PURE. The peaks over `unitMib`: a per-unit cost that went stale, which narrows nothing and lets a job thrash. */
+export function outgrewUnit(peaks, unitMib) {
+  return peaks.filter((p) => p.mib > unitMib).map(({ pid, mib, args }) => ({ pid, mib, args }));
+}
+
+/** Every process's pid, parent, name, peak resident memory and command line, from /proc; [] where there is none. */
+export function readProcs() {
+  let ids = [];
+  try {
+    ids = readdirSync("/proc").filter((d) => /^\d+$/.test(d));
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const id of ids) {
+    const status = read(`/proc/${id}/status`);
+    if (!status) continue;
+    const field = (k) => new RegExp(`^${k}:\\s+(.+)$`, "m").exec(status)?.[1]?.trim();
+    out.push({
+      pid: Number(id),
+      ppid: Number(field("PPid")),
+      comm: field("Name") ?? "",
+      hwmKib: Number(/^(\d+)/.exec(field("VmHWM") ?? "0")?.[1] ?? 0),
+      args: (read(`/proc/${id}/cmdline`) ?? "").split("\0").filter(Boolean).join(" ").slice(0, 160),
+    });
+  }
+  return out;
 }
 
 /** The cores one heavy slot may use (#7202): inside scripts/heavy-slot.sh, the box's cores over its slot count.

@@ -206,7 +206,10 @@ function LabelButton({ slug, code, button }: { slug: string; code: string; butto
   return (
     <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3" data-testid="action-label-button">
       <div>
-        <div className="text-lg font-semibold text-content dark:text-mortar-100" data-testid="action-label-plan">
+        {/* The heading's line is held while the plan is read: a 16 px spinner
+            growing to the 28 px heading moved Confirm 12 px under a finger
+            (#7800). */}
+        <div className="min-h-7 text-lg font-semibold text-content dark:text-mortar-100" data-testid="action-label-plan">
           {plan.isLoading ? <Loader2 size={16} className="animate-spin text-faint" /> : heading}
         </div>
         {plan.data?.plan?.lines.map((l) => (

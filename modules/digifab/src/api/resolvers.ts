@@ -50,7 +50,7 @@ export function registerFarmResolvers(): void {
   platform().entities.registerListResolver("digifab:make", async (orgId, query) => {
     const db = (await platform().tenants.getDb(orgId)) as Kysely<DigifabDB>;
     let source = db.selectFrom("digifab_makes").selectAll();
-    if (query.q?.trim()) source = source.where((eb) => textSearchWhere(eb, query.q, { text: ["name", "prompt", "material", "outcome"] })!);
+    if (query.q?.trim()) source = source.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "prompt", "material", "outcome"] })!);
     const rows = (await groupListRows(db, source.orderBy("created_at", "desc"), query)) ?? await listMakes(db, query.q, Math.min(query.limit ?? 50, 200), query.offset ?? 0);
     return { items: rows.map(makeEntity) };
   });
@@ -66,7 +66,7 @@ export function registerFarmResolvers(): void {
     let q = db.selectFrom("digifab_jobs").select(JOB_COLUMNS);
     const status = query.filter?.status;
     if (typeof status === "string") q = q.where("status", "=", status as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { text: ["file_ref", "status", "target_device", "error"] })!);
+    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["file_ref", "status", "target_device", "error"] })!);
     const rows = (await groupListRows(db, q.orderBy("created_at", "desc"), query)) ?? await q.orderBy("created_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute();
     return { items: rows.map(jobToResolved) };
   });

@@ -58,6 +58,7 @@ export default defineModule({
         createEndpoint: "/entries",
         updateEndpoint: "/entries/{id}",
         deleteEndpoint: "/entries/{id}",
+        deleteBy: "member",
       },
     ],
   },

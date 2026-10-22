@@ -1,4 +1,5 @@
-// An action invoked with none of the arguments it declares.
+// An action invoked with none of the arguments it declares, or with one it
+// does not take.
 //
 // The model picks the right action and drops what it takes: record-usage with
 // no hours, remove-field with no field, place with no container. It got more
@@ -19,6 +20,24 @@ import { describeArgs, requiredArgsRefusal, type ActionArgSpec } from "@cobblr/p
 export type ArgSpec = ActionArgSpec;
 
 const NEXT = "Call invoke_action again with args filled from what the user said, or ask the user for the value you are missing.";
+
+/** An argument the action does not declare is handed back, never carried to
+ *  a card that shows it. "make Purchase Date required" became add-field with
+ *  `required: true`; the card said Required: true, the action does not take
+ *  it, and the field was saved optional (#7954). Every argument a handler
+ *  reads is declared (lint:action-args-declared), so an undeclared one is a
+ *  value that would be dropped after the person said yes to it. */
+export function undeclaredActionArgs(
+  actionId: string,
+  schema: Record<string, ArgSpec> | null | undefined,
+  given: unknown,
+): string | null {
+  const names = Object.keys(schema ?? {});
+  if (names.length === 0 || !given || typeof given !== "object" || Array.isArray(given)) return null;
+  const extra = Object.keys(given as Record<string, unknown>).filter((k) => !names.includes(k));
+  if (!extra.length) return null;
+  return `${actionId} does not take ${extra.join(", ")}, so ${extra.length === 1 ? "it" : "they"} would be dropped after the person confirms. It takes: ${describeArgs(schema, names)}. Call it again without ${extra.length === 1 ? "it" : "them"}, and do what ${extra.length === 1 ? "it" : "they"} asked with the action that takes ${extra.length === 1 ? "it" : "them"}, or tell the user it cannot be done this way.`;
+}
 
 /** The message to hand back, or null when the call is fine as written. */
 export function missingActionArgs(

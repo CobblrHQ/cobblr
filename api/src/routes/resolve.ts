@@ -43,6 +43,7 @@ resolveRouter.post("/:slug/resolve", requireAuth, withTenant, async (req, res, n
       surface: surface as ResolveSurface,
       source,
       scope,
+      viewer: { userId: req.session?.id, role: req.tenant!.role },
     });
     res.json(outcome);
   } catch (e) {

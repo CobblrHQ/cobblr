@@ -11,7 +11,7 @@
 import { ownSize } from "@cobblr/platform-contract/plan-clearance";
 import { useMemo, useRef, useState } from "react";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { EntityPhoto, Modal, changeWorkspaceShape, useImageSrc, useToast } from "@cobblr/platform-web";
+import { EntityPhoto, Modal, changeWorkspaceShape, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
 import { fieldScopeSentinel } from "@cobblr/platform-contract";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { OUTER_SIZE_FIELD, OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
@@ -94,22 +94,22 @@ export function useSizedThings(opts: {
     () => [...new Set([...pins.map((t) => fieldKindOf(t)), ...onShelves.map((o) => fieldKindOf(byKey.get(`${fieldKindOf(o)}:${o.id}`) ?? o))])].sort(),
     [pins, onShelves, byKey],
   );
-  const defs = useQueries({
+  const { items: defs, pending: defsPending } = useQueries({
     queries: kinds.map((k) => ({
       queryKey: ["field-defs", slug, k],
       queryFn: () => api.listFieldDefs(slug, k),
       staleTime: 60_000,
     })),
-    combine: (rs) => rs.flatMap((r) => r.data?.items ?? []),
+    combine: (rs) => ({ items: rs.flatMap((r) => r.data?.items ?? []), pending: rs.some(stillAsking) }),
   });
   // Where each thing stands along its shelf, when somebody put it somewhere.
-  const shelfContents = useQueries({
+  const { lists: shelfContents, pending: shelvesPending } = useQueries({
     queries: openShelves.map((s) => ({
       queryKey: ["location-contents", slug, s.loc.id],
       queryFn: () => api.placementContents(slug, LOCATION_KIND, s.loc.id),
       staleTime: 30_000,
     })),
-    combine: (rs) => rs.map((r) => r.data?.items ?? []),
+    combine: (rs) => ({ lists: rs.map((r) => r.data?.items ?? []), pending: rs.some(stillAsking) }),
   });
 
   const sizeOf = (kind: string, id: string, fields?: Record<string, unknown>): OuterSize | null => {
@@ -119,7 +119,7 @@ export function useSizedThings(opts: {
     return outerSizeOf(rec?.metadata, names) ?? outerSizeOf(fields, names);
   };
 
-  return useMemo(() => {
+  const drawn = useMemo(() => {
     const things: SizedThing[] = [];
     const unsized: UnsizedThing[] = [];
     const sizedPinKeys = new Set<string>();
@@ -184,6 +184,9 @@ export function useSizedThings(opts: {
     // sizeOf reads defs and byKey, both listed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bound, front, pins, room.metadata, openShelves, onShelves, shelfContents, defs, byKey, band]);
+  // Still asking for the sizes or where things stand: a plan drawn now would
+  // redraw them, and move what is below it (#7791).
+  return { ...drawn, pending: defsPending || shelvesPending };
 }
 
 /** One thing at its size. On a shelf, a drag along it reorders the row. */

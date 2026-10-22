@@ -221,6 +221,8 @@ export const FAST = {
 };
 
 export const IMPACT_SHARDS = 6;
+/** The impact run's job for shard n of IMPACT_SHARDS. */
+export const impactShardJob = (n) => `test-${n}`;
 /** Steps of the test job that speak for a commit or deploy: a shard of the impact run is neither a verdict
  *  on main nor a release, so ci-impact.yml leaves them out. */
 export const IMPACT_DROPS = [
@@ -271,6 +273,11 @@ export function dropSteps(job, names) {
 // CI stack of its own. A first cut ran four apis in one job and broke 14 files (a job one api made, taken by
 // another's worker); its fix, a database each, broke 59 (what the CI image bakes into the one database).
 // A stack per job is the one that matches CI. The last job builds the map from every shard's part.
+// ONE SHARD AT A TIME (#7751): the shards run as a chain, each needing the one before, not as a matrix. A matrix
+// queued all six on `ci-test` at 06:23, and z87's one slot carries that label and every reserved lane, so on
+// 2026-10-22 a critical fix waited behind them: Forgejo hands a runner the waiting job with the oldest `updated`
+// (v15 models/actions/task.go), and a job blocked by `needs:` gets a fresh one when it unblocks, so a chain joins
+// the line one shard at a time, behind whatever waited first. About 90 minutes a night instead of 45.
 export const IMPACT = {
   lane: { "pr-check": "pr-check", "ci-test": "ci-test" },
   on: ["  workflow_dispatch:", "  schedule:", "    # Nightly, clear of the 09:41 heartbeat and the 08:00 bake.", "    # SINGLE SLOT OK: a lost night leaves yesterday's map, and selection judges a change against", "    # the map's own commit, so an older map is still a correct one.", "    - cron: '23 6 * * *'"],
@@ -283,16 +290,22 @@ export const IMPACT = {
   transform(body) {
     let job = jobLines(body, "test");
     job = dropSteps(job, IMPACT_DROPS);
-    const ri = job.findIndex((l) => l === "    runs-on: ci-test");
-    job.splice(ri + 1, 0, "    strategy:", "      fail-fast: false", "      matrix:", `        shard: [${Array.from({ length: IMPACT_SHARDS }, (_, i) => i + 1).join(", ")}]`);
-    const set = (from, to) => {
-      const i = job.findIndex((l) => l === from);
+    const set = (lines, from, to) => {
+      const i = lines.findIndex((l) => l === from);
       if (i < 0) throw new Error(`ci.yml's test job has no line "${from.trim()}"`);
-      job[i] = to;
+      lines[i] = to;
     };
-    set('      ATTRIBUTION: ""', '      ATTRIBUTION: "1"');
-    set('      IMPACT_SHARD: ""', `      IMPACT_SHARD: \${{ matrix.shard }}/${IMPACT_SHARDS}`);
-    return ["jobs:", ...trimEnd(job)];
+    set(job, '      ATTRIBUTION: ""', '      ATTRIBUTION: "1"');
+    const shards = [];
+    for (let n = 1; n <= IMPACT_SHARDS; n++) {
+      const one = [...job];
+      set(one, "  test:", `  ${impactShardJob(n)}:`);
+      set(one, '      IMPACT_SHARD: ""', `      IMPACT_SHARD: ${n}/${IMPACT_SHARDS}`);
+      // Every shard runs: a red one still leaves its part for the map, which says what it is missing.
+      if (n > 1) one.splice(1, 0, `    needs: ${impactShardJob(n - 1)}`, "    if: ${{ !cancelled() }}");
+      shards.push(...trimEnd(one), "");
+    }
+    return ["jobs:", ...trimEnd(shards)];
   },
   tail: [
     "",
@@ -300,7 +313,7 @@ export const IMPACT = {
     "  # shard would never select that shard's tests. scripts/test-impact.mjs assemble.",
     "  impact-map:",
     "    runs-on: pr-check",
-    "    needs: [test]",
+    `    needs: [${Array.from({ length: IMPACT_SHARDS }, (_, i) => impactShardJob(i + 1)).join(", ")}]`,
     "    if: always()",
     "    timeout-minutes: 10",
     "    steps:",

@@ -17,9 +17,10 @@ export {
   type FlowComponent,
   type FlowRegistry,
 } from "./context";
-export { useCan, useCapabilities, useRoleAtLeast, capabilityAllows, myCapabilitiesKey, type MyCapabilities, type CapabilitySource } from "./can";
+export { useCan, useCapabilities, useMayDelete, useRoleAtLeast, capabilityAllows, myCapabilitiesKey, type MyCapabilities, type CapabilitySource } from "./can";
 export { rowOpen, ROW_OWN_CONTROLS } from "./row-open";
-export { EntityActionsBar } from "./EntityActionsBar";
+export { EntityActionsBar, useRecordActions } from "./EntityActionsBar";
+export { HoldsQuiet, OnceQuiet, useOnceQuiet } from "./OnceQuiet";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { AllergenPills, allergenWords } from "./AllergenPills";
 export { RecordDisposition } from "./RecordDisposition";
@@ -33,6 +34,7 @@ export { useLater, type Later } from "./use-later";
 export { useFieldDraft, type FieldDraft } from "./use-field-draft";
 export { useSentWords, type SentWords } from "./use-sent-words";
 export { useFieldPresentation, PresentationGate, type FieldPresentation } from "./field-presentation";
+export { stillAsking, useStillAsking } from "./still-asking";
 export { refreshAfterStockChange } from "./stock-refresh";
 export { runAction, useRunAction, useRunWithUndo, offerUndo, undoStepsOf, refreshAfterAction, queryShowsKinds, affectedKindsOf, type ActionBody, type ActionRun, type ActionAffected, type KindMeta, type UndoStep, type RunOptions } from "./run-action";
 export { changeWorkspaceShape, useChangeWorkspaceShape, afterWorkspaceShapeChange, queryFollowsWorkspaceShape, type ShapeMeta, type ChangeShapeOptions } from "./workspace-shape";
@@ -202,6 +204,7 @@ export {
   collectionNameOf,
   type DetailPanelComponent,
   ContributedViewToolbar,
+  useViewToolbarPending,
   registerViewToolbar,
   ContributedTagToolbar,
   registerTagToolbar,
@@ -210,6 +213,7 @@ export {
   type TagToolbarCtx,
   type TagToolbarComponent,
 } from "./panels";
+export { groupBySection, type SectionLike } from "./field-sections";
 export { Modal } from "./Modal";
 export { RecordFormModal } from "./RecordFormModal";
 export { SHORTCUTS, isShortcut, keyCap, typingIn, OPEN_SHORTCUTS_EVENT, type Shortcut, type KeyLike } from "./shortcuts";

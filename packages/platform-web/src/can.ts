@@ -80,3 +80,21 @@ export function useRoleAtLeast(roles: readonly OrgRoleName[], source?: Pick<Capa
   const ctxRole = useContext(PlatformWebContext)?.role ?? null;
   return roleSatisfies(source ? source.role : ctxRole, roles);
 }
+
+/** May the viewer delete a record of `kind`? The kind's own rule, answered
+ *  for them by /entity-kinds (can_delete), the one the delete door applies
+ *  (#7922, #7888). False until known; a host that cannot say, or a server
+ *  that sends no answer, draws the button as before. */
+export function useMayDelete(kind: string): boolean {
+  const ctx = useContext(PlatformWebContext);
+  const list = ctx?.api.listEntityKinds;
+  const q = useQuery({
+    queryKey: ["entity-kinds-delete", ctx?.orgSlug],
+    queryFn: () => list!(ctx!.orgSlug),
+    enabled: !!list && !!ctx?.orgSlug,
+    staleTime: 60_000,
+  });
+  if (!list) return true;
+  if (!q.data) return false;
+  return q.data.items.find((k) => k.id === kind)?.can_delete !== false;
+}

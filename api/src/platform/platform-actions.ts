@@ -253,6 +253,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       choices: { label: "For a dropdown: the choices, comma-separated", type: "text" },
       unit: { label: "For a number: its unit (mm, g, in)", type: "text" },
       ref_kind: { label: "For a relation: the kind it points at", type: "text" },
+      required: { label: "Must be filled in", type: "boolean" },
     },
     version: "0.1.0",
   },

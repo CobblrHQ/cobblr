@@ -115,7 +115,7 @@ import { approvalRequestsRouter } from "./routes/approval-requests.js";
 import { recordMoveRouter } from "./routes/record-move.js";
 import { requireAuth } from "./auth/middleware.js";
 import { withTenant } from "./middleware/tenant.js";
-import { projectFieldScopes } from "./platform/field-scope-projection.js";
+import { FieldNotReadableError, projectFieldScopes } from "./platform/field-scope-projection.js";
 import { resolveInstance } from "./middleware/instance.js";
 import { dispatchInstanceItems } from "./modules/mount.js";
 import { qrScanRouter } from "./routes/qr-scan.js";
@@ -680,7 +680,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError) {
+      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError || err instanceof FieldNotReadableError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

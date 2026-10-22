@@ -4,6 +4,11 @@
 // terminal state). A summary (count, success rate, filament, hours) + the recent
 // prints, over a window. Per-printer rollups so you can see which machine did
 // what. No new storage — it's a read model on the jobs table.
+//
+// A machine finishing a print is not a good part (#7891). Success counts the
+// bed-clear verdict: a completed print judged good. A scrapped one is counted
+// apart, and one nobody has judged yet (or a cloud task with no verdict at all)
+// is left out of the rate rather than guessed either way.
 
 import { Router } from "express";
 import { sql } from "kysely";
@@ -15,6 +20,15 @@ export const historyRouter = Router({ mergeParams: true });
 
 const TERMINAL = ["completed", "failed", "cancelled"];
 const n = (v: unknown) => (v == null ? 0 : Number(v));
+
+/** Good parts over the attempts that have a verdict, as a whole percent; null with none. */
+export function successRate(c: { total: number; good: number; unjudged: number }): number | null {
+  const judged = c.total - c.unjudged;
+  return judged > 0 ? Math.round((c.good / judged) * 100) : null;
+}
+const GOOD = sql<number>`count(*) filter (where status = 'completed' and outcome = 'good')`;
+const SCRAPPED = sql<number>`count(*) filter (where status = 'completed' and outcome = 'scrap')`;
+const PARTLY_SCRAPPED = sql<number>`count(*) filter (where status = 'completed' and outcome = 'good' and outcome_scrap_qty > 0)`;
 
 // Bambu/Orca print-PROFILE names are often Chinese (e.g. "成年人版 0.2mm 层高,
 // 3 层墙, 15% 填充"). Bambu translates the model title but NOT the profile, so we
@@ -52,6 +66,9 @@ historyRouter.get(
         sql<number>`count(*) filter (where status = 'completed')`.as("completed"),
         sql<number>`count(*) filter (where status = 'failed')`.as("failed"),
         sql<number>`count(*) filter (where status = 'cancelled')`.as("cancelled"),
+        GOOD.as("good"),
+        SCRAPPED.as("scrapped"),
+        PARTLY_SCRAPPED.as("partly_scrapped"),
         sql<number>`coalesce(sum((material_grams)::numeric) filter (where status = 'completed'), 0)`.as("filament_g"),
         sql<number>`coalesce(sum(extract(epoch from (updated_at - created_at))) filter (where status = 'completed'), 0)`.as("seconds"),
       ])
@@ -67,6 +84,7 @@ historyRouter.get(
         sql<string>`to_char(date_trunc('day', updated_at), 'YYYY-MM-DD')`.as("day"),
         sql<number>`count(*) filter (where status = 'completed')`.as("completed"),
         sql<number>`count(*) filter (where status = 'failed')`.as("failed"),
+        SCRAPPED.as("scrapped"),
         sql<number>`coalesce(sum((material_grams)::numeric) filter (where status = 'completed'), 0)`.as("filament_g"),
       ])
       .groupBy("day")
@@ -112,7 +130,7 @@ historyRouter.get(
       .selectFrom("digifab_jobs")
       .where("status", "in", TERMINAL)
       .where("updated_at", ">", since)
-      .select(["id", "file_ref", "metadata", "connection_id", "target_device", "status", "material_grams", "cost_amount", "cost_currency", "created_at", "updated_at"])
+      .select(["id", "file_ref", "metadata", "connection_id", "target_device", "status", "outcome", "outcome_good_qty", "outcome_scrap_qty", "material_grams", "cost_amount", "cost_currency", "created_at", "updated_at"])
       .orderBy("updated_at", "desc")
       // list-cap-ok: the latest 50 finished jobs are the feed; the rollups beside it count every job
       .limit(50)
@@ -131,6 +149,8 @@ historyRouter.get(
         sql<number>`count(*)`.as("total"),
         sql<number>`count(*) filter (where status = 'completed')`.as("completed"),
         sql<number>`count(*) filter (where status = 'failed')`.as("failed"),
+        GOOD.as("good"),
+        SCRAPPED.as("scrapped"),
         sql<number>`coalesce(sum((material_grams)::numeric) filter (where status = 'completed'), 0)`.as("filament_g"),
       ])
       .execute();
@@ -139,7 +159,7 @@ historyRouter.get(
     // richer than the MQTT-observed rows: model name (translated), cover thumbnail,
     // weight, duration. One row per cloud task; supersedes digifab_observed_prints
     // for Bambu (which the pump can no longer name well).
-    type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; filament_g: number | null; cost: number | null; cost_currency: string | null; at: string; duration_s: number };
+    type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; outcome: "good" | "scrap" | null; good_qty: number | null; scrap_qty: number | null; filament_g: number | null; cost: number | null; cost_currency: string | null; at: string; duration_s: number };
     const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["task_id", "raw", "captured_at"]).execute();
     const taskItems: Item[] = taskRows
       .map((t) => {
@@ -156,6 +176,10 @@ historyRouter.get(
           connection_id: null,
           device_id: null,
           status: r.status === 3 ? "failed" : "completed",
+          // A cloud task has no bed-clear verdict.
+          outcome: null,
+          good_qty: null,
+          scrap_qty: null,
           filament_g: r.weight != null ? Number(r.weight) : null,
           // A cloud task names no spool, so it cannot be priced.
           cost: null,
@@ -168,13 +192,14 @@ historyRouter.get(
     const taskHours = taskItems.reduce((h, t) => h + t.duration_s / 3600, 0);
 
     // by-device: jobs + cloud tasks, keyed by resolved device name.
-    type DeviceRow = { name: string; total: number; completed: number; failed: number; filament_g: number; cost: number | null; unpriced: number };
+    type DeviceRow = { name: string; total: number; completed: number; failed: number; good: number; scrapped: number; unjudged: number; success: number | null; filament_g: number; cost: number | null; unpriced: number };
     const byName = new Map<string, DeviceRow>();
-    const blank = (name: string): DeviceRow => ({ name, total: 0, completed: 0, failed: 0, filament_g: 0, cost: 0, unpriced: 0 });
+    const blank = (name: string): DeviceRow => ({ name, total: 0, completed: 0, failed: 0, good: 0, scrapped: 0, unjudged: 0, success: null, filament_g: 0, cost: 0, unpriced: 0 });
     for (const r of byDeviceRows) {
       const name = nameOf(r.connection_id, r.target_device);
       const e = byName.get(name) ?? blank(name);
       e.total += n(r.total); e.completed += n(r.completed); e.failed += n(r.failed); e.filament_g += n(r.filament_g);
+      e.good += n(r.good); e.scrapped += n(r.scrapped); e.unjudged += n(r.completed) - n(r.good) - n(r.scrapped);
       byName.set(name, e);
     }
     const deviceCost = new Map<string, Array<{ amount: number; currency: string; day: string }>>();
@@ -192,11 +217,12 @@ historyRouter.get(
     for (const t of taskItems) {
       const e = byName.get(t.device) ?? blank(t.device);
       e.total += 1;
-      if (t.status === "completed") { e.completed += 1; e.unpriced += 1; }
+      if (t.status === "completed") { e.completed += 1; e.unjudged += 1; e.unpriced += 1; }
       if (t.status === "failed") e.failed += 1;
       e.filament_g += t.filament_g ?? 0;
       byName.set(t.device, e);
     }
+    for (const e of byName.values()) e.success = successRate(e);
 
     // recent: union jobs + cloud tasks, newest first.
     const recentMerged: Item[] = [
@@ -213,6 +239,9 @@ historyRouter.get(
         connection_id: r.connection_id,
         device_id: r.target_device,
         status: r.status,
+        outcome: r.status === "completed" ? r.outcome : null,
+        good_qty: r.outcome_good_qty,
+        scrap_qty: r.outcome_scrap_qty,
         filament_g: r.material_grams == null ? null : Number(r.material_grams),
         cost: r.cost_amount == null ? null : round(Number(r.cost_amount)),
         cost_currency: r.cost_amount == null ? null : r.cost_currency || workspaceCurrency,
@@ -227,11 +256,11 @@ historyRouter.get(
     const taskFilament = taskItems.reduce((g, t) => g + (t.filament_g ?? 0), 0);
 
     // Dense daily series (every day in the window, zero-filled) — jobs + tasks.
-    const byDay = new Map<string, { completed: number; failed: number; filament_g: number }>();
-    for (const r of seriesRows) byDay.set(r.day, { completed: n(r.completed), failed: n(r.failed), filament_g: Math.round(n(r.filament_g)) });
+    const byDay = new Map<string, { completed: number; failed: number; scrapped: number; filament_g: number }>();
+    for (const r of seriesRows) byDay.set(r.day, { completed: n(r.completed), failed: n(r.failed), scrapped: n(r.scrapped), filament_g: Math.round(n(r.filament_g)) });
     for (const t of taskItems) {
       const day = t.at.slice(0, 10);
-      const e = byDay.get(day) ?? { completed: 0, failed: 0, filament_g: 0 };
+      const e = byDay.get(day) ?? { completed: 0, failed: 0, scrapped: 0, filament_g: 0 };
       if (t.status === "completed") { e.completed += 1; e.filament_g += Math.round(t.filament_g ?? 0); }
       else if (t.status === "failed") e.failed += 1;
       byDay.set(day, e);
@@ -239,20 +268,32 @@ historyRouter.get(
     // `days` daily buckets ending TODAY (not `since`, which lands on yesterday —
     // today's prints are counted by the summary via `updated_at > since`, so the
     // trend must include today or the last bar visibly undercounts).
-    const series: Array<{ date: string; completed: number; failed: number; filament_g: number; cost: number | null }> = [];
+    const series: Array<{ date: string; completed: number; failed: number; scrapped: number; filament_g: number; cost: number | null }> = [];
     const startMs = Date.now() - (days - 1) * 86_400_000;
     for (let i = 0; i < days; i++) {
       const date = new Date(startMs + i * 86_400_000).toISOString().slice(0, 10);
-      series.push({ date, ...(byDay.get(date) ?? { completed: 0, failed: 0, filament_g: 0 }), cost: round(await money(costParts.filter((p) => p.day === date))) });
+      series.push({ date, ...(byDay.get(date) ?? { completed: 0, failed: 0, scrapped: 0, filament_g: 0 }), cost: round(await money(costParts.filter((p) => p.day === date))) });
     }
     const unpriced = costRows.reduce((a, r) => a + n(r.unpriced), 0) + taskCompleted;
+    const total = n(summary?.total) + taskItems.length;
+    const good = n(summary?.good);
+    const scrapped = n(summary?.scrapped);
+    // Completed with no verdict yet, and every cloud task (it never gets one).
+    const unjudged = n(summary?.completed) - good - scrapped + taskCompleted;
 
     res.json({
       days,
       series,
       summary: {
-        total: n(summary?.total) + taskItems.length,
+        total,
+        // `completed` is the machine finishing; `good` is what came out usable.
         completed: n(summary?.completed) + taskCompleted,
+        good,
+        scrapped,
+        // Judged good with some of the plate scrapped ("9 good, 1 scrap").
+        partly_scrapped: n(summary?.partly_scrapped),
+        unjudged,
+        success: successRate({ total, good, unjudged }),
         failed: n(summary?.failed) + taskFailed,
         cancelled: n(summary?.cancelled),
         filament_g: Math.round(n(summary?.filament_g) + taskFilament),
