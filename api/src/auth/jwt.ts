@@ -33,7 +33,7 @@ export interface SessionClaims {
 }
 
 export async function signSession(userId: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   const exp = now + env.SESSION_TTL_DAYS * 24 * 60 * 60;
   return new SignJWT({})
     .setProtectedHeader({ alg: ALG })
@@ -59,7 +59,7 @@ export async function signAppToken(
   appSlug: string,
   editKinds: readonly string[],
 ): Promise<{ token: string; expires_in: number }> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   const exp = now + APP_TOKEN_TTL_SECONDS;
   const token = await new SignJWT({ edits: [...editKinds] })
     .setProtectedHeader({ alg: ALG })
@@ -96,7 +96,7 @@ export function instanceOfGrants(): string {
  *  holds a request carrying it to GETs in that one workspace and refuses it
  *  once the row is ended or expired, so it is read-only and revocable. */
 export async function signShareView(userId: string, sessionId: string, expiresAt: Date): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   return new SignJWT({})
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -108,7 +108,7 @@ export async function signShareView(userId: string, sessionId: string, expiresAt
 }
 
 export async function signMcpReadGrant(userId: string, orgSlug: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   return new SignJWT({ ins: instanceOfGrants() })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -134,7 +134,7 @@ export async function signMcpReadGrant(userId: string, orgSlug: string): Promise
 const MCP_WRITE_TTL_SECONDS = 60; // one tool call's worth
 
 export async function signMcpWriteGrant(userId: string, orgSlug: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   return new SignJWT({})
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)
@@ -168,7 +168,7 @@ export async function signImpersonation(
   sessionId: string,
   ttlSeconds: number,
 ): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now() / 1000;
   return new SignJWT({ typ: "impersonation", act: targetId, org: orgId, sid: sessionId })
     .setProtectedHeader({ alg: ALG })
     .setIssuer(ISSUER)

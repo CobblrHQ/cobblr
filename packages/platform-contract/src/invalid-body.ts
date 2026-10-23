@@ -17,6 +17,7 @@ export interface BodyIssue {
   message: string;
   maximum?: number | bigint;
   minimum?: number | bigint;
+  inclusive?: boolean;
   type?: unknown;
   expected?: unknown;
   received?: unknown;
@@ -47,8 +48,9 @@ export function issueSentence(issue: BodyIssue): string {
     case "too_small":
       if (issue.type === "string") return Number(issue.minimum) <= 1 ? `${field} can't be empty.` : `${field} needs at least ${countOf(issue.minimum ?? 0, "character")}.`;
       if (issue.type === "array") return Number(issue.minimum) <= 1 ? `${field} needs at least one entry.` : `${field} needs at least ${n(issue.minimum)} entries.`;
-      return `${field} must be at least ${n(issue.minimum)}.`;
+      return issue.inclusive === false ? `${field} must be more than ${n(issue.minimum)}.` : `${field} must be at least ${n(issue.minimum)}.`;
     case "invalid_type":
+      if (issue.expected === "integer") return `${field} must be a whole number.`;
       return issue.received === "undefined" ? `${field} is missing.` : `${field} must be ${issue.expected === "string" ? "text" : `a ${String(issue.expected)}`}.`;
     case "invalid_enum_value":
       return issue.options?.length ? `${field} must be one of: ${issue.options.join(", ")}.` : `${field} is not one of the choices.`;

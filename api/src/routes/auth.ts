@@ -1645,14 +1645,33 @@ authRouter.post("/password/reset", async (req, res, next) => {
     }
 
     const newHash = await hashPassword(parsed.data.password);
-    await meta.updateTable("auth_password_reset_tokens").set({ consumed_at: new Date() }).where("id", "=", row.id).execute();
-    await meta
-      .updateTable("users")
-      // tokens_valid_from = now() revokes every existing session/app JWT — a
-      // password reset is exactly when a stolen token must die. Audit #6.
-      .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: new Date() })
-      .where("id", "=", row.user_id)
-      .execute();
+    const changed = await meta.transaction().execute(async (trx) => {
+      const at = new Date();
+      const claimed = await trx
+        .updateTable("auth_password_reset_tokens")
+        .set({ consumed_at: at })
+        .where("id", "=", row.id)
+        .where("consumed_at", "is", null)
+        .where("expires_at", ">", at)
+        .returning("id")
+        .executeTakeFirst();
+      if (!claimed) return false;
+      await trx
+        .updateTable("users")
+        .set({ password_hash: newHash, must_reset_password: false, tokens_valid_from: at })
+        .where("id", "=", row.user_id)
+        .execute();
+      return true;
+    });
+    if (!changed) {
+      const current = await meta.selectFrom("auth_password_reset_tokens")
+        .select(["consumed_at", "expires_at"]).where("id", "=", row.id).executeTakeFirst();
+      const expired = current && !current.consumed_at && current.expires_at <= new Date();
+      res.status(410).json({ error: expired
+        ? { code: "expired", message: "This reset link has expired." }
+        : { code: "already_consumed", message: "This reset link was already used." } });
+      return;
+    }
 
     const firstOrg = await meta
       .selectFrom("org_memberships")

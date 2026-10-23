@@ -16,6 +16,8 @@ export interface UseUnits {
   custom: PlatformUnitDef[];
   displayMode: UnitDisplayMode;
   loading: boolean;
+  /** the vocabulary has answered, or its first try failed: what waits on it can draw */
+  settled: boolean;
   /** render qty + unit per the workspace display mode; the word agrees with
    *  the count, using `known` (a table's declared words) for a unit the
    *  vocabulary does not hold */
@@ -59,6 +61,7 @@ export function useUnits(): UseUnits {
       custom,
       displayMode,
       loading: q.isLoading,
+      settled: !q.isLoading || q.failureCount > 0,
       format: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known),
       wordFor: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known).replace(/^\S+\s*/, ""),
       unit: (raw) => formatUnit(raw, all, displayMode),
@@ -67,5 +70,5 @@ export function useUnits(): UseUnits {
       convert: (value, fromRaw, toRaw) => convertQuantity(value, fromRaw, toRaw, all),
       lens: unitLens(all),
     };
-  }, [q.data, q.isLoading]);
+  }, [q.data, q.isLoading, q.failureCount]);
 }

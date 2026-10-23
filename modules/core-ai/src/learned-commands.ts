@@ -295,6 +295,19 @@ export function fillSlots(text: string, values: Record<string, string>): string 
   return text.replace(/\{([a-z0-9_]+)\}/gi, (_, k: string) => values[k] ?? `{${k}}`);
 }
 
+/** What a bound command will do, in the person's own words: its description
+ *  with the blanks filled when it has blanks, otherwise the sentence in the
+ *  template's shape with what they typed in it. Never a sentence with a blank
+ *  still in it: "add a place called {name} in {parent}" was the whole offer,
+ *  reply and card, for a place the person had just named (#7837). */
+export function sayCommand(cmd: Pick<LearnedCommand, "pattern" | "slots" | "template">, message: string, description?: string | null): string | null {
+  const values = slotValues(cmd, message);
+  if (!values) return null;
+  const said = fillSlots(description && /\{[a-z0-9_]+\}/i.test(description) ? description : cmd.template, values).trim();
+  if (!said || /\{[a-z0-9_]+\}/i.test(said)) return null;
+  return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
 export function bindCommand(cmd: LearnedCommand, message: string): Operation[] | null {
   const values = slotValues(cmd, message);
   if (!values) return null;

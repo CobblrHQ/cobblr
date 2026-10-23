@@ -399,6 +399,7 @@ export interface DigifabJobReview {
 export interface LaserMaterialTag { material: string; thickness_mm: number; width_mm: number; height_mm: number }
 export interface ResinStockChoice { id: string; kind: string; name: string; shape: string; unit: string; remaining: number; used: number; revision: number; slot?: string; maintenance_due?: boolean; low?: boolean }
 export interface MachineStationView {
+  connection_error?: string | null;
   resin?: { station: string; loaded: ResinStockChoice[]; canStart: boolean; warning: string; stockError: string | null; postprocess: Array<{ job_id: string; file_ref: string; metadata?: Record<string, unknown>; wash_done: boolean; cure_done: boolean }> };
   kind?: string | null;
   screen_kind?: "laser" | "print" | "cnc" | "cutter" | "resin" | "large-format" | "bench" | "production-test" | null;

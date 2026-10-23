@@ -15,12 +15,12 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type Kysely, type RawBuilder } from "kysely";
 import { csvCell } from "@cobblr/platform-contract/csv";
-import { daysUntilField, likeNeedle, platform, stockDisclosureFromConfig, unreadableFieldsOf, valueSearchWhere, type FilterPredicate } from "@cobblr/platform-contract";
-import { asMeasure, measureTokens } from "@cobblr/platform-contract/measure";
+import { daysUntilField, platform, stockDisclosureFromConfig, unreadableFieldsOf, type FilterPredicate } from "@cobblr/platform-contract";
+import { asMeasure } from "@cobblr/platform-contract/measure";
 import { formatMoneyPlain, moneyStorageOf, storedCents } from "@cobblr/platform-contract/money";
 import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { floorDelta } from "../stock-floor.js";
-import { applyPartFilters, applyPartSort } from "./part-query.js";
+import { applyPartFilters, applyPartSearch, applyPartSort } from "./part-query.js";
 import { suggestKindsFromPhoto } from "./suggest-kinds.js";
 import { instanceOf, instanceQtyUnit, partKindOf, sessionUser, tenantContext, tenantDb, type InventoryDB } from "../db.js";
 import { asyncHandler, badBody, requireCapability, requireRole } from "./util.js";
@@ -267,14 +267,6 @@ function needsValueSql(names: readonly string[]): RawBuilder<boolean> {
 const Truthy = z.union([z.literal("1"), z.literal("true"), z.literal("0"), z.literal("false")]);
 const isTruthy = (v: string | undefined): boolean => v === "1" || v === "true";
 
-/** A search that is a number. HomeBox's `#NNN` asks for that asset number
- *  alone; a bare number may be one too, or the number in a name, a barcode or
- *  a model ("Gloves M 563543"), so it finds either (#5445). */
-function assetNumberSearch(raw: string): { n: number; only: boolean } | null {
-  const m = raw.match(/^(#)?\s*0*(\d+)\s*$/);
-  return m ? { n: Number(m[2]), only: m[1] === "#" } : null;
-}
-
 const ListQuery = z.object({
   search: z.string().optional(),
   /** The search word under the name every other list and the workspace
@@ -440,20 +432,6 @@ partsRouter.get("/dashboard", asyncHandler(async (req, res) => {
   res.json({ total: total.total, low });
 }));
 
-/** What search_blob holds, lower-cased (migrations 0005). */
-const BLOB_COLUMNS = ["name", "notes", "serial_number", "model_number", "manufacturer"] as const;
-const blobHides = (hidden: ReadonlySet<string> | undefined) => BLOB_COLUMNS.some((c) => hidden?.has(c));
-
-/** A search over the blob, or, when the reader may not read one of the
- *  columns it holds (a serial behind assets' permission, notes behind a
- *  workspace's own scope), over the columns they may read: the blob would
- *  find a part by what the hidden column says (#7838). */
-function blobMatch(hidden: ReadonlySet<string> | undefined, like: string): RawBuilder<boolean> {
-  if (!blobHides(hidden)) return sql<boolean>`p.search_blob like ${like}`;
-  const readable = BLOB_COLUMNS.filter((c) => !hidden!.has(c));
-  return sql<boolean>`(${sql.join(readable.map((c) => sql`lower(coalesce(${sql.ref(`p.${c}`)}, '')) like ${like}`), sql` or `)})`;
-}
-
 partsRouter.get(
   "/",
   asyncHandler(async (req, res) => {
@@ -491,33 +469,7 @@ partsRouter.get(
       query = query.where("p.instance", "=", instanceOf(req));
     }
 
-    if (filter.search) {
-      const raw = filter.search.trim();
-      const asset = assetNumberSearch(raw);
-      if (asset?.only) {
-        query = query.where("p.asset_id", "=", asset.n);
-      } else if (asset) {
-        query = query.where((eb) => eb.or([eb("p.asset_id", "=", asset.n), sql<boolean>`p.search_blob like ${likeNeedle(raw)}`]));
-      } else {
-        // H8: one trigram-GIN-indexed column (search_blob) instead of a
-        // 5-column OR of LIKE '%…%' (which can't use indexes and
-        // seq-scans at scale). search_blob is already lower()'d and
-        // concatenates name + notes + serial + model + manufacturer, so
-        // this matches the old behaviour but is an index scan at 40k+.
-        // A value in the search ("10k", "100 nF 16V") is found by value
-        // (±1%, in its unit) as well as by text, and never as the text of a
-        // part holding that number in another unit (the 10 kHz crystal).
-        const read = measureTokens(raw);
-        const hidden = unreadableFieldsOf(req);
-        if (read) {
-          query = query.where((eb) =>
-            valueSearchWhere(eb, read, { text: (w) => [blobMatch(hidden, likeNeedle(w))], readings: blobHides(hidden) ? undefined : "p.measures" }),
-          );
-        } else {
-          query = query.where(blobMatch(hidden, likeNeedle(raw)));
-        }
-      }
-    }
+    query = applyPartSearch(query, filter.search, { table: "p", unreadable: unreadableFieldsOf(req) });
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
     if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
     if (filter.state) query = query.where("p.state", "=", filter.state);
@@ -859,26 +811,7 @@ partsRouter.get(
       .where("p.instance", "=", instanceOf(req));
 
     if (readsValues(filter)) await refreshMeasureReadings(db, { instance: instanceOf(req) });
-    if (filter.search) {
-      const raw = filter.search.trim();
-      const asset = assetNumberSearch(raw);
-      if (asset?.only) {
-        query = query.where("p.asset_id", "=", asset.n);
-      } else {
-        // Only the columns this reader may read (#7838).
-        const hidden = unreadableFieldsOf(req);
-        const searched = (["name", "serial_number", "model_number", "manufacturer"] as const).filter((c) => !hidden?.has(c));
-        const words = (w: string) => {
-          const like = likeNeedle(w);
-          return searched.map((c) => sql<boolean>`lower(coalesce(${sql.ref(`p.${c}`)}, '')) like ${like}`);
-        };
-        // The same value-aware search as the list (valueSearchWhere).
-        const read = measureTokens(raw);
-        query = read
-          ? query.where((eb) => valueSearchWhere(eb, read, { text: words, readings: blobHides(hidden) ? undefined : "p.measures" }))
-          : query.where((eb) => eb.or([...(asset ? [eb("p.asset_id", "=", asset.n)] : []), ...words(raw)]));
-      }
-    }
+    query = applyPartSearch(query, filter.search, { table: "p", unreadable: unreadableFieldsOf(req) });
     if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
     if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
     if (filter.state) query = query.where("p.state", "=", filter.state);
@@ -1718,10 +1651,6 @@ partsRouter.delete(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
 
-    // A card's holdings outlive it (stock in an ambulance is not deleted with
-    // the closet's record), and a deleted holding leaves no link behind.
-    await releaseForDelete(holdingsCtx(req), id);
-
     const deleted = await db
       .deleteFrom("inventory_parts")
       .where("id", "=", id)
@@ -1732,6 +1661,10 @@ partsRouter.delete(
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
     }
+    // A card's holdings outlive it (stock in an ambulance is not deleted with
+    // the closet's record), and a deleted holding leaves no link behind. Only
+    // once the row is gone: a delete that fails keeps every link (#7905).
+    await releaseForDelete(holdingsCtx(req), id);
 
     await platform().activity.log({
       orgId: ctx.org.id,

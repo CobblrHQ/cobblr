@@ -449,14 +449,10 @@ export async function requireAuth(
       });
       return;
     }
-    // Session revocation: reject a session/app JWT issued before the user's
-    // last password change. API tokens (cbt_) have their own revoked_at and
-    // carry no iat, so they're exempt here. Compared at second granularity
-    // because JWT `iat` is whole seconds — so a token re-minted in the same
-    // second as the cutoff (the self-service change re-mint) stays valid.
-    // See 2026-06-10 audit #6.
+    // Keep subsecond precision so signing out also ends a session minted
+    // earlier in this second. Older tokens' integer issue times still compare.
     if (tokenIssuedAt !== null && user.tokens_valid_from) {
-      const cutoffSec = Math.floor(new Date(user.tokens_valid_from).getTime() / 1000);
+      const cutoffSec = new Date(user.tokens_valid_from).getTime() / 1000;
       if (tokenIssuedAt < cutoffSec) {
         res.status(401).json({
           error: { code: "session_revoked", message: "Session expired — please sign in again." },

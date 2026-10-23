@@ -78,7 +78,7 @@ async function oneRecord(
   }
   // The page's chosen fields, in its order: never more than the visibility
   // let through above, only fewer.
-  const chosen = showFields && showFields.length ? showFields.map((n) => fields.find((f) => f.name === n)).filter((f): f is PublicRecord["fields"][number] => !!f) : fields;
+  const chosen = showFields !== null ? showFields.map((n) => fields.find((f) => f.name === n)).filter((f): f is PublicRecord["fields"][number] => !!f) : fields;
   return {
     ref: publicRef(linkId, ref),
     title: p.title,

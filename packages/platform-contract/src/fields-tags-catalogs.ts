@@ -183,6 +183,18 @@ export interface PlatformPairings {
     targetId: string;
     relationshipKind: string;
   }): Promise<{ removed: number }>;
+  /** The distinct targets of this relationship's pairings of one target kind,
+   *  made before `madeBefore`, in id order, `limit` at a time after
+   *  `afterTargetId`. For a module that checks which of the records it owns
+   *  its links still point at (a heal finding links to records that are gone). */
+  listTargets(args: {
+    orgId: string;
+    targetKind: string;
+    relationshipKind: string;
+    madeBefore: Date;
+    afterTargetId?: string;
+    limit: number;
+  }): Promise<string[]>;
   /** Remove every pairing of this relationship that points AT one of these
    *  targets, whatever its source. For a module that deletes the targets it
    *  owns (a catalog taking its entries with it) and must not leave links to

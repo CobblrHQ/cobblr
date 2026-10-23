@@ -209,7 +209,7 @@ export function WireDetailModal({ open, onClose, slug, binding, onEdit }: Props)
               <summary className="uppercase tracking-widest text-[10px] text-faint dark:text-slate-500 cursor-pointer">
                 Advanced (filter / args)
               </summary>
-              <pre className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200">
+              <pre tabIndex={0} className="mt-2 p-2 rounded bg-subtle dark:bg-slate-800 font-mono text-[11px] overflow-x-auto text-content dark:text-mortar-200">
                 {JSON.stringify({ filter: binding.filter, args: binding.args }, null, 2)}
               </pre>
             </details>

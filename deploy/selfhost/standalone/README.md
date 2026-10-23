@@ -107,9 +107,12 @@ For a live backup, use the dumps instead. A `pg_dumpall` runs every day at
 UTC when neither is set) and lands in
 `${COBBLR_DATA_ROOT}/backups/daily` (Sundays are also copied to `weekly/`),
 kept for 30 days and 12 weeks, and restores anywhere. A dump only counts as
-usable above `BACKUP_MIN_BYTES`, and retention counts only usable dumps —
-otherwise a bad week silently evicts the good backups underneath it. A
-truncated dump is kept for triage and pruned on its own shorter clock.
+usable after both the dump and compression succeed, gzip integrity and the cluster
+dump completion marker pass, and the file clears `BACKUP_MIN_BYTES`. Output stays in a `.partial.*` file until it is complete,
+then becomes `.sql.gz`. Failed output is kept as `.failed` for two days.
+Existing daily and weekly archives are verified before taking a retention slot.
+Only completed dumps count toward retention, so a large incomplete dump
+cannot evict the last good backup.
 
 **If you copy the dumps off this machine**, run your copy job after
 `BACKUP_AT`, and have it wait for `${COBBLR_DATA_ROOT}/backups/last-dump`: a
@@ -138,11 +141,14 @@ docker compose up -d                                      # then everything else
 ```
 
 The dump makes and fills every database itself, which is why it goes in before
-the api starts and why psql is pointed at `postgres`. Two lines saying
-`role "cobblr" already exists` and `database "cobblr_meta" already exists` are
-the new database's own and harmless; any other `ERROR` means the restore is
-incomplete. Uploaded files (photos, attachments) live in `data/files`, not in
-the dump, so copy that folder from the old install or its backup too.
+the api starts and why psql is pointed at `postgres`. A dump taken without
+`--clean` can report `role "cobblr" already exists` and
+`database "cobblr_meta" already exists` from the fresh database. The automatic
+clean dump instead reports `current user cannot be dropped`, followed by
+`role "cobblr" already exists`, because psql is using that bootstrap role.
+These messages are harmless; any other `ERROR` means the restore is incomplete.
+Uploaded files (photos, attachments) live in `data/files`, not in the dump, so
+copy that folder from the old install or its backup too.
 
 **These dumps live on the same disk as the database.** Copy them somewhere else
 — that is the part this stack cannot do for you.

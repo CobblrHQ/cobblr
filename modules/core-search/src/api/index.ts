@@ -24,13 +24,11 @@ const SearchQuery = z.object({
   // Skip this many of EACH kind: the next page of a search is the next
   // per_kind rows of every kind that had more.
   offset: z.coerce.number().int().min(0).max(5000).default(0),
-  // Restrict to entities carrying this tag (case-insensitive). The
-  // value is passed straight through as filter._tag to every list
-  // resolver that opts into the D7 tag predicate. Resolvers that
-  // don't opt in get the filter and ignore it (it's just an unknown
-  // key), so the result silently narrows to kinds that DO support
-  // tag filtering — which is the right behavior for "show me
-  // everything tagged X".
+  // Restrict to entities carrying this tag (case-insensitive), passed as
+  // filter._tag. A kind whose resolver does not run it gets it reported
+  // unapplied by the platform and is left out: it ignored the key and
+  // answered with every record, so a tag nobody had still listed every
+  // tag in the workspace (#7840).
   tag: z.string().min(1).max(80).optional(),
 });
 
@@ -104,6 +102,7 @@ router.get("/search", (req, res, next) => {
           filter: tag ? { _tag: tag } : undefined,
           include_retired: true,
         }, viewer);
+        if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false };
         return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true };
       }),
     );

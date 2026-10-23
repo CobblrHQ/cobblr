@@ -1,3 +1,4 @@
+import { RecordRunsContext } from "./record-runs";
 import { useEscapeToClose } from "./useEscapeToClose";
 import { createPortal } from "react-dom";
 import { BackdropLayer, PopoverLayer } from "./fixed-layers";
@@ -130,6 +131,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
   // menus and pushed Actions and Share along, and the page down a row, under a
   // finger (#7781).
   return (
+    <RecordRunsContext.Provider value={data?.runs ?? null}>
     <RecordActionProvider value={surface}>
       <div ref={bar} data-testid="record-actions-bar" aria-busy={isLoading || undefined} className={`flex flex-wrap items-center gap-2 ${isLoading ? "min-h-11 sm:min-h-8 " : ""}${className ?? ""}`}>
         {!isLoading && <>
@@ -161,6 +163,7 @@ export function EntityActionsBar({ entityKind, entityId, entityLabel, className,
         </>}
       </div>
     </RecordActionProvider>
+    </RecordRunsContext.Provider>
   );
 }
 

@@ -79,7 +79,7 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
           {late && <span className="ml-1 font-medium text-ember-700 dark:text-ember-300">· overdue</span>}
           {loan.note && <span className="block text-xs text-muted">{loan.note}</span>}
         </span>
-        <RecordActionItem id="record:return" group="lifecycle" label="It's back" description="The loan ends; it is at its own place again, as it was."><button
+        <RecordActionItem id="record:return" action="platform:return" group="lifecycle" label="It's back" description="The loan ends; it is at its own place again, as it was."><button
           type="button"
           disabled={busy}
           data-testid="loan-return"
@@ -121,7 +121,7 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
 
   return (
     <>
-      <RecordActionItem id="record:lend" group="lifecycle" label="Lend…" description="Say who has it, why and until when. Its place and state are kept."><button
+      <RecordActionItem id="record:lend" action="platform:lend" group="lifecycle" label="Lend…" description="Say who has it, why and until when. Its place and state are kept."><button
         type="button"
         data-testid="lend"
         onClick={() => setAsking(true)}

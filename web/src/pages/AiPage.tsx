@@ -31,7 +31,7 @@ import { redirectNote } from "@cobblr/platform-contract/ai-models";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Info, Pencil, Plus, Sparkles, Trash2 } from "lucide-react";
-import { Modal, MoneyInput, SegmentedChoice, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, MoneyInput, SegmentedChoice, useToast, useConfirm, usePageTitle, useOnceQuiet } from "@cobblr/platform-web";
 import { formatMoney, formatStoredMoney, toCents } from "@cobblr/platform-contract/money";
 import { capabilityLabel } from "../lib/ai-capability-labels";
 import { connectionsNotUsedIn, routesWith } from "../lib/unused-connections";
@@ -116,8 +116,14 @@ export function AiPage() {
       (p) => p.enabled && defByPid.get(p.provider_id)?.capabilities[cap as never] !== undefined && (cap !== "personal-document-read" || defByPid.get(p.provider_id)?.locality === "local"),
     );
 
+  // Drawn once every section has its answer: each one lands above the buttons
+  // below it, and a finger on its way to one taps the page instead.
+  const settled = useOnceQuiet();
+
   return (
-    <div className="space-y-6">
+    <>
+    {!settled && <p className="text-sm text-muted">Loading AI settings…</p>}
+    <div className={settled ? "space-y-6" : "hidden"}>
       {/* The SERVER's answer to "is AI usable here", same signal every other AI
           surface reads (AiOffNotice on scan / match / build). This page used to
           answer that question itself by counting workspace providers, which is
@@ -323,6 +329,7 @@ export function AiPage() {
 
       <AiActivitySection slug={activeSlug} />
     </div>
+    </>
   );
 }
 

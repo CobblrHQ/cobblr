@@ -27,6 +27,18 @@ interface CheckedPayload {
 const isRestock = (e: { action_id: string; args: Record<string, unknown> | null }) =>
   /:adjust-stock$/.test(e.action_id) && typeof e.args?.delta === "number" && (e.args.delta as number) > 0;
 
+/** The one live item a typed title names, or null when it names none or two. */
+async function partNamed(db: Kysely<InventoryDB>, title: string): Promise<string | null> {
+  const named = await db
+    .selectFrom("inventory_parts")
+    .select("id")
+    .where(sql<boolean>`lower(btrim(name)) = lower(${title.trim()})`)
+    .where("archived", "=", false)
+    .limit(2)
+    .execute();
+  return named.length === 1 ? named[0]!.id : null;
+}
+
 export function registerListRestock(): void {
   // A line typed by hand whose title names exactly one item is that item's
   // line: ticking it restocks it, and the line says so before it is ticked.
@@ -41,15 +53,8 @@ export function registerListRestock(): void {
       const behind = (line?.fields as { metadata?: { source_ref?: { id?: string } } } | undefined)?.metadata?.source_ref?.id;
       if (!title || behind) return;
       const db = (await platform().tenants.getDb(ev.orgId)) as Kysely<InventoryDB>;
-      const named = await db
-        .selectFrom("inventory_parts")
-        .select("id")
-        .where(sql<boolean>`lower(btrim(name)) = lower(${title})`)
-        .where("archived", "=", false)
-        .limit(2)
-        .execute();
-      if (named.length !== 1) return;
-      const part = named[0]!.id;
+      const part = await partNamed(db, title);
+      if (!part) return;
       const kind = await platform().entities.resolvedKindForEntity(ev.orgId, "inventory:part", part);
       const linked = await platform().actions.invoke("lists:link-item", {
         orgId: ev.orgId,
@@ -62,6 +67,43 @@ export function registerListRestock(): void {
     } catch (err) {
       platform().health.notePassFailure("inventory.list-link-typed-line", ev.orgId, err);
       console.error("[inventory] a typed line was not linked to the item it names:", (err as Error).message);
+    }
+  });
+
+  // A line corrected into another thing is no longer the record its old words
+  // named: "Original milk" changed to "Substitute oat milk" restocked the milk
+  // that was not bought (#7866). The line follows its new words: the one item
+  // they name, or no item, never the old one. A correction that still names
+  // the record it points at (a capital, a stray space) is left alone.
+  platform().events.on("lists.item.renamed", "inventory", async (raw) => {
+    const ev = raw as { orgId?: string; itemId?: string; to?: string; sourceRef?: { kind?: string; id?: string } };
+    if (!ev.orgId || !ev.itemId) return;
+    try {
+      const behind = ev.sourceRef;
+      if (!behind?.id || !behind.kind) return;
+      if ((await platform().entities.baseKindOf(ev.orgId, behind.kind)) !== "inventory:part") return;
+      const title = (ev.to ?? "").trim();
+      const db = (await platform().tenants.getDb(ev.orgId)) as Kysely<InventoryDB>;
+      const stays = await db
+        .selectFrom("inventory_parts")
+        .select("id")
+        .where("id", "=", behind.id)
+        .where(sql<boolean>`lower(btrim(name)) = lower(${title})`)
+        .executeTakeFirst();
+      if (stays) return;
+      const part = title ? await partNamed(db, title) : null;
+      const kind = part ? await platform().entities.resolvedKindForEntity(ev.orgId, "inventory:part", part) : "";
+      const moved = await platform().actions.invoke("lists:link-item", {
+        orgId: ev.orgId,
+        userId: null,
+        scope: "workspace",
+        args: part ? { item_id: ev.itemId, kind, id: part, relink: true } : { item_id: ev.itemId, unlink: true },
+        event: { name: "lists.item.renamed", payload: raw as Record<string, unknown>, actor: { user_id: null, display_name: null, auth_method: "system" }, timestamp: new Date().toISOString(), trigger_type: "event" },
+      });
+      if (!actionActed(moved)) console.info(`[inventory] a corrected line was not re-pointed: ${JSON.stringify(moved).slice(0, 200)}`);
+    } catch (err) {
+      platform().health.notePassFailure("inventory.list-relink-corrected-line", ev.orgId, err);
+      console.error("[inventory] a corrected line was not re-pointed at the item it now names:", (err as Error).message);
     }
   });
 

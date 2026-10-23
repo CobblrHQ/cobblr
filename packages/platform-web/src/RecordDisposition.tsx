@@ -91,7 +91,7 @@ export function RecordDisposition({
           {sayDisposition(gone, money)}
           {gone.note && <span className="block text-xs text-muted">{gone.note}</span>}
         </span>
-        <RecordActionItem id="record:bring-back" group="lifecycle" label="Bring back" description="Return this thing to your active lists and totals."><button
+        <RecordActionItem id="record:bring-back" action="platform:bring-back" group="lifecycle" label="Bring back" description="Return this thing to your active lists and totals."><button
           type="button"
           disabled={busy}
           data-testid="bring-back"
@@ -158,7 +158,7 @@ export function RecordDisposition({
   return (
     <>
       {targets.length > 0 && (
-        <RecordActionItem id="record:give-to" group="share" label="Give to…" description="Offer this thing to someone. It leaves yours when they take it."><button
+        <RecordActionItem id="record:give-to" action="platform:offer-to" group="share" label="Give to…" description="Offer this thing to someone. It leaves yours when they take it."><button
           type="button"
           data-testid="give-to"
           onClick={() => setGiving(true)}
@@ -182,7 +182,7 @@ export function RecordDisposition({
           />
         )}
       </Modal>
-      <RecordActionItem id="record:mark-gone" group="lifecycle" label="No longer mine…" description="Record how this thing left your things. Its history is kept."><button
+      <RecordActionItem id="record:mark-gone" action="platform:mark-gone" group="lifecycle" label="No longer mine…" description="Record how this thing left your things. Its history is kept."><button
         type="button"
         data-testid="mark-gone"
         onClick={() => setAsking(true)}

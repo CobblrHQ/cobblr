@@ -1911,6 +1911,15 @@ export function platformActionChangesWorkspace(actionId: string): boolean {
   return PLATFORM_ACTIONS.find((a) => a.id === actionId)?.changes === "setup";
 }
 
+/** The face a generic record action stands for, where a kind's own module
+ *  may offer the same act: the record's Lend and It's back are what an asset's
+ *  own Lend it out and Got it back do (face "lendable"). Whoever may run the
+ *  kind's own may run the generic one on its records (may-invoke.ts, #7897). */
+const STANDS_FOR: Readonly<Record<string, string>> = { "platform:lend": "lendable", "platform:return": "lendable" };
+export function platformActionStandsFor(actionId: string): string | null {
+  return STANDS_FOR[actionId] ?? null;
+}
+
 export function platformActionMinRole(actionId: string): OrgRoleName | null {
   const floor = PLATFORM_ACTIONS.find((a) => a.id === actionId)?.min_role;
   // "grantable" is an explicit "no hard floor" — the invoke route's

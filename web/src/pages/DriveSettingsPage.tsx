@@ -138,7 +138,7 @@ function ConnectFromClaude({ slug }: { slug: string }) {
                   Copy
                 </button>
               </div>
-              <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
+              <pre tabIndex={0} className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
               <p className="text-[11px] text-amber-600 dark:text-amber-400">
                 Token shown once - it can <strong>only</strong> drive your own open tab (scope <code>drive:control</code>),
                 and only at the level you picked above.

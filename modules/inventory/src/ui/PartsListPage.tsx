@@ -36,6 +36,7 @@ import type { PartListItem, InvFieldDef } from "./api";
 import { countOf, viewQuery } from "@cobblr/platform-contract";
 import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { unappliedSentence } from "@cobblr/platform-contract/view-caveats";
 import { PART_FIELD_LABELS } from "../part-field-labels";
 
 /** One of this module's lists, as `GET /instances?module=inventory` describes it. */
@@ -498,7 +499,10 @@ export function PartsListPage() {
   // Export along the bar under a finger (#7790). Only the first draw waits,
   // and never through a failing read's retries (useStillAsking): a filter
   // changed later asks again, and the search box must stay where it is.
-  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions);
+  // The unit vocabulary too: a stepper drawn without it is drawn again as the
+  // other form, and every cell beside it moves (#7792).
+  const unitsAnswered = useUnits().settled;
+  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions) && unitsAnswered;
 
   return (
     <div className="space-y-4">
@@ -840,8 +844,7 @@ export function PartsListPage() {
           unfiltered rows read as the filtered set. */}
       {(parts.data?.pages[0]?.unapplied?.length ?? 0) > 0 && (
         <p data-testid="view-unapplied" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
-          {parts.data!.pages[0]!.unapplied!.length === 1 ? "One filter" : `${parts.data!.pages[0]!.unapplied!.length} filters`} in this view could not run, so these are not narrowed by{" "}
-          {parts.data!.pages[0]!.unapplied!.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
+          {unappliedSentence(parts.data!.pages[0]!.unapplied)}
         </p>
       )}
       {parts.isLoading && <div className="text-sm text-faint dark:text-slate-500">loading…</div>}
@@ -1537,7 +1540,11 @@ function PartsTable({
             onClick={rowOpen(() => navigate(`${basePath}/parts/${p.id}`))}
             className="group/row rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3 cursor-pointer hover:border-cobble-300 dark:hover:border-cobble-700 transition"
           >
-            <div className="flex items-start gap-3">
+            {/* Wraps: with the text made larger (200%) the box and the
+                picture leave the details too little room for the stepper,
+                which ran off the screen (#7853), so the details go under them
+                at the card's full width once they would be narrower than 12rem. */}
+            <div className="flex flex-wrap items-start gap-3">
               <SelectBox checked={selected.has(p.id)} onChange={(checked) => onToggle(p.id, checked)} label={`Select ${p.name}`} className="mt-1 shrink-0" />
               <EntityThumb
                 src={p.image_path}
@@ -1547,7 +1554,7 @@ function PartsTable({
                 color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
                 values={p.metadata as Record<string, unknown> | null}
               />
-              <div className="flex-1 min-w-0">
+              <div className="flex-1 min-w-[min(12rem,100%)]">
                 <EditableCell
                   def={nativeDef("name", "Name", "text", true)}
                   value={p.name}

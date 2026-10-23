@@ -24,7 +24,7 @@ import { Activity, Cable, CheckCircle2, ChevronRight, Plug, User, XCircle } from
 import { api, type EdgeBridge } from "../lib/api";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import {FoundDevices} from "../features/edge/FoundDevices";
-import {ServerBridge} from "../features/edge/ServerBridge";
+import {ServerBridge,useServerBridge} from "../features/edge/ServerBridge";
 import { DriverPackages } from "../features/edge/DriverPackages";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { changeWorkspaceShape, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
@@ -39,6 +39,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
   const toast = useToast();
   const qc = useQueryClient();
   const on = useEnabledModules(slug);
+  const serverBridge = useServerBridge(slug);
 
   const status = useQuery({
     queryKey: ["edge-status", slug],
@@ -177,6 +178,10 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
       </section>
 
       <ServerBridge slug={slug} />
+      {/* What follows is drawn once the server bridge has answered: its section
+          is a line high until then and several when it has, which moves every
+          button below it. */}
+      {!serverBridge.isLoading && (<>
       {/* A found machine is added as a Digital Fabrication connection: without it, nothing to add to. */}
       {on?.has("digifab")&&<FoundDevices slug={slug} bridges={tunnel}/>}
       {on?.has("digifab")&&<BrowserLaserOption/>}
@@ -243,6 +248,7 @@ export function EdgeBridgesPage({ embedded = false }: { embedded?: boolean } = {
       <section>
         <DriverPackages slug={slug} hasBridge={agents.length > 0} />
       </section>
+      </>)}
     </div>
   );
 }

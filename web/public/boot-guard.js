@@ -23,7 +23,10 @@
   var WINDOW_MS = 60000;
   var DELAYS = [300, 2500];
   var started = false;
-  var CHUNK = /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|dynamically imported module|ChunkLoadError/i;
+  // The app's code or a route's stylesheet did not arrive. "Unable to preload
+  // CSS" is Vite's word for a stylesheet a deploy moved (#8012). The error
+  // boundary's CHUNK_LOAD_ERROR is this same matcher, and a test holds them equal.
+  var CHUNK = /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|dynamically imported module|ChunkLoadError|unable to preload css/i;
 
   function read() {
     try {
@@ -91,11 +94,16 @@
   /** The app's code did not arrive: retry, or say so. Returns "retrying" or
    *  "failed". At the start this file draws the message; the app (its error
    *  boundary, `{ app: true }`) draws its own, so there is one Retry. */
+  var retrying = false;
   function loadFailed(opts) {
+    // One failure seen from two places (a route's stylesheet, its error
+    // boundary) spends one retry.
+    if (retrying) return "retrying";
     var v = read();
     if (v.n < DELAYS.length) {
       var wait = DELAYS[v.n];
       write({ n: v.n + 1, at: v.n === 0 ? Date.now() : v.at });
+      retrying = true;
       setTimeout(reload, wait);
       return "retrying";
     }
@@ -131,6 +139,29 @@
     var box = document.getElementById("cobblr-load-failed");
     if (box) box.parentNode.removeChild(box);
   };
+
+  // A route's stylesheet a deploy moved, met by a prefetch (#8012). Vite
+  // marks a stylesheet it tried as seen, so the page itself, opened later,
+  // would draw without it: the build moved, so the next page opens on the new
+  // one, by a reload at its address. The failed import still fails (no
+  // preventDefault), so a page being opened goes to its error boundary. Set up
+  // once per window: the newest guard's state is the one read.
+  window.__cobblrBuildMoved = false;
+  if (!window.__cobblrWatchesMoves) {
+    window.__cobblrWatchesMoves = true;
+    window.addEventListener("vite:preloadError", function (e) {
+      var err = e && e.payload;
+      if (err && /unable to preload css/i.test(String(err.message || err))) window.__cobblrBuildMoved = true;
+    });
+    var opened = function () { if (window.__cobblrBuildMoved) window.__cobblrLoadFailed(); };
+    var push = history.pushState;
+    history.pushState = function () {
+      var out = push.apply(this, arguments);
+      opened();
+      return out;
+    };
+    window.addEventListener("popstate", opened);
+  }
 
   var bootFailed = false;
   function bootFailure() {

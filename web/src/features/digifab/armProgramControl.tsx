@@ -37,7 +37,7 @@ export function ProgramDiff({ slug, program }: { slug: string; program: string }
   {d.files.filter(f => f.status !== "same").map(f => <div key={f.path} className="rounded border border-line">
    <p className="px-2 py-1 font-semibold break-words">{f.path} · {f.status === "binary-changed" ? "changed (not text, so not shown line by line)" : f.status}{f.diff ? ` · ${f.diff.added} added, ${f.diff.removed} removed` : ""}</p>
    {f.diff?.tooLarge && <p className="px-2">Too large to compare line by line here.</p>}
-   {f.diff?.hunks.map((h, i) => <pre key={i} className="overflow-x-auto text-xs border-t border-line p-2">{h.lines.map((l, j) => <div key={j} className={l.op === "add" ? "bg-green-100 dark:bg-green-900/40" : l.op === "del" ? "bg-red-100 dark:bg-red-900/40" : ""}>{l.op === "add" ? "+ " : l.op === "del" ? "- " : "  "}{l.text}</div>)}</pre>)}
+   {f.diff?.hunks.map((h, i) => <pre tabIndex={0} key={i} className="overflow-x-auto text-xs border-t border-line p-2">{h.lines.map((l, j) => <div key={j} className={l.op === "add" ? "bg-green-100 dark:bg-green-900/40" : l.op === "del" ? "bg-red-100 dark:bg-red-900/40" : ""}>{l.op === "add" ? "+ " : l.op === "del" ? "- " : "  "}{l.text}</div>)}</pre>)}
   </div>)}
  </div>;
 }

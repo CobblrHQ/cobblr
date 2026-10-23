@@ -351,7 +351,7 @@ export function ApiRecipesPage() {
         <button onClick={() => copy(id, code)} className="absolute right-2 top-2 z-10 rounded border border-line dark:border-slate-600 bg-surface/80 dark:bg-slate-900/80 px-2 py-1 text-xs text-muted hover:text-content">
           {copied === id ? "Copied" : "Copy"}
         </button>
-        <pre className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 text-xs leading-relaxed text-slate-200"><code>{code}</code></pre>
+        <pre tabIndex={0} className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 text-xs leading-relaxed text-slate-200"><code>{code}</code></pre>
       </div>
       <div className="mt-1 text-xs text-muted dark:text-slate-400">→ {resp}</div>
     </div>

@@ -79,6 +79,7 @@ export function registerLocationsResolvers(): void {
         .execute();
       return { items: rows.map(toResolved) };
     },
+    { tags: true },
   );
 }
 

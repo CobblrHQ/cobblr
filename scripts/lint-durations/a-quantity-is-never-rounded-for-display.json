@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-quantity-is-never-rounded-for-display",
+  "run": "node scripts/lint-a-quantity-is-never-rounded-for-display.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 516,
+  "recorded": "2026-10-22",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

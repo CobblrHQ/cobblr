@@ -453,7 +453,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
             length) can crowd "Cobblr" down to "Co..." — reported 2026-07-29. */}
-        <Link to="/" title="Home" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
+        <Link to="/" title="Home" aria-label="Home" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">{productName()}</span>
         </Link>
@@ -664,6 +664,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           <Link
             to="/"
             title="Home"
+            aria-label="Home"
             className={`relative flex items-center gap-2 hover:opacity-80 transition ${appMode && navSuffix ? "min-w-0" : "shrink-0"}`}
           >
             <CobblestoneMark size={26} dot={envDot} />
@@ -679,10 +680,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             )}
             {/* Mobile: overlay the env chip ON the wordmark (right-aligned) so
                 it adds ZERO width — the navbar fits exactly as it does in prod,
-                the chip can't push the right menu off-screen. */}
+                the chip can't push the right menu off-screen. Its padding is in
+                px like its text: in rem it doubled with larger text (200%) and
+                the chip ran past the wordmark it sits on (#7853). */}
             {envBanner && (
               <span
-                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
+                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-[4px] py-[2px] text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
               >
                 {envBanner.label}
               </span>
@@ -705,7 +708,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               switch to. */}
           {!appMode && (
             <>
-              <span className="text-faint dark:text-slate-700 shrink-0">/</span>
+              <span aria-hidden className="text-faint dark:text-slate-500 shrink-0">/</span>
               {/* Workspace logo — the builder's brand, alongside the Cobblr mark. */}
               {wsLogo && (
                 <img

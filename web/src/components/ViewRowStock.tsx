@@ -13,7 +13,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
 import { withCount, type CountedRow } from "@cobblr/inventory/stock-derived";
-import { useStillAsking, useFaces, useFieldPresentation, refreshAfterStockChange } from "@cobblr/platform-web";
+import { useStillAsking, useFaces, useFieldPresentation, refreshAfterStockChange, useUnits } from "@cobblr/platform-web";
 import { api, type ViewDataResponse } from "../lib/api";
 import { fieldVal } from "../lib/view-group-key";
 import { StockStepper } from "@cobblr/platform-web";
@@ -85,7 +85,10 @@ function useCountedKnown(slug: string, kind: string): boolean {
 
 export function RowStockProvider({ slug, kind, children }: { slug: string; kind: string; children: ReactNode }) {
   const counted = useCountedCollection(slug, kind);
-  const known = useCountedKnown(slug, kind);
+  // A stepper drawn before the unit vocabulary is known is drawn again (the
+  // measured form, then the counted one) and every cell beside it moves.
+  const units = useUnits();
+  const known = useCountedKnown(slug, kind) && (!counted || units.settled);
   const qc = useQueryClient();
   const stock = useMemo<RowStock>(() => {
     if (!counted) return NONE;

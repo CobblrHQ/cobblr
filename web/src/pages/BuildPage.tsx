@@ -79,7 +79,7 @@ function BundleDetails({ candidate, label = "Show the generated bundle" }: { can
   return (
     <details className="text-xs">
       <summary className="cursor-pointer text-faint hover:text-accent select-none">{label}</summary>
-      <pre className="mt-2 whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-72 overflow-auto font-mono text-content dark:text-mortar-200">
+      <pre tabIndex={0} className="mt-2 whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-72 overflow-auto font-mono text-content dark:text-mortar-200">
         {JSON.stringify(candidate, null, 2)}
       </pre>
     </details>
@@ -765,7 +765,7 @@ export function BuildPage() {
             </span>
             <CopyButton text={prompt} label="Copy prompt" />
           </div>
-          <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">
+          <pre tabIndex={0} className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-64 overflow-auto text-content dark:text-mortar-200">
             {prompt}
           </pre>
           {warnings.length > 0 && (

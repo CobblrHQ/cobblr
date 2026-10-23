@@ -216,7 +216,7 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
     void qc.invalidateQueries({ queryKey: ["builds"] });
   };
 
-  // PRESS-ARGS: it only runs the step the build handed back, which carries every argument it needs.
+  // PRESS-ARGS: it runs the step an action handed back (every argument it needs) and the component removal (the one line the press names).
   const runBack = useRunAction();
   const takeBack = async (b: Parameters<typeof runBack>[0]) => {
     const outcome = await runBack(b, { undo: "is-undo" });
@@ -235,8 +235,14 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
+  // Through the action, so a component removed by a mistaken tap can be put back with its quantity,
+  // optional flag and fitting notes: the action hands back its own inverse (#7982).
   const removeComponent = useMutation({
-    mutationFn: (cid: string) => api.removeComponent(buildId, cid),
+    mutationFn: async (c: { id: string; name: string }) => {
+      const outcome = await runBack({ actionId: "builds:remove-component", entityKind: "builds:build", entityId: buildId, args: { component: c.id } }, { undo: "shown-here" });
+      const done = `${c.name} removed.`;
+      if (!offerUndo(toast, takeBack, outcome, { entityKind: "builds:build", entityId: buildId }, done)) toast.success(done);
+    },
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
@@ -276,13 +282,13 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const addOperation = useMutation({
-    mutationFn: (name: string) => api.addOperation(buildId, { name }),
+    mutationFn: (v: { name: string; est_minutes: number | null }) => api.addOperation(buildId, v),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const updateOperation = useMutation({
-    mutationFn: (v: { opId: string; status?: OperationRow["status"]; seq?: number }) =>
-      api.updateOperation(buildId, v.opId, { status: v.status, seq: v.seq }),
+    mutationFn: (v: { opId: string; status?: OperationRow["status"]; seq?: number; est_minutes?: number | null }) =>
+      api.updateOperation(buildId, v.opId, { status: v.status, seq: v.seq, est_minutes: v.est_minutes }),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
@@ -418,7 +424,7 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
                           {c.use_stock === false ? "Always make" : "Use stock first"}
                         </button>
                       )}
-                      <button title="Remove component" type="button" onClick={() => removeComponent.mutate(c.id)} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
+                      <button title="Remove component" type="button" onClick={() => removeComponent.mutate({ id: c.id, name: c.name })} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
                         <X size={14} />
                       </button>
                     </li>
@@ -447,7 +453,8 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
             {/* Routing — the ordered steps to make this build */}
             <OperationsSection
               operations={d.operations}
-              onAdd={(name) => addOperation.mutate(name)}
+              onAdd={(name, est_minutes) => addOperation.mutate({ name, est_minutes })}
+              onEstimate={(opId, est_minutes) => updateOperation.mutate({ opId, est_minutes })}
               onCycle={(op) => updateOperation.mutate({ opId: op.id, status: nextStatus(op.status) })}
               onMove={(op, dir) => {
                 const sorted = [...d.operations].sort((a, b) => a.seq - b.seq);
@@ -612,9 +619,10 @@ function nextStatus(s: OperationRow["status"]): OperationRow["status"] {
   return STATUS_ORDER[(i + 1) % STATUS_ORDER.length]!;
 }
 
-function OperationsSection({
+export function OperationsSection({
   operations,
   onAdd,
+  onEstimate,
   onCycle,
   onMove,
   onRemove,
@@ -622,7 +630,9 @@ function OperationsSection({
   onLogQty,
 }: {
   operations: OperationRow[];
-  onAdd: (name: string) => void;
+  onAdd: (name: string, estMinutes: number | null) => void;
+  /** Set a step's estimated minutes; null clears it. What the build's projected finish is made from. */
+  onEstimate: (opId: string, estMinutes: number | null) => void;
   onCycle: (op: OperationRow) => void;
   onMove: (op: OperationRow, dir: "up" | "down") => void;
   onRemove: (opId: string) => void;
@@ -630,6 +640,9 @@ function OperationsSection({
   onLogQty: (opId: string, kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [estText, setEstText] = useState("");
+  const [estimating, setEstimating] = useState<string | null>(null);
+  const [estEdit, setEstEdit] = useState("");
   const [logging, setLogging] = useState<string | null>(null);
   const sorted = [...operations].sort((a, b) => a.seq - b.seq);
 
@@ -667,7 +680,14 @@ function OperationsSection({
                 <span className="text-xs text-muted tabular-nums w-5">{i + 1}.</span>
                 <span className={`flex-1 ${op.status === "done" ? "line-through text-muted" : "text-content dark:text-mortar-100"}`}>
                   {op.name}
-                  {op.est_minutes != null && <span className="text-[10px] text-muted ml-1.5">est ~{op.est_minutes}m</span>}
+                  <button
+                    type="button"
+                    onClick={() => { setEstimating(estimating === op.id ? null : op.id); setEstEdit(op.est_minutes != null ? String(Number(op.est_minutes)) : ""); }}
+                    className="text-[10px] text-muted hover:text-content hover:underline ml-1.5"
+                    aria-label={op.est_minutes != null ? `Estimate for ${op.name}: ${Number(op.est_minutes)} minutes. Change` : `Set the estimated minutes for ${op.name}`}
+                  >
+                    {op.est_minutes != null ? `est ~${Number(op.est_minutes)}m` : "set estimate"}
+                  </button>
                   {op.status === "skipped" && <span className="text-[10px] text-muted ml-1.5">(skipped)</span>}
                   {hasExec && (
                     <span className="ml-2 inline-flex flex-wrap gap-1 align-middle">
@@ -700,6 +720,29 @@ function OperationsSection({
                   </button>
                 </div>
               </div>
+              {estimating === op.id && (
+                <form
+                  className="flex items-center gap-2 px-3 pb-2 text-xs"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const n = estEdit.trim() === "" ? null : Number(estEdit);
+                    if (n !== null && (!Number.isFinite(n) || n < 0)) return;
+                    onEstimate(op.id, n);
+                    setEstimating(null);
+                  }}
+                >
+                  <input
+                    inputMode="decimal"
+                    value={estEdit}
+                    onChange={(e) => setEstEdit(e.target.value)}
+                    aria-label={`Estimated minutes for ${op.name}`}
+                    placeholder="minutes"
+                    className="w-24 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-sm"
+                  />
+                  <button type="submit" className="px-2 py-1 rounded bg-cobble-600 text-white">Save estimate</button>
+                  <button type="button" className="px-2 py-1 text-muted hover:text-content" onClick={() => setEstimating(null)}>Cancel</button>
+                </form>
+              )}
               {logging === op.id && (
                 <OpLogRow
                   onTime={(kind, minutes) => onLogTime(op.id, kind, minutes)}
@@ -716,8 +759,11 @@ function OperationsSection({
         onSubmit={(e) => {
           e.preventDefault();
           if (name.trim()) {
-            onAdd(name.trim());
+            const est = estText.trim() === "" ? null : Number(estText);
+            if (est !== null && (!Number.isFinite(est) || est < 0)) return;
+            onAdd(name.trim(), est);
             setName("");
+            setEstText("");
           }
         }}
       >
@@ -726,6 +772,14 @@ function OperationsSection({
           onChange={(e) => setName(e.target.value)}
           placeholder="Add a step (e.g. Reflow paste)…"
           className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-1.5 text-sm"
+        />
+        <input
+          inputMode="decimal"
+          value={estText}
+          onChange={(e) => setEstText(e.target.value)}
+          aria-label="Estimated minutes for this step"
+          placeholder="est min"
+          className="w-20 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
         />
         <button type="submit" disabled={!name.trim()} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">
           Add step
@@ -1079,7 +1133,7 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
           {adding && <AddPlannedRow builds={ordinaryBuilds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
           {sched.isLoading && <div className="text-sm text-muted">Loading…</div>}
           {!sched.isLoading && totalItems === 0 && (
-            <div className="text-sm text-muted italic">Nothing planned. Add est-minutes to a build's routing steps, then plan one here to see a projected timeline.</div>
+            <div className="text-sm text-muted italic">Nothing planned. Give a build's routing steps estimated minutes, then plan one here to see a projected timeline.</div>
           )}
           {lanes.map((lane) => (
             <div key={lane.resource_label}>

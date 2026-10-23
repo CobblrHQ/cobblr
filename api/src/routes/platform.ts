@@ -1,7 +1,6 @@
 import { actionDetail, nameRequest } from "../platform/compute-ledger.js";
 import { wiresSaid } from "../platform/wire-said.js";
 import { editableFieldsOf } from "../platform/update-record-fields.js";
-import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { previewWire, relationshipsInUse } from "../platform/wire-preview.js";
 import { BindingCreate, BindingPatch, createWire, declaredWireEvents, deleteWire, lifecycleWireRefusal, updateWire } from "../platform/wire-ops.js";
 import { isLendable, listOpenLoans } from "../platform/custody.js";
@@ -28,17 +27,15 @@ import { z } from "zod";
 import { bindingAskOf } from "@cobblr/platform-contract/binding-ask";
 import { csvDownloadHeaders } from "@cobblr/platform-contract/csv";
 import { sql } from "kysely";
-import { platform, isActionRefusal, crashSentence, uploadOne } from "@cobblr/platform-contract";
+import { platform, isActionRefusal, crashSentence, argumentRefusal, uploadOne } from "@cobblr/platform-contract";
 import { uploadedFile } from "@cobblr/platform-contract/upload";
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { requireAuth, appTokenInvokeRefusal } from "../auth/middleware.js";
-import { accessMessage } from "../auth/token-access.js";
+import { requireAuth } from "../auth/middleware.js";
 import { requireCapability, requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import { meta } from "../db/meta.js";
 import { labelVia } from "./label-via.js";
-import { actionRefusal, actionSafety } from "../platform/ai-action-door.js";
 import { getTenantDb } from "../db/tenant.js";
 import { fieldsHiddenFromAuthor } from "../platform/wire-event-author.js";
 import { listEntries } from "../modules/registry.js";
@@ -50,11 +47,12 @@ import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { actionChangesWorkspace, actionGateOf } from "../platform/action-gates.js";
 import { issueUndos, issuedUndoFor, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
-import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo, isRequester } from "../platform/actions.js";
+import { doorRefusal, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
+import { actionGateOf } from "../platform/action-gates.js";
+import { RECORD_BAR_ACTIONS } from "@cobblr/platform-contract/record-bar-actions";
+import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
 import { facesForKind } from "../platform/faces.js";
-import { platformActionMinRole } from "../platform/platform-actions.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { deleteRefusal } from "../platform/kind-delete.js";
@@ -683,14 +681,32 @@ platformOrgRouter.get(
       const dormant = await listDormant(kind, req.tenant!.org.id).catch(() => []);
       const choose = await argChoicesFor(req.tenant!.org.id, kind, [...applicable.map((a) => a.args_schema), ...bindings.map((b) => b.args_schema)]);
       const writer = await platform().entities.getWriter(req.tenant!.org.id, kind).catch(() => null);
+      // Only what would run for this person, through this door: an action
+      // offered and refused after the tap was the door and the list answering
+      // two different questions (#7922). One answer per action id.
+      const asker = askerOf(req);
+      const allowed = new Map<string, boolean>();
+      const runs = async (actionId: string) => {
+        if (!allowed.has(actionId)) allowed.set(actionId, !(await mayInvoke(asker, actionId, { entityKind: kind, args: { entity_kind: kind } }, { listing: true })));
+        return allowed.get(actionId)!;
+      };
+      const offered = [];
+      for (const a of applicable) if (installedSet.has(a.module_name) && (await runs(a.id))) offered.push(a);
+      const offeredBindings = [];
+      for (const b of bindings) if (await runs(b.action_id)) offeredBindings.push(b);
+      // The bar's own parts ask here too, one answer per kernel action.
+      const runsHere: Record<string, boolean> = {};
+      for (const id of RECORD_BAR_ACTIONS) runsHere[id] = await runs(id);
       res.json({
-        items: applicable.filter((a) => installedSet.has(a.module_name)).map((a) => ({ ...a, args_schema: choose(a.args_schema) })),
+        // run_by "requester": offered per kind, decided per record (who started it).
+        items: offered.map((a) => ({ ...a, args_schema: choose(a.args_schema), run_by: actionGateOf(a.id).runBy ?? null })),
+        runs: runsHere,
         ...(await readRecordActionLayout(req.tenant!.org.id, kind, req.session!.id)),
         dormant: dormant.map((a) => ({ group: a.group, primary: a.primary, id: a.id, label: a.label, description: a.description, icon: a.icon, module_name: a.module_name, module_label: a.module_label })),
-        bindings: bindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
+        bindings: offeredBindings.map((b) => ({ ...b, args_schema: choose(b.args_schema), ask: bindingAskOf(b.ask) })),
         lifecycle: !!(writer?.retire && writer.unretire),
         // A loan is metadata on the record, in a table the open-loans read
-        // can find (custody.ts isLendable).
+        // can find (custody.ts isLendable). Its buttons follow runs.
         lendable: isLendable(writer),
       });
     } catch (err) {
@@ -699,6 +715,20 @@ platformOrgRouter.get(
   },
 );
 
+
+/** Who asks, and through which door, as may-invoke.ts reads it. */
+function askerOf(req: Request): InvokeAsker {
+  return {
+    orgId: req.tenant!.org.id,
+    userId: req.session!.id,
+    role: req.tenant!.role,
+    aiDoor: req.session?.ai_door ?? null,
+    appScope: req.session?.app_scope ?? null,
+    appEditKinds: req.session?.app_edit_kinds ?? [],
+    tokenAccess: req.session?.token_access ?? null,
+    via: currentVia()?.kind ?? null,
+  };
+}
 
 const InvokeBody = z.object({
   // Not merely a string: "" matched no action, read as record-scoped, and was
@@ -711,6 +741,8 @@ const InvokeBody = z.object({
   entityId: optionalField(z.string()),
   bindingId: optionalUuid(),
   args: z.record(z.unknown()).optional(),
+  /** Ask every gate and stop: whether it would run for this person here. */
+  dry_run: z.boolean().optional(),
 });
 
 /** The arguments a binding was given, under what this press adds. A button a
@@ -770,6 +802,7 @@ platformOrgRouter.post(
   withTenant,
   async (req, res, next) => {
     try {
+      // ROLE: any member (mayInvoke below decides who may, by the action's own gate)
       const parsed = PlanBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -777,7 +810,12 @@ platformOrgRouter.post(
         });
         return;
       }
-      if (!(await requireCapability(req, res, parsed.data.actionId))) return;
+      // The card asks about the press the door will be asked: the same gate.
+      const refused = await mayInvoke(askerOf(req), parsed.data.actionId, { entityKind: parsed.data.entityKind ?? null, entityId: parsed.data.entityId ?? null, args: (parsed.data.args ?? null) as Record<string, unknown> | null });
+      if (refused) {
+        res.status(refused.status).json(refused.body);
+        return;
+      }
       const isWorkspaceAction = (await getActionScope(parsed.data.actionId)) === "workspace";
       const args = await withBindingArgs(req.tenant!.org.id, parsed.data.bindingId ?? undefined, parsed.data.actionId, argsOf(parsed.data, isWorkspaceAction));
       const plan = await planFor(parsed.data.actionId, {
@@ -863,6 +901,7 @@ platformOrgRouter.post(
     let spentUndo: string | null = null;
     let undoMayHaveApplied = false;
     try {
+      // ROLE: any member (doorRefusal and permissionRefusal below decide who may, by the action's own gate)
       const parsed = InvokeBody.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -872,60 +911,17 @@ platformOrgRouter.post(
       }
       // Priced under its own name in the compute ledger (#5424), once it has run, and its operation when it names one.
       nameRequest(res, actionDetail(parsed.data.actionId, parsed.data.args));
-      // A Tier-B app-scoped token may fire capability-gated MODULE actions but
-      // never a kernel workspace-config one (`platform:*`), and a kernel record
-      // verb only on a kind its app declares it edits. requireCapability below
-      // is not enough: an owner/admin identity passes it implicitly, so a
-      // managed-app bundle running under one could otherwise disable a module,
-      // rename the workspace or rewrite any record (#7408).
-      if (req.session?.app_scope) {
-        const refusal = appTokenInvokeRefusal(
-          parsed.data.actionId,
-          (parsed.data.args ?? null) as Record<string, unknown> | null,
-          req.session.app_edit_kinds ?? [],
-        );
-        if (refusal) {
-          res.status(403).json({ error: { code: "app_token_out_of_scope", message: refusal } });
-          return;
-        }
-      }
-
-      // A personal token that may change only records (token-access.ts)
-      // never runs an action that changes the workspace itself: a rename, a
-      // feature turned off (#7138), a module's setting or station (#7343).
-      // The path rule cannot see the action id; every action says (#7356).
-      if (req.session?.token_access === "change" && actionChangesWorkspace(parsed.data.actionId)) {
-        res.status(403).json({ error: { code: "token_access", message: accessMessage("change") } });
+      // Who is asking and through which door, for the one answer every door
+      // gives (may-invoke.ts, #7922): the actions list offers only what this
+      // lets through, so nothing offered is refused here.
+      const asker = askerOf(req);
+      const target = { entityKind: parsed.data.entityKind ?? null, entityId: parsed.data.entityId ?? null, args: (parsed.data.args ?? null) as Record<string, unknown> | null };
+      const door = await doorRefusal(asker, parsed.data.actionId, target);
+      if (door) {
+        res.status(door.status).json(door.body);
         return;
       }
 
-      // An assistant with no way to show a person a confirmation (any MCP
-      // door, or the in-app chat's relay) never runs an action that needs
-      // one. Asked here because every door arrives here; asking only in the
-      // relay's tool call left the others running it unasked.
-      // What only a person does (human-only.ts) is refused to every assistant
-      // door, confirmed or not: MCP, the relay, and the in-app chat's own
-      // calls (via "assistant").
-      const viaKind = currentVia()?.kind;
-      if (req.session?.ai_door || viaKind === "assistant" || viaKind === "mcp") {
-        const human = humanOnlyRefusal(parsed.data.actionId, (parsed.data.args ?? null) as Record<string, unknown> | null);
-        if (human) {
-          res.status(403).json({ error: { code: "human_only", message: human } });
-          return;
-        }
-      }
-      if (req.session?.ai_door) {
-        const refused = actionRefusal(await actionSafety(parsed.data.actionId));
-        if (refused) {
-          res.status(403).json({ error: { code: "needs_a_person", message: refused } });
-          return;
-        }
-      }
-
-      // Authorize: owner/admin pass; members/guests need an explicit
-      // grant for this specific action. Closes the hole where any
-      // authenticated member (incl. a read-only guest) could invoke any
-      // action — e.g. hand-firing inventory:adjust-stock to move stock.
       // An undo the platform handed this person for their own run is theirs
       // to run, whatever their role (#5193): exactly that step, once.
       const ownUndo = await issuedUndoFor(req.tenant!.org.id, req.session!.id, {
@@ -934,41 +930,16 @@ platformOrgRouter.post(
         entity_kind: parsed.data.entityKind ?? null,
         entity_id: parsed.data.entityId ?? null,
       });
-      // And what a person started is theirs to answer, cancel or confirm,
-      // whatever their role (#5192): the action names who started its target.
-      if (ownUndo && !(await spendIssuedUndo(ownUndo))) {
+      if (ownUndo && !parsed.data.dry_run && !(await spendIssuedUndo(ownUndo))) {
         res.status(409).json({ error: { code: "undo_already_pressed", message: "This Undo was already pressed. It runs once; look at the record to see where it stands." } });
         return;
       }
-      spentUndo = ownUndo;
-      const asRequester = !!ownUndo || actionGateOf(parsed.data.actionId).runBy === "requester" && await isRequester(parsed.data.actionId, req.session!.id, {
-        orgId: req.tenant!.org.id,
-        args: parsed.data.args ?? {},
-        ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
-      });
-      if (!asRequester && !(await requireCapability(req, res, parsed.data.actionId))) return;
-
-      // Per-action role FLOOR — parity with the REST twin (audit
-      // M-ACTION-PARITY). requireCapability lets any admin through, but some
-      // kernel actions are owner-only over REST (platform:rename-workspace is
-      // hard `role === "owner"` on PATCH /orgs/:slug). Without this the action
-      // rail would be more permissive than the settings UI for the SAME
-      // operation, so an admin could rename through Cobb / the generic invoke
-      // what they cannot rename in Settings. roleSatisfies is rank-based, so a
-      // higher role always clears a lower floor.
-      const minRole = platformActionMinRole(parsed.data.actionId);
-      if (minRole && !roleSatisfies(req.tenant!.role, [minRole])) {
-        res.status(403).json({
-          error: {
-            code: "forbidden",
-            message: `The ${parsed.data.actionId} action requires the ${minRole} role.`,
-            details: {
-              action_id: parsed.data.actionId,
-              required_role: minRole,
-              your_role: req.tenant!.role,
-            },
-          },
-        });
+      if (!parsed.data.dry_run) spentUndo = ownUndo;
+      // Authorize: by role, grant, the record's own module, or as the person
+      // who started its target; then a kernel action's role floor.
+      const denied = await permissionRefusal(asker, parsed.data.actionId, target, { ownUndo: !!ownUndo });
+      if (denied) {
+        res.status(denied.status).json(denied.body);
         return;
       }
 
@@ -992,6 +963,11 @@ platformOrgRouter.post(
               "entityKind and entityId are required for this action (it runs on a record)",
           },
         });
+        return;
+      }
+      // Would it run for them? Every gate above has answered; nothing runs.
+      if (parsed.data.dry_run) {
+        res.json({ ok: true, dry_run: true });
         return;
       }
 
@@ -1105,6 +1081,11 @@ platformOrgRouter.post(
         // handler's name, from actions.invoke) carries the reference too.
         if (isActionRefusal(err) && err.message.trim()) {
           res.json({ ok: true, result: { ok: false, error: err.message } });
+          return;
+        }
+        const wrongArgs = argumentRefusal(err);
+        if (wrongArgs) {
+          res.json({ ok: true, result: { ok: false, error: wrongArgs } });
           return;
         }
         const ref = `act-${randomBytes(3).toString("hex")}`;
@@ -2444,11 +2425,24 @@ platformOrgRouter.get(
       // are (#3255). Every reader the assistant has comes through here, so
       // this is what keeps it from offering a card that cannot run.
       const on = await enabledActionOwners(orgId);
+      // Only what this person may run (may-invoke.ts, #7922): an action
+      // listed and then refused for who they are was the list and the door
+      // answering two questions. What their connection cannot run without a
+      // person in front of it stays listed, saying so, so the assistant can
+      // send them to the app instead of guessing.
+      const asker = askerOf(req);
+      const listedFor = new Map<string, string | null>();
+      for (const a of actions) {
+        if (!on.has(a.module_name) || !on.has(actionOwner(a))) continue;
+        if (await permissionRefusal(asker, a.id, {}, { listing: true })) continue;
+        const door = await doorRefusal(asker, a.id, {});
+        listedFor.set(a.id, door ? String(door.body.error.message ?? door.body.error.code) : null);
+      }
       res.json({
         // An action that exists only as the way back for another is not listed
         // for anyone who did not ask: every reader the assistant has (the tool,
         // the prompt rail, the argument schemas) comes through here.
-        items: actions.filter((a) => on.has(a.module_name) && on.has(actionOwner(a)) && (a.internal !== true || req.query.include_internal === "1")).map((a) => {
+        items: actions.filter((a) => listedFor.has(a.id) && (a.internal !== true || req.query.include_internal === "1")).map((a) => {
           const ovr = overrides.get(a.id);
           const effective = (ovr?.applies_to_override ??
             a.applies_to) as ActionAppliesToDecl;
@@ -2477,6 +2471,9 @@ platformOrgRouter.get(
             description: a.description,
             icon: a.icon,
             scope,
+            // Why this connection cannot run it, or null: listed so a person
+            // can be sent where it runs.
+            refused_here: listedFor.get(a.id) ?? null,
             default_applies_to: a.applies_to,
             effective_applies_to: effective,
             overridden: !!ovr,

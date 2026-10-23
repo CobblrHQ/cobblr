@@ -1886,7 +1886,7 @@ function BarcodeCacheTab() {
             )}
             <div>
               <div className="text-[10px] uppercase tracking-wider text-muted mb-1">Raw provider payload (everything captured)</div>
-              <pre className="rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-900 p-3 text-[11px] overflow-auto max-h-72 whitespace-pre-wrap break-all">
+              <pre tabIndex={0} className="rounded-md border border-line dark:border-slate-700 bg-subtle/60 dark:bg-slate-900 p-3 text-[11px] overflow-auto max-h-72 whitespace-pre-wrap break-all">
                 {JSON.stringify(detail.raw, null, 2)}
               </pre>
             </div>
@@ -1972,7 +1972,7 @@ function ScanEvalDetailModal({ c, onClose }: { c: ScanEvalCase; onClose: () => v
   const block = (label: string, value: unknown) => (
     <div>
       <div className="text-[10px] uppercase tracking-widest text-accent mb-1">{label}</div>
-      <pre className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-56 overflow-auto text-content dark:text-mortar-200">{JSON.stringify(value, null, 2)}</pre>
+      <pre tabIndex={0} className="text-xs whitespace-pre-wrap bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 rounded p-3 max-h-56 overflow-auto text-content dark:text-mortar-200">{JSON.stringify(value, null, 2)}</pre>
     </div>
   );
   return (

@@ -116,6 +116,24 @@ export function consumeOldest(
   return { batches: out.filter((b) => b.qty > 0), consumed };
 }
 
+/** Take `count` back off the lots that arrived last: what a cancelled
+ *  purchase put there is the newest stock, so undoing it must not eat the
+ *  older lot and leave the cancelled purchase's date on the item (#7877).
+ *  A lot with no arrival date counts as oldest. Whole and part units alike. */
+export function consumeNewest(batches: Batch[], count: number): Batch[] {
+  let left = Math.max(0, count);
+  const out = batches.map((b) => ({ ...b }));
+  const newestFirst = [...out].sort((a, b) => b.received_on.localeCompare(a.received_on) || (b.expires_on ? 0 : 1) - (a.expires_on ? 0 : 1) || a.expires_on.localeCompare(b.expires_on));
+  for (const b of newestFirst) {
+    if (left <= 0) break;
+    if (b.qty <= 0) continue;
+    const take = Math.min(b.qty, left);
+    b.qty -= take;
+    left -= take;
+  }
+  return sortBatches(out.filter((b) => b.qty > 0));
+}
+
 /** Which lot a row named: the three things that make a lot itself. A date a
  *  record never had (a bare expiry date with no arrival) leaves received_on
  *  empty, and then only the other two decide. */

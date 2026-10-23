@@ -1,9 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { QueryClient, QueryClientProvider, MutationCache } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SettledMarker } from "./components/SettledMarker";
 import { ApiError } from "./lib/api";
 import { raiseBlockedAction } from "./lib/blocked-action";
+import { PersonsWritesCache, WAITING_MUTATIONS } from "./lib/offline-writes";
 import { ThemeProvider } from "./theme/ThemeContext";
 import "./index.css";
 import { App } from "./App";
@@ -12,7 +13,7 @@ const queryClient = new QueryClient({
   // A write a person asked for in a View as (a Create, a Save) is refused and
   // says why in the shell's refusal sheet; the page's own background writes,
   // not mutations, are refused quietly (#4687).
-  mutationCache: new MutationCache({
+  mutationCache: new PersonsWritesCache({
     onError: (e) => {
       if (e instanceof ApiError && e.code === "share_view_read_only" && e.blocked) raiseBlockedAction({ blocked: e.blocked, refused: null, subject: null });
     },
@@ -24,6 +25,9 @@ const queryClient = new QueryClient({
       staleTime: 30_000,
       retry: 1,
     },
+    // A write made offline reaches its door once, which keeps it on this
+    // device, then waits for the connection (lib/offline-writes.ts, #7863).
+    mutations: WAITING_MUTATIONS,
   },
 });
 

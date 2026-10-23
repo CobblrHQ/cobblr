@@ -422,7 +422,7 @@ function ImportCsvModal({
             <summary className="cursor-pointer text-muted">
               Preview ({countOf(csvText.length, "char")})
             </summary>
-            <pre className="mt-2 p-2 bg-subtle dark:bg-slate-800 rounded text-[10px] max-h-32 overflow-auto">
+            <pre tabIndex={0} className="mt-2 p-2 bg-subtle dark:bg-slate-800 rounded text-[10px] max-h-32 overflow-auto">
               {csvText.slice(0, 600)}
               {csvText.length > 600 ? "\n…" : ""}
             </pre>

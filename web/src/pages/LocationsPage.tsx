@@ -890,7 +890,7 @@ function LocationCard({
           ) : (
             usageTotal > 0 && (
               <span
-                className="text-[10px] font-mono text-accent dark:text-cobble-400"
+                className="text-[10px] font-mono text-accent dark:text-cobble-300"
                 title={`${usage?.machines ?? 0} machine(s) · ${usage?.assets ?? 0} asset(s) · ${usage?.parts ?? 0} part(s) point here`}
               >
                 {usageTotal} item{usageTotal === 1 ? "" : "s"}

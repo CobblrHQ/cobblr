@@ -1,0 +1,10 @@
+{
+  "lint": "lint:submit-never-reads-debounced",
+  "run": "node scripts/lint-submit-never-reads-debounced.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-23",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

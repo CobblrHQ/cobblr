@@ -7,13 +7,15 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { dropStaleBuild } from "../lib/staleBuild";
 
-// A lazy route chunk can 404 when a deploy lands while the tab is open: the
-// loaded index.html references chunk hashes the freshly-deployed container no
-// longer serves. The fix is simply to reload index.html (which lists the new
-// hashes). We detect that class of error and auto-reload ONCE — guarded so a
-// genuinely-broken chunk can't spin the page in a reload loop.
-const CHUNK_LOAD_ERROR =
-  /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|dynamically imported module/i;
+// A lazy route chunk, or its stylesheet (#8012), can 404 when a deploy lands
+// while the tab is open: the loaded index.html references hashes the
+// freshly-deployed container no longer serves. The fix is simply to reload
+// index.html (which lists the new hashes). We detect that class of error and
+// auto-reload ONCE — guarded so a genuinely-broken chunk can't spin the page in
+// a reload loop. The boot guard's CHUNK (web/public/boot-guard.js) is this
+// same matcher; a test holds them equal.
+export const CHUNK_LOAD_ERROR =
+  /failed to fetch dynamically imported module|error loading dynamically imported module|importing a module script failed|dynamically imported module|ChunkLoadError|unable to preload css/i;
 
 function isChunkLoadError(error: Error): boolean {
   return error?.name === "ChunkLoadError" || CHUNK_LOAD_ERROR.test(error?.message ?? "");
@@ -137,7 +139,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <p className="mt-1 text-sm text-content dark:text-mortar-200">
           The rest of the app is still running. Try again, or head back to the dashboard.
         </p>
-        <pre className="mt-3 max-h-40 overflow-auto rounded bg-surface/70 dark:bg-slate-800 p-2 text-[11px] font-mono text-muted">
+        <pre tabIndex={0} className="mt-3 max-h-40 overflow-auto rounded bg-surface/70 dark:bg-slate-800 p-2 text-[11px] font-mono text-muted">
           {this.state.error.message}
         </pre>
         <div className="mt-3 flex gap-2">

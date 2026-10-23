@@ -1175,22 +1175,19 @@ export const CAPABILITIES: Capability[] = [
       "and to the assistant q is a text search, so a name-only resolver answered 'you have no Bambu' about a workspace with " +
       "one (2026-08-27). The clause is identical everywhere; only the column list belongs to the module",
     owner: "packages/platform-contract/src/text-search.ts",
-    scope: [
-      "modules/purchases/src/api/resolvers.ts",
-      "modules/projects/src/api/handlers.ts",
-      "modules/core-tags/src/api/resolvers.ts",
-      "modules/sales/src/api/resolvers.ts",
-      "modules/core-locations/src/api/resolvers.ts",
-      "modules/core-catalogs/src/api/resolvers.ts",
-      "modules/inventory/src/api/resolvers.ts",
-      "modules/machines/src/api/resolvers.ts",
-      "modules/assets/src/api/resolvers.ts",
-      "modules/lists/src/api/resolvers.ts",
-      "modules/knowledge/src/api/resolvers.ts",
-    ],
-    // A hand-rolled like: lower(<col>) like <needle>, in either the builder or raw-sql spelling.
-    detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like/i,
+    // Every module file, not only its resolver: the inventory parts list and
+    // the orders list each hand-rolled their own search beside a resolver
+    // that used this, so the list a part lives in missed a barcode Search
+    // found (#7818, #7929).
+    scope: ["modules/*/src/**/*.ts"],
+    // A hand-rolled like: lower(<col>) like <needle>, in either the builder or
+    // raw-sql spelling, or a needle built for one (likeNeedle).
+    detect: /eb\.fn\(\s*["']lower["'][^\n]*["']like["']|lower\([a-z_.>'"-]+\)\s+like|\blikeNeedle\(/i,
     use: "textSearchWhere(eb, query.q, { text: [...], json: [...] }) from @cobblr/platform-contract",
+    except: {
+      "modules/core-catalogs/src/api/catalogs.ts": "a catalog's own lookup by an entry's title or id, the picker's typeahead over reference data; its records' search is the resolver's",
+      "modules/projects/src/api/pattern-text.ts": "one extra column beside the project's search (its pattern PDF's text, in its own table), shaped to that column's trigram index",
+    },
   },
   {
     kind: "owns",

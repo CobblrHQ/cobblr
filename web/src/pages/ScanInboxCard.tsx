@@ -2126,7 +2126,7 @@ export function InboxCard({
                     {!handheld && (
                     <details className="mt-1.5">
                       <summary className="cursor-pointer select-none text-[10px] text-faint hover:text-muted">raw response</summary>
-                      <pre className="mt-1 overflow-x-auto rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-[10px] leading-snug text-content dark:text-mortar-200">
+                      <pre tabIndex={0} className="mt-1 overflow-x-auto rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-2 text-[10px] leading-snug text-content dark:text-mortar-200">
 {JSON.stringify(item.suggested_metadata, null, 2)}
                       </pre>
                     </details>

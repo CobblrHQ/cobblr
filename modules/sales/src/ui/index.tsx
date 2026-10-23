@@ -846,7 +846,7 @@ function OrderNumberField({ value, onSave }: { value: string; onSave: (v: string
  *  Copy, and "Email the customer" only when this workspace can send it (its own
  *  outbound email is set up and the customer has an address). Nothing is
  *  emailed unless the box is ticked when Ship is pressed. */
-function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; orderId: string; onClose: () => void; onShipped: () => void }) {
+export function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; orderId: string; onClose: () => void; onShipped: () => void }) {
   const toast = useToast();
   const [tracking, setTracking] = useState("");
   const [typed, setTyped] = useState("");
@@ -861,7 +861,9 @@ function ShipDialog({ api, orderId, onClose, onShipped }: { api: SalesApi; order
   const preview = useQuery({ queryKey: ["sales-ship-preview", orderId, tracking], queryFn: () => api.shipPreview(orderId, tracking) });
   const p = preview.data;
   const ship = useMutation({
-    mutationFn: () => api.shipOrder(orderId, { tracking_number: tracking || null, carrier: null, email_customer: emailIt && !!p?.email.available }),
+    // What is in the field now, not the debounced copy the preview follows:
+    // pressing Ship inside the 400 ms beat shipped the previous (empty) number (#7988).
+    mutationFn: () => api.shipOrder(orderId, { tracking_number: typed.trim() || null, carrier: null, email_customer: emailIt && !!p?.email.available }),
     onSuccess: (r) => {
       if (r.email.asked && r.email.sent && r.email.status === "sent") toast.success(`Shipped. ${r.email.to} was emailed.`);
       else if (r.email.asked && r.email.sent) toast.error(`Shipped, but ${r.email.to} cannot receive mail, so no email went.`);

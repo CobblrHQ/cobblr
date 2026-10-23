@@ -115,11 +115,11 @@ export function registerProjectsHandlers(): void {
   // the note there. An Outfits instance's rows must not double up here.
   platform().entities.registerListResolver("projects:project", (orgId, query) =>
     projectsListResolver(orgId, query, "projects"),
-  );
+  { tags: true });
   // Projects instances (e.g. the Outfits table) → projects scoped to instance.
   platform().entities.registerInstanceListResolver("projects", (orgId, instance, query) =>
     projectsListResolver(orgId, query, instance),
-  );
+  { tags: true });
   // …and the single-entity half. Registering only the list resolver is a trap:
   // the collection renders (that IS the list) while every generic single-record
   // read — entities.lookup("<instance>:item", id) — returns null, silently. See
@@ -195,7 +195,7 @@ export function registerProjectsHandlers(): void {
     }
     const rows = (await groupListRows(db, q, query)) ?? await q.limit(limit).offset(offset).execute();
     return { items: rows.map((r) => toResolvedTask(r)) };
-  });
+  }, { tags: true });
 
   // Action handler ─────────────────────────────────────────────────
   // The platform calls this when a wire targeting

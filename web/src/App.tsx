@@ -231,6 +231,7 @@ import { ShareViewBanner } from "./components/ShareViewBanner";
 const AdminLayout = lazy(() => import("./components/AdminLayout").then((m) => ({ default: m.AdminLayout })));
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ConnectivityBanner } from "./components/ConnectivityBanner";
+import { WaitingWritesSender } from "./components/WaitingWritesSender";
 const PortalLayout = lazy(() => import("./components/PortalLayout").then((m) => ({ default: m.PortalLayout })));
 import { ToastProvider, ConfirmProvider } from "@cobblr/platform-web";
 import { BootScrim } from "./components/BootScrim";
@@ -323,6 +324,7 @@ export function App() {
         <ToastProvider>
           <ConfirmProvider>
             <DeletedRecordUndo />
+            <WaitingWritesSender />
             <Shell />
           </ConfirmProvider>
         </ToastProvider>

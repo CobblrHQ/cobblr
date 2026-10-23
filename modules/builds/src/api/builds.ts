@@ -358,6 +358,7 @@ buildsRouter.patch(
 );
 
 // AI-ACTION: builds:remove-component
+// UI-SCREEN: /builds (the sheet presses the action of this name, so the removal carries its Undo)
 buildsRouter.delete(
   "/builds/:id/components/:cid",
   asyncHandler(async (req, res) => {

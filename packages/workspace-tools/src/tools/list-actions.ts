@@ -32,6 +32,7 @@ const tool: WorkspaceTool = {
             scope?: string;
             args_schema?: Record<string, { label?: string; type?: string; required?: boolean; oneOf?: string }> | null;
             undoable?: boolean;
+            refused_here?: string | null;
             user_invokable?: boolean;
             internal?: boolean;
             wire_only?: boolean;
@@ -72,6 +73,9 @@ const tool: WorkspaceTool = {
         // so this is the difference between "I will do that" and a refusal
         // the user can act on.
         undoable: a.undoable === true,
+        // Why this connection cannot run it (it needs a person in the app):
+        // listed so the person can be sent there, not refused after the ask.
+        ...(a.refused_here ? { run_it_in_the_app: a.refused_here } : {}),
         // How a person asks for it, so a sentence can be matched to an action
         // rather than guessed at from the id.
         ...(a.examples?.length ? { said_like: kind && !actionId ? a.examples.slice(0, 2) : a.examples } : {}),

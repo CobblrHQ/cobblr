@@ -136,13 +136,13 @@ export function registerMachinesResolvers(): void {
   // the note there. A 3D Printers instance's fleet must not double up here.
   platform().entities.registerListResolver("machines:machine", (orgId, query) =>
     listMachines(orgId, query, "machines"),
-  );
+  { tags: true });
   // Multi-instance: `<instance_name>:item` lists just that instance's machines.
   // Mirrors inventory/assets so a named machines instance (3D Printers) is
   // listable through the generic layer — what the labels browser uses.
   platform().entities.registerInstanceListResolver("machines", (orgId, instance, query) =>
     listMachines(orgId, query, instance),
-  );
+  { tags: true });
   // …and the single-entity half. Registering only the list resolver is a trap:
   // the collection renders (that IS the list) while every generic single-record
   // read — entities.lookup("<instance>:item", id) — returns null, silently. See

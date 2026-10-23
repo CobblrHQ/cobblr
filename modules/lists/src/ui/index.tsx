@@ -9,7 +9,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
-import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, restockAmount, willDatePhrase } from "./api.js";
+import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, lineUnit, restockAmount, willDatePhrase } from "./api.js";
 import { RunningLowOffer, useRunningLowKnown } from "./RunningLowOffer.js";
 import { PickToLight } from "@cobblr/platform-web";
 
@@ -255,10 +255,17 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     onSuccess: () => { setRenaming(null); invalidate(); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
-  const [editing, setEditing] = useState<{ id: string; title: string; qty: string; note: string } | null>(null);
+  type Editing = { id: string; title: string; qty: string; note: string; from: { title: string; qty: string; note: string } };
+  const [editing, setEditing] = useState<Editing | null>(null);
+  // Only what the person changed goes up: the form holds a snapshot of the
+  // line from when it opened, and sending all of it would put back a quantity
+  // another shopper saved since (#7889).
   const saveItem = useMutation({
-    mutationFn: (e: { id: string; title: string; qty: string; note: string }) =>
-      api.updateItem(e.id, { title: e.title.trim(), qty: e.qty.trim(), note: e.note.trim() }),
+    mutationFn: (e: Editing) => {
+      const changes: { title?: string; qty?: string; note?: string } = {};
+      for (const k of ["title", "qty", "note"] as const) if (e[k].trim() !== e.from[k].trim()) changes[k] = e[k].trim();
+      return Object.keys(changes).length ? api.updateItem(e.id, changes) : Promise.resolve(null);
+    },
     onSuccess: () => { setEditing(null); invalidate(); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
@@ -414,7 +421,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   <button
                     title="Correct this line"
                     type="button"
-                    onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "" })}
+                    onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "", from: { title: it.title, qty: it.qty ?? "", note: it.note ?? "" } })}
                     className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-accent hover-reveal`}
                     aria-label="Correct this line"
                   >
@@ -451,7 +458,9 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   <NumberStepper
                     className="inline-flex shrink-0 items-center rounded border border-line dark:border-slate-700"
                     value={amountFor(it)!}
-                    min={1}
+                    min={Math.min(1, amountFor(it)!)}
+                    decimal
+                    suffix={lineUnit(it.qty) ?? undefined}
                     label="Amount to add to stock"
                     decreaseLabel="One fewer"
                     increaseLabel="One more"

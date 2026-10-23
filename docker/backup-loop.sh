@@ -17,16 +17,17 @@
 # names it and passes env.
 #
 # WHAT IT GUARANTEES, in the order the failures happened:
-#   1. SIZE IS THE CHECK, not exit status. `pg_dumpall | gzip` reports gzip,
+#   1. EXIT STATUS, CONTENT AND SIZE must all pass. `pg_dumpall | gzip` reports gzip,
 #      which succeeds on empty input, so a refused connection wrote a 20-byte
 #      file and slept a day. That hid a three-day outage once and cost staging
-#      a day in 2026-09.
+#      a day in 2026-09. A gzip integrity check and the pg_dumpall completion
+#      marker also catch output that is large but unfinished.
 #   2. A FAILED DUMP RETRIES IN MINUTES, never tomorrow. The 20-byte dumps
 #      happen while the db container is being recreated, which clears in
 #      seconds; sleeping 24 h turned a blip into a day with no restore point.
 #      `depends_on: service_healthy` does not prevent it (prod had it and still
 #      hit the race).
-#   3. RETENTION COUNTS ONLY USABLE DUMPS. A failed run leaves a small file for
+#   3. RETENTION COUNTS ONLY VERIFIED DUMPS. A failed run leaves a file for
 #      triage; letting those hold slots means a bad week evicts the good
 #      backups underneath it.
 #   4. THE DUMP HOUR IS CHOSEN, NOT INHERITED (BACKUP_AT, #3307). The old loop
@@ -149,16 +150,27 @@ ONCE=0
 
 mkdir -p "$DIR/daily" "$DIR/weekly"
 
+verified_dump() {
+  local file="$1" bytes
+  bytes=$(stat -c%s "$file" 2>/dev/null || echo 0)
+  [ "$bytes" -ge "$MIN" ] || return 1
+  gzip -t "$file" 2>/dev/null || return 1
+  gzip -dc "$file" 2>/dev/null | tail -n 12 | grep -Fx -- '-- PostgreSQL database cluster dump complete' >/dev/null
+}
+
 # One dump, judged. Prints its verdict; returns 0 only for a usable dump.
 dump_once() {
-  local stamp out ok sz
+  local stamp out partial failed ok sz
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   out="$DIR/daily/$PREFIX-$stamp.sql.gz"
   echo "[backup] $stamp -> pg_dumpall -> $out"
   ok=1
-  pg_dumpall --clean --if-exists | gzip > "$out" || ok=0
-  sz=$(stat -c%s "$out" 2>/dev/null || echo 0)
-  if [ "$ok" = "1" ] && [ "$sz" -ge "$MIN" ]; then
+  partial=$(mktemp "$DIR/daily/$PREFIX-$stamp.partial.XXXXXX") || return 1 # tmp-kept: published on success, kept for triage on failure; prune removes stale partials.
+  pg_dumpall --clean --if-exists | gzip > "$partial" || ok=0
+  sz=$(stat -c%s "$partial" 2>/dev/null || echo 0)
+  if [ "$ok" = "1" ] && verified_dump "$partial"; then
+    [ -e "$out" ] && out="$DIR/daily/$PREFIX-$stamp-${partial##*.}.sql.gz"
+    mv "$partial" "$out" || { echo "[backup] $stamp FAILED to publish $out"; return 1; }
     echo "[backup] $stamp done - $sz bytes"
     if [ "$(date +%u)" = "7" ]; then
       cp "$out" "$DIR/weekly/" && echo "[backup] weekly copy"
@@ -169,7 +181,9 @@ dump_once() {
     printf '%s %s\n' "$stamp" "$out" > "$DIR/last-dump"
     return 0
   fi
-  echo "[backup] $stamp FAILED - $sz bytes (floor $MIN); kept for triage, NOT promoted to weekly"
+  failed="$DIR/daily/$PREFIX-$stamp-${partial##*.}.failed"
+  mv "$partial" "$failed" || return 1
+  echo "[backup] $stamp FAILED - $sz bytes (floor $MIN, gzip integrity and dump completion required); kept for triage at $failed, NOT promoted to weekly"
   return 1
 }
 
@@ -177,11 +191,14 @@ dump_once() {
 # and every `|| true` here is load-bearing: a `while` returns its LAST test, so
 # a final undersized file would make the pipeline non-zero.
 prune() {
+  find "$DIR/daily" -type f \( -name '*.failed' -o -name '*.partial.*' \) -mmin +2880 -delete 2>/dev/null || true
   find "$DIR/daily" -name '*.sql.gz' -size -$(( MIN / 1024 ))k -mmin +2880 -delete 2>/dev/null || true
   { ls -1t "$DIR"/daily/*.sql.gz 2>/dev/null \
-    | while read -r f; do [ "$(stat -c%s "$f")" -ge "$MIN" ] && echo "$f"; done \
+    | while read -r f; do verified_dump "$f" && echo "$f"; done \
     | tail -n +$(( DAILY + 1 )) | xargs -r rm -f; } || true
-  { ls -1t "$DIR"/weekly/*.sql.gz 2>/dev/null | tail -n +$(( WEEKLY + 1 )) | xargs -r rm -f; } || true
+  { ls -1t "$DIR"/weekly/*.sql.gz 2>/dev/null \
+    | while read -r f; do verified_dump "$f" && echo "$f"; done \
+    | tail -n +$(( WEEKLY + 1 )) | xargs -r rm -f; } || true
 }
 
 if [ "$ONCE" = "1" ]; then

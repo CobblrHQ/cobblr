@@ -20,6 +20,7 @@ import { goodUntil, shelfLifeDaysOf, startsFreshLot } from "@cobblr/platform-con
 import { z } from "zod";
 import { tenantContext, tenantDb, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { lineAmountText, parseLineAmount } from "../line-amount.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 
 export const listsRouter = Router({ mergeParams: true });
@@ -196,6 +197,8 @@ listsRouter.get(
   }),
 );
 
+const sameWords = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase();
+
 // AI-REACH: crud
 listsRouter.patch(
   "/lists/:id",
@@ -279,7 +282,7 @@ const ItemUpdate = z.object({
   /** How many were bought, stated with the check. The wires that restock the
    *  line's record and file its purchase take this over their fixed amount;
    *  the row shows that amount as the default and lets it be corrected. */
-  quantity: optionalField(z.number().int().positive().max(100_000)),
+  quantity: optionalField(z.number().positive().max(100_000)),
   /** "I'm getting this" / "never mind". The claimer is always the caller — a
    *  claim is a statement about yourself, never an assignment handed to someone
    *  else, so there is no user id in the body to spoof. */
@@ -345,6 +348,10 @@ listsRouter.patch(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const patch: Record<string, unknown> = { updated_at: new Date() };
+    // The row as it was: the log says what this edit changed (#4517), and the
+    // amount the line already states is what a check-off must not rewrite.
+    const before = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+    const own = parseLineAmount(parsed.data.qty ?? before?.qty);
     if (parsed.data.title !== undefined) patch.title = parsed.data.title;
     if (parsed.data.note !== undefined) patch.note = parsed.data.note;
     if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
@@ -355,7 +362,11 @@ listsRouter.patch(
       patch.checked_at = parsed.data.checked ? new Date() : null;
       // The amount bought is the line's amount from now on, so a shared list
       // reads "×3" on every phone, not only the one that said so.
-      if (parsed.data.checked && parsed.data.quantity !== undefined) patch.qty = String(parsed.data.quantity);
+      // Said as the line wrote it: "1 kg" stays "1 kg" when the amount is the
+      // one it already carries, and a corrected amount keeps the unit (#7867).
+      if (parsed.data.checked && typeof parsed.data.quantity === "number" && parsed.data.quantity !== own?.value) {
+        patch.qty = lineAmountText(parsed.data.quantity, own?.unit ?? null);
+      }
       // Buying it settles the question of who was getting it. Leaving the claim
       // on a checked line would show "Sam is getting this" next to a line Sam
       // already got.
@@ -371,8 +382,6 @@ listsRouter.patch(
       patch.claimed_by_name = parsed.data.claimed ? (who?.display_name || who?.email || null) : null;
       patch.claimed_at = parsed.data.claimed ? new Date() : null;
     }
-    // The row as it was: the log says what this edit changed (#4517).
-    const before = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     const row = await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
     if (parsed.data.checked !== undefined) {
@@ -409,6 +418,10 @@ listsRouter.patch(
         // amount is a wire's fixed arg (adjust-stock's delta, record-event's
         // qty_delta) takes a stated quantity over it; see those handlers.
         ...(parsed.data.checked && parsed.data.quantity !== undefined ? { quantity: parsed.data.quantity } : {}),
+        // The unit it was written in, when the workspace knows it, so 1 kg
+        // lands on a pantry item kept in g as 1000; a word it does not know
+        // ("boxes") is a count and goes without (#7867).
+        ...(parsed.data.checked && parsed.data.quantity !== undefined && own?.unit && (await platform().units.resolve(ctx.org.id, own.unit).catch(() => null)) ? { unit: own.unit } : {}),
         // Whatever a tick does to the record it counts once per line: a
         // mis-tap and a second tick is still one purchase (the wires' adjust
         // and record steps read these to refuse the repeat).
@@ -434,6 +447,14 @@ listsRouter.patch(
           actorId: sessionUser(req)?.id ?? null,
         });
       }
+    }
+    // A correction that makes the line a different thing: whatever record the
+    // old words pointed at is no longer what is being bought (#7866). Said to
+    // the modules that own those records; an unticked line only, a ticked one
+    // is the record of what was bought.
+    if (parsed.data.title !== undefined && before && !before.checked && !row.checked && sameWords(before.title) !== sameWords(row.title)) {
+      const sourceRef = ((row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {}).source_ref;
+      await platform().events.emit("lists.item.renamed", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id, from: before.title, to: row.title, ...(sourceRef?.id ? { sourceRef } : {}) });
     }
     if (parsed.data.claimed !== undefined) {
       void platform().events.emit("lists.item.claimed", {

@@ -21,6 +21,7 @@ import { approvalDedupeKey, type BlockedAction } from "@cobblr/platform-contract
 import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
 import { primedRead } from "./primed-reads";
 import { sharedRead } from "./shared-reads";
+import { browserOffline, keepWaitingWrite, landedWrite, madeByAPerson, withWaitingWrites } from "./waiting-writes";
 
 const roles = new Map<string, string>();
 const shared = new Map<string, PortalShares>();
@@ -78,6 +79,7 @@ export const GUEST_NOT_SHARED = "A guest sees what this workspace shares in its 
  *  ITS answer is what the page gets, so a second refusal is shown the way the
  *  first would have been (#5890); closed, the page gets the refusal. */
 export async function workspaceFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const byAPerson = madeByAPerson();
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
   const path = url.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/^\/api\/v1(?=\/orgs\/)/, "");
@@ -89,9 +91,21 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
     const primed = await primedRead(method, path);
     if (primed) return new Response(JSON.stringify(primed.body), { status: primed.status, headers: { "content-type": "application/json" } });
   }
+  const authorization = new Headers(init?.headers).get("authorization");
+  // A write the browser could not send offline waits on this device, and a
+  // read shows the edits still waiting over its answer (waiting-writes.ts, #7863).
+  const keeps = path.startsWith("/orgs/") && !(input instanceof Request) && !new Headers(init?.headers).has("x-impersonation");
   let applied: string | null = null;
   for (;;) {
-    const res = await send(input, init, method);
+    let res: Response;
+    try {
+      res = await send(input, init, method);
+    } catch (e) {
+      if (keeps && byAPerson && browserOffline()) keepWaitingWrite(method, path, init?.body, authorization);
+      throw e;
+    }
+    if (keeps && method !== "GET") landedWrite(method, path, authorization);
+    if (keeps && method === "GET" && res.ok) res = await overWaitingWrites(res, path, authorization);
     if (res.status < 400 || res.status >= 500 || !path.startsWith("/orgs/")) return res;
     const sent = typeof init?.body === "string" ? parseBody(init.body) : undefined;
     const refused = refusedRequestFor(method, path, sent);
@@ -120,6 +134,14 @@ function send(input: string | URL | Request, init: RequestInit | undefined, meth
   if (own && method === "GET") return fetch(input, init);
   const headers = [...new Headers(init?.headers).entries()].map(([k, v]) => `${k}=${v}`).join("&");
   return sharedRead(method, `${headers} ${String(input)}`, () => fetch(input, init));
+}
+
+async function overWaitingWrites(res: Response, path: string, authorization: string | null): Promise<Response> {
+  if (!(res.headers.get("content-type") ?? "").includes("application/json")) return res;
+  const answer: unknown = await res.clone().json().catch(() => undefined);
+  const shown = withWaitingWrites(path, answer, authorization);
+  if (shown === answer) return res;
+  return new Response(JSON.stringify(shown), { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
 function parseBody(text: string): unknown {

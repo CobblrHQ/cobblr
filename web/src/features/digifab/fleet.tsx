@@ -510,7 +510,10 @@ function FleetBatchBar({
   const pausable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job?.status === "printing");
   const resumable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job?.status === "paused");
   const stoppable = devices.filter((d) => !d.lightburn_readiness && d.id !== "lightburn" && d.active_job && ["printing", "paused", "sent"].includes(d.active_job.status));
-  const clearable = devices.filter((d) => d.needs_attention);
+  // Clearing a bed records the print as good: an outcome, the admin tier's
+  // and an operator's to give, never drawn for someone it would refuse (#7892).
+  const recordsOutcomes = useCan("digifab:machine-outcome") === true;
+  const clearable = recordsOutcomes ? devices.filter((d) => d.needs_attention) : [];
   const run = async (label: string, items: Array<DigifabFleetDevice & { connId: string }>, fn: (d: DigifabFleetDevice & { connId: string }) => Promise<unknown>, destructive = false) => {
     const ok = await confirm({
       title: `${label} ${items.length} machine${items.length === 1 ? "" : "s"}?`,
@@ -1290,6 +1293,8 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
   // A station is where its machine is run: offered to the admin tier and to
   // an operator, never to someone it would only refuse (#7748).
   const runsMachines = useCan("digifab:operate") === true;
+  // How a print came out is recorded by whoever may record it (#7892).
+  const recordsOutcomes = useCan("digifab:machine-outcome") === true;
   const st = KLASS_STYLE[d.klass];
   // Progress: a Cobblr job's (0–1) wins; otherwise the printer's own live percent
   // (already 0–100, e.g. a Bambu print started from its own slicer).
@@ -1667,7 +1672,9 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
           {/* No verdict for a failed or CANCELLED print: there is no finished
               part to judge, and "came out good" would credit the production run
               for a plate that was abandoned mid-layer. */}
-          {att.reason === "print-failed" || att.reason === "print-cancelled" ? (
+          {!recordsOutcomes ? (
+            <p className="mt-0.5 text-[10px] text-amber-700 dark:text-amber-400">An operator records how it came out.</p>
+          ) : att.reason === "print-failed" || att.reason === "print-cancelled" ? (
             <button
               onClick={() => ready.mutate("good")}
               disabled={ready.isPending}

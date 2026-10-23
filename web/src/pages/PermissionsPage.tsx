@@ -18,7 +18,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EyeOff, Plus, X } from "lucide-react";
-import { useToast, usePageTitle } from "@cobblr/platform-web";
+import { useToast, usePageTitle, useOnceQuiet } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -173,8 +173,14 @@ function PermissionsOverview() {
   const kindLabel = (id: string) =>
     kinds.find((k) => k.id === id)?.display_name ?? id;
 
+  // Drawn once every section has its answer: the approvals card and the member
+  // list land above the field-visibility form and push its buttons.
+  const settled = useOnceQuiet();
+
   return (
-    <div className="space-y-6">
+    <>
+    {!settled && <p className="text-sm text-muted">Loading permissions…</p>}
+    <div className={settled ? "space-y-6" : "hidden"}>
       {/* What people are asking for, first: the same cards the bell and the
           Discord DM carried, for an approver who missed both. */}
       <ApprovalRequestsCard slug={activeSlug} />
@@ -369,6 +375,7 @@ function PermissionsOverview() {
         </div>
       </div>
     </div>
+    </>
   );
 }
 

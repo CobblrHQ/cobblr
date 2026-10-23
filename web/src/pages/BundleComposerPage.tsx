@@ -447,7 +447,7 @@ export function BundleComposerPage() {
                   {countOf(selectedWires.size, "wire")} · {countOf(selectedFields.size, "field")}
                 </div>
               </div>
-              <pre className="max-h-96 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
+              <pre tabIndex={0} className="max-h-96 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-800 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
                 {json}
               </pre>
             </section>

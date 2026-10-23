@@ -55,6 +55,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
         : api.unassignCustomRole(activeSlug, user_id, role_id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["permissions-matrix", activeSlug] });
+      void qc.invalidateQueries({ queryKey: ["custom-roles", activeSlug] });
     },
     onError: (e: unknown) => toast.error(`Couldn't change that role: ${e instanceof ApiError ? e.message : String(e)}`),
   });

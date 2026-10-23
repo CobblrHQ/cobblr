@@ -74,6 +74,19 @@ export function actionChangesWorkspace(actionId: string): boolean {
   return false;
 }
 
+/** The module actions of `face` that apply to `kind` (its base kind for a
+ *  collection's): the kind's own way of doing what a generic action does. */
+export function kindActionsOfFace(face: string, kinds: readonly string[] | null): string[] {
+  const out: string[] = [];
+  for (const m of list()) {
+    for (const a of m.exposes?.actions ?? []) {
+      const decl = a as { id: string; face?: string; appliesTo?: { kinds?: string[] } };
+      if (decl.face === face && (kinds === null || (decl.appliesTo?.kinds ?? []).some((k) => kinds.includes(k)))) out.push(decl.id);
+    }
+  }
+  return out;
+}
+
 let heldByRole: Map<string, Set<string>> | null = null;
 
 /** What a stock role holds without a grant, from the modules' own

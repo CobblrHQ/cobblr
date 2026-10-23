@@ -35,7 +35,7 @@ export interface NotificationEntry {
   link_url: string | null;
   /** The substance behind the one-liner, when there is any — the same card a
    *  Discord DM renders as an embed. Absent for most notifications. */
-  card?: { heading?: string; body?: string; context?: string; rows?: Array<{ text: string; actions?: string[] }> } | null;
+  card?: { heading?: string; body?: string; context?: string; rows?: Array<{ text: string; actions?: string[]; settled?: { label: string; at: string | null } }> } | null;
   /** Pressable things this notification offers — "Mark done", "Accept", "Move
    *  it". Declared at dispatch; what a press DOES is a platform action, so the
    *  bell needs no per-notification code to render one. */
@@ -199,7 +199,7 @@ export const notificationsApi = {
   /** Press a button a notification offered. One endpoint for every kind of
    *  notification: what the button does is declared at dispatch, not here. */
   pressNotificationAction: (id: string, actionId: string) =>
-    request<{ ok: true; label: string }>(
+    request<{ ok: true; label: string; undo?: Array<{ action_id: string; args?: Record<string, unknown>; entity_kind?: string; entity_id?: string }> }>(
       "POST",
       `/me/notifications/${id}/actions/${encodeURIComponent(actionId)}`,
     ),

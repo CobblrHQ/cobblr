@@ -1,5 +1,6 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName, useSentWords } from "@cobblr/platform-web";
+import { useCan } from "../lib/can";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
@@ -16,7 +17,7 @@ import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeW
 import { cancelOutcome, canCancelJob } from "../lib/digifab-cancel";
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, ListPlus, ChevronRight, Share2, Ban, Layers, Sliders } from "lucide-react";
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -354,9 +355,7 @@ export function DigifabPage({
         })}
       </ul>
 
-      {items.length > 0 && <PoolsSection slug={activeSlug} />}
-      {items.length > 0 && <PrintUpdatesPanel slug={activeSlug} />}
-      {items.length > 0 && <FailureDetectionPanel slug={activeSlug} />}
+      {items.length > 0 && <SetupPanels slug={activeSlug} />}
         </>
       )}
 
@@ -850,6 +849,23 @@ function PrintTrendChart({ series }: { series: NonNullable<DigifabHistory["serie
       </div>
     </div>
   );
+}
+
+// The set-once panels under the connections draw together, once the reads that
+// size them have answered: drawn one by one, a panel answering late pushed the
+// ones below it down after they showed (#8007).
+function SetupPanels({ slug }: { slug: string }) {
+  const reads = useQueries({ queries: [
+    { queryKey: ["digifab-pools", slug], queryFn: () => api.listDigifabPools(slug) },
+    { queryKey: ["digifab-channels", slug], queryFn: () => api.listDigifabChannels(slug) },
+    { queryKey: ["digifab-rules", slug], queryFn: () => api.listDigifabRules(slug) },
+  ] });
+  if (reads.some((r) => r.isPending)) return <div className="text-sm text-muted">Loading pools and print updates…</div>;
+  return <>
+    <PoolsSection slug={slug} />
+    <PrintUpdatesPanel slug={slug} />
+    <FailureDetectionPanel slug={slug} />
+  </>;
 }
 
 // AI print-failure detection config — enable the camera watch that folds a
@@ -1410,6 +1426,10 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
   const toast = useToast();
   const confirm = useConfirm();
   const [newOpen, setNewOpen] = useState(false);
+  // Making, sending and retrying a job runs a machine: drawn only for someone
+  // who may, never a Send that answers 403 (#7892). Stop and Cancel keep
+  // their own gates.
+  const runsMachines = useCan("digifab:operate") === true;
   const [sel, setSel] = useState<Set<string>>(new Set()); // F-10: bulk selection
   const [detailId, setDetailId] = useState<string | null>(null); // job detail modal
   // ⑥ SimplyPrint-style "queue timeline": one row per printer — what's running
@@ -1594,19 +1614,21 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
             { value: "timeline", label: "Timeline" },
           ]}
         />
+        {runsMachines && (
         <button
           onClick={() => setNewOpen(true)}
           className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition"
         >
           <Plus size={13} /> New job
         </button>
+        )}
       </div>
 
       {sel.size > 0 && (
         <div className="flex items-center gap-2 rounded bg-subtle dark:bg-slate-800 px-2.5 py-1.5 text-xs">
           <span className="text-content dark:text-mortar-200 font-medium">{sel.size} selected</span>
           <div className="flex-1" />
-          {bulkSendable.length > 0 && (
+          {runsMachines && bulkSendable.length > 0 && (
             <button onClick={bulkSend} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 disabled:opacity-50">
               <Send size={11} /> Send {bulkSendable.length}
             </button>
@@ -1705,7 +1727,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <RefreshCw size={14} className={poll.isPending && poll.variables === jb.id ? "animate-spin" : ""} />
                 </button>
               )}
-              {canSend(jb) && (
+              {runsMachines && canSend(jb) && (
                 <button
                   onClick={() => askSend(jb)}
                   disabled={send.isPending || startReview.busy}
@@ -1714,7 +1736,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <Send size={12} /> Send
                 </button>
               )}
-              {canRetry(jb) && (
+              {runsMachines && canRetry(jb) && (
                 <button
                   onClick={() => retry.mutate(jb.id)}
                   disabled={retry.isPending}
@@ -1724,7 +1746,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <RefreshCw size={12} className={retry.isPending && retry.variables === jb.id ? "animate-spin" : ""} /> Retry
                 </button>
               )}
-              {canAssign(jb) && <ReassignControl job={jb} slug={activeSlug} onDone={invalidate} />}
+              {runsMachines && canAssign(jb) && <ReassignControl job={jb} slug={activeSlug} onDone={invalidate} />}
               {canCancel(jb) && (
                 <button aria-label="Cancel" onClick={() => askCancel(jb)} disabled={cancel.isPending} title="Cancel" className="text-faint hover:text-ember-500 transition p-1.5 disabled:opacity-50">
                   <Ban size={14} />
@@ -1797,6 +1819,7 @@ function JobDetailModal({
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const confirm = useConfirm();
+  const runsMachines = useCan("digifab:operate") === true;
   const q = useQuery({
     queryKey: ["digifab-job", activeSlug, jobId],
     queryFn: () => api.getDigifabJob(activeSlug, jobId),
@@ -1882,14 +1905,14 @@ function JobDetailModal({
           <ContributedDetailPanels target="digifab:job" ctx={{ slug: activeSlug, entityId: j.id, entityTitle: jobDisplayName(j) }} />
           <div className="flex justify-end gap-2 pt-1">
             {j.embroidery_run && <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Open embroidery run</Link>}
-            {canSend(j) && (
+            {runsMachines && canSend(j) && (
               <button onClick={() => void startReview.beforeStart(jobId, async () => {
                 if (await confirm({ title: "Start this job?", message: "This physically starts the machine. Check it is ready before continuing.", confirmLabel: "Start job", destructive: true })) send.mutate();
               })} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm disabled:opacity-50">
                 <Send size={13} /> Send
               </button>
             )}
-            {canRetry(j) && (
+            {runsMachines && canRetry(j) && (
               <button onClick={() => act(() => api.retryDigifabJob(activeSlug, jobId), "Retrying")} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent hover:text-accent px-3 py-1.5 text-sm">
                 <RefreshCw size={13} /> Retry
               </button>
@@ -2537,11 +2560,11 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
         {items.map((p) => {
           const linked = linkByPrinter.get(p.id);
           return (
-            <li key={p.id} className="py-2.5 flex items-center gap-2 text-sm">
+            <li key={p.id} className="py-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
               <Printer size={14} className="text-faint shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-content dark:text-mortar-100 truncate">{p.name}</span>
+              <div className="flex-1 min-w-0 basis-40">
+                <div data-testid="farm-printer-name" className="text-content dark:text-mortar-100 truncate">{p.name}</div>
+                <div className="flex flex-wrap items-center gap-x-2">
                   {p.state && <span className="text-[11px] text-faint">{p.state}</span>}
                   <span className={"text-[11px] " + (p.enabled ? "text-moss-600 dark:text-moss-400" : "text-faint")}>
                     {p.enabled ? "enabled" : "disabled"}
@@ -2554,7 +2577,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
                 )}
               </div>
               <Combobox
-                className="max-w-[14rem]"
+                className="w-full sm:w-56"
                 disabled={link.isPending || unlink.isPending || machines.isLoading}
                 value={linked?.machine_id ?? ""}
                 allowClear
@@ -2631,6 +2654,7 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
   const toast = useToast();
   const confirm = useConfirm();
   const [sendOpen, setSendOpen] = useState(false);
+  const runsMachines = useCan("digifab:operate") === true;
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [materialOpen, setMaterialOpen] = useState(false);
   const thumb = useImageSrc(item.thumbnail_file_id ? api.fileRawUrl(slug, item.thumbnail_file_id) : null);
@@ -2668,7 +2692,7 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
           {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}{item.metadata.laser_layout ? " parts/sheet" : "×/plate"}</span>}
         </div>
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
-          {!(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
+          {runsMachines && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
           {(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <span className="text-xs text-muted">Use the queued job at its station.</span>}
           <button
             aria-label="Delete"

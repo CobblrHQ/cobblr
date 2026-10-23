@@ -20,7 +20,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
-import { HoldsQuiet } from "./OnceQuiet";
+import { HoldsQuiet, useOnceQuiet } from "./OnceQuiet";
 import { stillAsking } from "./still-asking";
 import { useFaces } from "./faces";
 
@@ -256,11 +256,12 @@ export function ContributedDetailPanels({
     enabled: !!api.recordPanelLayout,
     staleTime: 60_000,
   });
+  const quiet = useOnceQuiet();
   // Held until the arrangement is read, so a hidden panel never flashes up.
   if (api.recordPanelLayout && arranged.isLoading) return null;
   const panels = arrangePanels(all.filter((p) => panelShows(p, shape, placement)), arranged.data?.layout);
   if (panels.length === 0) return null;
-  return (
+  const drawn = (
     <>
       {panels.map((p) => {
         const C = REGISTRY.get(p.id);
@@ -276,6 +277,18 @@ export function ContributedDetailPanels({
         );
       })}
     </>
+  );
+  // On a record's own page the panels show once, and whole, after their last
+  // answer (OnceQuiet): a history that came after Discuss and Tag pushed both
+  // down under a finger on every page that draws them (#7870). A row in a
+  // list draws them as they come; a held row would be a gap in the list. The
+  // box takes its host's spacing, which hosts set differently: a flex or grid
+  // host's gap, and between panels the margin a space-y host gives the box.
+  if (!universal) return drawn;
+  return (
+    <div className={`flex flex-col gap-[inherit] [&>*+*]:mt-[inherit]${quiet ? "" : " invisible"}`} aria-hidden={quiet ? undefined : true} aria-busy={quiet ? undefined : true}>
+      {drawn}
+    </div>
   );
 }
 

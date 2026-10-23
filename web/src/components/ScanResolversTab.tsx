@@ -176,7 +176,7 @@ function TestBox() {
             <div className="text-content">
               <span className="text-accent font-medium">✓ resolved</span> — {result.resolution.name}{" "}
               <span className="text-faint">({result.resolution.source})</span>
-              <pre className="mt-1 text-xs bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto">
+              <pre tabIndex={0} className="mt-1 text-xs bg-surface dark:bg-slate-900 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto">
                 {JSON.stringify(result.resolution.fields, null, 2)}
               </pre>
             </div>

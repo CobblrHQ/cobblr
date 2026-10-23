@@ -17,6 +17,10 @@ import { ApiError, api, type SavedView, type SurfaceRecord } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { Modal, SegmentedChoice, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
+import { useKindLabels } from "../lib/useKindLabels";
+
+/** What a surface shows, in the words the Publish form offers it by. */
+const SOURCE_WORDS: Record<string, string> = { view: "Saved view", collection: "Collection", app: "App" };
 
 export function SurfacesPage() {
   usePageTitle("Public surfaces");
@@ -60,9 +64,8 @@ export function SurfacesPage() {
       </ConfigHeaderActions>
 
       <p className="text-sm text-muted dark:text-slate-400">
-        Cross-module readers go through{" "}
-        <code className="font-mono">exposableFields</code> projection
-        so private fields stay private.
+        A public surface is a link anyone can open, without an account, to read
+        what it shows. Revoke it to stop sharing: the link stops opening at once.
       </p>
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
@@ -73,14 +76,15 @@ export function SurfacesPage() {
       )}
 
       {items.length > 0 && (
-      <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
+      <ul data-testid="surface-list" className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800">
         {items.map((s) => (
-          <li key={s.id} className="px-3 py-2 text-sm space-y-1">
-            <div className="flex items-baseline gap-2">
-              <Globe size={14} className="text-faint" />
-              <span className="font-medium">{s.name}</span>
+          <li key={s.id} className="min-w-0 px-3 py-2 text-sm space-y-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div className="flex min-w-0 flex-[1_1_12rem] flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <Globe size={14} className="shrink-0 self-center text-faint" />
+              <span className="min-w-0 break-words font-medium">{s.name}</span>
               <span className="text-xs text-muted dark:text-slate-400">
-                {s.scope_type}
+                {SOURCE_WORDS[s.scope_type] ?? s.scope_type}
               </span>
               {!s.enabled && (
                 <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">
@@ -95,11 +99,12 @@ export function SurfacesPage() {
                   expires {new Date(s.expires_at).toLocaleDateString()}
                 </span>
               )}
-              <div className="flex-1" />
+              </div>
+              <div className="ml-auto flex shrink-0 items-center">
               <button
                 aria-label="Edit"
                 onClick={() => setEditFor(s)}
-                className="text-faint hover:text-accent transition"
+                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Edit"
               >
                 <Pencil size={14} />
@@ -109,7 +114,7 @@ export function SurfacesPage() {
                 href={`/p/${s.token}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-faint hover:text-accent transition"
+                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Open public page"
               >
                 <ExternalLink size={14} />
@@ -122,7 +127,7 @@ export function SurfacesPage() {
                   );
                   toast.success("Public URL copied");
                 }}
-                className="text-faint hover:text-accent transition"
+                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Copy public URL"
               >
                 <Copy size={14} />
@@ -130,7 +135,7 @@ export function SurfacesPage() {
               <button
                 aria-label="View stats"
                 onClick={() => setStatsFor(s)}
-                className="text-faint hover:text-accent transition"
+                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
                 title="View stats"
               >
                 <BarChart3 size={14} />
@@ -146,11 +151,12 @@ export function SurfacesPage() {
                   });
                   if (ok) revoke.mutate(s.id);
                 }}
-                className="text-faint hover:text-ember-500 transition"
+                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-ember-500 transition"
                 title="Revoke"
               >
                 <Trash2 size={14} />
               </button>
+              </div>
             </div>
             <div className="font-mono text-xs text-muted dark:text-slate-400 truncate">
               /p/{s.token}
@@ -307,7 +313,7 @@ function EditSurfaceModal({
             Enabled
           </span>
           <span className="text-xs text-faint">
-             - uncheck to pause (URL stays valid, 404s while paused)
+            Untick to pause: the link stays the same and shows nothing until you tick this again.
           </span>
         </label>
 
@@ -544,6 +550,7 @@ function CreateSurfaceModal({
   const [layout, setLayout] = useState<"tiles" | "list">("tiles");
   const [footer, setFooter] = useState("");
   const toast = useToast();
+  const kinds = useKindLabels(slug);
 
   const views = useQuery({
     queryKey: ["saved-views", slug],
@@ -580,7 +587,8 @@ function CreateSurfaceModal({
             filter = {};
             for (const piece of collectionFilterRaw.split(",")) {
               const [k, v] = piece.split("=").map((s) => s.trim());
-              if (k && v) filter[k] = v;
+              // "tag=urgent" is how the form says it; the filter's key is _tag.
+              if (k && v) filter[k === "tag" ? "_tag" : k] = v;
             }
             if (Object.keys(filter).length === 0) filter = undefined;
           }
@@ -650,7 +658,7 @@ function CreateSurfaceModal({
                 <option value=""> - pick a saved view - </option>
                 {items.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.name} ({v.entity_kind})
+                    {v.name} ({kinds.collection(v.entity_kind)})
                   </option>
                 ))}
               </select>
@@ -666,7 +674,7 @@ function CreateSurfaceModal({
         {scopeType === "collection" && (
           <>
             <label className="block">
-              <div className="text-xs text-muted mb-1">Entity kind</div>
+              <div className="text-xs text-muted mb-1">Collection</div>
               <select
                 value={collectionKind}
                 onChange={(e) => setCollectionKind(e.target.value)}
@@ -674,26 +682,24 @@ function CreateSurfaceModal({
               >
                 {kindList.map((k) => (
                   <option key={k.id} value={k.id}>
-                    {k.display_name} ({k.id})
+                    {k.display_name}
                   </option>
                 ))}
               </select>
             </label>
             <label className="block">
-              <div className="text-xs text-muted mb-1">
-                Filter (comma-separated <code>field=value</code>, optional)
-              </div>
+              <div className="text-xs text-muted mb-1">Show only some (optional)</div>
               <input
                 type="text"
                 value={collectionFilterRaw}
                 onChange={(e) => setCollectionFilterRaw(e.target.value)}
-                placeholder="state=active, location_id=…, _tag=urgent"
+                placeholder="state=active, tag=urgent"
                 className="w-full px-2 py-1 text-sm font-mono border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
               />
               <div className="text-[11px] text-faint mt-1">
-                Native columns + metadata fields + <code>_tag</code> are
-                supported (resolver-dependent). Blank = list every entity
-                of this kind.
+                A field and the value it must have, such as state=active, or a
+                tag, such as tag=urgent; separate several with commas. Blank
+                shows every record in the collection.
               </div>
             </label>
           </>

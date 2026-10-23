@@ -12,7 +12,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "lists",
-  version: "0.1.23",
+  version: "0.1.25",
   displayName: "Lists",
   description:
     "Simple checklists for shopping, packing or to-dos, which can fill themselves when something runs low.",
@@ -86,8 +86,9 @@ export default defineModule({
     // What a check-off carries. The item's record rides under its kind's own
     // id key (partId for a part), with sourceRef beside it.
     eventPayloads: {
-      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity", "restocks", "actorId", "once", "reversible", "sourceKind", "sourceId"],
+      "lists.item.checked": ["listId", "itemId", "checked", "partId", "sourceRef", "quantity", "unit", "restocks", "actorId", "once", "reversible", "sourceKind", "sourceId"],
       "lists.item.unchecked": ["listId", "itemId", "partId", "sourceRef", "actorId"],
+      "lists.item.renamed": ["listId", "itemId", "from", "to", "sourceRef"],
     },
     // The KINDS of workspace notification this module sends, so the
     // workspace can say who each kind is for (Configuration > Who gets told).
@@ -101,6 +102,9 @@ export default defineModule({
       "lists.item.checked",
       // A tick taken back: what the tick did to the line's record is undone.
       "lists.item.unchecked",
+      // An unticked line corrected into another thing: the record its old
+      // words pointed at is not what is being bought any more.
+      "lists.item.renamed",
       // Someone said "I'm getting this" (or took it back) on a shared list.
       "lists.item.claimed",
       "lists.item.removed",
@@ -186,7 +190,7 @@ export default defineModule({
         internal: true,
         label: "Link a typed line to the record it names",
         description:
-          "Internal: point an unticked line that has no record behind it at the record its title names, so ticking it restocks that record. A line that already has a record is left alone.",
+          "Internal: point an unticked line that has no record behind it at the record its title names, so ticking it restocks that record. A line that already has a record is left alone unless it is asked to relink (the line was corrected into another thing) or unlink (it no longer names a record).",
         icon: "link",
         scope: "workspace" as const,
         userInvokable: false,
@@ -195,6 +199,8 @@ export default defineModule({
           item_id: { label: "The item's id", type: "text" },
           kind: { label: "The record's kind", type: "text" },
           id: { label: "The record's id", type: "text" },
+          relink: { label: "Replace the record it points at", type: "boolean" },
+          unlink: { label: "Point it at no record", type: "boolean" },
         },
       },
     ],
@@ -206,6 +212,8 @@ export default defineModule({
     onBoot: async () => {
       const { startExpirySweeper } = await import("./expiry-sweeper.js");
       startExpirySweeper();
+      const { registerAnsweredExpiry } = await import("./answered-expiry.js");
+      registerAnsweredExpiry();
       const { registerExpiryCalendarSource } = await import("./calendar-source.js");
       registerExpiryCalendarSource();
       const { registerRecoveredStock } = await import("./recovered-stock.js");

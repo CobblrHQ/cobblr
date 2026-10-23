@@ -1,3 +1,4 @@
+import { lineFigures } from "./purchase-line-figures";
 import { SelectBox, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -1004,8 +1005,7 @@ function OrderLineItem({
   const href = ent?.detailUrl ?? (item.part_id ? routeFor("inventory:part", item.part_id) : null);
   const qty = Number(item.qty);
   const unit = item.unit_cost != null ? Number(item.unit_cost) : null;
-  const ext = unit != null ? qty * unit : null;
-  const each = `${qty.toFixed(0)} × ${unit != null ? money(unit) : "—"}`;
+  const { each, total: ext } = lineFigures(qty, unit, money);
   const actions = usePurchaseLineActions(slug, order, item);
 
   const inner = (

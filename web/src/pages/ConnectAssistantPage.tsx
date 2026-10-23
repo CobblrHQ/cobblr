@@ -114,7 +114,7 @@ export function ConnectAssistantPage() {
         <section key={c.id} className={SECTION + " space-y-2"} data-client={c.id} data-status={c.status}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <div className="text-sm font-medium text-content dark:text-slate-100">{c.label}</div>
-            <span className={"text-[11px] " + (c.status === "ready" ? "text-faint dark:text-slate-500" : "text-amber-500")}>
+            <span className={"text-[11px] " + (c.status === "ready" ? "text-faint dark:text-slate-500" : "text-amber-800 dark:text-amber-300")}>
               {c.status === "ready" ? c.where : "Not available yet"}
             </span>
           </div>
@@ -130,7 +130,7 @@ export function ConnectAssistantPage() {
               >
                 {copied === c.id ? "Copied" : "Copy"}
               </button>
-              <pre className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 pr-16 text-xs leading-relaxed text-slate-200"><code>{c.snippet}</code></pre>
+              <pre tabIndex={0} className="overflow-x-auto rounded-md border border-line dark:border-slate-700 bg-slate-950 p-4 pr-16 text-xs leading-relaxed text-slate-200"><code>{c.snippet}</code></pre>
             </div>
           )}
         </section>

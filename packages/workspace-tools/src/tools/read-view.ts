@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { type WorkspaceTool } from "../tool-kit.js";
+import { unappliedSentence, type UnappliedFilter } from "@cobblr/platform-contract/view-caveats";
 
 const tool: WorkspaceTool = {
   name: "read_view",
@@ -36,7 +37,13 @@ const tool: WorkspaceTool = {
     if (Object.keys(inputs).length) qs.set("inputs", JSON.stringify(inputs));
     const read = await api.request("GET", `/modules/core-views/views/${encodeURIComponent(view.id)}/data?${qs}`);
     if (read.status >= 400) return toolFail(apiErrorMessage(read, `couldn't read ${view.name}`));
-    const body = read.body as { items?: unknown[]; total?: number; inputs?: { values: Record<string, unknown>; notes: Array<{ message: string }> } };
+    const body = read.body as {
+      items?: unknown[];
+      total?: number;
+      inputs?: { values: Record<string, unknown>; notes: Array<{ message: string }> };
+      unapplied?: UnappliedFilter[];
+      ungrouped?: { group_by: unknown; reason?: string };
+    };
     // The page keeps the inputs in its address, so the screen opens scaled.
     const page = new URLSearchParams();
     for (const [k, v] of Object.entries(body.inputs?.values ?? {})) page.set(`in.${k}`, String(v));
@@ -45,6 +52,11 @@ const tool: WorkspaceTool = {
     return toolOk({
       view: { name: view.name, of: view.entity_kind },
       ...(body.inputs ? { inputs: body.inputs.values, ...(body.inputs.notes.length ? { inputs_changed: body.inputs.notes.map((n) => n.message) } : {}) } : {}),
+      // What the rows are NOT, as the app says it above them: a filter that
+      // could not run leaves every row in, and saying nothing presented them
+      // as the filtered set (#7880).
+      ...(body.unapplied?.length ? { unapplied: body.unapplied, warning: unappliedSentence(body.unapplied) } : {}),
+      ...(body.ungrouped ? { ungrouped: `This view could not group by ${String(body.ungrouped.group_by)}, so these are in one list.` } : {}),
       items,
       shown: items.length,
       ...(typeof body.total === "number" ? { total: body.total } : {}),

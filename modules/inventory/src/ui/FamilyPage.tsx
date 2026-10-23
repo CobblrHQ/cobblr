@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
 import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, SearchInput, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
+import { valuesAnswer } from "@cobblr/platform-contract/measure";
 import { InventoryProvider, useInventory } from "./context";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
 import type { FamilyPayload, FamilyThing, FamilyType } from "./api";
@@ -312,15 +313,11 @@ export function inNaturalOrder(types: FamilyType[]): FamilyType[] {
   return [...types].sort((a, b) => naturally.compare(a.name, b.name));
 }
 
-const wordsOf = (md: Record<string, unknown>) => Object.values(md).filter((v) => typeof v === "string" || typeof v === "number").join(" ");
-
 /** Whether a type answers what was typed: every word somewhere in its name,
- *  maker, details, or one of its things (a lot, a distributor number). */
+ *  maker, details, or one of its things (a lot, a distributor number), and
+ *  every value by value, so "0.1uF" finds the capacitor stocked as "100n". */
 export function typeMatches(t: FamilyType, query: string): boolean {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (!words.length) return true;
-  const text = [t.name, t.manufacturer ?? "", wordsOf(t.metadata), ...t.children.flatMap((c) => [c.name, wordsOf(c.metadata), c.location_name ?? ""])].join(" ").toLowerCase();
-  return words.every((w) => text.includes(w));
+  return valuesAnswer([t.name, t.manufacturer, ...Object.values(t.metadata), ...t.children.flatMap((c) => [c.name, ...Object.values(c.metadata), c.location_name])], query);
 }
 
 const groupKey = (t: FamilyType, view: View): string => {

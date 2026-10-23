@@ -14,6 +14,24 @@ export function subjectClaimKey(s: { kind: string; id: string; question: string;
   return `${s.kind}/${s.id}/${s.question}`;
 }
 
+/** The distinct claim keys of a notice, and the subjects it said under each.
+ *  Two lines under one key are still two lines: a ledger keys a claim on what
+ *  the thing IS, and a producer that put two services of one record under one
+ *  key lost one of them from the message (#7841). */
+export function groupByClaimKey(subjects: readonly AttentionSubject[]): Map<string, AttentionSubject[]> {
+  const out = new Map<string, AttentionSubject[]>();
+  for (const s of subjects) {
+    const key = subjectClaimKey(s);
+    out.set(key, [...(out.get(key) ?? []), s]);
+  }
+  return out;
+}
+
+/** What this notice is now the one to say: every subject under a key it won. */
+export function subjectsUnder(groups: ReadonlyMap<string, AttentionSubject[]>, wonKeys: ReadonlySet<string>): AttentionSubject[] {
+  return [...groups].filter(([k]) => wonKeys.has(k)).flatMap(([, subjects]) => subjects);
+}
+
 const plain = (line: string) => line.replace(/\*\*/g, "");
 
 /** The same notice, saying only the subjects in `fresh`: its message is their

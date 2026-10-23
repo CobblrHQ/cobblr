@@ -116,6 +116,10 @@ export interface ListResolverOptions {
    *  this the platform reports those predicates unapplied rather than let the
    *  resolver skip them and answer with everything. */
   textOps?: boolean;
+  /** It runs `filter._tag` itself (the records carrying that tag). Without
+   *  this the platform reports the tag filter unapplied rather than let the
+   *  resolver ignore the key and answer with everything (#7840). */
+  tags?: boolean;
 }
 
 /** Query passed to a list resolver — generic primitives so the

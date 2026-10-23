@@ -1,4 +1,4 @@
-import { platform, readJsonArg, likeNeedle } from "@cobblr/platform-contract";
+import { platform, readJsonArg, textSearchWhere } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import { z } from "zod";
 import type { DigifabDB } from "../../db.js";
@@ -25,7 +25,7 @@ export function registerKilnActions() {
  platform().entities.registerListResolver("digifab:firing", async (orgId, query) => {
   const db = await platform().tenants.getDb(orgId) as Kysely<DigifabDB>;
   let q = db.selectFrom("digifab_firings").selectAll();
-  if (query.q) q = q.where("name", "ilike", likeNeedle(query.q));
+  if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "status"], json: ["recipe"] })!);
   const rows = await q.orderBy("created_at", "desc").limit(Math.min(query.limit ?? 50, 200)).offset(query.offset ?? 0).execute(); return { items: await Promise.all(rows.map(row => entity(orgId, row))) };
  });
 }

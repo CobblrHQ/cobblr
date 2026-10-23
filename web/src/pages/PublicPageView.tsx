@@ -74,9 +74,9 @@ export function PublicBrand({ frame, className, children, testId }: { frame: Pub
 
 const shown = (v: unknown) => (typeof v === "boolean" ? (v ? "Yes" : "No") : String(v));
 
-export function PublicPageView({ token, layout, items }: { token: string; layout: string; items: PublicRecord[] }) {
+export function PublicPageView({ token, layout, items, refreshedAt }: { token: string; layout: string; items: PublicRecord[]; refreshedAt: number }) {
   const [open, setOpen] = useState<string | null>(null);
-  if (open) return <PublicRecordDetail token={token} refId={open} onBack={() => setOpen(null)} />;
+  if (open) return <PublicRecordDetail token={token} refId={open} refreshedAt={refreshedAt} onBack={() => setOpen(null)} />;
   if (items.length === 0) return <div className="py-12 text-center text-sm italic text-muted">Nothing here yet.</div>;
   if (layout === "table") {
     return (
@@ -106,9 +106,10 @@ export function PublicPageView({ token, layout, items }: { token: string; layout
   );
 }
 
-function PublicRecordDetail({ token, refId, onBack }: { token: string; refId: string; onBack: () => void }) {
+function PublicRecordDetail({ token, refId, refreshedAt, onBack }: { token: string; refId: string; refreshedAt: number; onBack: () => void }) {
   const q = useQuery({
-    queryKey: ["public-record", token, refId],
+    queryKey: ["public-record", token, refId, refreshedAt],
+    gcTime: 0,
     queryFn: async () => {
       const res = await fetch(`/api/v1/public/${token}/records/${encodeURIComponent(refId)}`);
       if (!res.ok) throw new Error(res.status === 410 ? "This link has expired." : "That is not here any more.");

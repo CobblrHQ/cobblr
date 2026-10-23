@@ -17,7 +17,7 @@ import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useToast } from "@cobblr/platform-web";
 import { ServicesInOrder } from "./ServicesInOrder";
 import { JobRow } from "./YourAiDefaults";
-import { PersonalDocumentsReader } from "./PersonalDocumentsReader";
+import { PersonalDocumentsReader, usePersonalDocumentsReader } from "./PersonalDocumentsReader";
 
 export { WHO_ANSWERS_ANCHOR } from "../lib/ai-chain";
 
@@ -57,6 +57,10 @@ export function WhoAnswersSection() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
+  const reader = usePersonalDocumentsReader();
+  // The rows wait for who reads personal documents: its row is drawn in the
+  // middle of them once known, and pushes the buttons of the rows below it.
+  const readerAnswered = !reader.isPending || reader.failureCount > 0;
   const view = order.data;
   const all = chains.map((c) => c.data).filter((d): d is AiChainAnswer => !!d);
   const warnings = all.length === AI_JOB_GROUPS.length ? sectionWarnings(all) : [];
@@ -103,7 +107,7 @@ export function WhoAnswersSection() {
           ))}
         </ul>
       )}
-      {!view ? (
+      {!view || !readerAnswered ? (
         <p className="text-xs text-faint">Checking…</p>
       ) : (
         <div className="divide-y divide-line dark:divide-slate-700">
@@ -145,7 +149,8 @@ export function WhoAnswersSection() {
           })}
         </div>
       )}
-      <ServicesInOrder />
+      {/* After the rows: it is a line high before they are drawn, and moves with them. */}
+      {view && readerAnswered && <ServicesInOrder />}
     </section>
   );
 }

@@ -8,6 +8,7 @@
 // the kernel's actions (platform:accept-suggestions / reject-suggestions),
 // the same the assistant uses, and each offers Undo.
 
+import { useRecordRuns } from "./record-runs";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { MessageSquareDiff } from "lucide-react";
@@ -25,6 +26,10 @@ export function RecordSuggestions({ kind, id, onChanged }: { kind: string; id: s
   const runAction = useRunAction();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Accept and Reject only where they run for this viewer (#7922).
+  const may = useRecordRuns();
+  const accepts = may("platform:accept-suggestions");
+  const rejects = may("platform:reject-suggestions");
   const q = useQuery({
     queryKey: ["record-suggestions", orgSlug, kind, id],
     queryFn: () => api.listSuggestions!(orgSlug, { kind, id }),
@@ -66,7 +71,7 @@ export function RecordSuggestions({ kind, id, onChanged }: { kind: string; id: s
         <span className="min-w-0 flex-1 font-medium">
           {countOf(items.length, "suggested edit")} by {who}
         </span>
-        {items.length > 1 && (
+        {accepts && items.length > 1 && (
           <button type="button" disabled={busy} data-testid="suggestions-accept-all" onClick={() => void decide("platform:accept-suggestions", items.map((e) => e.id))} className={btn}>
             Accept all
           </button>
@@ -87,12 +92,12 @@ export function RecordSuggestions({ kind, id, onChanged }: { kind: string; id: s
             )}
             {!e.still_shared && <span className="text-xs text-muted">no longer shared</span>}
             <span className="flex gap-1">
-              <button type="button" disabled={busy} data-testid="suggestion-accept" onClick={() => void decide("platform:accept-suggestions", [e.id])} className={btn}>
+              {accepts && <button type="button" disabled={busy} data-testid="suggestion-accept" onClick={() => void decide("platform:accept-suggestions", [e.id])} className={btn}>
                 {e.status === "conflict" ? "Take theirs" : "Accept"}
-              </button>
-              <button type="button" disabled={busy} data-testid="suggestion-reject" onClick={() => void decide("platform:reject-suggestions", [e.id])} className={btn}>
+              </button>}
+              {rejects && <button type="button" disabled={busy} data-testid="suggestion-reject" onClick={() => void decide("platform:reject-suggestions", [e.id])} className={btn}>
                 {e.status === "conflict" ? "Keep yours" : "Reject"}
-              </button>
+              </button>}
             </span>
           </li>
         ))}

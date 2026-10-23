@@ -1,4 +1,5 @@
 import { productName } from "./product-name.js";
+import { clearOfReservedKey } from "@cobblr/platform-contract/field-key";
 import { exportSendFile } from "./record-send-file.js";
 import { listFlagshipManifests } from "../lib/flagship-bundles.js";
 import { createPairing, deletePairing, updatePairing } from "./pairings-ops.js";
@@ -105,7 +106,7 @@ function renderEventValues(value: unknown, data: Record<string, unknown>): unkno
   return value;
 }
 
-/** A storage name from a label: "Purchase Date" → purchase_date. The def
+/** A storage name from a label: "Purchase Date" → purchase_date, "Batch note" → batch_note_text (one the server accepts, #7879). The def
  *  schema requires a leading letter, so a label like "3D printer count" gets a
  *  letter prefix rather than a refusal over a rule the user never typed. */
 function fieldNameFromLabel(label: string): string {
@@ -114,7 +115,7 @@ function fieldNameFromLabel(label: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
-  return /^[a-z]/.test(slug) ? slug : slug ? `f_${slug}` : "";
+  return clearOfReservedKey(/^[a-z]/.test(slug) ? slug : slug ? `f_${slug}` : "");
 }
 
 /** An instance slug from a display name: "CNC Machines" → cnc-machines. */
@@ -944,7 +945,11 @@ export function registerPlatformActionHandlers(): void {
             ? patch.learns === false
               ? "no longer remembers new entries"
               : "remembers new entries"
-            : k.replace(/_/g, " "),
+            : k === "required"
+              ? patch.required === true
+                ? "now required"
+                : "now optional"
+              : k.replace(/_/g, " "),
       )
       .join(", ");
     const onlyChoices = Object.keys(patch).length === 1 && patch.choices !== undefined;

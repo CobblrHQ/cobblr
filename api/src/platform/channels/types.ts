@@ -55,7 +55,7 @@ export interface NotificationCard {
   context?: string;
   /** The body as lines with the actions that are about each (see the
    *  contract's NotificationCardRow); `body` stands alone without it. */
-  rows?: Array<{ text: string; actions?: string[] }>;
+  rows?: Array<{ text: string; actions?: string[]; settled?: { label: string; at: string | null } }>;
 }
 
 export interface Channel {

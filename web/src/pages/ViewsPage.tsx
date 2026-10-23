@@ -53,6 +53,7 @@ import {
   type SortRow,
 } from "../components/ViewBuilder";
 import { layoutConfig, tableGroupingValue } from "../lib/view-config";
+import { unappliedSentence } from "@cobblr/platform-contract/view-caveats";
 
 export function ViewsPage() {
   usePageTitle("Views");
@@ -381,8 +382,7 @@ export function SavedViewBody({
           below read as the filtered set when they were everything. */}
       {unapplied && unapplied.length > 0 && (
         <p data-testid="view-unapplied" className="rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-2 py-1 text-xs text-amber-900 dark:text-amber-200">
-          {unapplied.length === 1 ? "One filter" : `${unapplied.length} filters`} in this view could not run, so these are not narrowed by{" "}
-          {unapplied.map((p) => `${p.col} ${p.op} ${p.ref_col ?? String(p.value ?? "")}`).join(", ")}.
+          {unappliedSentence(unapplied)}
         </p>
       )}
       {ungrouped && (

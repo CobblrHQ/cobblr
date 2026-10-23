@@ -163,42 +163,35 @@ async function sweepStaleLocks(): Promise<number> {
   return reclaimed.length;
 }
 
-/** Pop up to N ready jobs from one queue. Each row is locked via
- *  SKIP LOCKED + flipped to 'running' so the caller can release the
- *  meta connection before invoking the handler. Returns the locked
- *  rows. */
-async function claim(
-  queue: string,
-  limit: number,
-): Promise<
-  Array<{ id: string; org_id: string; payload: Record<string, unknown>; attempts: number }>
-> {
-  const rows = await meta
-    .updateTable("core_queue_jobs")
-    .set({
-      status: "running",
-      locked_at: new Date(),
-      locked_by: WORKER_ID,
-    } as never)
-    .where("id", "in", (eb) =>
-      eb
-        .selectFrom("core_queue_jobs")
-        .select("id")
-        .where("status", "=", "queued")
-        .where("run_at", "<=", new Date())
-        .where("queue", "=", queue)
-        .orderBy("run_at", "asc")
-        .limit(limit)
-        .modifyEnd(sql`for update skip locked`),
-    )
-    .returning(["id", "org_id", "payload", "attempts"])
-    .execute();
-  return rows.map((r) => ({
-    id: r.id,
-    org_id: r.org_id,
-    payload: (r.payload as Record<string, unknown>) ?? {},
-    attempts: r.attempts,
-  }));
+type ClaimedJob = { id: string; org_id: string; queue: string; payload: Record<string, unknown>; attempts: number; max_attempts: number };
+
+/** Pop up to `limit` ready jobs from EACH of `queues`, in ONE statement: a LATERAL per queue, each row locked via
+ *  SKIP LOCKED and flipped to 'running', so the caller holds no meta connection while the handlers run.
+ *
+ *  ONE STATEMENT, NOT ONE PER QUEUE (#7719, 2026-10-22): the tick claimed each registered queue in parallel, one meta
+ *  checkout each, so a tick held as many meta clients as there are queues. Main's test run 56224 on the CI box named
+ *  it: 14 meta clients held by `no request: claim (queue.js)` at once, and the same burst had starved the suite's own
+ *  API on run 55631 (33 held by timers, 80 of 80 in use). A claim now costs one client whatever the queue count.
+ *  max_attempts comes back with the claim, which also drops the second SELECT each job made. */
+async function claimAll(queues: string[], limit: number): Promise<ClaimedJob[]> {
+  if (queues.length === 0) return [];
+  const now = new Date();
+  const { rows } = await sql<ClaimedJob>`
+    update core_queue_jobs as j
+       set status = 'running', locked_at = ${now}, locked_by = ${WORKER_ID}
+     where j.id in (
+       select picked.id
+         from unnest(${queues}::text[]) as q(name)
+         cross join lateral (
+           select id from core_queue_jobs
+            where status = 'queued' and run_at <= ${now} and queue = q.name
+            order by run_at asc
+            limit ${limit}
+            for update skip locked
+         ) as picked
+     )
+    returning j.id, j.org_id, j.queue, j.payload, j.attempts, j.max_attempts`.execute(meta);
+  return rows.map((r) => ({ ...r, payload: (r.payload as Record<string, unknown>) ?? {} }));
 }
 
 async function markDone(id: string): Promise<void> {
@@ -261,8 +254,8 @@ export interface TickResult {
 }
 
 /** One polling pass. Reclaims stale locks, then for each registered
- *  handler claims up to JOBS_PER_TICK ready jobs and invokes the
- *  handler. Errors per job are logged + retried; the loop never
+ *  handler gets up to JOBS_PER_TICK ready jobs, all claimed in one
+ *  statement, and invokes the handler. Errors per job are logged + retried; the loop never
  *  takes down the worker. */
 export async function tick(): Promise<TickResult> {
   const staleReclaimed = await sweepStaleLocks();
@@ -270,21 +263,16 @@ export async function tick(): Promise<TickResult> {
   let failed = 0;
   let retried = 0;
 
-  // Fan out across queues in parallel: a slow handler on one queue
+  // One claim for every queue (claimAll), then each queue's jobs in parallel: a slow handler on one queue
   // shouldn't block another queue's throughput.
+  const claimed = await claimAll(Array.from(handlers.keys()), JOBS_PER_TICK);
+  const byQueue = new Map<string, ClaimedJob[]>();
+  for (const job of claimed) byQueue.set(job.queue, [...(byQueue.get(job.queue) ?? []), job]);
   await Promise.all(
-    Array.from(handlers.entries()).map(async ([queue, handler]) => {
-      const jobs = await claim(queue, JOBS_PER_TICK);
+    Array.from(byQueue.entries()).map(async ([queue, jobs]) => {
+      const handler = handlers.get(queue);
+      if (!handler) return;
       for (const job of jobs) {
-        // We need max_attempts to decide retry vs. fail. Read it
-        // alongside the claim to avoid an extra query — simplest
-        // hack: read from a second SELECT now. Cheap; we just
-        // claimed by id.
-        const meta_row = await meta
-          .selectFrom("core_queue_jobs")
-          .select("max_attempts")
-          .where("id", "=", job.id)
-          .executeTakeFirstOrThrow();
         try {
           await handler({
             id: job.id,
@@ -295,12 +283,7 @@ export async function tick(): Promise<TickResult> {
           await markDone(job.id);
           ran++;
         } catch (err) {
-          const outcome = await markFailedOrRetry(
-            job.id,
-            job.attempts,
-            meta_row.max_attempts,
-            err as Error,
-          );
+          const outcome = await markFailedOrRetry(job.id, job.attempts, job.max_attempts, err as Error);
           if (outcome === "failed") failed++;
           else retried++;
           console.error(

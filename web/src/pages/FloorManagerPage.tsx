@@ -30,6 +30,10 @@ export function FloorManagerPage({ screen = false }: { screen?: boolean }) {
  const [operations, setOperations] = useState<Record<string, string>>({}); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
  const design = useQuery({ queryKey: ["laser-design", slug, drawing, units], queryFn: () => api.laserDesign(slug, drawing, units), enabled: !!drawing });
  const data = floor.data;
+ // The page draws whole once both reads answer: the machine queues sit above
+ // the material and dispatch sections, so drawing those first pushed Preview
+ // dispatch screens down when the fleet arrived (#7913).
+ const ready = (!!data || !!floor.error) && (!!fleet.data || !!fleet.error);
  const layers = [...new Set(design.data?.paths.map(p => p.layer) ?? [])];
  const selectedMaterial = data?.laser_materials.find(m => `${m.material}:${m.thickness_mm}` === material);
  const dispatch = async (operation: "plan" | "queue" | "cancel", args: Record<string, unknown>) => {
@@ -47,8 +51,8 @@ export function FloorManagerPage({ screen = false }: { screen?: boolean }) {
   <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-3xl font-semibold">Floor manager</h1><p className="text-muted">All machines, their queues and what needs a person.</p></div><div className="flex flex-wrap gap-3"><Link className={button} to={screen ? "/digifab/manager" : "/station/floor"}>{screen ? "Exit shared screen" : "Open shared screen"}</Link>{!screen && <Link className={button} to="/digifab">Fleet and setup</Link>}</div></header>
   {(error || floor.error || fleet.error) && <p role="alert" className={`${panel} border-red-500 break-words`}>{error || errorText(floor.error || fleet.error)}</p>}
   {notice && <p role="status" className={`${panel} break-words`}>{notice}</p>}
-  {!data && !floor.error && <p>Loading the floor…</p>}
-  {fleet.data && <section aria-label="All machine queues" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{fleet.data.connections.map(c => c.error && !c.devices.length ? <article key={c.connection_id} className={panel}><h2 className="text-2xl font-semibold uppercase tracking-wide">{c.label}</h2><p role="alert">Connection unavailable: {c.error}</p></article> : c.devices.map(d => {
+  {!ready && <p>Loading the floor…</p>}
+  {ready && fleet.data && <section aria-label="All machine queues" className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{fleet.data.connections.map(c => c.error && !c.devices.length ? <article key={c.connection_id} className={panel}><h2 className="text-2xl font-semibold uppercase tracking-wide">{c.label}</h2><p role="alert">Connection unavailable: {c.error}</p></article> : c.devices.map(d => {
    const laser = !!d.laser_backend || d.lightburn_readiness != null || data?.laser_devices.some(p => p.connection_id === c.connection_id && p.device_id === d.id);
    const queue = data?.jobs.filter(j => j.connection_id === c.connection_id && j.target_device === d.id && j.status === "queued") ?? [];
    const current = d.active_job;
@@ -62,7 +66,7 @@ export function FloorManagerPage({ screen = false }: { screen?: boolean }) {
     {station && <Link className={button} to={station}>Open {laser ? "laser" : "printer"} station</Link>}
    </article>;
   }))}{fleet.data.summary.devices === 0 && <p>No machines connected. Add them in Fleet and setup.</p>}</section>}
-  {data && <>
+  {ready && data && <>
    {data.jobs.some(j => j.target_pool && !j.connection_id) && <section className={panel}><h2 className="text-2xl font-semibold uppercase tracking-wide">Waiting for placement</h2>{data.jobs.filter(j => j.target_pool && !j.connection_id).map(j => <div key={j.id} className="break-words"><p className="font-semibold">{jobDisplayName(j)} · {data.pools.find(p => p.id === j.target_pool)?.name || "Pool"}</p><p>{j.blocked || "Waiting for an available machine"}</p></div>)}</section>}
    <section className="space-y-3"><h2 className="text-2xl font-semibold uppercase tracking-wide">Material on hand</h2>{!data.stock_complete && <p role="alert">The stock list is incomplete. Choose sheets explicitly in Prepare laser batch.</p>}<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">{data.stock.map(m => <article className={panel} key={`${m.material}:${m.thickness_mm}`}><h3 className="text-xl font-semibold uppercase tracking-wide">{m.thickness_mm != null ? `${m.thickness_mm} mm ` : ""}{m.material}</h3><p>{m.thickness_mm != null ? `${m.sheets} ${m.sheets === 1 ? "sheet" : "sheets"}, including ${m.offcuts} ${m.offcuts === 1 ? "offcut" : "offcuts"}` : `${m.spools} ${m.spools === 1 ? "spool" : "spools"}`}</p><p>{m.thickness_mm != null ? `${Math.round(m.free_mm2 / 100)} cm² free area` : `${Math.round(m.grams)} g remaining`}</p></article>)}</div>{!data.stock.length && <p>No tagged sheets or filament spools in stock.</p>}</section>
    {!!data.reorders.length && <section className={panel}><h2 className="text-2xl font-semibold uppercase tracking-wide">Material to restock</h2><p>These shortages join the existing daily low-stock digest. Load material already on hand at its machine station.</p>{data.reorders.map(r => <p key={r.key} className="break-words">{r.text}</p>)}<Link to="/inventory" className={button}>Open stock</Link></section>}

@@ -800,7 +800,7 @@ function ConnectorInvokeModal({
           />
         </label>
         {result !== null && (
-          <pre className="text-xs bg-subtle dark:bg-slate-900 border dark:border-slate-700 rounded p-2 overflow-auto max-h-40">
+          <pre tabIndex={0} className="text-xs bg-subtle dark:bg-slate-900 border dark:border-slate-700 rounded p-2 overflow-auto max-h-40">
             {JSON.stringify(result, null, 2)}
           </pre>
         )}

@@ -1,9 +1,13 @@
 import { productName } from "@cobblr/platform-web";
 import {useMutation,useQuery,useQueryClient} from "@tanstack/react-query";
 import {api} from "../../lib/api";
+/** The server bridge's state; the page below it waits for the answer, since its section changes height when it arrives. */
+export function useServerBridge(slug:string){
+ return useQuery({queryKey:["server-bridge",slug],queryFn:()=>api.getServerBridge(slug),enabled:!!slug,refetchInterval:10000});
+}
 export function ServerBridge({slug}:{slug:string}){
  const queryClient=useQueryClient();
- const state=useQuery({queryKey:["server-bridge",slug],queryFn:()=>api.getServerBridge(slug),enabled:!!slug,refetchInterval:10000});
+ const state=useServerBridge(slug);
  const change=useMutation({mutationFn:(enabled:boolean)=>api.setServerBridge(slug,enabled),onSuccess:async()=>{await queryClient.invalidateQueries({queryKey:["server-bridge",slug]});await queryClient.invalidateQueries({queryKey:["edge-status",slug]});await queryClient.invalidateQueries({queryKey:["edge-bridges",slug]});}});
  return <section className="rounded-xl border border-line p-4 space-y-3">
   <h2 className="text-sm font-semibold">Server bridge</h2>

@@ -10,7 +10,7 @@
 // Unbuilt chips filtered nothing (#2772, #2422). Two read paths, one rule,
 // one place, so they cannot disagree again.
 import { sql, type SelectQueryBuilder } from "kysely";
-import { columnSet, arrivedEverywhere, parseSort, containsPattern, isTextWhereOp, type EntityListQuery, type FilterPredicate } from "@cobblr/platform-contract";
+import { columnSet, arrivedEverywhere, parseSort, containsPattern, isTextWhereOp, textSearchWhere, type EntityListQuery, type FilterPredicate } from "@cobblr/platform-contract";
 import type { InventoryDB } from "../db.js";
 import { PART_CI_FILTER_COLS, PART_FILTER_COLS } from "../db.js";
 import { filterValues, isMulti } from "./filter-values.js";
@@ -34,6 +34,42 @@ export interface PartQueryOpts {
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** What a search reads on a part, on every door: the parts list, the search
+ *  page and Cobb (which asks the search page). The list used to read its own
+ *  index of five columns, so a barcode kept in a custom field was found by
+ *  Search and Cobb and not by the list that holds the part (#7818), and a
+ *  serial was found by the list and not by Search (#7929). */
+const PART_SEARCH_TEXT = columnSet<InventoryDB["inventory_parts"]>()(["name", "description", "manufacturer", "notes", "serial_number", "model_number", "state", "unit"]);
+
+/** A search that is a number. HomeBox's `#NNN` asks for that asset number
+ *  alone; a bare number may be one too, or the number in a name, a barcode or
+ *  a model ("Gloves M 563543"), so it finds either (#5445). */
+export function assetNumberSearch(raw: string): { n: number; only: boolean } | null {
+  const m = raw.match(/^(#)?\s*0*(\d+)\s*$/);
+  return m ? { n: Number(m[2]), only: m[1] === "#" } : null;
+}
+
+/** Apply a search `q` the one way every door does: textSearchWhere over the
+ *  part's text columns, its custom fields and its measured values (so 0.1uF
+ *  finds 100n), or the part's asset number. `unreadable` is the reader's
+ *  hidden fields, never matched (#7838). */
+export function applyPartSearch<Q extends PartsQuery>(
+  qIn: Q,
+  raw: string | undefined,
+  opts: { table?: string; unreadable: ReadonlySet<string> | undefined },
+): Q {
+  const text = (raw ?? "").trim();
+  if (!text) return qIn;
+  const t = opts.table ?? "inventory_parts";
+  const assetId = sql.ref(`${t}.asset_id`);
+  const asset = assetNumberSearch(text);
+  if (asset?.only) return qIn.where(sql<boolean>`${assetId} = ${asset.n}`) as Q;
+  return qIn.where((eb) => {
+    const found = textSearchWhere(eb, text, { unreadable: opts.unreadable, text: [...PART_SEARCH_TEXT].map((c) => `${t}.${c}`), json: [`${t}.metadata`], readings: `${t}.measures` });
+    return asset ? eb.or([sql<boolean>`${assetId} = ${asset.n}`, found]) : found;
+  }) as Q;
+}
 
 /** The native columns a query may order by. Anything else in a sort spec is
  *  taken to be one of the table's own fields and orders by its metadata

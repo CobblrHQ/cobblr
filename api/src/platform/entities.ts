@@ -75,6 +75,10 @@ const instanceListResolvers = new Map<string, EntityInstanceListResolver>();
 // resolvers skip an op they do not know, and would answer with everything.
 const textOpsKinds = new Set<string>();
 const textOpsModules = new Set<string>();
+// The same for filter._tag: a resolver that does not say it runs it answers
+// with every record, tagged or not (#7840).
+const tagKinds = new Set<string>();
+const tagModules = new Set<string>();
 
 export function registerInstanceListResolver(
   moduleName: string,
@@ -84,6 +88,8 @@ export function registerInstanceListResolver(
   instanceListResolvers.set(moduleName, resolver);
   if (options.textOps) textOpsModules.add(moduleName);
   else textOpsModules.delete(moduleName);
+  if (options.tags) tagModules.add(moduleName);
+  else tagModules.delete(moduleName);
 }
 
 // Single-entity twin of instanceListResolvers — lets a `<name>:item` LOOKUP
@@ -246,9 +252,11 @@ async function instanceFallbackResolver(
   if (!fn) return null;
   const resolve: EntityListResolver = (oid, query) => fn(oid, instanceName, query);
   if (textOpsModules.has(row.module_name)) textOpsResolvers.add(resolve);
+  if (tagModules.has(row.module_name)) tagResolvers.add(resolve);
   return resolve;
 }
 const textOpsResolvers = new WeakSet<EntityListResolver>();
+const tagResolvers = new WeakSet<EntityListResolver>();
 
 // In-process cache of the exposable-fields whitelist per kind. Filled
 // lazily on first lookup; kept until process restart (kinds rarely
@@ -615,6 +623,8 @@ export function registerListResolver(
   listResolvers.set(kind, resolver);
   if (options.textOps) textOpsKinds.add(kind);
   else textOpsKinds.delete(kind);
+  if (options.tags) tagKinds.add(kind);
+  else tagKinds.delete(kind);
 }
 
 /** Forget which modules a workspace has enabled. Called the moment enablement
@@ -1155,9 +1165,17 @@ export async function list(
   const runsText = listResolvers.has(kind) ? textOpsKinds.has(kind) : textOpsResolvers.has(resolver);
   const textUnrun = runsText ? [] : (query.where ?? []).filter((p) => isTextWhereOp(p.op));
   if (textUnrun.length) query = { ...query, where: query.where!.filter((p) => !isTextWhereOp(p.op)) };
+  // A tag filter likewise: a kind that cannot say which of its records carry
+  // a tag is reported, and a search for what carries one leaves it out.
+  const runsTags = listResolvers.has(kind) ? tagKinds.has(kind) : tagResolvers.has(resolver);
+  const tagUnrun: FilterPredicate[] = !runsTags && query.filter?._tag !== undefined ? [{ col: "_tag", op: "=" }] : [];
+  if (tagUnrun.length) {
+    const { _tag: _unrun, ...rest } = query.filter!;
+    query = { ...query, filter: rest };
+  }
   try {
     const result = await resolver(orgId, query);
-    const notRun = [...hiddenUnrun, ...textUnrun, ...(result.unapplied ?? [])];
+    const notRun = [...hiddenUnrun, ...textUnrun, ...tagUnrun, ...(result.unapplied ?? [])];
     unapplied = notRun.length ? notRun : undefined;
     // Compute AFTER projection (see lookup() — gated fields are stripped
     // before the template runs, so a computed field can't leak them).

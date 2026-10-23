@@ -86,6 +86,9 @@ import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 const FILES_TABLE = "core_files_files";
 const EXCLUDED_TABLES = new Set(["migrations", FILES_TABLE]);
 
+const UNREADABLE_BACKUP_MESSAGE =
+  "This backup file could not be read. Choose the original .zip file or download a complete copy, then try again. Nothing was restored.";
+
 const upload = uploadMiddleware({ maxBytes: UPLOAD_CEILING_BYTES, noun: "backup" });
 
 interface CoreFilesRow {
@@ -561,7 +564,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload, async (req, res, 
         res.status(413).json({ error: { code: err.code, message: err.message } });
         return;
       }
-      res.status(400).json({ error: { code: "bad_archive", message: (err as Error).message } });
+      res.status(400).json({ error: { code: "bad_archive", message: UNREADABLE_BACKUP_MESSAGE } });
       return;
     }
     const { manifest, tables, platform: sharedRows, files } = parsed;
@@ -685,7 +688,7 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
         res.status(413).json({ error: { code: err.code, message: err.message } });
         return;
       }
-      res.status(400).json({ error: { code: "bad_archive", message: (err as Error).message } });
+      res.status(400).json({ error: { code: "bad_archive", message: UNREADABLE_BACKUP_MESSAGE } });
       return;
     }
     const tdb = (await getTenantDb(orgId)) as unknown as Kysely<unknown>;

@@ -824,17 +824,18 @@ testSupportRouter.get("/test-support/heal-passes", async (_req, res, next) => {
 // takes it (a heal takes only rows made before its since, #7282). A test
 // plants the old shape through the real doors, then dates it here. Test-only,
 // mounted under the same flag. Body: { org_id, table, ids, at, column? }
-// (column defaults to created_at).
+// (column defaults to created_at; db: "meta" for a platform table).
 testSupportRouter.post("/test-support/made-before", async (req, res, next) => {
   try {
-    const b = (req.body ?? {}) as { org_id?: string; table?: string; ids?: string[]; at?: string; column?: string };
+    const b = (req.body ?? {}) as { org_id?: string; table?: string; ids?: string[]; at?: string; column?: string; db?: "meta" };
     const ident = /^[a-z][a-z0-9_]*$/;
     const column = b.column ?? "created_at";
     if (!b.org_id || !b.table || !ident.test(b.table) || !ident.test(column) || !Array.isArray(b.ids) || !b.ids.length || !b.at) {
       res.status(400).json({ error: { code: "bad_body", message: "org_id, table, ids and at required; column optional" } });
       return;
     }
-    const db = await getTenantDb(b.org_id);
+    // The platform's own tables (entity_pairings) live in the meta database.
+    const db = b.db === "meta" ? meta : await getTenantDb(b.org_id);
     const r = await sql`update ${sql.table(b.table)} set ${sql.ref(column)} = ${b.at}::timestamptz where id::text = any(${b.ids}::text[])`.execute(db as never);
     res.json({ ok: true, rows: Number(r.numAffectedRows ?? 0) });
   } catch (err) {

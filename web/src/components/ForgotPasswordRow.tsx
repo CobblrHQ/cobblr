@@ -1,10 +1,17 @@
 import { useState } from "react";
 import { api, ApiError } from "../lib/api";
 
+type ResetRequestProps = { email: string; resetHref?: string | null };
+
 /** "Forgot password?" — sends a reset link to the email typed above. In dev
  *  (no email sender) the server returns the link inline so the flow is
  *  exercisable; otherwise we just confirm it's been sent. */
-export function ForgotPasswordRow({ email, resetHref }: { email: string; resetHref?: string | null }) {
+export function ForgotPasswordRow({ email, resetHref }: ResetRequestProps) {
+  const cleanEmail = email.replace(/\s+/g, "");
+  return <ResetPasswordRequest key={cleanEmail.toLowerCase()} email={cleanEmail} resetHref={resetHref} />;
+}
+
+function ResetPasswordRequest({ email, resetHref }: ResetRequestProps) {
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [devLink, setDevLink] = useState<string | null>(null);

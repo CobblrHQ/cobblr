@@ -1,3 +1,4 @@
+import { useRecordRuns } from "./record-runs";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -19,13 +20,19 @@ export function useRecordActionContributions() {
 }
 export const RecordActionProvider = Context.Provider;
 
-export function RecordActionItem({ children, ...item }: RecordActionDescriptor & { children: ReactNode }) {
+export function RecordActionItem({ children, action, ...item }: RecordActionDescriptor & {
+  children: ReactNode;
+  /** The action it runs: drawn, and listed in a menu, only where it runs (#7922). */
+  action?: string;
+}) {
   const surface = useContext(Context);
   const declare = surface?.declare;
   const key = JSON.stringify(item);
+  const runs = useRecordRuns()(action ?? "");
   // Descriptor changes follow the record; the button and its dialogs stay in
   // their owning component, even when the menu holding the button closes.
-  useEffect(() => declare?.(JSON.parse(key) as RecordActionDescriptor), [declare, key]);
+  useEffect(() => (runs ? declare?.(JSON.parse(key) as RecordActionDescriptor) : undefined), [declare, key, runs]);
+  if (!runs) return null;
   if (!surface) return <>{children}</>;
   const target = surface.targets.get(item.id);
   return target ? createPortal(children, target) : null;

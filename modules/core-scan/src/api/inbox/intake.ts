@@ -676,7 +676,16 @@ async function addThingFor(req: Request, token: string, body: z.infer<typeof Ass
     if (body.goes_to) {
       const said = body.goes_to.toLowerCase();
       const entry = menu.find((e) => e.kind.toLowerCase() === said || (e.instance ?? "").toLowerCase() === said || e.label.toLowerCase() === said || e.noun.toLowerCase() === said);
-      if (!entry) goesToRefused = `no list called ${body.goes_to}; the lists are ${menu.map((e) => e.label).join(", ")}`;
+      // A place said where a list goes ("in Blue drawer" as goes_to) is the
+      // place the thing is kept in, never a list it is filed into: the list
+      // is left to routing, and the place is kept when none was set (#7914).
+      const asPlace = entry ? null : said === (body.place ?? "").trim().toLowerCase() ? (locationId ?? "said") : await placeNamed(ctx.org.id, body.goes_to).catch(() => undefined);
+      if (!entry && asPlace) {
+        if (!locationId && asPlace !== "said") {
+          locationId = asPlace;
+          await db.updateTable("core_scan_inbox_items").set({ target_location_id: asPlace, updated_at: new Date() }).where("id", "=", itemId).execute();
+        }
+      } else if (!entry) goesToRefused = `no list called ${body.goes_to}; the lists are ${menu.map((e) => e.label).join(", ")}`;
       else {
         const stored: StoredDestination = { module: entry.module, instance: entry.instance ?? null, kind: entry.kind, label: entry.label, by: "person", at: new Date().toISOString() };
         await db

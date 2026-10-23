@@ -12,7 +12,8 @@ import { createHash } from "node:crypto";
 import { Router } from "express";
 import { sql } from "kysely";
 import { z } from "zod";
-import { likeNeedle, platform } from "@cobblr/platform-contract";
+import { platform, unreadableFieldsOf } from "@cobblr/platform-contract";
+import { orderSearchWhere } from "../order-search.js";
 import { instanceOf, sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { routeUnknownToMetadata, refuseUnknownFields, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
@@ -157,10 +158,7 @@ function filteredOrders(req: import("express").Request) {
   const status = typeof req.query.status === "string" && req.query.status ? req.query.status : null;
   if (status) q = q.where("o.status", "=", status as never);
   const search = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  if (search) {
-    const like = likeNeedle(search);
-    q = q.where(sql<boolean>`(lower(coalesce(o.vendor, '')) like ${like} or lower(coalesce(o.order_number, '')) like ${like} or lower(coalesce(o.notes, '')) like ${like} or lower(coalesce(o.tracking_number, '')) like ${like})`);
-  }
+  if (search) q = q.where((eb) => orderSearchWhere(eb, search, { table: "o", unreadable: unreadableFieldsOf(req) }));
   return { db, q };
 }
 

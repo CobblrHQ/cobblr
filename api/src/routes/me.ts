@@ -1046,7 +1046,7 @@ meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req
     }
     // Pressing IS reading it: the thing it asked about has been dealt with.
     await notifications.markRead(id, req.session!.id).catch(() => {});
-    res.json({ ok: true, label: outcome.label });
+    res.json({ ok: true, label: outcome.label, ...(outcome.undo ? { undo: outcome.undo } : {}) });
   } catch (err) {
     next(err);
   }

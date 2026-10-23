@@ -22,7 +22,7 @@ import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
 import { getTool, unitsCounted, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, fillSlots, oneAtATimeReply, slotValues, splitInstructions, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
+import { bindCommand, deriveCommand, oneAtATimeReply, sayCommand, splitInstructions, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
@@ -156,9 +156,10 @@ basicsRouter.post(
         key: null,
         score: 99,
         candidates: [],
-        // Said in the person's words when the command has them ("Add Aran to
-        // the yarn weight choices"), the template's blanks otherwise.
-        reply: `I can do that: **${command.summary ?? command.template}**.`,
+        // Said in the person's words ("Add Aran to the yarn weight choices");
+        // a command that cannot say it that way is described by what it does,
+        // never by a template with its blanks still in it (#7837).
+        reply: `I can do that: **${command.summary ?? describeOps(command.operations)}**.`,
         command: {
           id: command.id,
           template: command.template,
@@ -659,25 +660,26 @@ export async function matchCommand(
   for (const row of await loadCommands(db)) {
     if (!row.enabled) continue;
     const ops = bindCommand(asLearned(row), message);
-    if (ops?.length) return { id: row.id, template: row.template, operations: ops };
+    if (ops?.length) return { id: row.id, template: row.template, operations: ops, ...summaryOf(asLearned(row), ops, message) };
   }
   if (!orgId) return null;
   for (const row of await loadShippedCommands(orgId)) {
     // A workspace can turn a shipped command off by adopting it and disabling
     // that copy; a disabled row with the same template wins here.
     const ops = bindCommand(asLearned(row), message);
-    if (ops?.length) return { id: `shipped:${row.id}`, template: row.template, operations: ops, ...shippedSummary(row, message) };
+    if (ops?.length) return { id: `shipped:${row.id}`, template: row.template, operations: ops, ...summaryOf(asLearned(row), ops, message, row.description) };
   }
   return null;
 }
 
-/** A shipped command whose description carries the template's blanks says
- *  what it will do in the person's own words ("Add Aran to the yarn weight
- *  choices"); one without is described from its operations as before. */
-function shippedSummary(row: ShippedCommandRow, message: string): { summary?: string } {
-  if (!row.description || !/\{[a-z0-9_]+\}/i.test(row.description)) return {};
-  const values = slotValues({ pattern: row.pattern, slots: row.slots as LearnedCommand["slots"] }, message);
-  return values ? { summary: fillSlots(row.description, values) } : {};
+/** A bound command says what it will do in the person's own words ("Add
+ *  Aran to the yarn weight choices", "Add a place called Blue bin in Shelf").
+ *  A run of several is described by its count ("Creates 4 locations"), which
+ *  is what a person checks before confirming it. */
+function summaryOf(cmd: LearnedCommand, ops: Operation[], message: string, description?: string | null): { summary?: string } {
+  const blanks = !!description && /\{[a-z0-9_]+\}/i.test(description);
+  const said = blanks || ops.length === 1 ? sayCommand(cmd, message, description) : null;
+  return said ? { summary: said } : {};
 }
 
 // POST /basics/commands/match — "does anything I know fit what is being typed?"

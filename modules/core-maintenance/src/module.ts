@@ -437,6 +437,8 @@ export default defineModule({
       registerTermResolvers();
       const { startMaintenanceSweeper } = await import("./sweeper.js");
       startMaintenanceSweeper();
+      const { registerAnsweredReminders } = await import("./answered-reminders.js");
+      registerAnsweredReminders();
       const { registerMaintenanceContext, registerRenewalContext } = await import("./computed-context.js");
       registerMaintenanceContext();
       registerRenewalContext();

@@ -10,10 +10,12 @@
 // fails the server's pattern comes back as a 400 the user can't diagnose from the
 // label they typed.
 
+import { clearOfReservedKey } from "@cobblr/platform-contract/field-key";
+
 /** Derive a valid field key from a display label. Returns "" for a label with
  *  nothing usable in it (e.g. "!!!"), which the caller treats as "not ready". */
 export function slugifyFieldName(label: string): string {
-  return (
+  return clearOfReservedKey(
     label
       .trim()
       .toLowerCase()
@@ -30,7 +32,5 @@ export function slugifyFieldName(label: string): string {
   );
 }
 
-/** The server's rule, mirrored so the form can say so before the round trip. */
-export function isValidFieldKey(key: string): boolean {
-  return /^[a-z][a-z0-9_]*$/.test(key);
-}
+/** The server's rule, the same function it checks with, so the form can say so before the round trip. */
+export { isValidFieldKey } from "@cobblr/platform-contract/field-key";

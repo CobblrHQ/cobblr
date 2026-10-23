@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/projects",
-  "version": "0.3.30",
+  "version": "0.3.31",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

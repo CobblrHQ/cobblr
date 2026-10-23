@@ -4,6 +4,15 @@
 @tailwind utilities;
 
 @layer base {
+  /* A link set in a sentence is underlined, not only coloured: "field
+     builder" in a settings hint read 1.09:1 against the words around it, so
+     a person who cannot tell the colours could not find it (#7857, WCAG
+     1.4.1). Base layer, so a link that is a control of its own in a
+     paragraph says no-underline and wins. */
+  p a {
+    text-decoration-line: underline;
+    text-underline-offset: 2px;
+  }
   /* Semantic role tokens — defaults = the EXACT current palette (as
      R G B triplets for <alpha-value>), so unthemed renders identically.
      AppLayout overrides these on <html> when a workspace admin_theme is

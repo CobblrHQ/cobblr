@@ -35,7 +35,7 @@ import { sendDiscordDm, dmOutcome, dmResultUnverifies } from "./discord-bot-trig
 import { discordConnectionState } from "./discord-connection.js";
 import type { DeliveryOutcomes } from "@cobblr/platform-contract/delivery-outcome";
 import { arrivedEverywhere, type AttentionDeclaration, type AttentionSubject, type NotificationDestination } from "@cobblr/platform-contract";
-import { narrowToWhatIsNew, subjectClaimKey } from "./attention-subject.js";
+import { groupByClaimKey, narrowToWhatIsNew, subjectsUnder } from "./attention-subject.js";
 import { randomUUID } from "node:crypto";
 import { defaultEnabled, tierOf, type PrefChannel } from "./notification-catalog.js";
 import { fallbackChannels } from "./dispatch-fallback.js";
@@ -158,48 +158,6 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     if (claimed.fresh.length === 0) return { notificationId: claimed.toldIn ?? "", deliveredVia: [] };
     if (claimed.fresh.length < p.subjects.length) p = narrowToWhatIsNew(p, claimed.fresh);
   }
-  // 1. Insert the notification row first so it exists in the DB even
-  //    if every channel fails. delivered_via starts empty.
-  const inserted = await meta
-    .insertInto("notifications")
-    .values({
-      id: notificationId,
-      dedupe_key: p.idempotencyKey ?? null,
-      org_id: p.orgId,
-      user_id: p.userId,
-      event_type: p.eventType,
-      module_name: p.module ?? null,
-      entity_type: p.entityType ?? null,
-      entity_id: p.entityId ?? null,
-      message: p.message,
-      link_url: p.link_url ?? null,
-      priority,
-      // Stored for the same reason as `actions` below: the bell reads the row,
-      // and a card that only ever existed in flight left the app's own inbox
-      // saying "something happened" while the Discord DM showed what.
-      // jsonb-object-ok: one small document, written once at dispatch.
-      card: p.card ? (JSON.stringify(p.card) as never) : null,
-      // Stored, not merely rendered: a press comes back carrying an ID, and
-      // the action it maps to is read from HERE.
-      //
-      // `JSON.stringify(...) as never` is the house convention for a jsonb
-      // ARRAY (lint:jsonb-array-writes): node-pg renders a JS array as a
-      // Postgres array literal, which jsonb rejects at runtime while
-      // typechecking perfectly.
-      actions: (p.actions?.length ? JSON.stringify(p.actions) : null) as never,
-    })
-    .onConflict((oc) => oc.columns(["org_id", "user_id", "dedupe_key"]).doNothing())
-    .returning("id")
-    .executeTakeFirst();
-  if (!inserted) {
-    const existing = await meta.selectFrom("notifications").select("id")
-      .where("org_id", "=", p.orgId).where("user_id", "=", p.userId)
-      .where("dedupe_key", "=", p.idempotencyKey!).executeTakeFirstOrThrow();
-    return { notificationId: existing.id, deliveredVia: [] };
-  }
-  sometimesPrune(p.userId);
-  announceNotificationChange(p.userId, { kind: "new", id: inserted.id });
-
   // 2. Resolve which subscriptions to fire. We pull both exact-match
   //    (event_type = eventType) and wildcard ('*') rows. Then:
   //      a. drop disabled rows
@@ -310,6 +268,58 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
       if (worthAPush(priority, pushSettings)) effective.push({ channel: "browser_push", config: null });
     }
   }
+
+  // A kind turned off for the in-app inbox is not delivered to it. With no other
+  // channel to carry it there is nothing to say, and no row is written: the
+  // inbox reads a row as delivery (#7843).
+  const inAppMuted = winningByChannel.get("in_app")?.enabled === false;
+  if (inAppMuted && effective.length === 0) return { notificationId: "", deliveredVia: [] };
+  // 1. Insert the notification row before any channel runs, so it exists in the
+  //    DB even if every channel fails. delivered_via starts empty. It is written
+  //    once the subscriptions are known (below), because a kind the person
+  //    turned off for the in-app inbox must not arrive in it (#7843).
+  const inserted = await meta
+    .insertInto("notifications")
+    .values({
+      id: notificationId,
+      dedupe_key: p.idempotencyKey ?? null,
+      org_id: p.orgId,
+      user_id: p.userId,
+      event_type: p.eventType,
+      module_name: p.module ?? null,
+      entity_type: p.entityType ?? null,
+      entity_id: p.entityId ?? null,
+      message: p.message,
+      link_url: p.link_url ?? null,
+      priority,
+      // Stored for the same reason as `actions` below: the bell reads the row,
+      // and a card that only ever existed in flight left the app's own inbox
+      // saying "something happened" while the Discord DM showed what.
+      // jsonb-object-ok: one small document, written once at dispatch.
+      card: p.card ? (JSON.stringify(p.card) as never) : null,
+      // Stored, not merely rendered: a press comes back carrying an ID, and
+      // the action it maps to is read from HERE.
+      //
+      // `JSON.stringify(...) as never` is the house convention for a jsonb
+      // ARRAY (lint:jsonb-array-writes): node-pg renders a JS array as a
+      // Postgres array literal, which jsonb rejects at runtime while
+      // typechecking perfectly.
+      actions: (p.actions?.length ? JSON.stringify(p.actions) : null) as never,
+      // Muted in-app but still carried by another channel: the row stays (that
+      // channel's buttons and held sends read it) but raises no unread dot.
+      read_at: inAppMuted ? new Date() : null,
+    })
+    .onConflict((oc) => oc.columns(["org_id", "user_id", "dedupe_key"]).doNothing())
+    .returning("id")
+    .executeTakeFirst();
+  if (!inserted) {
+    const existing = await meta.selectFrom("notifications").select("id")
+      .where("org_id", "=", p.orgId).where("user_id", "=", p.userId)
+      .where("dedupe_key", "=", p.idempotencyKey!).executeTakeFirstOrThrow();
+    return { notificationId: existing.id, deliveredVia: [] };
+  }
+  sometimesPrune(p.userId);
+  announceNotificationChange(p.userId, { kind: "new", id: inserted.id });
 
   // 2b. Split the channels into "now" and "with the rest".
   //
@@ -982,7 +992,7 @@ async function claimSubjects(
   subjects: readonly AttentionSubject[],
   notificationId: string,
 ): Promise<{ fresh: AttentionSubject[]; toldIn: string | null }> {
-  const byKey = new Map(subjects.map((s) => [subjectClaimKey(s), s]));
+  const byKey = groupByClaimKey(subjects);
   const won = await meta
     .insertInto("notification_subject_claims")
     .values([...byKey.keys()].map((subject) => ({ org_id: orgId, user_id: userId, day, subject, notification_id: notificationId })))
@@ -990,8 +1000,8 @@ async function claimSubjects(
     .returning("subject")
     .execute();
   const wonKeys = new Set(won.map((r) => r.subject));
-  const fresh = [...byKey].filter(([k]) => wonKeys.has(k)).map(([, s]) => s);
-  if (fresh.length === byKey.size) return { fresh, toldIn: null };
+  const fresh = subjectsUnder(byKey, wonKeys);
+  if (wonKeys.size === byKey.size) return { fresh, toldIn: null };
   const told = await meta
     .selectFrom("notification_subject_claims")
     .select("notification_id")

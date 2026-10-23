@@ -193,7 +193,9 @@ async function visitWorkspace(orgId: string, raw: unknown): Promise<{ scanned: n
       actions.push(...rowActions);
       cardRows.push({ text: message, actions: rowActions.map((a) => a.id) });
       lines.push(message);
-      subjects.push({ kind: `${row.entity_module}:${row.entity_type}`, id: row.entity_id, question: "service-due", line: message });
+      // One subject per obligation, not per record: two services due on one item are two
+      // things to say, and the day's claim of one must not stand for the other.
+      subjects.push({ kind: `${row.entity_module}:${row.entity_type}`, id: row.entity_id, question: `service-due:${row.schedule_id ?? row.id}`, line: message });
       only = lines.length === 1 ? row : null;
 
       // Mark notified so we don't re-fire next tick.

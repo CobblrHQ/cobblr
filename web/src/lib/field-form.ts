@@ -15,6 +15,7 @@
 // debug, and it's how a drifted rule hides.
 
 import { isValidFieldKey } from "./field-key";
+import { isReservedFieldKey } from "@cobblr/platform-contract/field-key";
 
 export interface FieldFormState {
   mode: "kind" | "scope";
@@ -39,7 +40,7 @@ export function fieldFormReadiness(s: FieldFormState): Readiness {
   if (!s.label.trim()) return no("give it a label");
   if (!s.name.trim()) return no("give it a key");
   if (!isValidFieldKey(s.name)) {
-    return no("the key must be lowercase, start with a letter, and use only a-z 0-9 _");
+    return no(isReservedFieldKey(s.name) ? "the key cannot end in _note (kept for a choice field's clarifier)" : "the key must be lowercase, start with a letter, and use only a-z 0-9 _");
   }
   if (s.mode === "kind" && !s.entityKind) return no("pick an entity kind");
   // In scope mode the entity_kind is DERIVED from the traits server-side, so it's

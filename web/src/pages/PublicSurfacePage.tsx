@@ -53,7 +53,7 @@ interface SurfaceResponse {
   };
   page?: PublicFrame & { name: string; layout: string };
   view?: { name: string; entity_kind: string; view_type: string };
-  collection?: { kind: string; query: Record<string, unknown> };
+  collection?: { kind: string };
   entity?: SurfaceItem | null;
   items?: SurfaceItem[];
   sections?: SurfaceSection[];
@@ -162,7 +162,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
     return (
       <PublicBrand frame={data.page} testId="public-page-brand">
       <PublicShell theme={data.page.theme ? { ...theme, theme: "light" } : theme} title={data.page.name}>
-        <PublicPageView token={token!} layout={data.page.layout} items={(data.items ?? []) as unknown as PublicRecord[]} />
+        <PublicPageView token={token!} layout={data.page.layout} items={(data.items ?? []) as unknown as PublicRecord[]} refreshedAt={surface.dataUpdatedAt} />
         {data.page.contact && (
           <p className="mt-6 text-center">
             <a href={data.page.contact} rel="noopener noreferrer" target="_blank" className="inline-flex rounded-lg bg-cobble-600 px-3 py-2 text-sm font-medium text-white">

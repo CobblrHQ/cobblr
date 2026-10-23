@@ -44,6 +44,10 @@ export function UnitsPage() {
   const all: UnitDef[] = [...(units.data?.builtins ?? []), ...(units.data?.custom ?? [])];
   const mode = units.data?.display_mode ?? "symbol";
 
+  // Drawn once the units answer: the preview line and the lists arrive above
+  // the form and push its buttons.
+  if (units.isLoading) return <p className="text-sm text-muted">Loading units…</p>;
+
   return (
     <div className="space-y-5">
       {/* Display mode */}

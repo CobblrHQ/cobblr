@@ -401,5 +401,6 @@ export type { OwnConnections } from "./ConnectCobblr";
 export { GUEST_NOT_SHARED, makesBackgroundWrites, mayRead, refusedForGuest, rememberRole, roleIn, workspaceFetch } from "./acting-role";
 export { PRIMED_FOR_MS, clearPrimedReads, holdPrimedReads, primeReads, primeTicket, primedRead, releasePrimedReads, resetPrimedReads } from "./primed-reads";
 export { resetSharedReads, sharedRead } from "./shared-reads";
+export { asAPersonsWrite, browserOffline, forgetWaitingWrites, keepWaitingWrite, keptByThisPage, landedWrite, madeByAPerson, sendWaitingWrites, subscribeWaitingWrites, waitingWriteCount, waitingWritesToSend, withWaitingWrites, type SendOutcome, type WaitingWrite } from "./waiting-writes";
 export { StatusRow, type StatusRowProps } from "./StatusRow";
 export { configureProductName, productName } from "./product-name";

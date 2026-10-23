@@ -150,20 +150,26 @@ export function registerListActionHandlers(): void {
   // Only a line with nothing behind it and not yet ticked: a line made from a
   // record, or one somebody already bought, is not rewritten.
   platform().actions.registerHandler("lists.link-item", async (ctx) => {
-    const a = (ctx.args as { item_id?: unknown; kind?: unknown; id?: unknown } | null) ?? {};
+    const a = (ctx.args as { item_id?: unknown; kind?: unknown; id?: unknown; relink?: unknown; unlink?: unknown } | null) ?? {};
     const itemId = typeof a.item_id === "string" ? a.item_id : "";
     const kind = typeof a.kind === "string" ? a.kind : "";
     const id = typeof a.id === "string" ? a.id : "";
-    if (!itemId || !kind || !id) return { ok: false, error: "say which line and which record" };
+    const unlink = a.unlink === true;
+    if (!itemId || (!unlink && (!kind || !id))) return { ok: false, error: "say which line and which record" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
+    // A line corrected into another thing (#7866) is pointed at the record its
+    // new words name, or at none: the old record is not what is being bought.
     const patch = JSON.stringify({ source_ref: { kind, id }, restocks: true });
-    const res = await db
+    const metadata = unlink
+      ? sql`(coalesce(metadata, '{}'::jsonb) - 'source_ref' - 'restocks')`
+      : sql`coalesce(metadata, '{}'::jsonb) || ${patch}::jsonb`;
+    let q = db
       .updateTable("lists_items")
-      .set({ metadata: sql`coalesce(metadata, '{}'::jsonb) || ${patch}::jsonb` as never, updated_at: new Date() })
+      .set({ metadata: metadata as never, updated_at: new Date() })
       .where("id", "=", itemId)
-      .where("checked", "=", false)
-      .where(sql<boolean>`coalesce(metadata->'source_ref'->>'id', '') = ''`)
-      .executeTakeFirst();
+      .where("checked", "=", false);
+    if (!unlink && a.relink !== true) q = q.where(sql<boolean>`coalesce(metadata->'source_ref'->>'id', '') = ''`);
+    const res = await q.executeTakeFirst();
     return { ok: true, linked: Number(res.numUpdatedRows ?? 0n) };
   });
 

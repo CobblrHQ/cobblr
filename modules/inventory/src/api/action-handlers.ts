@@ -35,6 +35,7 @@ import {
   arrivingLotsOf,
   type ArrivingLot,
   consumeOldest,
+  consumeNewest,
   consumeLot,
   lotIs,
   lotPickOf,
@@ -900,14 +901,17 @@ export function registerInventoryActionHandlers(): void {
         // check-off wire's +1 was a bare count and the fresh milk inherited the
         // old lot's dates (fresh-lot.ts). A correction on a stocked record stays
         // a bare count: reconcile files it as an undated lot, as it always did.
-        if (delta > 0) {
+        if (delta > 0 || takeBack) {
+          // A take-back goes through the lots too: what the cancelled purchase
+          // added is the newest stock, so it is the lot that goes, and the
+          // item's date goes back to the older lot's (#7877).
           const run = await withBatchesIn(
             trx,
             ctx.orgId,
             partId,
             reason,
             delta,
-            arrivingLots(delta, restock, arrivingLotsOf(args.lots, delta)),
+            takeBack ? (batches) => consumeNewest(batches, -delta) : arrivingLots(delta, restock, arrivingLotsOf(args.lots, delta)),
             {
               ...(typeof args.timezone === "string" ? { timezone: args.timezone } : {}),
               userId: ctx.userId,

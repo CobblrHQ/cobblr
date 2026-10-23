@@ -68,7 +68,7 @@
     "why": "The automations page lists each binding as source kind, arrow, action id: it is the composer's own list, and the id is what the person chose when they made the binding and what they would edit."
   },
   {
-    "key": "web/src/pages/BuildPage.tsx::<span className=\"font-mono text-xs\">{label(w.source_kind)}</span> \u2192 <span className=\"font-medium\">{w.action_id}</span>{\" \"}",
+    "key": "web/src/pages/BuildPage.tsx::<span className=\"font-mono text-xs\">{label(w.source_kind)}</span> → <span className=\"font-medium\">{w.action_id}</span>{\" \"}",
     "why": "The builder's preview of the bundle it is about to install lists the automations the manifest will carry; nothing has fired yet, so there is no row with the action's words, and the id is what the manifest will say."
   },
   {
@@ -114,9 +114,5 @@
   {
     "key": "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",
     "why": "The scan rules tester shows what a trial scan matched: the entity's label in words as the link, then the rule's name, then the kind in <code> because a person writing rules routes by kind and needs to see which one the rule chose."
-  },
-  {
-    "key": "web/src/pages/SurfacesPage.tsx::{v.name} ({v.entity_kind})",
-    "why": "The surfaces page's saved-view picker: the view's name comes first and the kind in parentheses tells two views with the same name apart, for the person composing a surface who knows which table they mean."
   }
 ]

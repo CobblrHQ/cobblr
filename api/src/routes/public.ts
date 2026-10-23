@@ -18,16 +18,17 @@ import { productName } from "../platform/product-name.js";
 import { Router } from "express";
 import type { Kysely } from "kysely";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { platform, viewQuery, type EntityListResult } from "@cobblr/platform-contract";
+import { platform, viewQuery, type EntityListQuery, type EntityListResult } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { FrameDocTooLarge, putFrameDoc } from "../platform/frame-docs.js";
 import { FrameDocBody } from "./frame-docs.js";
 import { env } from "../env.js";
 import { ttlCache } from "../lib/ttl-cache.js";
 import { statKey, statValue } from "@cobblr/platform-contract/stat-value";
-import { projectRecord, readVisibility } from "@cobblr/platform-contract/share-scope";
+import { classifyField, fieldVisible, projectRecord, readVisibility } from "@cobblr/platform-contract/share-scope";
 import { fieldsOf } from "../platform/share-mirror.js";
 import { hiddenFieldsFor } from "../platform/entities.js";
+import { fieldsNamedBy } from "../platform/field-scope-projection.js";
 import { countLabelScan, labelPublicRecord, pageFrame, pageIsLive, publicPageRecord, publicPageRecords, skinDocument } from "../platform/public-page.js";
 import { resolveQrToken } from "./qr-scan.js";
 
@@ -191,10 +192,57 @@ function curateItems(items: unknown, token: string): unknown {
  *  view's conditions, shows nothing rather than more than the owner chose. */
 export async function publicViewRows(orgId: string, view: { entity_kind: string; config: unknown }, limit: number): Promise<EntityListResult["items"]> {
   const today = await platform().accounts.dayFor(null);
-  // The owner's query names what it names: a part on a field no reader of a
-  // public page may read is left out and reported, so publicRows shows none.
-  const result = await platform().entities.list(orgId, view.entity_kind, { ...viewQuery((view.config as Record<string, unknown> | null) ?? {}, today), today, limit, dropUnreadable: true }, { publicRead: true });
-  return publicFieldsOnly(orgId, view.entity_kind, publicRows(result));
+  return publicList(orgId, view.entity_kind, { ...viewQuery((view.config as Record<string, unknown> | null) ?? {}, today), today, limit });
+}
+
+/** How a public page looks, the only part of a surface's configuration it
+ *  is sent. A query, a board's columns or a page's visibility name fields
+ *  and the values the owner looked for: a collection filtered on a private
+ *  diary sent the diary to every visitor inside its filter (#8041). Anything
+ *  else a configuration holds stays with the owner. */
+const PUBLIC_LOOK = ["theme", "layout", "banner_image", "footer", "refresh_seconds", "epaper"] as const;
+export function publicSurfaceConfig(config: unknown): Record<string, unknown> {
+  const own = (config && typeof config === "object" ? config : {}) as Record<string, unknown>;
+  return Object.fromEntries(PUBLIC_LOOK.filter((k) => own[k] !== undefined && (typeof own[k] !== "object" || own[k] === null)).map((k) => [k, own[k]]));
+}
+
+/** The fields of a kind a signed-out reader may not read: what
+ *  publicFieldsOnly takes out of a record, asked of a field's name. */
+async function publicHides(orgId: string, kind: string): Promise<(field: string) => boolean> {
+  const [defs, gated] = await Promise.all([fieldsOf(orgId, kind), hiddenFieldsFor(orgId, kind, {})]);
+  const byName = new Map(defs.map((d) => [d.name, d]));
+  return (field) => {
+    const name = field.replace(/^metadata\./, "");
+    return !fieldVisible(classifyField(byName.get(name) ?? { name }, gated), name, PUBLIC_SURFACE_VISIBILITY);
+  };
+}
+
+/** Every string a record shows, for a search to be held to. */
+function shownText(v: unknown, out: string[] = []): string[] {
+  if (typeof v === "string") out.push(v.toLowerCase());
+  else if (typeof v === "number") out.push(String(v));
+  else if (Array.isArray(v)) for (const x of v) shownText(x, out);
+  else if (v && typeof v === "object") for (const x of Object.values(v)) shownText(x, out);
+  return out;
+}
+
+/** The records a public surface lists, read the way a signed-out visitor
+ *  reads them: the owner's query asked only of fields a visitor may read.
+ *  A condition on any other field (a private diary, a scoped description, a
+ *  price) shows nothing rather than answering, by which records came back,
+ *  what that field holds; an order by one is left out; a search keeps only
+ *  the records it found in what the visitor is shown. It fails closed: a
+ *  list that failed, or could not run one of its conditions, shows nothing
+ *  rather than more than the owner chose. */
+export async function publicList(orgId: string, kind: string, query: EntityListQuery): Promise<EntityListResult["items"]> {
+  const hides = await publicHides(orgId, kind);
+  if (fieldsNamedBy({ filter: query.filter, where: query.where }).some(hides)) return [];
+  const asked = { ...query, sort: query.sort?.filter((f) => !hides(f.replace(/^-/, ""))), dropUnreadable: true };
+  const result = await platform().entities.list(orgId, kind, asked, { publicRead: true });
+  const shown = await publicFieldsOnly(orgId, kind, publicRows(result));
+  const needle = query.q?.trim().toLowerCase();
+  if (!needle) return shown;
+  return shown.filter((r) => shownText([(r as { title?: unknown }).title, r.fields]).some((t) => t.includes(needle)));
 }
 
 /** What a signed-out reader may see of a public surface's records: never a
@@ -409,7 +457,7 @@ async function surfacePayload(token: string | undefined): Promise<
     surface: {
       name: surface.name,
       scope_type: surface.scope_type,
-      config: surface.config,
+      config: publicSurfaceConfig(surface.config),
     },
   };
 
@@ -449,19 +497,14 @@ async function surfacePayload(token: string | undefined): Promise<
     const kind = surface.scope_id;
     const cfg = (surface.config ?? {}) as Record<string, unknown>;
     const query = (cfg.query as Record<string, unknown> | undefined) ?? {};
-    const result = await platform().entities.list(tok.orgId,kind, {
+    payload.collection = { kind };
+    payload.items = curateItems(await publicList(tok.orgId, kind, {
       q: typeof query.q === "string" ? query.q : undefined,
       filter: (query.filter as Record<string, unknown> | undefined) ?? undefined,
       where: (query.where as never) ?? undefined,
       sort: (query.sort as string[] | undefined) ?? undefined,
       limit: Math.min(Number(query.limit) || 50, 200),
-      dropUnreadable: true,
-    }, { publicRead: true });
-    payload.collection = {
-      kind,
-      query,
-    };
-    payload.items = curateItems(await publicFieldsOnly(tok.orgId, kind, publicRows(result)), token!);
+    }), token!);
   } else if (surface.scope_type === "board") {
     // Multi-column TV board: config.sections = [{ title, view_id }].
     // Each column resolves a saved view (same path as scope_type

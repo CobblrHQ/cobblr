@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
+import { capabilityAllows, NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 import { api, type PlatformResolvedEntity } from "../../lib/api";
 import { useEnabledModules } from "../../lib/useEnabledModules";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 import { readKiln, saveKiln, createFiring, finishFiring, controlFiring, type KilnProfile, type Segment, type FiringLog, type Piece } from "./kiln-api";
+import { useCapabilitiesFor } from "../../lib/can";
 import { countOf } from "@cobblr/platform-contract/plural";
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const input = "input w-full min-h-11";
@@ -15,6 +16,9 @@ export function KilnRecords({ ctx, station = false }: { ctx: EntityDetailPanelCt
  const { slug, entityId: machine } = ctx, qc = useQueryClient(), toast = useToast();
  const [offset, setOffset] = useState(0), [busy, setBusy] = useState(false), [editing, setEditing] = useState(false), [adding, setAdding] = useState(false);
  const query = useQuery({ queryKey: ["kiln", slug, machine, offset], queryFn: () => readKiln(slug, machine, offset), refetchInterval: station ? 15000 : false });
+ const caps = useCapabilitiesFor(slug);
+ const canRecord = capabilityAllows(caps, "digifab:kiln-log"), canOperate = capabilityAllows(caps, "digifab:operate");
+ const canAuthorize = caps?.all === true, canRevoke = capabilityAllows(caps, "digifab:revoke-station");
  const stationPath = `/station/kiln/${machine}`;
  const storageKey = `kiln-station:${slug}:${query.data?.profile?.connection_id}:${query.data?.profile?.device_id}`;
  const [credential, setCredential] = useState<{ id: string; token: string; key: string } | null>(() => null);
@@ -24,10 +28,10 @@ export function KilnRecords({ ctx, station = false }: { ctx: EntityDetailPanelCt
  if (query.isError) return <QueryError what="Firing logs could not be loaded." onRetry={() => void query.refetch()} />;
  if (!query.data) return <p className="text-sm text-muted">Loading firing logs…</p>;
  const data = query.data, profile = data.profile, t = data.telemetry;
- if (!profile && !editing) return <details className="text-sm"><summary className="min-h-11 cursor-pointer flex items-center">Firing logs for a kiln</summary><p>Keep schedules, pieces and firing hours here, even without a connected controller.</p><button className={button} disabled={busy} onClick={() => setEditing(true)}>Set up firing logs</button></details>;
+ if (!profile && !editing) return <details className="text-sm"><summary className="min-h-11 cursor-pointer flex items-center">Firing logs for a kiln</summary><p>Keep schedules, pieces and firing hours here, even without a connected controller.</p>{canRecord && <button className={button} disabled={busy} onClick={() => setEditing(true)}>Set up firing logs</button>}</details>;
  return <section data-testid="kiln-records" className="rounded-lg border border-line p-3 space-y-4 text-content">
-  <header className="flex flex-wrap gap-2 items-center"><h3 className="flex-1 text-sm font-semibold">Firing logs</h3>{profile && <button className={button} onClick={() => setEditing(!editing)}>Kiln settings</button>}{profile && !station && <WorkspaceLink className={button} slug={slug} to={`${stationPath}`}>Open kiln station</WorkspaceLink>}</header>
-  {editing && <ProfileForm slug={slug} profile={profile ?? emptyProfile} hours={data.firing_hours} busy={busy} save={p => void run(async () => { await saveKiln(slug, machine, p); setEditing(false); })} />}
+  <header className="flex flex-wrap gap-2 items-center"><h3 className="flex-1 text-sm font-semibold">Firing logs</h3>{canRecord && profile && <button className={button} onClick={() => setEditing(!editing)}>Kiln settings</button>}{profile && !station && <WorkspaceLink className={button} slug={slug} to={`${stationPath}`}>Open kiln station</WorkspaceLink>}</header>
+  {canRecord && editing && <ProfileForm slug={slug} profile={profile ?? emptyProfile} hours={data.firing_hours} busy={busy} save={p => void run(async () => { await saveKiln(slug, machine, p); setEditing(false); })} />}
   {profile && <>
    <p className="text-sm">{data.firing_hours.toFixed(1)} firing hours recorded</p>
    {data.reminders.map(r => <p role="status" key={r.name} className="rounded bg-amber-50 dark:bg-amber-950 p-3 text-amber-900 dark:text-amber-100">{r.name} needs replacement: {r.hours_used.toFixed(1)} hours used, due at {r.interval_hours}.</p>)}
@@ -36,12 +40,12 @@ export function KilnRecords({ ctx, station = false }: { ctx: EntityDetailPanelCt
    {!profile.connection_id && <p className="text-sm text-muted">Manual log. Start and stop the firing on the kiln's controller.</p>}
    <details><summary className="min-h-11 cursor-pointer flex items-center">Cone charts</summary><p className="text-sm">Cones measure heatwork. The equivalent temperature depends on heating rate, cone type and hold time. Keep the observed cone alongside the measured peak.</p><a className="text-accent min-h-11 inline-flex items-center" href="https://www.ortonceramic.com/pyrometric-cones-resources" target="_blank" rel="noreferrer">Open Orton's Celsius and Fahrenheit cone charts</a></details>
    {station && profile.connection_id && profile.device_id && <div className="space-y-2">
-    <p>Keep this screen beside {ctx.entityTitle}. Start and Stop need an owner or admin and this screen's authorization.</p>
-    {screen ? <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button> : <button className={button} disabled={busy} onClick={() => void run(async () => { const result = await api.registerDigifabStation(slug, profile.connection_id!, profile.device_id!); const next = { id: result.id, token: result.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); })}>Authorize this kiln station</button>}
+    <p>Keep this screen beside {ctx.entityTitle}. Start and Stop need permission to run machines and this screen's authorization.</p>
+    {screen ? canRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button> : canAuthorize && <button className={button} disabled={busy} onClick={() => void run(async () => { const result = await api.registerDigifabStation(slug, profile.connection_id!, profile.device_id!); const next = { id: result.id, token: result.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); })}>Authorize this kiln station</button>}
    </div>}
-   <button className={button} disabled={busy} onClick={() => setAdding(!adding)}>New firing log</button>
-   {adding && <NewFiring slug={slug} profile={profile} busy={busy} save={(id, recipe) => void run(async () => { await createFiring(slug, machine, id, recipe); setAdding(false); setOffset(0); })} saveSchedule={(name, segments) => void run(() => saveKiln(slug, machine, { ...profile, schedules: [...profile.schedules.filter(s => s.name !== name), { name, segments }] }))} />}
-   <ol className="space-y-3">{data.items.map(log => <li key={log.id}><LogCard slug={slug} log={log} busy={busy} telemetryRunning={!!t?.running} finish={value => void run(() => finishFiring(slug, log.id, value))} control={station && screen && profile.connection_id ? operation => void run(() => controlFiring(slug, log.id, operation, screen.token)) : undefined} /></li>)}</ol>
+   {canRecord && <button className={button} disabled={busy} onClick={() => setAdding(!adding)}>New firing log</button>}
+   {canRecord && adding && <NewFiring slug={slug} profile={profile} busy={busy} save={(id, recipe) => void run(async () => { await createFiring(slug, machine, id, recipe); setAdding(false); setOffset(0); })} saveSchedule={(name, segments) => void run(() => saveKiln(slug, machine, { ...profile, schedules: [...profile.schedules.filter(s => s.name !== name), { name, segments }] }))} />}
+   <ol className="space-y-3">{data.items.map(log => <li key={log.id}><LogCard slug={slug} log={log} busy={busy} telemetryRunning={!!t?.running} finish={canRecord ? value => void run(() => finishFiring(slug, log.id, value)) : undefined} control={canOperate && station && screen && profile.connection_id ? operation => void run(() => controlFiring(slug, log.id, operation, screen.token)) : undefined} /></li>)}</ol>
    {data.total > 20 && <nav aria-label="Firing log pages" className="flex flex-wrap gap-3"><button className={button} disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 20))}>Previous firings</button><span className="py-3">{offset + 1}–{Math.min(offset + 20, data.total)} of {data.total}</span><button className={button} disabled={offset + 20 >= data.total} onClick={() => setOffset(offset + 20)}>Next firings</button></nav>}
   </>}
  </section>;
@@ -100,7 +104,7 @@ function ThingPicker({ slug, label, onPick }: { slug: string; label: string; onP
  const found = useQuery({ queryKey: ["kiln-piece-picker", slug, kind, text], queryFn: () => api.listEntities(slug, kind, text), enabled: text.trim().length > 0 });
  return <div className="space-y-2"><label className="block">Piece collection<select className={input} value={kind} onChange={e => setKind(e.target.value)}>{kinds.data?.items.filter(k => k.id !== "digifab:firing").map(k => <option key={k.id} value={k.id}>{k.display_name_plural ?? k.display_name}</option>)}</select></label><SearchInput aria-label={label} placeholder={label} value={text} onChange={setText} />{found.isError && <QueryError what="The records could not be found." onRetry={() => void found.refetch()} />}<ul className="max-h-48 overflow-auto">{found.data?.items.map(p => <li key={p.id}><button type="button" className={`${button} w-full text-left`} onClick={() => { onPick(p); setText(""); }}>{p.title}</button></li>)}</ul></div>;
 }
-function LogCard({ slug, log, busy, telemetryRunning, finish, control }: { slug: string; log: FiringLog; busy: boolean; telemetryRunning: boolean; finish: (p: { peak_c: number; duration_hours: number; outcome: string }) => void; control?: (operation: "start" | "stop") => void }) {
+function LogCard({ slug, log, busy, telemetryRunning, finish, control }: { slug: string; log: FiringLog; busy: boolean; telemetryRunning: boolean; finish?: (p: { peak_c: number; duration_hours: number; outcome: string }) => void; control?: (operation: "start" | "stop") => void }) {
  const [edited, setEdited] = useState(false);
  const [hours, setHours] = useState(log.duration_hours ?? 0), [peak, setPeak] = useState(log.peak_c ?? 0), [outcome, setOutcome] = useState("completed"), [confirm, setConfirm] = useState<"start" | "stop" | null>(null);
  useEffect(() => { if (!edited) { setHours(log.duration_hours ?? 0); setPeak(log.peak_c ?? 0); } }, [edited, log.duration_hours, log.peak_c]);
@@ -109,7 +113,7 @@ function LogCard({ slug, log, busy, telemetryRunning, finish, control }: { slug:
   {log.ended_at ? <p>{log.peak_c} °C peak · {log.duration_hours} hours · {new Date(log.ended_at).toLocaleDateString()}</p> : <>
    {control && <div className="flex flex-wrap gap-2">{log.status === "planned" && <button className={button} disabled={busy || telemetryRunning} onClick={() => setConfirm("start")}>Start this firing</button>}<button className={button} disabled={busy} onClick={() => setConfirm("stop")}>Stop kiln</button></div>}
    {confirm && <div role="alert" className="rounded border border-line p-3 space-y-2"><p>{confirm === "start" ? "Check the load, lid, ventilation and schedule at the kiln before starting." : "Stop the kiln's heating now?"}</p><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => { control?.(confirm); setConfirm(null); }}>{confirm === "start" ? "Confirm Start at this station" : "Confirm Stop at this station"}</button><button className={button} onClick={() => setConfirm(null)}>Cancel</button></div></div>}
-   <form className="grid grid-cols-1 sm:grid-cols-3 gap-2" onSubmit={e => { e.preventDefault(); finish({ duration_hours: hours, peak_c: peak, outcome }); }}><label>Firing duration (hours)<NumberField className={input} min={0.01} max={1000} required value={hours} onChange={n => { setEdited(true); setHours(n); }} /></label><label>Measured peak (°C)<NumberField className={input} min={0} max={1500} required value={peak} onChange={n => { setEdited(true); setPeak(n); }} /></label><label>Outcome<select className={input} value={outcome} onChange={e => setOutcome(e.target.value)}><option value="completed">Completed</option><option value="failed">Failed</option><option value="stopped">Stopped</option></select></label><button className={button} disabled={busy || telemetryRunning || hours <= 0}>Finish firing log</button></form>
+   {finish && <form className="grid grid-cols-1 sm:grid-cols-3 gap-2" onSubmit={e => { e.preventDefault(); finish({ duration_hours: hours, peak_c: peak, outcome }); }}><label>Firing duration (hours)<NumberField className={input} min={0.01} max={1000} required value={hours} onChange={n => { setEdited(true); setHours(n); }} /></label><label>Measured peak (°C)<NumberField className={input} min={0} max={1500} required value={peak} onChange={n => { setEdited(true); setPeak(n); }} /></label><label>Outcome<select className={input} value={outcome} onChange={e => setOutcome(e.target.value)}><option value="completed">Completed</option><option value="failed">Failed</option><option value="stopped">Stopped</option></select></label><button className={button} disabled={busy || telemetryRunning || hours <= 0}>Finish firing log</button></form>}
   </>}
  </article>;
 }

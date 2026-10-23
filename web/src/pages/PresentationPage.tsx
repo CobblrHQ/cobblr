@@ -20,6 +20,7 @@ import { pluralise } from "@cobblr/platform-contract/plural";
 import { FACE_NAMES, FACE_LABELS, type FaceName } from "@cobblr/platform-contract/field-vocabulary";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { BASE_NATIVE_FIELDS } from "../lib/native-field-policy";
+import { kindForFieldsEditor } from "../lib/presentation-fields-kind";
 import { ListOrganisation } from "../components/ListOrganisation";
 import { HeadingsBuilder } from "../components/HeadingsBuilder";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -177,12 +178,9 @@ export function PresentationPage() {
             organise={row.target_kind === "instance" ? <ListOrganisation slug={activeSlug} instance={(instances.data?.items ?? []).find((i) => `${i.module_name}:${i.instance_name}` === row.target_id)!} siblings={instances.data?.items ?? []} /> : undefined}
             onFields={(() => {
               // The entity kind whose native fields this row's form renders:
-              // a kind row IS that kind; an instance row resolves to its
-              // module's primary kind (what the default form uses).
-              const kind =
-                row.target_kind === "entity_kind"
-                  ? row.target_id
-                  : (kinds.data?.items.find((k) => k.module_name === row.moduleName)?.id ?? null);
+              // a kind row IS that kind; a collection row is the collection's
+              // own kind, not its module's first one (#7878).
+              const kind = kindForFieldsEditor(kinds.data?.items ?? [], row);
               return kind ? () => setFieldsFor({ entityKind: kind, label: row.defaultLabel }) : undefined;
             })()}
           />

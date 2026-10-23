@@ -5,6 +5,7 @@
 
 import { forgetSignedInWith, signedInWith } from "../lib/oidc-sign-in";
 import { forgetKeptReads } from "../lib/offline";
+import { forgetWaitingWrites } from "@cobblr/platform-web";
 import { letGoOfAnotherAccountsPush, retirePushHere } from "../lib/push-device";
 import { getShareViewToken } from "../lib/share-view";
 import { onSessionChange } from "../lib/session-identity";
@@ -159,6 +160,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     void forgetKeptReads();
+    // Writes made offline wait for the person who made them, not for whoever
+    // signs in next (waiting-writes.ts).
+    forgetWaitingWrites();
     // The browser stays with whoever uses it next: it stops taking this
     // account's pushes (#7124). Signing out of a share's View as leaves the
     // account signed in, and its pushes with it.

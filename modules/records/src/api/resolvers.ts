@@ -92,10 +92,10 @@ export function registerRecordsResolvers(): void {
   // the note there. A Bookshelf instance's books must not double up here.
   platform().entities.registerListResolver("records:record", (orgId, query) =>
     recordsListResolver(orgId, query, "records"),
-  );
+  { tags: true });
   platform().entities.registerInstanceListResolver("records", (orgId, instance, query) =>
     recordsListResolver(orgId, query, instance),
-  );
+  { tags: true });
   // Single-entity lookup for an INSTANCE kind ("bookshelf:item"). Registering
   // the list resolver WITHOUT this one is a trap: the collection renders fine
   // (that's the list), while every generic single-record read —

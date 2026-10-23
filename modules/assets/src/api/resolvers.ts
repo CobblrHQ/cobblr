@@ -168,10 +168,10 @@ export function registerAssetsResolvers(): void {
   // the note there. A Vehicles instance's cars must not double up under Assets.
   platform().entities.registerListResolver("assets:asset", (orgId, query) =>
     assetsListResolver(orgId, query, "assets"),
-  );
+  { tags: true });
   platform().entities.registerInstanceListResolver("assets", (orgId, instance, query) =>
     assetsListResolver(orgId, query, instance),
-  );
+  { tags: true });
   // Single-entity lookup for an INSTANCE kind ("vehicles:item"). Without it the
   // collection lists fine but every generic single-record read
   // (entities.lookup) returns null — see the records resolver for the failure

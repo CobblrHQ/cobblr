@@ -3,22 +3,65 @@
 // raw HTML — so a stored Markdown string is safe to render without a sanitizer
 // (no XSS surface). Styling matches the app convention (Tailwind Typography
 // `prose`), same as ChatWidget / BundleDetailModal.
-import { lazy, Suspense } from "react";
+import { Component, lazy, Suspense, useEffect, useState, type ComponentType, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 
-const Render = lazy(() => import("./markdown-render"));
+type RenderProps = { children: string; components?: Components };
+type Load = () => Promise<{ default: ComponentType<RenderProps> }>;
 
-/** Markdown rendered as elements, with no wrapper of its own. The renderer
- *  loads on first use; until it arrives the words show as plain text in the
- *  same place, so nothing is blank and nothing jumps far. Every surface that
- *  renders Markdown comes through here (capability markdown:render). */
-export function MarkdownText({ children, components }: { children: string; components?: Components }) {
-  return (
-    <Suspense fallback={<p className="whitespace-pre-wrap">{children}</p>}>
-      <Render components={components}>{children}</Render>
-    </Suspense>
-  );
+/** Catches the renderer's failed load so it never reaches a boundary above:
+ *  in the side panel that boundary was the Cobb host's, and the panel lost
+ *  Cobb for a renderer that only makes words bold (#7848). */
+class PlainOnFail extends Component<{ plain: ReactNode; onFail: () => void; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("[markdown] renderer not loaded yet:", error.message);
+    this.props.onFail();
+  }
+  render() {
+    return this.state.failed ? this.props.plain : this.props.children;
+  }
 }
+
+/** Markdown rendered as elements, from a renderer that loads on first use.
+ *  Until it arrives the words show as plain text in the same place; if it
+ *  cannot arrive (offline), they stay plain text and it is asked for again
+ *  when the device is back online. A rejected lazy() stays rejected, so the
+ *  retry is a fresh one, shared by every place showing Markdown. */
+export function markdownTextFrom(load: Load) {
+  let Render = lazy(load);
+  return function MarkdownText({ children, components }: RenderProps) {
+    const [failedOn, setFailedOn] = useState<typeof Render | null>(null);
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+      if (!failedOn) return;
+      const again = () => {
+        if (Render === failedOn) Render = lazy(load);
+        setFailedOn(null);
+        setAttempt((n) => n + 1);
+      };
+      window.addEventListener("online", again);
+      return () => window.removeEventListener("online", again);
+    }, [failedOn]);
+    const plain = <p className="whitespace-pre-wrap">{children}</p>;
+    if (failedOn) return plain;
+    const Now = Render;
+    return (
+      <PlainOnFail key={attempt} plain={plain} onFail={() => setFailedOn(Now)}>
+        <Suspense fallback={plain}>
+          <Now components={components}>{children}</Now>
+        </Suspense>
+      </PlainOnFail>
+    );
+  };
+}
+
+/** Markdown rendered as elements, with no wrapper of its own. Every surface
+ *  that renders Markdown comes through here (capability markdown:render). */
+export const MarkdownText = markdownTextFrom(() => import("./markdown-render"));
 
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (

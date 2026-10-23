@@ -9,9 +9,9 @@ import { storageView } from "./storage.js";
 import { sheetViews } from "./sheets.js";
 import { placeNames } from "@cobblr/platform-contract";
 import { sql, type Kysely } from "kysely";
-import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity, textSearchWhere } from "@cobblr/platform-contract";
+import { platform, type EntityListQuery, type FilterPredicate, type ResolvedEntity } from "@cobblr/platform-contract";
 import { type InventoryDB } from "../db.js";
-import { applyPartFilters, applyPartSort } from "./part-query.js";
+import { applyPartFilters, applyPartSearch, applyPartSort } from "./part-query.js";
 import { readsValues, refreshMeasureReadings } from "../measure-readings.js";
 import { resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
 import type { Remaining } from "@cobblr/platform-contract/consumption-gauge";
@@ -97,7 +97,7 @@ export function registerInventoryResolvers(): void {
     const namesArchived =
       query.include_retired === true || query.filter?.archived !== undefined || (query.where ?? []).some((p) => p.col === "archived");
     if (!namesArchived) q = q.where("archived", "=", false);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["name", "description", "manufacturer", "notes", "state", "unit"], json: ["metadata"], readings: "measures" })!);
+    q = applyPartSearch(q, query.q, { unreadable: query.unreadable });
     const unapplied: FilterPredicate[] = [];
     q = applyPartFilters(q, query, { unapplied });
     const sortedQ = applyPartSort(q, query.sort);
@@ -152,12 +152,12 @@ export function registerInventoryResolvers(): void {
   // never mix") broken on the door views/search/AI all read through.
   platform().entities.registerListResolver("inventory:part", (orgId, query) =>
     partsListResolver(orgId, query, "inventory"),
-  { textOps: true });
+  { textOps: true, tags: true });
   // Instance kinds (`<name>:item`) → this module's parts scoped to the instance.
   // Lets a Wardrobe/Filament/… instance's items flow through views/data/search.
   platform().entities.registerInstanceListResolver("inventory", (orgId, instance, query) =>
     partsListResolver(orgId, query, instance),
-  { textOps: true });
+  { textOps: true, tags: true });
   // Single-entity twin — a `<name>:item` LOOKUP resolves the part by id scoped to
   // the instance, so instance detail/lookup resolves + gets computed fields the
   // same as the base inventory:part kind.

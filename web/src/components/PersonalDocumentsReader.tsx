@@ -23,11 +23,17 @@ export function readerSentence(v: Pick<PersonalDocumentsReaderView, "reader" | "
     : "No local AI is connected: code reads what it can and you check the rest. They never go to a cloud AI.";
 }
 
+/** Who reads personal documents. The list of jobs it sits in waits for the answer: the row is drawn only once it is known, in the middle of the list. */
+export function usePersonalDocumentsReader() {
+  const { activeSlug } = useActiveOrg();
+  return useQuery({ queryKey: aiAvailabilityKeys.personalReader(activeSlug), queryFn: () => api.getPersonalDocumentsReader(activeSlug), enabled: !!activeSlug });
+}
+
 export function PersonalDocumentsReader() {
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
   const toast = useToast();
-  const view = useQuery({ queryKey: aiAvailabilityKeys.personalReader(activeSlug), queryFn: () => api.getPersonalDocumentsReader(activeSlug), enabled: !!activeSlug });
+  const view = usePersonalDocumentsReader();
   const [picked, setPicked] = useState<string | null>(null);
   const [agreed, setAgreed] = useState(false);
   const save = useMutation({

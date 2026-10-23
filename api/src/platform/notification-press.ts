@@ -25,9 +25,13 @@ import { meta } from "../db/meta.js";
 import { resolvePress, pressMayAct, type StoredNotification } from "./discord-interaction.js";
 import { actionActed, normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { assertActingRoleClearsActionFloor, ActionRoleFloorError } from "./platform-actions.js";
+import { undoFor } from "./actions.js";
+import { issueUndos } from "./issued-undos.js";
 
 export type PressOutcome =
-  | { ok: true; label: string; short?: string }
+  /** `undo`: the way back the action handed back, when it has one: an accidental
+   *  press can be taken back from the message (#7934). */
+  | { ok: true; label: string; short?: string; undo?: unknown[] }
   | { ok: false; reason: "refused" | "failed" }
   /** The person was allowed to press, and the action answered no in its own
    *  words ("This was already declined."). Said, never shown as done. */
@@ -131,6 +135,11 @@ export async function pressNotificationAction(args: {
     const read = normaliseActionResult(result, resolved.action);
     return { ok: false, reason: "declined", message: read.ok ? "That could not be done." : read.error };
   }
-  return { ok: true, label: resolved.label, ...(resolved.short ? { short: resolved.short } : {}) };
+  // The way back, issued to this person the way the action door issues it, so
+  // the Undo they are offered is theirs to run (issued-undos.ts).
+  const undo = await undoFor(resolved.action, result, { orgId: resolved.orgId, ...(entity ? { entity: { kind: entity.kind, id: entity.id } } : {}) }).catch(() => null);
+  const issued = (undo ?? []).flatMap((u) => ("action_id" in u ? [u] : []));
+  if (issued.length) await issueUndos(resolved.orgId, resolved.userId, issued).catch((e) => console.error("[notification-press] could not issue the undo:", (e as Error).message));
+  return { ok: true, label: resolved.label, ...(resolved.short ? { short: resolved.short } : {}), ...(undo?.length ? { undo } : {}) };
 }
 

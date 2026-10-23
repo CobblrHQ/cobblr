@@ -24,7 +24,7 @@ export function LightBurnPairing({ method }: { method?: BridgeInstallOS }) {
       <button type="button" onClick={() => pair.mutate()} disabled={!online || pair.isPending} className="rounded bg-cobble-600 text-white px-3 py-1.5 disabled:opacity-50">{!online ? "Waiting for the bridge…" : pair.isPending ? "Approve the dialog in LightBurn…" : "Pair LightBurn"}</button>
       {pair.error && <p role="alert">{pair.error.message}</p>}
       {pair.data?.readiness && <LightBurnReadiness readiness={pair.data.readiness} />}
-    </> : os === "docker" ? <p>Pair on the LightBurn computer with {productName()} Desktop or a native bridge. A Docker bridge needs LightBurn's network API enabled to reach it.</p> : <pre className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{pairingCommands[os]}</pre>}
+    </> : os === "docker" ? <p>Pair on the LightBurn computer with {productName()} Desktop or a native bridge. A Docker bridge needs LightBurn's network API enabled to reach it.</p> : <pre tabIndex={0} className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{pairingCommands[os]}</pre>}
     <p>Approve the dialog in LightBurn within 30 seconds. Pairing reloads automatically. Use host 127.0.0.1 when LightBurn runs on the bridge's computer.</p>
   </div>;
 }

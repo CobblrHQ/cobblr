@@ -13,6 +13,8 @@
 // Duck-typed on `refusal === true` rather than `instanceof`, because a module
 // and the api may hold different copies of this package.
 
+import { invalidBodyMessage, type BodyIssue } from "@cobblr/platform-contract/invalid-body";
+
 export class ActionRefusal extends Error {
   readonly refusal = true as const;
   constructor(message: string) {
@@ -29,4 +31,14 @@ export function isActionRefusal(err: unknown): err is ActionRefusal {
 /** What a person is told about a crash: no internals, one reference to quote. */
 export function crashSentence(ref: string): string {
   return `That action couldn't run. Ask an admin to check the log for ${ref}.`;
+}
+
+/** The sentence for a handler that threw its own argument check: a zod error
+ *  from `Args.parse(ctx.args)` names the field and what it must be, so it is
+ *  the person's to fix, never a crash for an admin to look up (#7898). Null
+ *  for anything else. Duck-typed, as a module may hold its own zod. */
+export function argumentRefusal(err: unknown): string | null {
+  const issues = (err as { name?: unknown; issues?: unknown } | null)?.issues;
+  if (!(err instanceof Error) || err.name !== "ZodError" || !Array.isArray(issues) || !issues.length) return null;
+  return invalidBodyMessage(issues as BodyIssue[]);
 }

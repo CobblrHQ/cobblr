@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, Globe, Plus } from "lucide-react";
 import { DragInput, Modal, useConfirm, useToast } from "@cobblr/platform-web";
+import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
 import { EMPTY_SCOPE, VISIBILITY_NONE, type VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import { api, type PublicPageItem } from "../lib/api";
 import { ScopeEditor } from "./ShareWhatEditor";
@@ -88,7 +89,10 @@ export function PublicPagesSection({ slug }: { slug: string }) {
               key: ["public-page-what", slug, editing.id],
               load: async () => ({ scope: editing.scope, visibility: editing.visibility, gated_fields: (await api.scopeFields(slug)).gated_fields }),
               save: async (b) => {
-                await api.updatePublicPage(slug, editing.id, { scope: b.scope, visibility: b.visibility });
+                await api.updatePublicPage(slug, editing.id, jsonbPatchBetween(
+                  { scope: editing.scope, visibility: editing.visibility },
+                  { scope: b.scope, visibility: b.visibility },
+                ) as Partial<Pick<PublicPageItem, "scope" | "visibility">>);
                 return (await api.previewScope(slug, b.scope)).count;
               },
               editMode: false,
@@ -268,7 +272,7 @@ function PageLookForm({
   slug: string;
   page: PublicPageItem;
   onCancel: () => void;
-  onSave: (b: { show_fields: string[] | null; about: string | null; links: Array<{ label: string; url: string }>; skin_html: string | null; accent: string | null }) => Promise<void>;
+  onSave: (b: Partial<{ show_fields: string[] | null; about: string | null; links: Array<{ label: string; url: string }>; skin_html: string | null; accent: string | null }>) => Promise<void>;
 }) {
   const choices = useQuery({ queryKey: ["public-page-fields", slug, page.id], queryFn: () => api.publicPageFields(slug, page.id) });
   const [picked, setPicked] = useState<string[] | null>(page.show_fields ?? null);
@@ -278,6 +282,8 @@ function PageLookForm({
   const [accent, setAccent] = useState<string | null>(page.accent ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const values = { show_fields: picked, about: about.trim() || null, links: links.filter((l) => l.label.trim() && l.url.trim()), skin_html: skin.trim() || null, accent };
+  const [before] = useState(values);
   const all = choices.data?.fields ?? [];
   const on = (name: string) => (picked === null ? true : picked.includes(name));
   const toggle = (name: string) => {
@@ -293,7 +299,7 @@ function PageLookForm({
         setBusy(true);
         setError(null);
         try {
-          await onSave({ show_fields: picked, about: about.trim() || null, links: links.filter((l) => l.label.trim() && l.url.trim()), skin_html: skin.trim() || null, accent });
+          await onSave(jsonbPatchBetween(before, values) as Partial<typeof values>);
         } catch (err) {
           setError((err as Error).message);
         } finally {
@@ -379,7 +385,7 @@ function PageLookForm({
 
 /** The page's other doors: its things' printed labels, booth mode, a way to
  *  get in touch, and the footer. */
-function PageSettingsForm({ slug, page, onCancel, onSave }: { slug: string; page: PublicPageItem; onCancel: () => void; onSave: (b: { label_door: boolean; public_until: string | null; contact: string | null; footer: boolean; indexable: boolean; address: string | null }) => Promise<void> }) {
+function PageSettingsForm({ slug, page, onCancel, onSave }: { slug: string; page: PublicPageItem; onCancel: () => void; onSave: (b: Partial<{ label_door: boolean; public_until: string | null; contact: string | null; footer: boolean; indexable: boolean; address: string | null }>) => Promise<void> }) {
   const local = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "");
   const [labelDoor, setLabelDoor] = useState(!!page.label_door);
   const [until, setUntil] = useState(local(page.public_until));
@@ -387,6 +393,8 @@ function PageSettingsForm({ slug, page, onCancel, onSave }: { slug: string; page
   const [footer, setFooter] = useState(page.footer !== false);
   const [indexable, setIndexable] = useState(!!page.indexable);
   const [address, setAddress] = useState(page.address ?? "");
+  const values = { label_door: labelDoor, public_until: until || null, contact: contact.trim() || null, footer, indexable, address: address.trim() || null };
+  const [before] = useState(values);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -397,7 +405,9 @@ function PageSettingsForm({ slug, page, onCancel, onSave }: { slug: string; page
         setBusy(true);
         setError(null);
         try {
-          await onSave({ label_door: labelDoor, public_until: until ? new Date(until).toISOString() : null, contact: contact.trim() || null, footer, indexable, address: address.trim() || null });
+          const patch = jsonbPatchBetween(before, values) as Partial<typeof values>;
+          if ("public_until" in patch) patch.public_until = until ? new Date(until).toISOString() : null;
+          await onSave(patch);
         } catch (err) {
           setError((err as Error).message);
         } finally {

@@ -8,7 +8,13 @@
 // THE BOUNDARY. Border tokens are deliberately quieter and are judged by dark-line-reads;
 // this rule covers text on the standard grounds, not badges with their own fill.
 // PROVE IT RED: the original slate-500 lift reads 4.03:1 on a card.
+// The environment headers (web/src/lib/deploy-env.ts: Dev, Test, Staging) are
+// dark grounds too: the header's account name, Build, Scan and the open nav
+// entry sit on them. Dev's amber-900/85 read 3.87:1 under the account name
+// (#7864), so each header's dark ground, laid over the dark canvas, is judged
+// with the others.
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 const file = "web/src/index.css";
 const css = readFileSync(file, "utf8");
@@ -25,6 +31,24 @@ function check(name: string, fg: RGB, grounds: Map<string, RGB>) {
     if (ratio < 4.5) problems.push(`${name} on ${ground} reads ${ratio.toFixed(2)}:1, below 4.5:1`);
   }
 }
+/** Each environment header's dark ground (`dark:bg-<colour>-<shade>/<alpha>`)
+ *  as drawn over the dark canvas. None found fails closed: the parse broke. */
+function envHeaderGrounds(canvas: RGB): Map<string, RGB> {
+  const envFile = "web/src/lib/deploy-env.ts";
+  const src = readFileSync(envFile, "utf8");
+  const palette = createRequire(new URL("../web/package.json", import.meta.url))("tailwindcss/colors") as Record<string, Record<string, string>>;
+  const out = new Map<string, RGB>();
+  for (const m of src.matchAll(/(\w+):\s*\{[^}]*?header:\s*"[^"]*\bdark:bg-(\w+)-(\d+)(?:\/(\d+))?/g)) {
+    const hex = palette[m[2]!]?.[m[3]!];
+    if (!hex) throw new Error(`${envFile}: ${m[1]}'s header colour ${m[2]}-${m[3]} is not in Tailwind's palette`);
+    const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)) as RGB;
+    const alpha = m[4] ? Number(m[4]) / 100 : 1;
+    out.set(`the ${m[1]} header`, rgb.map((v, i) => Math.round(v * alpha + canvas[i]! * (1 - alpha))) as RGB);
+  }
+  if (out.size === 0) throw new Error(`${envFile}: no environment header grounds found`);
+  return out;
+}
+
 for (const selector of ["html.dark:not([data-ws-themed])", ".force-dark"]) {
   const start = css.indexOf(`${selector} {`);
   if (start < 0) throw new Error(`${file}: missing ${selector}`);
@@ -39,6 +63,7 @@ for (const selector of ["html.dark:not([data-ws-themed])", ".force-dark"]) {
     if (!value) throw new Error(`${file}: missing ${selector} --c-${name}`);
     grounds.set(name, value);
   }
+  if (selector.startsWith("html.dark")) for (const [name, rgb] of envHeaderGrounds(grounds.get("canvas")!)) grounds.set(name, rgb);
   for (const name of ["content", "muted", "faint", "accent", "danger"]) {
     if (!tokens.has(name)) throw new Error(`${file}: missing ${selector} --c-${name}`);
   }

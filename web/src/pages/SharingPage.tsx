@@ -11,7 +11,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Plus, RefreshCw, Share2 } from "lucide-react";
-import { ConnectCobblr, Modal, relativeTime, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { ConnectCobblr, Modal, relativeTime, useConfirm, usePageTitle, useOnceQuiet, useToast } from "@cobblr/platform-web";
 import { api, type ShareLinkItem, type ShareOfferItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -52,10 +52,15 @@ export function SharingPage() {
   const inShare = list.data?.kind === "share";
   const items = list.data?.items ?? [];
 
+  // Drawn once every section has its answer: the empty note or the rows above
+  // Connect and the public pages move their buttons, and a share space is a
+  // different page from your own.
+  const settled = useOnceQuiet();
+
   if (inShare) {
     const l = items[0];
     return (
-      <div className="space-y-4" data-testid="sharing-page">
+      <div className={settled ? "space-y-4" : "hidden"} data-testid="sharing-page">
         <p className="text-sm text-muted dark:text-slate-400">
           This workspace holds what someone shared with you. What you change here and what you offer them goes back to them.
         </p>
@@ -89,7 +94,9 @@ export function SharingPage() {
   const live = items.filter((l) => l.status === "active");
   const pending = items.filter((l) => l.status === "pending");
   return (
-    <div className="space-y-6" data-testid="sharing-page">
+    <>
+    {!settled && <p className="text-sm text-muted">Loading sharing…</p>}
+    <div className={settled ? "space-y-6" : "hidden"} data-testid="sharing-page">
       <ConfigHeaderActions>
         <button
           type="button"
@@ -100,7 +107,7 @@ export function SharingPage() {
           <Plus size={14} /> Share with someone
         </button>
       </ConfigHeaderActions>
-      {list.isLoading ? null : live.length + pending.length === 0 ? (
+      {live.length + pending.length === 0 ? (
         <div className="rounded-lg border border-dashed border-line dark:border-slate-600 p-6 text-center text-sm text-muted">
           <Share2 size={20} className="mx-auto mb-2 text-faint" aria-hidden />
           Not shared with anyone yet.
@@ -150,6 +157,7 @@ export function SharingPage() {
         {inviting && <InviteForm slug={activeSlug} onDone={() => void qc.invalidateQueries({ queryKey: key })} />}
       </Modal>
     </div>
+    </>
   );
 }
 

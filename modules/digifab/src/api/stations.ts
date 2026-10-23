@@ -1,10 +1,12 @@
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { sql } from "kysely";
+import { DriverSaid, plainDriverError } from "../job-truth.js";
+import type { RemoteDevice } from "../drivers/types.js";
 import { libraryForJob } from "../sheet-layout.js";
 import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { platform } from "@cobblr/platform-contract";
+import { EdgeOffline, EdgeTimeout, platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
 import { authorizeLaserStart, stationTokenHash } from "../laser-station.js";
@@ -100,7 +102,13 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const type = typeof machine?.fields.type === "string" ? machine.fields.type.trim() : "";
   const processKind = driver?.printProcess === "fdm" ? "print" : driver?.printProcess === "resin" || driver?.printProcess === "large-format" ? driver.printProcess : null;
   // Known print processes keep the station and Stop reachable while the bridge is disconnected.
-  const remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device);
+  let remote: RemoteDevice | undefined, connectionError: string | null = null;
+  try { remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device); }
+  catch (error) {
+    const unavailable = error instanceof EdgeOffline || error instanceof EdgeTimeout || error instanceof DriverSaid || error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|fetch failed|socket hang up/i.test(error.message));
+    if (!unavailable || await driver?.jobReviewKind?.() !== "cnc") throw error;
+    connectionError = plainDriverError(error, "CNC controller", "reading its state");
+  }
   // A production test station is a bridge device of its own; it is read from the same device list, never a second call.
   if (remote?.station_kind === "production-test") return void res.json({ kind: "production-test", screen_kind: "production-test", job: null, library: null, attention: null, sheets: [] });
   const reviewKind = processKind ?? await driver?.jobReviewKind?.();
@@ -118,7 +126,7 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const cnc = screen_kind === "cnc" || ((kind === "cnc" || kind === null) && (!!finished?.cnc_setup || jobs.some(j => !!j.cnc_setup)));
   const job = (cnc ? finished : null) ?? jobs.find(j => j.status !== "queued") ?? jobs[0] ?? null;
   const library = job ? await libraryForJob(db, job) : null;
-  if (cnc) return void res.json({ kind: "cnc", screen_kind: "cnc", job, library: library ?? null, attention: attention ?? null, sheets: [], ...await familyOfReviewKind("cnc")?.stationScreen?.(orgId, { q: typeof req.query.q === "string" ? req.query.q : undefined }) });
+  if (cnc) return void res.json({ kind: "cnc", screen_kind: "cnc", connection_error: connectionError, job, library: library ?? null, attention: attention ?? null, sheets: [], ...await familyOfReviewKind("cnc")?.stationScreen?.(orgId, { q: typeof req.query.q === "string" ? req.query.q : undefined }) });
   if (!screen_kind) return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "cutter") return void res.json({ kind, screen_kind, job, library: library ?? null, attention: attention ?? null, sheets: [] });
   if (kind === "resin") {

@@ -1,4 +1,5 @@
 import { receiptPending } from "../receipt-pending.js";
+import { orderSearchWhere } from "../order-search.js";
 import { groupListRows } from "@cobblr/platform-contract/grouped-list";
 // Platform entity-kind resolvers for purchases. Lets other modules /
 // the platform's EntityActionsBar look up an order or order_item by
@@ -176,7 +177,7 @@ export function registerPurchasesResolvers(): void {
     const offset = query.offset ?? 0;
     let q = db.selectFrom("purchases_orders").selectAll().select(receiptPending().as("stock_pending"));
     if (instance) q = q.where("instance", "=", instance as never);
-    if (query.q?.trim()) q = q.where((eb) => textSearchWhere(eb, query.q, { unreadable: query.unreadable, text: ["vendor", "order_number", "notes", "tracking_number"], json: ["metadata"] })!);
+    if (query.q?.trim()) q = q.where((eb) => orderSearchWhere(eb, query.q, { unreadable: query.unreadable })!);
     if (query.filter) {
       const NATIVE = columnSet<PurchasesDB["purchases_orders"]>()(["status", "vendor"]);
       for (const [key, val] of Object.entries(query.filter)) {
@@ -251,10 +252,10 @@ export function registerPurchasesResolvers(): void {
   };
   platform().entities.registerListResolver("purchases:order", (orgId, query) =>
     ordersListResolver(orgId, query, "purchases"),
-  );
+  { tags: true });
   platform().entities.registerInstanceListResolver("purchases", (orgId, instance, query) =>
     ordersListResolver(orgId, query, instance),
-  );
+  { tags: true });
   // The single-entity twin - lint:instance-resolvers enforces the pair, and a
   // list whose rows 404 on click is worse than no list.
   platform().entities.registerInstanceResolver("purchases", async (orgId, instance, id) => {

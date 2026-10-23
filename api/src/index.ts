@@ -135,6 +135,7 @@ import * as categoryAxis from "./platform/category-axis.js";
 import * as queue from "./platform/queue.js";
 import * as sharedCache from "./platform/shared-cache.js";
 import { registerDigestContributor, digestContributions } from "./platform/digest-contributions.js";
+import { registerActionSettlement } from "./platform/notification-subjects.js";
 import * as notificationsImpl from "./platform/notifications.js";
 import { orgMemberIds } from "./platform/memberships.js";
 import { audienceFor } from "./platform/notification-audience.js";
@@ -632,6 +633,7 @@ async function boot() {
     },
     notifications: {
       registerDigestContributor, digestContributions,
+      registerActionSettlement,
       dispatch: notificationsImpl.dispatch,
       orgMemberIds: async (orgId: string) => [...(await orgMemberIds(orgId))],
       audienceFor,
@@ -1045,6 +1047,18 @@ async function boot() {
           .returning("id")
           .execute();
         return { removed: gone.length };
+      },
+      listTargets: async ({ orgId, targetKind, relationshipKind, madeBefore, afterTargetId, limit }) => {
+        let q = meta
+          .selectFrom("entity_pairings")
+          .select("target_id")
+          .distinct()
+          .where("org_id", "=", orgId)
+          .where("target_kind", "=", targetKind)
+          .where("relationship_kind", "=", relationshipKind)
+          .where("created_at", "<", madeBefore);
+        if (afterTargetId) q = q.where("target_id", ">", afterTargetId);
+        return (await q.orderBy("target_id").limit(limit).execute()).map((r) => r.target_id);
       },
       removeByTargets: async ({ orgId, targetKind, targetIds, relationshipKind }) => {
         if (targetIds.length === 0) return { removed: 0 };

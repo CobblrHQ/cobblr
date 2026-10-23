@@ -107,7 +107,7 @@ export function BridgeInstallMethod({
                   Copy
                 </button>
               </div>}
-              {method === "desktop" ? <DesktopConnect code={pairing.code} /> : <pre data-testid="one-line-install" className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{oneLine}</pre>}
+              {method === "desktop" ? <DesktopConnect code={pairing.code} /> : <pre tabIndex={0} data-testid="one-line-install" className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{oneLine}</pre>}
               <p className="text-[11px] text-faint">
                 {method === "desktop" ? "Connect this Desktop bridge to your workspace, then pair LightBurn below." : method === "windows" ? "It keeps this bridge's key on your computer and installs a startup task for your account. It downloads the native Windows x64 or ARM64 bridge and keeps its code up to date." : method === "mac" ? "It trades the code for this bridge's own key, which stays on your Mac, installs a native service that starts at login, and keeps its code up to date." : <>It trades the code for this bridge's own key, which stays on that box, installs it as a service that starts at boot, and keeps it up to date. Add <code>--system</code> to install it for the whole machine, or <code>--docker</code> for a network-only Linux bridge. USB machines need the native installer.</>}
               </p>
@@ -145,7 +145,7 @@ export function BridgeInstallMethod({
               </button>
             ) : (
               <>
-                <pre className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
+                <pre tabIndex={0} className="text-[11px] leading-relaxed bg-subtle dark:bg-slate-950 border border-line dark:border-slate-700 rounded p-2 overflow-x-auto whitespace-pre text-content dark:text-mortar-200">{snippet}</pre>
                 <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
                   Run this on a box at your site. Token shown once - it can <strong>only</strong> run this bridge (scope <code>devices:edge</code>).
                 </p>
@@ -160,7 +160,7 @@ export function BridgeInstallMethod({
         {lightBurn && <div className="mt-2"><LightBurnPairing method={method} /></div>}
         {(method === "mac" || method === "windows" || method === "code") && <div className="mt-2 text-[11px] text-muted">
           <p>To remove the bridge:</p>
-          <pre className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{uninstallCommand(method === "windows" ? "windows" : method === "mac" ? "mac" : "linux")}</pre>
+          <pre tabIndex={0} className="overflow-x-auto whitespace-pre rounded bg-subtle p-2">{uninstallCommand(method === "windows" ? "windows" : method === "mac" ? "mac" : "linux")}</pre>
         </div>}
         <BridgeTrust />
       </div>
@@ -197,7 +197,7 @@ export function BridgeAbout() {
       {(["linux", "mac", "windows"] as const).map((os) => (
         <div key={os} className="mt-1">
           <span className="text-faint">{os === "linux" ? "Linux" : os === "mac" ? "Mac" : "Windows (PowerShell)"}</span>
-          <pre className="overflow-x-auto whitespace-pre rounded bg-subtle dark:bg-slate-950 p-2">{uninstallCommand(os)}</pre>
+          <pre tabIndex={0} className="overflow-x-auto whitespace-pre rounded bg-subtle dark:bg-slate-950 p-2">{uninstallCommand(os)}</pre>
         </div>
       ))}
     </details>

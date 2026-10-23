@@ -1,4 +1,4 @@
-import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob } from "@cobblr/platform-web";
+import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, useOnceQuiet, downloadBlob, OnceQuiet, stillAsking, useRecordActions } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -187,6 +187,10 @@ export function LocationDetailPage() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't change the photo. Try again."),
   });
 
+  // Drawn once every section has its answer: what is kept here lands above
+  // Add, Move everything and Delete, and pushes them from under a finger.
+  const settled = useOnceQuiet();
+
   // The place is drawn once everything that adds a part of it has answered
   // or first failed: drawn as each came, the breadcrumb, the bin's count
   // card, the actions bar, the insurance list and what's here each arrived
@@ -218,7 +222,9 @@ export function LocationDetailPage() {
   })();
 
   return (
-    <div className="space-y-5 max-w-4xl mx-auto">
+    <>
+    {!settled && <div className="text-sm text-faint">loading…</div>}
+    <div className={settled ? "space-y-5 max-w-4xl mx-auto" : "hidden"}>
       <Link
         to="/locations"
         className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 hover:text-accent"
@@ -566,6 +572,7 @@ export function LocationDetailPage() {
         />
       )}
     </div>
+    </>
   );
 }
 

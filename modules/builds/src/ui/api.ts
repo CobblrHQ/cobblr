@@ -287,9 +287,6 @@ export class BuildsApi {
   addSubAssembly(buildId: string, body: { sub_assembly_build_id: string; quantity: number; optional?: boolean }) {
     return this.req<ComponentRow>("POST", `/builds/${buildId}/components`, body);
   }
-  removeComponent(buildId: string, componentId: string) {
-    return this.req<void>("DELETE", `/builds/${buildId}/components/${componentId}`);
-  }
   build(buildId: string, qty: number, output_serial?: string) {
     return this.req<BuildRunResult>("POST", `/builds/${buildId}/build`, { qty, output_serial: output_serial || null });
   }

@@ -29,7 +29,7 @@ export { arrivedEverywhere, dayHere, dayIn, countdownWords, daySaid, daysUntil, 
 export { keepMembers, isMember, parcelAudience } from "@cobblr/platform-contract/membership";
 export { splitEntityKind, entityKindOf, type EntityKindParts } from "@cobblr/platform-contract/entity-kind";
 export { actionRunsUnconfirmed, type ActionConsent } from "@cobblr/platform-contract/action-consent";
-export { ActionRefusal, isActionRefusal, crashSentence } from "@cobblr/platform-contract/action-refusal";
+export { ActionRefusal, isActionRefusal, crashSentence, argumentRefusal } from "@cobblr/platform-contract/action-refusal";
 export { isActionStep, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 export { approvalDedupeKey, blockedSentence, type ApprovalRemedy, type ApprovalRemedyKind, type BlockedAction } from "@cobblr/platform-contract/blocked-action";
 export { destinationLabel, normaliseTargetKind, type DestinationTable } from "@cobblr/platform-contract/destination-label";

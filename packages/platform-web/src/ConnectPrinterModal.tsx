@@ -374,7 +374,7 @@ export function ConnectPrinterModal(props: ConnectPrinterModalProps) {
                   </li>
                   <li>
                     Run the bridge, telling it about that printer:
-                    <pre className="mt-1 p-2 rounded bg-mortar-100 dark:bg-slate-800 text-[11px] overflow-x-auto whitespace-pre">{INSTALL_CMD}</pre>
+                    <pre tabIndex={0} className="mt-1 p-2 rounded bg-mortar-100 dark:bg-slate-800 text-[11px] overflow-x-auto whitespace-pre">{INSTALL_CMD}</pre>
                     <button
                       onClick={() => void navigator.clipboard?.writeText(INSTALL_CMD)}
                       className="mt-1 text-accent hover:underline"

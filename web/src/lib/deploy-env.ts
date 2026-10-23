@@ -36,7 +36,7 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
     chrome: "banner",
     label: "Staging",
     header:
-      "bg-violet-100 border-violet-300 dark:bg-violet-900/85 dark:border-violet-700",
+      "bg-violet-100 border-violet-300 dark:bg-violet-950/90 dark:border-violet-800",
     chip: "bg-violet-600 text-white",
   },
   // Canary runs main against REAL production data, so its cue says "newer code",
@@ -47,7 +47,7 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
     label: "Canary",
     // Unused while chrome is `mark`; kept so switching back is a one-word edit.
     header:
-      "bg-yellow-100 border-yellow-300 dark:bg-yellow-900/85 dark:border-yellow-700",
+      "bg-yellow-100 border-yellow-300 dark:bg-yellow-950/90 dark:border-yellow-800",
     chip: "bg-yellow-400 text-yellow-950",
     chrome: "mark",
     markDot: "#FACC15",
@@ -56,7 +56,7 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
     chrome: "banner",
     label: "Dev",
     header:
-      "bg-amber-100 border-amber-300 dark:bg-amber-900/85 dark:border-amber-700",
+      "bg-amber-100 border-amber-300 dark:bg-amber-950/90 dark:border-amber-800",
     chip: "bg-amber-500 text-amber-950",
   },
   // `test` reuses the dev look — same "not real" signal.
@@ -64,7 +64,7 @@ export const ENV_BADGES: Record<string, EnvBadge> = {
     chrome: "banner",
     label: "Test",
     header:
-      "bg-amber-100 border-amber-300 dark:bg-amber-900/85 dark:border-amber-700",
+      "bg-amber-100 border-amber-300 dark:bg-amber-950/90 dark:border-amber-800",
     chip: "bg-amber-500 text-amber-950",
   },
 };

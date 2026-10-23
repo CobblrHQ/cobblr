@@ -4,7 +4,7 @@
 // hands out the tokenised iCal URL (works in Apple Calendar, and in Google
 // Calendar via "add from URL").
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, CalendarDays, Link2, RefreshCw, Copy, MapPin } from "lucide-react";
@@ -14,7 +14,7 @@ import { useRoleAtLeast } from "../lib/can";
 import { usePersistedState } from "../lib/use-persisted-state";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { AddressView, stillAsking, usePageTitle, useToast } from "@cobblr/platform-web";
+import { AddressView, usePageTitle, useOnceQuiet, useToast, stillAsking } from "@cobblr/platform-web";
 import { WEEKDAYS, MONTHS, isoLocal as iso, buildMonthGrid, shiftMonth } from "../lib/month-grid";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { dayLabel } from "@cobblr/platform-contract/day";
@@ -74,6 +74,10 @@ export function CalendarPage() {
   }, [events.data, hiddenSources]);
 
   const todayKey = iso(new Date());
+  // The day whose every event is listed under the grid: a square shows four,
+  // and the rest had no way to be read or opened (#7869). A date a
+  // notification landed on opens its list too.
+  const [openDay, setOpenDay] = useState<string | null>(focusKey);
 
   function openEvent(ev: CalendarEvent) {
     if (ev.entityModule && ev.entityType && ev.entityId) {
@@ -85,8 +89,14 @@ export function CalendarPage() {
     }
   }
 
+  // Drawn once the dates, the warranties and the feed have all answered: each
+  // one lands above the subscribe button and moves it.
+  const settled = useOnceQuiet();
+
   return (
-    <div className="space-y-4 max-w-5xl mx-auto">
+    <>
+    {!settled && <p className="text-sm text-muted">Loading the calendar…</p>}
+    <div className={settled ? "space-y-4 max-w-5xl mx-auto" : "hidden"}>
       <div className="flex flex-wrap items-center gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
           <CalendarDays size={22} className="text-accent" /> Calendar
@@ -154,7 +164,16 @@ export function CalendarPage() {
                     </button>
                   ))}
                   {dayEvents.length > 4 && (
-                    <div className="text-[9px] text-faint dark:text-slate-500 px-1">+{dayEvents.length - 4} more</div>
+                    <button
+                      type="button"
+                      data-testid="calendar-day-more"
+                      aria-expanded={openDay === key}
+                      aria-label={`${dayEvents.length - 4} more on ${dayLabel(key, { weekday: "long", month: "long", day: "numeric" })}, list all ${dayEvents.length}`}
+                      onClick={() => setOpenDay(openDay === key ? null : key)}
+                      className="block w-full text-left rounded px-1 py-0.5 text-[10px] font-medium text-accent hover:underline max-sm:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]"
+                    >
+                      +{dayEvents.length - 4} more
+                    </button>
                   )}
                 </div>
               </div>
@@ -163,12 +182,41 @@ export function CalendarPage() {
         </div>
       </div>
 
+      {openDay && (byDay[openDay]?.length ?? 0) > 0 && <DayList day={openDay} events={byDay[openDay]!} onOpen={openEvent} onClose={() => setOpenDay(null)} />}
+
       <WhereToBe events={(events.data?.items ?? []).filter((ev) => !hiddenSources.includes(ev.source) && ev.date.slice(0, 7) === `${cursor.y}-${String(cursor.m + 1).padStart(2, "0")}`)} onOpen={openEvent} />
 
       <WarrantyReminders slug={slug} />
       <SubscribeBar slug={slug} />
       </>}
     </div>
+    </>
+  );
+}
+
+/** Every event on one day, each one openable: the square holds four. */
+function DayList({ day, events, onOpen, onClose }: { day: string; events: CalendarEvent[]; onOpen: (ev: CalendarEvent) => void; onClose: () => void }) {
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => { ref.current?.scrollIntoView?.({ block: "nearest" }); }, [day]);
+  return (
+    <section ref={ref} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3" data-testid="calendar-day-list" aria-label={`Everything on ${dayLabel(day, { weekday: "long", month: "long", day: "numeric" })}`}>
+      <div className="mb-2 flex items-baseline gap-2">
+        <h2 className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{dayLabel(day, { weekday: "long", month: "long", day: "numeric" })}</h2>
+        <span className="text-xs text-faint">{events.length} {events.length === 1 ? "event" : "events"}</span>
+        <div className="flex-1" />
+        <button type="button" onClick={onClose} className="rounded px-2 py-1 text-xs text-accent hover:underline max-sm:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]">Close</button>
+      </div>
+      <ul className="divide-y divide-line dark:divide-slate-700">
+        {events.map((ev) => (
+          <li key={ev.id} data-testid="calendar-day-list-row">
+            <button type="button" onClick={() => onOpen(ev)} className="flex w-full items-baseline gap-2 py-2 text-left text-sm hover:text-accent max-sm:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]">
+              <span className={"shrink-0 rounded px-1.5 py-0.5 text-[10px] " + catStyle(ev.category)}>{ev.sourceLabel ?? ev.source}</span>
+              <span className="min-w-0 flex-1 truncate text-content dark:text-mortar-100">{ev.title}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

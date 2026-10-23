@@ -2,13 +2,13 @@ import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete, useCan, type FieldPackItem } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
 // don't silently rewrite history.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, ArrowRightLeft, Copy, Library, Minus, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { consumptionGauge, type ConsumptionGauge as ConsumptionGaugeT } from "@cobblr/platform-contract/consumption-gauge";
@@ -362,6 +362,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   });
 
   const mayDelete = useMayDelete(entityKind);
+  // A viewer who may not edit parts (a member, an operator) reads the record:
+  // its name, fields and photo are drawn but nothing in them can be changed,
+  // where each used to open, take the edit, and answer 403 (#7888). Taking
+  // one and putting it back is theirs, so the stepper and the actions stay.
+  const mayEdit = useCan("inventory:update-part");
+  const editable = (node: ReactNode) => <fieldset disabled={mayEdit !== true} className="contents">{node}</fieldset>;
+  const editableItem = (item: FieldPackItem | null): FieldPackItem | null => item && { ...item, node: editable(item.node) };
   const remove = useMutation({
     mutationFn: () => api.deletePart(id!),
     onSuccess: () => {
@@ -551,7 +558,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
 
       <div data-testid="record-header" className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <div className="flex flex-col sm:flex-row sm:flex-wrap items-start gap-4">
-          <RecordPhoto
+          {editable(<RecordPhoto
             kind={entityKind}
             id={p.id}
             instance={instance}
@@ -565,12 +572,13 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
               void qc.invalidateQueries({ queryKey: ["part-gallery", orgSlug, p.id] });
             }}
-          />
+          />)}
           <div className="w-full sm:w-auto sm:flex-1 min-w-0">
             <div className="min-w-0">
               <EditableTitle
                 value={p.name}
                 display={p.title}
+                editable={mayEdit === true}
                 onCommit={(v) => update.mutate({ name: v })}
                 className="font-display text-xl sm:text-2xl font-bold text-content dark:text-mortar-100"
               />
@@ -610,6 +618,9 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                   </span>
                 )}
               </div>
+              {mayEdit === false && (
+                <p className="mt-1 text-xs text-muted dark:text-slate-400">You can read this {itemNoun}; changing it needs permission to edit parts.</p>
+              )}
             </div>
           </div>
         </div>
@@ -665,7 +676,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                           // Changing the unit auto-converts the quantity when the two are
                           // interconvertible (1000 g -> kg = 1); otherwise just the unit
                           // changes. (e55169b1)
-                          <UnitInput
+                          editable(<UnitInput
                             className="w-32"
                             value={p.unit}
                             count={Number(p.qty)}
@@ -675,7 +686,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                               const c = Number.isFinite(n) ? units.convert(n, p.unit, v) : null;
                               update.mutate(c != null ? { unit: v, qty: c } : { unit: v });
                             }}
-                          />
+                          />)
                         )}
                       </div>
                     </Field>
@@ -756,7 +767,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
                 }
               : null,
             editFieldItem("notes", { label: "Notes", value: p.notes ?? "", multiline: true, onCommit: (v) => update.mutate({ notes: v || null }) }),
-          ]}
+          ].map((item) => (item?.need.key === "qty" ? item : editableItem(item)))}
         />
         {/* A field edit the workspace refused says why, under the fields. */}
         <MutationError mutation={update} className="block mt-2">Not saved:</MutationError>
@@ -769,12 +780,12 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1.5">
             {parent.label ?? "Type"}
           </div>
-          <ParentPicker
+          {editable(<ParentPicker
             instance={parent.instance}
             value={parentQ.data ?? null}
             onChange={(v) => setParent.mutate(v)}
             placeholder={`Search ${parent.label?.toLowerCase() ?? "type"}…`}
-          />
+          />)}
         </div>
       )}
 
@@ -790,7 +801,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
       {/* The instance's own fields, promoted to the top (right under the
           identity card) — the point of a skinned instance is that THESE are
           the fields that matter, not the generic inventory ones below. */}
-      <CustomFieldsPanel
+      {editable(<CustomFieldsPanel
         entityKind={entityKind}
         entityId={p.id}
         values={(p.metadata as Record<string, unknown> | null) ?? {}}
@@ -802,14 +813,14 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
           // edits keep only the last (#3625).
           update.mutate({ metadata: { [name]: value } })
         }
-      />
+      />)}
 
       {!hide("warranty") && (
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 sm:p-5 space-y-3">
         <h3 className="text-[10px] uppercase tracking-widest text-muted dark:text-slate-400">
           warranty & status
         </h3>
-        <FieldPack
+        {editable(<FieldPack
           items={[
             editFieldItem("warranty_expires", {
               label: "Warranty expires",
@@ -853,7 +864,7 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
               ),
             },
           ]}
-        />
+        />)}
       </div>
       )}
 
@@ -1020,6 +1031,7 @@ const Field = LabeledField;
 function EditableTitle({
   value,
   display,
+  editable,
   onCommit,
   className,
 }: {
@@ -1029,11 +1041,14 @@ function EditableTitle({
    *  the person's format, #3061). Shown in place of the stored name and
    *  never edited: nothing composed is ever writable. */
   display?: string | null;
+  /** False for a viewer who may not rename it: the name reads, and a tap
+   *  opens nothing the server would refuse (#7888). */
+  editable: boolean;
   onCommit: (v: string) => void;
   className: string;
 }) {
   const [editing, setEditing] = useState(false);
-  if (editing) {
+  if (editing && editable) {
     return (
       <input aria-label="Name"
         autoFocus
@@ -1057,9 +1072,9 @@ function EditableTitle({
   }
   return (
     <h1
-      onClick={() => setEditing(true)}
-      title="Click to rename"
-      className={`${className} w-full min-w-0 break-words cursor-text leading-tight`}
+      onClick={editable ? () => setEditing(true) : undefined}
+      title={editable ? "Click to rename" : undefined}
+      className={`${className} w-full min-w-0 break-words leading-tight${editable ? " cursor-text" : ""}`}
     >
       {display || value || <span className="text-faint dark:text-slate-500 font-normal">Unnamed</span>}
     </h1>

@@ -6,7 +6,7 @@ import { getStationTokenOverride } from "../station-token";
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, describeUnreadableBody, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf } from "@cobblr/platform-web";
+import { UploadError, browserOffline, describeUnreadableBody, keepWaitingWrite, landedWrite, madeByAPerson, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, withWaitingWrites } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
@@ -315,6 +315,8 @@ async function sendRequest<T>(
   body?: unknown,
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
+  // Read before anything is waited on: whether a person's mutation sent this (waiting-writes.ts).
+  const byAPerson = madeByAPerson();
   // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
   if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
   // The page is going, with other credentials than it ran on (leaving View
@@ -351,7 +353,12 @@ async function sendRequest<T>(
     // fetch only rejects on a network-level failure (offline, server
     // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
     setApiDown(true);
-    if (typeof navigator !== "undefined" && navigator.onLine === false) throw new ApiError(0, "offline", OFFLINE_SENTENCE);
+    if (browserOffline()) {
+      // Never sent, so it can be sent later without doubling: it waits on
+      // this device, not only in this page (waiting-writes.ts, #7863).
+      if (byAPerson && !impToken && !headers["x-cobblr-waited"]) keepWaitingWrite(method, path, body === undefined ? undefined : JSON.stringify(body), headers["Authorization"]);
+      throw new ApiError(0, "offline", OFFLINE_SENTENCE);
+    }
     throw new ApiError(0, "network_error", `Can't reach ${productName()}. Check your connection and try again.`);
   }
   // Offline, the service worker answered: a kept copy (marked with when it was
@@ -372,6 +379,7 @@ async function sendRequest<T>(
     if (!down) setOfflineAsOf(null);
   }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
+  if (isMutating(method) && !impToken) landedWrite(method, path, headers["Authorization"]);
   if (res.ok && isMutating(method)) {
     noteWorkspaceWrite(path, res);
     noteAiAvailabilityWrite(path);
@@ -457,7 +465,7 @@ async function sendRequest<T>(
       res.status === 429 && (err?.code ?? "rate_limited") === "rate_limited" ? busySentence(retryAfterSec) : reason ?? `HTTP ${res.status}`;
     throw new ApiError(res.status, err?.code ?? "unknown", message, err?.details, err?.blocked, retryAfterSec);
   }
-  return parsed as T;
+  return (method === "GET" && !impToken ? withWaitingWrites(path, parsed, headers["Authorization"]) : parsed) as T;
 }
 
 /** Primary-entity base for a host module (machines/assets/purchases).

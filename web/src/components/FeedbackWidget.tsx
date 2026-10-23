@@ -425,7 +425,7 @@ export function FeedbackWidget({ asRow = false }: { asRow?: boolean } = {}) {
                 <ChevronRight size={10} className="transition-transform group-open:rotate-90" />
                 What this says about your setup
               </summary>
-              <pre
+              <pre tabIndex={0}
                 aria-label="What the report says about your setup"
                 className="mt-1 max-h-24 overflow-auto rounded border border-line dark:border-slate-700 bg-subtle dark:bg-slate-900/60 p-2 text-[10px] leading-relaxed font-mono text-muted dark:text-slate-400 whitespace-pre-wrap break-words"
               >

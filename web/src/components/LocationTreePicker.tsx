@@ -389,7 +389,13 @@ export function LocationTreePicker({
           </div>
           <button
             type="button"
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              // The picker steps aside for the form it opened: left up over
+              // it, its full-screen layer took the form's Name and Create
+              // (#7815).
+              setOpen(false);
+              setCreateOpen(true);
+            }}
             className="flex w-full items-center gap-2 border-t border-line dark:border-slate-800 px-3 py-2 text-left text-sm text-accent hover:bg-subtle dark:hover:bg-slate-800"
           >
             <Plus size={14} /> New location…

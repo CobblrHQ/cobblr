@@ -17,7 +17,7 @@ import { usePrefill } from "../lib/prefill";
 import { MySignupInvites } from "./MySignupInvites";
 import { useAuth } from "../auth/AuthContext";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
+import { ORG_ROLES, INVITABLE_ORG_ROLES, roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { withArticle } from "@cobblr/platform-contract/plural";
 
 interface Props {
@@ -63,6 +63,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
   // Only an OWNER can invite a brand-new person who gets their OWN workspace
   // (the platform-signup path); admins can still invite into THIS workspace.
   const isOwner = members.data?.self.role === "owner";
+  const changeableRoles = ROLES.filter((role) => roleSatisfies(members.data?.self.role, [role]));
   // The "start their own Cobblr" path is the uncontrolled-growth lever, so it's
   // off by default during alpha (server flag). Hide the option unless it's open.
   const config = useQuery({
@@ -324,6 +325,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
           <ul className="divide-y divide-line dark:divide-slate-700">
             {members.data?.items.map((m) => {
               const isSelf = m.user_id === members.data?.self.user_id;
+              const canManageMember = isAdminish && !isSelf && roleSatisfies(members.data?.self.role, [m.role]);
               return (
                 <li key={m.user_id} className="py-2 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
@@ -339,7 +341,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       {m.email}
                     </div>
                   </div>
-                  {isAdminish && !isSelf ? (
+                  {canManageMember ? (
                     <select aria-label="Role"
                       value={m.role}
                       onChange={(e) =>
@@ -350,7 +352,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       }
                       className="input !w-auto !py-1 text-xs"
                     >
-                      {ROLES.map((r) => (
+                      {changeableRoles.map((r) => (
                         <option key={r} value={r}>
                           {r}
                         </option>
@@ -361,7 +363,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                       {m.role}
                     </span>
                   )}
-                  {isAdminish && !isSelf && (
+                  {canManageMember && (
                     <button
                       aria-label="Remove member"
                       onClick={() => handleRemoveMember(m)}

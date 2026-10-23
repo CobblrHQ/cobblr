@@ -63,7 +63,7 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
   return (
     <>
       {(q.data?.shared_with ?? []).map((t) => (
-        <RecordActionItem key={t.link_id} id={`record:stop-sharing:${t.link_id}`} group="share" label={`Stop sharing with ${t.to}`} description="Remove this record from their share." badge={t.to}><span data-testid="record-shared-with" className={`order-last inline-flex items-center gap-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600 ${className ?? ""}`}>
+        <RecordActionItem key={t.link_id} id={`record:stop-sharing:${t.link_id}`} action="platform:stop-sharing" group="share" label={`Stop sharing with ${t.to}`} description="Remove this record from their share." badge={t.to}><span data-testid="record-shared-with" className={`order-last inline-flex items-center gap-1 rounded border border-line bg-subtle px-2 py-1 text-xs text-content dark:border-slate-600 ${className ?? ""}`}>
           <Share2 size={12} aria-hidden className="text-muted" />
           Shared with {t.to}
           <button type="button" disabled={busy} data-testid="record-stop-sharing" onClick={() => void run("platform:stop-sharing", t.link_id)} className="ml-1 text-muted underline-offset-2 hover:text-accent hover:underline">
@@ -72,7 +72,7 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
         </span></RecordActionItem>
       ))}
       {manager &&
-        <RecordActionItem id="record:share-with" group="share" label="Share…" description="Share this record with someone, or invite someone new by email."><button
+        <RecordActionItem id="record:share-with" action="platform:share-list" group="share" label="Share…" description="Share this record with someone, or invite someone new by email."><button
             type="button"
             data-testid="record-share-with"
             onClick={() => openFlow("platform:share-list", { kind, ids: [id] })}
@@ -82,7 +82,7 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
             Share…
           </button></RecordActionItem>}
       {!manager && others.length > 0 &&
-        <RecordActionItem id="record:share-with" group="share" label="Share with…" description="Choose someone who can see this record.">{(choosing && others.length > 1 ? (
+        <RecordActionItem id="record:share-with" action="platform:share-with" group="share" label="Share with…" description="Choose someone who can see this record.">{(choosing && others.length > 1 ? (
           <span className={`order-last inline-flex flex-wrap items-center gap-1 ${className ?? ""}`}>
             {others.map((t) => (
               <button key={t.link_id} type="button" disabled={busy} data-testid="record-share-with-who" onClick={() => void run("platform:share-with", t.link_id)} className={chip}>

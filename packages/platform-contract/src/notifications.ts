@@ -7,6 +7,9 @@
 export interface NotificationCardRow {
   /** The line, plain text with light markdown (bold), e.g. "**Milk** — expires today". */
   text: string;
+  /** Set when reading the inbox, never at dispatch: the question this line's
+   *  buttons asked has been answered, and how. Its buttons are gone. */
+  settled?: { label: string; at: string | null };
   /** Ids from the notification's `actions`, in the order to offer them. The
    *  first is the one a channel puts beside the line when it can hold only one. */
   actions?: string[];
@@ -110,7 +113,15 @@ export type AttentionDeclaration =
 
 export interface DigestContribution { key: string; text: string; link?: string }
 export type DigestContributor = (orgId: string, db: unknown) => Promise<DigestContribution[]>;
+/** How a question a notification's button asked was answered: "Done", "Snoozed until Nov 5". */
+export interface ActionSettlement { label: string; at: string | null }
 export interface PlatformNotifications {
+  /** The buttons that run these actions ask a question a record can later answer
+   *  (an overdue service, done elsewhere). `settle` gets the arguments each
+   *  button carries and says which are already answered (null: still open).
+   *  Read when the inbox is read, so a reload, another tab and the
+   *  Maintenance page all agree; an answered button is not offered again. */
+  registerActionSettlement(actionIds: readonly string[], settle: (orgId: string, args: Array<Record<string, unknown>>) => Promise<Array<ActionSettlement | null>>): void;
   /** Adds a module's current needs to an existing digest, only while that module is enabled. */
   registerDigestContributor(eventType: string, module: string, read: DigestContributor): void;
   digestContributions(eventType: string, orgId: string, db: unknown): Promise<DigestContribution[]>;

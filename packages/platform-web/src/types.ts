@@ -218,6 +218,9 @@ export interface PlatformWebApi {
     lifecycle?: boolean;
     /** The kind can be lent out and come back (platform:lend / platform:return). */
     lendable?: boolean;
+    /** For each kernel action the bar's own parts run (RECORD_BAR_ACTIONS),
+     *  whether it runs for this viewer: the door's own answer (#7922). */
+    runs?: Partial<Record<string, boolean>>;
   }>;
   setRecordActionPin?(slug: string, kind: string, action: string, pinned: boolean): Promise<unknown>;
   /** Turn a module on for the workspace (an owner's or admin's act). Optional:

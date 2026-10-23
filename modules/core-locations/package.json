@@ -1,6 +1,6 @@
 {
   "name": "@cobblr/core-locations",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "main": "dist/module.js",

@@ -79,7 +79,11 @@ function screenInsets(): { insetTop: number; insetBottom: number } {
     probe.remove();
     return h;
   };
-  return { insetTop: measure("--inset-top"), insetBottom: measure("--inset-bottom") };
+  // The foot of the screen a popover keeps clear of: the home bar's inset,
+  // or the room the toasts take over overlays (--overlay-bottom, #5801),
+  // whichever is more. Under the toasts a picker's last row was theirs to
+  // press: the install toast took a first item's New location… (#7814).
+  return { insetTop: measure("--inset-top"), insetBottom: Math.max(measure("--inset-bottom"), measure("--overlay-bottom")) };
 }
 
 /** The space every popover keeps from the screen's edges. */
@@ -155,8 +159,13 @@ export const PopoverLayer = forwardRef<HTMLDivElement, PopoverLayerProps>(functi
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(fit) : null;
     ro?.observe(el);
     window.addEventListener("resize", fit);
+    // A toast that comes while the popover is open changes --overlay-bottom
+    // on the root's style: fit again so the popover steps up out of its way.
+    const mo = typeof MutationObserver !== "undefined" ? new MutationObserver(fit) : null;
+    mo?.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     return () => {
       ro?.disconnect();
+      mo?.disconnect();
       window.removeEventListener("resize", fit);
     };
   });

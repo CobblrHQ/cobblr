@@ -1,4 +1,5 @@
 import { FieldAggregateSchema } from "@cobblr/platform-contract/field-aggregate";
+import { CLARIFIER_SUFFIX, FIELD_KEY_PATTERN, isReservedFieldKey } from "@cobblr/platform-contract/field-key";
 import { forgetPerRequest, perReadRequest } from "../lib/request-context.js";
 // The ONE place that answers "which custom field defs apply to this entity kind?"
 //
@@ -225,9 +226,9 @@ export const FieldDefCreate = z.object({
   // shadows for one key, and whichever wrote last would win.
   name: z
     .string()
-    .regex(/^[a-z][a-z0-9_]*$/)
-    .refine((n) => !n.endsWith("_note"), {
-      message: "field names cannot end in _note (reserved for a choice field's clarifier)",
+    .regex(FIELD_KEY_PATTERN)
+    .refine((n) => !isReservedFieldKey(n), {
+      message: `field names cannot end in ${CLARIFIER_SUFFIX} (reserved for a choice field's clarifier)`,
     }),
   display_label: z.string().min(1),
   type: FieldTypeSchema,

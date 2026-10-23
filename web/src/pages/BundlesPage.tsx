@@ -3,7 +3,7 @@
 // JSON the user pastes / uploads.
 
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName, useSentWords } from "@cobblr/platform-web";
+import { productName, useSentWords, useOnceQuiet } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Copy, Download, Library, Package, Plus, Share2, Trash2, X } from "lucide-react";
@@ -275,8 +275,14 @@ export function BundlesPage() {
     (bundles.data?.items ?? []).map((b) => [b.external_id, b.version]),
   );
 
+  // Drawn once every section has its answer: the catalog and the installed list
+  // land above the install controls and push them.
+  const settled = useOnceQuiet();
+
   return (
-    <div className="space-y-5">
+    <>
+    {!settled && <p className="text-sm text-muted">Loading bundles…</p>}
+    <div className={settled ? "space-y-5" : "hidden"}>
       <ConfigHeaderActions>
         <Link
           to="/bundles/compose"
@@ -735,6 +741,7 @@ export function BundlesPage() {
         }}
       />
     </div>
+    </>
   );
 }
 
@@ -881,7 +888,7 @@ function ExportBundleModal({
             <div className="text-[10px] uppercase tracking-widest text-muted mb-1">
               preview
             </div>
-            <pre className="max-h-48 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
+            <pre tabIndex={0} className="max-h-48 overflow-auto text-[10px] font-mono p-3 rounded bg-subtle dark:bg-slate-900 border border-line dark:border-slate-700 text-content dark:text-mortar-200">
               {json}
             </pre>
           </div>

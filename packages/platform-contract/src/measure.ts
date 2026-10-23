@@ -328,3 +328,31 @@ export function measurePaths(q: Measure, tolerance = MEASURE_SEARCH_TOLERANCE): 
     vars: JSON.stringify({ lo, hi, u: r.unit ?? "" }),
   };
 }
+
+/** The in-memory twin of `textSearchWhere`, for a page that already holds its
+ *  records (#7893): every word of `q` is in one of `values`, and every value
+ *  it names ("0.1uF") is one they hold ("100n", or a measure field's value),
+ *  or is in their text and held there in no other unit. `values` are a
+ *  record's names and field values, read as they are stored. */
+export function valuesAnswer(values: ReadonlyArray<unknown>, q: string): boolean {
+  const words = q.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const texts: string[] = [];
+  const held: Measure[] = [];
+  for (const v of values) {
+    if (typeof v === "string" || typeof v === "number") {
+      texts.push(String(v));
+      if (typeof v === "string") for (const t of measureTokens(v)?.values ?? []) held.push(t.measure);
+    } else if (v && typeof v === "object" && typeof (v as { value?: unknown }).value === "number") {
+      const m = asMeasure(v);
+      if (m) { held.push(m); texts.push(m.text); }
+    }
+  }
+  const hay = texts.join(" ").toLowerCase();
+  const has = (w: string) => hay.includes(w.toLowerCase());
+  const read = measureTokens(q);
+  if (!read) return words.every(has);
+  return read.words.every(has) && read.values.every((v) =>
+    held.some((h) => measureMatches(v.measure, h)) ||
+    (has(v.text) && !held.some((h) => !!v.measure.unit && !!h.unit && h.unit !== v.measure.unit && measureMatches({ ...v.measure, unit: null }, h))));
+}

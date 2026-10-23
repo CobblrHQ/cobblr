@@ -4,6 +4,7 @@
 import { dayHere } from "@cobblr/platform-contract/day";
 import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 import { dayLabel } from "@cobblr/platform-contract/day";
+import { parseLineAmount } from "../line-amount.js";
 
 export interface ListSummary {
   id: string;
@@ -68,11 +69,14 @@ export function restockAmount(effects: CheckEffect[] | undefined): number | null
   return null;
 }
 
-/** A numeric line quantity ("3", "3 boxes"), or null when the line does not say. */
+/** A numeric line quantity ("3", "1.5", "3 boxes"), or null when the line does not say. */
 export function lineQuantity(qty: string | null | undefined): number | null {
-  const m = /^\s*(\d+)/.exec(qty ?? "");
-  const n = m ? Number(m[1]) : NaN;
-  return Number.isInteger(n) && n > 0 ? n : null;
+  return parseLineAmount(qty)?.value ?? null;
+}
+
+/** The unit the line's amount is written in ("kg" in "1 kg"), when it names one. */
+export function lineUnit(qty: string | null | undefined): string | null {
+  return parseLineAmount(qty)?.unit ?? null;
 }
 
 export interface ListDetail {
