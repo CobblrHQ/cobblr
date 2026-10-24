@@ -28,18 +28,7 @@ import { stripNonExecutable } from "../api/src/db/migration-shape.js";
 
 /** Keys that predate the rule, by module/table.column, each with the issue
  *  that decides its delete rule. Remove a line when its heal lands. */
-const DECIDED_ELSEWHERE: Record<string, string> = {
-  "builds/builds_inspections.order_id": "#7920",
-  "core-authoring/core_authoring_drafts.parent_draft_id": "#7920",
-  "digifab/digifab_test_plan_versions.plan_id": "#7920",
-  "digifab/digifab_test_runs.plan_id": "#7920",
-  "digifab/digifab_test_dispositions.run_id": "#7920",
-  "digifab/digifab_test_delivery.run_id": "#7920",
-  "digifab/digifab_embroidery_runs.job_id": "#7920",
-  "digifab/digifab_embroidery_runs.machine_id": "#7920",
-  "digifab/digifab_embroidery_runs.design_id": "#7920",
-  "digifab/digifab_embroidery_thread_claims.job_id": "#7920",
-};
+const DECIDED_ELSEWHERE: Record<string, string> = {};
 
 interface Key { module: string; table: string; column: string; file: string; line: number; rule: boolean }
 

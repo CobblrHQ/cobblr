@@ -104,7 +104,18 @@ export function roleSatisfies(role: string | null | undefined, allowed: readonly
   const need = Math.min(
     ...allowed.map((r) => ORG_ROLE_RANK[r as OrgRoleName] ?? Number.POSITIVE_INFINITY),
   );
-  return have >= need;
+  const ok = have >= need;
+  if (ok) rolePassObserver?.();
+  return ok;
+}
+
+let rolePassObserver: (() => void) | null = null;
+
+/** The api watches a role gate pass, to ask a route whether a person may do
+ *  something without doing it (api/src/lib/gate-probe.ts, #7909). Nothing
+ *  else sets this; in the browser it stays null. */
+export function observeRolePasses(fn: (() => void) | null): void {
+  rolePassObserver = fn;
 }
 
 /**
@@ -185,3 +196,11 @@ export const CALENDAR_FEED_MANAGERS = ["owner", "admin"] as const;
  * route refuses (#7552).
  */
 export const MANAGED_APP_REFRESHERS = ["owner", "admin"] as const;
+
+/**
+ * The admin tier as a route names it, requireRole(req, res, "owner", "admin"):
+ * an owner, an admin or an editor (by rank). A page asks this list before it
+ * draws a control whose route says that, so a member or an operator is never
+ * offered a setup they are always refused (#7922).
+ */
+export const ADMIN_TIER = ["owner", "admin"] as const;

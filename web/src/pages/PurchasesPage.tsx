@@ -1,4 +1,5 @@
 import { lineFigures } from "./purchase-line-figures";
+import { formatUnitPrice } from "@cobblr/platform-contract/money";
 import { SelectBox, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -15,7 +16,7 @@ import { ChevronRight, Plus, Receipt, Store, Trash2 } from "lucide-react";
 import { ApiError, api, type Order, type OrderItem, type OrderSummary, type VendorSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
-import { formatStoredMoney, linesTotalLabel } from "@cobblr/platform-contract/money";
+import { formatStoredMoney, linesTotalLabel, fieldCurrency } from "@cobblr/platform-contract/money";
 import { useFieldPresentation } from "../lib/useFieldPresentation";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { ReceiptSourceViewer } from "../components/ReceiptSourceViewer";
@@ -614,7 +615,9 @@ function ReceiptRenderModal({
   const items = order.items ?? [];
   const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
   const shipping = order.shipping_cost != null ? Number(order.shipping_cost) : 0;
-  const computed = order.computed_total ?? subtotal + shipping;
+  const shippingCurrency = order.shipping_currency ?? fieldCurrency(order.metadata, "shipping_cost", order.currency);
+  const linesSubtotal = order.computed_subtotal ?? (order.computed_total != null ? order.computed_total - (order.shipping_total ?? shipping) : subtotal);
+  const computed = order.computed_total ?? linesSubtotal + (order.shipping_total ?? shipping);
   const total = order.total_cost != null ? Number(order.total_cost) : computed;
   const other = total - computed;
   const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
@@ -649,12 +652,12 @@ function ReceiptRenderModal({
         <div className="mt-3 space-y-1 text-xs">
           <div className="flex justify-between">
             <span>{linesTotalLabel(pricedLines, "Subtotal")}</span>
-            <span className="tabular-nums">{money(order.computed_total != null ? computed - shipping : subtotal)}</span>
+            <span className="tabular-nums">{money(linesSubtotal)}</span>
           </div>
           {shipping > 0 && (
             <div className="flex justify-between">
               <span>Shipping</span>
-              <span className="tabular-nums">{money(shipping)}</span>
+              <span className="tabular-nums">{money(shipping, shippingCurrency)}</span>
             </div>
           )}
           {Math.abs(other) >= 0.01 && (
@@ -725,7 +728,9 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   // obvious: Σ(qty × unit) + shipping vs the recorded total.
   const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
   const shipping = o?.shipping_cost != null ? Number(o.shipping_cost) : 0;
-  const computed = o?.computed_total ?? subtotal + shipping;
+  const shippingCurrency = o?.shipping_currency ?? fieldCurrency(o?.metadata, "shipping_cost", o?.currency);
+  const linesSubtotal = o?.computed_subtotal ?? (o?.computed_total != null ? o.computed_total - (o.shipping_total ?? shipping) : subtotal);
+  const computed = o?.computed_total ?? linesSubtotal + (o?.shipping_total ?? shipping);
   const totalNum = o?.total_cost != null ? Number(o.total_cost) : null;
   const reconciles = totalNum != null && Math.abs(totalNum - computed) < 0.01;
   const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
@@ -906,12 +911,12 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
                   <div className="flex justify-between text-muted">
                     <span data-testid="order-subtotal">{pricedLines.unpriced ? linesTotalLabel(pricedLines, "Subtotal") : `Subtotal (${items.length} line${items.length === 1 ? "" : "s"})`}</span>
-                    <span className="font-mono">{money(computed - shipping)}</span>
+                    <span className="font-mono">{money(linesSubtotal)}</span>
                   </div>
                   {shipping > 0 && (
                     <div className="flex justify-between text-muted">
                       <span>Shipping</span>
-                      <span className="font-mono">{money(shipping)}</span>
+                      <span className="font-mono">{money(shipping, shippingCurrency)}</span>
                     </div>
                   )}
                   {totalNum != null && (
@@ -1005,7 +1010,7 @@ function OrderLineItem({
   const href = ent?.detailUrl ?? (item.part_id ? routeFor("inventory:part", item.part_id) : null);
   const qty = Number(item.qty);
   const unit = item.unit_cost != null ? Number(item.unit_cost) : null;
-  const { each, total: ext } = lineFigures(qty, unit, money);
+  const { each, total: ext } = lineFigures(qty, unit, (v) => formatUnitPrice(v, { currency: item.currency }));
   const actions = usePurchaseLineActions(slug, order, item);
 
   const inner = (

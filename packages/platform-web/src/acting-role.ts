@@ -21,6 +21,7 @@ import { approvalDedupeKey, type BlockedAction } from "@cobblr/platform-contract
 import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequestFor } from "./blocked-action";
 import { primedRead } from "./primed-reads";
 import { sharedRead } from "./shared-reads";
+import { networkFailureMessage } from "./network-failure";
 import { browserOffline, keepWaitingWrite, landedWrite, madeByAPerson, withWaitingWrites } from "./waiting-writes";
 
 const roles = new Map<string, string>();
@@ -102,7 +103,8 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
       res = await send(input, init, method);
     } catch (e) {
       if (keeps && byAPerson && browserOffline()) keepWaitingWrite(method, path, init?.body, authorization);
-      throw e;
+      if (!path.startsWith("/orgs/") || (e && typeof e === "object" && "name" in e && e.name === "AbortError")) throw e;
+      throw new Error(networkFailureMessage(), { cause: e });
     }
     if (keeps && method !== "GET") landedWrite(method, path, authorization);
     if (keeps && method === "GET" && res.ok) res = await overWaitingWrites(res, path, authorization);

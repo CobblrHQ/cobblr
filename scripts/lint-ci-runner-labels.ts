@@ -53,7 +53,7 @@ const KNOWN = new Set([
   "ci-test",
   "ci-test-full",
   "ci-e2e",
-  // The nightly walk's shards (#7640): cobblr-test-a6-full and cobblr-light-b550, two at a time.
+  // The nightly walk's shards (#7640): cobblr-light-b550, and cobblr-a6 after 6 h (#6226, 2026-10-24).
   "ci-walk",
   // A job past 15 minutes that is no lane's verdict (#7754): the b550 alone, which carries no reserved lane.
   "ci-long",

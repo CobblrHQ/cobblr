@@ -5,6 +5,7 @@ import { baseKindOf, listKinds } from "./entities.js";
 import { kindForRoute } from "./entity-saved.js";
 import { finishHistoryWrite } from "./history-writes.js";
 import { runHistoryWrite, type HistoryWrite } from "./record-history.js";
+import { refuseStaleEdit } from "./stale-edit.js";
 
 async function capture(req: Request, res: Response, next: NextFunction, kind: string, id: string): Promise<void> {
   const orgId = req.tenant!.org.id;
@@ -12,6 +13,8 @@ async function capture(req: Request, res: Response, next: NextFunction, kind: st
   const read = writer?.snapshot?.bind(writer);
   const before = read ? await read(orgId, id) : null;
   if (!before || !read) { next(); return; }
+  // An older form's save over a field changed since is refused here (#7925).
+  if (await refuseStaleEdit(req, res, orgId, id, before)) return;
   const write: HistoryWrite = { orgId, kind: await baseKindOf(orgId, kind), id, before, readAfter: () => read(orgId, id), logged: false };
   const json = res.json.bind(res);
   res.json = ((body: unknown) => {

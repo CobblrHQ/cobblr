@@ -1,3 +1,5 @@
+import { useCan, useRoleAtLeast } from "../../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import {useEffect,useRef,useState} from "react";
 import {Link} from "react-router-dom";
 import {useQuery,useQueryClient} from "@tanstack/react-query";
@@ -9,6 +11,8 @@ import {LargeFormatStock} from "./LargeFormatStock";
 const button="min-h-12 rounded border border-line px-4 py-3 disabled:opacity-50";
 const input="block w-full min-h-12 rounded border border-line bg-surface px-3 py-2";
 export function LargeFormatStation({slug,connectionId,deviceId}:{slug:string;connectionId:string;deviceId:string}) {
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const mayRevoke = useCan("digifab:revoke-station");
  usePageTitle("Large format station");
  const queries=useQueryClient();
  const key=`cobblr.machine-station.${slug}.${connectionId}.${deviceId}`;
@@ -46,7 +50,7 @@ export function LargeFormatStation({slug,connectionId,deviceId}:{slug:string;con
  return <><SkipToContent/><main id={MAIN_ID} tabIndex={-1} data-testid="machine-station" className="min-h-screen max-w-5xl mx-auto bg-surface text-content p-4 sm:p-6 space-y-5">
  <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Large format station</h1><p className="break-words text-muted">{device?.name||"Network printer"} · {device?.state||"Unknown state"}</p></div><Link className={button} to="/digifab">Exit to the fleet</Link></header>
  {(error||q.error)&&<p role="alert" className="rounded border border-red-500 p-4 break-words">{error||String(q.error)}</p>}{notice&&<p role="status">{notice}</p>}
- <div className="flex flex-wrap gap-3"><button className={`${button} border-red-500`} onClick={()=>void stop()}>Stop print</button><button className={button} onClick={()=>void refresh()}>Refresh printer</button>{!credential?<button className={button} disabled={busy} onClick={()=>void run(async()=>{const result=await api.registerDigifabStation(slug,connectionId,deviceId),next={id:result.id,token:result.token};localStorage.setItem(key,JSON.stringify(next));setCredential(next);})}>Authorize this machine station</button>:<button className={button} disabled={busy} onClick={()=>void run(async()=>{await api.revokeDigifabStation(slug,credential.id);localStorage.removeItem(key);setCredential(null);setReview(null);})}>Revoke this screen</button>}</div>
+ <div className="flex flex-wrap gap-3"><button className={`${button} border-red-500`} onClick={()=>void stop()}>Stop print</button><button className={button} onClick={()=>void refresh()}>Refresh printer</button>{!credential?(setsUp && <button className={button} disabled={busy} onClick={()=>void run(async()=>{const result=await api.registerDigifabStation(slug,connectionId,deviceId),next={id:result.id,token:result.token};localStorage.setItem(key,JSON.stringify(next));setCredential(next);})}>Authorize this machine station</button>):(mayRevoke && <button className={button} disabled={busy} onClick={()=>void run(async()=>{await api.revokeDigifabStation(slug,credential.id);localStorage.removeItem(key);setCredential(null);setReview(null);})}>Revoke this screen</button>)}</div>
  <section className="rounded border border-line p-4 space-y-3"><h2 className="text-sm font-semibold">Ink and printer status</h2><p>Ink is read from the printer. Unknown readings do not mean empty.</p>{q.data?.supplies.length?<ul className="space-y-3">{q.data.supplies.map(s=><li key={s.supply_id}><strong>{s.reading.name}</strong>: {s.reading.percent==null?"Unknown":`${s.reading.percent}%`}{s.reading.remaining_ml!=null?` · ${s.reading.remaining_ml} ml`:""}{s.low&&<span className="text-amber-700 dark:text-amber-400"> · Low, check replacement stock</span>}<p className="text-sm text-muted">Last read: {new Date(s.updated_at).toLocaleString()}</p></li>)}</ul>:<p>No supply readings are available. Enable read-only Printer MIB SNMP on the printer.</p>}
  {printer?.raw&&<><p className="break-words">Printer errors: {Array.isArray(printer.raw.reasons)?printer.raw.reasons.join(", "):"Unknown"}</p><p className="break-words">Reported loaded media: {printer.raw.media==null?"Unknown":JSON.stringify(printer.raw.media)}</p>{typeof printer.raw.supplyError==="string"&&<p>{printer.raw.supplyError}</p>}</>}
  </section>

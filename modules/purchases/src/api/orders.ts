@@ -676,6 +676,10 @@ ordersRouter.patch(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
     if (Object.keys(edit.data).length > 0) {
+      // A line inside an order is not a kind the kernel judges, so it asks
+      // here: an older tab's save over a price changed since is refused (#8118).
+      const now = await db.selectFrom("purchases_order_items").selectAll().where("id", "=", itemId).where("order_id", "=", orderId).executeTakeFirst();
+      if (now && (await platform().http.refuseStaleEdit(req, res, itemId, now as unknown as Record<string, unknown>))) return;
       const r = await editOrderLine(db, { orgId: ctx.org.id, userId: session.id }, itemId, edit.data, orderId);
       if (!r.ok) {
         res.status(r.code === "not_found" ? 404 : 409).json({ error: { code: r.code, message: r.message } });

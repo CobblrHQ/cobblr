@@ -7,10 +7,14 @@ import { useToast } from "@cobblr/platform-web";
 import { api, type OverdueCadence } from "../../lib/api";
 import type { ConfigSectionCtx } from "../../panels/types";
 import { CadencePicker } from "./renewals";
+import { useCan } from "../../lib/can";
+
+const SAID = { day: "Daily", week: "Weekly", month: "Monthly", off: "Off" } as const;
 
 export function ReminderDefaultSection({ ctx }: { ctx: ConfigSectionCtx }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const maySet = useCan("core-maintenance:reminder-default");
   const preferences = useQuery({ queryKey: ["maintenance-reminder-default", ctx.slug], queryFn: () => api.maintenanceReminderPreferences(ctx.slug), enabled: !!ctx.slug });
   const save = useMutation({
     mutationFn: (v: OverdueCadence) => api.setMaintenanceReminderPreferences(ctx.slug, v),
@@ -25,7 +29,11 @@ export function ReminderDefaultSection({ ctx }: { ctx: ConfigSectionCtx }) {
   return (
     <>
       <p className="text-sm text-muted dark:text-slate-400">After a service or renewal is overdue, keep reminding at this cadence. Each schedule can choose its own.</p>
-      <CadencePicker workspace value={preferences.data.overdue_every} onChange={(v) => { if (v) save.mutate(v); }} />
+      {maySet ? (
+        <CadencePicker workspace value={preferences.data.overdue_every} onChange={(v) => { if (v) save.mutate(v); }} />
+      ) : (
+        <p className="text-sm">Overdue reminders: {SAID[preferences.data.overdue_every as keyof typeof SAID] ?? preferences.data.overdue_every}. An owner, an admin or an editor of this workspace sets it.</p>
+      )}
     </>
   );
 }

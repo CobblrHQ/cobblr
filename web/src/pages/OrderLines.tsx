@@ -15,7 +15,7 @@ import { parcelWords } from "../features/purchases/parcelWords";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2, ArrowUpRight } from "lucide-react";
 import { Link } from "react-router-dom";
-import { MoneyInput, useMoneyCurrency, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
+import { MoneyInput, editOf, useMoneyCurrency, RelationSelect, useConfirm, useToast } from "@cobblr/platform-web";
 import { ApiError, api, type Order, type OrderItem } from "../lib/api";
 import { StartReturnButton } from "./OrderReturns";
 import { usePurchaseLineActions } from "./purchaseLineActions";
@@ -332,13 +332,18 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
   };
 
   const save = useMutation({
-    mutationFn: () =>
-      api.updateOrderItem(slug, order.id, item.id, {
+    // Only what this correction changed, with what it was: a price another
+    // tab saved while this was open stands, or this save says it changed
+    // (#8118, #7925).
+    mutationFn: () => {
+      const edit = editOf(item as unknown as Record<string, unknown>, {
         description: description.trim() || null,
         ...(settled ? {} : { qty: Number(qty) }),
         unit_cost: unitCost,
         currency,
-      }),
+      });
+      return Object.keys(edit.body).length ? api.updateOrderItem(slug, order.id, item.id, edit.body, edit.headers) : Promise.resolve(item);
+    },
     onSuccess: () => {
       refresh();
       setEditing(false);

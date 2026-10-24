@@ -7,6 +7,7 @@
 import { describeGuestWrite } from "../platform/approvals.js";
 import { guestMayRead, guestMayWrite, guestRouteKey, portalShares } from "../auth/guest-reads.js";
 import { holdForAPerson, workspacePath } from "../platform/ai-held-changes.js";
+import { GATE_PROBE_HEADER, runInGateProbe, settleGateProbe, takeGateProbe } from "../lib/gate-probe.js";
 import { deleteRefusal, kindOfDeletePath } from "../platform/kind-delete.js";
 import { sandboxIsOver, trialIsOver } from "../platform/sandbox-over.js";
 import { sandboxEnabled } from "../platform/try-sandbox.js";
@@ -266,6 +267,14 @@ export async function withTenant(
     // because every workspace route passes this door.
     if (req.method === "DELETE" && req.session.ai_door) {
       await holdForAPerson(req, res);
+      return;
+    }
+    // The hold's question to the route: does this person get past its gate?
+    // The rest of the request runs inside the probe, which stops it there.
+    const probe = takeGateProbe(req.get(GATE_PROBE_HEADER));
+    if (probe) {
+      res.on("finish", () => settleGateProbe(probe));
+      runInGateProbe(probe, next);
       return;
     }
     next();

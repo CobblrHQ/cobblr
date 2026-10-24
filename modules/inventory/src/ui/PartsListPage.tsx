@@ -1,3 +1,4 @@
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
@@ -1872,7 +1873,7 @@ function onHandOf(p: { qty: number | string; on_hand?: number }): number {
 
 function fmt(n: number): string {
   // Trim trailing zeros: 3.000 → 3, 3.500 → 3.5, 3.510 → 3.51.
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 /** HomeBox-style zero-padded asset id. */

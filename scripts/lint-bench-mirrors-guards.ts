@@ -30,6 +30,7 @@ const BENCH = join(ROOT, "scripts/bench-action-rail.ts");
 
 /** The guards a turn applies, by the module that owns each. */
 const GUARD_MODULES = [
+  "add-destination",
   "action-args-guard",
   "act-dont-escort",
   "act-dont-describe",

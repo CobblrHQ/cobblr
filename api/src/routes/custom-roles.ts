@@ -292,12 +292,16 @@ customRolesRouter.post(
       // Verify target user is a member of this workspace.
       const member = await meta
         .selectFrom("org_memberships")
-        .select("user_id")
+        .select(["user_id", "role"])
         .where("org_id", "=", orgId)
         .where("user_id", "=", parsed.data.user_id)
         .executeTakeFirst();
       if (!member) {
         res.status(404).json({ error: { code: "not_member", message: "User isn't a member." } });
+        return;
+      }
+      if (member.role === "guest") {
+        res.status(403).json({ error: { code: "guest_read_only", message: "Guests are read-only. Change this person's role before assigning a custom role." } });
         return;
       }
       // Verify the role belongs to this workspace.

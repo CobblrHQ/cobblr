@@ -45,6 +45,7 @@ export async function effectiveCapabilities(
   userId: string,
   role: string,
 ): Promise<EffectiveCapabilities> {
+  if (role === "guest") return { all: false, caps: new Set() };
   if (roleHoldsEveryCapability(role)) {
     return { all: true, caps: new Set() };
   }

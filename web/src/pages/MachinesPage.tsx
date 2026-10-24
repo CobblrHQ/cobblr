@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useCan, useRoleAtLeast } from "../lib/can";
 import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
@@ -1533,6 +1535,10 @@ function NewMachineModal({
   const [view, setView] = useState<"form" | "bambu" | "direct" | "edge">("form");
   const [kind, setKind] = useState("");
   const [connect, setConnect] = useState<"later" | "bambu_direct" | "manager" | "direct" | "edge">("later");
+  // Connecting a machine to what runs it (a manager, a driver, a link) is the
+  // admin tier's, as its routes say; anyone may add the machine itself (#7922).
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const canEnable = useCan("platform:enable-module");
   const [bambuConn, setBambuConn] = useState<DigifabConnection | null>(null);
   const [bambuDevices, setBambuDevices] = useState<BambuDiscoveredDevice[]>([]);
   const [bambuDevId, setBambuDevId] = useState("");
@@ -1645,7 +1651,7 @@ function NewMachineModal({
     setKind(k);
     const def = KINDS.find((x) => x.id === k);
     if (def?.manufacturer && !manufacturer.trim()) setManufacturer(def.manufacturer);
-    setConnect(k === "bambu" ? "bambu_direct" : KIND_DRIVER[k] ? (hosted ? "edge" : "direct") : k === "other" ? "later" : "manager");
+    setConnect(!setsUp ? "later" : k === "bambu" ? "bambu_direct" : KIND_DRIVER[k] ? (hosted ? "edge" : "direct") : k === "other" ? "later" : "manager");
   }
   function onEdgeConnected(connId?: string) {
     // The bridge is online + its connection exists — fall into the manager
@@ -1872,11 +1878,11 @@ function NewMachineModal({
           ) }
         ]} />
 
-        {instance && !digifabEnabled && (
+        {instance && !digifabEnabled && canEnable && (
           <EnableJobManagerCard words={words} noun={noun} pending={enableDigifab.isPending} onEnable={() => enableDigifab.mutate()} />
         )}
 
-        {printerFlow && kind && (
+        {setsUp && printerFlow && kind && (
           <div className="rounded-lg border border-line dark:border-slate-700 bg-subtle/40 dark:bg-slate-800/30 p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-accent">
               <Printer size={12} /> How do you want to connect?

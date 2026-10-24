@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../lib/can";
 // /build — the AI App Builder (core-authoring, Phase 1: copy-paste).
 //
 // Describe what you want → the site compiles a prompt → you run it in your
@@ -87,6 +89,8 @@ function BundleDetails({ candidate, label = "Show the generated bundle" }: { can
 }
 
 export function BuildPage() {
+  // Making or remaking an app is the admin tier's, as the apps route says.
+  const makesApps = useRoleAtLeast(ADMIN_TIER);
   usePageTitle("Build");
   const { activeSlug } = useActiveOrg();
   const slug = activeSlug ?? "";
@@ -551,7 +555,7 @@ export function BuildPage() {
         the result back in - same outcome, your AI.{" "}
       </AiOffNotice>
 
-      {mode === "app" && (
+      {mode === "app" && makesApps && (
         <button
           type="button"
           onClick={() =>

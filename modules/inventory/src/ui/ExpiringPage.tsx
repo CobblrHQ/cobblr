@@ -4,6 +4,7 @@
 // the lot, never the item. Spans every collection: a vehicle carries supplies
 // and snacks alike. See docs/design-decisions/holdings-and-units.md (phase 3).
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +16,7 @@ import { useInventory } from "./context";
 const WINDOWS = [7, 30, 90] as const;
 
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 export function ExpiringPage() {
@@ -89,7 +90,7 @@ export function ExpiringPage() {
                 </Link>
                 <span className="font-mono text-xs">{fmt(l.qty)}</span>
                 {l.lot && <span className="font-mono text-[11px] text-muted">lot {l.lot}</span>}
-                <span className={"font-mono text-[11px] " + (l.days < 0 ? "text-ember-600 dark:text-ember-400" : l.days <= 7 ? "text-amber-700 dark:text-amber-400" : "text-muted dark:text-slate-400")}>
+                <span className={"font-mono text-[11px] " + (l.days < 0 ? "text-danger" : l.days <= 7 ? "text-amber-700 dark:text-amber-400" : "text-muted dark:text-slate-400")}>
                   {l.days < 0 ? `${-l.days}d past its date` : today ? countdownWords(l.expires_on as Day, today) : l.expires_on}
                 </span>
                 <span className="ml-auto flex gap-1.5">

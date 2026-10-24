@@ -88,6 +88,40 @@ export function stationQrMay(settings: Pick<StationSettings, "qr_use_one" | "qr_
   return false;
 }
 
+// ── The QR's token: station-qr:<address> (#5353) ──────────────────────────
+// What the API lets that token reach (api/src/auth/scopes.ts clamps by it).
+// Claimed by a phone that opened the printed QR (platform/station-devices.ts
+// claimStationQr), never minted any other way. Narrower than the tablet's:
+// the station's own reads, its lookup and its presses (which presses is the
+// station's own qr_ settings, checked by core-scan), and the reads its card
+// draws with. No scan intake, no bridge scanner's queue (the tablet's, #8070),
+// no inbox, no moving, no settings.
+const STATION_QR_SCOPE_RE = /^station-qr:([a-z0-9][a-z0-9-]{0,39})$/;
+
+export function isStationQrScope(key: string): boolean {
+  return STATION_QR_SCOPE_RE.test(key);
+}
+
+const QR_ORG = "/orgs/[^/]+";
+
+const STATION_QR_READS: Array<[string, RegExp]> = [
+  ["GET", new RegExp(`^${QR_ORG}/modules/core-locations/locations$`)],
+  ["GET", new RegExp(`^${QR_ORG}/modules/core-files/files/[^/]+(/raw)?$`)],
+  ["GET", new RegExp(`^${QR_ORG}/modules/core-scan/menu$`)],
+  ["GET", /^\/me$/],
+];
+
+/** Does a station-qr token reach this request? `rel` is the path without
+ *  /api/v1 and without a query. */
+export function stationQrScopeAllows(key: string, method: string, rel: string): boolean {
+  const address = STATION_QR_SCOPE_RE.exec(key)?.[1];
+  if (!address) return false;
+  const own = `^${QR_ORG}/modules/core-scan/stations/screens/${address}`;
+  if (method === "GET" && new RegExp(`${own}(/actions)?$`).test(rel)) return true;
+  if (method === "POST" && new RegExp(`${own}/(lookup|count|undo|actions/run|actions/undo|recount)$`).test(rel)) return true;
+  return STATION_QR_READS.some(([m, re]) => m === method && re.test(rel));
+}
+
 // ── Settings ───────────────────────────────────────────────────────────────
 
 /** What a scan of something you already have does. `ask` shows the record's

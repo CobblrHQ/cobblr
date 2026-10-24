@@ -36,8 +36,8 @@ export class KnowledgeApiError extends Error {
 export class KnowledgeApi {
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { ...extra };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -88,8 +88,8 @@ export class KnowledgeApi {
   createEntry(body: EntryInput) {
     return this.req<Entry>("POST", "/entries", body);
   }
-  updateEntry(id: string, body: Partial<EntryInput>) {
-    return this.req<Entry>("PATCH", `/entries/${id}`, body);
+  updateEntry(id: string, body: Partial<EntryInput>, headers?: Record<string, string>) {
+    return this.req<Entry>("PATCH", `/entries/${id}`, body, headers);
   }
   deleteEntry(id: string) {
     return this.req<void>("DELETE", `/entries/${id}`);

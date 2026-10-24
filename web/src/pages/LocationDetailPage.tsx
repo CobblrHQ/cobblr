@@ -1,4 +1,4 @@
-import { RecordFormModal, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, useOnceQuiet, downloadBlob, OnceQuiet, stillAsking, useRecordActions } from "@cobblr/platform-web";
+import { RecordFormModal, editOf, MoneyTotalNotice, CustomFieldsPanel, EntityActionsBar, OnceQuiet, stillAsking, useRecordActions, EntityThumb, FieldPack, LabeledField, fieldNeed, useConfirm, useToast, usePageTitle, downloadBlob, useOnceQuiet } from "@cobblr/platform-web";
 // /locations/:id — full-entity detail view.
 //
 // Locations are now first-class entities (Punch-list #1 from
@@ -126,7 +126,9 @@ export function LocationDetailPage() {
   // must still let the place be drawn.
   const capabilities = useQuery({ ...capabilitiesQuery(activeSlug), enabled: !!activeSlug });
   const worth = useQuery({
-    queryKey: ["placement-worth", activeSlug, id],
+    // Under the place's own key, so every refresh of the place (a move of
+    // its contents, its Undo) asks for its worth again (#7886).
+    queryKey: ["location", activeSlug, id, "worth"],
     queryFn: () => api.placementWorth(activeSlug, { kind: "core-locations:location", id: id! }),
     enabled: !!activeSlug && !!id && seesCosts === true,
     staleTime: 30_000,
@@ -576,6 +578,13 @@ export function LocationDetailPage() {
   );
 }
 
+/** A container's declared interior size in mm, or null when none is given. */
+function interiorOf(kind: "area" | "container", dims: string[]): { x?: number; y?: number; z?: number } | null {
+  const [x, y, z] = dims.map((v) => (v.trim() ? Number(v) : null));
+  if (kind !== "container" || ![x, y, z].some((n) => n != null && Number.isFinite(n) && n > 0)) return null;
+  return { ...(x ? { x } : {}), ...(y ? { y } : {}), ...(z ? { z } : {}) };
+}
+
 function EditLocationModal({
   location,
   onClose,
@@ -606,32 +615,22 @@ function EditLocationModal({
   const [dimZ, setDimZ] = useState(dims0.z != null ? String(dims0.z) : "");
 
   const save = useMutation({
-    mutationFn: (allowDuplicate: boolean) =>
-      api.updateLocation(activeSlug, location.id, {
-        ...(allowDuplicate ? { allow_duplicate: true } : {}),
+    mutationFn: (allowDuplicate: boolean) => {
+      // Only what this form changed, with what it was when the form opened:
+      // the place may have moved or been renamed since, in another tab or by
+      // someone else, and sending the old copy back undid theirs in silence
+      // (#7906, #7925). The interior size is one key of the bag.
+      const edit = editOf(location as unknown as Record<string, unknown>, {
         parent_id: parentId,
         name: name.trim(),
         short_name: shortName.trim() || null,
         kind,
         description: description.trim() || null,
         notes: notes.trim() || null,
-        // metadata is replaced wholesale by the PATCH — merge over the
-        // current blob so container identity etc. survives a dims edit.
-        metadata: (() => {
-          const next = { ...(location.metadata ?? {}) } as Record<string, unknown>;
-          const nums = [dimX, dimY, dimZ].map((v) => (v.trim() ? Number(v) : null));
-          if (kind === "container" && nums.some((n) => n != null && Number.isFinite(n) && n > 0)) {
-            next.interior_mm = {
-              ...(nums[0] ? { x: nums[0] } : {}),
-              ...(nums[1] ? { y: nums[1] } : {}),
-              ...(nums[2] ? { z: nums[2] } : {}),
-            };
-          } else {
-            delete next.interior_mm;
-          }
-          return next;
-        })(),
-      }),
+        metadata: { interior_mm: interiorOf(kind, [dimX, dimY, dimZ]) },
+      });
+      return api.updateLocation(activeSlug, location.id, { ...(allowDuplicate ? { allow_duplicate: true } : {}), ...edit.body }, edit.headers);
+    },
     onSuccess: () => {
       toast.success("Location updated.");
       void qc.invalidateQueries({ queryKey: ["location", activeSlug, location.id] });

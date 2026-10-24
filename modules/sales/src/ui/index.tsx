@@ -1,3 +1,4 @@
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { downloadBlob, useMoneyCurrency, RecordFormModal, CollectionHeader, ContributedDetailPanels, MoneyInput, useRecordInPath, CustomFieldsPanel, FieldPack, fieldNeed, fieldPackControlClass, Modal, headerButton, useFieldDraft, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField } from "@cobblr/platform-web";
 // sales UI — the host mounts <SalesUI /> at /sales. A list of sales orders; the
 // detail modal carries the customer, line items (each an inventory part + qty +
@@ -1025,7 +1026,7 @@ function OrderHistory({ api, orderId }: { api: SalesApi; orderId: string }) {
 function LineStock({ ordered, a }: { ordered: number; a: LineAvailability }) {
   const units = useUnits();
   const amount = (n: number) => {
-    const shown = String(parseFloat(n.toFixed(3)));
+    const shown = quantityNumber(n);
     return !a.unit || a.unit.trim().toLowerCase() === "each" ? shown : units.format(n, a.unit);
   };
   const parts = [`Ordered ${amount(ordered)}`, `${amount(a.on_hand)} in stock`, ...(a.being_made > 0 ? [`${amount(a.being_made)} being made`] : []), ...(a.short > 0 ? [`${amount(a.short)} short`] : [])];

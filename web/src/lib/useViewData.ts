@@ -1,13 +1,9 @@
-// A saved view's records, ALL of them, and the count the server gave.
-//
-// The view endpoint walks every page when asked without a limit, so almost
-// every view arrives whole in one answer. Past the walk's cap the answer says
-// `complete: false`, and this pages on from where it stopped, visibly, when
-// the surface asks (`loadMore`). The count is the server's `total`: a view
-// that counted what it had loaded read "50 3D printers" with 56 on file.
+// Saved views keep the server's full count. Tables page their rows so the
+// first screen need not draw the whole collection; aggregate views read all
+// records so their summaries still describe the complete matching set.
 import { useState } from "react";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type ViewDataResponse } from "./api";
+import { api, type SavedView, type ViewDataResponse } from "./api";
 
 const MORE_PAGE = 500;
 
@@ -25,6 +21,7 @@ export interface ViewData {
   complete: boolean;
   isLoading: boolean;
   isError?: boolean;
+  error?: unknown;
   refetch?: () => void;
   collectionEmpty?: boolean;
   unapplied?: ViewDataResponse["unapplied"];
@@ -45,7 +42,7 @@ export function useViewData(
   slug: string | null | undefined,
   viewId: string | null | undefined,
   kind: string | null,
-  opts: { enabled?: boolean; q?: string; inputs?: Record<string, string> } = {},
+  opts: { enabled?: boolean; q?: string; inputs?: Record<string, string>; view?: Pick<SavedView, "view_type" | "config"> } = {},
 ): ViewData {
   const qc = useQueryClient();
   const [loadingGroup, setLoadingGroup] = useState<string>();
@@ -53,15 +50,17 @@ export function useViewData(
   const enabled = opts.enabled ?? true;
   const text = opts.q?.trim() || undefined;
   const inputs = opts.inputs && Object.keys(opts.inputs).length ? opts.inputs : undefined;
+  const pageSize = opts.view?.view_type === "table" && !opts.view.config?.group_by ? 100 : undefined;
+  const queryKey = ["view-data", slug, viewId, kind ?? "", text ?? "", pageSize ?? "all", ...(inputs ? [JSON.stringify(inputs)] : [])];
   const q = useInfiniteQuery({
     // The view's kind rides in the key, so an action on one of its records
     // refreshes it wherever it is shown (platform-web run-action).
-    queryKey: ["view-data", slug, viewId, kind ?? "", text ?? "", ...(inputs ? [JSON.stringify(inputs)] : [])],
+    queryKey,
     ...(kind === null ? { meta: { kinds: "*" as const } } : {}),
     queryFn: ({ pageParam }) =>
       pageParam.offset === 0 && pageParam.group_offset === 0
-        ? api.viewData(slug!, viewId!, { q: text, inputs })
-        : api.viewData(slug!, viewId!, { q: text, inputs, offset: pageParam.offset, group_offset: pageParam.group_offset, limit: MORE_PAGE }),
+        ? api.viewData(slug!, viewId!, { q: text, inputs, ...(pageSize ? { limit: pageSize } : {}) })
+        : api.viewData(slug!, viewId!, { q: text, inputs, offset: pageParam.offset, group_offset: pageParam.group_offset, limit: pageSize ?? MORE_PAGE }),
     initialPageParam: { offset: 0, group_offset: 0 },
     getNextPageParam: (last, pages) => {
       const first = pages[0];
@@ -101,13 +100,14 @@ export function useViewData(
       setGroupError(false);
       try {
         const page = await api.viewData(slug!, viewId!, { q: text, inputs, group_keys: keys, offset, limit: 50 });
-        qc.setQueryData<typeof q.data>(["view-data", slug, viewId, kind ?? "", text ?? ""], (previous) => previous ? { ...previous, pages: [...previous.pages, page], pageParams: [...previous.pageParams, { offset, group_offset: 0 }] } : previous);
+        qc.setQueryData<typeof q.data>(queryKey, (previous) => previous ? { ...previous, pages: [...previous.pages, page], pageParams: [...previous.pageParams, { offset, group_offset: 0 }] } : previous);
       } catch { setGroupError(true); } finally { setLoadingGroup(undefined); }
     } : undefined,
     total: first?.total ?? (complete ? items.length : null),
     complete,
     isLoading: q.isLoading,
     isError: q.isError || groupError,
+    error: q.error,
     refetch: () => void q.refetch(),
     collectionEmpty: first?.collection_empty,
     unapplied: first?.unapplied,

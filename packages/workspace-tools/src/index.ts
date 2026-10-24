@@ -28,6 +28,7 @@ export {
   resolveDeletePath,
   summarizeKind,
   LEGACY_CREATE_PATHS,
+  withKindsTitleField,
   type KindRec,
 } from "./kinds.js";
 export { jsonSchemaOf, undescribedParams } from "./schema.js";

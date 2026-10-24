@@ -15,115 +15,31 @@
 // by symbol → code → name/plural (case-insensitive); an unmatched value
 // renders as-is. So existing data needs no migration.
 
-import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
-import { MEASURE_UNITS } from "@cobblr/platform-contract/measure";
+import type { CountWords } from "@cobblr/platform-contract/plural";
+import { convertBetween, formatQuantityIn, resolveUnitIn } from "@cobblr/platform-contract/unit-figure";
 
-export type UnitCategory =
-  | "count"
-  | "mass"
-  | "length"
-  | "area"
-  | "volume"
-  | "time"
-  | "electrical"
-  | "digital";
-
-export interface UnitDef {
-  code: string;
-  symbol: string;
-  name: string;
-  plural: string;
-  category: UnitCategory;
-  /** How many of the category's BASE unit one of these is (mass→gram,
-   *  length→metre, area→m², volume→litre, time→second, digital→MB). Two units
-   *  in the same category that both carry a factor are interconvertible: a value
-   *  in `from` becomes `value * from.factor / to.factor` in `to`. Omitted = not
-   *  convertible (count units — a "pack" isn't a fixed number of "each"). */
-  factor?: number;
-}
-
-export const BUILTIN_UNITS: UnitDef[] = [
-  // count — deliberately NO factor (a pack/set/box isn't a fixed count).
-  { code: "each", symbol: "ea", name: "each", plural: "each", category: "count" },
-  { code: "piece", symbol: "pc", name: "piece", plural: "pieces", category: "count" },
-  { code: "pair", symbol: "pr", name: "pair", plural: "pairs", category: "count" },
-  { code: "pack", symbol: "pk", name: "pack", plural: "packs", category: "count" },
-  { code: "set", symbol: "set", name: "set", plural: "sets", category: "count" },
-  { code: "roll", symbol: "roll", name: "roll", plural: "rolls", category: "count" },
-  { code: "sheet", symbol: "sht", name: "sheet", plural: "sheets", category: "count" },
-  { code: "box", symbol: "box", name: "box", plural: "boxes", category: "count" },
-  { code: "dozen", symbol: "dz", name: "dozen", plural: "dozen", category: "count" },
-  // mass — base = gram
-  { code: "milligram", symbol: "mg", name: "milligram", plural: "milligrams", category: "mass", factor: 0.001 },
-  { code: "gram", symbol: "g", name: "gram", plural: "grams", category: "mass", factor: 1 },
-  { code: "kilogram", symbol: "kg", name: "kilogram", plural: "kilograms", category: "mass", factor: 1000 },
-  { code: "ounce", symbol: "oz", name: "ounce", plural: "ounces", category: "mass", factor: 28.349523125 },
-  { code: "pound", symbol: "lb", name: "pound", plural: "pounds", category: "mass", factor: 453.59237 },
-  // length — base = metre
-  { code: "millimeter", symbol: "mm", name: "millimeter", plural: "millimeters", category: "length", factor: 0.001 },
-  { code: "centimeter", symbol: "cm", name: "centimeter", plural: "centimeters", category: "length", factor: 0.01 },
-  { code: "meter", symbol: "m", name: "meter", plural: "meters", category: "length", factor: 1 },
-  { code: "inch", symbol: "in", name: "inch", plural: "inches", category: "length", factor: 0.0254 },
-  { code: "foot", symbol: "ft", name: "foot", plural: "feet", category: "length", factor: 0.3048 },
-  { code: "yard", symbol: "yd", name: "yard", plural: "yards", category: "length", factor: 0.9144 },
-  // area — base = m²
-  { code: "square-meter", symbol: "m²", name: "square meter", plural: "square meters", category: "area", factor: 1 },
-  { code: "square-foot", symbol: "ft²", name: "square foot", plural: "square feet", category: "area", factor: 0.09290304 },
-  // volume — base = litre
-  { code: "milliliter", symbol: "ml", name: "milliliter", plural: "milliliters", category: "volume", factor: 0.001 },
-  { code: "liter", symbol: "L", name: "liter", plural: "liters", category: "volume", factor: 1 },
-  { code: "fluid-ounce", symbol: "fl oz", name: "fluid ounce", plural: "fluid ounces", category: "volume", factor: 0.0295735295625 },
-  // time — base = second
-  { code: "hour", symbol: "h", name: "hour", plural: "hours", category: "time", factor: 3600 },
-  { code: "minute", symbol: "min", name: "minute", plural: "minutes", category: "time", factor: 60 },
-  { code: "day", symbol: "d", name: "day", plural: "days", category: "time", factor: 86400 },
-  // electrical: distinct dimensions, NOT interconvertible, so no factor. The
-  // same codes a measured value carries ("4k7" is 4700 ohm), from the one list.
-  // Its lengths (millimeter, inch) are the ones listed under length above.
-  ...MEASURE_UNITS.filter((u) => u.category === "electrical").map((u) => ({ code: u.code, symbol: u.symbol, name: u.name, plural: u.plural, category: "electrical" as const })),
-  // digital — base = MB
-  { code: "megabyte", symbol: "MB", name: "megabyte", plural: "megabytes", category: "digital", factor: 1 },
-  { code: "gigabyte", symbol: "GB", name: "gigabyte", plural: "gigabytes", category: "digital", factor: 1000 },
-];
+// The vocabulary itself is the contract's (unit-figure.ts), so the server's
+// catalog and the web's formatter read one list as well as one rule.
+export { BUILTIN_UNITS, type UnitCategory, type UnitDef } from "@cobblr/platform-contract/unit-figure";
+import { BUILTIN_UNITS, type UnitDef } from "@cobblr/platform-contract/unit-figure";
 
 /** Convert `value` from one unit to another when they share a category and both
  *  define a factor; returns null when not convertible (different categories,
- *  count units, free-text). The caller decides what to do with null. */
-export function convertQuantity(
-  value: number,
-  from: UnitDef | null,
-  to: UnitDef | null,
-): number | null {
-  if (!from || !to || from.code === to.code) return null;
-  if (from.category !== to.category) return null;
-  if (from.factor == null || to.factor == null) return null;
-  return (value * from.factor) / to.factor;
+ *  count units, free-text). The caller decides what to do with null. The one
+ *  rule is the contract's (unit-figure.ts), so the app reads what the server does. */
+export function convertQuantity(value: number, from: UnitDef | null, to: UnitDef | null): number | null {
+  return convertBetween(value, from, to);
 }
 
 /** How a quantity+unit is rendered: shorthand symbol, full word, or both. */
 export type UnitDisplayMode = "symbol" | "name" | "both";
 export const DEFAULT_DISPLAY_MODE: UnitDisplayMode = "symbol";
 
-/** Resolve a raw unit string to a catalog entry. Matches symbol → code →
- *  name/plural, case-insensitive, trimmed. Returns null for free-text the
- *  vocabulary doesn't know (it'll render as-is). The `extra` list lets the
- *  caller fold in a workspace's custom units. */
-export function resolveUnit(
-  raw: string | null | undefined,
-  extra: UnitDef[] = [],
-): UnitDef | null {
-  if (!raw) return null;
-  const q = raw.trim().toLowerCase();
-  if (!q) return null;
-  const all = [...BUILTIN_UNITS, ...extra];
-  // A symbol's case first: "H" is a henry and "h" an hour.
-  return (
-    all.find((u) => u.symbol === raw.trim()) ??
-    all.find((u) => u.symbol.toLowerCase() === q) ??
-    all.find((u) => u.code.toLowerCase() === q) ??
-    all.find((u) => u.name.toLowerCase() === q || u.plural.toLowerCase() === q) ??
-    null
-  );
+/** Resolve a raw unit string to a catalog entry (the contract's rule: the symbol
+ *  exactly first, then without regard to case). The `extra` list lets the caller
+ *  fold in a workspace's custom units. */
+export function resolveUnit(raw: string | null | undefined, extra: UnitDef[] = []): UnitDef | null {
+  return resolveUnitIn(raw, [...BUILTIN_UNITS, ...extra]);
 }
 
 /** Render a quantity + unit per the display mode. Pluralises the full word
@@ -136,20 +52,5 @@ export function formatQuantity(
   extra: UnitDef[] = [],
   known: readonly CountWords[] = [],
 ): string {
-  const n = qty == null || Number.isNaN(qty) ? null : qty;
-  const def = resolveUnit(raw, extra);
-  const numPart =
-    n == null ? "" : Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
-  if (!def) {
-    // A free-text unit still agrees with its count ("3 hanks", "1 cone").
-    const u = (raw ?? "").trim();
-    const word = u && n != null ? wordForCount(n, countWordsFor(u, known)) : u;
-    return [numPart, word].filter(Boolean).join(" ");
-  }
-  const word = n != null && Math.abs(n) === 1 ? def.name : def.plural;
-  let unitPart: string;
-  if (mode === "name") unitPart = word;
-  else if (mode === "both") unitPart = `${def.symbol} (${word})`;
-  else unitPart = def.symbol;
-  return [numPart, unitPart].filter(Boolean).join(" ");
+  return formatQuantityIn(qty, raw, [...BUILTIN_UNITS, ...extra], mode, known);
 }

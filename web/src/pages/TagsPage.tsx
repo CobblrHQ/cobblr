@@ -1,3 +1,4 @@
+import { useCan } from "../lib/can";
 import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 // /tags — list every tag the workspace has, what each is attached
 // to, and a quick "new tag" affordance. The attach-to-entity UX
@@ -33,7 +34,7 @@ function TagPillRow({
   /** The tag's parents, shown when a search lifts it out of its tree. */
   path?: string;
   onEdit: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   onTogglePin: () => void;
 }) {
   return (
@@ -81,9 +82,9 @@ function TagPillRow({
       <button onClick={onEdit} className={`${PILL_BUTTON} text-faint hover:text-accent`} title="Edit" aria-label={`Edit ${t.name}`}>
         <Pencil size={12} />
       </button>
-      <button onClick={onDelete} className={`${PILL_BUTTON} text-faint hover:text-ember-500`} title="Delete" aria-label={`Delete ${t.name}`}>
+      {onDelete && <button onClick={onDelete} className={`${PILL_BUTTON} text-faint hover:text-ember-500`} title="Delete" aria-label={`Delete ${t.name}`}>
         <Trash2 size={12} />
-      </button>
+      </button>}
     </span>
   );
 }
@@ -94,6 +95,7 @@ function TagPillRow({
 export function TagsPage() {
   usePageTitle("Tags");
   const { activeSlug } = useActiveOrg();
+  const mayMerge = !!useCan("core-tags:merge");
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -108,6 +110,7 @@ export function TagsPage() {
     enabled: !!activeSlug,
   });
 
+  const canDelete = useCan("core-tags:delete-tag");
   const del = useMutation({
     mutationFn: (id: string) => api.deleteTag(activeSlug, id),
     onSuccess: (gone, id) => {
@@ -195,7 +198,7 @@ export function TagsPage() {
         <TagPillRow
           t={t}
           onEdit={() => setEditing(t)}
-          onDelete={() => void onDelete(t)}
+          onDelete={canDelete ? () => void onDelete(t) : undefined}
           onTogglePin={() => pin.mutate(t)}
         />
         {renderNodes(t.id, depth + 1)}
@@ -240,7 +243,7 @@ export function TagsPage() {
           <div className="space-y-1.5">
             {found.map((t) => (
               <div key={t.id}>
-                <TagPillRow t={t} path={pathOf(t) || undefined} onEdit={() => setEditing(t)} onDelete={() => void onDelete(t)} onTogglePin={() => pin.mutate(t)} />
+                <TagPillRow t={t} path={pathOf(t) || undefined} onEdit={() => setEditing(t)} onDelete={canDelete ? () => void onDelete(t) : undefined} onTogglePin={() => pin.mutate(t)} />
               </div>
             ))}
           </div>
@@ -264,6 +267,7 @@ export function TagsPage() {
 
       {editing && (
         <EditTagModal
+          mayMerge={mayMerge}
           slug={activeSlug}
           tag={editing}
           onClose={() => setEditing(null)}

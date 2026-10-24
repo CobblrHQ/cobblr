@@ -237,8 +237,11 @@ export default defineModule({
         runBy: "member",
         examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
         label: "Move everything to another place",
+        // Asked to move a shelf "including its bins", a model chose this and
+        // the shelf stayed while its bins left it (#8050). Moving a place
+        // itself is a parent change, and the description says so first.
         description:
-          "Move every thing kept in this place into another place, through placement, each move recorded on the thing. `to`: the destination place's id, or with `to_kind` a thing that holds things (a Backpack, a toolbox; the things go inside it, places cannot). `places: true` also moves the places inside it (with their contents) under the destination. `then_delete: true` merges: moves everything including the places, then deletes this now-empty place. Refused when the destination is inside this place and places would move. Undo puts each thing and place back, and restores a merged-away place.",
+          "Empties this place: what is inside it moves, and this place itself stays where it is. To move a place itself (a shelf into another room, with its bins and everything in them), do not use this: update the place's `parent_id` to the new place, and everything inside goes with it. This action: move every thing kept in this place into another place, through placement, each move recorded on the thing. `to`: the destination place's id, or with `to_kind` a thing that holds things (a Backpack, a toolbox; the things go inside it, places cannot). `places: true` also moves the places inside it (with their contents) under the destination. `then_delete: true` merges: moves everything including the places, then deletes this now-empty place. Refused when the destination is inside this place and places would move. Undo puts each thing and place back, and restores a merged-away place.",
         appliesTo: { kinds: ["core-locations:location"] },
         invokeHandler: "core-locations.move-everything",
         userInvokable: false,

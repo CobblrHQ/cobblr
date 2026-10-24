@@ -209,14 +209,16 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
                     </td>
                     {roles.map((r) => (
                       <td key={r.id} className="text-center px-3 py-2">
-                        <AssignToggle
+                        {m.role === "guest" && !m.custom_role_ids.includes(r.id) ? (
+                          <span title="Guests are read-only. Change their role before assigning capabilities." className="text-xs text-muted">Read-only</span>
+                        ) : <AssignToggle
                           assigned={m.custom_role_ids.includes(r.id)}
                           roleId={r.id}
                           name={`${r.name} for ${m.display_name || m.email}`}
                           onToggle={(grant) =>
                             assign.mutate({ user_id: m.id, role_id: r.id, grant })
                           }
-                        />
+                        />}
                       </td>
                     ))}
                   </tr>

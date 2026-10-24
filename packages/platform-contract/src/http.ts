@@ -26,6 +26,12 @@ export interface PublicWebhookHandler {
   ) => Promise<{ status: number; body?: unknown; headers?: Record<string, string> }>;
 }
 export interface PlatformHttp {
+  /** A save over a field changed since its form opened is refused (#7925,
+   *  edited-from.ts): every kind's own update route is judged by the kernel;
+   *  a route the kind registry does not map (a line inside an order) calls
+   *  this with the record as it is now, by the names its body uses. True when
+   *  it answered the request (409, nothing written). */
+  refuseStaleEdit(req: unknown, res: unknown, recordId: string, current: Record<string, unknown>): Promise<boolean>;
   /** Hosted overlay registers a request guard (rate-limit / abuse). */
   registerRequestGuard(g: RequestGuard): void;
   /** Register a global, UNAUTHENTICATED webhook endpoint mounted at

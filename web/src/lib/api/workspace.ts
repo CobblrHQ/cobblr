@@ -137,7 +137,7 @@ export const workspaceApi = {
   restoreBackupFile: async (slug: string, file: File, opts: { replace?: boolean } = {}) => {
     const form = new FormData();
     form.set("file", file);
-    form.set("confirm", opts.replace ? "replace" : "true");
+    if (opts.replace) form.set("confirm", "replace");
     return upload<{ restored?: { rows: number; files: number } }>(`/api/v1/orgs/${slug}/backup/restore`, form, file);
   },
   /** Bring a backup in from a link another Cobblr made (a sandbox's file). */

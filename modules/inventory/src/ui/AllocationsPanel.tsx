@@ -2,6 +2,7 @@
 // inline consume + release controls on the reserved ones, and a
 // "new reservation" form at the bottom.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useStockWrites } from "./stock-writes";
 import { MutationError, SearchInput } from "@cobblr/platform-web";
 import { useEffect, useState, type FormEvent } from "react";
@@ -297,5 +298,5 @@ function StatusBadge({ status }: { status: AllocationStatus }) {
 function fmt(n: number | string): string {
   const v = typeof n === "string" ? Number(n) : n;
   if (Number.isNaN(v)) return String(n);
-  return Number.isInteger(v) ? String(v) : String(parseFloat(v.toFixed(3)));
+  return quantityNumber(v);
 }

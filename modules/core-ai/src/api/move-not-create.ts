@@ -111,6 +111,23 @@ export function placedInto(call: ToolCall): string | null {
   return null;
 }
 
+/** The names read this turn, plus what the place a write puts the thing INTO
+ *  is actually called. The guard below asks "is that where they said?", and
+ *  an id it can look up answers that as well as a read does: the bounce that
+ *  turns emptying a shelf into a parent change hands the model the
+ *  destination's id, and that call was refused for want of a read, so the
+ *  shelf stayed put while Cobb said it had moved (#8050). */
+export async function destinationLookedUp(
+  call: ToolCall,
+  seenNames: ReadonlyMap<string, string>,
+  nameOf: (id: string) => Promise<string | null>,
+): Promise<ReadonlyMap<string, string>> {
+  const into = placedInto(call);
+  if (!into || seenNames.has(into)) return seenNames;
+  const name = await nameOf(into);
+  return name ? new Map(seenNames).set(into, name) : seenNames;
+}
+
 /** The message to hand back, or null when the call is fine as written. */
 export function movedNotCreated(
   userText: string,
@@ -178,5 +195,35 @@ export function destinationNotThere(
     `Do not substitute a place. If you have not looked, look for "${dest}" first (list or search the locations). ` +
     `If it is not there, answer in words: say "${dest}" does not exist, and ask whether to make it and move ${thing} in, ` +
     `or which of the places that do exist to use.`
+  );
+}
+
+/** The action that empties a place and leaves the place where it is. */
+const EMPTIES_A_PLACE = "core-locations:move-everything";
+
+/** Asked to move a PLACE, and about to empty it instead.
+ *
+ *   "Move Oak shelf, including its bins and their contents, into Old workshop."
+ *     -> invoke_action core-locations:move-everything on Oak shelf { to: Old workshop, places: true }
+ *
+ * The bin left the shelf for the other room and the shelf stayed where it was
+ * (#8050). Their words named the shelf as the thing that moves; emptying it is
+ * "move everything from the shelf", "empty the shelf". A place moves with what
+ * is inside it when its parent changes, so that is the call to make. Null when
+ * the call is not that, or the words ask to empty the place. */
+export function movedItselfNotEmptied(userText: string, call: ToolCall, placeName: string | null): string | null {
+  if (call.name !== "invoke_action" || !placeName?.trim()) return null;
+  const args = (call.args ?? {}) as Record<string, unknown>;
+  if (args.action_id !== EMPTIES_A_PLACE) return null;
+  const inner = (args.args ?? {}) as Record<string, unknown>;
+  if (inner.then_delete === true || inner.then_delete === "true") return null;
+  if (NOT_A_MOVE.test(userText)) return null;
+  const itself = new RegExp(`\\b(?:move|relocate|shift|transfer)\\s+${ARTICLE}${namePattern(placeName)}\\b`, "i");
+  if (!itself.test(userText)) return null;
+  const to = typeof inner.to === "string" ? inner.to : "the place they named";
+  return (
+    `They asked you to move "${placeName}" itself. ${EMPTIES_A_PLACE} empties "${placeName}": what is inside it moves, and "${placeName}" stays where it is, ` +
+    `so its shelves or bins would leave it. Move the place instead: update_record on core-locations:location ${String(args.entity_id ?? "")} ` +
+    `with fields { parent_id: "${to}" }. Everything inside "${placeName}" goes with it.`
   );
 }

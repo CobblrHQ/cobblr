@@ -1,3 +1,4 @@
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { ReceivePackage } from "./ReceivePackage";
 import { useStockWrites } from "./stock-writes";
 import { FilamentCatalog } from "./FilamentCatalog";
@@ -29,7 +30,7 @@ import type { FamilyPayload, FamilyThing, FamilyType } from "./api";
 type View = "all" | "material" | "colour" | "low";
 
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(2)));
+  return quantityNumber(n);
 }
 
 

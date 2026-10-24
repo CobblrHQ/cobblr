@@ -1,3 +1,5 @@
+import { useCan, useRoleAtLeast } from "../../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import {StationInstall} from "./StationInstall";
 import {keepStationScreenAwake} from "../../lib/station-screen";
 import { jobDisplayName } from "./jobDisplayName";
@@ -14,6 +16,8 @@ const input="block w-full min-h-12 rounded border border-line bg-surface px-3 py
 const initial:CutterProfile={material:"Vinyl",material_type:"vinyl",speed:5,force:15,blade_depth:2,passes:1,blade_offset_mm:0.25};
 const physical=[{key:"media_loaded",label:"The chosen roll is loaded and aligned"},{key:"blade_depth_set",label:"The blade depth matches this profile"},{key:"native_offset_zero",label:"The machine's native blade offset is zero"},{key:"test_cut_checked",label:"A test cut checked force, speed and blade depth"},{key:"origin_checked",label:"The origin and pen-up frame are clear"}] as const;
 export function CutterStation({slug,connectionId,deviceId}:{slug:string;connectionId:string;deviceId:string}) {
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const mayRevoke = useCan("digifab:revoke-station");
  usePageTitle("Cutter station");
  const key=`cobblr.machine-station.${slug}.${connectionId}.${deviceId}`;
  const readCredential=()=>{try{return JSON.parse(localStorage.getItem(key)||"null") as {id:string;token:string}|null;}catch{return null;}};
@@ -49,7 +53,7 @@ export function CutterStation({slug,connectionId,deviceId}:{slug:string;connecti
   <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Cutter station</h1><p>{device?.name||"Vinyl and craft cutter"}</p></div><Link to="/digifab" className={button}>Exit to the fleet</Link></header>
   <div className="flex flex-wrap gap-3">{!currentReview&&!profileOpen&&<button className={`${button} border-red-500`} onClick={stop}>Stop cutter</button>}<p>Stay beside the cutter. Use its physical Stop in an emergency.</p></div>
   {(error||q.error||design.error||profiles.error)&&<p role="alert" className="rounded border border-red-500 p-4 break-words">{error||String(q.error||design.error||profiles.error)}</p>}{notice&&<p role="status">{notice}</p>}
-  {!credential?<section className={panel}><h2 className="text-xl font-semibold uppercase tracking-wide">Authorize this screen</h2><p>An owner or admin authorizes this browser or tablet at the machine before Frame, Start and recording roll use.</p><button className={button} disabled={busy} onClick={()=>void run(async()=>{const next=await api.registerDigifabStation(slug,connectionId,deviceId);localStorage.setItem(key,JSON.stringify(next));setCredential(next);})}>Authorize cutter station</button></section>:<button className={button} disabled={busy} onClick={()=>void run(async()=>{await api.revokeDigifabStation(slug,credential.id);localStorage.removeItem(key);setCredential(null);setReview(null);})}>Revoke this screen</button>}
+  {!credential?<section className={panel}><h2 className="text-xl font-semibold uppercase tracking-wide">Authorize this screen</h2><p>An owner or admin authorizes this browser or tablet at the machine before Frame, Start and recording roll use.</p>{setsUp && <button className={button} disabled={busy} onClick={()=>void run(async()=>{const next=await api.registerDigifabStation(slug,connectionId,deviceId);localStorage.setItem(key,JSON.stringify(next));setCredential(next);})}>Authorize cutter station</button>}</section>:(mayRevoke && <button className={button} disabled={busy} onClick={()=>void run(async()=>{await api.revokeDigifabStation(slug,credential.id);localStorage.removeItem(key);setCredential(null);setReview(null);})}>Revoke this screen</button>)}
   {credential&&<StationInstall/>}
   <p className="text-muted">HPGL, DMPL and Silhouette use a shared bridge on Linux, Windows or macOS. Cricut is unsupported because its protocol is cloud locked.</p>
   {!saved?<section className={panel}><h2 className="text-xl font-semibold uppercase tracking-wide">Prepare a cut</h2>

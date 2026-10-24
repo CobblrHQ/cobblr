@@ -96,8 +96,8 @@ export class ListsApiError extends Error {
 export class ListsApi {
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { ...extra };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -158,8 +158,8 @@ export class ListsApi {
     return this.req<ListSummary>("PATCH", `/lists/${id}`, { title });
   }
   /** A line's words, how many and note, corrected where they are read. */
-  updateItem(id: string, body: { title?: string; qty?: string; note?: string }) {
-    return this.req<ListItem>("PATCH", `/items/${id}`, body);
+  updateItem(id: string, body: { title?: string; qty?: string; note?: string }, headers?: Record<string, string>) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, body, headers);
   }
   /** Save custom fields on a list; merged into what it holds. */
   setListFields(id: string, metadata: Record<string, unknown>) {

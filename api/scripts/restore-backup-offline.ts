@@ -27,6 +27,7 @@
 // (FK triggers off) so preserved ids load in any order — same trick as the
 // in-app restore.
 
+import { advanceRestoredSequences } from "../src/routes/backup-sequences.js";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import unzipper from "unzipper";
@@ -149,6 +150,7 @@ async function main() {
       }
       console.log(`  ${t}: ${loaded}/${rows.length} row(s)`);
     }
+    await advanceRestoredSequences(client, loadable);
     await client.query("commit");
     console.log(
       `Done. File blobs extracted to ${fileCount > 0 ? filesOut : "(none)"} — run the in-app restore later if you need the files pipeline (variants + core_files rows).`,

@@ -10,7 +10,7 @@ import { FAMILY_ACTIONS, FAMILY_NOTIFICATIONS, FAMILY_PANELS, FAMILY_PARTS } fro
 
 export default defineModule({
   name: "digifab",
-  version: "0.45.2",
+  version: "0.45.4",
   displayName: "Digital Fabrication",
   description:
     "Send a design to the software that runs your machine (FDM Monster, OctoPrint and others) and follow the job until it is done.",
@@ -119,7 +119,7 @@ export default defineModule({
           { name: "metadata", type: "object" },
         ],
         exposableFields: ["file_ref", "status", "target_device", "progress", "remote_job_id", "material_pending"],
-        detailRoute: "/configuration/devices?tab=machines",
+        detailRoute: "/digifab?job={id}",
       },
       {
         // A Make: one fabrication run, from the request to the outcome, every

@@ -26,7 +26,7 @@
 // combined value) is migrated to the account slot on first load.
 
 import {
-  createContext, useCallback, useContext, useEffect, useState,
+  createContext, useCallback, useContext, useEffect, useRef, useState,
   type ReactNode,
 } from "react";
 import { api } from "../lib/api";
@@ -42,7 +42,7 @@ interface ThemeCtx {
   /** This-device override. null = follow the account default here. */
   deviceOverride: DeviceOverride;
   /** Set the synced account default (Profile). Persists to the server. */
-  setAccountPref: (p: ThemePref) => void;
+  setAccountPref: (p: ThemePref) => Promise<void>;
   /** Set the local device override (Profile / used by the quick toggle). Never synced. */
   setDeviceOverride: (p: DeviceOverride) => void;
   /** Quick flip of THIS device (icon buttons). Returns what it did: `locked`
@@ -94,6 +94,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [accountPref, setAccountPrefState] = useState<ThemePref>(readInitialAccount);
   const [deviceOverride, setDeviceOverrideState] = useState<DeviceOverride>(readDeviceOverride);
   const [os, setOS] = useState<Theme>(detectOS);
+  const accountWrites = useRef(Promise.resolve());
 
   const theme: Theme = resolveTheme(deviceOverride, accountPref, os);
 
@@ -124,9 +125,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   };
 
   const setAccountPref = useCallback((p: ThemePref) => {
-    setAccountPrefState(p);
-    writeCache(K_ACCOUNT, p);
-    void api.setThemePref(p).catch(() => {}); // fire-and-forget cross-device sync
+    const saved = accountWrites.current.catch(() => {}).then(async () => {
+      await api.setThemePref(p);
+      setAccountPrefState(p);
+      writeCache(K_ACCOUNT, p);
+    });
+    accountWrites.current = saved;
+    return saved;
   }, []);
 
   const setDeviceOverride = useCallback((p: DeviceOverride) => {

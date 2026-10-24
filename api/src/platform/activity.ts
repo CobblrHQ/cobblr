@@ -8,6 +8,7 @@
 // prune rows past the window; best-effort, never blocks the write) — same
 // pattern as product_events. Unset (default) = keep everything.
 
+import { keepActivityReferenceTitles } from "./activity-references.js";
 import { currentHistoryWrite, historyDiff, noteCreatedLog } from "./record-history.js";
 import { changesOf } from "@cobblr/platform-contract/activity-changes";
 import { secretHistoryDiff } from "@cobblr/platform-contract/secret-field";
@@ -74,10 +75,12 @@ export async function log(p: LogParams, db: Kysely<MetaDB> = meta): Promise<void
     ? currentHistoryWrite(p.orgId, `${p.ref.module}:${p.ref.entityType}`, p.ref.entityId)
     : null;
   const after = write ? await write.readAfter() : null;
-  const diff = write && after ? historyDiff(write.before, after) :
+  const rawDiff = write && after ? historyDiff(write.before, after) :
     p.before !== undefined && p.diff && typeof p.diff === "object" && !Array.isArray(p.diff)
       ? { ...(p.diff as Record<string, unknown>), changes: changesOf(p.before, p.diff), ...((p.before as { id?: unknown })?.id === p.ref.entityId ? { version_before: p.before } : {}) }
       : p.diff;
+
+  const diff = await keepActivityReferenceTitles(p.orgId, [`${p.ref.module}:${p.ref.entityType}`], secretHistoryDiff(rawDiff));
 
   await db
     .insertInto("activity_log")

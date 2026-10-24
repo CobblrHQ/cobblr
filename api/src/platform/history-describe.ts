@@ -8,12 +8,15 @@
 // from), never a column name, an id or a storage path. One place, so the
 // History panel, the dashboard and the Activity page say a change the same
 // way.
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { changesIn, isInternalField, type ActivityChange } from "@cobblr/platform-contract/activity-changes";
-import { referenceStem, saidLabel, saidValue, stockReadingOf, type SaidFieldType } from "@cobblr/platform-contract/activity-said";
+import { saidLabel, saidValue, stockReadingOf, type SaidFieldType } from "@cobblr/platform-contract/activity-said";
 import { quantityWithUnit } from "@cobblr/platform-contract/plural";
 import type { PhotoSource } from "@cobblr/platform-contract/photo-source";
 import { formatStoredMoney, moneyStorageOf, type MoneyFieldLike, type MoneyStorage } from "@cobblr/platform-contract/money";
 import { platform } from "@cobblr/platform-contract";
+import { historyReferenceKind } from "./activity-references.js";
+import { historyBag } from "./record-history.js";
 import { meta } from "../db/meta.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { lookup as lookupEntity } from "./entities.js";
@@ -115,7 +118,7 @@ const FILE_IN_PATH = /\/core-files\/files\/([0-9a-f-]{36})\/raw/i;
 /** An amount in the unit it is kept in, through the workspace's own words:
  *  "8.4 m", "3 skeins", "1 skein", or the bare number for a count of each. */
 export async function saidAmount(orgId: string, n: number, unit: string | null): Promise<string> {
-  const amount = parseFloat(n.toFixed(3));
+  const amount = parseFloat(quantityNumber(n));
   if (!unit || unit.toLowerCase() === "each") return String(amount);
   const resolved = await platform().units.resolve(orgId, unit).catch(() => null);
   return quantityWithUnit(amount, unit, resolved);
@@ -149,17 +152,6 @@ export async function describeChanges(
   // References: each `<x>_id` value named by its record's title.
   const kinds = await platform().entities.listKindsForOrg(orgId);
   const titles = new Map<string, string | null>();
-  const refKind = (field: string, own: string[]): string | null => {
-    const stem = referenceStem(field);
-    if (!stem) return null;
-    if (stem === "parent") return own[own.length - 1] ?? null;
-    const sameModule = own.map((k) => k.split(":")[0]);
-    return (
-      kinds.find((k) => k.id.endsWith(`:${stem}`) && sameModule.includes(k.module_name))?.id ??
-      kinds.find((k) => k.id.endsWith(`:${stem}`))?.id ??
-      null
-    );
-  };
   const titleOf = async (kind: string, id: string): Promise<string | null> => {
     const key = `${kind} ${id}`;
     if (!titles.has(key)) titles.set(key, (await lookupEntity(orgId, kind, id).catch(() => null))?.title ?? null);
@@ -167,7 +159,7 @@ export async function describeChanges(
   };
 
   const amountIn = (n: number, unit: string | null) => saidAmount(orgId, n, unit);
-  const show = async (value: unknown, field: string, info: FieldInfo | undefined, own: string[]): Promise<ShownValue> => {
+  const show = async (value: unknown, field: string, info: FieldInfo | undefined, own: string[], title?: string): Promise<ShownValue> => {
     if (field === "image_path" || info?.type === "image-path") {
       if (value === null || value === undefined || value === "") return { text: null };
       const m = FILE_IN_PATH.exec(String(value));
@@ -192,7 +184,12 @@ export async function describeChanges(
       const said = formatStoredMoney(value, info.money, { currency });
       if (said) return { text: said };
     }
-    const kind = refKind(field, own);
+    if (title) return { text: title };
+    const ref = historyBag(value);
+    if ((field === "from" || field === "to") && typeof ref.kind === "string" && typeof ref.id === "string") {
+      return { text: typeof ref.title === "string" ? ref.title : (await titleOf(ref.kind, ref.id)) ?? "a record that is gone" };
+    }
+    const kind = historyReferenceKind(field, own, kinds);
     if (kind && typeof value === "string" && value) return { text: (await titleOf(kind, value)) ?? "a record that is gone" };
     // A stock reading is how much, in the unit it is kept in (#6039).
     const reading = stockReadingOf(value);
@@ -208,8 +205,8 @@ export async function describeChanges(
         cs.map(async (c): Promise<SaidChange> => {
           const f = info.get(c.field);
           if (c.secret || f?.type === "secret") return { field: c.field, label: f?.label ?? saidLabel(c.field), to: { text: "updated" } };
-          const said: SaidChange = { field: c.field, label: f?.label ?? saidLabel(c.field), to: await show(c.to, c.field, f, own) };
-          if (changesIn(rows[i]!.diff)) said.from = await show(c.from, c.field, f, own);
+          const said: SaidChange = { field: c.field, label: f?.label ?? saidLabel(c.field), to: await show(c.to, c.field, f, own, c.reference_titles?.to) };
+          if (changesIn(rows[i]!.diff)) said.from = await show(c.from, c.field, f, own, c.reference_titles?.from);
           return said;
         }),
       );

@@ -269,10 +269,9 @@ export async function dispatch(p: DispatchParams): Promise<DispatchResult> {
     }
   }
 
-  // A kind turned off for the in-app inbox is not delivered to it. With no other
-  // channel to carry it there is nothing to say, and no row is written: the
-  // inbox reads a row as delivery (#7843).
-  const inAppMuted = winningByChannel.get("in_app")?.enabled === false;
+  // A row is inbox delivery, so a binding rejected by enablement or priority
+  // must also suppress storage when no other channel needs the row.
+  const inAppMuted = winningByChannel.has("in_app") && !effective.some((e) => e.channel === "in_app");
   if (inAppMuted && effective.length === 0) return { notificationId: "", deliveredVia: [] };
   // 1. Insert the notification row before any channel runs, so it exists in the
   //    DB even if every channel fails. delivered_via starts empty. It is written

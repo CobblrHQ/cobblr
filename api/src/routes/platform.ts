@@ -1,3 +1,4 @@
+import { listWhereQuery } from "./list-where-query.js";
 import { actionDetail, nameRequest } from "../platform/compute-ledger.js";
 import { wiresSaid } from "../platform/wire-said.js";
 import { editableFieldsOf } from "../platform/update-record-fields.js";
@@ -97,25 +98,6 @@ import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
  *  in the app. */
 function readsAsAssistant(req: { session?: { ai_door?: string | null }; headers: Record<string, unknown> }): boolean {
   return !!req.session?.ai_door || String(req.headers["x-cobblr-reader"] ?? "").toLowerCase() === "assistant";
-}
-
-function secretPresenceQuery(raw: unknown): import("@cobblr/platform-contract").FilterPredicate[] | undefined {
-  if (raw === undefined) return undefined;
-  const values = z.record(z.enum(["empty", "has_value"])).parse(raw);
-  return Object.entries(values).map(([col, value]) => ({ col, op: value === "empty" ? "empty" : "not_empty" }));
-}
-
-/** A list read's `where`: secret presence (`presence[field]=empty|has_value`)
- *  and text matches (`contains[field]=…`, `not_contains[field]=…`, #6896), so
- *  the assistant's list tool asks for exactly what a view can. */
-function listWhereQuery(query: Record<string, unknown>): import("@cobblr/platform-contract").FilterPredicate[] | undefined {
-  const text = z.record(z.string().max(200));
-  const where = [
-    ...(secretPresenceQuery(query.presence) ?? []),
-    ...Object.entries(query.contains === undefined ? {} : text.parse(query.contains)).map(([col, value]) => ({ col, op: "contains" as const, value })),
-    ...Object.entries(query.not_contains === undefined ? {} : text.parse(query.not_contains)).map(([col, value]) => ({ col, op: "not_contains" as const, value })),
-  ];
-  return where.length ? where : undefined;
 }
 
 export const platformOrgRouter = Router({ mergeParams: true });
@@ -304,6 +286,11 @@ platformOrgRouter.get(
         res.status(403).json({ error: { code: "secret_hidden", message: "A person must export secrets themselves." } });
         return;
       }
+      const predicates = listWhereQuery(req.query);
+      if (predicates.error) {
+        res.status(400).json({ error: predicates.error });
+        return;
+      }
       const raw = req.query.filter;
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
         for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
@@ -316,7 +303,7 @@ platformOrgRouter.get(
         {
           q: typeof req.query.q === "string" && req.query.q ? req.query.q : undefined,
           filter: Object.keys(filter).length ? filter : undefined,
-          where: listWhereQuery(req.query),
+          where: predicates.where,
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role },
@@ -416,6 +403,11 @@ platformOrgRouter.get(
         res.status(400).json({ error: { code: "missing_params", message: "kind required" } });
         return;
       }
+      const predicates = listWhereQuery(req.query);
+      if (predicates.error) {
+        res.status(400).json({ error: predicates.error });
+        return;
+      }
       const filter: Record<string, unknown> = {};
       const raw = req.query.filter;
       if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -435,7 +427,7 @@ platformOrgRouter.get(
           limit: Math.min(Number(req.query.limit) || 50, 200),
           offset: Number(req.query.offset) || 0,
           filter: Object.keys(filter).length ? filter : undefined,
-          where: listWhereQuery(req.query),
+          where: predicates.where,
           ...(req.query.include_retired === "1" || req.query.include_retired === "true" ? { include_retired: true } : {}),
         },
         { userId: req.session?.id, role: req.tenant!.role, ...(readsAsAssistant(req) ? { assistant: true } : {}) },

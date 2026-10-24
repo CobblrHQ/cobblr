@@ -10,8 +10,9 @@
 
 import { ownSize } from "@cobblr/platform-contract/plan-clearance";
 import { useMemo, useRef, useState } from "react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
-import { EntityPhoto, Modal, changeWorkspaceShape, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCan } from "../lib/can";
+import { EntityPhoto, Modal, changeWorkspaceShape, useImageSrc, useToast, stillAsking } from "@cobblr/platform-web";
 import { fieldScopeSentinel } from "@cobblr/platform-contract";
 import { fieldKindOf } from "@cobblr/platform-contract/kind-label";
 import { OUTER_SIZE_FIELD, OUTER_SIZE_ROLE, parseOuterSize, type OuterSize } from "@cobblr/platform-contract/outer-size";
@@ -390,6 +391,25 @@ export function AddSizesDialog({
   const [busy, setBusy] = useState(false);
   const keyOf = (t: UnsizedThing) => `${t.kind}:${t.id}`;
   const bad = Object.entries(values).filter(([, v]) => v.trim() && !parseOuterSize(v));
+  // A first size adds the workspace's Outer size field, which is
+  // configuration: a person who may not add a field is told who does, before
+  // they type sizes a save would refuse (#7922).
+  const mayAddField = useCan("platform:add-field");
+  const first = things[0];
+  const firstKind = first ? fieldKindOf(placeable.find((r) => r.id === first.id) ?? first) : null;
+  const hasField = useQuery({
+    queryKey: ["platform-field-defs", slug, firstKind],
+    queryFn: () => api.listFieldDefs(slug, firstKind!),
+    enabled: !!firstKind && mayAddField === false,
+    select: (r) => r.items.some((d) => d.field_role === OUTER_SIZE_ROLE),
+  });
+  if (mayAddField === false && hasField.data === false) {
+    return (
+      <Modal open onClose={onClose} title="Add sizes to see if they fit" size="md">
+        <p className="text-sm text-content dark:text-slate-200">Sizes need an Outer size field, and an owner, an admin or an editor of this workspace adds it. Once it is there, anyone can fill it in.</p>
+      </Modal>
+    );
+  }
 
   const save = async () => {
     setBusy(true);

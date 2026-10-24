@@ -19,6 +19,8 @@
 //     sent some other way) makes leaving the page ask first, so nothing is thrown
 //     away without a word: the page counts what it kept against what waits.
 
+import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
+
 const KEY = "cobblr:waiting-writes";
 const WRITES = new Set(["PUT", "PATCH", "DELETE"]);
 
@@ -125,7 +127,12 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
   while (last >= 0 && !(list[last]!.who === who && list[last]!.path === path)) last -= 1;
   const prior = last >= 0 ? list[last]! : null;
   if (prior && m === "PATCH" && prior.method === "PATCH" && isRecord(prior.body) && isRecord(parsed)) {
-    list[last] = { ...prior, body: { ...prior.body, ...parsed }, page: PAGE };
+    const body = { ...prior.body, ...parsed };
+    if (isRecord(prior.body.metadata) && isRecord(parsed.metadata)) {
+      // Keep null deletion markers until the server applies the combined patch.
+      body.metadata = { ...prior.body.metadata, ...parsed.metadata };
+    }
+    list[last] = { ...prior, body, page: PAGE };
   } else if (prior && (m === "PUT" || m === "DELETE") && (prior.method === "PATCH" || prior.method === "PUT")) {
     list[last] = { method: m, path, body: parsed, who, page: PAGE, at: new Date().toISOString() };
   } else {
@@ -164,7 +171,12 @@ export function withWaitingWrites<T>(path: string, answer: T, authorization: str
   let out: Record<string, unknown> = answer;
   for (const w of read()) {
     if (w.who !== who || bare(w.path) !== p || !isRecord(w.body)) continue;
-    if (w.method === "PATCH" || w.method === "PUT") out = { ...out, ...w.body };
+    if (w.method === "PATCH" || w.method === "PUT") {
+      const metadata = w.method === "PATCH" && isRecord(w.body.metadata)
+        ? { metadata: applyJsonbMerge(isRecord(out.metadata) ? out.metadata : undefined, w.body.metadata) }
+        : {};
+      out = { ...out, ...w.body, ...metadata };
+    }
   }
   return out as T;
 }

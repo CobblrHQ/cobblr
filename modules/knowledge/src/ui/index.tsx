@@ -1,4 +1,4 @@
-import { RecordFormModal } from "@cobblr/platform-web";
+import { RecordFormModal, editOf } from "@cobblr/platform-web";
 // knowledge UI — the host mounts <KnowledgeUI /> at /knowledge. A list of
 // entries (bordered cards) with a create/edit MODAL that uses the shared
 // Markdown editor (KB phase 1). Modals for detail/edit, toasts for feedback,
@@ -274,7 +274,11 @@ function EntryEditor({
         pinned,
         image_path: imagePath,
       };
-      return entry ? api.updateEntry(entry.id, input) : api.createEntry(input);
+      if (!entry) return api.createEntry(input);
+      // Only what this editor changed, with what it was: a title saved in
+      // another tab stands, or this save says it changed (#7980, #7925).
+      const edit = editOf(entry as unknown as Record<string, unknown>, input as unknown as Record<string, unknown>);
+      return Object.keys(edit.body).length ? api.updateEntry(entry.id, edit.body as Partial<EntryInput>, edit.headers) : Promise.resolve(entry);
     },
     onSuccess: () => {
       toast.success(entry ? "Saved" : "Entry created");

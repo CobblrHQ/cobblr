@@ -1,3 +1,4 @@
+import { ActiveScanSessionNotice } from "./ActiveScanSessionNotice";
 import { ReadPersonalDocumentModal } from "../components/PersonalDocumentReader";
 import { SplitLineGroup } from "../components/SplitLineGroup";
 import { splitLayoutOf, type SplitParent } from "../lib/splitLayout";
@@ -1609,6 +1610,15 @@ export function ScanPage() {
   // ── the one intake box ────────────────────────────────────────────────────
   const [omniOpen, setOmniOpen] = useState(false);
   const omniRef = useRef<HTMLInputElement>(null);
+  // A code or link that went in leaves the box empty: close it now, so the
+  // next tap changes nothing under the finger. Left focused, the first tap
+  // after it blurred the box, it collapsed mid-tap, and WebKit dropped that
+  // tap's click: "+1 more" on the scan just added did nothing (#7836).
+  const omniDone = () => {
+    setSearchQ("");
+    omniRef.current?.blur();
+    setOmniOpen(false);
+  };
   const submitOmni = async () => {
     const intent = classifyOmni(searchQ, scanOrigins);
     if (intent.kind === "own-route") {
@@ -1624,7 +1634,7 @@ export function ScanPage() {
     }
     if (intent.kind === "upc") {
       wedgeScan.mutate(intent.value);
-      setSearchQ("");
+      omniDone();
       return;
     }
     if (intent.kind === "url" || intent.kind === "urls") {
@@ -1632,7 +1642,7 @@ export function ScanPage() {
       // app is kept as the item's name (lib/sharedProducts.ts). A failure keeps
       // its reason; "Added 0" is never a success (reported 2026-08-12).
       const products = intent.products ?? intent.value.split("\n").map((url) => ({ title: null, url }));
-      setSearchQ("");
+      omniDone();
       const added = await addSharedProducts(activeSlug, products, { target_location_id: fileBin || undefined });
       void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
       const said = addedSharedMessage(added);
@@ -2434,7 +2444,7 @@ export function ScanPage() {
             the group takes the spare width and the controls pack right; on a
             desk the elastic search box comes straight after it. */}
         <div className="flex items-center gap-2 shrink min-w-0 max-sm:flex-1 sm:order-[-2]">
-        <h1 className="hidden sm:block text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
+        <h1 className="sr-only sm:not-sr-only text-lg font-semibold text-content dark:text-mortar-100 shrink-0">
           Inbox
         </h1>
         {/* The counts keep their words' width and the row scrolls: the touch
@@ -2707,8 +2717,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
            
             onBlur={() => {
               // Collapsing while it holds text would eat the search you are
-              // in the middle of typing.
-              if (!searchQ.trim()) setOmniOpen(false);
+              // in the middle of typing. An empty one closes once the tap that
+              // blurred it is over: closing during it moved the page under the
+              // finger, and WebKit dropped the tap's click (#7836).
+              later.after("omni-collapse", 400, () => {
+                if (document.activeElement !== omniRef.current && !omniRef.current?.value.trim()) setOmniOpen(false);
+              });
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && omniIntent.action) {
@@ -3242,34 +3256,14 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
       )}
 
       {sessionActive && !batchId && !activeSessionInList && (
-        <div data-inbox-counts className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-emerald-300/60 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20 px-2.5 py-1.5 text-xs text-muted">
-          <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="text-content dark:text-mortar-100 font-medium">
-            Scan session active
-            {activeSession?.count ? ` (${activeSession.count} item${activeSession.count === 1 ? "" : "s"})` : ""}
-          </span>
-          <span className="hidden sm:inline">· groups until 30 min idle</span>
-          <span className="ml-auto inline-flex items-center gap-2 shrink-0">
-            {activeSession?.batchId && (
-              <Link
-                to={`/scan?batch=${activeSession.batchId}`}
-                className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
-              >
-                Review session
-              </Link>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                clearScanSession(activeSlug);
-                toast.success("Session ended - the next scan starts a new one");
-              }}
-              className="rounded px-1.5 py-0.5 font-medium text-accent hover:bg-accent/10"
-            >
-              End session
-            </button>
-          </span>
-        </div>
+        <ActiveScanSessionNotice
+          settled={inboxSettled}
+          session={activeSession!}
+          onEnd={() => {
+            clearScanSession(activeSlug);
+            toast.success("Session ended - the next scan starts a new one");
+          }}
+        />
       )}
 
       {/* ── the LIST's own bar ───────────────────────────────────────────────

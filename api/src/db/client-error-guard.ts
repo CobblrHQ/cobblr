@@ -1,3 +1,4 @@
+import { stopAtGate } from "../lib/gate-probe.js";
 import { Client, Pool, types } from "pg";
 import { isConnectionRefusal, noteConnectionRefused } from "./connection-budget.js";
 import type { ClientConfig, CustomTypesConfig, PoolConfig } from "pg";
@@ -100,6 +101,8 @@ function bornGuarded(label: string, Base: ClientClass): ClientClass {
         if (label === "meta-pool") noteMetaStatement(text);
         const scope = currentRequestScope();
         if (!scope || scope.answered) noteBackgroundWork();
+        // A held delete's probe stops before the route's first write (#7909).
+        if (statementEffect(text) === "write") stopAtGate();
         noteWriteOf(this, text);
         return query(...a);
       };

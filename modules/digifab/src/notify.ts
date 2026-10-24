@@ -87,6 +87,8 @@ export async function notifyPrint(
 
   const eventType = `digifab.print.${o.kind}`;
   const members = await platform().notifications.orgMemberIds(orgId).catch(() => [] as string[]);
+  // The job's own detail (its kind's detailRoute), in the workspace it is in.
+  const link = await platform().entities.recordAddressForEntity(orgId, "digifab:job", o.jobId).catch(() => undefined);
   await Promise.all(
     members.map((userId) =>
       platform()
@@ -95,7 +97,7 @@ export async function notifyPrint(
           userId,
           eventType,
           message: title,
-          link_url: "/configuration/devices?tab=machines",
+          ...(link ? { link_url: link } : { no_link_reason: "the job's workspace address could not be read" }),
           module: "digifab",
           entityType: "digifab:job",
           entityId: o.jobId,

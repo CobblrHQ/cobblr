@@ -11,7 +11,7 @@
 
 import { productName } from "../product-name.js";
 import { checkEmailConfig, sendEmailVia, type EmailConfig, type ValidConfig } from "../email-send.js";
-import { emailableUrl, NO_ADDRESS_NOTE } from "../link-origin.js";
+import { emailableUrl, NO_ADDRESS_NOTE, pointTo } from "../link-origin.js";
 import type { Channel, ChannelEvent } from "./types.js";
 
 /** Validate config for the chosen provider; null (+ a warn) if incomplete. */
@@ -42,7 +42,10 @@ export function subjectAndText(event: ChannelEvent): { subject: string; text: st
   const link = event.link_url ? emailableUrl(event.link_url) : null;
   // The priority is said only when it asks for attention, and in words.
   const urgency = event.priority === "urgent" ? "This one is marked urgent." : event.priority === "high" ? "This one is marked important." : null;
-  const text = [event.message.replace(/\*\*/g, ""), "", link ? `Open it: ${link}` : event.link_url ? NO_ADDRESS_NOTE : null, urgency ? "" : null, urgency, "", `Sent by ${productName()}.`]
+  const text = [event.message.replace(/\*\*/g, ""), "", link ? `Open it: ${link}` : event.link_url ? NO_ADDRESS_NOTE : null, urgency ? "" : null, urgency, "",
+    pointTo("To change or stop routine email, open Notification settings", emailableUrl("/me/communication")),
+    event.subscriptionConfig == null ? null : pointTo("Workspace email bindings can be removed in Channels", emailableUrl("/me/notification-channels")),
+    "", `Sent by ${productName()}.`]
     .filter((line) => line !== null)
     .join("\n")
     .replace(/\n{3,}/g, "\n\n");

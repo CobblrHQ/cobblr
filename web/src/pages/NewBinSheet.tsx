@@ -1,3 +1,4 @@
+import { useCan } from "../lib/can";
 // Register a bin the way you actually meet one: standing in front of it, phone
 // in hand. Photograph it, say what is in it, done — the bin exists, with that
 // photo, under that name.
@@ -83,6 +84,9 @@ export function NewBinSheet({
     enabled: !!activeSlug && open,
   });
   const wire = findBinLabelWire(bindings.data?.items ?? []);
+  // Turning the automatic label on or off is a workspace automation.
+  const mayWire = useCan("platform:add-wire");
+  const mayUnwire = useCan("platform:remove-wire");
 
   // Opening the sheet goes straight to the camera: the photo is the reason you
   // are here, and a sheet that opens on an empty form makes you press twice.
@@ -200,6 +204,7 @@ export function NewBinSheet({
               </span>
             </label>
 
+            {(wire ? mayUnwire : mayWire) && (
             <button
               type="button"
               onClick={() => toggleWire.mutate()}
@@ -226,6 +231,7 @@ export function NewBinSheet({
                 </span>
               </span>
             </button>
+            )}
           </div>
           <div className="border-t border-line dark:border-slate-700 p-3 shrink-0 flex items-center gap-2">
             <button

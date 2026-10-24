@@ -142,7 +142,9 @@ export interface ConfigSectionMeta {
   action?: {
     label: string;
     to: string;
-    page?: Pick<ConfigDestination, "label" | "description" | "icon">;
+    /** A minRole here holds the action's own page as a destination's does:
+     *  someone below it who arrives by URL is told who manages it (#7904). */
+    page?: Pick<ConfigDestination, "label" | "description" | "icon" | "minRole">;
   };
 }
 
@@ -163,6 +165,7 @@ export const CONFIG_SECTIONS: Record<ConfigSection, ConfigSectionMeta> = {
         label: "New thing",
         description: "Add a new kind of thing to track, then choose how it appears in your workspace.",
         icon: FolderPlus,
+        minRole: "admin",
       },
     },
   },

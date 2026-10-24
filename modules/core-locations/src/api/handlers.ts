@@ -17,25 +17,31 @@ import { platform, readListArg, requireActionEntity } from "@cobblr/platform-con
 import { PLAN_COLOURS, planColourOf, readPlanColour } from "@cobblr/platform-contract/plan-colours";
 import type { Kysely } from "kysely";
 import { ReorderIds, applyOrder } from "./locations.js";
-import { MoveRefused, moveEverything, putBackEverything, readMoveResult } from "./move-everything.js";
+import { MoveRefused, moveEverything, planMove, putBackEverything, readMoveResult } from "./move-everything.js";
 import type { CoreLocationsDB } from "../db.js";
 
 export function registerLocationsHandlers(): void {
   registerUndos();
   // Move everything out of one place into another (move-everything.ts): the
   // assistant's door to what the place page's "Move everything to…" does.
+  // The card says what stays as well as what goes: the place being emptied
+  // keeps its own spot (#8050).
+  platform().actions.registerPlanner("core-locations.move-everything", async (ctx) => {
+    const read = readMoveArgs(ctx.args);
+    if ("error" in read) return read;
+    try {
+      return await planMove(ctx.orgId, requireActionEntity(ctx).id, read.to, read.opts);
+    } catch (e) {
+      if (e instanceof MoveRefused) return { error: e.message };
+      throw e;
+    }
+  });
   platform().actions.registerHandler("core-locations.move-everything", async (ctx) => {
     const entity = requireActionEntity(ctx);
-    const a = (ctx.args ?? {}) as { to?: unknown; to_kind?: unknown; places?: unknown; then_delete?: unknown };
-    const to = typeof a.to === "string" ? a.to.trim() : "";
-    const toKind = typeof a.to_kind === "string" ? a.to_kind.trim() : "";
-    if (!to) return { ok: false, error: "Pass `to`: the id of the place to move everything into." };
+    const read = readMoveArgs(ctx.args);
+    if ("error" in read) return { ok: false, error: read.error };
     try {
-      const moved = await moveEverything(ctx.orgId, entity.id, toKind ? { kind: toKind, id: to } : to, {
-        places: a.places === true || a.places === "true",
-        thenDelete: a.then_delete === true || a.then_delete === "true",
-        userId: ctx.userId ?? null,
-      });
+      const moved = await moveEverything(ctx.orgId, entity.id, read.to, { ...read.opts, userId: ctx.userId ?? null });
       return { ok: true, result: { ...moved, note: moveSentence(moved) } };
     } catch (e) {
       if (e instanceof MoveRefused) return { ok: false, error: e.message };
@@ -149,6 +155,18 @@ export function registerLocationsHandlers(): void {
       },
     };
   });
+}
+
+/** move-everything's arguments, read once for the card and the move. */
+function readMoveArgs(args: unknown): { to: string | { kind: string; id: string }; opts: { places: boolean; thenDelete: boolean } } | { error: string } {
+  const a = (args ?? {}) as { to?: unknown; to_kind?: unknown; places?: unknown; then_delete?: unknown };
+  const to = typeof a.to === "string" ? a.to.trim() : "";
+  const toKind = typeof a.to_kind === "string" ? a.to_kind.trim() : "";
+  if (!to) return { error: "Pass `to`: the id of the place to move everything into." };
+  return {
+    to: toKind ? { kind: toKind, id: to } : to,
+    opts: { places: a.places === true || a.places === "true", thenDelete: a.then_delete === true || a.then_delete === "true" },
+  };
 }
 
 /** What a move did, in words. */

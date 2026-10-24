@@ -1,3 +1,4 @@
+import { useCan } from "../../lib/can";
 // A record's history, as a contributed panel on every record: who changed it,
 // what, and when, read from the activity log the record's module already
 // writes.
@@ -167,6 +168,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const { activeSlug } = useActiveOrg();
   const client = useQueryClient();
   const [restoring, setRestoring] = useState<ActivityEntry | null>(null);
+  const mayRestore = useCan("platform:restore-record-version");
   const restore = useMutation({
     mutationFn: (entry: ActivityEntry) => api.restoreHistoryVersion(activeSlug, entry.id, { kind: ctx.kind ?? "", entity_id: ctx.entityId, expected_latest_id: Number(q.data?.items[0]?.id ?? entry.id) }),
     onSuccess: async () => { setRestoring(null); await client.invalidateQueries(); },
@@ -195,7 +197,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
       {relativeTime(at)}
     </span>
   );
-  const versions = (rows: ActivityEntry[]) => rows.some((e) => e.restorable) ? (
+  const versions = (rows: ActivityEntry[]) => mayRestore && rows.some((e) => e.restorable) ? (
     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs">
       {rows.filter((e) => e.restorable).map((e) => (
         <button key={e.id} type="button" onClick={() => { restore.reset(); setRestoring(e); }} disabled={restore.isPending} className="text-accent hover:underline" aria-label={`Restore this version from ${new Date(e.occurred_at).toLocaleString()}`}>

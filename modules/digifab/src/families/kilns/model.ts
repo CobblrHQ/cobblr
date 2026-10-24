@@ -16,6 +16,7 @@ export const FiringSchema = z.object({
 export type Firing = z.infer<typeof FiringSchema>;
 export type Component = z.infer<typeof ComponentSchema>;
 export const FinishSchema = z.object({ duration_hours: z.number().positive().max(1000), peak_c: z.number().min(0).max(1500), outcome: z.enum(["completed", "failed", "stopped"]) });
+export type Finish = z.infer<typeof FinishSchema>;
 export const TelemetrySchema = z.object({ temperature_c: z.number().finite(), segment: z.number().int().nonnegative().nullable(), segments: z.number().int().nonnegative(), elapsed_sec: z.number().nonnegative(), remaining_sec: z.number().nonnegative().nullable(), progress: z.number().min(0).max(1).nullable(), schedule_name: z.string(), running: z.boolean(), errors: z.array(z.string()).nullable() });
 export function firingLinks(orgId: string, firingId: string, pieces: Firing["pieces"]) {
  return pieces.map(p => ({ orgId, sourceKind: "digifab:firing", sourceId: firingId, targetKind: p.kind, targetId: p.id, relationshipKind: "contains" }));

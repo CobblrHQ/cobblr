@@ -17,7 +17,7 @@ export async function orderFigures<T extends Order>(orgId: string, db: Kysely<Pu
   for (const r of refunds) refundedBy.set(r.order_id, (refundedBy.get(r.order_id) || 0) + Number(r.refund_amount));
   const byOrder = new Map<string, typeof lines>();
   for (const l of lines) byOrder.set(l.order_id, [...(byOrder.get(l.order_id) || []), l]);
-  const out: Array<T & { currency: string; total: number | null; money_total: MoneyTotal; computed_total: number; refunded: number; unpriced_lines: number }> = [];
+  const out: Array<T & { currency: string; total: number | null; money_total: MoneyTotal; computed_total: number; computed_subtotal: number; shipping_total: number; shipping_currency: string; refunded: number; unpriced_lines: number }> = [];
   for (const o of orders) {
     const currency = fieldCurrency(o.metadata, "total_cost", main);
     const day = fieldDay(o.ordered_at) || fieldDay(o.created_at) || "";
@@ -28,17 +28,28 @@ export async function orderFigures<T extends Order>(orgId: string, db: Kysely<Pu
       const amount = l.line_amount != null ? Number(l.line_amount) : l.unit_cost != null ? Number(l.qty) * Number(l.unit_cost) : null;
       return amount === null ? [] : [{ value: { amount, currency: fieldCurrency(l.metadata, "unit_cost", currency) }, day }];
     });
-    {
-      const shipping = readMoney(o.shipping_cost, "amount", fieldCurrency(o.metadata, "shipping_cost", currency));
-      if (shipping) lineEntries.push({ value: shipping, day });
-    }
+    const shippingCurrency = fieldCurrency(o.metadata, "shipping_cost", currency);
+    const shipping = readMoney(o.shipping_cost, "amount", shippingCurrency);
+    const subtotal = shipping ? await platform().money.total(orgId, lineEntries, currency) : null;
+    if (shipping) lineEntries.push({ value: shipping, day });
     const refunded = refundedBy.get(o.id) || 0;
     const back = refunded ? [{ value: { amount: -refunded, currency }, day }] : [];
     const entries = [...(stated ? [{ value: stated, day }] : lineEntries), ...back];
     const computed = await platform().money.total(orgId, lineEntries, currency);
     const own = stated || refunded ? await platform().money.total(orgId, entries, currency) : computed;
     const sum = currency === main ? own : await platform().money.total(orgId, entries, main);
-    out.push({ ...o, currency, total: entries.length > back.length ? own.amount : null, computed_total: computed.amount, money_total: sum, refunded, unpriced_lines: unpricedLines });
+    out.push({
+      ...o,
+      currency,
+      total: entries.length > back.length ? own.amount : null,
+      computed_total: computed.amount,
+      computed_subtotal: subtotal?.amount ?? computed.amount,
+      shipping_total: roundMoneyAmount(computed.amount - (subtotal?.amount ?? computed.amount), currency),
+      shipping_currency: shippingCurrency,
+      money_total: sum,
+      refunded,
+      unpriced_lines: unpricedLines,
+    });
   }
   return out;
 }

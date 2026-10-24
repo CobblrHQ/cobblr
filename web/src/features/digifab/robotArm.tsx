@@ -9,7 +9,8 @@ import type { EntityDetailPanelCtx } from "../../panels/types";
 import { Backups, Copies, ProgramControl, Updates } from "./armProgramControl";
 import { SafetyBoundaryLink } from "../../pages/RobotSafetyPage";
 import { addProgram, approveRun, commandArm, editProgram, endRun, readArm, refreshArm, releaseControl, revokeControl, saveCompatibility, setMaintenance, setTooling, setupArm, startRun, takeControl, type ArmCompatibility, type ArmProgram, type ArmView } from "./robot-arm-api";
-import { useCapabilitiesFor } from "../../lib/can";
+import { useCan, useCapabilitiesFor, useRoleAtLeast } from "../../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 const button = "min-h-11 rounded border border-line px-3 py-2 text-sm disabled:opacity-50";
 const input = "input w-full min-h-11";
 const WORDS: Record<string, string> = {
@@ -80,6 +81,8 @@ function SetupForm({ slug, current, busy, save }: { slug: string; current: ArmVi
  </form>;
 }
 function StationControls({ slug, machine, title, unit, data, admin, operate, revokes, busy, screen, storageKey, setCredential, run, send }: { slug: string; machine: string; title: string; unit: { connection_id: string; device_id: string; tooling: string }; data: ArmView; admin: boolean; operate: boolean; revokes: boolean; busy: boolean; screen: { id: string; token: string } | null; storageKey: string; setCredential: (c: { id: string; token: string; key: string } | null) => void; run: (w: () => Promise<unknown>, done?: string) => Promise<void>; send: (c: ArmCommand) => void }) {
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const mayRevoke = useCan("digifab:revoke-station");
  const [program, setProgram] = useState(""), [clear, setClear] = useState(false), [tooled, setTooled] = useState(false);
  const [kind, setKind] = useState("invocation"), [label, setLabel] = useState(""), [ref, setRef] = useState(""), [target, setTarget] = useState("");
  const usable = data.programs.filter(p => !p.missing_since), chosen = usable.find(p => p.id === program), s = data.state;
@@ -89,7 +92,7 @@ function StationControls({ slug, machine, title, unit, data, admin, operate, rev
  const mine = !!data.ownership && !!screen && data.ownership.station_id === screen.id;
  return <div className="space-y-3 rounded border border-line p-3">
   <p>Keep this screen beside {title}. Taking control, loading, approving and starting a run need an operator, an owner or an admin at this screen. The pendant always wins.</p>
-  {screen ? revokes && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button> : <button className={button} disabled={busy || !admin} onClick={() => void run(async () => { const r = await api.registerDigifabStation(slug, unit.connection_id, unit.device_id); const next = { id: r.id, token: r.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); }, "This screen is the arm's station.")}>Authorize this arm station</button>}
+  {screen ? revokes && (mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button>) : (setsUp && <button className={button} disabled={busy || !admin} onClick={() => void run(async () => { const r = await api.registerDigifabStation(slug, unit.connection_id, unit.device_id); const next = { id: r.id, token: r.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); }, "This screen is the arm's station.")}>Authorize this arm station</button>)}
   {screen && <>
    <div className="flex flex-wrap gap-2 items-center">{!operate ? <p className="text-sm">{mine ? "This station has control of the arm." : data.ownership ? "Another station has control of this arm." : "No station has control of this arm."} Taking control needs an operator, an owner or an admin; Pause and Stop are yours.</p> : mine ? <><p className="text-sm">This station has control until {new Date(data.ownership!.expires_at).toLocaleTimeString()}.</p><button className={button} disabled={busy} onClick={() => void run(() => takeControl(slug, machine, screen.token), "Kept control of the arm.")}>Keep control</button><button className={button} disabled={busy} onClick={() => void run(() => releaseControl(slug, machine, screen.token), "Gave back control of the arm.")}>Give back control</button></> : <><p className="text-sm">{data.ownership ? "Another station has control of this arm." : "No station has control of this arm."}</p><button className={button} disabled={busy} onClick={() => void run(() => takeControl(slug, machine, screen.token), "This station has control of the arm.")}>Take control</button></>}</div>
    {mine && operate && <>

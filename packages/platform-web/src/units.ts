@@ -4,25 +4,17 @@
 // shorthand symbol, the full word, or both. Mirror of the server-side
 // units-catalog.ts formatter so display is identical wherever it runs.
 
-import { countWordsFor, wordForCount, type CountWords } from "@cobblr/platform-contract/plural";
+import type { CountWords } from "@cobblr/platform-contract/plural";
+import { convertBetween, formatQuantityIn, resolveUnitIn } from "@cobblr/platform-contract/unit-figure";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
 
-/** Resolve a raw unit string to a catalog entry by symbol → code →
- *  name/plural (case-insensitive). Null for free-text the vocabulary
- *  doesn't know — it renders as typed. */
-export function resolveUnit(
-  raw: string | null | undefined,
-  units: PlatformUnitDef[],
-): PlatformUnitDef | null {
-  if (!raw) return null;
-  const q = raw.trim().toLowerCase();
-  if (!q) return null;
-  return (
-    units.find((u) => u.symbol.toLowerCase() === q) ??
-    units.find((u) => u.code.toLowerCase() === q) ??
-    units.find((u) => u.name.toLowerCase() === q || u.plural.toLowerCase() === q) ??
-    null
-  );
+/** Resolve a raw unit string to a catalog entry: the symbol exactly first ("H" a
+ *  henry, "h" an hour), then without regard to case by symbol, code, name or
+ *  plural. Null for free-text the vocabulary doesn't know, which renders as
+ *  typed. The rule is the contract's one (unit-figure.ts), shared with the
+ *  server's catalog, so the app reads what the server does. */
+export function resolveUnit(raw: string | null | undefined, units: PlatformUnitDef[]): PlatformUnitDef | null {
+  return resolveUnitIn(raw, units);
 }
 
 /** Convert a numeric value between two raw unit strings when they resolve to
@@ -35,19 +27,11 @@ export function convertQuantity(
   toRaw: string | null | undefined,
   units: PlatformUnitDef[],
 ): number | null {
-  if (!Number.isFinite(value)) return null;
-  const from = resolveUnit(fromRaw, units);
-  const to = resolveUnit(toRaw, units);
-  if (!from || !to || from.code === to.code) return null;
-  if (from.category !== to.category) return null;
-  if (from.factor == null || to.factor == null) return null;
-  const converted = (value * from.factor) / to.factor;
-  // Trim FP noise (1000 * 0.001 / 1 = 1, but 1/3-style ratios shouldn't sprawl).
-  return parseFloat(converted.toPrecision(12));
+  return convertBetween(value, resolveUnit(fromRaw, units), resolveUnit(toRaw, units));
 }
 
-/** Render a quantity + unit per the display mode, pluralising the full
- *  word by quantity ("1 gram" / "340 grams"). A unit the vocabulary does not
+/** Render a quantity + unit per the display mode, pluralising the full word
+ *  by quantity ("1 gram" / "340 grams"). A unit the vocabulary does not
  *  know agrees with its count too, from `known` (a bundle's declared words)
  *  or the regular rules. `qty` may be null to label a unit without a number. */
 export function formatQuantity(
@@ -57,21 +41,7 @@ export function formatQuantity(
   mode: UnitDisplayMode = "symbol",
   known: readonly CountWords[] = [],
 ): string {
-  const n = qty == null || Number.isNaN(qty) ? null : qty;
-  // Clean number: integers as-is, otherwise trimmed to 3 decimals.
-  const numPart = n == null ? "" : Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
-  const def = resolveUnit(raw, units);
-  if (!def) {
-    // A word the vocabulary does not hold (a bundle's "hank", a typed "cone")
-    // still agrees with its count: "3 hanks", never "3 hank".
-    const typed = (raw ?? "").trim();
-    const word = typed && n != null ? wordForCount(n, countWordsFor(typed, known)) : typed;
-    return [numPart, word].filter(Boolean).join(" ");
-  }
-  const word = n != null && Math.abs(n) === 1 ? def.name : def.plural;
-  const unitPart =
-    mode === "name" ? word : mode === "both" ? `${def.symbol} (${word})` : def.symbol;
-  return [numPart, unitPart].filter(Boolean).join(" ");
+  return formatQuantityIn(qty, raw, units, mode, known);
 }
 
 /** Just the unit token (no quantity) per mode — for column headers / chips. */

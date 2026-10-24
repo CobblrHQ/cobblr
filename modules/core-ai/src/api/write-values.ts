@@ -146,14 +146,16 @@ export async function writeValues(opts: {
         continue;
       }
     }
-    // A record named by id reads as the record's own name.
+    // A record named by id reads as the record's own name: the kind the
+    // field names (`location_id`), else the record's own kind, since a field
+    // that names no kind (`parent_id` on a place) points at another of the
+    // same. A shelf's move read "Parent: 8ff7…→ 5752…" with neither room
+    // named (#7970). A lookup that finds nothing leaves the value as it was.
     const ref = field.match(/^(.+)_id$/)?.[1];
     if (ref && opts.titleOf) {
-      const refKind = opts.kinds.find((k) => k.id.endsWith(`:${ref}`))?.id;
-      if (refKind) {
-        value = (await opts.titleOf(refKind, value)) ?? value;
-        if (from) from = (await opts.titleOf(refKind, from)) ?? from;
-      }
+      const refKind = opts.kinds.find((k) => k.id.endsWith(`:${ref}`))?.id ?? opts.kind;
+      value = (await opts.titleOf(refKind, value)) ?? value;
+      if (from) from = (await opts.titleOf(refKind, from)) ?? from;
     }
     out.push({ field, label: labelOf(kind, field), value, ...(opts.update ? { from: from ?? "nothing" } : {}) });
   }

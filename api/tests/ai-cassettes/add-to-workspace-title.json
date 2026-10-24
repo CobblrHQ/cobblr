@@ -1,0 +1,8 @@
+{
+  "match": "add a replay nylon washer",
+  "rounds": [
+    { "tool_calls": [{ "name": "list_records", "args": { "kind": "core-locations:location", "q": "Blue drawer" } }] },
+    { "tool_calls": [{ "name": "add_thing", "args": { "name": "Replay nylon washer", "quantity": 7, "goes_to": "Workshop review", "place": "Blue drawer", "location_id": "$result.list_records.data.items[0].id" } }] },
+    { "tool_calls": [{ "name": "add_thing", "args": { "name": "Replay nylon washer", "quantity": 7, "goes_to": "Inventory", "place": "Blue drawer", "location_id": "$result.list_records.data.items[0].id", "file": true } }] }
+  ]
+}

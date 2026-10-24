@@ -6,7 +6,7 @@ import { getStationTokenOverride } from "../station-token";
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, browserOffline, describeUnreadableBody, keepWaitingWrite, landedWrite, madeByAPerson, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, withWaitingWrites } from "@cobblr/platform-web";
+import { UploadError, browserOffline, describeUnreadableBody, keepWaitingWrite, landedWrite, madeByAPerson, networkFailureMessage, noteWorkspaceWrite, OFFLINE_SENTENCE, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, withWaitingWrites } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
@@ -172,7 +172,7 @@ export function subscribeOfflineCopies(listener: OfflineListener): () => void {
   };
 }
 /** What a person reads when a write or an unopened read is made offline. */
-export const OFFLINE_SENTENCE = "You're offline. This will work again when you're back online.";
+export { OFFLINE_SENTENCE };
 
 /** The 5xx the api itself answers with a reason: never a gateway's "down". */
 const API_ANSWERED_5XX = new Set(["tenant_unprovisioned"]);
@@ -357,9 +357,9 @@ async function sendRequest<T>(
       // Never sent, so it can be sent later without doubling: it waits on
       // this device, not only in this page (waiting-writes.ts, #7863).
       if (byAPerson && !impToken && !headers["x-cobblr-waited"]) keepWaitingWrite(method, path, body === undefined ? undefined : JSON.stringify(body), headers["Authorization"]);
-      throw new ApiError(0, "offline", OFFLINE_SENTENCE);
+      throw new ApiError(0, "offline", networkFailureMessage());
     }
-    throw new ApiError(0, "network_error", `Can't reach ${productName()}. Check your connection and try again.`);
+    throw new ApiError(0, "network_error", networkFailureMessage());
   }
   // Offline, the service worker answered: a kept copy (marked with when it was
   // fetched) or "never kept". Either way we are not connected, and a kept copy

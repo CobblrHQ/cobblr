@@ -12,6 +12,7 @@
 // Renders nothing for a place that holds no stock: the page's "what's here"
 // already says so.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -26,7 +27,7 @@ import { InventoryApi, WhatsStillHereButton } from "@cobblr/inventory/ui";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 function offWords(expiresOn: string | null, today: string): string | null {

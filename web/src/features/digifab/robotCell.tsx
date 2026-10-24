@@ -1,3 +1,5 @@
+import { useCan, useRoleAtLeast } from "../../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { MemberSelect, productName, QueryError, RelationSelect, useToast, WorkspaceLink } from "@cobblr/platform-web";
@@ -188,6 +190,8 @@ function ArmProgram({ slug, machine, value, onChange }: { slug: string; machine:
 }
 
 function StationControls({ slug, machine, title, data, admin, busy, run }: { slug: string; machine: string; title: string; data: CellView; admin: boolean; busy: boolean; run: (w: () => Promise<unknown>, done?: string) => Promise<void> }) {
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const mayRevoke = useCan("digifab:revoke-station");
  const cell = data.cell!, storageKey = `cell-station:${slug}:${cell.connection_id}:${cell.device_id}`;
  const [credential, setCredential] = useState<{ id: string; token: string; key: string } | null>(null), [clear, setClear] = useState(false);
  const saved = (() => { try { return JSON.parse(localStorage.getItem(storageKey) || "null") as { id: string; token: string; key: string } | null; } catch { return null; } })();
@@ -196,7 +200,7 @@ function StationControls({ slug, machine, title, data, admin, busy, run }: { slu
  if (!cell.connection_id || !cell.device_id) return <p className="text-sm">Put this cell on your bridge before running it.</p>;
  return <div className="space-y-3 rounded border border-line p-3">
   <p>Keep this screen beside {title}. Starting and resuming its job need an operator, an owner or an admin at this screen.</p>
-  {screen ? <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button> : <button className={button} disabled={busy || !admin} onClick={() => void run(async () => { const r = await api.registerDigifabStation(slug, cell.connection_id!, cell.device_id!); const next = { id: r.id, token: r.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); }, "This screen is the cell's station.")}>Authorize this cell station</button>}
+  {screen ? (mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, screen.id); localStorage.removeItem(storageKey); setCredential(null); })}>Revoke this screen</button>) : (setsUp && <button className={button} disabled={busy || !admin} onClick={() => void run(async () => { const r = await api.registerDigifabStation(slug, cell.connection_id!, cell.device_id!); const next = { id: r.id, token: r.token, key: storageKey }; localStorage.setItem(storageKey, JSON.stringify(next)); setCredential(next); }, "This screen is the cell's station.")}>Authorize this cell station</button>)}
   {screen && <>
    {!open && data.hash && <div role="group" aria-label="Start the cell's job" className="space-y-2">
     <p className="text-sm">This starts {cell.definition.label || "the cell's job"}: {cell.definition.steps.length} step{cell.definition.steps.length === 1 ? "" : "s"}, {cell.definition.cycles === null ? "until stopped" : `${cell.definition.cycles} cycle${cell.definition.cycles === 1 ? "" : "s"}`}. Check {data.hash.slice(0, 8)}.</p>

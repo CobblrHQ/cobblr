@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail, MessageSquare, Send, Trash2 } from "lucide-react";
-import { FieldPack, LabeledField, NumberField, SecretInput, fieldNeed, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { OnceQuiet, FieldPack, LabeledField, NumberField, SecretInput, fieldNeed, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type AutomationEmailSettings } from "../lib/api";
 import { EMAIL_PROVIDER_FIELDS, EMAIL_SECRET_KEYS } from "../lib/email-provider-fields";
@@ -103,7 +103,7 @@ export function OutboundEmailPage() {
   const set = (k: string, v: string) => setForm((p) => ({ ...p, [k]: v }));
 
   return (
-    <div className="space-y-5 max-w-2xl">
+    <OnceQuiet key={slug} className="space-y-5 max-w-2xl">
 
       <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
         <div className="flex items-center gap-2">
@@ -207,7 +207,7 @@ export function OutboundEmailPage() {
           </ul>
         </section>
       )}
-    </div>
+    </OnceQuiet>
   );
 }
 

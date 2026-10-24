@@ -204,7 +204,7 @@ export function BackupPage() {
     try {
       const form = new FormData();
       form.set("file", bkPlan.file);
-      form.set("confirm", bkPlan.plan.target_not_empty ? "replace" : "true");
+      form.set("confirm", "replace");
       const res = await sendUpload(`${base}/backup/restore`, form, { token: getToken(), file: bkPlan.file });
       if (!res.ok) throw new Error((await uploadErrorOf(res, bkPlan.file)).message);
       const body = await res.json();

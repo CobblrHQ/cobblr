@@ -11,7 +11,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Plus, RefreshCw, Share2 } from "lucide-react";
-import { ConnectCobblr, Modal, relativeTime, useConfirm, usePageTitle, useOnceQuiet, useToast } from "@cobblr/platform-web";
+import { ConnectCobblr, Modal, QueryError, relativeTime, useConfirm, usePageTitle, useOnceQuiet, useToast } from "@cobblr/platform-web";
 import { api, type ShareLinkItem, type ShareOfferItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ConfigHeaderActions } from "../components/ConfigPageHeader";
@@ -56,6 +56,9 @@ export function SharingPage() {
   // Connect and the public pages move their buttons, and a share space is a
   // different page from your own.
   const settled = useOnceQuiet();
+
+  if (list.isError) return <QueryError what="sharing settings" onRetry={() => void qc.invalidateQueries({ queryKey: key })} />;
+  if (!list.data) return <p role="status" className="text-sm text-muted">Loading sharing settings…</p>;
 
   if (inShare) {
     const l = items[0];

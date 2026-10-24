@@ -40,7 +40,7 @@ export const GUEST_WRITES: Readonly<Record<string, { why: string }>> = {
   "PUT /:slug/modules/core-apps/apps/:app/data/:key": { why: "an app in the portal keeps its own state; the app decides who may open it" },
   "POST /:slug/modules/core-apps/apps/:app/token": { why: "an app in the portal starts: its token acts as the guest and reads only what a guest may (the app decides who may open it, #6044)" },
   "DELETE /:slug/members/:userId": { why: "leaving the workspace; the route refuses a guest removing anyone but themselves" },
-  "POST /:slug/actions/invoke": { why: "a button in a portal app; the action refuses a guest unless it was granted to them" },
+  "POST /:slug/actions/invoke": { why: "a portal app button reaches the shared action gate; guests hold no write capabilities, but their own issued Undo remains theirs" },
 };
 
 /** Whether a guest may make this write. */

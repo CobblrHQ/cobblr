@@ -66,8 +66,13 @@ export const EntityKind = z
     // can assign it via roles / the permission matrix.
     fieldReadScopes: z.record(z.string().min(1), z.string().min(1)).optional(),
     // Path template (relative to PUBLIC_BASE_URL) for the entity's
-    // canonical detail page. {id} placeholder gets substituted.
-    detailRoute: z.string().optional(),
+    // canonical detail page. {id} placeholder gets substituted, and it must
+    // be there: a print job's route named a settings tab, so Cobb's "open
+    // it" led to machine connections and no job at all (#7903).
+    detailRoute: z
+      .string()
+      .refine((r) => r.includes("{id}"), { message: "detailRoute must name the record with {id}: a page that does not open this record is not its detail page" })
+      .optional(),
     // Module-relative GET endpoint for lookup. {id} placeholder.
     // The platform proxies to this when other modules ask for the
     // entity's data via platform.entities.lookup().

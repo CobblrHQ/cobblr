@@ -3,6 +3,7 @@
 // or a new place beside the others. So it asks, and nothing moves until the
 // person says which. Each answer goes through the holdings door.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useState } from "react";
 import { Modal, NumberStepper } from "@cobblr/platform-web";
 import type { PlaceableRecord } from "../../lib/placeableRecords";
@@ -14,7 +15,7 @@ export type SeveralPlacesAnswer =
   | { kind: "add"; qty: number };
 
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 export function SeveralPlacesDialog({

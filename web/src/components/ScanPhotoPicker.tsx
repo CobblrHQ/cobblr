@@ -272,18 +272,19 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
     const now = Date.now();
     if (key === lastTakeRef.current.key && now - lastTakeRef.current.at < 1000) return;
     lastTakeRef.current = { key, at: now };
-    if (intent.kind === "photos" && door !== "pick") {
+    if (intent.photos.length && door !== "pick") {
       // Said the moment it lands, before anything has uploaded.
-      const n = intent.files.length;
+      const n = intent.photos.length;
       toast.info(`${door === "paste" ? "Pasted" : "Dropped"} ${n} picture${n === 1 ? "" : "s"}: adding ${n === 1 ? "it" : "them"} to the inbox.`);
     }
-    if (intent.kind === "receipt" && door !== "pick") {
-      // Said the moment it lands, as a picture is: a pasted or dropped PDF
-      // that shows nothing for a second reads as a paste that did not work.
-      toast.info(`Reading ${intent.file.name}…`);
-    }
-    if (intent.kind === "photos") setAskKindFor(intent.files);
-    else void uploadReceipt(intent.file);
+    const takeSelection = async () => {
+      for (const file of intent.receipts) {
+        if (door !== "pick") toast.info(`Reading ${file.name}…`);
+        await uploadReceipt(file);
+      }
+      if (intent.photos.length) setAskKindFor(intent.photos);
+    };
+    void takeSelection();
   };
 
   const sheet = (

@@ -399,6 +399,7 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
                           </span>
                         )}
                         {c.optional && <span className="text-[10px] text-muted ml-1.5">(optional)</span>}
+                        {c.notes && <span data-testid="component-notes" className="block text-xs text-muted whitespace-pre-wrap">{c.notes}</span>}
                         {!isSub && c.part_id && limitingIds.has(c.part_id) && (
                           <span className="ml-2 inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 align-middle">
                             <AlertTriangle size={10} /> limiting
@@ -639,6 +640,7 @@ export function OperationsSection({
   onLogTime: (opId: string, kind: "labor" | "machine" | "setup", minutes: number) => void;
   onLogQty: (opId: string, kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => void;
 }) {
+  const confirm = useConfirm();
   const [name, setName] = useState("");
   const [estText, setEstText] = useState("");
   const [estimating, setEstimating] = useState<string | null>(null);
@@ -715,11 +717,21 @@ export function OperationsSection({
                   <button title="Move down" type="button" onClick={() => onMove(op, "down")} disabled={i === sorted.length - 1} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move down">
                     <ChevronDown size={14} />
                   </button>
-                  <button title="Remove step" type="button" onClick={() => onRemove(op.id)} className="text-slate-300 hover:text-red-500 ml-1" aria-label="Remove step">
+                  <button title="Remove step" type="button" onClick={async () => {
+                    if (await confirm({
+                      title: `Remove "${op.name}"?`,
+                      message: "This permanently deletes the step, its estimate, all logged time, and its good, scrap and rework counts. This cannot be undone.",
+                      confirmLabel: "Remove step",
+                      destructive: true,
+                    })) onRemove(op.id);
+                  }} className="text-slate-300 hover:text-red-500 ml-1" aria-label="Remove step">
                     <X size={14} />
                   </button>
                 </div>
               </div>
+              {op.description && (
+                <div data-testid="step-instructions" className="px-3 pb-2 pl-14 text-xs text-muted whitespace-pre-wrap">{op.description}</div>
+              )}
               {estimating === op.id && (
                 <form
                   className="flex items-center gap-2 px-3 pb-2 text-xs"
@@ -1117,11 +1129,6 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
           {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
         <span className="text-[11px] text-muted">Ordered by due date. Machine availability is not included.</span>
-        {totalLate > 0 && (
-          <span className="inline-flex items-center gap-0.5 rounded bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300">
-            <AlertTriangle size={10} /> {totalLate} at risk
-          </span>
-        )}
         <div className="flex-1" />
         {ordinaryBuilds.length > 0 && <button type="button" onClick={() => setAdding((a) => !a)} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-cobble-600 text-white">
           <Plus size={12} /> Plan a build
@@ -1131,6 +1138,12 @@ function SchedulePanel({ api, builds }: { api: BuildsApi; builds: BuildSummary[]
       {!collapsed && (
         <div className="p-3 space-y-3">
           {adding && <AddPlannedRow builds={ordinaryBuilds} onAdd={(v) => addPlanned.mutate(v)} onCancel={() => setAdding(false)} />}
+          {/* Under the header, not in it: arriving there it pushed Plan a build along (#7794). */}
+          {totalLate > 0 && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-red-50 dark:bg-red-900/30 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-300">
+              <AlertTriangle size={10} /> {totalLate} at risk
+            </span>
+          )}
           {sched.isLoading && <div className="text-sm text-muted">Loading…</div>}
           {!sched.isLoading && totalItems === 0 && (
             <div className="text-sm text-muted italic">Nothing planned. Give a build's routing steps estimated minutes, then plan one here to see a projected timeline.</div>

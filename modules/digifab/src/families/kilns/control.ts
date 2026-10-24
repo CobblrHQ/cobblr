@@ -14,10 +14,11 @@ export async function controlFiring(db: Kysely<DigifabDB>, orgId: string, id: st
  const driver = await buildDriverById(db, orgId, firing.connection_id);
  if (!(driver instanceof EdgeAdapterDriver)) throw new KilnRefusal("The kiln must be connected through your shop's bridge.");
  if (input.operation === "start") {
+  if (firing.finish_intent) throw new KilnRefusal("This firing is recording its result. Finish the remaining glaze use before starting another load.");
   const device = (await driver.listDevices()).find(d => d.id === firing.device_id);
   const telemetry = TelemetrySchema.parse(device?.raw?.kiln);
   if (telemetry.running || firing.status !== "planned") throw new KilnRefusal("This kiln is already firing or this log has already been started.");
-  const claimed = await db.updateTable("digifab_firings").set({ status: "starting", started_at: new Date() }).where("id", "=", id).where("status", "=", "planned").returning("id").executeTakeFirst();
+  const claimed = await db.updateTable("digifab_firings").set({ status: "starting", started_at: new Date() }).where("id", "=", id).where("status", "=", "planned").where("finish_intent", "is", null).where("ended_at", "is", null).returning("id").executeTakeFirst();
   if (!claimed) throw new KilnRefusal("Another screen is starting this firing.");
  }
  // Start asks again, just before the kiln is told and once it answers, whether
@@ -28,8 +29,8 @@ export async function controlFiring(db: Kysely<DigifabDB>, orgId: string, id: st
   checks++;
   try {
    await authorizeKiln(db, firing.connection_id!, firing.device_id!, input.station_token);
-   const now = await db.selectFrom("digifab_firings").select(["status", "ended_at"]).where("id", "=", id).executeTakeFirst();
-   if (!now || now.ended_at || now.status !== "starting") throw new KilnRefusal("This firing changed while it was starting. Check it before starting it again.");
+   const now = await db.selectFrom("digifab_firings").select(["status", "ended_at", "finish_intent"]).where("id", "=", id).executeTakeFirst();
+   if (!now || now.ended_at || now.finish_intent || now.status !== "starting") throw new KilnRefusal("This firing changed while it was starting. Check it before starting it again.");
   } catch (e) { if (checks > 1) withdrawnAfterStart = true; throw e; }
  };
  const result = await kilnAtStation(driver, permit, input.operation, { name: firing.name, schedule: firing.recipe.schedule.map(s => [s.ramp_c_per_hour, s.target_c, s.hold_minutes]) }, input.operation === "start" ? checkStartAllowed : undefined);

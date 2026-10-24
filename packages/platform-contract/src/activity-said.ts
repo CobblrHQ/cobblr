@@ -6,6 +6,7 @@
 // "Paid: (empty) → $4,300", a place by its name, a photo as a photo (the api
 // resolves references and files, history-describe.ts); this file is the pure
 // part: the label, and a plain value by its type.
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { humanFieldLabel } from "@cobblr/platform-contract/display-identity";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { asMeasure } from "@cobblr/platform-contract/measure";
@@ -75,7 +76,7 @@ export function saidValue(value: unknown, field: SaidFieldType = {}): string | n
     // (#6039). It is how much: its unit needs the workspace's words, which a
     // caller that has them adds (stockReadingOf, quantityWithUnit).
     const reading = stockReadingOf(o);
-    if (reading) return String(parseFloat(reading.remaining.toFixed(3)));
+    if (reading) return quantityNumber(reading.remaining);
     const named = o.label ?? o.name ?? o.title;
     if (typeof named === "string" && named.trim()) return named.trim();
     // A measure ("12 mm"), in the words the field itself shows.

@@ -14,6 +14,8 @@ export interface ActivityChange {
   /** A custom field (a key of the record's metadata bag). */
   custom?: true;
   secret?: true;
+  /** Reference names captured when the change was made. */
+  reference_titles?: { from?: string; to?: string };
   from: unknown;
   to: unknown;
 }
@@ -30,6 +32,13 @@ export const INTERNAL_FIELDS: ReadonlySet<string> = new Set([
   "updated_at", "created_at", "id", "org_id", "instance", "metadata", "fields",
   ...DERIVED_FIELDS,
 ]);
+
+/** Keys the platform keeps in a record's bag of extra fields for its own
+ *  bookkeeping: where a share's copy came from and the place it left
+ *  (origin_ref, origin_place), and what a hand-over said (share_offer). The
+ *  person never set one, so taking a friend's addition is never told as
+ *  "updated origin ref" (#7819). */
+export const BOOKKEEPING_BAG_KEYS: ReadonlySet<string> = new Set(["origin_ref", "origin_place", "share_offer"]);
 
 /** True for a field no person sees or edits as such (INTERNAL_FIELDS). */
 export const isInternalField = (field: string): boolean => INTERNAL_FIELDS.has(field);
@@ -62,7 +71,7 @@ export function changesOf(before: unknown, patch: unknown): ActivityChange[] {
   const wasBag = bagOf(was.metadata);
   for (const key of ["metadata", "fields"]) {
     for (const [field, to] of Object.entries(bagOf(now[key]))) {
-      if (to === undefined) continue;
+      if (to === undefined || BOOKKEEPING_BAG_KEYS.has(field)) continue;
       if (!same(wasBag[field], to)) out.push({ field, custom: true, from: plain(wasBag[field]), to: plain(to) });
     }
   }
@@ -74,5 +83,5 @@ export function changesOf(before: unknown, patch: unknown): ActivityChange[] {
  *  so no reader ever sees them. */
 export function changesIn(diff: unknown): ActivityChange[] | null {
   const c = bagOf(diff).changes;
-  return Array.isArray(c) ? (c as ActivityChange[]).filter((x) => x.custom || !isInternalField(x.field)) : null;
+  return Array.isArray(c) ? (c as ActivityChange[]).filter((x) => (x.custom ? !BOOKKEEPING_BAG_KEYS.has(x.field) : !isInternalField(x.field))) : null;
 }

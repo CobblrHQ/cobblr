@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useCan, useRoleAtLeast } from "../lib/can";
 import { SelectBox, fieldNeed, FieldPack, RecordFormModal, NewItemMenu, EntityThumb, BulkActionBar, BulkSetField, useTickedRows, useToast, useConfirm, usePageTitle, useAskCobbAboutSelection, RecordRow, useSelectionResolver, buildLocationForest, type LocationNode as SharedLocationNode, usePublishChatContext, SearchInput } from "@cobblr/platform-web";
 // /locations — the workspace-wide tree of physical places.
 // core-locations is foundational, so this page always exists when an
@@ -36,7 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ApiError, api, fetchCsv, type Location } from "../lib/api";
-import { downloadBlob } from "@cobblr/platform-web";
+import { downloadBlob, editOf } from "@cobblr/platform-web";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useHideEmpty } from "../lib/useHideEmpty";
@@ -92,6 +94,8 @@ export function LocationsPage() {
   const [editTarget, setEditTarget] = useState<Location | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
+  // Importing places is the admin tier's; their order is its own action.
+  const mayImport = useRoleAtLeast(ADMIN_TIER);
   // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
   // every surviving node is open and fold memory is left alone.
   const [q, setQ] = useState("");
@@ -407,7 +411,7 @@ export function LocationsPage() {
       <div className="flex items-center gap-3 text-xs text-muted">
         <Link className="inline-flex items-center underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
         <button type="button" onClick={exportCsv} className="inline-flex items-center sm:hidden underline" title="Download all locations as a CSV">Export</button>
-        <button type="button" onClick={() => setImportOpen(true)} className="inline-flex items-center sm:hidden underline" title="Import locations from a file">Import</button>
+        {mayImport && <button type="button" onClick={() => setImportOpen(true)} className="inline-flex items-center sm:hidden underline" title="Import locations from a file">Import</button>}
       </div>
       {/* ONE row on every width. It used to wrap, which kept the page from
           scrolling sideways but spent three of a phone's rows on chrome before
@@ -470,14 +474,14 @@ export function LocationsPage() {
         >
           <Download size={14} /> <span className="hidden sm:inline">Export</span>
         </button>
-        <button
+        {mayImport && <button
           onClick={() => setImportOpen(true)}
           aria-label="Import"
           title="Import locations from a file"
           className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded border border-line dark:border-slate-600 text-content dark:text-mortar-200 hover:bg-subtle dark:hover:bg-slate-800 px-2 sm:px-2.5 py-1.5 text-sm transition"
         >
           <Upload size={14} /> <span className="hidden sm:inline">Import</span>
-        </button>
+        </button>}
       </div>
       {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
 
@@ -755,8 +759,9 @@ function LocationCard({
   onEdit: (loc: Location) => void;
 }) {
   const KindIcon = node.kind === "container" ? BoxIcon : AreaIcon;
+  const mayReorder = !!useCan("core-locations:reorder");
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
-    useSortable({ id: node.id, disabled: filtering });
+    useSortable({ id: node.id, disabled: filtering || !mayReorder });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const usage = usageByLocation.get(node.id);
   const usageTotal = totalUsage(usage);
@@ -781,7 +786,7 @@ function LocationCard({
           (depth === 0 ? "pr-6 sm:pr-8" : "")
         }
       >
-        <button
+        {mayReorder && <button
           type="button"
           {...attributes}
           {...listeners}
@@ -790,7 +795,7 @@ function LocationCard({
           className="hidden sm:block cursor-grab touch-none text-faint hover:text-muted shrink-0 -ml-1.5 active:cursor-grabbing"
         >
           <GripVertical size={15} />
-        </button>
+        </button>}
         <SelectBox checked={selected.has(node.id)} onChange={() => onToggleSelect(node.id)} label={`Select ${node.name}`} title="Select for bulk actions" />
         {/* The fold control. A leaf keeps the slot so names line up, but has
             nothing to open, so it draws nothing clickable. */}
@@ -1315,6 +1320,7 @@ export function LocationFormModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const mayReorder = !!useCan("core-locations:reorder");
   const editing = !!target;
   const [name, setName] = useState(target?.name ?? "");
   const [shortName, setShortName] = useState(target?.short_name ?? "");
@@ -1350,13 +1356,15 @@ export function LocationFormModal({
     setDup(null);
     try {
       if (editing && target) {
-        await api.updateLocation(slug, target.id, {
+        // Only what changed, with what it was: a newer move or rename from
+        // another tab stands, or this save is refused and says so (#7906, #7925).
+        const edit = editOf(target as unknown as Record<string, unknown>, {
           name: name.trim(),
           short_name: shortName.trim() || null,
           kind,
           parent_id: parentId || null,
-          ...(allowDuplicate ? { allow_duplicate: true } : {}),
         });
+        await api.updateLocation(slug, target.id, { ...edit.body, ...(allowDuplicate ? { allow_duplicate: true } : {}) }, edit.headers);
         toast.success("Location updated");
       } else if (expansion && expansion.names.length > 1) {
         // Bulk-create N siblings from a "Foo 1-3" range. Sequential
@@ -1377,7 +1385,7 @@ export function LocationFormModal({
         // the group on screen looks like the rack in the room. /reorder is
         // the same door a drag uses, so this is an opening position, not a
         // special case the sort has to know about.
-        if (stacked && bottomUp && created.length > 1) {
+        if (mayReorder && stacked && bottomUp && created.length > 1) {
           await api.reorderLocations(slug, bottomUpDisplayOrder(created));
         }
         toast.success(

@@ -24,10 +24,22 @@
 // flagged the sharing, portal, presentation and actions settings pages and
 // the sections inside them: ConfigurationLayout already keeps a member out of
 // them by their minRole. So reach through the routes is followed, not the
-// file alone. Not yet judged: a module's own routes and clients, and
-// requireCapability gates (whether a member holds a capability is a grant,
-// not code); useCan is the gate for those, and the role pass sees their
-// refused reads.
+// file alone.
+//
+// MODULE ROUTES AND CAPABILITIES (#7922). A module's own routes are read too,
+// at the path their routers are mounted under (`.use("/jobs", jobsRouter)`),
+// and so is a requireCapability gate whose action a plain member holds by no
+// declaration: no runBy a member satisfies (an operator's is not theirs), no
+// heldBy naming "member", not a member default. Members were offered Send on
+// every queued print and an operator was offered to authorize a station, and
+// both were refused after the tap (#7892, #7947); this found 64 such calls.
+// The client a host hands a shared package (<PlatformWebProvider api={{…}}>)
+// is wiring, not a control. A control drawn on the server's own answer for
+// the person says so on a GATED-BY: line.
+//
+// Still not judged: which control in a file a gate covers (a file with one
+// gate passes), a role other than a member (an operator's refusals are
+// fixed where they were found), and a module's own UI clients.
 //
 // PROVED RED on main: web/src/components/AppLayout.tsx (refreshApp, an
 // owner/admin route, sent on every managed app's first page).
@@ -38,6 +50,7 @@ import { dirname, join, normalize } from "node:path";
 import ts from "typescript";
 import * as orgRoles from "../packages/platform-contract/src/org-roles.ts";
 import { pageOpenTo } from "../web/src/lib/configuration-nav.ts";
+import { MEMBER_DEFAULT_CAPABILITIES } from "../api/src/platform/member-defaults.ts";
 import { repoFiles, repoFilesContaining } from "./lib/repo-files.ts";
 
 interface Violation {
@@ -47,7 +60,9 @@ interface Violation {
 }
 
 const PROBE_ROLE = "member";
-const GATE = /\b(useCan|useRoleAtLeast|useCapabilities|useCapabilitiesFor|roleSatisfies|ManagedByAdmins|pageOpenTo)\b/;
+// A control drawn on the server's own answer for this person (a blocked
+// action's selfApply, a kind's can_delete) says so on a GATED-BY: line.
+const GATE = /\b(useCan|useRoleAtLeast|useCapabilities|useCapabilitiesFor|useMayDelete|roleSatisfies|ManagedByAdmins|pageOpenTo)\b|(\/\/|\/\*) GATED-BY: \S/;
 
 const notTests = (fs: string[]) => fs.filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
 const parse = (file: string, src: string) => ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -70,17 +85,26 @@ function unconditional(call: ts.Node): boolean {
   return true;
 }
 
-/** "POST /orgs/:p/refresh-app" → the role list that route reads. */
-export function memberRefusedRoutes(files: Array<[string, string]>): Map<string, string[]> {
+/** Where a module's route is mounted: "/orgs/:p/modules/<name>" plus the
+ *  prefixes its routers are `.use`d under, or null for a kernel file. */
+export type PrefixOf = (file: string, router: string) => string | null;
+
+/** "POST /orgs/:p/refresh-app" → the gate that route reads, as words: a role
+ *  list, or the capability a member does not hold. */
+export function memberRefusedRoutes(files: Array<[string, string]>, opts: { prefixOf?: PrefixOf; memberHolds?: (capability: string) => boolean | null } = {}): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const [file, src] of files) {
-    if (!src.includes("requireRole(")) continue;
+    if (!src.includes("requireRole(") && !(opts.memberHolds && src.includes("requireCapability("))) continue;
     const sf = parse(file, src);
     const visit = (n: ts.Node) => {
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && /^(post|put|patch|delete)$/.test(n.expression.name.text) && n.arguments[0] && ts.isStringLiteral(n.arguments[0])) {
         const lists: string[][] = [];
+        const caps: string[] = [];
         let unread = false;
         const inner = (m: ts.Node) => {
+          // A capability gate a member does not hold by any declaration
+          // (runBy, heldBy, the member defaults) refuses them as a role does.
+          if (opts.memberHolds && ts.isCallExpression(m) && ts.isIdentifier(m.expression) && m.expression.text === "requireCapability" && unconditional(m) && m.arguments[2] && ts.isStringLiteral(m.arguments[2]) && opts.memberHolds(m.arguments[2].text) === false) caps.push(m.arguments[2].text);
           if (ts.isCallExpression(m) && ts.isIdentifier(m.expression) && m.expression.text === "requireRole" && unconditional(m)) {
             const list: string[] = [];
             for (const a of m.arguments.slice(2)) {
@@ -94,7 +118,12 @@ export function memberRefusedRoutes(files: Array<[string, string]>): Map<string,
         };
         n.arguments.slice(1).forEach(inner);
         const path = n.arguments[0].text;
-        if (!unread && lists.length && lists.every((l) => !orgRoles.roleSatisfies(PROBE_ROLE, l))) out.set(`${n.expression.name.text.toUpperCase()} ${shape(path.startsWith("/:slug") ? `/orgs${path}` : path)}`, lists[0]!);
+        const router = ts.isIdentifier(n.expression.expression) ? n.expression.expression.text : "";
+        const prefix = opts.prefixOf?.(file, router) ?? null;
+        const full = prefix !== null ? `${prefix}${path === "/" ? "" : path}` : path.startsWith("/:slug") ? `/orgs${path}` : path;
+        const verb = n.expression.name.text.toUpperCase();
+        if (caps.length) out.set(`${verb} ${shape(full)}`, [`capability ${caps[0]}`]);
+        else if (!unread && lists.length && lists.every((l) => !orgRoles.roleSatisfies(PROBE_ROLE, l))) out.set(`${verb} ${shape(full)}`, lists[0]!);
       }
       ts.forEachChild(n, visit);
     };
@@ -127,6 +156,76 @@ export function clientMethodsOn(files: Array<[string, string]>, routes: Map<stri
     visit(sf);
   }
   return out;
+}
+
+/** Each module router's mount: `<parent>.use("/jobs", jobsRouter)` read
+ *  across the module's api files, up to the router nothing mounts. */
+export function modulePrefixes(files: Array<[string, string]>): PrefixOf {
+  const parentOf = new Map<string, { parent: string; at: string }>();
+  const moduleOf = (file: string) => /^modules\/([^/]+)\/src\/api\//.exec(file)?.[1] ?? null;
+  for (const [file, src] of files) {
+    const m = moduleOf(file);
+    if (!m || !src.includes(".use(")) continue;
+    const sf = parse(file, src);
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === "use" && ts.isIdentifier(n.expression.expression) && n.arguments[0] && ts.isStringLiteral(n.arguments[0])) {
+        const last = n.arguments[n.arguments.length - 1]!;
+        if (ts.isIdentifier(last)) parentOf.set(`${m} ${last.text}`, { parent: n.expression.expression.text, at: n.arguments[0].text });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return (file, router) => {
+    const m = moduleOf(file);
+    if (!m) return null;
+    let at = "";
+    for (let r = router, hops = 0; parentOf.has(`${m} ${r}`) && hops < 8; hops++) {
+      const p = parentOf.get(`${m} ${r}`)!;
+      at = `${p.at === "/" ? "" : p.at}${at}`;
+      r = p.parent;
+    }
+    return `/orgs/:p/modules/${m}${at}`;
+  };
+}
+
+/** Does a plain member hold `capability` by a declaration the code makes:
+ *  an action's runBy, a capability's heldBy, or the member defaults? null
+ *  for an id nothing declares (not judged). */
+export function memberHoldings(files: Array<[string, string]>, memberDefaults: readonly string[]): (capability: string) => boolean | null {
+  const runBy = new Map<string, string | null>();
+  const grantedAs = new Map<string, string>();
+  const heldByMember = new Set<string>();
+  const str = (o: ts.ObjectLiteralExpression, key: string) => {
+    const p = o.properties.find((q): q is ts.PropertyAssignment => ts.isPropertyAssignment(q) && q.name.getText() === key);
+    return p && ts.isStringLiteral(p.initializer) ? p.initializer.text : null;
+  };
+  for (const [file, src] of files) {
+    const sf = parse(file, src);
+    const visit = (n: ts.Node) => {
+      if (ts.isObjectLiteralExpression(n)) {
+        const id = str(n, "id");
+        if (id && /^[a-z0-9-]+:[a-z0-9-]+$/.test(id)) {
+          if (!runBy.has(id) || str(n, "runBy") || str(n, "run_by")) runBy.set(id, str(n, "runBy") ?? str(n, "run_by"));
+          const g = str(n, "grantedAs");
+          if (g) grantedAs.set(id, g);
+          const held = n.properties.find((q): q is ts.PropertyAssignment => ts.isPropertyAssignment(q) && q.name.getText() === "heldBy");
+          if (held && ts.isArrayLiteralExpression(held.initializer) && held.initializer.elements.some((e) => ts.isStringLiteral(e) && e.text === PROBE_ROLE)) heldByMember.add(id);
+        }
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return (capability) => {
+    if (!runBy.has(capability)) return null;
+    const ids = [capability, grantedAs.get(capability)].filter((x): x is string => !!x);
+    const r = runBy.get(capability);
+    // An operator shares a member's rank and is a member who runs the
+    // machines: what runs by "operator" is not a plain member's.
+    if (r && r !== "requester" && r !== "operator" && orgRoles.roleSatisfies(PROBE_ROLE, [r])) return true;
+    return ids.some((i) => heldByMember.has(i) || memberDefaults.includes(i));
+  };
 }
 
 const resolveImport = (from: string, spec: string): string | null => {
@@ -191,7 +290,10 @@ function reach(webFiles: Array<[string, string]>) {
 
 export function check(): Violation[] {
   const read = (fs: string[]) => fs.map((f) => [f, readFileSync(f, "utf8")] as [string, string]);
-  const routes = memberRefusedRoutes(read(notTests(repoFilesContaining("requireRole(", ["api/src"]))));
+  const modules = repoFiles(["modules"]);
+  const moduleApi = read(notTests(modules.filter((f) => /^modules\/[^/]+\/src\/api\//.test(f))));
+  const holds = memberHoldings(read([...modules.filter((f) => /^modules\/[^/]+\/src\/module\.ts$/.test(f)), "api/src/platform/platform-actions.ts"]), MEMBER_DEFAULT_CAPABILITIES);
+  const routes = memberRefusedRoutes([...read(notTests(repoFiles(["api/src"]))), ...moduleApi], { prefixOf: modulePrefixes(moduleApi), memberHolds: holds });
   const methods = clientMethodsOn(read(notTests(repoFiles(["web/src/lib/api.ts", "web/src/lib/api"]))), routes);
   const web = read(notTests(repoFiles(["web/src"])));
   const src = new Map(web);
@@ -216,13 +318,26 @@ export function check(): Violation[] {
   const out: Violation[] = [];
   for (const [file, text] of web) {
     if (file.startsWith("web/src/lib/api")) continue;
+    // The client a host hands a shared package (<PlatformWebProvider api={{…}}>)
+    // is wiring, not a control: the package's own control is judged where it draws.
+    const handedOn: Array<[number, number]> = [];
+    if (text.includes("api={{")) {
+      const sf = parse(file, text);
+      const visit = (n: ts.Node) => {
+        if (ts.isJsxAttribute(n) && n.name.getText(sf) === "api" && n.initializer) handedOn.push([n.initializer.pos, n.initializer.end]);
+        ts.forEachChild(n, visit);
+      };
+      visit(sf);
+    }
     for (const [name, route] of methods) {
       // A call draws or sends it; a reference handed on (the provider's client) does not.
-      const at = text.search(new RegExp(`\\bapi\\.${name}!?\\s*\\(`));
+      const re = new RegExp(`\\bapi\\.${name}!?\\s*\\(`, "g");
+      let at = -1;
+      for (let m = re.exec(text); m; m = re.exec(text)) if (!handedOn.some(([a, b]) => m!.index >= a && m!.index < b)) { at = m.index; break; }
       if (at < 0) continue;
       const via = openPath(file, new Set());
       if (!via) continue;
-      out.push({ file, line: text.slice(0, at).split("\n").length, what: `api.${name} is ${route}, refused to a ${PROBE_ROLE} (requireRole ${routes.get(route)!.join(", ")}), and a ${PROBE_ROLE} reaches it with no gate (via ${via})` });
+      out.push({ file, line: text.slice(0, at).split("\n").length, what: `api.${name} is ${route}, refused to a ${PROBE_ROLE} (${routes.get(route)![0]!.startsWith("capability ") ? routes.get(route)![0] : `requireRole ${routes.get(route)!.join(", ")}`}), and a ${PROBE_ROLE} reaches it with no gate (via ${via})` });
     }
   }
   return out;

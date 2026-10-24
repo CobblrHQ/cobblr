@@ -3,7 +3,7 @@ import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { NumberField, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
+import { NumberField, OnceQuiet, SearchInput, usePageTitle, useRunAction } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api } from "../lib/api";
 import { useCan } from "../lib/can";
@@ -414,6 +414,10 @@ export function EmbroideryPage() {
           Fleet and setup
         </Link>
       </header>
+      {/* Machines, designs, thread stock and the brand charts each fill in
+          from their own answer: drawn together, so none pushes the controls
+          below it (#7794). */}
+      <OnceQuiet className="space-y-6">
       {(error || machines.error || designs.error || runs.error) && (
         <p role="alert" className={`${panel} border-red-500 break-words`}>
           {error || message(machines.error || designs.error || runs.error)}
@@ -1278,6 +1282,7 @@ export function EmbroideryPage() {
           Add Sewing from Bundles
         </Link>
       </section>
+      </OnceQuiet>
     </div>
   );
 }

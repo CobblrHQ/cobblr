@@ -257,7 +257,10 @@ export function namedBy(path, tests, testSources, basenameCount) {
   const fileDir = dirs.at(-1) ?? "";
   for (const t of tests) {
     const src = stripComments(testSources.get(t) ?? "");
-    if (src.includes(path) || src.includes(keyOf(path) + '"') || (distinct && quoted(src, base))) { out.add(t); continue; }
+    // A ROOT FILE IS NAMED ONLY WHOLE (2026-10-24): `out`, a stray file at the root, was "named" by every test holding
+    // the letters (timeout, about, output). A path with a directory is specific enough as a substring; a bare one is not.
+    const says = path.includes("/") ? src.includes(path) : quoted(src, path);
+    if (says || src.includes(keyOf(path) + '"') || (distinct && quoted(src, base))) { out.add(t); continue; }
     if (code) continue;
     // Not code: a test that walks one of its directories, or sits beside or above it.
     if (dirs.some((d) => walksDir(src, d))) { out.add(t); continue; }

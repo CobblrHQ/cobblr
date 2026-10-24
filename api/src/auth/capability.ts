@@ -100,8 +100,8 @@ export function requireScope(req: Request, res: Response, scope: string): boolea
 
 /** Gate by a specific action capability. The admin tier passes implicitly
  *  (owner, admin, and editor — by rank, see roleHoldsEveryCapability);
- *  members/guests need an explicit grant (workspace_capability_grants
- *  or a custom-role bundle) — see platform().auth.userHasCapability.
+ *  members need an explicit grant (workspace_capability_grants
+ *  or a custom-role bundle); guests stay read-only. See platform().auth.userHasCapability.
  *  docs/modules/member-portal-and-permissions.md. */
 export async function requireCapability(
   req: Request,

@@ -132,8 +132,10 @@ export interface PlatformCategoryAxis {
 }
 
 export interface PlatformPairings {
-  /** Insert a pairing. Returns the new row id. Org-scoped: the
-   *  caller passes orgId; the function inserts with that org_id. */
+  /** Link two records, once. Returns the link's id: the new one, or the one
+   *  already there when this exact link (same kinds, ids and relationship)
+   *  exists, so asking again on a retried or repeated write never makes a
+   *  second row (#8040). Org-scoped: the caller passes orgId. */
   create(args: {
     orgId: string;
     sourceKind: string;
@@ -206,8 +208,10 @@ export interface PlatformPairings {
     targetIds: string[];
     relationshipKind: string;
   }): Promise<{ removed: number }>;
-  /** Insert many pairings at once. Used by bricklink.disassemble-kit
-   *  to write hundreds of "matches" / "derived-from" rows efficiently. */
+  /** Insert many pairings at once, each once: a link already there, or named
+   *  twice in the batch, is not written again, and `inserted` counts only the
+   *  new ones. Used by bricklink.disassemble-kit to write hundreds of
+   *  "matches" / "derived-from" rows, and by a kiln firing on create and finish. */
   createMany(
     rows: Array<{
       orgId: string;

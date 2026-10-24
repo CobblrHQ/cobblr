@@ -1,10 +1,10 @@
 import "./db.js";
-import { sql, type Kysely } from "kysely";
+import { sql, type Kysely, type Selectable } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { DigifabDB } from "../../db.js";
 import { buildDriverById } from "../../jobs-core.js";
-import { FiringSchema, FinishSchema, ProfileSchema, TelemetrySchema, firingLinks, replacementReminders, type Firing } from "./model.js";
+import { FiringSchema, FinishSchema, ProfileSchema, TelemetrySchema, firingLinks, replacementReminders, type Firing, type Finish } from "./model.js";
 import { z } from "zod";
 export class KilnRefusal extends Error {}
 export const CreateSchema = z.object({ id: z.string().uuid(), machine_id: z.string().uuid(), firing: FiringSchema });
@@ -53,20 +53,41 @@ export async function createFiring(db: Kysely<DigifabDB>, orgId: string, value: 
  await platform().pairings.createMany(firingLinks(orgId, row.id, row.recipe.pieces));
  return row;
 }
+type StoredFiring = Selectable<DigifabDB["digifab_firings"]>;
+function requireSameFinish(firing: StoredFiring, finish: Finish) {
+ const saved = firing.finish_intent;
+ if (saved && (saved.outcome !== finish.outcome || saved.duration_hours !== finish.duration_hours || saved.peak_c !== finish.peak_c)) throw new KilnRefusal("Glaze use has started with a recorded result. Retry with the same result after fixing the stock problem.");
+}
+async function checkFinish(db: Kysely<DigifabDB>, orgId: string, firing: StoredFiring, finish: Finish) {
+ if (firing.status === "starting") throw new KilnRefusal("Wait for the kiln's Start to finish before recording its result.");
+ if (firing.duration_hours && finish.duration_hours < firing.duration_hours || firing.peak_c !== null && finish.peak_c < firing.peak_c) throw new KilnRefusal("The log cannot discard recorded firing time or peak temperature.");
+ if (firing.connection_id && firing.device_id) {
+  const driver = await buildDriverById(db, orgId, firing.connection_id);
+  const device = (await driver?.listDevices())?.find(d => d.id === firing.device_id);
+  const telemetry = TelemetrySchema.safeParse(device?.raw?.kiln);
+  if (telemetry.success && telemetry.data.running) throw new KilnRefusal("Stop or complete the firing on the kiln before finishing its log.");
+ }
+ await checkLoad(orgId, firing.recipe);
+}
 export async function finishFiring(db: Kysely<DigifabDB>, orgId: string, userId: string | null, id: string, value: unknown) {
  const finish = FinishSchema.parse(value);
+ // Stock draws commit in Inventory's transactions. Keep their shared result
+ // before the first one so a refused later draw cannot change it on retry.
+ await db.transaction().execute(async trx => {
+  const firing = await trx.selectFrom("digifab_firings").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
+  if (!firing) throw new KilnRefusal("No such firing.");
+  if (firing.ended_at) return;
+  requireSameFinish(firing, finish);
+  if (firing.finish_intent || !firing.recipe.glazes.length) return;
+  await checkFinish(trx, orgId, firing, finish);
+  await trx.updateTable("digifab_firings").set({ finish_intent: JSON.stringify(finish) }).where("id", "=", id).execute();
+ });
  const row = await db.transaction().execute(async trx => {
   const firing = await trx.selectFrom("digifab_firings").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
   if (!firing) throw new KilnRefusal("No such firing.");
   if (firing.ended_at) return firing;
-  if (firing.duration_hours && finish.duration_hours < firing.duration_hours || firing.peak_c !== null && finish.peak_c < firing.peak_c) throw new KilnRefusal("The log cannot discard recorded firing time or peak temperature.");
-  if (firing.connection_id && firing.device_id) {
-   const driver = await buildDriverById(db, orgId, firing.connection_id);
-   const device = (await driver?.listDevices())?.find(d => d.id === firing.device_id);
-   const telemetry = TelemetrySchema.safeParse(device?.raw?.kiln);
-   if (telemetry.success && telemetry.data.running) throw new KilnRefusal("Stop or complete the firing on the kiln before finishing its log.");
-  }
-  await checkLoad(orgId, firing.recipe);
+  requireSameFinish(firing, finish);
+  await checkFinish(trx, orgId, firing, finish);
   await platform().pairings.createMany(firingLinks(orgId, id, firing.recipe.pieces));
   for (const glaze of firing.recipe.glazes) {
    const stock = await readGlaze(orgId, glaze);

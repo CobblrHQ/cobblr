@@ -49,6 +49,9 @@ export interface OrderReturn {
 export interface Order {
   stock_pending?: boolean;
   computed_total?: number;
+  computed_subtotal?: number;
+  shipping_total?: number;
+  shipping_currency?: string;
   currency?: string;
   money_total?: MoneyTotal;
   id: string;
@@ -322,8 +325,9 @@ export const purchasesApi = {
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
   /** Correct a line: what it is, how many, the price. A line whose stock was
    *  already added refuses a new count (409 line_received). */
-  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null; currency?: string }) =>
-    request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body),
+  /** `headers` from editOf: what the edited fields were when the form opened. */
+  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null; currency?: string }, headers?: Record<string, string>) =>
+    request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body, headers),
   listOrderReturns: (slug: string, orderId: string) =>
     request<{ items: OrderReturn[] }>("GET", `/orgs/${slug}/modules/purchases/orders/${orderId}/returns`),
   /** Start a return on one line: how many and why. */

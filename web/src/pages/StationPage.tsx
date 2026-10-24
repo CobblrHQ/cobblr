@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../lib/can";
 // /station/:slug/:address — a Station: a tablet or counter screen that a
 // barcode scanner drives (#4640, docs/modules/station-screen.md).
 //
@@ -36,6 +38,7 @@ import {
   type StationRecountAnswer,
   type StationSettings,
   type StationStockOp,
+  stationQrMay,
 } from "@cobblr/platform-contract/station-screen";
 import { api, ApiError, getToken, type Location, type ScanInboxItem, type OrgMembership, type StationRecordAction } from "../lib/api";
 import { askBeforePress, pressAnswersToArgs } from "@cobblr/platform-contract/action-args";
@@ -356,22 +359,37 @@ interface LastMove {
   words: string;
   status: "waiting" | "sending" | "applied";
   at: number;
+  /** The record it changed. Undo writes back to this one only, whichever card
+   *  is up when it is pressed: a late answer's Undo put the earlier thing's
+   *  count on the next thing's card (#8064). */
+  of: { kind: string; id: string; title: string };
   /** A record action's run (Lend, Log service), undone at its own door. */
   action?: boolean;
   /** False when the run handed back no way to undo it. */
   undoable?: boolean;
 }
 
+const moveWords = (op: StationStockOp, value?: number) => (op === "add" ? `Added ${value ?? 1}` : op === "use" ? `Used ${value ?? 1}` : `Set to ${value}`);
+
+/** The newest change still waiting to sync, as the Undo it had before a
+ *  reload: the queue outlives a restart, so its Undo must too (#8075). */
+function waitingLast(q: QueuedMove[]): LastMove | null {
+  const m = q.at(-1);
+  return m ? { request_id: m.request_id, words: moveWords(m.op, m.value), status: "waiting", at: m.at, of: { kind: m.kind, id: m.entity_id, title: m.title } } : null;
+}
+
 function Station(props: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; label: string; settings: StationSettings; hasPin: boolean; onForget: () => void }) {
   const { slug, address, settings } = props;
   const qc = useQueryClient();
   const [view, setView] = useState<View>({ kind: "ready" });
-  const [last, setLast] = useState<LastMove | null>(null);
+  const [last, setLast] = useState<LastMove | null>(() => waitingLast(loadQueue(slug, address, Date.now())));
   const [flash, setFlash] = useState<"ok" | "bad" | null>(null);
   const [keypad, setKeypad] = useState(false);
   const [asking, setAsking] = useState<Asking | null>(null);
   const [mover, setMover] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // The station's settings are the admin tier's to change, as its route says.
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const [queue, setQueue] = useState<QueuedMove[]>(() => loadQueue(slug, address, Date.now()));
   const replaying = useRef(new Map<string, Promise<void>>());
   const flushing = useRef<Promise<void> | null>(null);
@@ -438,22 +456,26 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   );
 
   const count = useCallback(
-    async (record: StationRecord, op: StationStockOp, value?: number) => {
+    async (record: StationRecord, op: StationStockOp, value?: number, shown = true) => {
       const request_id = newRequestId();
-      const words = op === "add" ? `Added ${value ?? 1}` : op === "use" ? `Used ${value ?? 1}` : `Set to ${value}`;
+      const words = moveWords(op, value);
       try {
         const moved = await api.stationCount(slug, address, { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}) });
-        setView((v) => (v.kind === "record" && v.record.id === record.id ? { ...v, record: { ...v.record, qty: moved.qty } } : v));
-        setLast({ request_id, words: moved.note ? `${words}. ${moved.note}` : words, status: "applied", at: Date.now() });
+        // An answer with no count is not a count of none (#7860).
+        setView((v) => (v.kind === "record" && v.record.id === record.id ? { ...v, record: { ...v.record, qty: moved.qty ?? v.record.qty } } : v));
+        if (!shown) return;
+        setLast({ request_id, words: moved.note ? `${words}. ${moved.note}` : words, status: "applied", at: Date.now(), of: record });
         signal(true);
       } catch (e) {
         if (unreachable(e)) {
           const q = [...loadQueue(slug, address, Date.now()), { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}), title: record.title, at: Date.now() }];
           persistQueue(q);
-          setLast({ request_id, words, status: "waiting", at: Date.now() });
+          if (!shown) return;
+          setLast({ request_id, words, status: "waiting", at: Date.now(), of: record });
           signal(true);
           return;
         }
+        if (!shown) return;
         setView({ kind: "error", message: errText(e) });
         signal(false);
       }
@@ -473,7 +495,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "sending" } : previous);
             try {
               const moved = await api.stationCount(slug, address, { request_id: m.request_id, kind: m.kind, entity_id: m.entity_id, op: m.op, ...(m.value !== undefined ? { value: m.value } : {}) });
-              setView((v) => v.kind === "record" && v.record.kind === m.kind && v.record.id === m.entity_id ? { ...v, record: { ...v.record, qty: moved.qty } } : v);
+              setView((v) => v.kind === "record" && v.record.kind === m.kind && v.record.id === m.entity_id ? { ...v, record: { ...v.record, qty: moved.qty ?? v.record.qty } } : v);
               setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "applied", words: moved.note ? `${previous.words}. ${moved.note}` : previous.words } : previous);
               persistQueue(loadQueue(slug, address, Date.now()).filter((waiting) => waiting.request_id !== m.request_id));
             } catch (e) {
@@ -536,7 +558,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         try {
           const r = await api.stationActionRun(slug, address, { request_id, action_id: a.id, kind: record.kind, entity_id: record.id, args });
           showNow(record.id, r.now);
-          setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, status: "applied", at: Date.now(), action: true, undoable: r.undoable });
+          setLast({ request_id, words: r.summary || `${a.label}: ${record.title}`, status: "applied", at: Date.now(), action: true, undoable: r.undoable, of: record });
           signal(true);
         } catch (e) {
           setView({ kind: "error", message: unreachable(e) ? "No connection. Try it again when the network is back." : errText(e) });
@@ -564,7 +586,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     if (last.action) {
       try {
         const r = await api.stationActionUndo(slug, address, last.request_id);
-        if (view.kind === "record") showNow(view.record.id, r.now);
+        showNow(last.of.id, r.now);
         setLast(null);
       } catch (e) {
         setView({ kind: "error", message: errText(e) });
@@ -583,7 +605,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         persistQueue(waiting.filter((m) => m.request_id !== last.request_id));
       } else {
         const r = await api.stationUndo(slug, address, last.request_id);
-        setView((v) => (v.kind === "record" && view.kind === "record" && v.record.kind === view.record.kind && v.record.id === view.record.id ? { ...v, record: { ...v.record, qty: r.qty ?? v.record.qty } } : v));
+        setView((v) => (v.kind === "record" && v.record.kind === last.of.kind && v.record.id === last.of.id ? { ...v, record: { ...v.record, qty: r.qty ?? v.record.qty } } : v));
       }
       setLast((previous) => previous?.request_id === last.request_id ? null : previous);
     } catch (e) {
@@ -591,9 +613,14 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     } finally {
       undoing.current.delete(last.request_id);
     }
-  }, [last, slug, address, persistQueue, view, showNow]);
+  }, [last, slug, address, persistQueue, showNow]);
 
   // ── One scan ────────────────────────────────────────────────────────────
+  // Each scan takes a number. An answer that arrives after a newer scan has
+  // begun still does its work (One-tap still counts it, a new code still goes
+  // to the inbox) but never touches the card: a slow lookup put the earlier
+  // thing back over the one just scanned, and +1 moved its stock (#7859).
+  const scanSeq = useRef(0);
   const onScan = useCallback(
     async (raw: string) => {
       touchedAt.current = Date.now();
@@ -605,6 +632,8 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       setLast(null);
       const scan = stationScanOf(raw);
       if (scan.kind === "ignore") return;
+      const mine = ++scanSeq.current;
+      const current = () => mine === scanSeq.current;
       setView({ kind: "looking", code: raw });
       if (settings.recount_id) {
         // A recount station counts the thing; a Cobblr label goes as scanned,
@@ -612,9 +641,11 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         const asked = { code: scan.kind === "label" ? raw : scan.code };
         try {
           const answer = await api.stationRecount(slug, address, asked);
+          if (!current()) return;
           setView({ kind: "recount", answer, asked });
           signal(answer.result === "matched" || answer.result === "new");
         } catch (e) {
+          if (!current()) return;
           setView({ kind: "error", message: unreachable(e) ? "No connection. Scan it again when the network is back." : errText(e) });
           signal(false);
         }
@@ -625,6 +656,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         if (scan.kind === "label") {
           const r = await api.resolveQrToken(scan.token);
           if (!r?.entity_kind || !r.entity_id || (r.org_slug && r.org_slug !== slug)) {
+            if (!current()) return;
             setView({ kind: "error", message: "That label is not one of this workspace's." });
             return signal(false);
           }
@@ -633,16 +665,22 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           found = await api.stationLookup(slug, address, { code: scan.code });
         }
       } catch (e) {
+        if (!current()) return;
         setView({ kind: "error", message: unreachable(e) ? "No connection. Scan it again when the network is back." : errText(e) });
         return signal(false);
       }
       if (found.found === "record") {
-        setView({ kind: "record", record: found.record, countable: found.countable });
         const op = oneTapOp(settings.action);
+        if (!current()) {
+          if (op && found.countable) await count(found.record, op, undefined, false);
+          return;
+        }
+        setView({ kind: "record", record: found.record, countable: found.countable });
         if (op && found.countable) await count(found.record, op);
         else signal(true);
         return;
       }
+      if (!current() && (found.found === "outside" || scan.kind === "label" || props.qr)) return;
       if (found.found === "outside") {
         setView({ kind: "outside", title: found.title });
         return signal(false);
@@ -659,9 +697,11 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       // Something new: the scan inbox's own intake, then its own card.
       try {
         const item = await api.scanBarcode(slug, { barcode: scan.code, ...(settings.new_location_id ? { target_location_id: settings.new_location_id } : {}) });
+        if (!current()) return;
         setView({ kind: "new", item });
         signal(true);
       } catch (e) {
+        if (!current()) return;
         setView({ kind: "error", message: errText(e) });
         signal(false);
       }
@@ -671,8 +711,11 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
 
   useBarcodeWedge({ enabled: !keypad && !settingsOpen && !asking, onScan: (c) => void onScan(c) });
 
-  // A bridge's scanner: codes it posted for this station, taken in order.
+  // A bridge's scanner: codes it posted for this station, taken in order, by
+  // the station's own screen. A phone on the QR never takes them: they are
+  // the tablet's, and its token may not ask (#8070).
   useEffect(() => {
+    if (props.qr) return;
     let stop = false;
     const tick = async () => {
       if (stop) return;
@@ -691,7 +734,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       stop = true;
       window.clearTimeout(t);
     };
-  }, [slug, address, onScan]);
+  }, [slug, address, onScan, props.qr]);
 
   // A new thing's card fills in as the identify finishes in the background.
   const newId = view.kind === "new" ? view.item.id : null;
@@ -743,7 +786,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
                 <WifiOff size={14} /> {queue.length} waiting to sync
               </span>
             )}
-            {!props.qr && (
+            {!props.qr && setsUp && (
               <button
                 type="button"
                 onClick={() => setSettingsOpen(true)}
@@ -806,6 +849,10 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
                 runRecordAction(view.record, a);
               }}
               onDone={() => setView({ kind: "ready" })}
+              // A phone on the kitchen QR is offered only what its QR may
+              // press, by the server's own rule: +1 was shown, refused 403
+              // not_on_qr, and the refusal replaced the card (#7868).
+              may={(press) => !props.qr || stationQrMay(settings, press)}
             />
           )}
           {view.kind === "new" && (
@@ -903,10 +950,11 @@ function Ready({ label, last, onUndo, camera, children }: { label: string; last:
   );
 }
 
-function UndoBar({ last, onUndo }: { last: LastMove; onUndo: () => void }) {
+function UndoBar({ last, onUndo, showing }: { last: LastMove; onUndo: () => void; showing?: StationRecord }) {
+  const elsewhere = showing && (showing.kind !== last.of.kind || showing.id !== last.of.id);
   return (
     <div className="inline-flex items-center gap-3 rounded-full bg-moss-100 px-4 py-2 text-lg text-moss-900 dark:bg-moss-900/40 dark:text-moss-100" role="status" data-testid="station-last">
-      <Check size={20} /> {last.words}{last.status === "waiting" ? " (waiting to sync)" : last.status === "sending" ? " (syncing)" : ""}
+      <Check size={20} /> {elsewhere ? `${last.of.title}: ` : ""}{last.words}{last.status === "waiting" ? " (waiting to sync)" : last.status === "sending" ? " (syncing)" : ""}
       {last.undoable !== false && <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium underline-offset-2 hover:underline">
         <Undo2 size={18} /> Undo
       </button>}
@@ -926,8 +974,11 @@ function RecordCard(props: {
   onSetTotal: () => void;
   onMove: () => void;
   onDone: () => void;
+  /** Whether this screen may press it: a phone on the QR may press less. */
+  may: (press: { op?: string; action_id?: string }) => boolean;
 }) {
   const r = props.record;
+  const actions = props.actions.filter((a) => props.may({ action_id: a.id }));
   return (
     <div className="w-full max-w-4xl" data-testid="station-record">
       <div className="flex gap-5 max-sm:flex-col">
@@ -950,30 +1001,38 @@ function RecordCard(props: {
       </div>
       {props.last && (
         <div className="mt-5">
-          <UndoBar last={props.last} onUndo={props.onUndo} />
+          <UndoBar last={props.last} onUndo={props.onUndo} showing={r} />
         </div>
       )}
       <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {props.countable && (
           <>
-            <BigButton onClick={() => props.onCount("add")}>
-              <Plus size={26} /> +1
-            </BigButton>
-            <BigButton onClick={() => props.onCount("use")} disabled={(r.qty ?? 0) <= 0}>
-              <Minus size={26} /> Used one
-            </BigButton>
-            <BigButton tone="plain" onClick={props.onSetTotal}>
-              <Hash size={22} /> Set total…
-            </BigButton>
+            {props.may({ op: "add" }) && (
+              <BigButton onClick={() => props.onCount("add")}>
+                <Plus size={26} /> +1
+              </BigButton>
+            )}
+            {props.may({ op: "use" }) && (
+              <BigButton onClick={() => props.onCount("use")} disabled={(r.qty ?? 0) <= 0}>
+                <Minus size={26} /> Used one
+              </BigButton>
+            )}
+            {props.may({ op: "total" }) && (
+              <BigButton tone="plain" onClick={props.onSetTotal}>
+                <Hash size={22} /> Set total…
+              </BigButton>
+            )}
           </>
         )}
-        <BigButton tone="plain" onClick={props.onMove}>
-          <MapPin size={22} /> Move to…
-        </BigButton>
+        {props.may({ op: "move" }) && (
+          <BigButton tone="plain" onClick={props.onMove}>
+            <MapPin size={22} /> Move to…
+          </BigButton>
+        )}
       </div>
-      {props.actions.length > 0 && (
+      {actions.length > 0 && (
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="station-record-actions">
-          {props.actions.map((a) => (
+          {actions.map((a) => (
             <BigButton key={a.id} tone="plain" onClick={() => props.onAction(a)}>
               {a.label}
             </BigButton>

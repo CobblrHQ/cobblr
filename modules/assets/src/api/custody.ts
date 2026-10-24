@@ -11,7 +11,7 @@
 
 import { sql, type Kysely } from "kysely";
 import { platform, requireActionEntity, type ActionInvokeContext } from "@cobblr/platform-contract";
-import { readRecordLoan } from "@cobblr/platform-contract/loan";
+import { readRecordLoan, type RecordLoan } from "@cobblr/platform-contract/loan";
 import type { AssetsDB } from "../db.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -19,12 +19,13 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 type Custody = { assigned_to: string | null; due_back: string | null };
 
-async function readCustody(db: Kysely<AssetsDB>, id: string): Promise<(Custody & { name: string }) | null> {
+async function readCustody(db: Kysely<AssetsDB>, id: string): Promise<(Custody & { name: string; loan: RecordLoan | null }) | null> {
   const row = await db.selectFrom("assets_assets").select(["name", "metadata"]).where("id", "=", id).executeTakeFirst();
   if (!row) return null;
   const m = (row.metadata ?? {}) as Record<string, unknown>;
   return {
     name: row.name,
+    loan: readRecordLoan(m),
     assigned_to: typeof m.assigned_to === "string" ? m.assigned_to : null,
     due_back: typeof m.due_back === "string" ? m.due_back : null,
   };
@@ -70,8 +71,13 @@ async function mirrorLoan(ctx: ActionInvokeContext, db: Kysely<AssetsDB>, id: st
   if (r && (r as { ok?: unknown }).ok !== true) console.error(`[assets] the loan on ${id} did not follow Who has it:`, (r as { error?: unknown }).error);
 }
 
+export function withCustodyLabel<T extends { metadata: unknown }>(row: T): T & { assigned_to_label?: string } {
+  const loan = readRecordLoan(row.metadata);
+  return loan && !loan.holder_id ? { ...row, assigned_to_label: loan.holder } : row;
+}
+
 /** The writer's onLoan: a loan made anywhere shows in Who has it and Due
- *  back. A holder who is not on the People list leaves Who has it empty. */
+ *  back. Typed holders stay on the loan and are displayed from there. */
 export async function custodyFromLoan(orgId: string, id: string, loan: { holder_id: string | null; due_back: string | null } | null): Promise<void> {
   const db = (await platform().tenants.getDb(orgId)) as Kysely<AssetsDB>;
   const before = await readCustody(db, id);
@@ -94,7 +100,7 @@ export function registerCustodyHandlers(): void {
     if (!before) return { ok: false, error: "That asset is not here any more." };
     await writeCustody(ctx.orgId, db, asset.id, { assigned_to: to, due_back: due }, before);
     await mirrorLoan(ctx, db, asset.id, { assigned_to: to, due_back: due });
-    return { ok: true, summary: `${before.name} is lent out${due ? `, due back ${due}` : ""}.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
+    return { ok: true, summary: `${before.name} is lent out${due ? `, due back ${due}` : ""}.`, was: before };
   });
 
   platform().actions.registerHandler("assets.got-back", async (ctx) => {
@@ -102,10 +108,10 @@ export function registerCustodyHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<AssetsDB>;
     const before = await readCustody(db, asset.id);
     if (!before) return { ok: false, error: "That asset is not here any more." };
-    if (!before.assigned_to && !before.due_back) return { ok: true, skipped: true, summary: `${before.name} was not lent out.` };
+    if (!before.loan && !before.assigned_to && !before.due_back) return { ok: true, skipped: true, summary: `${before.name} was not lent out.` };
     await writeCustody(ctx.orgId, db, asset.id, { assigned_to: null, due_back: null }, before);
     await mirrorLoan(ctx, db, asset.id, { assigned_to: null, due_back: null });
-    return { ok: true, summary: `${before.name} is back.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
+    return { ok: true, summary: `${before.name} is back.`, was: before };
   });
 
   platform().actions.registerHandler("assets.set-custody", async (ctx) => {
@@ -120,13 +126,18 @@ export function registerCustodyHandlers(): void {
     };
     await writeCustody(ctx.orgId, db, asset.id, next, before);
     await mirrorLoan(ctx, db, asset.id, next);
-    return { ok: true, summary: `${before.name} is back to how it was.`, was: { assigned_to: before.assigned_to, due_back: before.due_back } };
+    return { ok: true, summary: `${before.name} is back to how it was.`, was: before };
   });
 
   // Each one's way back is the custody it replaced.
   const back = (result: unknown, ctx: { entity?: { kind: string; id: string } | null }) => {
-    const r = result as { ok?: unknown; skipped?: unknown; was?: { assigned_to?: unknown; due_back?: unknown } } | null;
+    const r = result as { ok?: unknown; skipped?: unknown; was?: { assigned_to?: unknown; due_back?: unknown; loan?: unknown } } | null;
     if (r?.ok !== true || r.skipped || !r.was || !ctx.entity) return null;
+    const loan = readRecordLoan({ loan: r.was.loan });
+    if (loan) return {
+      action_id: "platform:lend",
+      args: { entity_kind: ctx.entity.kind, ids: [ctx.entity.id], ...loan },
+    };
     return {
       action_id: "assets:set-custody",
       args: { assigned_to: typeof r.was.assigned_to === "string" ? r.was.assigned_to : "", due_back: typeof r.was.due_back === "string" ? r.was.due_back : "" },

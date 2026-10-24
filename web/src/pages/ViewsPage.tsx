@@ -248,7 +248,7 @@ function ViewDataModal({
   slug: string;
   onClose: () => void;
 }) {
-  const data = useViewData(slug, view.id, view.entity_kind);
+  const data = useViewData(slug, view.id, view.entity_kind, { view });
 
   return (
     <Modal open onClose={onClose} title={view.name} size="lg">
@@ -464,11 +464,9 @@ export function SavedViewBody({
       {items.length > 0 && view.view_type !== "kanban" && view.view_type !== "table" && view.view_type !== "trend" && view.view_type !== "calendar" && view.view_type !== "gantt" && view.view_type !== "gallery" && view.view_type !== "heatmap" && view.view_type !== "vending" && (
         <ListRenderer items={items} />
       )}
+      <ViewMore data={data} />
       </RowStockProvider>
       )}
-      {/* Past the server's walk (thousands of records) the rest is paged in
-          here, visibly: a view never passes a page off as the whole. */}
-      <ViewMore data={data} />
     </div>
   );
   // Over rows, the header holds what the module owning them contributes.

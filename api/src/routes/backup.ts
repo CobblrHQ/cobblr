@@ -24,6 +24,7 @@ import { captureBackupSecrets, rebindBackupSecrets } from "../platform/secret-ba
 //
 // Mounted at /api/v1/orgs/:slug/backup. Owner/admin only.
 
+import { advanceRestoredSequences } from "./backup-sequences.js";
 import { leaveOut } from "../platform/take-provenance.js";
 import { uploadMiddleware } from "../platform/uploads.js";
 import { UPLOAD_CEILING_BYTES, uploadedFile } from "@cobblr/platform-contract/upload";
@@ -519,6 +520,7 @@ export async function restoreBackupInto(
         rowsRestored++;
       }
     }
+    await advanceRestoredSequences(client, restorable);
     // The shared rows land in their own transaction just before this one
     // commits: if they fail, the workspace's own rows roll back with them.
     if (sharedRows) platformResult = await restorePlatformRows(orgId, sharedRows, platformIds);
@@ -554,7 +556,7 @@ backupRouter.post("/restore", requireAuth, withTenant, upload, async (req, res, 
       res.status(400).json({ error: { code: "missing_file", message: "Multipart field 'file' (the backup .zip) is required." } });
       return;
     }
-    const confirm = String((req.body as { confirm?: unknown }).confirm ?? "");
+    const confirm = (req.body as { confirm?: unknown }).confirm;
 
     let parsed: ParsedBackup;
     try {
@@ -612,13 +614,13 @@ backupRouter.post("/restore", requireAuth, withTenant, upload, async (req, res, 
       return;
     }
 
-    if (confirm !== "replace" && confirm !== "true") {
+    if (confirm !== "replace") {
       res.status(409).json({
         error: {
           code: "needs_consent",
           message: targetHasData
             ? "This workspace already has data. Restoring REPLACES it. Re-POST with confirm=replace to proceed."
-            : "Restore will recreate this workspace from the backup. Re-POST with confirm=true to proceed.",
+            : "Restore will recreate this workspace from the backup. Re-POST with confirm=replace to proceed.",
           details: {
             restore_rows: totalRows,
             restore_files: files.size,
@@ -657,7 +659,7 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
     if (!requireRole(req, res, "owner", "admin")) return;
     const orgId = req.tenant!.org.id;
     const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-    const confirm = String(req.body?.confirm ?? "");
+    const confirm: unknown = req.body?.confirm;
     let parsedUrl: URL | null = null;
     try {
       parsedUrl = new URL(url);
@@ -691,10 +693,9 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
       res.status(400).json({ error: { code: "bad_archive", message: UNREADABLE_BACKUP_MESSAGE } });
       return;
     }
-    const tdb = (await getTenantDb(orgId)) as unknown as Kysely<unknown>;
-    if ((await workspaceHasData(tdb, parsed)) && confirm !== "replace") {
+    if (confirm !== "replace") {
       res.status(409).json({
-        error: { code: "needs_consent", message: "This workspace already has things in it. Bring the file into a new workspace, or confirm that it replaces what is here." },
+        error: { code: "needs_consent", message: "Restore will recreate this workspace from the backup. Send confirm=replace to proceed." },
       });
       return;
     }
@@ -709,16 +710,6 @@ backupRouter.post("/restore-from-link", requireAuth, withTenant, async (req, res
     next(err);
   }
 });
-
-/** Whether the tables the backup would fill already hold rows here. */
-async function workspaceHasData(tdb: Kysely<unknown>, parsed: ParsedBackup): Promise<boolean> {
-  const existingNow = new Set((await listTenantTables(tdb)).filter((t) => !EXCLUDED_TABLES.has(t)));
-  for (const t of [...parsed.tables.keys()].filter((t) => existingNow.has(t))) {
-    const c = await sql<{ n: number }>`select count(*)::int as n from ${sql.ref(t)}`.execute(tdb);
-    if ((c.rows[0]?.n ?? 0) > 0) return true;
-  }
-  return false;
-}
 
 // ── Destinations (Phase C) — where automatic backups go ──────────────
 // A destination = driver + config + (encrypted) credentials + schedule. The

@@ -109,6 +109,7 @@ export function WorkspaceSwitcher({ inline = false }: { inline?: boolean } = {})
     window.location.assign(`/w/${slug}/dashboard`);
   }
 
+  // GATED-BY: rename is offered only on a workspace its row says this person owns, the floor platform:rename-workspace keeps
   const owned = orgs.filter((o) => o.role === "owner");
   const shared = orgs.filter((o) => o.role !== "owner");
 

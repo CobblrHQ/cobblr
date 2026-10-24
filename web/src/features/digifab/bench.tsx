@@ -79,8 +79,11 @@ export function BenchInstrument({slug,machineId}:{slug:string;machineId:string})
    {record?<div className="flex flex-wrap items-center gap-2"><span className="text-sm break-words">{record.title}</span><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm text-content hover:bg-subtle disabled:opacity-50" onClick={()=>setRecord(null)}>Change record</button></div>:<>
     <label className="block text-sm">Record collection<select aria-label="Record collection" className="input w-full min-h-11" value={kind} onChange={e=>{setKind(e.target.value);setSearch("");}}>{(kinds.data?.items || []).filter(k=>k.id!=="digifab:instrument-reading").map(k=><option key={k.id} value={k.id}>{k.display_name}</option>)}</select></label>
     <SearchInput aria-label="Find a record" placeholder="Find a board or test run" value={search} onChange={setSearch}/>
-    <ul className="max-h-44 overflow-y-auto divide-y divide-line">{choices.data?.items.map(item=><li key={item.id}><button type="button" className="w-full min-h-11 px-2 text-left text-sm break-words" onClick={()=>setRecord(item)}>{item.title}</button></li>)}</ul>
-    {choices.data&&!choices.data.items.length&&<p className="text-sm text-muted">No records found in this collection.</p>}
+    {/* The records arrive after Log fresh reading is drawn: their box holds its room from the start, so a late row never moves the button under a finger (#8042). */}
+    <div className="h-44 overflow-y-auto" data-testid="bench-record-choices">
+     {choices.data?<ul className="divide-y divide-line">{choices.data.items.map(item=><li key={item.id}><button type="button" className="w-full min-h-11 px-2 text-left text-sm break-words" onClick={()=>setRecord(item)}>{item.title}</button></li>)}</ul>:<p className="text-sm text-muted">{choices.isError?"The records could not be read.":"Reading records…"}</p>}
+     {choices.data&&!choices.data.items.length&&<p className="text-sm text-muted">No records found in this collection.</p>}
+    </div>
    </>}
    {instrument.profile==="sigrok"?<><button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>capture()}>{busy?"Waiting for analyser…":"Start capture"}</button><label className="block text-sm">Import .sr<input className="block w-full min-h-11" type="file" accept=".sr" disabled={busy||!record} onChange={e=>{const file=e.target.files?.[0];if(file)void importCapture(file);e.target.value="";}}/></label></>:<button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>void operate("log")}>{busy?"Waiting for instrument…":"Log fresh reading"}</button>}
   </div>}

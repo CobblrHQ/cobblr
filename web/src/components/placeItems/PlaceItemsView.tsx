@@ -11,6 +11,7 @@
 // several places asks what to move. Every move can be undone, and reads
 // "moved via floor plan" in the activity.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useQueryClient } from "@tanstack/react-query";
 import { swallowNextClick } from "../../lib/swallow-click";
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -54,7 +55,7 @@ const LONG_PRESS_MS = 450;
 const DRAG_START_PX = 6;
 
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 function errorText(e: unknown): string {

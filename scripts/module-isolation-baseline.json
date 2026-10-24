@@ -133,12 +133,6 @@
   },
   {
     "rule": "C-kernel-names-module",
-    "file": "api/src/platform/repair-replay-truncated-names.ts",
-    "token": "core-scan",
-    "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot repair for rows a pre-2026-08-12 Replay truncated. Repairing data the platform itself damaged is the platform's job, and it cannot go through a module API because the damaged rows are exactly the ones no live code path visits. It names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRepaired=0 on prod + staging + dev), and docs/design-decisions/replay-recomputes-derivation.md."
-  },
-  {
-    "rule": "C-kernel-names-module",
     "file": "api/src/platform/retire-receipt-failure-placeholders.ts",
     "token": "core-scan",
     "reason": "INTENTIONAL (historical data migration, not kernel logic): a one-shot boot pass that moves a failed receipt's placeholder row (written by core-scan before 2026-09-13) into the session's read state, on every workspace that has one. It cannot go through a module API because the rows are exactly the ones no live code path writes any more; it names core-scan only to SCOPE itself - a workspace without core-scan opens no tenant pool. Retires with the file: see its DONE WHEN header (rowsRetired=0 on prod + staging + dev)."

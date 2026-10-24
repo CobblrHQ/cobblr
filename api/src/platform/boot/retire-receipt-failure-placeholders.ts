@@ -7,7 +7,6 @@ import { retireReceiptFailurePlaceholders } from "../retire-receipt-failure-plac
 export default bootPass({
   name: "retireReceiptFailurePlaceholders",
   phase: "workspaces",
-  after: ["repairReplayTruncatedNames"],
   run: () => retireReceiptFailurePlaceholders(),
   report: (r) => (r.rowsRetired > 0 ? `receipt-failure placeholders: ${r.rowsRetired} retired into session state across ${r.orgsTouched} workspace(s)` : null),
 });

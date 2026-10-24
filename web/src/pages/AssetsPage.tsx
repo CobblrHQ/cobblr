@@ -53,6 +53,14 @@ import { fieldCurrency, formatMoney, toCents } from "@cobblr/platform-contract/m
 
 const ENTITY_KIND = "assets:asset";
 
+function assetFieldValue(asset: Asset, name: string): unknown {
+  if (name === "assigned_to") {
+    const loan = readRecordLoan(asset.metadata);
+    return (loan && !loan.holder_id ? loan.holder : asset.assigned_to_label) ?? loan?.holder ?? asset.metadata?.[name];
+  }
+  return asset.metadata?.[name];
+}
+
 export function AssetsPage({
   instance,
   displayName,
@@ -195,7 +203,7 @@ export function AssetsPage({
   const rows = lensName
     ? allRows.filter((m) =>
         lensFieldDefs.some((d) => {
-          const v = (m.metadata as Record<string, unknown>)[d.name];
+          const v = assetFieldValue(m, d.name);
           return v !== null && v !== undefined && v !== "";
         }),
       )
@@ -559,7 +567,7 @@ function AssetsTable({
           state: a.state,
           identity: [a.manufacturer, a.model, fp.hidden("type") ? null : a.type],
           fields: customCols.map((d) => {
-            const v = (a.metadata as Record<string, unknown>)[d.name];
+            const v = assetFieldValue(a, d.name);
             return { label: d.display_label, value: v === null || v === undefined || v === "" ? null : String(v) };
           }),
           quantity: a.quantity,
@@ -620,7 +628,7 @@ function AssetsTable({
                 </span>
               </td>
               {customCols.map((d) => {
-                const v = (a.metadata as Record<string, unknown>)[d.name];
+                const v = assetFieldValue(a, d.name);
                 return (
                   <td key={d.id} className="px-3 py-2 text-content dark:text-mortar-200 text-xs">
                     {v === null || v === undefined || v === "" ? "—" : String(v)}
@@ -725,6 +733,7 @@ export function AssetDetailModal({
   });
 
   const a = asset.data;
+  const loan = readRecordLoan(a?.metadata);
   const mainCurrency = useMoneyCurrency();
   async function handleDelete() {
     if (!a) return;
@@ -880,6 +889,9 @@ export function AssetDetailModal({
             entityKind={kind}
             entityId={a.id}
             values={a.metadata}
+            readOnlyValues={loan && !loan.holder_id
+              ? { assigned_to: loan.holder }
+              : undefined}
             onCommit={(name, value) =>
               update.mutate({ metadata: { [name]: value } })
             }

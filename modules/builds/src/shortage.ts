@@ -1,3 +1,4 @@
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 // The one sentence a build short of its components is refused with, said the
 // same by the server that refuses it and by the Build button that will not
 // press (#5976). Pure, so the page and the engine share it.
@@ -9,7 +10,7 @@ export interface ComponentCover {
   optional: boolean;
 }
 
-const fmt = (n: number) => String(parseFloat(n.toFixed(3)));
+const fmt = (n: number) => quantityNumber(n);
 
 /** "Not enough to build 1: Blanks needs 2, 0 in stock.", or null when every
  *  required component covers `qty` builds. An optional one never blocks. */

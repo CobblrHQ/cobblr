@@ -204,7 +204,17 @@ const STOCK_MOVES = [
   "inventory:consume-stock",
   "inventory:adjust-stock",
 ];
-export function PartDetailPage({ id, onClose }: { id: string; onClose: () => void }) {
+/** The record's page. Once the record is deleted the whole page is dropped,
+ *  not just hidden: every read it holds (detail, stock shape, holdings,
+ *  placement, pairings) would otherwise refetch the removed record and come
+ *  back 404 while the caller is still closing it (#8053). */
+export function PartDetailPage({ id, onClose, onDeleted }: { id: string; onClose: () => void; onDeleted?: () => void }) {
+  const [deleted, setDeleted] = useState(false);
+  if (deleted) return null;
+  return <PartDetailBody id={id} onClose={onClose} onDeleted={() => { setDeleted(true); onDeleted?.(); }} />;
+}
+
+function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () => void; onDeleted: () => void }) {
   const mainCurrency = useMoneyCurrency();
   const { api, orgSlug, getToken, entityKind, instance, itemNoun, parent, countWords, storageTracking, pasteTracking } = useInventory();
   const stock = useStockWrites();
@@ -372,6 +382,11 @@ export function PartDetailPage({ id, onClose }: { id: string; onClose: () => voi
   const remove = useMutation({
     mutationFn: () => api.deletePart(id!),
     onSuccess: () => {
+      onDeleted?.();
+      for (const key of [["inventory-part", id], ["inventory-holdings", id], ["stock-shape", orgSlug, id]]) {
+        void qc.cancelQueries({ queryKey: key });
+        qc.removeQueries({ queryKey: key });
+      }
       toast.success(`${itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1)} deleted.`);
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
       onClose();
@@ -1095,17 +1110,18 @@ export function PartDetailModal({
   onClose: () => void;
 }) {
   const { api, itemNoun } = useInventory();
+  const [deleted, setDeleted] = useState(false);
   const part = useQuery({
     queryKey: ["inventory-part", id],
     queryFn: () => api.getPart(id),
-    enabled: !!id,
+    enabled: !!id && !deleted,
   });
   // While the record loads, title with the instance's own noun ("Film"), never a
   // hardcoded "Part". See one-record-substrate.md (vocabulary is per-instance).
   const loadingTitle = itemNoun.charAt(0).toUpperCase() + itemNoun.slice(1);
   return (
     <RecordFormModal open onClose={onClose} title={part.data?.title ?? part.data?.name ?? loadingTitle}>
-      <PartDetailPage id={id} onClose={onClose} />
+      <PartDetailPage id={id} onClose={onClose} onDeleted={() => setDeleted(true)} />
     </RecordFormModal>
   );
 }

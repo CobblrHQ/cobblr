@@ -1,3 +1,4 @@
+import { useCan } from "../lib/can";
 // /tags/:id: one tag, and everything that carries it, across every kind.
 //
 // core-tags declared this as the tag's detail route and nothing drew it, so a
@@ -23,6 +24,7 @@ import { ContributedDetailPanels, ContributedTagToolbar } from "../panels/regist
 export function TagDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { activeSlug, activeOrg } = useActiveOrg();
+  const mayMerge = !!useCan("core-tags:merge");
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
@@ -237,6 +239,7 @@ export function TagDetailPage() {
 
       {editing && (
         <EditTagModal
+          mayMerge={mayMerge}
           slug={activeSlug}
           tag={tag}
           onClose={() => setEditing(false)}

@@ -53,6 +53,7 @@ export function BlockedActionSheet() {
 
   return (
     <>
+      {/* GATED-BY: the server's own answer for this person (blocked.selfApply), the gate a module's switch meets */}
       {raised && raised.blocked.selfApply && <TurnOnSheet raised={raised} onClose={clearBlockedAction} />}
       {raised && !raised.blocked.selfApply && <AskSheet raised={raised} onClose={clearBlockedAction} />}
       {resumeId && !raised && <ResumeSheet requestId={resumeId} />}

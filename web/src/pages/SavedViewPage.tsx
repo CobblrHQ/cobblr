@@ -35,7 +35,7 @@ export function SavedViewPage({ viewId: viewIdProp, embedded = false }: { viewId
   // link that reopens scaled (#6897).
   const [search] = useSearchParams();
   const inputs = viewInputsFromSearch(search);
-  const data = useViewData(activeSlug, viewId, view?.entity_kind ?? "", { enabled: !!view, inputs });
+  const data = useViewData(activeSlug, viewId, view?.entity_kind ?? "", { enabled: !!view, inputs, view: view ?? undefined });
   const bar = data.inputs ? <ViewInputsBar declared={data.inputs.declared} values={data.inputs.values} notes={data.inputs.notes} /> : null;
   usePageTitle(view?.name ?? "View");
 

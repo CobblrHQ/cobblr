@@ -144,11 +144,13 @@ export const locationsApi = {
       `/orgs/${slug}/modules/core-locations/locations`,
       body,
     ),
-  updateLocation: (slug: string, id: string, body: Partial<Location> & { allow_duplicate?: boolean }) =>
+  /** `headers` from editOf: what the edited fields were when the form opened. */
+  updateLocation: (slug: string, id: string, body: Partial<Location> & { allow_duplicate?: boolean }, headers?: Record<string, string>) =>
     request<Location>(
       "PATCH",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
       body,
+      headers,
     ),
   /** Deletes the place, every place inside it, and takes out what was kept
    *  there; says how much went, for the Undo toast. */

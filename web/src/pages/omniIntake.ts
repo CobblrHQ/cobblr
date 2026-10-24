@@ -88,29 +88,21 @@ export function classifyOmni(raw: string, ownOrigins?: readonly string[]): OmniI
   return { kind: "text", value: s, action: null };
 }
 
-/** What a set of FILES handed to the box should become. Same question
- *  classifyOmni answers for text, and the same box asks it: a file can arrive
- *  by drag-and-drop or by pasting a screenshot, and both are the same intake.
- *
- *  Routing is by type, not by how it arrived, which is why the two entry points
- *  share this. Note the known limitation it inherits: an IMAGE of a receipt is
- *  routed to photo intake, because nothing here can tell a photographed receipt
- *  from a photographed product. That is stated and specced in
- *  docs/design-decisions/receipt-from-a-photo.md; when it is fixed, it is fixed
- *  here, once, for drop and paste together. */
-export type FileIntent =
-  | { kind: "photos"; files: File[] }
-  | { kind: "receipt"; file: File }
-  | null;
+/** Partition a selection without dropping any files. Images follow photo
+ *  intake; documents are each read as a separate receipt. */
+export interface FileIntent {
+  photos: File[];
+  receipts: File[];
+}
 
-export function classifyFiles(files: File[]): FileIntent {
+export function classifyFiles(files: File[]): FileIntent | null {
   if (!files.length) return null;
-  const images = files.filter((f) => f.type.startsWith("image/"));
-  // ALL images -> one photo session. A mixed selection is treated as a
-  // document drop, because the non-image is the specific thing the user meant.
-  if (images.length === files.length) return { kind: "photos", files: images };
-  const first = files[0];
-  return first ? { kind: "receipt", file: first } : null;
+  const photos: File[] = [];
+  const receipts: File[] = [];
+  for (const file of files) {
+    (file.type.startsWith("image/") ? photos : receipts).push(file);
+  }
+  return { photos, receipts };
 }
 
 /** Placeholder copy - a phone cannot show the full sentence. */

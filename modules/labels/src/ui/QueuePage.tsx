@@ -891,6 +891,24 @@ export function QueuePage() {
     onSettled: () => setPrintProgress(null),
   });
 
+  const loadingLayout = [list, printersQ, autoflush, customSizes, qrBase, codes, overlayCfg, previewQr]
+    .some((query) => query.isLoading);
+  const [readyOrg, setReadyOrg] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loadingLayout) setReadyOrg(orgSlug);
+  }, [loadingLayout, orgSlug]);
+
+  // Initial reads change the toolbar's shape and the rows' widths. Reveal them
+  // together, then keep them mounted through edits and background refreshes.
+  if (readyOrg !== orgSlug) {
+    return (
+      <div className="space-y-4">
+        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
+        <p role="status" className="text-sm text-faint dark:text-slate-500">Loading labels…</p>
+      </div>
+    );
+  }
+
   const perSheetCount = size ? size.cols * size.rows : 0;
   const sheets = perSheetCount > 0 ? Math.ceil(Math.max(total, 0) / perSheetCount) : 0;
 

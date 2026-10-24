@@ -53,11 +53,17 @@ discardRouter.post(
       .updateTable("core_scan_inbox_items")
       .set({ status: "discarded", updated_at: new Date() })
       .where("id", "=", id)
+      .where("status", "in", ["pending", "enriching", "discarded"])
       .$if(!!expected, (q) => q.where("status", "=", "pending")
         .where("target_container_kind", "=", expected!.kind).where("target_container_id", "=", expected!.id))
       .returningAll()
       .executeTakeFirst();
     if (!row) {
+      const current = await db.selectFrom("core_scan_inbox_items").select(["status"]).where("id", "=", id).executeTakeFirst();
+      if (current?.status === "resolved") {
+        res.status(409).json({ error: { code: "already_resolved", message: "This scan is being filed or is already filed. Refresh the inbox to see it." } });
+        return;
+      }
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }

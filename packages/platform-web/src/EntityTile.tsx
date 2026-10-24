@@ -9,6 +9,7 @@
 // chip (state / qty / status). Card is fully clickable when wrapped
 // in a Link.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import type { ReactNode } from "react";
 import { EntityPhoto } from "./EntityPhoto";
 import { PICTURE_STATE_TEXT, type PictureState } from "./photoSuggestions";
@@ -81,7 +82,7 @@ interface Props {
 
 /** The "×N" a tile shows for a record standing for N things, or null. */
 export function countBadge(count: number | null | undefined): string | null {
-  return typeof count === "number" && Number.isFinite(count) && count > 1 ? `×${Number.isInteger(count) ? count : parseFloat(count.toFixed(3))}` : null;
+  return typeof count === "number" && Number.isFinite(count) && count > 1 ? `×${quantityNumber(count)}` : null;
 }
 
 export function EntityTile({ src, title, subtitle: rawSubtitle, badge, color, values, fieldDefs, attention, status, suggestedSrc, pictureState, count }: Props) {

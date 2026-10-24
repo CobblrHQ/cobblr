@@ -320,12 +320,14 @@ function ThemeChoiceRow<T extends string | null>({
   options,
   value,
   onPick,
+  disabled = false,
 }: {
   label: string;
   sub: string;
   options: { value: T; label: string; icon: typeof Sun; hint: string }[];
   value: T;
   onPick: (v: T) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
@@ -341,6 +343,7 @@ function ThemeChoiceRow<T extends string | null>({
               key={o.label}
               type="button"
               aria-pressed={selected}
+              disabled={disabled}
               title={o.hint}
               onClick={() => onPick(o.value)}
               className={
@@ -362,6 +365,11 @@ function ThemeChoiceRow<T extends string | null>({
 
 function AppearanceSection() {
   const { accountPref, deviceOverride, setAccountPref, setDeviceOverride } = useTheme();
+  const toast = useToast();
+  const save = useMutation({
+    mutationFn: setAccountPref,
+    onError: () => toast.error("Couldn't save your account theme. Try again."),
+  });
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2.5">
       <h2 className="text-sm font-medium text-content dark:text-slate-300 flex items-center gap-2">
@@ -372,13 +380,16 @@ function AppearanceSection() {
         label="Account default"
         sub="Follows you to every workspace and device."
         value={accountPref}
-        onPick={setAccountPref}
+        onPick={(value) => save.mutate(value)}
+        disabled={save.isPending}
         options={[
           { value: null, label: "Match device", icon: Monitor, hint: "follow each device's OS" },
           { value: "light", label: "Light", icon: Sun, hint: "always light" },
           { value: "dark", label: "Dark", icon: Moon, hint: "always dark" },
         ]}
       />
+
+      {save.isPending && <p role="status" className="text-xs text-muted">Saving account theme…</p>}
 
       <ThemeChoiceRow
         label="This device only"

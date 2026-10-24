@@ -21,6 +21,7 @@ export { useCan, useCapabilities, useMayDelete, useRoleAtLeast, capabilityAllows
 export { rowOpen, ROW_OWN_CONTROLS } from "./row-open";
 export { EntityActionsBar, useRecordActions } from "./EntityActionsBar";
 export { HoldsQuiet, OnceQuiet, useOnceQuiet } from "./OnceQuiet";
+export { changedFrom, editOf } from "./changed-from";
 export { RecordHeaderChips } from "./RecordHeaderChips";
 export { AllergenPills, allergenWords } from "./AllergenPills";
 export { RecordDisposition } from "./RecordDisposition";
@@ -404,3 +405,4 @@ export { resetSharedReads, sharedRead } from "./shared-reads";
 export { asAPersonsWrite, browserOffline, forgetWaitingWrites, keepWaitingWrite, keptByThisPage, landedWrite, madeByAPerson, sendWaitingWrites, subscribeWaitingWrites, waitingWriteCount, waitingWritesToSend, withWaitingWrites, type SendOutcome, type WaitingWrite } from "./waiting-writes";
 export { StatusRow, type StatusRowProps } from "./StatusRow";
 export { configureProductName, productName } from "./product-name";
+export { networkFailureMessage, OFFLINE_SENTENCE } from "./network-failure";

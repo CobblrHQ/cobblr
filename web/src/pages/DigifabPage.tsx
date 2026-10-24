@@ -1,13 +1,12 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName, useSentWords } from "@cobblr/platform-web";
-import { useCan } from "../lib/can";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
 import { useJobStartReview } from "../features/digifab/startReview";
 import { LaserLayoutPlanner } from "../features/digifab/LaserLayout";
 import { LaserMaterialForm } from "../features/digifab/laserMaterial";
-import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel, NumberField, SegmentedChoice } from "@cobblr/platform-web";
+import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeWorkspaceShape, DragInput, Lightbox, Modal, useToast, useConfirm, usePageTitle, useImageSrc, SecretInput, EntityPhoto, FilePreview, AddressInput, SearchInput, CustomFieldsPanel, NumberField, OnceQuiet, SegmentedChoice } from "@cobblr/platform-web";
 // /configuration/digifab — Digital Fabrication. Manage connections to the
 // software that runs your machines (FDM Monster, OctoPrint, …): add one,
 // test it, list its printers, link printers to machines, and run the job
@@ -16,11 +15,13 @@ import { ContributedDetailPanels, FieldPack, fieldNeed, RecordFormModal, changeW
 
 import { cancelOutcome, canCancelJob } from "../lib/digifab-cancel";
 import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { useMutation, useQueries, useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useInfiniteQuery, useQueryClient, useQueries } from "@tanstack/react-query";
 import { Plus, Trash2, Wifi, Printer, RefreshCw, Send, ListChecks, Boxes, X, ListPlus, ChevronRight, Share2, Ban, Layers, Sliders } from "lucide-react";
 import { ApiError, api, type DigifabConnection, type DigifabJob, type DigifabFleet, type BambuMode, type DigifabLibraryItem, type DigifabHistory, type DigifabRun, type DigifabFailureConfig, type DigifabDetector, type DigifabDetectorCatalogEntry } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+import { useCan, useRoleAtLeast } from "../lib/can";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { PrintUpdatesPanel } from "./PrintUpdatesPanel";
 import { Combobox } from "../components/Combobox";
 import { CreateConnectionModal, FleetView, PrintDetailModal, LIBRARY_DRAG_MIME, fetchAllMachines } from "../features/digifab/fleet";
@@ -52,14 +53,23 @@ export function DigifabPage({
   const [importOpen, setImportOpen] = useState(false);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [editConn, setEditConn] = useState<DigifabConnection | null>(null);
+  // Setting machines up (connections, drivers, a farm import, sharing) is the
+  // admin tier's, as its routes say; testing a connection and turning the
+  // module on are their own actions (#7892).
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const canTest = useCan("digifab:test-connection");
+  const canEnable = useCan("platform:enable-module");
   // IA (the author: "a bit much to have it all there"): the page distinguishes OPERATE
   // (floor + queue + library + history — daily) from SETUP (connections, pools,
   // print-update rules — set-once). Floor is the page; Setup is one click away.
   // setupOnly (settings route /configuration/digifab): the FLOOR is an
   // operate surface and doesn't belong in Configuration — settings shows the
   // set-once plumbing only; the floor lives at /digifab (the author, 2026-07-03).
+  // A link to one job (?job=, the job's detail route) opens on the floor,
+  // where its queue is, whatever tab was last open (#7903).
+  const [params] = useSearchParams();
   const [tab, setTab] = useState<"floor" | "setup">(() =>
-    setupOnly ? "setup" : localStorage.getItem("cobblr.digifab.tab") === "setup" ? "setup" : "floor");
+    setupOnly ? "setup" : !params.get("job") && localStorage.getItem("cobblr.digifab.tab") === "setup" ? "setup" : "floor");
   const pickTab = (t: "floor" | "setup") => {
     localStorage.setItem("cobblr.digifab.tab", t);
     setTab(t);
@@ -145,13 +155,17 @@ export function DigifabPage({
             Connect to the software that runs your machines (FDM Monster, OctoPrint, Bambu, a LAN bridge…), send files to be
             made, and track jobs to completion.
           </p>
-          <button
-            onClick={() => enableDigifab.mutate()}
-            disabled={enableDigifab.isPending}
-            className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition disabled:opacity-50"
-          >
-            <Plus size={15} /> {enableDigifab.isPending ? "Enabling…" : "Enable Digital Fabrication"}
-          </button>
+          {canEnable ? (
+            <button
+              onClick={() => enableDigifab.mutate()}
+              disabled={enableDigifab.isPending}
+              className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition disabled:opacity-50"
+            >
+              <Plus size={15} /> {enableDigifab.isPending ? "Enabling…" : "Enable Digital Fabrication"}
+            </button>
+          ) : (
+            <p className="text-sm text-muted dark:text-slate-400">An owner, an admin or an editor of this workspace turns it on.</p>
+          )}
         </div>
       </div>
     );
@@ -200,16 +214,25 @@ export function DigifabPage({
               <p className="text-sm text-muted dark:text-slate-400 mb-4">
                 Point {productName()} at the software that runs your machines - FDM Monster, OctoPrint, Bambu, a LAN bridge.
               </p>
-              <button onClick={() => pickTab("setup")} className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition">
-                <Plus size={15} /> Open Setup
-              </button>
+              {setsUp ? (
+                <button onClick={() => pickTab("setup")} className="inline-flex items-center gap-2 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-4 py-2 text-sm transition">
+                  <Plus size={15} /> Open Setup
+                </button>
+              ) : (
+                <p className="text-sm text-muted dark:text-slate-400">An owner, an admin or an editor of this workspace connects them.</p>
+              )}
             </div>
           )}
-          {(list.isLoading || items.length > 0) && <FleetView slug={activeSlug} />}
-          {items.length > 0 && <ProductionRunsSection slug={activeSlug} />}
-          {items.length > 0 && <PrintQueueSection connections={items} />}
-          {items.length > 0 && <LibrarySection slug={activeSlug} />}
-          {items.length > 0 && <PrintHistorySection slug={activeSlug} />}
+          {/* The fleet, the queue and the library each fill in from their own
+              answers, and each one arriving pushed the buttons below it
+              (#7794): drawn together once the floor has stopped asking. */}
+          <OnceQuiet className="space-y-4">
+            {(list.isLoading || items.length > 0) && <FleetView slug={activeSlug} />}
+            {items.length > 0 && <ProductionRunsSection slug={activeSlug} />}
+            {items.length > 0 && <PrintQueueSection connections={items} />}
+            {items.length > 0 && <LibrarySection slug={activeSlug} />}
+            {items.length > 0 && <PrintHistorySection slug={activeSlug} />}
+          </OnceQuiet>
         </>
       )}
 
@@ -221,6 +244,8 @@ export function DigifabPage({
           Connect to the software that runs your machines - FDM Monster, OctoPrint, and friends - then group them into pools
           and wire up print updates.
         </p>
+        {setsUp && (
+          <>
         <button
           onClick={() => setBulkOpen(true)}
           className="inline-flex items-center gap-2 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition"
@@ -255,8 +280,11 @@ export function DigifabPage({
         >
           <Plus size={14} /> Add connection
         </button>
+          </>
+        )}
       </div>
 
+      <OnceQuiet className="space-y-4">
       <h2 className="text-sm font-semibold text-content dark:text-mortar-100 pt-2">Connections</h2>
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {items.length === 0 && !list.isLoading && (
@@ -311,7 +339,7 @@ export function DigifabPage({
                   </div>
                 )}
               </div>
-              <button
+              {canTest && <button
                 aria-label="Test connection"
                 onClick={() => test.mutate(c.id)}
                 disabled={test.isPending}
@@ -319,7 +347,8 @@ export function DigifabPage({
                 className="text-faint hover:text-accent transition p-1.5 disabled:opacity-50"
               >
                 {test.isPending && test.variables === c.id ? <RefreshCw size={15} className="animate-spin" /> : <Wifi size={15} />}
-              </button>
+              </button>}
+              {setsUp && <>
               <button
                 aria-label="Edit connection (rename / host / credentials / enable)"
                 onClick={() => setEditConn(c)}
@@ -344,6 +373,7 @@ export function DigifabPage({
               >
                 <Trash2 size={15} />
               </button>
+              </>}
             </div>
             {isOpen && (
               <div className="mt-2 ml-7 border-l-2 border-line dark:border-slate-700 pl-3">
@@ -356,6 +386,7 @@ export function DigifabPage({
       </ul>
 
       {items.length > 0 && <SetupPanels slug={activeSlug} />}
+      </OnceQuiet>
         </>
       )}
 
@@ -1426,12 +1457,27 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
   const toast = useToast();
   const confirm = useConfirm();
   const [newOpen, setNewOpen] = useState(false);
-  // Making, sending and retrying a job runs a machine: drawn only for someone
-  // who may, never a Send that answers 403 (#7892). Stop and Cancel keep
-  // their own gates.
-  const runsMachines = useCan("digifab:operate") === true;
+  // What this viewer may do to a job, by the action each route checks: a
+  // member watches the queue and may stop a print; starting, sending and
+  // tidying it are an operator's or the admin tier's (#7892).
+  const may = {
+    send: useCan("digifab:send"),
+    operate: useCan("digifab:operate"),
+    poll: useCan("digifab:refresh-job"),
+    remove: useCan("digifab:delete-job"),
+  };
   const [sel, setSel] = useState<Set<string>>(new Set()); // F-10: bulk selection
-  const [detailId, setDetailId] = useState<string | null>(null); // job detail modal
+  // The open job lives in the address (?job=<id>): the job's detail route,
+  // so a link from Cobb, a notification or another page opens it (#7903).
+  const [params, setParams] = useSearchParams();
+  const detailId = params.get("job");
+  const setDetailId = (id: string | null) =>
+    setParams((p) => {
+      const next = new URLSearchParams(p);
+      if (id) next.set("job", id);
+      else next.delete("job");
+      return next;
+    }, { replace: true });
   // ⑥ SimplyPrint-style "queue timeline": one row per printer — what's running
   // (with its finish clock) and what's lined up behind it.
   const [view, setView] = useState<"list" | "timeline">("list");
@@ -1544,9 +1590,9 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
   const toggleSel = (id: string) =>
     setSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const clearSel = () => setSel(new Set());
-  const bulkSendable = selItems.filter(canSend);
+  const bulkSendable = may.send ? selItems.filter(canSend) : [];
   const bulkCancelable = selItems.filter(canCancel);
-  const bulkDeletable = selItems.filter(canDelete);
+  const bulkDeletable = may.remove ? selItems.filter(canDelete) : [];
   const allChecked = items.length > 0 && items.every((j) => sel.has(j.id));
   const toggleAll = () => setSel(allChecked ? new Set() : new Set(items.map((j) => j.id)));
   const bulkSend = async () => {
@@ -1614,13 +1660,13 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
             { value: "timeline", label: "Timeline" },
           ]}
         />
-        {runsMachines && (
-        <button
-          onClick={() => setNewOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition"
-        >
-          <Plus size={13} /> New job
-        </button>
+        {may.operate && (
+          <button
+            onClick={() => setNewOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-2.5 py-1 text-xs transition"
+          >
+            <Plus size={13} /> New job
+          </button>
         )}
       </div>
 
@@ -1628,7 +1674,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
         <div className="flex items-center gap-2 rounded bg-subtle dark:bg-slate-800 px-2.5 py-1.5 text-xs">
           <span className="text-content dark:text-mortar-200 font-medium">{sel.size} selected</span>
           <div className="flex-1" />
-          {runsMachines && bulkSendable.length > 0 && (
+          {may.send && bulkSendable.length > 0 && (
             <button onClick={bulkSend} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-0.5 disabled:opacity-50">
               <Send size={11} /> Send {bulkSendable.length}
             </button>
@@ -1716,7 +1762,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   {jb.error && <span className="text-ember-500"> · {jb.error}</span>}
                 </div>
               </button>
-              {canPoll(jb) && (
+              {may.poll && canPoll(jb) && (
                 <button
                   aria-label="Refresh status"
                   onClick={() => poll.mutate(jb.id)}
@@ -1727,7 +1773,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <RefreshCw size={14} className={poll.isPending && poll.variables === jb.id ? "animate-spin" : ""} />
                 </button>
               )}
-              {runsMachines && canSend(jb) && (
+              {may.send && canSend(jb) && (
                 <button
                   onClick={() => askSend(jb)}
                   disabled={send.isPending || startReview.busy}
@@ -1736,7 +1782,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <Send size={12} /> Send
                 </button>
               )}
-              {runsMachines && canRetry(jb) && (
+              {may.operate && canRetry(jb) && (
                 <button
                   onClick={() => retry.mutate(jb.id)}
                   disabled={retry.isPending}
@@ -1746,14 +1792,14 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   <RefreshCw size={12} className={retry.isPending && retry.variables === jb.id ? "animate-spin" : ""} /> Retry
                 </button>
               )}
-              {runsMachines && canAssign(jb) && <ReassignControl job={jb} slug={activeSlug} onDone={invalidate} />}
+              {may.operate && canAssign(jb) && <ReassignControl job={jb} slug={activeSlug} onDone={invalidate} />}
               {canCancel(jb) && (
                 <button aria-label="Cancel" onClick={() => askCancel(jb)} disabled={cancel.isPending} title="Cancel" className="text-faint hover:text-ember-500 transition p-1.5 disabled:opacity-50">
                   <Ban size={14} />
                 </button>
               )}
               {jb.target_device === "lightburn" && jb.remote_job_id && !TERMINAL_JOB(jb.status) && <span className="text-xs text-muted max-w-40">{jb.status === "sent" ? "Start sent, waiting for LightBurn to report running. " : ""}Stop in LightBurn or at the machine</span>}
-              {canDelete(jb) && (
+              {may.remove && canDelete(jb) && (
                 <button
                   aria-label="Remove from queue"
                   onClick={async () => { if (await confirm({ title: "Remove this job?", message: "Deletes it from the queue.", confirmLabel: "Remove", destructive: true })) del.mutate(jb.id); }}
@@ -1819,7 +1865,6 @@ function JobDetailModal({
   const { activeSlug } = useActiveOrg();
   const toast = useToast();
   const confirm = useConfirm();
-  const runsMachines = useCan("digifab:operate") === true;
   const q = useQuery({
     queryKey: ["digifab-job", activeSlug, jobId],
     queryFn: () => api.getDigifabJob(activeSlug, jobId),
@@ -1832,6 +1877,7 @@ function JobDetailModal({
   const act = (fn: () => Promise<unknown>, ok: string) =>
     fn().then(() => { toast.success(ok); refresh(); }).catch((e) => toast.error(e instanceof ApiError ? e.message : String(e)));
   const startReview = useJobStartReview(refresh);
+  const may = { send: useCan("digifab:send"), operate: useCan("digifab:operate"), edit: useCan("digifab:prioritize-job") };
   const send = useMutation({ mutationFn: () => api.sendDigifabJob(activeSlug, jobId), onSuccess: () => { toast.success("Sent"); refresh(); }, onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)) });
   const setField = useMutation({
     mutationFn: (metadata: Record<string, unknown>) => api.updateDigifabJob(activeSlug, jobId, { metadata }),
@@ -1887,7 +1933,7 @@ function JobDetailModal({
               <select aria-label="Priority"
                 value={j.priority}
                 onChange={(e) => setPriority.mutate(Number(e.target.value))}
-                disabled={setPriority.isPending || TERMINAL_JOB(j.status)}
+                disabled={!may.edit || setPriority.isPending || TERMINAL_JOB(j.status)}
                 className="px-1.5 py-0.5 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900 disabled:opacity-50"
               >
                 <option value={0}>Normal</option>
@@ -1901,18 +1947,18 @@ function JobDetailModal({
             {row("Last polled", when(j.last_polled_at))}
           </div>
           {/* The job's own fields, as a bundle or a person defines them. */}
-          <CustomFieldsPanel entityKind="digifab:job" entityId={j.id} values={j.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
+          <CustomFieldsPanel entityKind="digifab:job" entityId={j.id} values={j.metadata ?? {}} readOnly={!may.edit} onCommit={(name, value) => setField.mutate({ [name]: value })} />
           <ContributedDetailPanels target="digifab:job" ctx={{ slug: activeSlug, entityId: j.id, entityTitle: jobDisplayName(j) }} />
           <div className="flex justify-end gap-2 pt-1">
             {j.embroidery_run && <Link to="/digifab/embroidery" className="inline-flex min-h-11 items-center rounded border border-line px-4 py-2">Open embroidery run</Link>}
-            {runsMachines && canSend(j) && (
+            {may.send && canSend(j) && (
               <button onClick={() => void startReview.beforeStart(jobId, async () => {
                 if (await confirm({ title: "Start this job?", message: "This physically starts the machine. Check it is ready before continuing.", confirmLabel: "Start job", destructive: true })) send.mutate();
               })} disabled={send.isPending || startReview.busy} className="inline-flex items-center gap-1.5 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm disabled:opacity-50">
                 <Send size={13} /> Send
               </button>
             )}
-            {runsMachines && canRetry(j) && (
+            {may.operate && canRetry(j) && (
               <button onClick={() => act(() => api.retryDigifabJob(activeSlug, jobId), "Retrying")} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent hover:text-accent px-3 py-1.5 text-sm">
                 <RefreshCw size={13} /> Retry
               </button>
@@ -2530,6 +2576,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
   });
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ["digifab-links", activeSlug] });
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const link = useMutation({
     mutationFn: (v: { remote_device_id: string; remote_device_name: string | null; machine_id: string; machine_label: string | null }) =>
       api.createDigifabLink(activeSlug, { connection_id: connection.id, ...v }),
@@ -2576,7 +2623,7 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
                   </div>
                 )}
               </div>
-              <Combobox
+              {setsUp && <Combobox
                 className="w-full sm:w-56"
                 disabled={link.isPending || unlink.isPending || machines.isLoading}
                 value={linked?.machine_id ?? ""}
@@ -2596,14 +2643,14 @@ function ConnectionPrinters({ connection }: { connection: DigifabConnection }) {
                     machine_label: m?.name ?? null,
                   });
                 }}
-              />
+              />}
             </li>
           );
         })}
       </ul>
-      <p className="mt-2 text-[11px] text-faint">
+      {setsUp && <p className="mt-2 text-[11px] text-faint">
         Link a farm printer to one of your machines - a job linked to that machine then routes to its printer automatically.
-      </p>
+      </p>}
     </div>
   );
 }
@@ -2619,10 +2666,11 @@ function LibrarySection({ slug }: { slug: string }) {
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [materialItem, setMaterialItem] = useState<DigifabLibraryItem | null>(null);
+  const canRename = useCan("digifab:rename-print-file");
   const lib = useQuery({ queryKey: ["digifab-library", slug], queryFn: () => api.listDigifabLibrary(slug), enabled: !!slug });
   const upload = useMutation({
     mutationFn: (file: File) => api.uploadDigifabLibrary(slug, file),
-    onSuccess: (item) => { toast.success("Added to library"); if (item.kind === "lbrn2") setMaterialItem(item); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); },
+    onSuccess: (item) => { toast.success("Added to library"); if (item.kind === "lbrn2" && canRename) setMaterialItem(item); void qc.invalidateQueries({ queryKey: ["digifab-library", slug] }); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Upload failed"),
   });
   const itemsL = lib.data?.items ?? [];
@@ -2654,9 +2702,9 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
   const toast = useToast();
   const confirm = useConfirm();
   const [sendOpen, setSendOpen] = useState(false);
-  const runsMachines = useCan("digifab:operate") === true;
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [materialOpen, setMaterialOpen] = useState(false);
+  const may = { send: useCan("digifab:operate"), remove: useCan("digifab:delete-print-file"), rename: useCan("digifab:rename-print-file") };
   const thumb = useImageSrc(item.thumbnail_file_id ? api.fileRawUrl(slug, item.thumbnail_file_id) : null);
   const del = useMutation({
     mutationFn: () => api.deleteDigifabLibrary(slug, item.id),
@@ -2669,7 +2717,7 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
     // the FDMM drag-a-gcode-onto-a-printer interaction.
     <div
       className="rounded-lg border border-line dark:border-slate-700 overflow-hidden flex flex-col cursor-grab active:cursor-grabbing"
-      draggable={!(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind)}
+      draggable={!!may.send && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind)}
       onDragStart={(e) => {
         e.dataTransfer.setData(LIBRARY_DRAG_MIME, JSON.stringify({ name: item.name, file_id: item.file_id }));
         e.dataTransfer.effectAllowed = "copy";
@@ -2692,18 +2740,18 @@ export function LibraryCard({ item, slug }: { item: DigifabLibraryItem; slug: st
           {item.metadata?.parts_per_plate && <span>· {item.metadata.parts_per_plate}{item.metadata.laser_layout ? " parts/sheet" : "×/plate"}</span>}
         </div>
         <div className="flex items-center gap-1.5 pt-1 mt-auto">
-          {runsMachines && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
+          {may.send && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && !["svg", "dxf"].includes(item.kind) && <button onClick={() => setSendOpen(true)} className="flex-1 inline-flex items-center justify-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-[11px]"><Send size={11} /> Send</button>}
           {(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <span className="text-xs text-muted">Use the queued job at its station.</span>}
-          <button
+          {may.remove && <button
             aria-label="Delete"
             onClick={async () => { if (await confirm({ title: `Delete "${item.name}"?`, message: "Removes it from the library (doesn't touch any machine).", confirmLabel: "Delete", destructive: true })) del.mutate(); }}
             disabled={del.isPending || !!(item.metadata?.laser_layout || item.metadata?.cutter_plan)}
             className="text-faint hover:text-ember-500 p-1 disabled:opacity-50"
             title="Delete"
-          ><Trash2 size={13} /></button>
+          ><Trash2 size={13} /></button>}
         </div>
         {["svg", "dxf"].includes(item.kind) && <button className="min-h-11 text-xs underline" onClick={() => setLayoutOpen(true)}>Prepare laser batch</button>}
-        {item.kind === "lbrn2" && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <button className="min-h-11 text-xs underline" onClick={() => setMaterialOpen(true)}>{item.metadata?.laser_material ? `${item.metadata.laser_material.thickness_mm} mm ${item.metadata.laser_material.material} · Edit material` : "Set file material"}</button>}
+        {may.rename && item.kind === "lbrn2" && !(item.metadata?.laser_layout || item.metadata?.cutter_plan) && <button className="min-h-11 text-xs underline" onClick={() => setMaterialOpen(true)}>{item.metadata?.laser_material ? `${item.metadata.laser_material.thickness_mm} mm ${item.metadata.laser_material.material} · Edit material` : "Set file material"}</button>}
       </div>
       {layoutOpen && <LaserLayoutPlanner slug={slug} item={item} onClose={() => setLayoutOpen(false)} />}
       {sendOpen && <LibrarySendModal item={item} slug={slug} onClose={() => setSendOpen(false)} />}
@@ -2908,6 +2956,7 @@ function PoolsSection({ slug }: { slug: string }) {
   });
 
   const poolList = pools.data?.items ?? [];
+  const may = { make: useCan("digifab:make-pool"), remove: useCan("digifab:remove-pool"), takeOut: useCan("digifab:remove-from-pool"), add: useRoleAtLeast(ADMIN_TIER) };
 
   return (
     <section className="space-y-2 pt-2">
@@ -2916,7 +2965,7 @@ function PoolsSection({ slug }: { slug: string }) {
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Pools</h2>
         <span className="text-[11px] text-faint">{poolList.length}</span>
         <div className="flex-1" />
-        <form
+        {may.make && <form
           onSubmit={(e) => { e.preventDefault(); if (name.trim()) create.mutate(); }}
           className="flex items-center gap-1.5"
         >
@@ -2929,7 +2978,7 @@ function PoolsSection({ slug }: { slug: string }) {
           <button type="submit" disabled={!name.trim() || create.isPending} className="inline-flex items-center gap-1 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-2 py-1 text-xs disabled:opacity-50">
             <Plus size={12} /> Add
           </button>
-        </form>
+        </form>}
       </div>
 
       {poolList.length === 0 ? (
@@ -2948,7 +2997,7 @@ function PoolsSection({ slug }: { slug: string }) {
                   <span className="text-[11px] text-faint">{p.members.length} machine{p.members.length === 1 ? "" : "s"}</span>
                   {typeof p.config.hour_rate === "number" && <span className="text-[11px] text-faint">· {formatMoney(centsFromAmount(p.config.hour_rate), { currency: String(p.config.hour_rate_currency ?? "") || undefined })} an hour</span>}
                   <div className="flex-1" />
-                  <button
+                  {may.remove && <button
                     aria-label="Remove pool"
                     onClick={async () => {
                       const ok = await confirm({ title: `Remove pool "${p.name}"?`, message: "Jobs already assigned keep running; nothing is sent anywhere.", confirmLabel: "Remove", destructive: true });
@@ -2958,7 +3007,7 @@ function PoolsSection({ slug }: { slug: string }) {
                     className="text-faint hover:text-ember-500 transition p-1"
                   >
                     <Trash2 size={14} />
-                  </button>
+                  </button>}
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5">
                   {p.members.map((m) => {
@@ -2966,18 +3015,18 @@ function PoolsSection({ slug }: { slug: string }) {
                     return (
                       <span key={`${m.connection_id}:${m.remote_device_id}`} className="inline-flex items-center gap-1 rounded bg-subtle dark:bg-slate-800 px-2 py-0.5 text-[11px] text-content dark:text-mortar-200">
                         {info?.name ?? m.remote_device_id}
-                        <button
+                        {may.takeOut && <button
                           aria-label="Remove from pool"
                           onClick={() => removeMember.mutate({ poolId: p.id, connId: m.connection_id, deviceId: m.remote_device_id })}
                           className="text-faint hover:text-ember-500"
                           title="Remove from pool"
                         >
                           <X size={11} />
-                        </button>
+                        </button>}
                       </span>
                     );
                   })}
-                  {available.length > 0 && (
+                  {may.add && available.length > 0 && (
                     <PoolMemberAdder
                       available={available}
                       onAdd={(keys) => {
@@ -3351,6 +3400,9 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
   });
 
   const items = runs.data?.items ?? [];
+  // Starting a run is the admin tier's; holding or cancelling one is its own action.
+  const mayStart = useRoleAtLeast(ADMIN_TIER);
+  const mayHold = !!useCan("digifab:hold-run");
   const active = items.filter((r) => r.status === "active" || r.status === "paused");
   const done = items.filter((r) => r.status === "completed" || r.status === "cancelled").slice(0, 5);
   if (!items.length && !open) {
@@ -3361,9 +3413,9 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
           <span className="font-medium text-content dark:text-mortar-100">Production runs</span>  - "make 250 of these,
           stop when done." {printingPool ? "Pick a pool, a plate file, and a target; the farm does the rest." : "Track good parts as jobs finish. Prepare a laser batch from the Library."}
         </div>
-        <button onClick={() => setOpen(true)} className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition">
+        {mayStart && <button onClick={() => setOpen(true)} className="shrink-0 rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-sm transition">
           New run
-        </button>
+        </button>}
       </div>
     );
   }
@@ -3373,15 +3425,15 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
       <div className="flex items-center gap-2">
         <Layers size={16} className="text-accent" />
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Production runs</h2>
-        <button onClick={() => setOpen(true)} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs transition">
+        {mayStart && <button onClick={() => setOpen(true)} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs transition">
           New run
-        </button>
+        </button>}
       </div>
 
       {active.length === 0 && <p className="text-sm text-faint dark:text-slate-400">No active runs.</p>}
       <ul className="space-y-2">
         {active.map((r) => (
-          <RunRow key={r.id} run={r} onPatch={(body) => patch.mutate({ id: r.id, body })} confirm={confirm} />
+          <RunRow key={r.id} run={r} mayHold={mayHold} onPatch={(body) => patch.mutate({ id: r.id, body })} confirm={confirm} />
         ))}
       </ul>
       {done.length > 0 && (
@@ -3509,10 +3561,12 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
 
 function RunRow({
   run,
+  mayHold,
   onPatch,
   confirm,
 }: {
   run: DigifabRun;
+  mayHold: boolean;
   onPatch: (body: { status?: "active" | "paused" | "cancelled" }) => void;
   confirm: ReturnType<typeof useConfirm>;
 }) {
@@ -3536,12 +3590,12 @@ function RunRow({
         {run.jobs_awaiting_verdict > 0 && <span className="text-amber-600 dark:text-amber-400">{run.jobs_awaiting_verdict} awaiting verdict</span>}
         {run.jobs_scrapped > 0 && <span>{run.jobs_scrapped} scrapped</span>}
         <span className="flex-1" />
-        {run.status === "active" ? (
+        {mayHold && (run.status === "active" ? (
           <button onClick={() => onPatch({ status: "paused" })} className="text-muted hover:text-accent">Pause</button>
         ) : (
           <button onClick={() => onPatch({ status: "active" })} className="text-muted hover:text-accent">Resume</button>
-        )}
-        <button
+        ))}
+        {mayHold && <button
           onClick={() => {
             void confirm({
               title: "Cancel this run?",
@@ -3553,7 +3607,7 @@ function RunRow({
           className="text-muted hover:text-red-500"
         >
           Cancel
-        </button>
+        </button>}
       </div>
     </li>
   );

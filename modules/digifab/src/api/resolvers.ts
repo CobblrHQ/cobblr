@@ -82,7 +82,7 @@ function jobToResolved(row: {
     id: row.id,
     title: row.file_ref,
     subtitle: row.status,
-    detailUrl: "/configuration/devices?tab=machines",
+    detailUrl: `/digifab?job=${encodeURIComponent(row.id)}`,
     fields: {
       file_ref: row.file_ref,
       status: row.status,

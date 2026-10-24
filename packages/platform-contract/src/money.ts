@@ -8,6 +8,7 @@
 // becomes `Cents` at the edge (toCents for a cents column, centsFromAmount for
 // an amount) and the only way to show `Cents` is formatMoney. Nothing stored
 // changes.
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { daysUntil } from "@cobblr/platform-contract/day";
 
 declare const centsBrand: unique symbol;
@@ -167,6 +168,25 @@ export function formatStoredMoney(
   }
   const c = storedCents(value, storage);
   return c === null ? null : formatMoney(c, opts);
+}
+
+/** A price each as a person reads it. A unit price keeps the precision it was stored with, so the
+ *  line total is explained by it: 1,000 at $0.0008 reads "$0.0008", never "$0.00" beside "$0.80"
+ *  (#8137). A price already at the currency's own precision reads as formatStoredMoney reads it;
+ *  one finer keeps its digits, to six places, with no trailing zeros past the currency's. */
+export function formatUnitPrice(value: unknown, opts: { currency?: string | null; locale?: string } = {}): string | null {
+  const plain = formatStoredMoney(value, "amount", opts);
+  const amount = parseMoneyAmount(value);
+  if (plain === null || amount === null) return plain;
+  const currency = (opts.currency || displayCurrency).toUpperCase();
+  if (roundMoneyAmount(amount, currency) === amount) return plain;
+  const base = formatter(currency, opts.locale, false).resolvedOptions().minimumFractionDigits ?? 2;
+  const kept = quantityNumber(amount, 6).split(".")[1]?.length ?? 0;
+  try {
+    return new Intl.NumberFormat(opts.locale, { style: "currency", currency, minimumFractionDigits: base, maximumFractionDigits: Math.max(base, kept) }).format(amount);
+  } catch {
+    return plain;
+  }
 }
 
 /** A typed amount as the value its field stores: cents for a cents column,

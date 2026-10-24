@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../../lib/can";
 // A record's items from the person's outside libraries, as a universal
 // contributed panel: the receipts and manuals in Paperless-ngx, the games in
 // RomM, whatever a library adapter brings, each under its own heading.
@@ -32,6 +34,8 @@ export function reconnectHref(label: string, at: DocumentRow["reconnect"]): stri
 }
 
 export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
+  // The library's push door is a workspace webhook, the admin tier's to make.
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const kind = ctx.kind ?? "";
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -314,7 +318,7 @@ export function DocumentsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         </div>
       )}
 
-      {data.systems.some((x) => x.push_setup) && <InstantSetup slug={activeSlug} setup={data.systems.find((x) => x.push_setup)!.push_setup!} />}
+      {setsUp && data.systems.some((x) => x.push_setup) && <InstantSetup slug={activeSlug} setup={data.systems.find((x) => x.push_setup)!.push_setup!} />}
 
       {data.unanswered && !data.matching && (
         <p className="mt-2 text-xs text-muted" data-testid="documents-unanswered">

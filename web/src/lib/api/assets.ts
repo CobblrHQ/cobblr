@@ -28,6 +28,7 @@ export interface Asset {
   notes: string | null;
   location_id: string | null;
   flags: unknown[];
+  assigned_to_label?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;

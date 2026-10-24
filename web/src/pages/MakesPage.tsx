@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../lib/can";
 // Makes: every print's history, from what was asked for to how it came out
 // (services.md §13). The list finds one by what it was, where it was made or
 // what it was made from; a Make's own page is its timeline.
@@ -255,6 +257,7 @@ export function MakePage() {
     onSuccess: refresh,
     onError: fail,
   });
+  const mayDelete = useRoleAtLeast(ADMIN_TIER);
   const setField = useMutation({
     mutationFn: (metadata: Record<string, unknown>) => api.patchMake(activeSlug, id, { metadata }),
     onSuccess: refresh,
@@ -308,7 +311,7 @@ export function MakePage() {
         <button type="button" onClick={() => setRerunning(true)} className="inline-flex items-center gap-1.5 rounded border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 px-3 py-1.5 text-sm transition">
           <RotateCcw className="w-4 h-4" /> Make again
         </button>
-        <button
+        {mayDelete && <button
           type="button"
           onClick={async () => {
             if (await confirm({ title: "Delete this make?", message: "Its history goes. Its files stay in Files.", confirmLabel: "Delete", destructive: true })) remove.mutate();
@@ -316,7 +319,7 @@ export function MakePage() {
           className="px-3 py-1.5 text-sm rounded text-content hover:bg-subtle dark:hover:bg-slate-800"
         >
           Delete
-        </button>
+        </button>}
       </div>
       {d.rerun_of && (
         <p className="text-sm text-muted mb-1">

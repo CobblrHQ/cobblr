@@ -5,6 +5,13 @@
 // reads to the station exactly as a scanner's would; the station's own view
 // changes on a read, which closes the camera until it is Ready again.
 //
+// It never stops reading on its own while it is on screen. It stopped on
+// every read, and a read the station ignored (the same code again within two
+// seconds) left Ready showing a live viewfinder that read nothing more until
+// the page was reloaded (#7865). A code it handed over is not handed over
+// again while it stays in view; one taken away and shown again, or any other
+// code, is.
+//
 // Same camera and decode as the Scan page and ScanOneSheet (barcodeScanner.ts,
 // barcodeDecode.ts). The lens is the device's own: the station's setting
 // starts it, the flip button changes it on this device only.
@@ -58,6 +65,8 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
     const frame = document.createElement("canvas");
     const rotated = document.createElement("canvas");
     let quietUntil = 0;
+    // The code last handed over, for as long as it stays in view.
+    let held: string | null = null;
     const onKey = () => {
       quietUntil = performance.now() + CAMERA_QUIET_AFTER_KEY_MS;
     };
@@ -84,10 +93,11 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
             if (ctx) {
               ctx.drawImage(v, 0, 0, frame.width, frame.height);
               const text = decodeCanvasSmart(reader, frame, rotated).text;
-              if (text) {
-                stopped = true;
+              if (!text) held = null;
+              else if (text !== held) {
+                held = text;
                 done.current(text);
-                return;
+                if (stopped) return;
               }
             }
           }

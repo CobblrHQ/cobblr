@@ -298,10 +298,10 @@ export function destinationBatches<T extends { org_id: string | null; event_type
 
 /** Where a digest's link goes (#6907): the one item's own page, or, for many
  *  from one workspace, that workspace's notifications; a digest across
- *  workspaces has nowhere single to open. PURE. */
-export function digestLink(batch: ReadonlyArray<{ link_url: string | null }>, workspaceSlug: string | null): string | null {
-  if (batch.length === 1) return batch[0]!.link_url;
-  return workspaceSlug ? `/w/${workspaceSlug}/me/notifications` : null;
+ *  workspaces opens the account inbox. PURE. */
+export function digestLink(batch: ReadonlyArray<{ link_url: string | null }>, workspaceSlug: string | null): string {
+  if (batch.length === 1 && batch[0]!.link_url) return batch[0]!.link_url;
+  return workspaceSlug ? `/w/${workspaceSlug}/me/notifications` : "/me/notifications";
 }
 
 // ── storage ────────────────────────────────────────────────────────────────

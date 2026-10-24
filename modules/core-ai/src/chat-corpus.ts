@@ -281,7 +281,13 @@ const RAW_CORPUS: CorpusCase[] = [
     no_ai: none,
     ai: "action:core-placement:place",
   },
-  ...ph("my-data", answer("my-data"), "read:search_records", [
+  // A where-question is answered by finding the record, however it was
+  // found: a list_records with q is the same search, and "where did it go"
+  // is answered by its history (list_activity). The 2026-10-23 nightly
+  // scored the multimeter's right answer (no place now, last in the
+  // Electronics bin) a miss for reading list_records, not search_records
+  // (#7628).
+  ...ph("my-data", answer("my-data"), "read:search_records|list_records|get_record|list_activity", [
     "which bin did the drill end up in", "where did the multimeter go",
     "where is my soldering iron", "where are my drill bits",
   ]),
@@ -418,6 +424,11 @@ const RAW_CORPUS: CorpusCase[] = [
   // Garage (the CubePro is in it) and Shelf A.
   ...ph("workspace", neverOffer, "action:core-locations:move-everything", [
     "move everything from the Garage to Shelf A",
+  ]),
+  // Moving a place itself is a change of its parent: what is inside goes with
+  // it. Emptying it instead left the shelf behind and took its bins (#8050).
+  ...ph("workspace", neverOffer, "update", [
+    "move Shelf A to the Garage",
   ]),
   // The seed has two Bin 3s (Rack 1 and Rack 3). "move everything from Bin 3"
   // names neither, and "merge the two Bin 3s" names no direction: a move aimed

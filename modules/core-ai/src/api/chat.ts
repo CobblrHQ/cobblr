@@ -15,8 +15,10 @@ import { humanizeProviderError, type ProviderFailureDetail } from "./provider-er
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
 import { missingActionArgs, undeclaredActionArgs, reconcileActionArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
-import { destinationNotThere, movedNotCreated } from "./move-not-create.js";
+import { destinationLookedUp, destinationNotThere, movedItselfNotEmptied, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
+import { workspaceAsList } from "./add-destination.js";
+import { missingOnCreate, missingRequired } from "./required-on-create.js";
 import { noneFromOneList } from "./none-from-one-list.js";
 import { answeredNotProposed } from "./answer-dont-propose.js";
 import { askDontRank } from "./ask-dont-rank.js";
@@ -529,6 +531,12 @@ async function runsWithoutARecord(c: Ctx, actionId: string): Promise<boolean> {
 }
 
 /** Best-effort display label for a record (falls back to the id). */
+/** A place's name, or null when the id is no place. */
+async function nameOfPlace(wsApi: WorkspaceApi, id: string): Promise<string | null> {
+  const name = await labelOf(wsApi, "core-locations:location", id);
+  return name === id ? null : name;
+}
+
 async function labelOf(wsApi: WorkspaceApi, kind: string, id: string): Promise<string> {
   try {
     const r = await getTool("get_record")!.execute(wsApi, { kind, id });
@@ -609,6 +617,10 @@ async function proposalOf(
   switch (call.name) {
     case "create_record": {
       if (!kind || !resolveCreatePath(kind, kinds)) return { error: `I can't create "${kind || "that"}" from chat yet.` };
+      // The last door: a create missing what its kind requires is no card,
+      // since it would fail the moment it was confirmed (#7895).
+      const unfilled = missingRequired(call, kinds);
+      if (unfilled.length) return { error: `Before I can add that I need its ${unfilled.map((n) => n.replace(/_/g, " ")).join(" and ")}. What should ${unfilled.length === 1 ? "it" : "they"} be?` };
       const fields = (a.fields as Record<string, unknown>) ?? {};
       const name = String(fields.title ?? fields.name ?? "").trim();
       // The card's line is what the person confirms: "Create a location:
@@ -680,6 +692,8 @@ async function proposalOf(
     case "add_thing": {
       const name = String(a.name ?? "").trim();
       if (!name) return { error: "I need to know what the thing is called." };
+      const wrongList = await workspaceAsList(call, c.orgName, wsApi);
+      if (wrongList) return { error: wrongList };
       return {
         summary: `Add “${name}” through the scan inbox${a.file === true ? " and file it" : ""}`,
         proposal: { kind: "add", args: a },
@@ -1006,6 +1020,10 @@ async function answerTurn(
       },
       isWrite: (name) => WRITE_NAMES.has(name),
       validateWrite: async (call, seenNames) => {
+        const wrongList = await workspaceAsList(call, c.orgName, wsApi);
+        if (wrongList) return wrongList;
+        // Where the write puts the thing, by its name, as a read would (#8050).
+        seenNames = await destinationLookedUp(call, seenNames, (id) => nameOfPlace(wsApi, id));
         // Asked how much of something there is and about to make one. A
         // question is answered, never proposed. See answer-dont-propose.ts.
         const asked = answeredNotProposed(askedFor, call);
@@ -1031,6 +1049,8 @@ async function answerTurn(
         if (call.name === "create_record" || call.name === "update_record") {
           const off = outsideChoices(call, await kindsOnce());
           if (off) return off;
+          const missing = missingOnCreate(call, await kindsOnce());
+          if (missing) return missing;
         }
         if (call.name !== "invoke_action") return null;
         const a = call.args ?? {};
@@ -1043,6 +1063,13 @@ async function answerTurn(
         // there is nothing to press on the assistant's say-so.
         const human = humanOnlyRefusal(typed, (a.args as Record<string, unknown> | undefined) ?? null);
         if (human) return human;
+        // Asked to move a place, about to empty it: the place would stay and
+        // its bins would leave it (#8050). See move-not-create.ts.
+        if (a.entity_kind && a.entity_id) {
+          const place = seenNames.get(String(a.entity_id)) ?? (await labelOf(wsApi, String(a.entity_kind), String(a.entity_id)));
+          const itself = movedItselfNotEmptied(askedFor, call, place);
+          if (itself) return itself;
+        }
         // platform:group_fields for platform:group-fields: the model chose the
         // right action and typed the separator its own way. Correct it in
         // place rather than refusing the turn.

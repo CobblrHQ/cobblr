@@ -299,6 +299,21 @@ function moveOf(row: { request_id: string; op: string; delta: string | number; q
   };
 }
 
+/** A station move's journal row once its stock change has finished: the row
+ *  is claimed with qty null and given its count when the move lands, or
+ *  deleted when the move was refused. "pending" when it has not finished
+ *  within the wait. */
+async function finishedMove(db: Db, address: string, requestId: string, waitMs = 10_000) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const row = await db.selectFrom("core_scan_station_moves").selectAll().where("address", "=", address).where("request_id", "=", requestId).executeTakeFirst();
+    if (!row) return "gone" as const;
+    if (row.qty != null) return row;
+    if (Date.now() >= until) return "pending" as const;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 function doorOf(req: Request, slug: string) {
   const token = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
   return {
@@ -338,7 +353,14 @@ stationsRouter.post(
       .returning(["request_id"])
       .executeTakeFirst();
     if (!claimed) {
-      const prior = await db.selectFrom("core_scan_station_moves").selectAll().where("address", "=", address).where("request_id", "=", b.request_id).executeTakeFirstOrThrow();
+      // The same request in flight (a retry sent while the first is still
+      // moving the stock): its row is claimed with no count yet. Answering
+      // that row said qty null, which a tablet read as "None left" with 21 on
+      // the shelf (#7860). Wait for the first to finish; what it left is the
+      // answer, and a first that failed fails this one too.
+      const prior = await finishedMove(db, address, b.request_id);
+      if (prior === "gone") return void res.status(409).json({ error: { code: "count_refused", message: "That count could not be changed." } });
+      if (prior === "pending") return void res.status(409).json({ error: { code: "count_pending", message: "That count is still being saved. Try again in a moment." } });
       return void res.json({ ...moveOf(prior), replayed: true });
     }
     const e = await platform().entities.lookup(org.id, b.kind, b.entity_id);

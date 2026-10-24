@@ -55,9 +55,10 @@ export function useThemeToggle(): () => void {
       actionLabel: "Use on all devices",
       duration: 10000, // let it fade = "not now"; the buttons are the real choices
       onAction: () => {
-        setAccountPref(value); // syncs to every device via PATCH /me
-        setDeviceOverride(null); // release the local lock so this device follows the default
-        writeNudge("off");
+        void setAccountPref(value).then(() => {
+          setDeviceOverride(null);
+          writeNudge("off");
+        }).catch(() => toast.error("Couldn't save your account theme. Try again."));
       },
       secondaryLabel: "Don't show again",
       onSecondary: () => writeNudge("off"),

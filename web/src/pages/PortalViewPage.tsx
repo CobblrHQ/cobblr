@@ -19,7 +19,7 @@ import { EntityThumb, usePageTitle, SearchInput } from "@cobblr/platform-web";
 import { NewPartDialog, InventoryProvider } from "@cobblr/inventory/ui";
 import { useViewData } from "../lib/useViewData";
 import { ViewMore } from "../components/ViewMore";
-import { getToken } from "../lib/api";
+import { ApiError, getToken } from "../lib/api";
 import { createCapabilityForKind } from "@cobblr/platform-contract/create-capability";
 import { AskForItButton } from "../components/AskForItButton";
 import { useCapabilitiesFor } from "../lib/can";
@@ -41,12 +41,25 @@ export function PortalViewPage() {
   // Every record the view holds (the rest offered past the server's walk): a
   // hard 100 cut the list off with nothing to say so.
   const data = useViewData(activeSlug, viewId, null, { q });
-  usePageTitle(data.view?.entity_kind ?? "View");
+  const accessEnded = data.error instanceof ApiError &&
+    (data.error.code === "workspace_deleting" || data.error.code === "org_not_found");
+  usePageTitle(accessEnded ? "Access ended" : data.view?.entity_kind ?? "View");
 
   // User capabilities — drives whether to show the "+ New" button.
   const caps = useCapabilitiesFor(activeSlug);
 
   if (!viewId || !activeSlug) return null;
+
+  if (accessEnded) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold text-content dark:text-mortar-100">Access ended</h1>
+        <p role="alert" className="text-sm text-muted dark:text-slate-400">
+          This workspace is no longer available to you. The share may have ended or your access may have been removed.
+        </p>
+      </div>
+    );
+  }
 
   const entityKind = data.view?.entity_kind;
   const createCap = createCapabilityForKind(entityKind) ?? undefined;

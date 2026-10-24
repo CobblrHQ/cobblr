@@ -439,7 +439,12 @@ export async function listOffers(orgId: string, userId?: string): Promise<OfferV
     .selectFrom("share_offers as o")
     .leftJoin("share_links as l", "l.id", "o.link_id")
     .select(["o.id", "o.direction", "o.title", "o.status", "o.created_at", "o.taken_at", "l.peer_name", "o.transfer", "o.target_org_id", "o.created_by", "o.batch"])
-    .where((eb) => eb.or([eb("l.org_id", "=", orgId), eb(sql<string>`o.source->>'org_id'`, "=", orgId), eb("o.target_org_id", "=", orgId)]))
+    .where((eb) => eb.or([
+      eb("l.org_id", "=", orgId),
+      eb(sql<string>`o.source->>'org_id'`, "=", orgId),
+      eb("o.target_org_id", "=", orgId),
+      eb.and([eb("o.direction", "=", "in"), eb(sql<string>`o.landed->>'org_id'`, "=", orgId)]),
+    ]))
     .orderBy("o.created_at", "desc")
     .limit(200)
     .execute();

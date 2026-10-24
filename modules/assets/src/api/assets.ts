@@ -1,4 +1,5 @@
 import { amountOf, centsFromAmount, fieldCurrency } from "@cobblr/platform-contract/money";
+import { withCustodyLabel } from "./custody.js";
 import { fieldDay } from "@cobblr/platform-contract/field-day";
 import { Router } from "express";
 import { z } from "zod";
@@ -109,7 +110,7 @@ assetsRouter.get(
     // Person and relation fields read as names (assigned_to_label).
     res.json({
       ...answer,
-      items: await forViewer(req, await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items)),
+      items: await forViewer(req, await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), answer.items.map(withCustodyLabel))),
       can_see_serials: await maySeeSerials(req),
       can_see_costs: !costsHidden,
       archived_count: Number(put?.n ?? 0),
@@ -149,7 +150,7 @@ assetsRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "asset not found" } });
       return;
     }
-    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), [row as Record<string, unknown>]);
+    const [labelled] = await platform().entities.withFieldLabels(tenantContext(req).org.id, kindOf(req), [withCustodyLabel(row)]);
     res.json(await maySeeSerials(req) ? labelled : withoutSerial(labelled as Record<string, unknown>));
   }),
 );

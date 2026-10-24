@@ -1,3 +1,5 @@
+import { refuseStaleEditOf } from "./platform/stale-edit.js";
+import { stopAtGate } from "./lib/gate-probe.js";
 import { registerPanelPresence } from "./platform/panel-presence.js";
 import { partIsOn } from "./platform/module-parts.js";
 import { externalMessagingRefusal, sendExternalMessage } from "./platform/external-messages.js";
@@ -29,7 +31,7 @@ import { sumPlaceWorth } from "./platform/placement-worth.js";
 // Migration failure crashes the boot intentionally — a half-migrated
 // cobblr_meta is more dangerous than an offline api.
 
-import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "./platform/capability-grants.js";
+import { userHasCapability } from "./auth/user-has-capability.js";
 import { logUploadRefused, startStaleUploadSweeper, uploadMiddleware, uploadSizeFor } from "./platform/uploads.js";
 import { fileURLToPath } from "node:url";
 import { withFieldLabels } from "./platform/field-labels.js";
@@ -40,13 +42,13 @@ import { registerServiceSupervisor } from "./platform/service-supervisor.js";
 import { openServicesTestDoors } from "./platform/services-test-doors.js";
 import { testDoorsEnabled } from "./platform/test-doors.js";
 import { setPlatform, canContain, canBeContained, likeEscape, platform as platformSeams, KindRefRegex, isInstallHolder, countOf } from "@cobblr/platform-contract";
-import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { describeBlock, describeCapabilityBlock } from "./platform/approvals.js";
 import { atVersion, mergeJsonb, rowVersion } from "./platform/jsonb-merge.js";
 import { selfFetch, setSelfHandler } from "./platform/self-fetch.js";
 import { deleteFieldDef, effectiveFieldDefsForKind, resolveFieldDefsForKind } from "./platform/field-defs.js";
 import { choiceLearns } from "@cobblr/platform-contract/field-choices";
 import { pairingResultMetadata } from "@cobblr/platform-contract/pairing-presentation";
+import { writePairingsOnce } from "./platform/pairings-once.js";
 import { sql, type Kysely, type Generated } from "kysely";
 import { env } from "./env.js";
 import { meta, metaPool, pingMeta } from "./db/meta.js";
@@ -154,7 +156,6 @@ import { syncInstalledModules } from "./platform/installed-modules.js";
 import { healArrival, noteHealShim } from "./platform/heal-shim-log.js";
 import { notePassFailure } from "./platform/pass-failures.js";
 import { seedProviderFromEnv } from "./platform/oidc.js";
-import { actionGateOf, gatePasses, capabilitiesHeldBy } from "./platform/action-gates.js";
 import { startBundleUpdateSweeper } from "./platform/bundle-updates.js";
 import { runBootPhase } from "./platform/boot-passes.js";
 import { logAnnounceRouting } from "./platform/announce.js";
@@ -881,6 +882,7 @@ async function boot() {
       },
     },
     http: {
+      refuseStaleEdit: refuseStaleEditOf,
       registerRequestGuard: hostedSeams.registerRequestGuard,
       registerWebhook: hostedSeams.registerWebhook,
       upload: uploadMiddleware,
@@ -932,48 +934,11 @@ async function boot() {
       //   3. Custom-role assignment that includes the capability.
       // See docs/modules/member-portal-and-permissions.md
       // §2.4 + 2026-05-25-audit.md S2.
-      userHasCapability: async ({ orgId, userId, role, actionId }) => {
-        if (roleHoldsEveryCapability(role)) return true;
-        // The action's own declaration (#5170): the role it runs by, read by
-        // every door alike (a route that does the same thing gates here too).
-        if (gatePasses(actionId, role, () => false)) return true;
-        // A grant counts for the action itself or for the capability it shares.
-        const ids = [actionId, ...(actionGateOf(actionId).grantedAs ? [actionGateOf(actionId).grantedAs!] : [])];
-        // What the stock role holds by a module's declaration (an operator runs the machines, #6672).
-        const byRole = capabilitiesHeldBy(role);
-        if (ids.some((id) => byRole.has(id))) return true;
-        // Direct grant.
-        const grant = await meta
-          .selectFrom("workspace_capability_grants")
-          .select("id")
-          .where("org_id", "=", orgId)
-          .where("user_id", "=", userId)
-          .where("action_id", "in", ids)
-          .executeTakeFirst();
-        if (grant) return true;
-        // Custom-role assignment → role's capability bundle.
-        const viaRole = await meta
-          .selectFrom("workspace_role_assignments as a")
-          .innerJoin("workspace_role_capabilities as c", "c.role_id", "a.role_id")
-          .select("c.action_id")
-          .where("a.org_id", "=", orgId)
-          .where("a.user_id", "=", userId)
-          .where("c.action_id", "in", ids)
-          .limit(1)
-          .executeTakeFirst();
-        if (viaRole) return true;
-        // What a plain member holds without a grant (take and put back stock),
-        // unless a custom role governs them.
-        const byDefault = ids.find((id) => MEMBER_DEFAULT_CAPABILITIES.includes(id));
-        if (!byDefault) return false;
-        const custom = await meta
-          .selectFrom("workspace_role_assignments")
-          .select("user_id")
-          .where("org_id", "=", orgId)
-          .where("user_id", "=", userId)
-          .limit(1)
-          .executeTakeFirst();
-        return memberHoldsByDefault(role, byDefault, !!custom);
+      // A capability gate passing ends a held delete's probe there (#7909).
+      userHasCapability: async (args) => {
+        const ok = await userHasCapability(args);
+        if (ok) stopAtGate();
+        return ok;
       },
       describeBlockedCapability: (args) => describeCapabilityBlock(args),
       describeBlock: (args) => describeBlock(args),
@@ -999,22 +964,8 @@ async function boot() {
     // surfaces so modules stop SELECTing each other's tables.
     pairings: {
       create: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy, notes, presentation }) => {
-        const row = await meta
-          .insertInto("entity_pairings")
-          .values({
-            org_id: orgId,
-            source_kind: sourceKind,
-            source_id: sourceId,
-            target_kind: targetKind,
-            target_id: targetId,
-            relationship_kind: relationshipKind,
-            created_by: createdBy ?? null,
-            ...(notes ? { notes: notes.slice(0, 500) } : {}),
-            ...(presentation ? { metadata: pairingResultMetadata(presentation) } : {}),
-          })
-          .returning("id")
-          .executeTakeFirstOrThrow();
-        return { id: row.id };
+        const { ids } = await writePairingsOnce([{ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, createdBy, notes, ...(presentation ? { metadata: pairingResultMetadata(presentation) } : {}) }]);
+        return { id: ids[0]! };
       },
       present: async ({ orgId, sourceKind, sourceId, targetKind, targetId, relationshipKind, presentation }) => {
         const safe = pairingResultMetadata(presentation);
@@ -1072,29 +1023,14 @@ async function boot() {
           .execute();
         return { removed: gone.length };
       },
-      createMany: async (rows) => {
-        if (rows.length === 0) return { inserted: 0 };
-        await meta
-          .insertInto("entity_pairings")
-          .values(
-            rows.map((r) => ({
-              org_id: r.orgId,
-              source_kind: r.sourceKind,
-              source_id: r.sourceId,
-              target_kind: r.targetKind,
-              target_id: r.targetId,
-              relationship_kind: r.relationshipKind,
-              created_by: r.createdBy ?? null,
-            })),
-          )
-          .execute();
-        return { inserted: rows.length };
-      },
+      createMany: async (rows) => ({ inserted: (await writePairingsOnce(rows)).inserted }),
       findByTargets: async ({ orgId, sourceKind, targetKind, targetIds, relationshipKind }) => {
         if (targetIds.length === 0) return [];
+        // Distinct: a link a module once wrote twice is one link (#8040).
         let q = meta
           .selectFrom("entity_pairings")
           .select(["source_id as sourceId", "source_kind as sourceKind", "target_id as targetId"])
+          .distinct()
           .where("org_id", "=", orgId)
           .where("target_kind", "=", targetKind)
           .where("relationship_kind", "=", relationshipKind)
@@ -1108,6 +1044,7 @@ async function boot() {
         const rows = await meta
           .selectFrom("entity_pairings")
           .select(["source_id as sourceId", "target_id as targetId"])
+          .distinct()
           .where("org_id", "=", orgId)
           .where("source_kind", "=", sourceKind)
           .where("target_kind", "=", targetKind)
@@ -1127,7 +1064,7 @@ async function boot() {
           .selectFrom("entity_pairings")
           .select(({ fn }) => [
             "target_id as targetId",
-            fn.count<number>("id").as("count"),
+            fn.count<number>("source_id").distinct().as("count"),
             fn.max("created_at").as("latestCreatedAt"),
           ])
           .where("org_id", "=", orgId)

@@ -575,8 +575,8 @@ export const CAPABILITIES: Capability[] = [
     kind: "owns",
     id: "views:a-views-records",
     what:
-      "reading a saved view's records in the web app: useViewData in web/src/lib/useViewData.ts, which holds every record " +
-      "(the server walks every page), carries the server's total and offers the rest past its cap",
+      "reading a saved view's records in the web app: useViewData in web/src/lib/useViewData.ts, which carries the server's total " +
+      "and offers later pages; saved tables page from the first read, summaries read every record",
     why:
       "each surface fetched a view its own way and counted what arrived: a board read \"50 3D printers\" of 56 and dropped a " +
       "column, a dashboard card counted a 500-row sample, an app's count stopped at 500 and its list at 100",
@@ -584,7 +584,7 @@ export const CAPABILITIES: Capability[] = [
     scope: ["web/src/**/*.{ts,tsx}"],
     // A surface fetching a view's data for itself.
     detect: /\bapi\.viewData\(/,
-    use: "const data = useViewData(slug, viewId, kind) from web/src/lib/useViewData.ts; show data.total, place <ViewMore data={data} />",
+    use: "const data = useViewData(slug, viewId, kind, { view }) from web/src/lib/useViewData.ts; show data.total, place <ViewMore data={data} />",
   },
   {
     kind: "owns",

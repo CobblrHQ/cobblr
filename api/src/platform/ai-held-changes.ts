@@ -21,6 +21,7 @@ import { dispatch } from "./notifications.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { productName } from "./product-name.js";
 import { HELD_CHANGE_TTL_MS } from "./ai-held-change-policy.js";
+import { GATE_PROBE_HEADER, openGateProbe } from "../lib/gate-probe.js";
 import { kindOfDeletePath } from "./kind-delete.js";
 
 export const CONFIRM_HELD_CHANGE_ACTION = "platform:confirm-held-change";
@@ -57,6 +58,14 @@ export async function holdForAPerson(req: Request, res: Response): Promise<void>
   const tenant = req.tenant!;
   const userId = req.session!.id;
   const rel = workspacePath(req.originalUrl, tenant.org.slug) ?? req.originalUrl;
+  // Asked of the route first, as the person (gate-probe.ts): a delete their
+  // role cannot make is refused now, in the route's own words, never sent
+  // to them as "Delete it?" to fail when they press it (#7909).
+  const asked = await askTheGate(tenant.org.slug, userId, req.method, rel);
+  if (asked) {
+    res.status(asked.status).json(asked.body);
+    return;
+  }
   const summary = await describeDelete(tenant.org.id, rel);
   const row = await meta
     .insertInto("ai_held_changes")
@@ -103,6 +112,26 @@ export async function holdForAPerson(req: Request, res: Response): Promise<void>
     change_id: row.id,
     message: `Waiting for you: deleting ${summary} needs your yes in ${productName()}. The card is in your notifications.`,
   });
+}
+
+/** The route's own answer when it refused (or had nothing to do) before its
+ *  gate, or null when the person gets past it and the hold goes ahead. A
+ *  probe that could not be asked holds, as before. */
+async function askTheGate(slug: string, userId: string, method: string, rel: string): Promise<{ status: number; body: unknown } | null> {
+  const { mark, probe } = openGateProbe();
+  try {
+    const token = await signSession(userId);
+    const r = await apiFetch(`${selfOrigin()}/api/v1/orgs/${slug}${rel}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, [GATE_PROBE_HEADER]: mark },
+    });
+    const body = await r.json().catch(() => ({}));
+    if (probe.passed) return null;
+    return { status: r.status, body };
+  } catch (err) {
+    console.warn(`[held-change] could not ask ${rel} first: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 export type HeldOutcome = { ok: true; message: string } | { ok: false; message: string };

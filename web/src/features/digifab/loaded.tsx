@@ -11,6 +11,7 @@
 // while this page is open, a scanned spool label loads it instead of opening
 // its page. A single-slot printer with nothing loaded is one line (#6337).
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,7 +27,7 @@ function amount(t: PlatformResolvedEntity): string | null {
   const q = Number(t.fields?.qty);
   if (!Number.isFinite(q)) return null;
   const unit = typeof t.fields?.unit === "string" && t.fields.unit !== "each" ? ` ${t.fields.unit}` : "";
-  return `${parseFloat(q.toFixed(3))}${unit} left`;
+  return `${quantityNumber(q)}${unit} left`;
 }
 
 export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {

@@ -1,3 +1,5 @@
+import { GateProbeStop, stopAtGate } from "./lib/gate-probe.js";
+import { observeRolePasses } from "@cobblr/platform-contract/org-roles";
 import { startRequest } from "./platform/compute-ledger.js";
 import { answerServerError } from "./lib/server-error.js";
 import { tenantTeardownErrors } from "./middleware/tenant-errors.js";
@@ -132,6 +134,8 @@ export interface AppHandles {
 
 export function createApp(): AppHandles {
   const app = express();
+  // A role gate passing ends a held delete's probe there (gate-probe.ts, #7909).
+  observeRolePasses(stopAtGate);
 
   app.set("trust proxy", 1);
 
@@ -668,6 +672,15 @@ export function completeApp(app: Application): void {
   app.use(tenantTeardownErrors);
   app.use(
     (err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+      // A held delete's probe stopped at the route's gate (gate-probe.ts):
+      // nothing ran past it, and the probe reads its own record, not this.
+      if (err instanceof GateProbeStop) {
+        if (!res.headersSent) {
+          res.status(204).end();
+          return;
+        }
+        return;
+      }
       // Postgres 22P02 (invalid_text_representation) means a malformed
       // path/query value hit a typed column (e.g. a non-UUID :id). That's
       // a client error, not a server fault — answer 400, and never echo

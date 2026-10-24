@@ -163,6 +163,16 @@ export const PLACEMENT: PlacementRow[] = [
     lints: ["lint:component-kinds", "lint:hooks-after-return", "lint:no-emdash"],
   },
   {
+    id: "offline-writes",
+    what: "offline edits, waiting writes and dropped network requests shared by the shell and module pages",
+    keywords: ["offline edits", "waiting writes", "dropped network requests", "offline queue", "offline reload", "pending changes"],
+    dir: "packages/platform-web/src/",
+    exemplar: "packages/platform-web/src/waiting-writes.ts",
+    why: "Both request doors share the same per-person device store, so reloads and module pages retain the same edits and show the same pending values.",
+    lints: ["lint:module-pages-fetch-through-the-workspace", "lint:no-emdash"],
+    notes: ["The app's React Query scheduling lives in web/src/lib/offline-writes.ts; durable payloads and cached-read overlays live in the shared store."],
+  },
+  {
     id: "shared-web-primitive",
     what: "a form, field or layout primitive that a SHARED package component must also reach (a field control, a field grid, a modal layout rule)",
     keywords: ["primitive", "field", "form", "grid", "packer", "layout", "control", "input", "platform-web", "custom fields panel", "shared overlay safe area", "persistent connectivity banners"],

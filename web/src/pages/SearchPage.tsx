@@ -59,7 +59,7 @@ export function SearchPage() {
     staleTime: 5 * 60_000,
   });
   // An exact identifier (a serial, a code) leads, as in the palette.
-  const exact = useExactHits(activeSlug, q, "search");
+  const exactAll = useExactHits(activeSlug, q, "search");
 
   // Where-is-it chip: hits whose fields carry a location_id get their
   // location's name inline — zone chips for search, zero API changes (kinds
@@ -102,6 +102,15 @@ export function SearchPage() {
     for (const [kind, page] of more) m.set(kind, [...(m.get(kind) ?? []), ...page.items]);
     return Array.from(m.entries());
   }, [results.data?.items, more]);
+  // The exact match answers the same filters as the results (#8058): a kind
+  // chip keeps only a match of that kind, and a tag keeps only a match the
+  // filtered results also hold, since only they know what carries the tag.
+  const exact = useMemo(() => {
+    const picked = new Set((kinds ?? "").split(",").filter(Boolean));
+    return exactAll.filter((c) =>
+      (picked.size === 0 || picked.has(c.entity_kind)) &&
+      (!tag || grouped.some(([kind, items]) => kind === c.entity_kind && items.some((h) => h.id === c.entity_id))));
+  }, [exactAll, kinds, tag, grouped]);
   // An api older than more_kinds (a web deployed ahead of it) still pages:
   // a kind that filled its page may have more.
   const firstPageFull = (kind: string) => (results.data?.items ?? []).filter((h) => h.kind === kind).length >= PAGE;

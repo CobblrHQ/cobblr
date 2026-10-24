@@ -99,7 +99,7 @@ let warned = false;
 /** What a sheet nested without the engine says, to the person looking at it. */
 export const ENGINE_MISSING_NOTE = "Nested by rectangle: the outline nesting engine is not installed on this server, so parts are spaced by their bounding boxes and use more of the sheet.";
 function engineMissing(): boolean {
- const run = "Run scripts/build-nesting.sh.";
+ const run = "Run bash scripts/ci/nesting-engine.sh (it fetches the published build; scripts/build-nesting.sh builds it with Rust).";
  if (existsSync(new URL("pkg/cobblr_nesting.cjs", nesting))) {
   if (process.env.VITEST && builtFrom() !== sourceHash()) throw new Error(`The outline nesting engine was built from other sources than this checkout's. ${run}`);
   return false;
@@ -129,7 +129,14 @@ export async function nestOutlines(design: Design, quantity: number, sheets: She
  for (const obstacles of extraObstacles) if (obstacles.length > 512 || obstacles.reduce((n,p)=>n+p.length,0)>32768) throw new Error("This sheet is too fragmented to nest by outline.");
  const rectangleSheets = sheets.map(s => {
   const margin = (spacing + kerf) / 2;
-  let free = s.free_rectangles;
+  // The rectangle planner reserves half a gap inside each free rectangle.
+  // Its interior edges border old cuts, which need the other half too;
+  // sheet edges still need only the ordinary half-gap margin.
+  let free = s.free_rectangles.map(r => {
+   const left = r.x > 1e-6 ? margin : 0, bottom = r.y > 1e-6 ? margin : 0;
+   const right = r.x + r.width < s.width - 1e-6 ? margin : 0, top = r.y + r.height < s.height - 1e-6 ? margin : 0;
+   return { x: r.x + left, y: r.y + bottom, width: r.width - left - right, height: r.height - bottom - top };
+  }).filter(r => r.width > 0 && r.height > 0);
   for (const obstacle of s.nest_obstacles ?? []) {
    const b = bounds(obstacle);
    free = subtractRectangles(free, {x:b.x-margin,y:b.y-margin,width:b.width+2*margin,height:b.height+2*margin});

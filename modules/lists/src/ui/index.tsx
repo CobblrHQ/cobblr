@@ -1,10 +1,10 @@
-import { NumberStepper, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
+import { NumberStepper, editOf, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
 // lists UI — the host mounts <ListsUI /> at /lists. A grid of lists;
 // clicking one opens a detail MODAL with check-off, add-item, and clear-done.
 // Modals (not pages) for detail/create; toasts (not dialogs) for feedback;
 // destructive deletes confirm via useConfirm. Matches house conventions.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,6 +17,7 @@ import { PickToLight } from "@cobblr/platform-web";
 /** A line's small icon button: the icon's own size on a wide screen, a
  *  44 by 44 px target on a phone. */
 const LINE_TOOL = "inline-flex shrink-0 items-center justify-center rounded max-sm:h-11 max-sm:w-11"
+const restockLineKey = (it: ListItem) => JSON.stringify([it.qty, it.metadata?.source_ref?.kind, it.metadata?.source_ref?.id]);
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
 
 interface Props {
@@ -186,10 +187,10 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     refetchOnWindowFocus: true,
   });
 
-  const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ["lists-detail", listId] });
-    void qc.invalidateQueries({ queryKey: ["lists"] }); // refresh counts on the grid
-  };
+  const invalidate = () => Promise.all([
+    qc.invalidateQueries({ queryKey: ["lists-detail", listId] }),
+    qc.invalidateQueries({ queryKey: ["lists"] }),
+  ]);
   const add = useMutation({
     mutationFn: (title: string) => api.addItem(listId, { title }),
     onSuccess: () => { setDraft(""); invalidate(); },
@@ -231,11 +232,22 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   // The amount a line will restock when checked, per line, corrected here
   // before the check. Starts from the line's own quantity ("×3") when it has
   // one, else the wire's amount. Only lines that restock have an entry.
-  const [amounts, setAmounts] = useState<Record<string, number>>({});
+  const [amounts, setAmounts] = useState<Record<string, { value: number; forLine: string }>>({});
+  // A saved quantity or destination replaces an earlier choice. Unchanged
+  // polls and note-only edits must still keep what the shopper chose.
+  useEffect(() => {
+    if (!detail.data) return;
+    const keys = new Map(detail.data.items.map((it) => [it.id, restockLineKey(it)]));
+    setAmounts((previous) => {
+      const kept = Object.entries(previous).filter(([id, choice]) => keys.get(id) === choice.forLine);
+      return kept.length === Object.keys(previous).length ? previous : Object.fromEntries(kept);
+    });
+  }, [detail.data?.items]);
   const amountFor = (it: ListItem): number | null => {
     const wired = restockAmount(it.on_check);
     if (wired == null) return null;
-    return amounts[it.id] ?? lineQuantity(it.qty) ?? wired;
+    const choice = amounts[it.id];
+    return (choice?.forLine === restockLineKey(it) ? choice.value : null) ?? lineQuantity(it.qty) ?? wired;
   };
   const remove = useMutation({
     mutationFn: (id: string) => api.removeItem(id),
@@ -255,18 +267,17 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     onSuccess: () => { setRenaming(null); invalidate(); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
-  type Editing = { id: string; title: string; qty: string; note: string; from: { title: string; qty: string; note: string } };
-  const [editing, setEditing] = useState<Editing | null>(null);
-  // Only what the person changed goes up: the form holds a snapshot of the
-  // line from when it opened, and sending all of it would put back a quantity
-  // another shopper saved since (#7889).
+  type LineEdit = { id: string; title: string; qty: string; note: string; opened: Record<string, unknown> };
+  const [editing, setEditing] = useState<LineEdit | null>(null);
   const saveItem = useMutation({
-    mutationFn: (e: Editing) => {
-      const changes: { title?: string; qty?: string; note?: string } = {};
-      for (const k of ["title", "qty", "note"] as const) if (e[k].trim() !== e.from[k].trim()) changes[k] = e[k].trim();
-      return Object.keys(changes).length ? api.updateItem(e.id, changes) : Promise.resolve(null);
+    // Only what this correction changed, with what it was: a quantity another
+    // shopper saved while this was open stands, or this save says it changed
+    // (#7889, #7925).
+    mutationFn: (e: LineEdit) => {
+      const edit = editOf(e.opened, { title: e.title.trim(), qty: e.qty.trim(), note: e.note.trim() });
+      return Object.keys(edit.body).length ? api.updateItem(e.id, edit.body, edit.headers) : Promise.resolve(null);
     },
-    onSuccess: () => { setEditing(null); invalidate(); },
+    onSuccess: async () => { await invalidate(); setEditing(null); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   const setListField = useMutation({
@@ -406,7 +417,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition ${
                     it.claimed_by
                       ? "text-muted hover:text-accent"
-                      : "text-slate-300 hover:text-accent hover-reveal"
+                      : "text-muted hover:text-accent hover-reveal"
                   }`}
                 >
                   {it.claimed_by ? "Never mind" : "I'll get it"}
@@ -421,7 +432,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   <button
                     title="Correct this line"
                     type="button"
-                    onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "", from: { title: it.title, qty: it.qty ?? "", note: it.note ?? "" } })}
+                    onClick={() => setEditing({ id: it.id, title: it.title, qty: it.qty ?? "", note: it.note ?? "", opened: { title: it.title, qty: it.qty ?? "", note: it.note ?? "" } })}
                     className={`${LINE_TOOL} text-muted dark:text-slate-400 hover:text-accent hover-reveal`}
                     aria-label="Correct this line"
                   >
@@ -469,7 +480,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                     prefix="+"
                     buttonClassName="px-1 py-0.5 hover:text-content disabled:opacity-40"
                     inputClassName="w-7 bg-transparent px-1 text-center font-medium tabular-nums text-content dark:text-mortar-100"
-                    onChange={(n) => setAmounts((a) => ({ ...a, [it.id]: n }))}
+                    onChange={(n) => setAmounts((a) => ({ ...a, [it.id]: { value: n, forLine: restockLineKey(it) } }))}
                   />
                   <span>
                     to stock when checked

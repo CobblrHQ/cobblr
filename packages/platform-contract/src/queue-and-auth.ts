@@ -38,8 +38,9 @@ export interface PlatformQueue {
  *  user-has-capability check for per-action grants. Modules that
  *  want a route gated by a specific verb (e.g. `inventory:create-
  *  part`) ask `platform().auth.userHasCapability(...)`. Admins/owners
- *  pass implicitly; members/guests need an explicit grant in
- *  workspace_capability_grants. See
+ *  pass implicitly; members can hold explicit grants in
+ *  workspace_capability_grants. Guests stay read-only even when older
+ *  grants are stored. See
  *  docs/modules/member-portal-and-permissions.md. */
 export interface PlatformAuth {
   /** Checks workspace membership against the same ranked roles as REST guards. */

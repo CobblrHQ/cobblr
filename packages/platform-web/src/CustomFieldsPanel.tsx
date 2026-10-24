@@ -66,6 +66,11 @@ interface Props {
    *  DIY Klipper shows them). Generic: any host can gate fields on its own
    *  discriminator without a per-field schema change. */
   hideNames?: Set<string>;
+  /** The viewer may read these fields and not change them: every control is
+   *  drawn disabled, so nothing is offered that its write would refuse. */
+  readOnly?: boolean;
+  /** Values owned by an overlay, displayed without editing the underlying field. */
+  readOnlyValues?: Record<string, string>;
 }
 
 const isBlank = (v: unknown) => v === null || v === undefined || v === "";
@@ -93,6 +98,8 @@ export function CustomFieldsPanel({
   fallbackLabel,
   entityId,
   hideNames,
+  readOnly = false,
+  readOnlyValues,
 }: Props) {
   const mainCurrency = useMoneyCurrency();
   const { api, orgSlug } = usePlatformWeb();
@@ -141,7 +148,7 @@ export function CustomFieldsPanel({
   // sourced data out of the "collapse if blank" bucket so it's
   // actually visible to the user.
   const hasValueOrFallback = (name: string) =>
-    !isBlank(values[name]) || !isBlank(fallbackValues?.[name]);
+    !isBlank(values[name]) || !isBlank(fallbackValues?.[name]) || !isBlank(readOnlyValues?.[name]);
   const { shown, hidden } = useMemo(() => {
     const shown: PlatformFieldDef[] = [];
     const hidden: PlatformFieldDef[] = [];
@@ -155,7 +162,7 @@ export function CustomFieldsPanel({
     }
     return { shown, hidden };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fields, values, fallbackValues, entityKind]);
+  }, [fields, values, fallbackValues, readOnlyValues, entityKind]);
 
   if (fields.length === 0) return null;
   const visible = showAll ? fields : shown;
@@ -205,6 +212,7 @@ export function CustomFieldsPanel({
         }
       : undefined;
   const grid = (fs: PlatformFieldDef[]) => (
+    <fieldset disabled={readOnly} className="contents">
     <FieldPack
       items={fs.map((f) => {
         const value = f.type === "computed" ? computedValues[f.name] : values[f.name];
@@ -218,7 +226,12 @@ export function CustomFieldsPanel({
           }),
           node: (
             <div>
-            <FieldValueEditor
+            {readOnlyValues?.[f.name] !== undefined ? (
+              <label className="block">
+                <span className="block text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 mb-1">{f.display_label}</span>
+                <input className="input w-full" aria-label={f.display_label} value={readOnlyValues[f.name]} readOnly />
+              </label>
+            ) : <FieldValueEditor
               key={`${f.id}:${refused[f.name] ?? 0}`}
               def={f}
               value={value}
@@ -238,7 +251,7 @@ export function CustomFieldsPanel({
               kind={entityKind}
               entityId={entityId}
               detailField={sellerBeside(f)}
-            />
+            />}
             {misfitLine(f, value)}
             {(refused[f.name] ?? 0) > 0 && (
               <p role="alert" className="mt-1 text-xs text-ember-600 dark:text-ember-400">
@@ -250,6 +263,7 @@ export function CustomFieldsPanel({
         };
       })}
     />
+    </fieldset>
   );
 
   return (
@@ -259,7 +273,7 @@ export function CustomFieldsPanel({
     <div className={"space-y-4 " + (className ?? "")}>
       {/* The seller upgrade is asked where the seller notes are written: a
           kind with a where-it-came-from field and no seller field yet. */}
-      {fields.some((f) => f.field_role === "acquired-from") && !fields.some((f) => f.field_role === "seller") && !nativeSeller && <SellerOfferNotice kind={entityKind} />}
+      {!readOnly && fields.some((f) => f.field_role === "acquired-from") && !fields.some((f) => f.field_role === "seller") && !nativeSeller && <SellerOfferNotice kind={entityKind} />}
       {ungrouped.length > 0 && grid(ungrouped)}
       {grouped.map(({ s, fs }) => {
         const open = !folded.has(s.id);

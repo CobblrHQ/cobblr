@@ -25,6 +25,7 @@ export function EditTagModal({
   onClose,
   onSaved,
   onMerged,
+  mayMerge = false,
   onUndone,
 }: {
   slug: string;
@@ -33,6 +34,8 @@ export function EditTagModal({
   onSaved: () => void;
   /** After a merge this tag is gone: go to the one it became. */
   onMerged?: (intoId: string) => void;
+  /** The viewer may merge tags (the page asks the gate). */
+  mayMerge?: boolean;
   /** After Undo on a merge, the tag is back. */
   onUndone?: (id: string) => void;
 }) {
@@ -163,7 +166,7 @@ export function EditTagModal({
           Renaming updates the tag everywhere it's attached - it's the same tag,
           not a copy.
         </p>
-        {otherTags.length > 0 && (
+        {mayMerge && otherTags.length > 0 && (
           <div className="border-t border-line dark:border-slate-700 pt-3">
             <div className="text-xs text-muted mb-1">Merge into another tag</div>
             <div className="flex items-center gap-2">

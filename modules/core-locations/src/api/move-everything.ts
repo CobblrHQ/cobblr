@@ -79,16 +79,11 @@ async function reparent(db: Db, id: string, parentId: string | null): Promise<vo
   }
 }
 
-/** Move what is kept in `fromId` into `toId` (a place's id, or a holder's
- *  `{kind, id}`); with `places`, the places inside it too; with `thenDelete`,
- *  then delete the empty place (a merge, which always takes the places). */
-export async function moveEverything(
-  orgId: string,
-  fromId: string,
-  toRef: string | { kind: string; id: string },
-  opts: { places?: boolean; thenDelete?: boolean; userId?: string | null },
-): Promise<MoveResult> {
-  const db = await dbOf(orgId);
+type MoveOpts = { places?: boolean; thenDelete?: boolean; userId?: string | null };
+
+/** Everything a move will touch, or why it cannot happen. The move and its
+ *  confirm card read it the same way, so the card lists what the move does. */
+async function readMove(db: Db, orgId: string, fromId: string, toRef: string | { kind: string; id: string }, opts: MoveOpts) {
   const places = !!(opts.places || opts.thenDelete);
   const holder = typeof toRef === "object" && toRef.kind !== LOCATION ? toRef : null;
   const toId = typeof toRef === "object" ? toRef.id : toRef;
@@ -123,11 +118,24 @@ export async function moveEverything(
   if (holderStaysBehind && opts.thenDelete) {
     throw new MoveRefused(`${to.name} is kept in ${from.name}, so ${from.name} cannot be emptied into it and deleted.`);
   }
+  const moving = contents.filter((t) => t.kind !== LOCATION && !(holder && t.kind === holder.kind && t.id === holder.id));
+  return { from, to, toId, holder, container, children, moving };
+}
+
+/** Move what is kept in `fromId` into `toId` (a place's id, or a holder's
+ *  `{kind, id}`); with `places`, the places inside it too; with `thenDelete`,
+ *  then delete the empty place (a merge, which always takes the places). */
+export async function moveEverything(
+  orgId: string,
+  fromId: string,
+  toRef: string | { kind: string; id: string },
+  opts: MoveOpts,
+): Promise<MoveResult> {
+  const db = await dbOf(orgId);
+  const { from, to, toId, holder, container, children, moving } = await readMove(db, orgId, fromId, toRef, opts);
 
   const things: MovedThing[] = [];
-  for (const t of contents) {
-    if (t.kind === LOCATION) continue;
-    if (holder && t.kind === holder.kind && t.id === holder.id) continue;
+  for (const t of moving) {
     await platform().placement.place({
       orgId,
       containee: { kind: t.kind, id: t.id },
@@ -150,6 +158,39 @@ export async function moveEverything(
   if (!holder) void platform().events.emit("core-locations.location.updated", { orgId, locationId: toId });
   if (!deleted) void platform().events.emit("core-locations.location.updated", { orgId, locationId: fromId });
   return { from: { id: from.id, name: from.name }, to, things, places: moved, deleted };
+}
+
+/** What a move will do, before it does it: the place being emptied stays
+ *  where it is, and only what is inside it goes. Asked to move a shelf "with
+ *  its bins", an assistant chose this and the shelf stayed behind while its
+ *  bins left it (#8050); the card is where a person catches that. */
+export async function planMove(
+  orgId: string,
+  fromId: string,
+  toRef: string | { kind: string; id: string },
+  opts: MoveOpts,
+): Promise<{ title: string; lines: string[] }> {
+  const db = await dbOf(orgId);
+  const { from, to, children, moving } = await readMove(db, orgId, fromId, toRef, opts);
+  const parent = await db
+    .selectFrom("core_locations_locations as l")
+    .leftJoin("core_locations_locations as p", "p.id", "l.parent_id")
+    .select("p.name as name")
+    .where("l.id", "=", fromId)
+    .executeTakeFirst();
+  const places = children.length
+    ? await db.selectFrom("core_locations_locations").select("name").where("id", "in", children.map((c) => c.id)).orderBy("name").execute()
+    : [];
+  const titles = moving.length ? await platform().entities.lookupMany(orgId, moving.map((t) => ({ kind: t.kind, id: t.id })), { system: true }).catch(() => []) : [];
+  const stays = parent?.name ? `${from.name} itself stays in ${parent.name}` : `${from.name} itself stays where it is`;
+  const title = opts.thenDelete
+    ? `Move everything in ${from.name} into ${to.name}, then delete ${from.name}`
+    : `Move what is in ${from.name} into ${to.name}; ${stays}`;
+  const lines = [
+    ...places.map((p) => `${p.name} (a place, with what is in it) into ${to.name}`),
+    ...moving.map((t) => `${titles.find((x) => x.id === t.id)?.title ?? "a thing"} into ${to.name}`),
+  ];
+  return { title, lines: lines.length ? lines : [`${from.name} has nothing in it to move.`] };
 }
 
 /** Put a move back: the place first if it was merged away, then each place

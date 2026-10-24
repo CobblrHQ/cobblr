@@ -1,3 +1,5 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { useRoleAtLeast } from "../lib/can";
 // /configuration/print — Printers. Configure a print manager (CUPS) once, then
 // any module or you can send documents to it. We hand the manager a discrete
 // job; we never live-drive the device (coordinate-not-control). Direct on the
@@ -33,6 +35,8 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<Printer | "new" | null>(null);
+  // Changing or removing a saved printer is the admin tier's, as its route says.
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   // Live readings, keyed by printer. Held in component state rather than saved:
   // the roll gets swapped and the battery drains, so a persisted reading would
   // go stale silently, which is worse than showing nothing.
@@ -241,7 +245,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
                   printer by the size funnel — fine for an inkjet, wrong for a thermal
                   roll. Nudge the user to set it (one click into edit) rather than
                   silently mis-funnel an existing printer. */}
-              {p.driver !== "browser-bluetooth" && p.driver !== "browser-serial" && !(p.settings as Record<string, unknown> | undefined)?.printerKind && (
+              {setsUp && p.driver !== "browser-bluetooth" && p.driver !== "browser-serial" && !(p.settings as Record<string, unknown> | undefined)?.printerKind && (
                 <button
                   onClick={() => setEditing(p)}
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:brightness-105 transition"
@@ -294,6 +298,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
                   </button>
                 </>
               )}
+              {setsUp && <>
               <button aria-label="Edit" onClick={() => setEditing(p)} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Edit">
                 <Pencil size={14} />
               </button>
@@ -310,6 +315,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
               >
                 <Trash2 size={14} />
               </button>
+              </>}
             </div>
             <div className="mt-2 text-xs text-muted dark:text-slate-400 font-mono">
               {/* Serial belongs with Bluetooth here, not with network: it has no

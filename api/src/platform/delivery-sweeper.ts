@@ -282,7 +282,7 @@ export async function deliveryTick(
             eventType: batch.length === 1 ? first.event_type : "notifications.digest",
             message: composeDigest(items, { workspace: org?.name, workspaces: new Set(batch.map((r) => r.org_id)).size }),
             // One item keeps its own link; many from one workspace open that
-            // workspace's notifications; a digest across workspaces has no one place.
+            // workspace's notifications when its slug is supplied, else the account inbox.
             link_url: digestLink(batch, org?.slug ?? null),
             priority: "normal",
             subscriptionConfig: config,

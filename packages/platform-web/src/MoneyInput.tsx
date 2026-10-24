@@ -86,6 +86,8 @@ export function MoneyInput({
         aria-label={ariaLabel}
         aria-invalid={bad || undefined}
         data-money-input=""
+        ref={(input) => input?.setCustomValidity(read(draft).ok ? "" : "Enter an amount.")}
+        onInvalid={() => setBad(true)}
         onChange={(e) => {
           setDraft(e.target.value);
           setBad(false);

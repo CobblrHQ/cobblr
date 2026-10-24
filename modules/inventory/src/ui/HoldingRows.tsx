@@ -6,6 +6,7 @@
 // short of gauze says so even when the closet holds plenty.
 // See docs/design-decisions/holdings-and-units.md.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { AlertTriangle, MapPin } from "lucide-react";
@@ -18,7 +19,7 @@ import { QtyStepper } from "./QtyStepper";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
-  return Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(3)));
+  return quantityNumber(n);
 }
 
 /** "expires in 3d" for the soonest date, the one countdown every surface shows. */
