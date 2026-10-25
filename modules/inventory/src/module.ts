@@ -501,7 +501,7 @@ export default defineModule({
         // UI-SCREEN: /instances/solder-paste/parts/<id> reads this readiness through the shared GET paste reader.
         id: "inventory:paste-readiness", changes: "records", group: "stock", label: "Check paste readiness", description: "Read a jar's handling history, warm-up deadline, remaining work life and shelf expiry. Changes nothing.",
         runBy: "member",
-        scope: "workspace" as const, invokeHandler: "inventory.paste-readiness", userInvokable: true,
+        scope: "workspace" as const, invokeHandler: "inventory.paste-readiness", effect: "none", userInvokable: true,
         argsSchema: { partId: { label: "Paste jar id", type: "text", required: true } },
       },
       {

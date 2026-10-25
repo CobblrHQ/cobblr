@@ -50,7 +50,7 @@ import { captureRoute } from "../lib/captureRoute";
 import { useDeployEnv } from "../lib/deploy-env";
 import { ManualScanField } from "../components/ManualScanField";
 import { NfcScanButton } from "../components/NfcScanButton";
-import { ingestBarcode } from "../lib/scanIngest";
+import { ingestBarcode, scannedAgain } from "../lib/scanIngest";
 import { ApiError, api, type LiveSortEntry, type ScanInboxItem, type ScanKnownCode, type ScanResolveCandidate, type TrackedMatch } from "../lib/api";
 import { LOCATION_ENTITY_KIND, decideLocationScan, filingLabel } from "../lib/scanFiling";
 import { freshDedupState, shouldFireScan, pickDetection, makeDetectionCollector, type DedupState } from "../lib/scanDedup";
@@ -2169,8 +2169,6 @@ export function ScanCameraPage() {
     // "Looking up…" for the seconds the camera frame took to send).
     // A code still in the inbox is that row (#6554): it shows at once, and
     // the scan below lands on it (+1 for an arrival, the dedupe in POST /scan).
-    let inboxRowId: string | null = null;
-    let inboxRowQty = 0;
     void ingestBarcode({
       code: barcode,
       known: (c) => api.scanKnown(activeSlug, c, purpose),
@@ -2178,8 +2176,6 @@ export function ScanCameraPage() {
         if (ingestKeyRef.current === key) setKnownCode({ code: barcode, known });
       },
       onInboxRow: (row) => {
-        inboxRowId = row.id;
-        inboxRowQty = Math.round(Number(row.quantity ?? 1)) || 1;
         if (ingestKeyRef.current === key) {
           resultItemRef.current = row;
           setResultItem(row);
@@ -2214,9 +2210,9 @@ export function ScanCameraPage() {
         void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
         // The same row, one more: said with its way back (#6554). A count
         // scan settles its own total and adds nothing.
-        if (inboxRowId && it.id === inboxRowId && purpose === "arrival") {
-          const now = Math.round(Number(it.quantity ?? inboxRowQty + 1)) || inboxRowQty + 1;
-          const back = Math.max(1, now - 1);
+        const again = scannedAgain(it, purpose);
+        if (again) {
+          const { now, back } = again;
           // The scanner's own note, under the top chrome (never a toast over
           // the shutter, lint:camera-no-toast), with its way back.
           showFilingNote(`Already in your inbox: ${now} now`, "ok", {

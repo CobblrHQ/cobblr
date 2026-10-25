@@ -48,8 +48,8 @@ import { hostedIdentifyReach } from "@cobblr/platform-contract/hosted-identify";
 import { ocrAvailable } from "@cobblr/core-scan/services/ocr";
 import { AiCapabilities, type AiCapability } from "@cobblr/platform-contract";
 import { clearComputedDefsCache } from "../platform/computed-fields.js";
-import { issueUndos, issuedUndoFor, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
-import { doorRefusal, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
+import { issueUndos, judgeUndo, returnIssuedUndo, spendIssuedUndo } from "../platform/issued-undos.js";
+import { askedByAnAssistant, doorRefusal, mayInvoke, permissionRefusal, type InvokeAsker } from "../platform/may-invoke.js";
 import { actionGateOf } from "../platform/action-gates.js";
 import { RECORD_BAR_ACTIONS } from "@cobblr/platform-contract/record-bar-actions";
 import { actionOwner, actionRecordOptional, effectiveAppliesTo, enabledActionOwners, listDormant, matchAction, getActionScope, planFor, undoFor, hasUndo } from "../platform/actions.js";
@@ -733,6 +733,9 @@ const InvokeBody = z.object({
   entityId: optionalField(z.string()),
   bindingId: optionalUuid(),
   args: z.record(z.unknown()).optional(),
+  // The Undo being pressed, as its run handed it back: it runs once, and
+  // only while what it would put back is as it left it (#7924).
+  undo_id: optionalUuid(),
   /** Ask every gate and stop: whether it would run for this person here. */
   dry_run: z.boolean().optional(),
 });
@@ -908,20 +911,27 @@ platformOrgRouter.post(
       // lets through, so nothing offered is refused here.
       const asker = askerOf(req);
       const target = { entityKind: parsed.data.entityKind ?? null, entityId: parsed.data.entityId ?? null, args: (parsed.data.args ?? null) as Record<string, unknown> | null };
-      const door = await doorRefusal(asker, parsed.data.actionId, target);
-      if (door) {
-        res.status(door.status).json(door.body);
-        return;
-      }
-
       // An undo the platform handed this person for their own run is theirs
-      // to run, whatever their role (#5193): exactly that step, once.
-      const ownUndo = await issuedUndoFor(req.tenant!.org.id, req.session!.id, {
+      // to run, whatever their role (#5193): exactly that step, once. Looked
+      // up before the door, so the way back an assistant was given is one it
+      // can take (#7831). An Undo runs once, and never over a change made
+      // since (#7924).
+      const judged = await judgeUndo(req.tenant!.org.id, req.session!.id, {
         action_id: parsed.data.actionId,
         args: parsed.data.args ?? {},
         entity_kind: parsed.data.entityKind ?? null,
         entity_id: parsed.data.entityId ?? null,
-      });
+      }, parsed.data.undo_id ?? null, !!req.session?.ai_door);
+      if ("refusal" in judged) {
+        res.status(judged.refusal.status).json({ error: { code: judged.refusal.code, message: judged.refusal.message } });
+        return;
+      }
+      const ownUndo = judged.id;
+      const door = await doorRefusal(asker, parsed.data.actionId, target, { ownUndo: !!ownUndo });
+      if (door) {
+        res.status(door.status).json(door.body);
+        return;
+      }
       if (ownUndo && !parsed.data.dry_run && !(await spendIssuedUndo(ownUndo))) {
         res.status(409).json({ error: { code: "undo_already_pressed", message: "This Undo was already pressed. It runs once; look at the record to see where it stands." } });
         return;
@@ -1057,6 +1067,7 @@ platformOrgRouter.post(
         },
         rendered,
         args,
+        ...(askedByAnAssistant(asker) ? { byAssistant: true } : {}),
         ...(uploadedFile(req) ? { document: {
           bytes: await readFile(uploadedFile(req)!.path),
           name: uploadedFile(req)!.originalname,
@@ -1092,7 +1103,11 @@ platformOrgRouter.post(
         ...(parsed.data.entityKind && parsed.data.entityId ? { entity: { kind: parsed.data.entityKind, id: parsed.data.entityId } } : {}),
       }).catch(() => null);
       const issued = (undo ?? []).flatMap((u) => ("action_id" in u ? [u] : []));
-      if (issued.length) await issueUndos(req.tenant!.org.id, req.session!.id, issued);
+      if (issued.length) {
+        // Each step carries the id its Undo presents when pressed.
+        const ids = await issueUndos(req.tenant!.org.id, req.session!.id, issued, !!req.session?.ai_door);
+        issued.forEach((u, i) => Object.assign(u, { undo_id: ids[i] }));
+      }
       // What the client should refresh, said once here: the record's kind
       // under both its spellings (an instance kind and the module's base
       // kind name the same rows), so every surface showing it can re-read

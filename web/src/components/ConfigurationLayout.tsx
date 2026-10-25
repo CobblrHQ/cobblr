@@ -140,7 +140,9 @@ export function ConfigSidebarBody() {
           No setting matches “{query}”.
         </p>
       )}
-      {filtered.map((g) => (
+      {ctx.settled === false ? (
+        <p aria-busy="true" className="px-2.5 py-1 text-xs text-faint dark:text-slate-500">loading…</p>
+      ) : filtered.map((g) => (
         <div key={g.id} className="mb-3">
           <NavLink
             to={`/configuration/s/${g.id}`}

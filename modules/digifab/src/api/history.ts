@@ -125,6 +125,7 @@ historyRouter.get(
       const l = links.find((x) => x.connection_id === connId && x.remote_device_id === dev);
       return l?.machine_label || l?.remote_device_name || dev || "—";
     };
+    const connections = new Map((await platform().devices.connections().list(orgId)).map((c) => [c.id, c.label]));
 
     const recent = await db
       .selectFrom("digifab_jobs")
@@ -160,10 +161,11 @@ historyRouter.get(
     // weight, duration. One row per cloud task; supersedes digifab_observed_prints
     // for Bambu (which the pump can no longer name well).
     type Item = { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label: string | null; cover: string | null; device: string; connection_id: string | null; device_id: string | null; status: string; outcome: "good" | "scrap" | null; good_qty: number | null; scrap_qty: number | null; filament_g: number | null; cost: number | null; cost_currency: string | null; at: string; duration_s: number };
-    const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["task_id", "raw", "captured_at"]).execute();
-    const taskItems: Item[] = taskRows
+    const taskRows = await db.selectFrom("digifab_bambu_tasks").select(["connection_id", "task_id", "raw", "captured_at"]).execute();
+    const taskItems: Array<Item & { printer: { connection_id: string; device_id: string | null } }> = taskRows
       .map((t) => {
         const r = t.raw as Record<string, unknown>;
+        const serial = (r.deviceId as string) || null;
         const name = (r.designTitleTranslated as string) || (r.designTitle as string) || (r.title as string) || "(print)";
         const at = r.endTime ? new Date(r.endTime as string).toISOString() : new Date(t.captured_at).toISOString();
         const dur = Number(r.costTime) || (r.startTime && r.endTime ? (new Date(r.endTime as string).getTime() - new Date(r.startTime as string).getTime()) / 1000 : 0);
@@ -186,43 +188,45 @@ historyRouter.get(
           cost_currency: null,
           at,
           duration_s: dur,
+          printer: { connection_id: t.connection_id, device_id: serial },
         };
       })
       .filter((t) => new Date(t.at) > since);
     const taskHours = taskItems.reduce((h, t) => h + t.duration_s / 3600, 0);
 
-    // by-device: jobs + cloud tasks, keyed by resolved device name.
-    type DeviceRow = { name: string; total: number; completed: number; failed: number; good: number; scrapped: number; unjudged: number; success: number | null; filament_g: number; cost: number | null; unpriced: number };
-    const byName = new Map<string, DeviceRow>();
-    const blank = (name: string): DeviceRow => ({ name, total: 0, completed: 0, failed: 0, good: 0, scrapped: 0, unjudged: 0, success: null, filament_g: 0, cost: 0, unpriced: 0 });
+    // by-device: jobs + cloud tasks, one row per printer. A printer is its
+    // connection and that manager's device id: names repeat across managers
+    // (each calls its own printer "p1"), so a name never joins two (#8052).
+    type DeviceRow = { name: string; connection_id: string | null; device_id: string | null; connection: string | null; total: number; completed: number; failed: number; good: number; scrapped: number; unjudged: number; success: number | null; filament_g: number; cost: number | null; unpriced: number };
+    const byPrinter = new Map<string, DeviceRow>();
+    const printerRow = (connId: string | null, dev: string | null, name: string): DeviceRow => {
+      // A cloud task with no serial is known only by its name on that account.
+      const key = JSON.stringify([connId, dev, dev ? null : name]);
+      const e = byPrinter.get(key) ?? { name, connection_id: connId, device_id: dev, connection: (connId && connections.get(connId)) || null, total: 0, completed: 0, failed: 0, good: 0, scrapped: 0, unjudged: 0, success: null, filament_g: 0, cost: 0, unpriced: 0 };
+      byPrinter.set(key, e);
+      return e;
+    };
     for (const r of byDeviceRows) {
-      const name = nameOf(r.connection_id, r.target_device);
-      const e = byName.get(name) ?? blank(name);
+      const e = printerRow(r.connection_id, r.target_device, nameOf(r.connection_id, r.target_device));
       e.total += n(r.total); e.completed += n(r.completed); e.failed += n(r.failed); e.filament_g += n(r.filament_g);
       e.good += n(r.good); e.scrapped += n(r.scrapped); e.unjudged += n(r.completed) - n(r.good) - n(r.scrapped);
-      byName.set(name, e);
     }
-    const deviceCost = new Map<string, Array<{ amount: number; currency: string; day: string }>>();
-    for (const r of costRows) {
-      const name = nameOf(r.connection_id, r.target_device);
-      const e = byName.get(name) ?? blank(name);
-      e.unpriced += n(r.unpriced);
-      byName.set(name, e);
-    }
+    for (const r of costRows) printerRow(r.connection_id, r.target_device, nameOf(r.connection_id, r.target_device)).unpriced += n(r.unpriced);
+    const deviceCost = new Map<DeviceRow, Array<{ amount: number; currency: string; day: string }>>();
     for (const p of costParts) {
-      const name = nameOf(p.conn, p.dev);
-      deviceCost.set(name, [...(deviceCost.get(name) ?? []), p]);
+      const e = printerRow(p.conn, p.dev, nameOf(p.conn, p.dev));
+      deviceCost.set(e, [...(deviceCost.get(e) ?? []), p]);
     }
-    for (const [name, e] of byName) e.cost = deviceCost.has(name) ? round(await money(deviceCost.get(name)!)) : null;
+    for (const e of byPrinter.values()) e.cost = deviceCost.has(e) ? round(await money(deviceCost.get(e)!)) : null;
     for (const t of taskItems) {
-      const e = byName.get(t.device) ?? blank(t.device);
+      const { connection_id: connId, device_id: serial } = t.printer;
+      const e = printerRow(connId, serial, serial ? nameOf(connId, serial) : t.device);
       e.total += 1;
       if (t.status === "completed") { e.completed += 1; e.unjudged += 1; e.unpriced += 1; }
       if (t.status === "failed") e.failed += 1;
       e.filament_g += t.filament_g ?? 0;
-      byName.set(t.device, e);
     }
-    for (const e of byName.values()) e.success = successRate(e);
+    for (const e of byPrinter.values()) e.success = successRate(e);
 
     // recent: union jobs + cloud tasks, newest first.
     const recentMerged: Item[] = [
@@ -248,7 +252,7 @@ historyRouter.get(
         at: new Date(r.updated_at).toISOString(),
         duration_s: Math.max(0, (new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / 1000),
       })),
-      ...taskItems,
+      ...taskItems.map(({ printer: _printer, ...t }) => t),
     ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 50);
 
     const taskCompleted = taskItems.filter((t) => t.status === "completed").length;
@@ -303,7 +307,7 @@ historyRouter.get(
         unpriced,
       },
       currency: workspaceCurrency,
-      by_device: [...byName.values()],
+      by_device: [...byPrinter.values()],
       recent: recentMerged,
     });
   }),

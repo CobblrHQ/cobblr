@@ -27,6 +27,7 @@ export function useConfigVisibility(): VisibilityContext {
   const items = modulesQ.data?.items;
   return {
     tidyAvailable: tidyQ.data?.available === true,
+    settled: !modulesQ.isLoading && !tidyQ.isLoading,
     // null while loading — nothing is module-hidden yet, so the settings area
     // never flickers entries in as the query resolves.
     enabledModules: items

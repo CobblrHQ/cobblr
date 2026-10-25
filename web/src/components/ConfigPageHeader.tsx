@@ -21,7 +21,7 @@
 import {
   createContext,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -43,10 +43,12 @@ export function ConfigHeaderProvider({ children }: { children: ReactNode }) {
 }
 
 /** Put a page's own buttons in the shared header. Renders nothing where you
- *  place it; the layout draws the children beside the title. */
+ *  place it; the layout draws the children beside the title. Handed over
+ *  before the page paints: given after, they arrived on a phone as a row above
+ *  the page and moved every button under a finger (#6881). */
 export function ConfigHeaderActions({ children }: { children: ReactNode }) {
   const ctx = useContext(Ctx);
-  useEffect(() => {
+  useLayoutEffect(() => {
     ctx?.setActions(children);
     return () => ctx?.setActions(null);
   });

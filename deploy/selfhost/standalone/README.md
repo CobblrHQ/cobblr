@@ -109,7 +109,8 @@ UTC when neither is set) and lands in
 kept for 30 days and 12 weeks, and restores anywhere. A dump only counts as
 usable after both the dump and compression succeed, gzip integrity and the cluster
 dump completion marker pass, and the file clears `BACKUP_MIN_BYTES`. Output stays in a `.partial.*` file until it is complete,
-then becomes `.sql.gz`. Failed output is kept as `.failed` for two days.
+then becomes `.sql.gz`, readable by any user on the box (mode 0644) so a copy you run as yourself can
+pull it. Failed output is kept as `.failed` for two days.
 Existing daily and weekly archives are verified before taking a retention slot.
 Only completed dumps count toward retention, so a large incomplete dump
 cannot evict the last good backup.

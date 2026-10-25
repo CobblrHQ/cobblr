@@ -21,6 +21,9 @@ export type ActionUndoStep =
       /** The record the inverse runs on, for an entity-scoped action. */
       entity_kind?: string;
       entity_id?: string;
+      /** Set by the door that issued it: pressed, the Undo presents it, so it
+       *  runs once and only while what it puts back is as it was (#7924). */
+      undo_id?: string;
     }
   | {
       tool: "delete" | "update";

@@ -99,6 +99,8 @@ export function ConfigurationPage() {
 
           {q ? (
             <SearchResults hits={hits} hosted={hostedHits} query={q} />
+          ) : ctx.settled === false ? (
+            <p aria-busy="true" className="text-sm text-faint dark:text-slate-500">loading…</p>
           ) : (
             <>
               <BundleUpdatesCallout slug={activeSlug} />

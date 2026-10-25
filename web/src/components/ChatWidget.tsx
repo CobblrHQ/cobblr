@@ -7,7 +7,7 @@
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MarkdownText, raisePersonalDocument, usePasteImage } from "@cobblr/platform-web";
+import { MarkdownText, browserOffline, raisePersonalDocument, usePasteImage } from "@cobblr/platform-web";
 import { panelArrived, panelLeft, type OpenChatDetail } from "../lib/open-chat-buffer";
 import { appliedCards } from "../lib/applied-cards";
 import { linkifyMarkdown, mergeRefs, refsOfResponse, refOfProposal, refsLeftUnnamed, type ChatEntityRef } from "../lib/entity-chips";
@@ -1076,6 +1076,15 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       setError(tooLong);
       return;
     }
+    // Offline, a message is not sent to fail: it stays in the box (kept on this
+    // device, like any draft) and goes once the connection is back, even after
+    // a reload (#7928). Sent offline it was lost to a connection error.
+    if (browserOffline()) {
+      if (spoken) setInput(text);
+      markWaiting(true);
+      return;
+    }
+    markWaiting(false);
     setInput("");
     setHistory((h) => {
       const entries = remember(h.entries, text);
@@ -1303,6 +1312,41 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
+  const waitingKey = personalChatKey("waiting", me, activeSlug);
+  const [waitingToSend, setWaitingToSend] = useState(false);
+  const markWaiting = (on: boolean) => {
+    setWaitingToSend(on);
+    try {
+      if (!waitingKey) return;
+      if (on) localStorage.setItem(waitingKey, "1");
+      else localStorage.removeItem(waitingKey);
+    } catch {
+      /* private mode */
+    }
+  };
+  useEffect(() => {
+    try {
+      setWaitingToSend(Boolean(waitingKey && localStorage.getItem(waitingKey)));
+    } catch {
+      /* private mode */
+    }
+  }, [waitingKey]);
+  const [backOnline, setBackOnline] = useState(0);
+  useEffect(() => {
+    const on = () => setBackOnline((n) => n + 1);
+    window.addEventListener("online", on);
+    return () => window.removeEventListener("online", on);
+  }, []);
+  // Back online with a message waiting: it goes, once.
+  useEffect(() => {
+    if (!waitingToSend || busy || browserOffline()) return;
+    if (!input.trim()) {
+      markWaiting(false);
+      return;
+    }
+    void send();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingToSend, backOnline, busy, input]);
   useEffect(() => {
     if (!draftKey) return;
     try {
@@ -2547,6 +2591,11 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
             )}
             {error && (
               <div className="text-xs text-ember-500 bg-ember-50 dark:bg-ember-900/20 rounded px-3 py-2">{error}</div>
+            )}
+            {waitingToSend && (
+              <div role="status" data-testid="cobb-waiting-to-send" className="text-xs text-muted dark:text-slate-400 bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded px-3 py-2">
+                You're offline. Waiting to send your message: it goes when you're back.
+              </div>
             )}
           </div>
 

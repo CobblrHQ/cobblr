@@ -5,6 +5,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { usePlatformWeb } from "./context";
+import { useStillAsking } from "./still-asking";
 import type { CountWords } from "@cobblr/platform-contract/plural";
 import type { PlatformUnitDef, UnitDisplayMode } from "./types";
 import { convertQuantity, formatQuantity, formatUnit, quantitySuffix, resolveUnit, unitLens } from "./units";
@@ -47,6 +48,8 @@ export function useUnits(): UseUnits {
     staleTime: 60_000,
   });
 
+  const settled = !useStillAsking(q);
+
   return useMemo(() => {
     const builtins = q.data?.builtins ?? [];
     const custom = q.data?.custom ?? [];
@@ -61,7 +64,7 @@ export function useUnits(): UseUnits {
       custom,
       displayMode,
       loading: q.isLoading,
-      settled: !q.isLoading || q.failureCount > 0,
+      settled,
       format: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known),
       wordFor: (qty, raw, known) => formatQuantity(qty, raw, all, displayMode, known).replace(/^\S+\s*/, ""),
       unit: (raw) => formatUnit(raw, all, displayMode),
@@ -70,5 +73,5 @@ export function useUnits(): UseUnits {
       convert: (value, fromRaw, toRaw) => convertQuantity(value, fromRaw, toRaw, all),
       lens: unitLens(all),
     };
-  }, [q.data, q.isLoading, q.failureCount]);
+  }, [q.data, q.isLoading, settled]);
 }

@@ -6,6 +6,20 @@
 // your own records answer. A code still in the scan inbox answers with that
 // row (#6554): the scan that follows lands on it, and it wins over a record.
 
+/** What a scan that landed on a row already in the inbox says, from the scan's
+ *  own answer: its new count and the count Undo goes back to. Null for a scan
+ *  that made a new row, or that does not count (#6554). It was decided from
+ *  the inbox lookup that runs beside the scan, and when the scan answered
+ *  first the person was told nothing (#6881). */
+export function scannedAgain(
+  answer: { scanned_again?: boolean; quantity?: number | string | null },
+  purpose: string,
+): { now: number; back: number } | null {
+  if (!answer.scanned_again || purpose !== "arrival") return null;
+  const now = Math.max(1, Math.round(Number(answer.quantity ?? 1)) || 1);
+  return { now, back: Math.max(1, now - 1) };
+}
+
 export interface KnownAnswer<K, R = unknown> {
   known: K | null;
   /** The unfiled inbox row for this code, when there is one. */

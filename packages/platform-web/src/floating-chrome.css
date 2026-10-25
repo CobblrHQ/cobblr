@@ -88,6 +88,12 @@
    * (#6782). 0 upright and on a desk. */
   margin-right: var(--inset-right);
 }
+/* No room above the dock (bottom-dock.ts noRoomForCorner): the piece waits,
+ * hidden, rather than going up under the status bar and over the page's own
+ * controls (#7930). */
+.fc-corner[data-fc-no-room] {
+  visibility: hidden;
+}
 /* An overlay ends above the toasts (--overlay-bottom, bottom-dock.ts
  * overlayBottomReserve): they stay up over a modal and used to sit on its
  * Create and Cancel, and on the phone menu's links (#5801). 0 with no toast. */

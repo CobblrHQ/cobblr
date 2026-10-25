@@ -10,6 +10,7 @@
 // and the door cannot disagree. The guard drives both for every role
 // (api/tests/an-action-offered-is-an-action-allowed.test.ts).
 
+import { effectNeedsAPerson } from "@cobblr/platform-contract/action-consent";
 import { humanOnlyRefusal } from "@cobblr/platform-contract/human-only";
 import { platform } from "@cobblr/platform-contract";
 import { roleRefusal, roleSatisfies } from "@cobblr/platform-contract/org-roles";
@@ -66,8 +67,14 @@ export interface InvokeRefusal {
 
 const refuse = (status: number, error: Record<string, unknown>): InvokeRefusal => ({ status, body: { error } });
 
+/** Whether an assistant is the one asking: an MCP or connector session, or
+ *  a request that came through the in-app chat or MCP. */
+export function askedByAnAssistant(asker: InvokeAsker): boolean {
+  return !!asker.aiDoor || asker.via === "assistant" || asker.via === "mcp";
+}
+
 /** The door's half: what this connection may never run, whoever is on it. */
-export async function doorRefusal(asker: InvokeAsker, actionId: string, target: InvokeTarget): Promise<InvokeRefusal | null> {
+export async function doorRefusal(asker: InvokeAsker, actionId: string, target: InvokeTarget, opts: { ownUndo?: boolean } = {}): Promise<InvokeRefusal | null> {
   const args = (target.args ?? null) as Record<string, unknown> | null;
   // A Tier-B app-scoped token may fire capability-gated MODULE actions but
   // never a kernel workspace-config one, and a kernel record verb only on a
@@ -79,13 +86,16 @@ export async function doorRefusal(asker: InvokeAsker, actionId: string, target: 
   // A personal token that may change only records never changes the workspace (#7138, #7343, #7356).
   if (asker.tokenAccess === "change" && actionChangesWorkspace(actionId)) return refuse(403, { code: "token_access", message: accessMessage("change") });
   // What only a person does is refused to every assistant door, confirmed or not.
-  if (asker.aiDoor || asker.via === "assistant" || asker.via === "mcp") {
+  if (askedByAnAssistant(asker)) {
     const human = humanOnlyRefusal(actionId, args);
     if (human) return refuse(403, { code: "human_only", message: human });
   }
   // An assistant with no way to show a person a confirmation never runs an action that needs one.
+  // An undo the platform issued this session is admitted past "cannot be
+  // undone" (it IS the undo), never past an effect that always needs a person.
   if (asker.aiDoor) {
-    const refused = actionRefusal(await once(asker, `safety:${actionId}`, () => actionSafety(actionId)));
+    const safety = await once(asker, `safety:${actionId}`, () => actionSafety(actionId));
+    const refused = opts.ownUndo && !effectNeedsAPerson(safety?.effect) ? null : actionRefusal(safety);
     if (refused) return refuse(403, { code: "needs_a_person", message: refused });
   }
   return null;

@@ -168,13 +168,20 @@ function layout(): void {
     sides.set(side, list);
   }
   const stacked: Array<{ height: number; lift: number }> = [];
+  const vh = typeof window !== "undefined" ? window.innerHeight : 0;
+  const rootStyle = getComputedStyle(root);
+  const insetTop = parseFloat(rootStyle.getPropertyValue("--inset-top")) || 0;
+  const insetBottom = parseFloat(rootStyle.getPropertyValue("--inset-bottom")) || 0;
   for (const list of sides.values()) {
     const { offsets } = stackCorner(list);
     list.forEach((p, i) => {
       const off = offsets[i] ?? 0;
       if (off > 0) p.el.style.setProperty(CORNER_STACK_VAR, `${off}px`);
       else p.el.style.removeProperty(CORNER_STACK_VAR);
-      stacked.push({ height: p.height, lift: p.lift + off });
+      const waits = vh > 0 && p.height > 0 && noRoomForCorner(vh, insetTop, insetBottom + total + p.lift + off, p.height);
+      if (waits) p.el.setAttribute(NO_ROOM_ATTR, "");
+      else p.el.removeAttribute(NO_ROOM_ATTR);
+      if (!waits) stacked.push({ height: p.height, lift: p.lift + off });
     });
   }
   const clearance = bottomClearance(total, stacked);
@@ -182,14 +189,27 @@ function layout(): void {
   else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
   document.body.style.paddingBottom = clearance > 0 ? `calc(var(--inset-bottom, 0px) + ${clearance}px)` : "";
   // Measured after the stacking above, so the rect is where the piece now is.
-  const vh = typeof window !== "undefined" ? window.innerHeight : 0;
-  const reserve = overlayBottomReserve(vh, [...overOverlays].map((el) => {
+  const reserve = overlayBottomReserve(vh, [...overOverlays].filter((el) => !el.hasAttribute(NO_ROOM_ATTR)).map((el) => {
     const r = el.getBoundingClientRect();
     return { top: r.top, height: el.isConnected ? r.height : 0 };
   }));
   if (reserve > 0) root.style.setProperty(OVERLAY_BOTTOM_VAR, `${reserve}px`);
   else root.style.removeProperty(OVERLAY_BOTTOM_VAR);
 }
+
+/** A corner piece the dock leaves no room for: on the scanner, a scanned
+ *  card joins the dock and stands most of the screen tall, and a toast stacked
+ *  above it went up under the status bar and over the camera's own controls
+ *  (#7930, a newcomer's first scan under the starter's Undo). There is no free
+ *  place for it then, so it waits, hidden (floating-chrome.css), and comes
+ *  back when the dock shrinks. `bottom` is how far its foot sits above the
+ *  screen's bottom edge. */
+export function noRoomForCorner(viewHeight: number, insetTop: number, bottom: number, height: number): boolean {
+  return viewHeight - bottom - height < insetTop;
+}
+
+/** Set on a corner piece while it waits for room. */
+export const NO_ROOM_ATTR = "data-fc-no-room";
 
 /** Coalesced: a burst of resizes is one layout. */
 export function scheduleDockLayout(): void {

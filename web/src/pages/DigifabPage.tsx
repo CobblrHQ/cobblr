@@ -1389,11 +1389,13 @@ function PrintHistorySection({ slug }: { slug: string }) {
                   <ul className="text-xs space-y-0.5">
                     {[...hist.data!.by_device]
                       .sort((a, b) => b.total - a.total)
-                      .map((d, i) => {
+                      .map((d, _i, rows) => {
                         const dr = d.success ?? null;
+                        // Two managers can each call a printer "p1": a shared name says whose it is.
+                        const shared = !!d.connection && rows.some((o) => o !== d && o.name === d.name);
                         return (
-                          <li key={i} className="flex gap-2">
-                            <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}</span>
+                          <li key={`${d.connection_id}:${d.device_id}:${d.name}`} data-testid="history-machine" className="flex gap-2">
+                            <span className="flex-1 min-w-0 truncate text-content dark:text-mortar-100">{d.name}{shared && <span className="text-faint"> · {d.connection}</span>}</span>
                             {dr != null && (
                               <span className={"shrink-0 tabular-nums " + (dr >= 90 ? "text-moss-600" : dr >= 70 ? "text-amber-600" : "text-ember-600 dark:text-ember-400")}>{dr}%</span>
                             )}

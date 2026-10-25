@@ -267,7 +267,10 @@ intakeRouter.post(
             console.error("[core-scan] re-scan cross-check threw:", (err as Error).message),
           );
         }
-        res.status(200).json(bumped);
+        // Says it is the same row again, so the camera tells the person
+        // "Already in your inbox" from this answer alone, never from a lookup
+        // racing it (#6881).
+        res.status(200).json({ ...bumped, scanned_again: true });
         return;
       }
     }

@@ -61,18 +61,25 @@ export async function refreshExchangeRates(): Promise<void> {
   if (!result.ran) console.info("[exchange-rates] another process is fetching the shared feed");
 }
 
-export function registerExchangeRates(): void {
-  platform().sweeps.register({
-    // Hourly, though the feed is read once a day: refreshExchangeRates asks the
-    // ECB only when its last fetch is 23 hours old, so a fetch that failed (a
-    // timeout on the full history, no way out yet) is tried again within the
-    // hour, not a day later with every foreign price left out of every total
-    // until then (#7623).
-    name: "platform.exchange-rates", everyMs: 60 * 60 * 1000, firstAfterMs: 1000,
-    // The shared feed needs no tenant pool. The gate does the work once.
-    candidates: async () => { await refreshExchangeRates(); return []; },
-    visit: async () => {},
-  });
+export const EXCHANGE_RATES_EVERY_MS = 60 * 60 * 1000;
+export const EXCHANGE_RATES_FIRST_MS = 1000;
+let ratesTimer: ReturnType<typeof setInterval> | null = null;
+
+/** The shared rates, refreshed a second after boot and then hourly, on their
+ *  own timer. They were a workspace sweep whose visit did nothing: a sweep
+ *  round with no workspace in it (a fresh install, a test stack before its
+ *  first signup) never reached the refresh and set it an hour on, so every
+ *  foreign price was left out of every total for that hour (#6881). Hourly,
+ *  though the feed is read once a day: refreshExchangeRates asks the ECB only
+ *  when its last fetch is 23 hours old, so a fetch that failed is tried again
+ *  within the hour, not a day later (#7623). Two api processes each tick; the
+ *  refresh's exclusive lock lets one of them fetch. */
+export function startExchangeRates(refresh: () => Promise<void> = refreshExchangeRates): void {
+  if (ratesTimer) clearInterval(ratesTimer);
+  const tick = () => void refresh().catch((err) => console.warn("[exchange-rates] refresh failed, the last known rates stay:", (err as Error).message));
+  ratesTimer = setInterval(tick, EXCHANGE_RATES_EVERY_MS);
+  ratesTimer.unref?.();
+  setTimeout(tick, EXCHANGE_RATES_FIRST_MS).unref?.();
 }
 
 export async function currency(orgId: string): Promise<string> {

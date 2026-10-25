@@ -17,7 +17,7 @@ import { mayFastClose } from "./pool-release-rule.js";
 import { createPool } from "./client-error-guard.js";
 import { IDLE_RELEASE_MS } from "./connection-budget.js";
 import { poolCounts, type PoolCounts } from "./pool-stats.js";
-import { connectThroughEnds, createConnectionLimit } from "./tenant-connection-limit.js";
+import { connectThroughEnds, createConnectionLimit, poolIsIdle } from "./tenant-connection-limit.js";
 
 interface CachedTenant {
   pool: Pool;
@@ -310,7 +310,7 @@ export async function releaseIdleTenantPool(orgId: string, ifSeqIs?: number): Pr
   }
   // Snapshot + delete with no await gap: in-use → leave it for live traffic.
   if (cache.get(orgId) !== entry) return; // someone else churned it
-  if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) return;
+  if (!poolIsIdle(pool)) return;
   // Recently handed out? A request may hold the Kysely ref but not have checked
   // out a connection yet (so the counts above look idle). The one caller who
   // may skip this wait is the access's OWN owner: when `ifSeqIs` matches the
@@ -395,7 +395,7 @@ export async function releaseSweepPool(orgId: string): Promise<void> {
     return;
   }
   if (cache.get(orgId) !== entry) return;
-  if (pool.totalCount !== pool.idleCount || pool.waitingCount > 0) {
+  if (!poolIsIdle(pool)) {
     await releaseIdleTenantPool(orgId);
     return;
   }

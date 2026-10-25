@@ -52,9 +52,13 @@ export function OpenApiPage() {
 
   return (
     <div className="space-y-4">
+      {/* Once the spec is in: drawn before, "v?" grew into the counts and
+          Copy and Download moved under a finger (#6881); nor have they
+          anything to copy or download until then. */}
+      {spec && (
       <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
-            v{spec?.info.version ?? "?"} · {countOf(schemas.length, "schema")} · {countOf(paths.length, "path")}
+            v{spec.info.version} · {countOf(schemas.length, "schema")} · {countOf(paths.length, "path")}
           </span>
         <button
               onClick={() => {
@@ -83,6 +87,7 @@ export function OpenApiPage() {
               Download
             </button>
       </ConfigHeaderActions>
+      )}
 
       <p className="text-sm text-muted dark:text-slate-400">
         Auto-generated from the live module registry. Point Swagger UI /

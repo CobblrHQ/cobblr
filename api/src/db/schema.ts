@@ -1696,6 +1696,12 @@ export interface IssuedUndosTable {
   entity_id: string | null;
   created_at: Generated<Date>;
   used_at: Date | null;
+  /** The records the step puts back, and the newest change on them it saw
+   *  when issued (20261025-246): pressed after a later change, it refuses. */
+  watch_ids: Generated<string[]>;
+  seen_activity_id: string | number | null;
+  /** Handed back through an assistant's door (20261024-245). */
+  ai_door: Generated<boolean>;
 }
 
 /** The cards a service job sent to people, by kind (20260929-155). */

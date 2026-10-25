@@ -17,7 +17,7 @@
 // invisible, not a crash).
 
 import { lazy, Suspense, type ComponentType, type LazyExoticComponent } from "react";
-import { ContributedDetailPanels, ContributedTagToolbar, registerViewToolbar, registerTagToolbar, hasDetailPanel } from "@cobblr/platform-web";
+import { ContributedDetailPanels, ContributedTagToolbar, HoldsQuiet, hasDetailPanel } from "@cobblr/platform-web";
 // Detail panels register in their own small module, imported at boot by
 // main.tsx; re-imported here so a page that names this file still has them.
 import "./detail-panels";
@@ -26,16 +26,6 @@ import type { ConfigSectionCtx, ModulePageTabCtx } from "./types";
 const PAGE_TABS: Record<string, LazyExoticComponent<ComponentType<{ ctx: ModulePageTabCtx }>>> = {
   "digifab:fleet-tab": lazy(() => import("../features/digifab/fleet").then((m) => ({ default: m.FleetPageTab }))),
 };
-
-registerViewToolbar(
-  "inventory:stocktake-view",
-  lazy(() => import("../features/inventory/stocktakeView").then((m) => ({ default: m.StocktakeViewControl }))),
-);
-
-registerTagToolbar(
-  "inventory:recount-tag",
-  lazy(() => import("../features/inventory/recountTag").then((m) => ({ default: m.RecountTagControl }))),
-);
 
 // Sections on a kernel Configuration page (surface "configuration-section"):
 // a module's own setting shown where its people look for it, without the
@@ -58,7 +48,8 @@ export function ContributedConfigSections({ target, panels, ctx }: { target: str
         return (
           <section key={p.id} data-config-section={p.id} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
             <h2 className="text-sm font-semibold text-content dark:text-mortar-100">{p.title}</h2>
-            <Suspense fallback={<p className="text-sm text-faint">Loading…</p>}>
+            {/* A section still loading its code holds a page drawn under OnceQuiet. */}
+            <Suspense fallback={<><HoldsQuiet /><p className="text-sm text-faint">Loading…</p></>}>
               <Section ctx={ctx} />
             </Suspense>
           </section>

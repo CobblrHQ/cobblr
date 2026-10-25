@@ -373,8 +373,9 @@ function WorkspaceRow({
       {/* Hover actions OVERLAY the right edge (absolute + a background fade)
           rather than taking flex width, so revealing them never reflows or
           truncates the workspace name (feedback: "name gets hidden on mouse
-          over"). At rest they're invisible AND non-interactive. */}
-      <div className="absolute right-0 inset-y-0 flex items-stretch pl-10 hover-reveal pointer-events-none transition-opacity bg-gradient-to-l from-subtle from-60% to-transparent dark:from-slate-800 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto">
+          over"). At rest they're invisible AND non-interactive where there
+          is hover; on a touch screen they show and take a tap (index.css). */}
+      <div className="absolute right-0 inset-y-0 flex items-stretch pl-10 hover-reveal transition-opacity bg-gradient-to-l from-subtle from-60% to-transparent dark:from-slate-800">
         {onSetDefault && (
           <button
             onClick={(e) => { e.stopPropagation(); onSetDefault(); }}

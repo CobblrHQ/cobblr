@@ -287,6 +287,18 @@ export const CAPABILITIES: Capability[] = [
   },
   {
     kind: "owns",
+    id: "chrome:hover-reveal-pressable",
+    what: "whether actions revealed on hover take a press: the .hover-reveal class in web/src/index.css, which hides them unpressable only where there is hover",
+    why:
+      "the workspace switcher added pointer-events-none beside hover-reveal: on a phone, with no hover, its members, rename and star " +
+      "showed and every tap went to the row under them, so a newcomer could not reach the invite (#7930)",
+    owner: "web/src/index.css",
+    scope: ["web/src/**/*.tsx", "packages/platform-web/src/**/*.tsx", "modules/*/src/ui/**/*.tsx"],
+    detect: /hover-reveal[^"`]*\bpointer-events-none\b|\bpointer-events-none\b[^"`]*hover-reveal/,
+    use: "hover-reveal alone: it is unpressable while hidden on a device with hover, and pressable wherever it shows.",
+  },
+  {
+    kind: "owns",
     id: "browser:random-id",
     what: "a random id made in the browser: randomId() from @cobblr/platform-contract/random-id (packages/platform-contract/src/random-id.ts)",
     why:

@@ -983,6 +983,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       ids: { label: "The records, by id (read them first)", type: "list", required: true },
       repaired: { label: "Back from a repair: was it repaired?", type: "boolean" },
       work: { label: "What was done, for its service log", type: "text" },
+      only_if_holder: { label: "End the loan only while this person still has it (a loan's own Undo)", type: "text" },
     },
     version: "0.1.0",
   },

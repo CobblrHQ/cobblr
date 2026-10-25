@@ -820,7 +820,7 @@ export const scanApi = {
       allow_duplicate?: boolean;
     },
   ) =>
-    request<ScanInboxItem & { duplicate_of_recent?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
+    request<ScanInboxItem & { duplicate_of_recent?: boolean; scanned_again?: boolean }>("POST", `/orgs/${slug}/modules/core-scan/scan`, body),
   // External QR resolver (the redirect table for foreign labels). The camera
   // reads the rules once to know whether to bother resolving; resolveExternal is
   // the synchronous "is this a known foreign QR? where does it go?" call on a

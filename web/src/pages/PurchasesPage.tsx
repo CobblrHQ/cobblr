@@ -1,6 +1,6 @@
-import { lineFigures } from "./purchase-line-figures";
+import { lineAmount, lineFigures } from "./purchase-line-figures";
+import { SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
-import { SelectBox, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
 // AssetsPage. Order items live inside the detail modal (they're a
@@ -387,6 +387,10 @@ export function PurchasesPage() {
         }
       />
 
+      {/* Receipts waiting, the figures, the spend chart and the orders each
+          fill in from their own answer: drawn together, so none pushes the
+          rows below it under a finger (#7796). */}
+      <OnceQuiet className="space-y-4">
       {pendingReceipts.length > 0 && (
         <button
           type="button"
@@ -577,6 +581,7 @@ export function PurchasesPage() {
           </>
         }
       />
+      </OnceQuiet>
     </div>
   );
 }
@@ -613,14 +618,14 @@ function ReceiptRenderModal({
 }) {
   const money = (v: string | number | null | undefined, currency = order.currency) => formatStoredMoney(v, "amount", { currency });
   const items = order.items ?? [];
-  const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
+  const subtotal = items.reduce((s, it) => s + (lineAmount(it) ?? 0), 0);
   const shipping = order.shipping_cost != null ? Number(order.shipping_cost) : 0;
   const shippingCurrency = order.shipping_currency ?? fieldCurrency(order.metadata, "shipping_cost", order.currency);
   const linesSubtotal = order.computed_subtotal ?? (order.computed_total != null ? order.computed_total - (order.shipping_total ?? shipping) : subtotal);
   const computed = order.computed_total ?? linesSubtotal + (order.shipping_total ?? shipping);
   const total = order.total_cost != null ? Number(order.total_cost) : computed;
   const other = total - computed;
-  const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
+  const pricedLines = { lines: items.length, unpriced: items.filter((it) => lineAmount(it) == null).length };
   const host = order.url ? order.url.replace(/^https?:\/\//, "").replace(/\/.*$/, "") : null;
   const meta = [host, order.order_number ? `Order #${order.order_number}` : null, fmtOrderDate(order.ordered_at)]
     .filter(Boolean)
@@ -636,7 +641,7 @@ function ReceiptRenderModal({
           <div>
             {items.map((it) => {
               const qty = Number(it.qty);
-              const ext = it.unit_cost != null ? qty * Number(it.unit_cost) : null;
+              const ext = lineAmount(it);
               return (
                 <div key={it.id} className="flex justify-between gap-3 text-sm border-b border-dotted border-[#bcb4a2] py-1.5">
                   <span className="min-w-0 break-words">
@@ -726,14 +731,14 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
   const receiptFileId = typeof o?.metadata?.receipt_file_id === "string" ? (o.metadata.receipt_file_id as string) : null;
   // Reconcile the line items against the order total so a mis-parsed receipt is
   // obvious: Σ(qty × unit) + shipping vs the recorded total.
-  const subtotal = items.reduce((s, it) => s + (it.unit_cost != null ? Number(it.qty) * Number(it.unit_cost) : 0), 0);
+  const subtotal = items.reduce((s, it) => s + (lineAmount(it) ?? 0), 0);
   const shipping = o?.shipping_cost != null ? Number(o.shipping_cost) : 0;
   const shippingCurrency = o?.shipping_currency ?? fieldCurrency(o?.metadata, "shipping_cost", o?.currency);
   const linesSubtotal = o?.computed_subtotal ?? (o?.computed_total != null ? o.computed_total - (o.shipping_total ?? shipping) : subtotal);
   const computed = o?.computed_total ?? linesSubtotal + (o?.shipping_total ?? shipping);
   const totalNum = o?.total_cost != null ? Number(o.total_cost) : null;
   const reconciles = totalNum != null && Math.abs(totalNum - computed) < 0.01;
-  const pricedLines = { lines: items.length, unpriced: items.filter((it) => it.unit_cost == null).length };
+  const pricedLines = { lines: items.length, unpriced: items.filter((it) => lineAmount(it) == null).length };
 
   async function handleDelete() {
     if (!o) return;
@@ -905,7 +910,7 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
               <>
                 <ul className="space-y-1.5">
                   {items.map((it) => (
-                    <OrderLineItem key={it.id} slug={activeSlug} order={o} item={it} routeFor={routeFor} totalColumn={items.some((i) => i.unit_cost != null)} controls={<OrderLineControls slug={activeSlug} order={o} item={it} onStartReturn={() => setReturnLine(it.id)} />} />
+                    <OrderLineItem key={it.id} slug={activeSlug} order={o} item={it} routeFor={routeFor} totalColumn={items.some((i) => lineAmount(i) != null)} controls={<OrderLineControls slug={activeSlug} order={o} item={it} onStartReturn={() => setReturnLine(it.id)} />} />
                   ))}
                 </ul>
                 <div className="mt-3 pt-2.5 border-t border-dashed border-line dark:border-slate-700 space-y-1 text-sm">
@@ -1010,7 +1015,7 @@ function OrderLineItem({
   const href = ent?.detailUrl ?? (item.part_id ? routeFor("inventory:part", item.part_id) : null);
   const qty = Number(item.qty);
   const unit = item.unit_cost != null ? Number(item.unit_cost) : null;
-  const { each, total: ext } = lineFigures(qty, unit, (v) => formatUnitPrice(v, { currency: item.currency }));
+  const { each, total: ext } = lineFigures(qty, unit, (v) => formatUnitPrice(v, { currency: item.currency }), item.line_amount == null ? null : Number(item.line_amount));
   const actions = usePurchaseLineActions(slug, order, item);
 
   const inner = (

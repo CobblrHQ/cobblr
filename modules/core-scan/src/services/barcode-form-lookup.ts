@@ -4,11 +4,13 @@ import { resolveBarcodeViaWebSearch } from "./barcode-websearch.js";
 import { findTracked } from "./entity-match.js";
 import { matchQuery } from "./tracked-stamp.js";
 
-export async function barcodeFormLookup(orgId: string, code: string, userId?: string | null): Promise<BarcodeLookup> {
+/** `webSearch: false` skips the web fallback, which asks the workspace's AI:
+ *  an assistant's lookup reads the catalogs and the records only (#7858). */
+export async function barcodeFormLookup(orgId: string, code: string, userId?: string | null, opts: { webSearch?: boolean } = {}): Promise<BarcodeLookup> {
   const existing = (await findTracked(orgId, matchQuery({ barcode_text: code, suggested_name: null, suggested_manufacturer: null }, null, null))).barcode_matches;
   const answer = await catalogAnswerForCode(code, orgId);
   let hit = answer.hit;
-  if (!hit && !answer.rateLimited) {
+  if (!hit && !answer.rateLimited && opts.webSearch !== false) {
     const web = await resolveBarcodeViaWebSearch(orgId, code, null, userId);
     if (web?.corroborated) hit = { source: "web", title: web.name, brand: web.brand, model: web.sku, description: null, category: web.category, image_url: web.imageUrl, raw: {} };
   }

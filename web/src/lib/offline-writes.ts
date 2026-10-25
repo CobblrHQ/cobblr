@@ -4,7 +4,7 @@
 // Query's default it waited before ever reaching the door, in memory only,
 // and a reload lost it.
 import { MutationCache, onlineManager, type Mutation, type MutationOptions, type MutationState, type QueryClient } from "@tanstack/react-query";
-import { asAPersonsWrite, browserOffline, sendWaitingWrites, type WaitingWrite } from "@cobblr/platform-web";
+import { IDEMPOTENCY_KEY, asAPersonsWrite, browserOffline, sendWaitingWrites, type WaitingWrite } from "@cobblr/platform-web";
 import { ApiError, getToken } from "./api";
 import { request } from "./api/client";
 
@@ -46,10 +46,13 @@ export function sendWaitingWritesNow(): ReturnType<typeof sendWaitingWrites> {
   const token = getToken();
   return sendWaitingWrites(token ? `Bearer ${token}` : null, async (w: WaitingWrite) => {
     try {
-      await request(w.method, w.path, w.body, { [SENDING_A_WAITING_WRITE]: "1" });
+      await request(w.method, w.path, w.body, { [SENDING_A_WAITING_WRITE]: "1", ...(w.key ? { [IDEMPOTENCY_KEY]: w.key } : {}) });
       return { outcome: "landed" };
     } catch (e) {
       if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) return { outcome: "unreachable" };
+      // The same create, by its key, is still running on the server (a send cut
+      // short and sent again): it waits for the next try, never dropped (#7923).
+      if (e instanceof ApiError && e.status === 409 && e.code === "request_in_progress") return { outcome: "unreachable" };
       return { outcome: "refused", reason: e instanceof Error ? e.message : String(e) };
     }
   });

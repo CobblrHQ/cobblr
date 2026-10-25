@@ -219,7 +219,7 @@ export default defineModule({
         // UI-SCREEN: /instances/board-projects/:id reads through GET board-project to avoid refreshing its own query.
         id: "builds:board-project", changes: "records", group: "make", label: "Board revisions", description: "Read the board revisions belonging to a project. Changes nothing.",
         runBy: "member",
-        examples: ["show this board\u2019s revisions"], scope: "workspace" as const, invokeHandler: "builds.board-project", userInvokable: true,
+        examples: ["show this board\u2019s revisions"], scope: "workspace" as const, invokeHandler: "builds.board-project", effect: "none", userInvokable: true,
         argsSchema: {
           project_id: { label: "Project id", type: "text", required: true },
           project_kind: { label: "Project collection kind", type: "text", required: true },
@@ -257,14 +257,14 @@ export default defineModule({
         // UI-SCREEN: /builds/<revision> lists work orders through the shared GET assembly-orders reader.
         id: "builds:assembly-orders", changes: "records", group: "make", label: "List assembly work orders", description: "List a board revision's native assembly work orders, quantities and current kit states. Changes nothing.",
         runBy: "member",
-        scope: "workspace" as const, invokeHandler: "builds.assembly-orders", userInvokable: true,
+        scope: "workspace" as const, invokeHandler: "builds.assembly-orders", effect: "none", userInvokable: true,
         argsSchema: { build_id: { label: "Board revision id", type: "text", required: true } },
       },
       {
         // UI-SCREEN: /builds/<revision> reads this order and its kit through GET assembly-orders/:id.
         id: "builds:assembly-order", changes: "records", group: "make", label: "Read assembly kit", description: "Read a work order and its kit sorted by location, with fresh quantity and moisture readiness. Changes nothing.",
         runBy: "member",
-        scope: "workspace" as const, invokeHandler: "builds.assembly-order", userInvokable: true,
+        scope: "workspace" as const, invokeHandler: "builds.assembly-order", effect: "none", userInvokable: true,
         argsSchema: { order_id: { label: "Assembly work order id", type: "text", required: true } },
       },
       {
@@ -279,7 +279,7 @@ export default defineModule({
       {
         id: "builds:check-board-stock", changes: "records", group: "make", label: "Check board stock", description: "Check N boards against usable package stock, reservations, moisture clocks and placement attrition. Return a shortage and picks by location. Changes nothing.",
         runBy: "member",
-        examples: ["do we have parts for fifty boards"], scope: "workspace" as const, invokeHandler: "builds.check-board-stock", userInvokable: true,
+        examples: ["do we have parts for fifty boards"], scope: "workspace" as const, invokeHandler: "builds.check-board-stock", effect: "none", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
           boards: { label: "How many boards", type: "number", required: true },
@@ -288,7 +288,7 @@ export default defineModule({
       {
         id: "builds:board-cart", changes: "records", group: "make", label: "Export shortage cart", description: "Export the current component shortage as a distributor BOM-upload CSV. Upload and confirm the column mapping at the distributor. No order is submitted.",
         runBy: "member",
-        examples: ["export these shortages for Mouser"], scope: "workspace" as const, invokeHandler: "builds.board-cart", userInvokable: true,
+        examples: ["export these shortages for Mouser"], scope: "workspace" as const, invokeHandler: "builds.board-cart", effect: "none", userInvokable: true,
         argsSchema: {
           build_id: { label: "Board revision id", type: "text", required: true },
           boards: { label: "How many boards", type: "number", required: true },
@@ -401,7 +401,7 @@ export default defineModule({
         description:
           "The work orders planned for one record, each with its build, qty, how many are made (good parts, handed out oldest order first) and whether it is done. Changes nothing. Args: { source_kind, source_id }.",
         scope: "workspace" as const,
-        invokeHandler: "builds.work-orders-for",
+        invokeHandler: "builds.work-orders-for", effect: "none",
         argsSchema: {
           source_kind: { label: "The kind of record", type: "text", required: true },
           source_id: { label: "The record", type: "text", required: true },

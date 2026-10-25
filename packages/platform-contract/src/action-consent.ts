@@ -22,6 +22,13 @@
 // hold (physical, spends, and any effect it does not know, read as physical)
 // is held on every AI door, whatever `undoable` says: putting a record back
 // does not un-start a machine.
+//
+// An action that declares `effect: "none"` reads and writes nothing, so there
+// is nothing to confirm and nothing to put back: it runs on every AI door, as
+// a Services capability declaring "none" already did. Reads declared nothing
+// and were refused over MCP as "cannot be undone" (a barcode lookup #7858, a
+// board's stock check #7885). The set is pinned by name beside the undoable
+// one, so "none" is a decision someone reviewed.
 
 import { serviceWaitsForAPerson } from "@cobblr/platform-contract/service-consent";
 
@@ -43,6 +50,6 @@ export interface ActionConsent {
 
 export function actionRunsUnconfirmed(action: ActionConsent | null | undefined): boolean {
   if (effectNeedsAPerson(action?.effect)) return false;
-  if (action?.effect === "signal" || action?.effect === "stops") return true;
+  if (action?.effect === "none" || action?.effect === "signal" || action?.effect === "stops") return true;
   return action?.undoable === true;
 }

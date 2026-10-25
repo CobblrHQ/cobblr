@@ -11,7 +11,7 @@ import { sql, type Kysely } from "kysely";
 import { isMailTitle } from "./receipt-shared.js";
 
 interface PriorDB {
-  core_scan_batches: { id: string; label: string | null; vendor: string | null; order_ref: string | null; content_key: string | null; created_at: Date };
+  core_scan_batches: { id: string; label: string | null; vendor: string | null; order_ref: string | null; content_key: string | null; source_file_id: string | null; created_at: Date };
   core_scan_inbox_items: { id: string; scan_batch_id: string | null; status: string };
 }
 
@@ -19,32 +19,41 @@ export interface PriorSession { id: string; label: string | null; vendor: string
 
 export async function priorSessionOfOrder(
   db: Kysely<never>,
-  key: { vendor: string; orderRef: string },
+  key: { vendor: string; orderRef: string } | null,
   contentKey: string | null,
+  sourceFileId?: string | null,
 ): Promise<PriorSession | undefined> {
   const k = db as unknown as Kysely<PriorDB>;
   const live = sql<boolean>`exists (select 1 from core_scan_inbox_items i where i.scan_batch_id = b.id and i.status <> 'discarded')`;
   const cols = ["b.id", "b.label", "b.vendor", "b.order_ref"] as const;
-  const sameShop = await k
-    .selectFrom("core_scan_batches as b")
-    .select(cols)
-    .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${key.vendor}`)
-    .where("b.order_ref", "=", key.orderRef)
-    .where(live)
-    .orderBy("b.created_at", "desc")
-    .limit(1)
-    .executeTakeFirst();
-  if (sameShop) return sameShop;
-  const sameNumber = (
-    await k.selectFrom("core_scan_batches as b").select(cols).where("b.order_ref", "=", key.orderRef).where(live).orderBy("b.created_at", "desc").execute()
-  ).find((b) => !b.vendor?.trim() || isMailTitle(b.vendor));
-  if (sameNumber) return sameNumber;
+  if (sourceFileId) {
+    const sameFile = await k.selectFrom("core_scan_batches as b").select(cols)
+      .where("b.source_file_id", "=", sourceFileId).where(live)
+      .orderBy("b.created_at", "desc").limit(1).executeTakeFirst();
+    if (sameFile) return sameFile;
+  }
+  if (key) {
+    const sameShop = await k
+      .selectFrom("core_scan_batches as b")
+      .select(cols)
+      .where(sql<boolean>`lower(regexp_replace(coalesce(b.vendor, ''), '[^a-zA-Z0-9]', '', 'g')) = ${key.vendor}`)
+      .where("b.order_ref", "=", key.orderRef)
+      .where(live)
+      .orderBy("b.created_at", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    if (sameShop) return sameShop;
+    const sameNumber = (
+      await k.selectFrom("core_scan_batches as b").select(cols).where("b.order_ref", "=", key.orderRef).where(live).orderBy("b.created_at", "desc").execute()
+    ).find((b) => !b.vendor?.trim() || isMailTitle(b.vendor));
+    if (sameNumber) return sameNumber;
+  }
   if (!contentKey) return undefined;
   return k
     .selectFrom("core_scan_batches as b")
     .select(cols)
     .where("b.content_key", "=", contentKey)
-    .where((eb) => eb.or([eb("b.order_ref", "is", null), eb("b.order_ref", "=", key.orderRef)]))
+    .$if(!!key, (q) => q.where((eb) => eb.or([eb("b.order_ref", "is", null), eb("b.order_ref", "=", key!.orderRef)])))
     .where(live)
     .orderBy("b.created_at", "desc")
     .limit(1)

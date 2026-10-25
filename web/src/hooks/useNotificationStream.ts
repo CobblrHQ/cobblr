@@ -17,6 +17,11 @@ import { NOTIFICATION_STREAM_EVENT } from "@cobblr/platform-contract/notificatio
 
 const RETRY_MIN_MS = 5_000;
 const RETRY_MAX_MS = 60_000;
+/** How long the stream outlives its last bell. The shell can be drawn twice as
+ *  a page loads, every bell going and coming back at once, and the stream shut
+ *  as the last went and opened again as the first came: two tickets asked for
+ *  on every load, one of them thrown away (#6881). */
+export const STREAM_LINGER_MS = 2_000;
 
 interface Listener {
   changed(): void;
@@ -26,6 +31,7 @@ interface Listener {
 const listeners = new Set<Listener>();
 let up = false;
 let stop: (() => void) | null = null;
+let linger: ReturnType<typeof setTimeout> | undefined;
 
 function setUp(next: boolean) {
   up = next;
@@ -82,14 +88,18 @@ export function useNotificationStream(enabled = true): boolean {
     const me: Listener = { changed: () => void qc.invalidateQueries({ queryKey: notificationKeys.all() }), live: setLive };
     listeners.add(me);
     setLive(up);
+    clearTimeout(linger);
     stop ??= open();
     return () => {
       listeners.delete(me);
       setLive(false);
-      if (listeners.size === 0) {
+      if (listeners.size > 0) return;
+      clearTimeout(linger);
+      linger = setTimeout(() => {
+        if (listeners.size > 0) return;
         stop?.();
         stop = null;
-      }
+      }, STREAM_LINGER_MS);
     };
   }, [enabled, qc]);
   return live;

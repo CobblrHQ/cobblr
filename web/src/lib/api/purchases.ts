@@ -224,6 +224,7 @@ export interface OrderItem {
   description: string | null;
   qty: string;
   unit_cost: string | null;
+  line_amount?: string | null;
   /** How many of its units are in hand, counted one by one (#5734). */
   received_qty?: string | number | null;
   received_at: string | null;

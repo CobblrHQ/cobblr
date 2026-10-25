@@ -12,9 +12,13 @@ export interface LineFigures {
   total: number | null;
 }
 
-export function lineFigures(qty: number, unitCost: number | null, money: (v: number) => string | null): LineFigures {
+export function lineAmount(line: { qty: string | number; unit_cost: string | number | null; line_amount?: string | number | null }): number | null {
+  return line.line_amount != null ? Number(line.line_amount) : line.unit_cost != null ? Number(line.qty) * Number(line.unit_cost) : null;
+}
+
+export function lineFigures(qty: number, unitCost: number | null, money: (v: number) => string | null, statedAmount: number | null = null): LineFigures {
   return {
     each: `${formatQuantity(qty, null, [])} × ${unitCost != null ? money(unitCost) ?? "—" : "—"}`,
-    total: unitCost != null ? qty * unitCost : null,
+    total: lineAmount({ qty, unit_cost: unitCost, line_amount: statedAmount }),
   };
 }

@@ -2695,7 +2695,7 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: n === 1 ? `${r.done[0]!.title} is with ${r.holder}.` : `${n} records are with ${r.holder}.`,
-      data: { kind, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
+      data: { kind, holder: r.holder, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
     };
   });
   registerPlanner("platform.lend", async (ctx: ActionInvokeContext) => {
@@ -2710,10 +2710,10 @@ export function registerPlatformActionHandlers(): void {
   // A loan that replaced an earlier one is undone by lending it back to the
   // earlier holder; a fresh loan by its return.
   registerUndo("platform.lend", (result) => {
-    const d = (result as { data?: { kind?: unknown; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
+    const d = (result as { data?: { kind?: unknown; holder?: unknown; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
     const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordLoan | null } => typeof b.id === "string");
     if (!rows.length || typeof d?.kind !== "string") return null;
-    if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id) } };
+    if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...(typeof d.holder === "string" ? { only_if_holder: d.holder } : {}) } };
     const first = rows[0]!.before;
     if (!first || !rows.every((r) => JSON.stringify(r.before) === JSON.stringify(first))) return null;
     return { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first } };
@@ -2723,7 +2723,7 @@ export function registerPlatformActionHandlers(): void {
     const { kind, ids } = goneArgs(ctx);
     if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
     if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
-    const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids);
+    const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids, { onlyIfHolder: str(ctx.args?.only_if_holder) || null });
     if (!r.ok) return { ok: false, error: r.error };
     const n = r.done.length;
     // Repaired: its service log says by whom and what, through the log's own

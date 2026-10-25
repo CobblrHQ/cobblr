@@ -150,6 +150,18 @@ ONCE=0
 
 mkdir -p "$DIR/daily" "$DIR/weekly"
 
+# A published dump is readable by others: an off-box copy pulls it as a user
+# that is not its owner (a restic job, a self-hoster's rsync). mktemp makes the
+# partial 0600 and a rename keeps the mode, so it is set before the rename,
+# whatever the umask (#8417; app's off-box copy failed on 2026-10-25).
+PUBLISHED_MODE=0644
+# One-shot heal for dumps published 0600 between #8295 and #8417. Only
+# finished dumps: a .failed or .partial file is never published.
+# DONE WHEN: no daily/ or weekly/ *.sql.gz on any box is 0600, so the last
+# nightly from before #8417 has aged out of retention (30 daily, 12 weekly).
+find "$DIR/daily" "$DIR/weekly" -maxdepth 1 -type f -name "$PREFIX-*.sql.gz" -perm 0600 \
+  -exec chmod "$PUBLISHED_MODE" {} + 2>/dev/null || true
+
 verified_dump() {
   local file="$1" bytes
   bytes=$(stat -c%s "$file" 2>/dev/null || echo 0)
@@ -170,10 +182,10 @@ dump_once() {
   sz=$(stat -c%s "$partial" 2>/dev/null || echo 0)
   if [ "$ok" = "1" ] && verified_dump "$partial"; then
     [ -e "$out" ] && out="$DIR/daily/$PREFIX-$stamp-${partial##*.}.sql.gz"
-    mv "$partial" "$out" || { echo "[backup] $stamp FAILED to publish $out"; return 1; }
+    chmod "$PUBLISHED_MODE" "$partial" && mv "$partial" "$out" || { echo "[backup] $stamp FAILED to publish $out"; return 1; }
     echo "[backup] $stamp done - $sz bytes"
     if [ "$(date +%u)" = "7" ]; then
-      cp "$out" "$DIR/weekly/" && echo "[backup] weekly copy"
+      cp "$out" "$DIR/weekly/" && chmod "$PUBLISHED_MODE" "$DIR/weekly/${out##*/}" && echo "[backup] weekly copy"
     fi
     # The marker is what lets an off-box copy order itself after the dump
     # instead of guessing an hour (#3307). Written only for a dump that passed,

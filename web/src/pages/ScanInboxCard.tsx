@@ -4067,13 +4067,14 @@ export function InboxCard({
               caption says when it is still being checked — it used to read a
               confident "✦ catalog" during the exact window the thumbnail above
               deliberately refuses to show it. */}
-          {(catalogImg || yoursImg) && (
+          {(catalogUrl || yoursUrl) && (
             <div className="flex gap-2">
-              {catalogImg && (
+              {catalogUrl && (
                 <figure className="flex-1 min-w-0">
                   <button
                     type="button"
                     onClick={() => openZoom("catalog")}
+                    disabled={!catalogImg}
                     aria-label="View the catalog photo full size"
                     title="View the catalog photo full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-white dark:bg-slate-800 flex items-center justify-center cursor-zoom-in"
@@ -4128,12 +4129,13 @@ export function InboxCard({
                   </figcaption>
                 </figure>
               )}
-              {yoursImg && yoursImg !== catalogImg && (
+              {yoursUrl && yoursUrl !== catalogUrl && (
                 <figure className="flex-1 min-w-0">
                   <button
                     aria-label="View full size"
                     type="button"
                     onClick={() => openZoom("yours")}
+                    disabled={!yoursImg}
                     title="View full size"
                     className="block w-full rounded-md overflow-hidden border border-line dark:border-slate-700 bg-black flex items-center justify-center cursor-zoom-in"
                   >
@@ -4144,7 +4146,7 @@ export function InboxCard({
                     {item.image_file_id && !handheld && (
                       <button
                         type="button"
-                        disabled={rotate.isPending}
+                        disabled={rotate.isPending || !yoursImg}
                         onClick={(e) => {
                           e.stopPropagation();
                           rotate.mutate();
@@ -4158,7 +4160,7 @@ export function InboxCard({
                     {!handheld && (
                     <button
                       type="button"
-                      disabled={catalogAction.isPending}
+                      disabled={catalogAction.isPending || !yoursImg}
                       onClick={(e) => {
                         e.stopPropagation();
                         catalogAction.mutate("use_own_photo");
@@ -4172,7 +4174,7 @@ export function InboxCard({
                     {item.image_file_id && !handheld && (
                       <button
                         type="button"
-                        disabled={cropCatalog.isPending}
+                        disabled={cropCatalog.isPending || !yoursImg}
                         onClick={(e) => {
                           e.stopPropagation();
                           setCropOpen(true);

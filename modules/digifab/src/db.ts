@@ -29,24 +29,6 @@ export interface DigifabCutterPlansTable {
 }
 export interface DigifabCutterRollClaimsTable { part_id: string; job_id: string }
 
-export interface DigifabConnectionsTable {
-  id: Generated<string>;
-  /** Driver type: "fdm_monster" | "mock" | … */
-  type: string;
-  label: string;
-  base_url: string;
-  /** AES-GCM ciphertext of { apiKey } — never returned to clients. */
-  credentials_enc: string;
-  config: Generated<Record<string, unknown>>;
-  enabled: Generated<boolean>;
-  /** Cached capability probe (e.g. { routing: true }). */
-  capabilities: Generated<Record<string, unknown>>;
-  last_sync_at: Date | null;
-  last_sync_status: string | null;
-  created_at: Generated<Date>;
-  updated_at: Generated<Date>;
-}
-
 export interface DigifabJobsTable {
   cnc_setup: Generated<CncUseSnapshot | null>;
   cnc_tool_seconds: Generated<Record<string,number>>;
@@ -388,7 +370,8 @@ export interface DigifabDB {
   digifab_channels: DigifabChannelsTable;
   digifab_print_rules: DigifabPrintRulesTable;
   digifab_print_rule_state: DigifabPrintRuleStateTable;
-  digifab_connections: DigifabConnectionsTable;
+  // digifab_connections is left out on purpose: its rows moved to the platform device-connection store
+  // (platform().devices.connections()), and the old table is a stale copy a query would read wrong (#8052).
   digifab_jobs: DigifabJobsTable;
   digifab_device_links: DigifabDeviceLinksTable;
   digifab_alarms: { id: Generated<string>; machine_id: string; source: "arm" | "machine"; source_ref: string; code: string; text: string; severity: "info" | "warning" | "error"; program: string | null; step: string | null; camera_file_id: string | null; occurred_at: Date; escalation_level: Generated<number>; next_escalation_at: Date | null; acknowledged_by: string | null; acknowledged_at: Date | null; note: Generated<string> };

@@ -7,7 +7,7 @@ import { readEnabledPlaceValues } from "./platform/placement-values.js";
 import { argChoicesFor } from "./platform/action-arg-choices.js";
 import { secretPresenceDb } from "./platform/secret-presence.js";
 import { registerDeletedRelations } from "./platform/deleted-relations.js";
-import { money, registerExchangeRates } from "./platform/money.js";
+import { money, startExchangeRates } from "./platform/money.js";
 import { roundMoneyAmount } from "@cobblr/platform-contract/money";
 function mergeExcluded(totals: import("@cobblr/platform-contract/money").MoneyTotal[]): Record<string, number> {
   const excluded: Record<string, number> = {};
@@ -1958,7 +1958,7 @@ async function boot() {
   registerIssuedUndosSweep();
   registerWarrantyReminders();
   registerStationSweep();
-  registerExchangeRates();
+  startExchangeRates();
   // Shares: what each side has to tell the other, retried until it arrives.
   registerShareLinkOps();
   shareOffers.registerShareOfferOps();

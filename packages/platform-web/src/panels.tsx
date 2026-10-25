@@ -144,6 +144,35 @@ export function registerTagToolbar(id: string, component: TagToolbarComponent): 
   notify();
 }
 
+// The host's own registrations arrive in a chunk of their own, after the app
+// starts. A page drawn before they landed drew a toolbar or a panel a moment
+// late, over or above the controls already there: a view's What's still here?
+// pushed its Export 105 px along under a finger on a slow device (#6881). A
+// host that registers that way says so before it renders, and says when they
+// are in; until then a toolbar is still asked for and a record's panels hold
+// the page's quiet. A host that never says so has nothing to wait for.
+let registrationsDone = false;
+let ready = true;
+
+/** Called by a host before it renders, when its registrations load in a chunk
+ *  of their own. */
+export function awaitPanelRegistrations(): void {
+  ready = registrationsDone;
+  notify();
+}
+
+/** Called once the host's registrations have run, or could not load: nothing
+ *  waits on them after this. */
+export function panelRegistrationsDone(): void {
+  registrationsDone = true;
+  ready = true;
+  notify();
+}
+
+function useRegistrationsReady(): boolean {
+  return useSyncExternalStore(subscribe, () => ready, () => ready);
+}
+
 export function unregisterDetailPanel(id: string): void {
   if (REGISTRY.delete(id)) notify();
 }
@@ -257,6 +286,10 @@ export function ContributedDetailPanels({
     staleTime: 60_000,
   });
   const quiet = useOnceQuiet();
+  const registrationsReady = useRegistrationsReady();
+  // Held while the host's panels are still registering: one that registered
+  // after the rest showed arrived above them (#6881).
+  if (!registrationsReady) return universal ? <HoldsQuiet /> : null;
   // Held until the arrangement is read, so a hidden panel never flashes up.
   if (api.recordPanelLayout && arranged.isLoading) return null;
   const panels = arrangePanels(all.filter((p) => panelShows(p, shape, placement)), arranged.data?.layout);
@@ -296,6 +329,7 @@ export function ContributedDetailPanels({
 function useContributedControls(surface: "view-toolbar" | "tag-toolbar", module: string | null | undefined) {
   const { api, orgSlug } = usePlatformWeb();
   const registered = useRegisteredIds();
+  const registrationsReady = useRegistrationsReady();
   const q = useQuery({
     queryKey: ["contributed-panels", orgSlug],
     queryFn: () => api.listContributedPanels!(orgSlug),
@@ -304,7 +338,7 @@ function useContributedControls(surface: "view-toolbar" | "tag-toolbar", module:
   });
   return {
     controls: (q.data ?? []).filter((p) => p.surface === surface && p.target === module && registered.includes(p.id)),
-    pending: stillAsking(q),
+    pending: stillAsking(q) || (!!module && !registrationsReady),
   };
 }
 

@@ -39,7 +39,7 @@ export function registerScanHandlers(): void {
   platform().actions.registerHandler("core-scan.lookup-barcode", async ctx => {
     const code = ctx.args?.code;
     if (typeof code !== "string" || !code.trim() || code.length > 4096) return { ok: false, error: "Give a barcode up to 4096 characters." };
-    return { ok: true, data: await barcodeFormLookup(ctx.orgId, code.trim(), ctx.userId) };
+    return { ok: true, data: await barcodeFormLookup(ctx.orgId, code.trim(), ctx.userId, { webSearch: !ctx.byAssistant }) };
   });
   platform().actions.registerHandler("core-scan.decode-identifier", async ctx => {
     const code = ctx.args?.code;

@@ -2,6 +2,22 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-25
+
+### Fixes
+- Off-box backup copies can read the nightly dump again. Since an earlier fix, each dump was saved readable only by its owner, so a copy run as another user missed it; dumps are readable again, and the ones saved meanwhile are fixed on the next start. If you copy dumps off the box, check that the last few nights arrived.
+
+## 2026-10-24
+
+### Fixes
+- A save from an older tab, a list's cell, a board's drag, a floor plan's Undo or an edit made offline is refused when someone changed that field since, instead of writing over it.
+
+## 2026-10-23
+
+### Fixes
+- On a phone, a message no longer covers the scanner's own controls after a scan, and the workspace menu's members, rename and default buttons take a tap
+- A thing you add offline is now kept on the device and sent once when you are back, the offline bar counts what is waiting to send, and a message to Ask Cobb sent offline waits in the box and goes by itself
+
 ## 2026-10-22
 
 ### Improvements

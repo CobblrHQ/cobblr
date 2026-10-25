@@ -95,7 +95,9 @@ export function ConfigSectionPage() {
         )}
       </div>
 
-      {rows.length === 0 ? (
+      {!isHosted && ctx.settled === false ? (
+        <p aria-busy="true" className="text-sm text-faint dark:text-slate-500">loading…</p>
+      ) : rows.length === 0 ? (
         <p className="text-sm text-faint dark:text-slate-500">
           Nothing here for this workspace yet.
         </p>

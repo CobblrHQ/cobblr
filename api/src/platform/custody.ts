@@ -112,11 +112,19 @@ export async function returnLoan(
   userId: string | null,
   kind: string,
   ids: readonly string[],
+  opts: { onlyIfHolder?: string | null } = {},
 ): Promise<{ ok: true; done: CustodyOutcome[] } | { ok: false; error: string }> {
   const f = await found(orgId, kind, ids);
   if (!f.ents) return { ok: false, error: f.error };
   const home = f.ents.find((e) => !loanOfFields(e.fields));
   if (home) return { ok: false, error: `${home.title} is not lent out.` };
+  // A loan's own Undo ends that loan and no other: lent again since, it is
+  // someone else's loan now, and ending it would say the thing is on its
+  // shelf while a borrower has it (#7899).
+  if (opts.onlyIfHolder) {
+    const moved = f.ents.find((e) => loanOfFields(e.fields)?.holder !== opts.onlyIfHolder);
+    if (moved) return { ok: false, error: `${moved.title} was lent to ${loanOfFields(moved.fields)?.holder ?? "someone else"} since, so this Undo would end their loan. Nothing was changed.` };
+  }
   const done: CustodyOutcome[] = [];
   for (const ent of f.ents) {
     const before = loanOfFields(ent.fields)!;

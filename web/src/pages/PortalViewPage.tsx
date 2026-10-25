@@ -43,7 +43,7 @@ export function PortalViewPage() {
   const data = useViewData(activeSlug, viewId, null, { q });
   const accessEnded = data.error instanceof ApiError &&
     (data.error.code === "workspace_deleting" || data.error.code === "org_not_found");
-  usePageTitle(accessEnded ? "Access ended" : data.view?.entity_kind ?? "View");
+  usePageTitle(accessEnded ? "Access ended" : data.view?.name ?? "View");
 
   // User capabilities — drives whether to show the "+ New" button.
   const caps = useCapabilitiesFor(activeSlug);
@@ -76,11 +76,13 @@ export function PortalViewPage() {
         <ArrowLeft size={12} /> back
       </Link>
 
-      <div className="flex items-center justify-between gap-3 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="text-xl font-semibold text-content dark:text-mortar-100">
-          {data.view?.entity_kind ?? "…"}
+      {/* On a phone the actions and the search take their own line under the
+          view's name: in one row the search ran 51 px past the edge (#7911). */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <h1 className="min-w-0 break-words text-xl font-semibold text-content dark:text-mortar-100">
+          {data.view?.name ?? "…"}
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full min-w-0 flex-wrap items-center gap-2 sm:w-auto">
           {canCreate && (
             <button
               type="button"
@@ -100,7 +102,7 @@ export function PortalViewPage() {
               subject={`Add to ${data.view?.name ?? "this view"}`}
             />
           )}
-          <SearchInput value={q} onChange={setQ} placeholder="search…" wrapperClassName="w-48" />
+          <SearchInput value={q} onChange={setQ} placeholder="search…" wrapperClassName="min-w-0 flex-1 sm:w-48 sm:flex-none" />
         </div>
       </div>
 

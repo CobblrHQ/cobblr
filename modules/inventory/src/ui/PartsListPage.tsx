@@ -95,6 +95,7 @@ export function PartsListPage() {
   const facets = useQuery({ queryKey: ["inventory-facets", orgSlug, instance ?? "inventory"], queryFn: () => api.getPartFacets(), staleTime: 30_000 });
   // What a row offers beside its count (Add to list) comes from the kind's actions.
   const recordActions = useRecordActions(entityKind);
+  const units = useUnits();
   const activeFilters = new Set<ListFilter>([
     ...(categoryId ? (["category"] as const) : []),
     ...(locationId ? (["location"] as const) : []),
@@ -502,8 +503,7 @@ export function PartsListPage() {
   // changed later asks again, and the search box must stay where it is.
   // The unit vocabulary too: a stepper drawn without it is drawn again as the
   // other form, and every cell beside it moves (#7792).
-  const unitsAnswered = useUnits().settled;
-  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions) && unitsAnswered;
+  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions) && units.settled;
 
   return (
     <div className="space-y-4">

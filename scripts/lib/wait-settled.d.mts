@@ -1,0 +1,10 @@
+export type Settled = { settled: boolean; ms: number; feedback?: boolean };
+export function settledInPage(now?: number): boolean;
+export function appMounted(): boolean;
+export const NEVER_MOUNTED: string;
+export function isNavigationError(e: unknown): boolean;
+export function waitSettled(page: any, opts?: { capMs?: number; holdMs?: number }): Promise<Settled>;
+export const FEEDBACK_MARGIN_MS: number;
+export function feedbackLeftInPage(since: number): number | null;
+export function waitSettledWhileFeedbackLasts(page: any, since: number, opts?: { marginMs?: number; settle?: (page: any) => Promise<Settled> }): Promise<Settled>;
+export function actsWhenSettled<P extends { goto?: Function; reload?: Function }>(page: P, settle?: (page: P) => Promise<unknown>): P;

@@ -19,7 +19,7 @@ import { suggestKinds } from "../lib/suggest-kinds";
 import { useBundleDetail } from "../components/useBundleDetail";
 import { useQuery } from "@tanstack/react-query";
 import { Wand2, Copy, Check, AlertTriangle, Sparkles } from "lucide-react";
-import { rovingRadio, useLater, usePageTitle, useToast } from "@cobblr/platform-web";
+import { OnceQuiet, rovingRadio, useLater, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { api, ApiError, type BundleValidation } from "../lib/api";
 import { Cobb } from "../components/Cobb";
@@ -499,6 +499,12 @@ export function BuildPage() {
         </p>
       </div>
 
+      {/* Cobb's greeting is drawn only once the AI status says AI can work,
+          and the notice in its place once it says AI cannot: drawn as each
+          came, the greeting went and the notice arrived above Build it for me
+          and moved it under a finger (#6881). So the page below its title
+          shows whole, once its reads have answered. */}
+      <OnceQuiet className="space-y-6">
       {/* Cobb greeting — the face of "just describe it". Only before you've
           started (no prompt/preview/build yet) and only when AI can actually do
           the work; he offers, he doesn't linger once you're going. */}
@@ -1029,6 +1035,7 @@ export function BuildPage() {
           )}
         </section>
       )}
+      </OnceQuiet>
       {bundleDetail.element}
     </div>
   );

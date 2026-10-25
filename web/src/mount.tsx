@@ -8,6 +8,7 @@ import { PersonsWritesCache, WAITING_MUTATIONS } from "./lib/offline-writes";
 import { ThemeProvider } from "./theme/ThemeContext";
 import "./index.css";
 import { App } from "./App";
+import { awaitPanelRegistrations, panelRegistrationsDone } from "@cobblr/platform-web";
 
 const queryClient = new QueryClient({
   // A write a person asked for in a View as (a Create, a Save) is refused and
@@ -42,7 +43,13 @@ if (!root) throw new Error("Root element missing");
 // here: the panel host re-renders when they arrive (useSyncExternalStore), so
 // they cost the first paint nothing. e2e/every-record-detail-shows-its-history.mjs
 // holds it.
-void import("./panels/detail-panels").catch((err) => console.error("[panels] the record panels could not load:", err));
+// Until it has run, a view's toolbar and a record's panels wait for it rather
+// than arriving over a page already drawn (#6881).
+awaitPanelRegistrations();
+void import("./panels/detail-panels").catch((err) => {
+  console.error("[panels] the record panels could not load:", err);
+  panelRegistrationsDone();
+});
 // The shell is ready; the boot guard can stop waiting.
 (window as { __cobblrStarted?: () => void }).__cobblrStarted?.();
 createRoot(root).render(

@@ -48,8 +48,13 @@ const COUNT_OFFENSE = /\}\s*(rows|records|entities)\b(?!\s*[=.[])/;
 // A `{x.kind}` slot NOT preceded by `=` or `$` is JSX text: an attribute
 // (`entityKind={kind}`, `key={e.kind}`) is a value, a template `${e.kind}` is
 // a key, and a destructuring `{ kind }` has the space this pattern refuses.
+// A fallback after it (`{view?.entity_kind ?? "…"}`) prints the id all the
+// same: the portal's view heading did (#7911).
+// The browser tab is words too: the portal's view passed its kind id to
+// usePageTitle, so a viewer's tab read "inventory:part" (#7978). A kind read
+// straight into the title counts; one passed through a labeller does not.
 const KIND_ID_OFFENSE =
-  /(?<![=$\w])\{[\w.?!]*\b(kind|entity_kind|entityKind|view_type|viewType)\}|\b(kind|entity_kind|entityKind|view_type|viewType)\.toUpperCase\(\)/;
+  /(?<![=$\w])\{[\w.?!]*\b(kind|entity_kind|entityKind|view_type|viewType)(\s*\?\?\s*"[^"]*")?\}|\b(kind|entity_kind|entityKind|view_type|viewType)\.toUpperCase\(\)|usePageTitle\([^()]*?\.(kind|entity_kind|entityKind|view_type|viewType)\b(?!\s*[(.\w])/;
 
 // Phrases the review called out by name. "ran a wire" is a verb nobody
 // outside this codebase uses; the activity row says "ran an automation".
@@ -94,8 +99,16 @@ const COUNT_SHAPE_OFFENSE = /(\d+|\})\s*w\s*[·•|/]\s*(\d+|\$\{[^}]*\})\s*f\b/
 const EVENT_ACTION_ID_OFFENSE =
   /(?<![=$\w{])\{[\w.?!]*\b(event|eventName|event_name|action_id|actionId|reactor|reactor_id)\b(\s*\?\?\s*"[^"]*")?\}(?!\})|\{shortActionId\(/;
 
+// The code's own nouns in words a person reads: a "projection" of fields, a
+// "resolver" that answers a filter (#7930, the first hour). A newcomer meets
+// them and stops. Words only: in JSX text, or in a quoted sentence (a string
+// with a space in it); a variable, an import or a property (`resolver.data`)
+// is code.
+const INTERNAL_WORD_OFFENSE =
+  /> *[^<>{}]*(?<![.\w])(?:[Pp]rojections?|[Rr]esolvers?)(?!\.\w|[\w(])[^<>{}]*<|(["'`])(?=[^"'`]*\s)[^"'`$]*(?<![.\w])(?:[Pp]rojections?|[Rr]esolvers?)(?!\.\w|[\w(])[^"'`$]*\1/;
+
 const OFFENSE = new RegExp(
-  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}|${EVENT_ACTION_ID_OFFENSE.source}`,
+  `${COUNT_OFFENSE.source}|${KIND_ID_OFFENSE.source}|${PHRASE_OFFENSE.source}|${COUNT_SHAPE_OFFENSE.source}|${EVENT_ACTION_ID_OFFENSE.source}|${INTERNAL_WORD_OFFENSE.source}`,
 );
 
 function tsxFiles(dir: string): string[] {

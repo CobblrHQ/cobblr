@@ -316,7 +316,7 @@ async function sendRequest<T>(
   extraHeaders?: Record<string, string>,
 ): Promise<T> {
   // Read before anything is waited on: whether a person's mutation sent this (waiting-writes.ts).
-  const byAPerson = madeByAPerson();
+  const byAPerson = madeByAPerson(method);
   // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
   if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
   // The page is going, with other credentials than it ran on (leaving View

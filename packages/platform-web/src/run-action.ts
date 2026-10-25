@@ -40,6 +40,8 @@ export interface ActionBody {
   entityId?: string;
   bindingId?: string;
   args?: Record<string, unknown>;
+  /** The Undo this press is, as its run handed it back (#7924). */
+  undo_id?: string;
   /** The original held by this screen, uploaded outside the JSON arguments. */
   document?: File;
   /** The code of the action label the press came from: the door checks it and
@@ -152,6 +154,7 @@ export function offerUndo(
           actionId: step.action_id,
           ...(step.entity_kind !== undefined ? { entityKind: step.entity_kind } : {}),
           ...(step.entity_id !== undefined ? { entityId: step.entity_id } : {}),
+          ...(step.undo_id ? { undo_id: step.undo_id } : {}),
           args: step.args ?? {},
         });
         toast.success("Undone.");

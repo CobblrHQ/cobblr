@@ -1,10 +1,11 @@
-// Every record detail panel, registered before any page renders: main.tsx
-// imports this file first (#5954). A panel registered anywhere else did not
+// Every record detail panel, and the toolbars a module puts on a saved view or
+// a tag's page, registered from the moment the app starts: mount.tsx imports
+// this file first (#5954), and pages wait until it has run (#6881). A panel registered anywhere else did not
 // exist until some page that imported it had loaded, so a module's own detail
 // page opened first had no History, Links, Photos and files or Tags. The
 // components stay lazy; only these lines are in the first load.
 import { lazy } from "react";
-import { registerDetailPanel } from "@cobblr/platform-web";
+import { panelRegistrationsDone, registerDetailPanel, registerTagToolbar, registerViewToolbar } from "@cobblr/platform-web";
 
 registerDetailPanel(
   "builds:board-revisions",
@@ -136,3 +137,20 @@ registerDetailPanel(
 );
 
 registerDetailPanel("digifab:instrument",lazy(()=>import("../features/digifab/bench").then(m=>({default:m.BenchPanel}))));
+
+// What the module owning a saved view's records, or a tag's things, puts in
+// its header. They registered in panels/registry.tsx, which only some pages
+// import, so a view opened first drew its Export and then What's still here?
+// arrived beside it whenever another page's code happened to load (#6881).
+registerViewToolbar(
+  "inventory:stocktake-view",
+  lazy(() => import("../features/inventory/stocktakeView").then((m) => ({ default: m.StocktakeViewControl }))),
+);
+
+registerTagToolbar(
+  "inventory:recount-tag",
+  lazy(() => import("../features/inventory/recountTag").then((m) => ({ default: m.RecountTagControl }))),
+);
+
+// Last: what is registered is all there will be.
+panelRegistrationsDone();

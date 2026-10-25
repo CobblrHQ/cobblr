@@ -9,12 +9,17 @@
 // when it was fetched, and the earliest of those is "as of" here, so a kept
 // copy is never taken for live. Back online, everything is fetched again at
 // once rather than waiting for each query's own timer.
-import { productName } from "@cobblr/platform-web";
+//
+// What waits to be sent is counted, never just promised (#7928): "Waiting to
+// send (2)" is the edits and creates kept on this device plus any of this
+// page's own the device could not keep, so a change is "saved" only once the
+// server has answered it.
+import { productName, subscribeWaitingWrites, waitingWriteCount } from "@cobblr/platform-web";
 import { useEffect, useRef, useState } from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FloatingChrome } from "@cobblr/platform-web";
-import { subscribeConnectivity, subscribeOfflineCopies, pingHealth } from "../lib/api";
+import { getToken, subscribeConnectivity, subscribeOfflineCopies, pingHealth } from "../lib/api";
 import { asOfWords } from "../lib/offline";
 
 export function ConnectivityBanner() {
@@ -23,7 +28,23 @@ export function ConnectivityBanner() {
   const [asOf, setAsOf] = useState<string | null>(null);
   const [offline, setOffline] = useState(() => typeof navigator !== "undefined" && navigator.onLine === false);
   const wasDown = useRef(false);
+  const [waiting, setWaiting] = useState(0);
   useEffect(() => subscribeConnectivity(setDown), []);
+  useEffect(() => {
+    const count = () => {
+      const token = getToken();
+      const kept = waitingWriteCount(token ? `Bearer ${token}` : null);
+      const paused = qc.getMutationCache().getAll().filter((m) => m.state.isPaused).length;
+      setWaiting(Math.max(kept, paused));
+    };
+    count();
+    const offStore = subscribeWaitingWrites(count);
+    const offCache = qc.getMutationCache().subscribe(count);
+    return () => {
+      offStore();
+      offCache();
+    };
+  }, [qc]);
   useEffect(() => subscribeOfflineCopies(setAsOf), []);
 
   useEffect(() => {
@@ -71,7 +92,8 @@ export function ConnectivityBanner() {
       {isOffline ? (
         <span>
           You're offline.{" "}
-          {asOf !== null ? <>Showing what you had as of {asOfWords(asOf)}. Changes wait until you're back.</> : <>Changes wait until you're back.</>}
+          {asOf !== null ? <>Showing what you had as of {asOfWords(asOf)}. </> : null}
+          {waiting > 0 ? <>Waiting to send ({waiting}).</> : <>Changes wait until you're back.</>}
         </span>
       ) : (
         <span>Can't reach {productName()} - reconnecting…</span>

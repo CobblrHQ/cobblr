@@ -16,8 +16,9 @@ const tool: WorkspaceTool = {
     entity_id: z
       .string()
       .optional()
-      .describe("The record's id — required for an entity action, omit for a workspace action"),
+      .describe("The record's id (an entity action)"),
     args: z.record(z.unknown()).optional().describe("Action arguments, by name, from the action's `args` in list_actions. Values may be any JSON — a string, a number, or a LIST (e.g. reorder takes ids: [\"…\",\"…\"])."),
+    undo_id: z.string().optional().describe("An Undo's undo_id"),
   },
   execute: async (api, args) => {
     const entityKind = typeof args.entity_kind === "string" && args.entity_kind.trim() ? args.entity_kind.trim() : undefined;
@@ -29,6 +30,7 @@ const tool: WorkspaceTool = {
       ...(entityKind ? { entityKind } : {}),
       ...(entityId ? { entityId } : {}),
       args: (args.args as Record<string, unknown> | undefined) ?? undefined,
+      ...(typeof args.undo_id === "string" && args.undo_id ? { undo_id: args.undo_id } : {}),
     });
     if (res.status >= 400) return toolFail(apiErrorMessage(res, "action failed"));
     // The route answers 200 when the action was INVOKED; whether the operation

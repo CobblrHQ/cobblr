@@ -38,6 +38,20 @@ export function isPoolEnded(err: unknown): boolean {
   return err instanceof PoolEndedError || /Cannot use a pool after calling end/.test((err as Error | null)?.message ?? "");
 }
 
+// The checkouts each pool has waiting at the limit, not yet given a
+// connection. pg-pool does not know of them (they are not in its queue), so
+// its own counts read a pool with a read waiting here as idle.
+const gateWaiting = new WeakMap<Pool, Set<unknown>>();
+
+/** Nothing borrowed, nothing queued in pg, and nothing waiting at the limit:
+ *  the one test every release and eviction asks before ending a pool. A pool
+ *  ended with a checkout waiting at the limit refused it, and four refusals in
+ *  a row under a busy server answered a fresh workspace's read with a 500
+ *  (#7908). */
+export function poolIsIdle(pool: Pool): boolean {
+  return pool.totalCount === pool.idleCount && pool.waitingCount === 0 && (gateWaiting.get(pool)?.size ?? 0) === 0;
+}
+
 const isEnding = (pool: Pool) => {
   const p = pool as unknown as { ended?: boolean; ending?: boolean };
   return !!(p.ended || p.ending);
@@ -87,7 +101,7 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
   const victim = (except: string) => {
     for (const [k, p] of opts.pools()) {
       if (k === except || p.totalCount === 0) continue;
-      if (p.totalCount === p.idleCount && p.waitingCount === 0 && opts.evictable(k)) return k;
+      if (poolIsIdle(p) && opts.evictable(k)) return k;
     }
     return null;
   };
@@ -127,6 +141,7 @@ export function createConnectionLimit(opts: ConnectionLimitOptions) {
     type Callback = (err: Error | undefined, client?: PoolClient, done?: Done) => void;
     // The checkouts still waiting on this pool, refused the moment it is ended.
     const waiting = new Set<(err: Error) => void>();
+    gateWaiting.set(pool, waiting);
     const end = pool.end.bind(pool) as (...a: unknown[]) => unknown;
     (pool as unknown as { end: (...a: unknown[]) => unknown }).end = (...a: unknown[]) => {
       const ended = end(...a);

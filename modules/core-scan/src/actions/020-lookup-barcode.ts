@@ -14,6 +14,9 @@ const action: ModuleActionInput = {
   scope: "workspace",
   invokeHandler: "core-scan.lookup-barcode",
   userInvokable: true,
+  // A read: it files nothing, and for an assistant it skips the web search
+  // that would call the workspace's AI, so there is nothing to confirm (#7858).
+  effect: "none",
   argsSchema: { code: { label: "Barcode", type: "text", required: true } },
 };
 

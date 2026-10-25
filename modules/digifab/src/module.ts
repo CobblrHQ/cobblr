@@ -462,7 +462,7 @@ export default defineModule({
         label: "Refresh a job's status",
         description: "Ask the printer for a sent job's state now instead of waiting for the next check. Reads only; it never starts or stops anything.",
         scope: "workspace",
-        invokeHandler: "digifab.refresh-job",
+        invokeHandler: "digifab.refresh-job", effect: "writes", // stores the state it was told, as the poller does
         userInvokable: true,
         argsSchema: {
           job: { label: "Which job (its file name or id)", type: "text", required: true },

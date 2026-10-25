@@ -101,7 +101,8 @@ export interface DigifabHistory {
    *  prints with none yet, and `success` good over the judged attempts (null with none). */
   summary: { total: number; completed: number; failed: number; cancelled: number; good?: number; scrapped?: number; partly_scrapped?: number; unjudged?: number; success?: number | null; filament_g: number; hours: number; cost?: number | null; unpriced?: number };
   currency?: string;
-  by_device: { name: string; total: number; completed: number; failed: number; good?: number; scrapped?: number; unjudged?: number; success?: number | null; filament_g: number; cost?: number | null; unpriced?: number }[];
+  /** One row per printer: its connection and that manager's device id, since names repeat across connections. */
+  by_device: { name: string; connection_id?: string | null; device_id?: string | null; connection?: string | null; total: number; completed: number; failed: number; good?: number; scrapped?: number; unjudged?: number; success?: number | null; filament_g: number; cost?: number | null; unpriced?: number }[];
   recent: { id: string; file_ref: string; metadata?: Record<string, unknown>; sub_label?: string | null; cover?: string | null; device: string; connection_id?: string | null; device_id?: string | null; status: string; outcome?: "good" | "scrap" | null; good_qty?: number | null; scrap_qty?: number | null; filament_g: number | null; cost?: number | null; cost_currency?: string | null; at: string; duration_s?: number }[];
 }
 

@@ -208,9 +208,15 @@
   .hover-reveal {
     opacity: 1;
   }
+  /* Hidden is unpressable, shown is pressable, and the class owns both: a
+     touch screen has no hover, so there the actions show AND take a tap. A
+     row that added its own pointer-events-none drew the switcher's members,
+     rename and star on a phone and sent the tap to the row under them (#7930,
+     a newcomer inviting a second person). */
   @media (hover: hover) {
     .hover-reveal {
       opacity: 0;
+      pointer-events: none;
       transition: opacity 150ms;
     }
     .group:hover .hover-reveal,
@@ -219,6 +225,7 @@
     .hover-reveal:focus-visible,
     .hover-reveal:focus-within {
       opacity: 1;
+      pointer-events: auto;
     }
   }
 }

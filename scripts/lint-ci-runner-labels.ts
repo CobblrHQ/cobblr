@@ -71,13 +71,25 @@ const KNOWN = new Set([
   "fast-recheck-test",
   "pr-check",
   "android-kvm",
+  // The scheduled nightlies' own label (#6226, 2026-10-25): cobblr-test-a6 and cobblr-light-b550, never a runner with a
+  // fast lane (server-setup's runner-configs-test.py refuses one).
+  "nightly",
 ]);
 
 // THE b550 IS TEST-ONLY (2026-10-07, server-setup #190: a bad DRAM spot). A job there may compute, but nothing
 // it makes may leave the box: no artifact upload, no image push, no release asset, no publish script, since a
 // flipped bit would ship. nightly-tour's `record` job made the homepage's published media on `ci-test`, a
 // label the b550 carries. A deliberate exception says why on the runs-on line: `# b550-ok: <why>`.
-const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long"]);
+const B550_LABELS = new Set(["ci-test", "bake-b550", "ci-walk", "ci-long", "nightly"]);
+
+// A SCHEDULED RUN NEVER TAKES A FAST LANE'S RUNNER (#6226, 2026-10-25): at 07:15Z ci-impact's shard test-4 took z87's one
+// slot on `ci-test` while a critical fix's fast-lane jobs waited behind it. z87's runner carries the fast lanes and the
+// pull requests' labels, so a scheduled workflow asks for `nightly` instead, except where it must prove those lanes.
+const LANE_LABELS = new Set(["ci-test", "pr-check"]);
+const SCHEDULED_ON_LANES_OK: Record<string, string> = {
+  "ci.yml": "its daily heartbeat is the pull requests' own workflow, proving their lane and the freshly baked image there",
+  "new-app-proof.yml": "it runs on pull requests too and proves pr-check's image; 15 min at 10:15Z, nothing waits on it",
+};
 // One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
 // push-main-and-verify.sh is how the showcase site publishes (e2e-suite.yml): a test-only box must not run it either
 // (#7764, the yardsticks' two legs; the rule could not see it before).
@@ -178,6 +190,9 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
       return;
     }
     if (label.startsWith("$")) return; // some other expression; not ours to judge
+    if (LANE_LABELS.has(label) && /^ {2}schedule:\s*$/m.test(src) && !(f in SCHEDULED_ON_LANES_OK)) {
+      errors.push(`.forgejo/workflows/${f}:${i + 1} is a scheduled workflow on "${label}", a label the fast lane's runner carries: its run takes that slot while a critical fix waits (ci-impact, 2026-10-25 07:15Z). Use \`runs-on: nightly\`, or say why in SCHEDULED_ON_LANES_OK.`);
+    }
     seen.set(label, [...(seen.get(label) ?? []), `${f}:${i + 1}`]);
     if (B550_LABELS.has(label) && !/# b550-ok: \S/.test(line)) {
       const what = publishesIn(jobBody(src.split("\n"), i));

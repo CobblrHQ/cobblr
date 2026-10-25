@@ -6,11 +6,13 @@
 // and a note typed in a basement was gone with the banner still promising it.
 // Every write passes one of two doors (the web's request, the modules'
 // workspaceFetch), and each tells this store what it could not send because
-// the browser is offline. An edit (PATCH, PUT, DELETE) the browser never sent
-// can be sent later without doubling or meaning something else, so the store
-// keeps it, per signed-in person. A POST is not kept: the app sends some that
-// change nothing (a stream's ticket, a lookup), and a create sent from a
-// later page could not finish what the page that asked for it meant to do.
+// the browser is offline. A write the browser never sent can be sent later
+// without doubling, so the store keeps it, per signed-in person: an edit
+// (PATCH, PUT, DELETE), and since #7928 a create (POST), which carries a key of
+// its own (Idempotency-Key) so a send cut short and sent again is one create
+// to a server that holds answers by key (#7923). A POST that only asks (a
+// lookup, a search, a preview) is not kept: sent later it changes nothing and
+// would be reported as saved.
 //   - the page that made it still sends it itself when the connection returns,
 //     and the store forgets it when it lands;
 //   - a page loaded after it (a reload, a new tab) shows it over what it reads
@@ -20,9 +22,14 @@
 //     away without a word: the page counts what it kept against what waits.
 
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
+import { randomId } from "@cobblr/platform-contract/random-id";
 
 const KEY = "cobblr:waiting-writes";
-const WRITES = new Set(["PUT", "PATCH", "DELETE"]);
+const WRITES = new Set(["PUT", "PATCH", "DELETE", "POST"]);
+/** A POST whose last step only asks: nothing to keep. */
+const ASKS = /\/(?:search|lookup|look-up|preview|resolve|suggest|suggestions|match|parse|read|estimate|check|validate|dry-run|ticket|stream-ticket|answer|query|count)(?:\?|$)/;
+/** The header a kept create is sent again with. */
+export const IDEMPOTENCY_KEY = "Idempotency-Key";
 
 export interface WaitingWrite {
   method: string;
@@ -34,6 +41,8 @@ export interface WaitingWrite {
   /** The document that made it, which sends it itself while it is open. */
   page: string;
   at: string;
+  /** A create's own key, sent with it as Idempotency-Key. */
+  key?: string;
 }
 
 let personsWrites = 0;
@@ -51,9 +60,23 @@ export function asAPersonsWrite<T>(fn: () => T): T {
   }
 }
 
+/** A create from a form a person just submitted is theirs too (#7928). A
+ *  form's handler sends it from an async function, not a mutation, so the
+ *  mark above has gone by then: the New part form's create was never kept,
+ *  and a part added offline was lost on reload. A create is the only write
+ *  this window keeps: an edit the page syncs on its own just after a submit
+ *  (a chat's history) must never be sent from a later page. */
+const SUBMITTED_WINDOW_MS = 10_000;
+let submittedAt = Number.NEGATIVE_INFINITY;
+if (typeof document !== "undefined") {
+  document.addEventListener("submit", (e) => {
+    if (e.isTrusted) submittedAt = Date.now();
+  }, true);
+}
+
 /** Read by a door as it is entered, before it waits on anything. */
-export function madeByAPerson(): boolean {
-  return personsWrites > 0;
+export function madeByAPerson(method?: string): boolean {
+  return personsWrites > 0 || (method?.toUpperCase() === "POST" && Date.now() - submittedAt < SUBMITTED_WINDOW_MS);
 }
 
 const PAGE = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -111,7 +134,7 @@ export function browserOffline(): boolean {
  *  landed. Says whether it was kept. */
 export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined): boolean {
   const m = method.toUpperCase();
-  if (!WRITES.has(m)) return false;
+  if (!WRITES.has(m) || (m === "POST" && ASKS.test(path))) return false;
   let parsed: unknown;
   if (body != null) {
     if (typeof body !== "string") return false;
@@ -125,8 +148,10 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
   const list = read();
   let last = list.length - 1;
   while (last >= 0 && !(list[last]!.who === who && list[last]!.path === path)) last -= 1;
-  const prior = last >= 0 ? list[last]! : null;
-  if (prior && m === "PATCH" && prior.method === "PATCH" && isRecord(prior.body) && isRecord(parsed)) {
+  const prior = last >= 0 && m !== "POST" ? list[last]! : null;
+  if (m === "POST") {
+    list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), who, page: PAGE, at: new Date().toISOString(), key: randomId() });
+  } else if (prior && m === "PATCH" && prior.method === "PATCH" && isRecord(prior.body) && isRecord(parsed)) {
     const body = { ...prior.body, ...parsed };
     if (isRecord(prior.body.metadata) && isRecord(parsed.metadata)) {
       // Keep null deletion markers until the server applies the combined patch.

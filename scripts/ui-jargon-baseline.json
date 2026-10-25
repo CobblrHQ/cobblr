@@ -36,6 +36,22 @@
     "why": "Quick access lists pinned knowledge entries, and an entry's kind is the vault chip the person chose (note, reference, SOP, prompt, paper); a plain word that happens to be stored under a property called kind."
   },
   {
+    "key": "web/src/components/ScanResolversTab.tsx::\"Deletes this custom vendor resolver. A built-in it overrides is restored.\",",
+    "why": "The scan settings tab that edits vendor resolvers: a resolver is the object being written here (its manifest is the JSON this form edits), on an advanced settings page a newcomer's first hour never reaches."
+  },
+  {
+    "key": "web/src/components/ScanResolversTab.tsx::<Modal open onClose={onClose} title={row ? `Edit ${row.label}` : \"Add a vendor resolver\"} size=\"lg\">",
+    "why": "The scan settings tab that edits vendor resolvers: a resolver is the object being written here (its manifest is the JSON this form edits), on an advanced settings page a newcomer's first hour never reaches."
+  },
+  {
+    "key": "web/src/components/ScanResolversTab.tsx::<span className=\"text-muted\">No vendor resolver claimed this URL.</span>",
+    "why": "The scan settings tab that edits vendor resolvers: a resolver is the object being written here (its manifest is the JSON this form edits), on an advanced settings page a newcomer's first hour never reaches."
+  },
+  {
+    "key": "web/src/components/ScanResolversTab.tsx::hint=\"The resolver manifest as JSON.\"",
+    "why": "The scan settings tab that edits vendor resolvers: a resolver is the object being written here (its manifest is the JSON this form edits), on an advanced settings page a newcomer's first hour never reaches."
+  },
+  {
     "key": "web/src/components/WireDetailModal.tsx::{binding.action_id}",
     "why": "The automation's own detail modal, the row labelled Action for the person who composed it: the action id is what the automation is bound to and what they would pick again in the composer; the id is the object on this surface."
   },
@@ -46,6 +62,14 @@
   {
     "key": "web/src/features/edge/DriverPackages.tsx::<span className=\"font-medium text-content dark:text-mortar-100\">{d.kind}</span>",
     "why": "A driver package's kind is the driver's own name as the person declared it on this page (the field they typed it into is beside the list), not a module:kind id; the list echoes the declaration back."
+  },
+  {
+    "key": "web/src/pages/AdminConsole.tsx::[\"Barcode resolver\", cfg.data.barcode_resolver_configured ? \"configured\" : \"not configured\", cfg.data.barcode_resolver_configured],",
+    "why": "The operator console's own health line for the barcode lookup service, read by whoever runs the server; the resolver is the service being reported on, not a word for a workspace member."
+  },
+  {
+    "key": "web/src/pages/AdminConsole.tsx::{resolver.isLoading ? \"Asking the resolver…\" : \"Resolver unreachable from the api right now.\"}",
+    "why": "The operator console's own health line for the barcode lookup service, read by whoever runs the server; the resolver is the service being reported on, not a word for a workspace member."
   },
   {
     "key": "web/src/pages/AdminConsole.tsx::{x.event} <b>{x.d7}</b>",
@@ -110,6 +134,14 @@
   {
     "key": "web/src/pages/RolesPage.tsx::<div className=\"text-[10px] font-mono text-faint truncate\">{a.action_id}</div>",
     "why": "The roles editor lists each permission with its label in words on the first line and the action id small underneath, because two actions can share a label and the id is what the role is checked against."
+  },
+  {
+    "key": "web/src/pages/ScanRulesPage.tsx::<Modal open onClose={onClose} title=\"Paste a rule\" subtitle=\"External QR resolver\" size=\"lg\">",
+    "why": "A scan rule's editor names the kind of rule it is, an external QR resolver that turns a code into a link; the rule IS that resolver, on the advanced scan rules page, not on a first-hour screen."
+  },
+  {
+    "key": "web/src/pages/ScanRulesPage.tsx::<Modal open onClose={onClose} title={rule ? \"Edit rule\" : \"New rule\"} subtitle=\"External QR resolver\" size=\"lg\">",
+    "why": "A scan rule's editor names the kind of rule it is, an external QR resolver that turns a code into a link; the rule IS that resolver, on the advanced scan rules page, not on a first-hour screen."
   },
   {
     "key": "web/src/pages/ScanRulesPage.tsx::<code className=\"text-faint\">{result.entity_kind}</code>",

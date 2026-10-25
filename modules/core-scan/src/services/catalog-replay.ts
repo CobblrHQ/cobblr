@@ -111,6 +111,8 @@ export function imageCassetteKey(url: string): string {
   return createHash("sha1").update(url).digest("hex");
 }
 
+const missedImages = new Set<string>();
+
 /** The recorded picture for a url, as a Response; a 404 when the dir is set
  *  and holds none; null when the fetch should go live (no dir, or recording). */
 export function replayImage(url: string): Response | null {
@@ -119,7 +121,16 @@ export function replayImage(url: string): Response | null {
   const images = join(dir, "images");
   const key = imageCassetteKey(url);
   const file = existsSync(images) ? readdirSync(images).find((f) => f.startsWith(`${key}.`)) : undefined;
-  if (!file) return new Response(null, { status: 404, statusText: "no image cassette" });
+  if (!file) {
+    // Said once per picture, with how to fill it: a missing picture under
+    // replay was a silent empty tile, and a nightly walk of a ten-spool pack
+    // sat red for a week with nothing in its log to say which (#6881).
+    if (!missedImages.has(url)) {
+      missedImages.add(url);
+      console.warn(`[catalog-replay] no recorded picture for ${url} (images/${key}.<ext>): record it with COBBLR_CATALOG_REPLAY_RECORD=1 on a box that reaches it`);
+    }
+    return new Response(null, { status: 404, statusText: "no image cassette" });
+  }
   const ext = file.slice(key.length + 1);
   const bytes = readFileSync(join(images, file));
   return new Response(new Uint8Array(bytes), { status: 200, headers: { "content-type": EXT_TYPE[ext] ?? "application/octet-stream", "content-length": String(bytes.length) } });

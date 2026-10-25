@@ -236,6 +236,9 @@ export default defineModule({
         changes: "records",
         runBy: "member",
         examples: ["move everything from Bin 3 to Bin 7", "empty the old shelf into the new one", "merge the two Bin 3s"],
+        // Its Undo (put-back-everything) puts each thing and place back and
+        // restores a merged-away place, so an assistant may run it (#7887).
+        undoable: true,
         label: "Move everything to another place",
         // Asked to move a shelf "including its bins", a model chose this and
         // the shelf stayed while its bins left it (#8050). Moving a place
@@ -350,7 +353,7 @@ export default defineModule({
           "The room as a planning layout would make it: each shelf (real or planned) with its width and height, the things on it with their outer sizes, how much width they use and whether they fit, and the things it puts elsewhere; the room's size and walls (doors with their swing, windows with their sill, closets), each rack's spot, size and turn on the floor, and `flags`: a rack that does not fit the room (bigger than it, or reaching past a wall: such a layout cannot be applied), a rack in a door's swing, a rack taller than a window's sill in front of it, and (when the room checks aisles) a gap narrower than its aisle. Changes nothing.",
         icon: "layout",
         scope: "workspace" as const,
-        invokeHandler: "core-locations.plan-read",
+        invokeHandler: "core-locations.plan-read", effect: "none",
         userInvokable: false,
         argsSchema: { draft_id: { label: "The layout (draft_id)", type: "text" as const, required: true } },
       },
@@ -435,7 +438,7 @@ export default defineModule({
           "This place and every room drawn under it as one cobblr-floorplan/1 plan: sizes, walls and openings, zones, containers with their shelves and drawers. Importing it back changes nothing. Changes nothing.",
         icon: "download",
         appliesTo: { kinds: ["core-locations:location"] },
-        invokeHandler: "core-locations.export-floorplan",
+        invokeHandler: "core-locations.export-floorplan", effect: "none",
         userInvokable: false,
         argsSchema: {},
       },

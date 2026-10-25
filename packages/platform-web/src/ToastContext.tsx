@@ -162,6 +162,10 @@ function ToastStack({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id: number
 function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => void }) {
   const [busy, setBusy] = useState(false);
   const timerRef = useRef<number | null>(null);
+  // When it goes by itself, on the card: a walk waiting for the page to settle
+  // stops before the feedback it means to judge is gone (#8133).
+  const [shownAt] = useState(() => Date.now());
+  const goesAt = toast.duration > 0 ? shownAt + toast.duration : undefined;
 
   useEffect(() => {
     if (toast.duration > 0) {
@@ -204,6 +208,8 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       }
       role="status"
       aria-live={toast.kind === "error" ? "assertive" : "polite"}
+      data-shown-at={shownAt}
+      data-goes-at={goesAt}
     >
       <Icon size={16} className={`shrink-0 mt-0.5 ${palette.icon}`} />
       <div className="flex-1 min-w-0">

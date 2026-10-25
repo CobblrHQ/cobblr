@@ -655,6 +655,10 @@ export function destinationMatches(
 
 export interface VisibilityContext {
   tidyAvailable?: boolean;
+  /** False while a read that decides what is listed is still on its way. A
+   *  list drawn before then grew a row (Tidy) above the ones a finger was
+   *  heading for (#6881), so a settings list waits for it. Absent = settled. */
+  settled?: boolean;
   /** Names of the modules enabled for the active workspace. Pass `null` while
    *  the list is still loading — nothing is hidden on a module basis then, so
    *  the settings area never flickers items in. */

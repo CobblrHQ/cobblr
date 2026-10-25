@@ -1,4 +1,4 @@
-import { SelectBox, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { SelectBox, useStillAsking, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -280,6 +280,9 @@ export function AssetsPage({
     },
     onError: (e) => toast.error((e as Error).message),
   });
+
+  const asking = useStillAsking(list, fieldDefs, orgModules, assetInstances, savedViews);
+  if (asking) return <div role="status" className="text-sm text-muted">Loading…</div>;
 
   return (
     <div className="space-y-4">

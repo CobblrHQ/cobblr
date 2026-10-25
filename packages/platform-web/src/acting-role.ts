@@ -80,9 +80,9 @@ export const GUEST_NOT_SHARED = "A guest sees what this workspace shares in its 
  *  ITS answer is what the page gets, so a second refusal is shown the way the
  *  first would have been (#5890); closed, the page gets the refusal. */
 export async function workspaceFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
-  const byAPerson = madeByAPerson();
   const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
   const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+  const byAPerson = madeByAPerson(method);
   const path = url.replace(/^[a-z]+:\/\/[^/]+/i, "").replace(/^\/api\/v1(?=\/orgs\/)/, "");
   if (refusedForGuest(method, path)) {
     return new Response(JSON.stringify({ error: { code: "guest_not_shared", message: GUEST_NOT_SHARED } }), { status: 403, headers: { "content-type": "application/json" } });

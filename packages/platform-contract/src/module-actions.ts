@@ -112,6 +112,10 @@ export interface ActionInvokeContext {
   /** The wire that ran this, when a wire did (#6070): what an action that
    *  reaches outside the workspace names, limits and lets a recipient stop. */
   wire?: { id: string };
+  /** Run for an assistant (any AI door, Cobb's relay or its own calls),
+   *  not a person. A handler that would spend the workspace's AI on a
+   *  fallback skips it: an assistant's read is never an AI bill (#7858). */
+  byAssistant?: boolean;
   /** Pre-rendered template result, if the binding had a template. */
   rendered?: string;
   /** Extra args from the binding (passed through). */

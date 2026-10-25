@@ -401,49 +401,8 @@ export async function fileReceiptRead(
   // away re-imports. `force` (user chose "import anyway") skips the guard.
   const dupKey = receiptDedupKey(receipt.vendor, orderRef);
   const contentKey = receiptContentKey(receipt);
-  // No order number on the receipt -> fall back to the content fingerprint.
-  // Same duplicate flow as below: tell the user, let force override.
-  if (!dupKey && contentKey && !parsed.data.force) {
-    const prior = await db
-      .selectFrom("core_scan_batches as b")
-      .select(["b.id", "b.label"])
-      .where("b.content_key", "=", contentKey)
-      .where((eb) =>
-        eb.exists(
-          eb
-            .selectFrom("core_scan_inbox_items as i")
-            .select("i.id")
-            .whereRef("i.scan_batch_id", "=", "b.id")
-            .where("i.status", "!=", "discarded"),
-        ),
-      )
-      .orderBy("b.created_at", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (prior) {
-      const live = await db
-        .selectFrom("core_scan_inbox_items")
-        .select((eb) => eb.fn.countAll<number>().as("n"))
-        .where("scan_batch_id", "=", prior.id)
-        .where("status", "!=", "discarded")
-        .executeTakeFirst();
-      // Same contract as the order-ref guard below, so the client's one
-      // "already imported - import anyway?" flow covers both.
-      res.status(200).json({
-        duplicate: true,
-        existing: {
-          batch_id: prior.id,
-          label: prior.label,
-          vendor: receipt.vendor,
-          order_ref: null,
-          item_count: Number(live?.n ?? 0),
-        },
-      });
-      return;
-    }
-  }
-  if (dupKey && !parsed.data.force) {
-    const prior = await priorSessionOfOrder(db as never, dupKey, contentKey);
+  if (!parsed.data.force) {
+    const prior = await priorSessionOfOrder(db as never, dupKey, contentKey, parsed.data.file_id);
     if (prior) {
       const live = await db
         .selectFrom("core_scan_inbox_items")

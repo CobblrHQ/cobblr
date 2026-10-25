@@ -253,7 +253,7 @@ export function useScanIntake(slug: string, opts: ScanIntakeOptions): ScanIntake
   async function uploadReceipt(file: File) {
     setUploading(true);
     try {
-      const rec = await api.uploadFile(slug, file);
+      const rec = await api.uploadFile(slug, file, { onDuplicate: "skip" });
       await importReceiptFile(rec.id, false);
     } catch (e) {
       if (isPersonalDocument(e)) return;

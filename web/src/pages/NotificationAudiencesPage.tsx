@@ -10,7 +10,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users } from "lucide-react";
-import { SegmentedChoice, usePageTitle, useToast } from "@cobblr/platform-web";
+import { OnceQuiet, SegmentedChoice, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ContributedConfigSections } from "../panels/registry";
 import { api, ApiError, type NotificationAudienceKind, type NotificationAudienceMode, type NotificationDefaultChannel, type WorkspaceMember } from "../lib/api";
@@ -55,13 +55,15 @@ export function NotificationAudiencesPage() {
   }
 
   return (
-    <div className="space-y-5">
+    // The defaults, a module's own section and each kind's audience fill in
+    // from their own answers: drawn together, so none pushes an audience's
+    // buttons down under a finger (#6881).
+    <OnceQuiet className="space-y-5">
       <DefaultChannels slug={activeSlug} />
       <p className="text-sm text-faint dark:text-slate-400">
         Each kind of notification this workspace sends, and who it goes to. Everyone is the default. How
         each person is told (the bell, a Discord DM, email) is their own choice under Your account.
       </p>
-      {kinds.isLoading && <div className="text-sm text-faint animate-pulse">Loading…</div>}
       {kinds.data && kinds.data.items.length === 0 && (
         <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 text-sm text-faint">
           Nothing to route yet. Kinds appear here as modules that send notifications are enabled, and as the
@@ -81,7 +83,7 @@ export function NotificationAudiencesPage() {
           ))}
         </section>
       ))}
-    </div>
+    </OnceQuiet>
   );
 }
 

@@ -278,8 +278,10 @@ export function dropSteps(job, names) {
 // 2026-10-22 a critical fix waited behind them: Forgejo hands a runner the waiting job with the oldest `updated`
 // (v15 models/actions/task.go), and a job blocked by `needs:` gets a fresh one when it unblocks, so a chain joins
 // the line one shard at a time, behind whatever waited first. About 90 minutes a night instead of 45.
+// THE NIGHTLY'S OWN LABEL (#6226, 2026-10-25): at 07:15Z shard test-4 took z87's one slot on `ci-test` while a critical
+// fix's fast-lane jobs waited. `nightly` is served by no runner with a fast lane (lint:ci-runner-labels).
 export const IMPACT = {
-  lane: { "pr-check": "pr-check", "ci-test": "ci-test" },
+  lane: { "pr-check": "nightly", "ci-test": "nightly" },
   on: ["  workflow_dispatch:", "  schedule:", "    # Nightly, clear of the 09:41 heartbeat and the 08:00 bake.", "    # SINGLE SLOT OK: a lost night leaves yesterday's map, and selection judges a change against", "    # the map's own commit, so an older map is still a correct one.", "    - cron: '23 6 * * *'"],
   group: "ci-impact-${{ github.run_id }}",
   header: [
@@ -312,7 +314,7 @@ export const IMPACT = {
     "  # Every shard's part, as one map, to the sink (POST /impact). Only when all are in: a map missing a",
     "  # shard would never select that shard's tests. scripts/test-impact.mjs assemble.",
     "  impact-map:",
-    "    runs-on: pr-check",
+    "    runs-on: nightly",
     `    needs: [${Array.from({ length: IMPACT_SHARDS }, (_, i) => impactShardJob(i + 1)).join(", ")}]`,
     "    if: always()",
     "    timeout-minutes: 10",

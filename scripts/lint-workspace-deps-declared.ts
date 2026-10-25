@@ -39,6 +39,24 @@ for (const pkgPath of PKGS) {
   }
 }
 
+// The root workspace too: scripts/ and e2e/ resolve third-party packages
+// through pnpm's hoisting, but a @cobblr/* package is linked only into the
+// workspaces that declare it. A scripts/ test importing @cobblr/platform-web
+// passed on a box whose root node_modules is a worktree link, and on CI's
+// clean install could not resolve it (#8133). Only statements that start a
+// line count: these files quote imports as fixtures all the time.
+{
+  const root = JSON.parse(readFileSync("package.json", "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  const declared = new Set([...Object.keys(root.dependencies ?? {}), ...Object.keys(root.devDependencies ?? {})]);
+  for (const f of sourceFiles("{scripts,e2e}/**/*.{ts,tsx,mjs}")) {
+    const src = readFileSync(f, "utf8");
+    for (const m of src.matchAll(/^(?:import|export)\b[^;'"]*?\bfrom\s+["'](@cobblr\/[a-z0-9-]+)(?:\/[^"']+)?["']|^\}\s*from\s+["'](@cobblr\/[a-z0-9-]+)(?:\/[^"']+)?["']/gm)) {
+      const dep = (m[1] ?? m[2])!;
+      if (!declared.has(dep)) problems.push(`the root workspace (scripts/, e2e/): ${f} imports ${dep}, which no root dependency links; put the test in a workspace that declares it`);
+    }
+  }
+}
+
 if (problems.length) {
   console.error(
     "[lint:workspace-deps] a workspace imports a @cobblr/* package it does not declare.\n" +
