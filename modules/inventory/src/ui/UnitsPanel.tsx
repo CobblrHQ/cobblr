@@ -11,7 +11,7 @@ import { useStockWrites } from "./stock-writes";
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useToast, MutationError } from "@cobblr/platform-web";
+import { useToast, MutationError, editOf, useCan } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 /** Who holds this unit — click to set/change. A plain string ("Janet", "IT
@@ -59,6 +59,7 @@ function HolderCell({ value, onCommit }: { value: string | null; onCommit: (v: s
 export function UnitsPanel({ partId, partName }: { partId: string; partName?: string }) {
   const { api, basePath, instance } = useInventory();
   const stock = useStockWrites();
+  const mayEdit = useCan("inventory:update-part");
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
@@ -70,7 +71,7 @@ export function UnitsPanel({ partId, partName }: { partId: string; partName?: st
   });
 
   const assign = useMutation({
-    mutationFn: (v: { id: string; assigned_to: string | null }) => api.updatePart(v.id, { assigned_to: v.assigned_to }),
+    mutationFn: (v: { id: string; assigned_to: string | null; was: string | null }) => api.updatePart(v.id, editOf({ assigned_to: v.was }, { assigned_to: v.assigned_to })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-units", partId] }),
   });
 
@@ -119,10 +120,12 @@ export function UnitsPanel({ partId, partName }: { partId: string; partName?: st
               >
                 {u.name}
               </a>
-              <HolderCell
-                value={u.assigned_to}
-                onCommit={(v) => assign.mutate({ id: u.id, assigned_to: v })}
-              />
+              {mayEdit ? (
+                <HolderCell
+                  value={u.assigned_to}
+                  onCommit={(v) => assign.mutate({ id: u.id, assigned_to: v, was: u.assigned_to ?? null })}
+                />
+              ) : u.assigned_to && <span className="shrink-0 text-xs text-muted">{u.assigned_to}</span>}
             </li>
           ))}
         </ul>
@@ -132,7 +135,7 @@ export function UnitsPanel({ partId, partName }: { partId: string; partName?: st
           "Add a serial" and "Scan within this" narrower than their words (#7620). */}
       <form onSubmit={submit} className="flex flex-wrap gap-2 pt-1">
         <input
-          className="input !w-auto flex-1 min-w-[12rem] text-sm"
+          className="input !w-auto flex-1 min-w-[min(12rem,100%)] text-sm"
           value={serial}
           placeholder="Serial number (optional)"
           onChange={(e) => setSerial(e.target.value)}

@@ -1,3 +1,4 @@
+import { LineStockRefusal } from "../order-lines.js";
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { tenantContext, type OrgRole } from "../db.js";
@@ -8,7 +9,13 @@ export function asyncHandler<R extends Request = Request>(
   handler: (req: R, res: Response, next: NextFunction) => Promise<void>,
 ) {
   return (req: Request, res: Response, next: NextFunction): void => {
-    void handler(req as R, res, next).catch(next);
+    void handler(req as R, res, next).catch((error) => {
+      if (error instanceof LineStockRefusal) {
+        res.status(409).json({ error: { code: error.code, message: error.message } });
+        return;
+      }
+      next(error);
+    });
   };
 }
 

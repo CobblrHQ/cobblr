@@ -82,14 +82,16 @@ export function CollectionHeader({
         {/* On a phone the name has the row to itself and the controls wrap
             under it: beside a select and a search it was squeezed, and the
             controls ran past the edge (#4390). */}
-        <div className="flex min-w-0 items-baseline gap-x-2 max-sm:basis-full" data-header-title>
+        <div className="flex flex-wrap gap-y-1 min-w-0 items-baseline gap-x-2 max-sm:basis-full" data-header-title>
           <h1 id={titleId} className="font-display text-2xl font-extrabold leading-9 text-content dark:text-mortar-100 page-title">{title}</h1>
           {/* Room for "22 of 22" from the start: "0 of 0" growing to it moved the
               controls after the title 14 px along (#7788). */}
           {count != null && <span className="inline-block min-w-[4.5rem] text-xs font-mono tabular-nums text-faint dark:text-slate-500">{count}</span>}
         </div>
+        {/* Wraps, its gap in px: held on one line, a link shrank below its
+            words and ran 28 px past a phone at 200% text (#8430). */}
         {nav && (
-          <nav aria-labelledby={titleId} className="flex h-9 items-center gap-5 text-sm" data-header-controls>
+          <nav aria-labelledby={titleId} className="flex min-h-9 flex-wrap items-center gap-x-[20px] text-sm" data-header-controls>
             {nav}
           </nav>
         )}

@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName, useSentWords } from "@cobblr/platform-web";
+import { productName, useSentWords, editOf } from "@cobblr/platform-web";
 import { jobDisplayName } from "../features/digifab/jobDisplayName";
 import { useEnabledModules } from "../lib/useEnabledModules";
 import { bridgeDisplayName } from "../lib/bridge-choice";
@@ -145,7 +145,7 @@ export function DigifabPage({
   if (digifabEnabled === false) {
     return (
       <div className="space-y-4">
-        <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <div className="flex flex-wrap items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
           <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
         </div>
         <div className="max-w-lg rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-6 text-center">
@@ -172,7 +172,7 @@ export function DigifabPage({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="digifab-page">
       <div className={"flex flex-wrap items-center gap-2 sm:gap-3 " + (embedded ? "" : "border-b border-line dark:border-slate-700 pb-3")}>
         {!embedded && (
           <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Digital Fabrication</h1>
@@ -240,7 +240,7 @@ export function DigifabPage({
       {tab === "setup" && (
         <>
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-sm text-muted dark:text-slate-400 flex-1 min-w-[16rem]">
+        <p className="text-sm text-muted dark:text-slate-400 flex-1 min-w-[min(100%,16rem)]">
           Connect to the software that runs your machines - FDM Monster, OctoPrint, and friends - then group them into pools
           and wire up print updates.
         </p>
@@ -718,13 +718,13 @@ const JOB_STATUS_STYLE: Record<string, string> = {
 // A pool job is auto-assigned by the worker (it has no connection to send to),
 // so it's not manually sendable.
 const TERMINAL_JOB = (s: string) => s === "completed" || s === "failed" || s === "cancelled";
-const canSend = (j: DigifabJob) => !j.embroidery_run && j.status === "queued" && !j.remote_job_id && !j.target_pool && !j.external;
+const canSend = (j: DigifabJob) => !j.sending && !j.embroidery_run && j.status === "queued" && !j.remote_job_id && !j.target_pool && !j.external;
 const canPoll = (j: DigifabJob) => !!j.remote_job_id && !TERMINAL_JOB(j.status) && !j.external;
 // An external ("on printer") row is an observed print with no Cobblr job behind
 // it — offering Cancel just 404s. Read-only.
 const canCancel = canCancelJob;
 // Safe to delete from the queue only when it's not physically on a printer.
-const canDelete = (j: DigifabJob) => !j.embroidery_run && j.status !== "sent" && j.status !== "printing" && j.status !== "paused" && !j.external;
+const canDelete = (j: DigifabJob) => !j.sending && !j.needs_bed_verdict && !j.embroidery_run && (TERMINAL_JOB(j.status) || j.status === "queued" || j.status === "awaiting-assignment") && !j.external;
 // F-14: a job that matched 0 or many printers can be re-pointed at a specific one.
 const canAssign = (j: DigifabJob) => j.status === "awaiting-assignment" && !!j.connection_id;
 // A terminal failed/cancelled job (not an observed external print) can be retried.
@@ -1499,7 +1499,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
     enabled: !!activeSlug,
     refetchInterval: (q) => {
       const its = q.state.data?.pages.flatMap((p) => p.items) ?? [];
-      return its.some((j) => j.material_pending || !TERMINAL_JOB(j.status)) ? 5000 : false;
+      return its.some((j) => j.material_pending || j.needs_bed_verdict || !TERMINAL_JOB(j.status)) ? 5000 : false;
     },
   });
   const invalidate = () => {
@@ -1740,7 +1740,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-[13px] text-content dark:text-mortar-100 truncate group-hover:text-accent transition">{jobDisplayName(jb)}</span>
                   <span className={"text-[10px] px-1.5 py-0.5 rounded font-medium " + (JOB_STATUS_STYLE[jb.status] ?? "text-muted bg-subtle")}>
-                    {jb.status === "printing" ? "Running" : jb.status}
+                    {jb.sending ? "Sending" : jb.status === "printing" ? "Running" : jb.status}
                   </span>
                   {jb.external && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded font-medium text-amber-700 bg-amber-100 dark:text-amber-300 dark:bg-amber-900/40" title={`Started at the machine, outside ${productName()}`}>
@@ -1763,6 +1763,7 @@ export function PrintQueueSection({ connections }: { connections: DigifabConnect
                   {jb.target_device ? target : <>{conn?.label ?? "—"} · {target}</>}
                   {jb.error && <span className="text-ember-500"> · {jb.error}</span>}
                 </div>
+                {jb.needs_bed_verdict && <p className="text-xs text-muted mt-1">Record good or scrap at the machine before removing this job.</p>}
               </button>
               {may.poll && canPoll(jb) && (
                 <button
@@ -1882,12 +1883,12 @@ function JobDetailModal({
   const may = { send: useCan("digifab:send"), operate: useCan("digifab:operate"), edit: useCan("digifab:prioritize-job") };
   const send = useMutation({ mutationFn: () => api.sendDigifabJob(activeSlug, jobId), onSuccess: () => { toast.success("Sent"); refresh(); }, onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)) });
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateDigifabJob(activeSlug, jobId, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateDigifabJob(activeSlug, jobId, editOf(j, { metadata })),
     onSuccess: refresh,
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const setPriority = useMutation({
-    mutationFn: (p: number) => api.updateDigifabJob(activeSlug, jobId, { priority: p }),
+    mutationFn: (p: number) => api.updateDigifabJob(activeSlug, jobId, editOf(j, { priority: p })),
     onSuccess: () => { toast.success("Priority updated"); refresh(); },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
@@ -2678,7 +2679,7 @@ function LibrarySection({ slug }: { slug: string }) {
   const itemsL = lib.data?.items ?? [];
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100">Library</h2>
         <span className="text-xs text-faint">{itemsL.length} file{itemsL.length === 1 ? "" : "s"}</span>
         <div className="flex-1" />
@@ -3409,9 +3410,9 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
   const done = items.filter((r) => r.status === "completed" || r.status === "cancelled").slice(0, 5);
   if (!items.length && !open) {
     return (
-      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 flex items-center gap-3">
+      <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-[16px] flex flex-wrap items-center gap-[12px]">
         <Layers size={16} className="text-accent shrink-0" />
-        <div className="flex-1 text-sm text-muted dark:text-slate-400">
+        <div className="flex-1 min-w-[min(100%,240px)] text-sm text-muted dark:text-slate-400">
           <span className="font-medium text-content dark:text-mortar-100">Production runs</span>  - "make 250 of these,
           stop when done." {printingPool ? "Pick a pool, a plate file, and a target; the farm does the rest." : "Track good parts as jobs finish. Prepare a laser batch from the Library."}
         </div>
@@ -3424,8 +3425,8 @@ export function ProductionRunsSection({ slug }: { slug: string }) {
 
   return (
     <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        <Layers size={16} className="text-accent" />
+      <div className="flex flex-wrap items-center gap-2">
+        <Layers size={16} className="text-accent shrink-0" />
         <h2 className="text-sm font-semibold text-content dark:text-mortar-100 flex-1">Production runs</h2>
         {mayStart && <button onClick={() => setOpen(true)} className="rounded bg-cobble-600 hover:bg-cobble-700 text-white px-3 py-1.5 text-xs transition">
           New run

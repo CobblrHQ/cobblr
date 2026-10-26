@@ -189,6 +189,9 @@ export function shellForRole(role: string | null | undefined): "workspace" | "po
  */
 export const CALENDAR_FEED_MANAGERS = ["owner", "admin"] as const;
 
+/** Printer connections and their saved settings, shared by the route and Labels. */
+export const PRINTER_MANAGERS = ["owner", "admin"] as const;
+
 /**
  * Who may bring a managed app's workspace up to its app's latest version.
  * The shell asks once a session on the app's first page; the route and the

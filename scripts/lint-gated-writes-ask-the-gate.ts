@@ -37,12 +37,30 @@
 // is wiring, not a control. A control drawn on the server's own answer for
 // the person says so on a GATED-BY: line.
 //
-// Still not judged: which control in a file a gate covers (a file with one
-// gate passes), a role other than a member (an operator's refusals are
-// fixed where they were found), and a module's own UI clients.
+// A MODULE'S OWN UI (#8028). Its client (modules/*/src/ui/api.ts) is read as
+// code: each method followed through the class's helpers and base path to
+// the route it sends (`updatePart` → this.partsRequest → requestAbs →
+// PATCH /orgs/:p/modules/inventory/parts/:p), and so is a workspaceFetch a UI
+// file sends itself. There the file that calls one asks the gate itself, or
+// says on a GATED-BY: line what draws it only for those allowed: an
+// importer's gate for some other control does not cover it (a list page's
+// delete gate passed a part page's title edit). An endpoint capability
+// (capability-grants.ts, `inventory:update-part`) is a capability a member
+// does not hold unless the member defaults say so. This found members
+// offered New part, Duplicate, Move, a unit's holder, the filament catalog,
+// Spoolman, a label printer's settings and Forget, the builds stations'
+// Authorize and Revoke, sales' Email and order intake, and tracking's delete.
+//
+// Still not judged: which control in a web file a gate covers (a web file
+// with one gate passes), and a role other than a member (an operator's
+// refusals are fixed where they were found).
 //
 // PROVED RED on main: web/src/components/AppLayout.tsx (refreshApp, an
-// owner/admin route, sent on every managed app's first page).
+// owner/admin route, sent on every managed app's first page), and
+// modules/inventory/src/ui/PartDetailPage.tsx with its gates taken out
+// (api.updatePart from the title, inventory:update-part), and
+// web/src/pages/DigifabPage.tsx with its gates taken out (askSend's
+// sendDigifabJob in startReview.tsx, digifab:send: 32 calls in all).
 //
 //   npx tsx scripts/lint-gated-writes-ask-the-gate.ts   (pnpm lint gated-writes-ask-the-gate)
 import { existsSync, readFileSync } from "node:fs";
@@ -63,6 +81,9 @@ const PROBE_ROLE = "member";
 // A control drawn on the server's own answer for this person (a blocked
 // action's selfApply, a kind's can_delete) says so on a GATED-BY: line.
 const GATE = /\b(useCan|useRoleAtLeast|useCapabilities|useCapabilitiesFor|useMayDelete|roleSatisfies|ManagedByAdmins|pageOpenTo)\b|(\/\/|\/\*) GATED-BY: \S/;
+
+// A page drawn only for the roles it lets in.
+const PAGE_GATE = /\b(ManagedByAdmins|pageOpenTo)\b/;
 
 const notTests = (fs: string[]) => fs.filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
 const parse = (file: string, src: string) => ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
@@ -204,7 +225,8 @@ export function memberHoldings(files: Array<[string, string]>, memberDefaults: r
     const sf = parse(file, src);
     const visit = (n: ts.Node) => {
       if (ts.isObjectLiteralExpression(n)) {
-        const id = str(n, "id");
+        // An endpoint capability (capability-grants.ts) names itself action_id.
+        const id = str(n, "id") ?? str(n, "action_id");
         if (id && /^[a-z0-9-]+:[a-z0-9-]+$/.test(id)) {
           if (!runBy.has(id) || str(n, "runBy") || str(n, "run_by")) runBy.set(id, str(n, "runBy") ?? str(n, "run_by"));
           const g = str(n, "grantedAs");
@@ -288,11 +310,191 @@ function reach(webFiles: Array<[string, string]>) {
   return { importers, routedAt };
 }
 
+type Fn = ts.FunctionLikeDeclaration;
+const HTTP = /^(GET|POST|PUT|PATCH|DELETE)$/;
+const SINKS = new Set(["workspaceFetch", "fetch"]);
+const UPLOADS = /^upload[A-Z]?\w*$/;
+
+/** Where a module UI client's request goes, read as code: each method's path
+ *  and verb followed through the class's own helpers (`this.partsRequest`,
+ *  `this.base()`), the parameters they are handed bound as they are called,
+ *  to the workspaceFetch it ends in. A part it cannot read is a parameter
+ *  (":p"). Also each bare workspaceFetch a UI file sends itself. */
+export function clientRequests(file: string, src: string): { methods: Map<string, string>; direct: Array<{ at: number; request: string }> } {
+  const sf = parse(file, src);
+  const members = new Map<string, Fn>();
+  const fnOf = (n: ts.Node): Fn | null => (ts.isMethodDeclaration(n) && n.body ? n : ts.isPropertyDeclaration(n) && n.initializer && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer)) ? n.initializer : null);
+  const named = (n: ts.ClassElement) => (n.name && (ts.isIdentifier(n.name) || ts.isPrivateIdentifier(n.name)) ? n.name.text : null);
+  sf.forEachChild(function classes(n): void {
+    if (ts.isClassDeclaration(n)) for (const m of n.members) { const f = fnOf(m), name = named(m); if (f && name) members.set(name, f); }
+    n.forEachChild(classes);
+  });
+  type Env = Map<string, string>;
+  const local = (from: ts.Node, name: string): ts.Expression | null => {
+    for (let f: ts.Node | undefined = from; f; f = f.parent) {
+      if (!ts.isFunctionLike(f) && !ts.isSourceFile(f)) continue;
+      let hit: ts.Expression | null = null;
+      f.forEachChild(function find(c): void {
+        if (!hit && ts.isVariableDeclaration(c) && ts.isIdentifier(c.name) && c.name.text === name && c.initializer && c.pos < from.pos) hit = c.initializer;
+        if (!hit && !ts.isFunctionLike(c)) c.forEachChild(find);
+      });
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const returned = (f: Fn): ts.Expression | null => {
+    if (f.body && !ts.isBlock(f.body)) return f.body;
+    let r: ts.Expression | null = null;
+    f.body?.forEachChild(function find(c): void {
+      if (!r && ts.isReturnStatement(c) && c.expression) r = c.expression;
+      if (!r && !ts.isFunctionLike(c)) c.forEachChild(find);
+    });
+    return r;
+  };
+  const bind = (f: Fn, args: readonly ts.Expression[], env: Env, depth: number): Env => {
+    const out: Env = new Map();
+    f.parameters.forEach((p, i) => { if (ts.isIdentifier(p.name)) out.set(p.name.text, args[i] ? text(args[i]!, env, depth + 1) : ""); });
+    return out;
+  };
+  const text = (e: ts.Expression, env: Env, depth = 0): string => {
+    if (depth > 8) return ":p";
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+    if (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isNonNullExpression(e)) return text(e.expression, env, depth);
+    if (ts.isTemplateExpression(e)) return e.head.text + e.templateSpans.map((s) => text(s.expression, env, depth + 1) + s.literal.text).join("");
+    if (ts.isConditionalExpression(e)) return text(e.whenFalse, env, depth + 1);
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) return text(e.left, env, depth + 1) + text(e.right, env, depth + 1);
+    if (ts.isIdentifier(e)) {
+      if (env.has(e.text)) return env.get(e.text)!;
+      const init = local(e, e.text);
+      return init ? text(init, env, depth + 1) : ":p";
+    }
+    if (ts.isCallExpression(e)) {
+      const c = e.expression;
+      if (ts.isIdentifier(c) && /^(encodeURIComponent|String)$/.test(c.text) && e.arguments[0]) return text(e.arguments[0], env, depth + 1);
+      if (ts.isPropertyAccessExpression(c) && c.expression.kind === ts.SyntaxKind.ThisKeyword && members.has(c.name.text)) {
+        const f = members.get(c.name.text)!, r = returned(f);
+        return r ? text(r, bind(f, e.arguments, env, depth), depth + 1) : ":p";
+      }
+    }
+    return ":p";
+  };
+  // The request a function ends in: a workspaceFetch (its method, else GET),
+  // an upload (POST), or a helper of the class it hands its verb and path on to.
+  const sink = (f: ts.Node, env: Env, depth: number): string | null => {
+    if (depth > 6) return null;
+    let found: string | null = null;
+    (function walk(n: ts.Node): void {
+      if (found) return;
+      if (ts.isCallExpression(n)) {
+        const c = n.expression;
+        const name = ts.isIdentifier(c) ? c.text : null;
+        if (name && (SINKS.has(name) || UPLOADS.test(name)) && n.arguments[0]) {
+          let verb = UPLOADS.test(name) ? "POST" : "GET";
+          const init = n.arguments[1];
+          if (init && ts.isObjectLiteralExpression(init)) for (const p of init.properties) {
+            if (ts.isPropertyAssignment(p) && p.name.getText(sf) === "method") verb = text(p.initializer, env, depth);
+            if (ts.isShorthandPropertyAssignment(p) && p.name.text === "method") verb = env.get("method") ?? text(p.name, env, depth);
+          }
+          verb = verb.toUpperCase();
+          if (HTTP.test(verb)) found = `${verb} ${shape(text(n.arguments[0], env, depth).replace(/^\/api\/v1/, ""))}`;
+          return;
+        }
+        if (ts.isPropertyAccessExpression(c) && c.expression.kind === ts.SyntaxKind.ThisKeyword && members.has(c.name.text)) {
+          const g = members.get(c.name.text)!;
+          found = sink(g.body ?? g, bind(g, n.arguments, env, depth), depth + 1);
+          if (found) return;
+        }
+      }
+      n.forEachChild(walk);
+    })(f);
+    return found;
+  };
+  const methods = new Map<string, string>();
+  for (const [name, f] of members) { const r = sink(f.body ?? f, new Map(), 0); if (r) methods.set(name, r); }
+  const direct: Array<{ at: number; request: string }> = [];
+  if (!members.size) sf.forEachChild(function walk(n): void {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && SINKS.has(n.expression.text)) {
+      const r = sink(n.parent, new Map(), 0);
+      if (r && !r.startsWith("GET ")) direct.push({ at: n.getStart(sf), request: r });
+    }
+    n.forEachChild(walk);
+  });
+  return { methods, direct };
+}
+
+/** A module's UI files that send a write a member is refused, through the
+ *  module's own client (`api.updatePart(`) or a workspaceFetch of their own,
+ *  with no gate on the way. Reach is followed up the module's own imports to
+ *  a file nothing in the module imports: the module's pages, drawn for anyone
+ *  its nav lets in. */
+export function moduleUiViolations(files: Array<[string, string]>, routes: Map<string, string[]>): Violation[] {
+  const out: Violation[] = [];
+  const byModule = new Map<string, Array<[string, string]>>();
+  for (const [f, s] of files) { const m = /^modules\/([^/]+)\/src\/ui\//.exec(f)?.[1]; if (m) (byModule.get(m) ?? byModule.set(m, []).get(m)!).push([f, s]); }
+  const said = (route: string) => (routes.get(route)![0]!.startsWith("capability ") ? routes.get(route)![0]! : `requireRole ${routes.get(route)!.join(", ")}`);
+  for (const [, ui] of byModule) {
+    const src = new Map(ui);
+    const clientMethods = new Map<string, string>();
+    const direct = new Map<string, Array<{ at: number; request: string }>>();
+    for (const [f, s] of ui) {
+      if (!s.includes("workspaceFetch(") && !/\bupload[A-Z]?\w*\(/.test(s)) continue;
+      const r = clientRequests(f, s);
+      for (const [name, request] of r.methods) if (routes.has(request)) clientMethods.set(name, request);
+      const hits = r.direct.filter((d) => routes.has(d.request));
+      if (hits.length) direct.set(f, hits);
+    }
+    if (!clientMethods.size && !direct.size) continue;
+    const importers = new Map<string, Set<string>>();
+    for (const [f, s] of ui) {
+      parse(f, s).forEachChild(function walk(n): void {
+        const spec = ts.isImportDeclaration(n) && !n.importClause?.isTypeOnly && ts.isStringLiteral(n.moduleSpecifier) ? n.moduleSpecifier.text
+          : ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword && n.arguments[0] && ts.isStringLiteral(n.arguments[0]) ? n.arguments[0].text : null;
+        const base = spec?.startsWith(".") ? normalize(join(dirname(f), spec.replace(/\.js$/, ""))) : null;
+        const to = base ? [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")].find((c) => /\.tsx?$/.test(c) && src.has(c)) : null;
+        if (to) (importers.get(to) ?? importers.set(to, new Set()).get(to)!).add(f);
+        n.forEachChild(walk);
+      });
+    }
+    // Above the caller only a page-level wrapper closes the way, never an
+    // importer's gate for some other control.
+    const memo = new Map<string, string | null>();
+    const upFrom = (f: string, seen: Set<string>): string | null => {
+      if (memo.has(f)) return memo.get(f)!;
+      if (seen.has(f)) return null;
+      seen.add(f);
+      let found: string | null = null;
+      if (!PAGE_GATE.test(src.get(f) ?? "")) {
+        const by = [...(importers.get(f) ?? [])];
+        if (!by.length) found = f;
+        for (const b of by) { const via = upFrom(b, seen); if (via) { found = via; break; } }
+      }
+      memo.set(f, found);
+      return found;
+    };
+    // The caller asks the gate itself, or says on a GATED-BY: line what draws it only for those allowed.
+    const openPath = (f: string): string | null => (GATE.test(src.get(f) ?? "") ? null : upFrom(f, new Set()));
+    for (const [f, s] of ui) {
+      if (/\/ui\/api\.ts$/.test(f)) continue;
+      const calls: Array<{ at: number; what: string; route: string }> = [];
+      for (const [name, route] of clientMethods) {
+        const m = new RegExp(`\\b\\w+\\.${name}!?\\s*\\(`).exec(s);
+        if (m) calls.push({ at: m.index, what: `.${name}`, route });
+      }
+      for (const d of direct.get(f) ?? []) calls.push({ at: d.at, what: "workspaceFetch", route: d.request });
+      if (!calls.length) continue;
+      const via = openPath(f);
+      if (!via) continue;
+      for (const c of calls) out.push({ file: f, line: s.slice(0, c.at).split("\n").length, what: `${c.what} is ${c.route}, refused to a ${PROBE_ROLE} (${said(c.route)}), and a ${PROBE_ROLE} reaches it with no gate (via ${via})` });
+    }
+  }
+  return out;
+}
+
 export function check(): Violation[] {
   const read = (fs: string[]) => fs.map((f) => [f, readFileSync(f, "utf8")] as [string, string]);
   const modules = repoFiles(["modules"]);
   const moduleApi = read(notTests(modules.filter((f) => /^modules\/[^/]+\/src\/api\//.test(f))));
-  const holds = memberHoldings(read([...modules.filter((f) => /^modules\/[^/]+\/src\/module\.ts$/.test(f)), "api/src/platform/platform-actions.ts"]), MEMBER_DEFAULT_CAPABILITIES);
+  const holds = memberHoldings(read([...modules.filter((f) => /^modules\/[^/]+\/src\/module\.ts$/.test(f)), "api/src/platform/platform-actions.ts", "api/src/platform/capability-grants.ts"]), MEMBER_DEFAULT_CAPABILITIES);
   const routes = memberRefusedRoutes([...read(notTests(repoFiles(["api/src"]))), ...moduleApi], { prefixOf: modulePrefixes(moduleApi), memberHolds: holds });
   const methods = clientMethodsOn(read(notTests(repoFiles(["web/src/lib/api.ts", "web/src/lib/api"]))), routes);
   const web = read(notTests(repoFiles(["web/src"])));
@@ -340,6 +542,7 @@ export function check(): Violation[] {
       out.push({ file, line: text.slice(0, at).split("\n").length, what: `api.${name} is ${route}, refused to a ${PROBE_ROLE} (${routes.get(route)![0]!.startsWith("capability ") ? routes.get(route)![0] : `requireRole ${routes.get(route)!.join(", ")}`}), and a ${PROBE_ROLE} reaches it with no gate (via ${via})` });
     }
   }
+  out.push(...moduleUiViolations(read(notTests(modules.filter((f) => /^modules\/[^/]+\/src\/ui\//.test(f)))), routes));
   return out;
 }
 

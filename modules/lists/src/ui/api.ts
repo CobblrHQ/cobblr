@@ -2,7 +2,7 @@
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
 import { dayHere } from "@cobblr/platform-contract/day";
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, type Edit } from "@cobblr/platform-web";
 import { dayLabel } from "@cobblr/platform-contract/day";
 import { parseLineAmount } from "../line-amount.js";
 
@@ -153,21 +153,15 @@ export class ListsApi {
   claimItem(id: string, claimed: boolean) {
     return this.req<ListItem>("PATCH", `/items/${id}`, { claimed });
   }
-  /** A list's name, corrected where it is read. */
-  renameList(id: string, title: string) {
-    return this.req<ListSummary>("PATCH", `/lists/${id}`, { title });
+  /** A list's name or custom fields (merged into what it holds), corrected
+   *  where they are read. `edit` from editOf (#7925). */
+  updateList(id: string, edit: Edit<{ title?: string; metadata?: Record<string, unknown> }>) {
+    return this.req<ListSummary>("PATCH", `/lists/${id}`, edit.body, edit.headers);
   }
-  /** A line's words, how many and note, corrected where they are read. */
-  updateItem(id: string, body: { title?: string; qty?: string; note?: string }, headers?: Record<string, string>) {
-    return this.req<ListItem>("PATCH", `/items/${id}`, body, headers);
-  }
-  /** Save custom fields on a list; merged into what it holds. */
-  setListFields(id: string, metadata: Record<string, unknown>) {
-    return this.req<ListSummary>("PATCH", `/lists/${id}`, { metadata });
-  }
-  /** Save custom fields on a line; merged into what it holds. */
-  setItemFields(id: string, metadata: Record<string, unknown>) {
-    return this.req<ListItem>("PATCH", `/items/${id}`, { metadata });
+  /** A line's words, how many, note or custom fields, corrected where they
+   *  are read. `edit` from editOf (#7925). */
+  updateItem(id: string, edit: Edit<{ title?: string; qty?: string; note?: string; metadata?: Record<string, unknown> }>) {
+    return this.req<ListItem>("PATCH", `/items/${id}`, edit.body, edit.headers);
   }
   getItem(id: string) {
     return this.req<ListItem>("GET", `/items/${id}`);

@@ -33,13 +33,13 @@ export function AccountCrumb() {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex items-center gap-1.5 text-xs text-faint dark:text-slate-500 mb-3"
+      className="flex flex-wrap items-center gap-1.5 text-xs text-faint dark:text-slate-500 mb-3"
     >
-      <NavLink to="/me" className="inline-flex items-center gap-1 hover:text-accent">
+      <NavLink to="/me" className="inline-flex shrink-0 items-center gap-1 hover:text-accent">
         <ChevronLeft size={13} /> Your account
       </NavLink>
       <span aria-hidden>›</span>
-      <NavLink to={`/me/s/${here.section}`} className="hover:text-accent">
+      <NavLink to={`/me/s/${here.section}`} className="shrink-0 hover:text-accent">
         {section.label}
       </NavLink>
       <span aria-hidden>›</span>

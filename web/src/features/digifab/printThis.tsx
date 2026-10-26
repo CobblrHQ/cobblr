@@ -23,7 +23,7 @@ const MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC"];
 
 /** A file Print this can take: a model to slice, or G-code already sliced. */
 export function isPrintable(filename: string): boolean {
-  return /\.(stl|step|stp|3mf|gcode|bgcode)$/i.test(filename);
+  return /\.(stl|step|stp|3mf|gcode|bgcode|gco)$/i.test(filename);
 }
 
 const message = (err: unknown) => (err instanceof ApiError ? err.message : (err as Error).message);

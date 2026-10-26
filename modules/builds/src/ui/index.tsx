@@ -3,14 +3,14 @@ import { BoardRevisionCard } from "./BoardRevisions.js";
 import type { BoardRevision } from "../api/board-revisions.js";
 export { BuildsApi } from "./api.js";
 export { BoardProjectPanel } from "./BoardRevisions.js";
-import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, CollectionHeader, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, headerButton, useToast, useConfirm, usePageTitle, SearchInput, NumberField, QuantityField, editOf } from "@cobblr/platform-web";
 // builds UI — the host mounts <BuildsUI /> at /builds. A grid of builds;
 // clicking one opens a detail MODAL with its bill-of-materials, a live
 // "can I build N right now / limiting component" readout, and a Build button
 // that consumes the components from inventory stock. Modals (not pages) for
 // detail/create; toasts for feedback; destructive deletes confirm. House style.
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link, useMatch } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
@@ -105,7 +105,7 @@ function BuildsCollectionUI({ orgSlug, getToken }: Props) {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {builds.data?.items.map((b) => (
           <BuildCard
             key={b.id}
@@ -267,17 +267,17 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateBuild(buildId, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateBuild(buildId, editOf(detail.data?.build, { metadata })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const setDetails = useMutation({
-    mutationFn: (v: { name: string; description: string | null; notes: string | null }) => api.updateBuild(buildId, v),
+    mutationFn: (v: { name: string; description: string | null; notes: string | null }) => api.updateBuild(buildId, editOf(detail.data?.build, v)),
     onSuccess: () => { toast.success("Saved."); invalidate(); },
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
   const setOutput = useMutation({
-    mutationFn: (name: string) => api.updateBuild(buildId, { output_part_name: name }),
+    mutationFn: (name: string) => api.updateBuild(buildId, editOf({ output_part_name: detail.data?.output?.name ?? null }, { output_part_name: name })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
@@ -467,8 +467,8 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
                 updateOperation.mutate({ opId: sorted[j]!.id, seq: op.seq });
               }}
               onRemove={(opId) => removeOperation.mutate(opId)}
-              onLogTime={(opId, kind, minutes) => logTime.mutate({ opId, kind, minutes })}
-              onLogQty={(opId, kind, quantity, reason) => logQuantity.mutate({ opId, kind, quantity, reason })}
+              onLogTime={(opId, kind, minutes) => logTime.mutateAsync({ opId, kind, minutes })}
+              onLogQty={(opId, kind, quantity, reason) => logQuantity.mutateAsync({ opId, kind, quantity, reason })}
             />
 
             {/* The build's own fields: whatever a bundle adds to a build
@@ -592,7 +592,7 @@ function OutputLine({
         setEditing(false);
       }}
     >
-      {!output && <div className="text-ember-700 dark:text-ember-300">Building this takes its components from stock and adds nothing: say which part it makes.</div>}
+      {!output && <div className="text-danger">Building this takes its components from stock and adds nothing: say which part it makes.</div>}
       <div className="flex flex-wrap items-center gap-2">
         <input
           aria-label="Part this build makes"
@@ -637,14 +637,19 @@ export function OperationsSection({
   onCycle: (op: OperationRow) => void;
   onMove: (op: OperationRow, dir: "up" | "down") => void;
   onRemove: (opId: string) => void;
-  onLogTime: (opId: string, kind: "labor" | "machine" | "setup", minutes: number) => void;
-  onLogQty: (opId: string, kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => void;
+  onLogTime: (opId: string, kind: "labor" | "machine" | "setup", minutes: number) => Promise<unknown>;
+  onLogQty: (opId: string, kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => Promise<unknown>;
 }) {
   const confirm = useConfirm();
   const [name, setName] = useState("");
   const [estText, setEstText] = useState("");
   const [estimating, setEstimating] = useState<string | null>(null);
   const [estEdit, setEstEdit] = useState("");
+  const [editEstimateInvalid, setEditEstimateInvalid] = useState(false);
+  const [newEstimateInvalid, setNewEstimateInvalid] = useState(false);
+  const editEstimateErrorId = useId();
+  const newEstimateErrorId = useId();
+  const estimateError = "Enter zero or a positive number of minutes.";
   const [logging, setLogging] = useState<string | null>(null);
   const sorted = [...operations].sort((a, b) => a.seq - b.seq);
 
@@ -684,7 +689,7 @@ export function OperationsSection({
                   {op.name}
                   <button
                     type="button"
-                    onClick={() => { setEstimating(estimating === op.id ? null : op.id); setEstEdit(op.est_minutes != null ? String(Number(op.est_minutes)) : ""); }}
+                    onClick={() => { setEditEstimateInvalid(false); setEstimating(estimating === op.id ? null : op.id); setEstEdit(op.est_minutes != null ? String(Number(op.est_minutes)) : ""); }}
                     className="text-[10px] text-muted hover:text-content hover:underline ml-1.5"
                     aria-label={op.est_minutes != null ? `Estimate for ${op.name}: ${Number(op.est_minutes)} minutes. Change` : `Set the estimated minutes for ${op.name}`}
                   >
@@ -734,11 +739,14 @@ export function OperationsSection({
               )}
               {estimating === op.id && (
                 <form
-                  className="flex items-center gap-2 px-3 pb-2 text-xs"
+                  className="flex flex-wrap items-center gap-2 px-3 pb-2 text-xs"
                   onSubmit={(e) => {
                     e.preventDefault();
                     const n = estEdit.trim() === "" ? null : Number(estEdit);
-                    if (n !== null && (!Number.isFinite(n) || n < 0)) return;
+                    if (n !== null && (!Number.isFinite(n) || n < 0)) {
+                      setEditEstimateInvalid(true);
+                      return;
+                    }
                     onEstimate(op.id, n);
                     setEstimating(null);
                   }}
@@ -746,13 +754,16 @@ export function OperationsSection({
                   <input
                     inputMode="decimal"
                     value={estEdit}
-                    onChange={(e) => setEstEdit(e.target.value)}
+                    onChange={(e) => { setEstEdit(e.target.value); setEditEstimateInvalid(false); }}
+                    aria-invalid={editEstimateInvalid || undefined}
+                    aria-describedby={editEstimateInvalid ? editEstimateErrorId : undefined}
                     aria-label={`Estimated minutes for ${op.name}`}
                     placeholder="minutes"
                     className="w-24 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-sm"
                   />
                   <button type="submit" className="px-2 py-1 rounded bg-cobble-600 text-white">Save estimate</button>
                   <button type="button" className="px-2 py-1 text-muted hover:text-content" onClick={() => setEstimating(null)}>Cancel</button>
+                  {editEstimateInvalid && <p id={editEstimateErrorId} role="alert" className="basis-full text-xs text-ember-700 dark:text-ember-300">{estimateError}</p>}
                 </form>
               )}
               {logging === op.id && (
@@ -767,12 +778,15 @@ export function OperationsSection({
         </ol>
       )}
       <form
-        className="flex items-center gap-2"
+        className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault();
           if (name.trim()) {
             const est = estText.trim() === "" ? null : Number(estText);
-            if (est !== null && (!Number.isFinite(est) || est < 0)) return;
+            if (est !== null && (!Number.isFinite(est) || est < 0)) {
+              setNewEstimateInvalid(true);
+              return;
+            }
             onAdd(name.trim(), est);
             setName("");
             setEstText("");
@@ -788,7 +802,9 @@ export function OperationsSection({
         <input
           inputMode="decimal"
           value={estText}
-          onChange={(e) => setEstText(e.target.value)}
+          onChange={(e) => { setEstText(e.target.value); setNewEstimateInvalid(false); }}
+          aria-invalid={newEstimateInvalid || undefined}
+          aria-describedby={newEstimateInvalid ? newEstimateErrorId : undefined}
           aria-label="Estimated minutes for this step"
           placeholder="est min"
           className="w-20 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
@@ -796,6 +812,7 @@ export function OperationsSection({
         <button type="submit" disabled={!name.trim()} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">
           Add step
         </button>
+        {newEstimateInvalid && <p id={newEstimateErrorId} role="alert" className="basis-full text-xs text-ember-700 dark:text-ember-300">{estimateError}</p>}
       </form>
     </div>
   );
@@ -906,14 +923,16 @@ function OpLogRow({
   onTime,
   onQty,
 }: {
-  onTime: (kind: "labor" | "machine" | "setup", minutes: number) => void;
-  onQty: (kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => void;
+  onTime: (kind: "labor" | "machine" | "setup", minutes: number) => Promise<unknown>;
+  onQty: (kind: "good" | "scrap" | "rework", quantity: number, reason?: string) => Promise<unknown>;
 }) {
   const [timeKind, setTimeKind] = useState<"labor" | "machine" | "setup">("labor");
   const [minutes, setMinutes] = useState("");
   const [qtyKind, setQtyKind] = useState<"good" | "scrap" | "rework">("good");
   const [qty, setQty] = useState("");
   const [reason, setReason] = useState("");
+  const [savingTime, setSavingTime] = useState(false);
+  const [savingQty, setSavingQty] = useState(false);
 
   const selCls = "rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1 text-xs";
   const inCls = "w-16 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs";
@@ -923,40 +942,59 @@ function OpLogRow({
       {/* Log time */}
       <form
         className="flex items-center gap-1.5"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           const m = Number(minutes);
-          if (m > 0) { onTime(timeKind, m); setMinutes(""); }
+          if (savingTime || !(m > 0)) return;
+          setSavingTime(true);
+          try {
+            await onTime(timeKind, m);
+            setMinutes("");
+          } catch {
+            // quiet: the mutation shows the failure; keep the entry for another try.
+          } finally {
+            setSavingTime(false);
+          }
         }}
       >
         <Clock size={12} className="text-muted" />
-        <select aria-label="Time kind" value={timeKind} onChange={(e) => setTimeKind(e.target.value as typeof timeKind)} className={selCls}>
+        <select aria-label="Time kind" disabled={savingTime} value={timeKind} onChange={(e) => setTimeKind(e.target.value as typeof timeKind)} className={selCls}>
           <option value="labor">labor</option>
           <option value="machine">machine</option>
           <option value="setup">setup</option>
         </select>
-        <input type="number" min={0} step="any" value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="min" className={inCls} aria-label="Minutes" />
-        <button type="submit" disabled={!(Number(minutes) > 0)} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-40">Log time</button>
+        <input type="number" min={0} step="any" value={minutes} disabled={savingTime} onChange={(e) => setMinutes(e.target.value)} placeholder="min" className={inCls} aria-label="Minutes" />
+        <button type="submit" disabled={savingTime || !(Number(minutes) > 0)} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-40">Log time</button>
       </form>
       {/* Log quantity */}
       <form
         className="flex items-center gap-1.5"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           const n = Number(qty);
-          if (n > 0) { onQty(qtyKind, n, reason.trim() || undefined); setQty(""); setReason(""); }
+          if (savingQty || !(n > 0)) return;
+          setSavingQty(true);
+          try {
+            await onQty(qtyKind, n, reason.trim() || undefined);
+            setQty("");
+            setReason("");
+          } catch {
+            // quiet: the mutation shows the failure; keep the entry for another try.
+          } finally {
+            setSavingQty(false);
+          }
         }}
       >
-        <select aria-label="Quantity kind" value={qtyKind} onChange={(e) => setQtyKind(e.target.value as typeof qtyKind)} className={selCls}>
+        <select aria-label="Quantity kind" disabled={savingQty} value={qtyKind} onChange={(e) => setQtyKind(e.target.value as typeof qtyKind)} className={selCls}>
           <option value="good">good</option>
           <option value="scrap">scrap</option>
           <option value="rework">rework</option>
         </select>
-        <input type="number" min={0} step="any" value={qty} onChange={(e) => setQty(e.target.value)} placeholder="qty" className={inCls} aria-label="Quantity" />
+        <input type="number" min={0} step="any" value={qty} disabled={savingQty} onChange={(e) => setQty(e.target.value)} placeholder="qty" className={inCls} aria-label="Quantity" />
         {qtyKind !== "good" && (
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="reason (optional)" className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs" aria-label="Reason" />
+          <input value={reason} disabled={savingQty} onChange={(e) => setReason(e.target.value)} placeholder="reason (optional)" className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1 text-xs" aria-label="Reason" />
         )}
-        <button type="submit" disabled={!(Number(qty) > 0)} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-40">Log qty</button>
+        <button type="submit" disabled={savingQty || !(Number(qty) > 0)} className="px-2 py-1 text-[11px] rounded bg-cobble-600 text-white disabled:opacity-40">Log qty</button>
       </form>
     </div>
   );

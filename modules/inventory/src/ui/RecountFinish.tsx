@@ -34,13 +34,14 @@ export function RecountFinish({ id, onClose }: { id: string; onClose: () => void
   const apply = async () => {
     setBusy(true);
     try {
-      const res = await runAction({ actionId: "inventory:apply-recount", args: { recount_id: id, ...body } }, { undo: "shown-here" });
+      const res = await runAction({ actionId: "inventory:apply-recount", args: { recount_id: id, ...body, preview: plan.data?.preview } }, { undo: "shown-here" });
       refresh();
       onClose();
       toast.action(String((res.result as { summary?: unknown } | null)?.summary ?? "Finished the recount."), {
         actionLabel: "Undo",
         onAction: async () => {
           try {
+            // OWN-WAY-BACK: the recount's own row is claimed undone once; a second press is refused.
             await runAction({ actionId: "inventory:undo-recount", args: { recount_id: id } }, { undo: "is-undo" });
             refresh();
             toast.success("Put everything back as it was.");
@@ -51,6 +52,7 @@ export function RecountFinish({ id, onClose }: { id: string; onClose: () => void
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      void qc.invalidateQueries({ queryKey: ["inventory-recount-plan", orgSlug, id] });
     } finally {
       setBusy(false);
     }
@@ -138,7 +140,7 @@ export function RecountFinish({ id, onClose }: { id: string; onClose: () => void
               ].filter(Boolean).join(", ") || "Nothing changes"}
             </span>
             <button type="button" onClick={onClose} className="min-h-11 rounded-md border border-line dark:border-slate-600 px-3 text-sm">Keep counting</button>
-            <button type="button" disabled={busy || plan.isFetching} onClick={() => void apply()} className="min-h-11 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-4 text-sm font-medium text-white">
+            <button type="button" disabled={busy || plan.isFetching || plan.isError} onClick={() => void apply()} className="min-h-11 rounded-md bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50 px-4 text-sm font-medium text-white">
               {busy ? "Applying…" : "Apply"}
             </button>
           </div>

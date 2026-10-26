@@ -144,7 +144,7 @@ export function ImportPlanDialog({ slug, onClose }: { slug: string; onClose: () 
                 ))}
               </ul>
             )}
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {plan.rooms.map((r) => (
                 <RoomPreview key={`${r.level ?? ""}/${r.name}`} room={r} />
               ))}

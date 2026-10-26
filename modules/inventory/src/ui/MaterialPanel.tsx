@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { useStockWrites } from "./stock-writes";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError } from "@cobblr/platform-web";
+import { MutationError, useCan } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function MaterialPanel({ id }: { id: string }) {
   const { api } = useInventory();
   const stock = useStockWrites();
+  const mayEdit = useCan("inventory:update-part");
   const qc = useQueryClient();
   const [mode, setMode] = useState<"gross_g" | "used_mm">("gross_g");
   const [value, setValue] = useState("");
@@ -29,7 +30,7 @@ export function MaterialPanel({ id }: { id: string }) {
       <p className="text-sm">{fmt(n.remaining_g)} g left · {fmt(n.used_g)} g used · {fmt(n.initial_g)} g initially</p>
       {n.remaining_m != null && <p className="text-sm">{fmt(n.remaining_m)} m left · {fmt(n.used_m ?? 0)} m used</p>}
       <p className="text-xs text-muted">{n.first_used ? `First used ${new Date(n.first_used).toLocaleDateString()} · Last used ${new Date(n.last_used!).toLocaleDateString()}` : "No use recorded yet."}</p>
-      {(!n.tracked_by || n.tracked_by === "firmware") && <label className="block text-sm">Who records use?
+      {mayEdit && (!n.tracked_by || n.tracked_by === "firmware") && <label className="block text-sm">Who records use?
         <select aria-label="Who records use?" value={n.tracked_by === "firmware" ? "firmware" : "slicer"} disabled={tracker.isPending} onChange={(e) => tracker.mutate(e.target.value)} className="block rounded border border-line bg-surface p-2">
           <option value="slicer">Completed prints and manual use</option>
           <option value="firmware">Firmware reports</option>

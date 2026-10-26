@@ -10,7 +10,7 @@ const action: ModuleActionInput = {
   runBy: "member",
   examples: ["undo that split, it was one thing"],
   label: "Undo split",
-  description: "Put a split photo back as one: the pieces it was split into leave the inbox (kept, never deleted) and the photo comes back as it was. Pass item_id, the group's or any one piece's. Refused while a piece is already filed.",
+  description: "Put a split photo back as one: the pieces it was split into leave the inbox (kept, never deleted) and the photo comes back as it was. Pass item_id, the group's or any one piece's. Refused while a piece is already filed, or when someone else has edited a piece since the split.",
   scope: "workspace",
   invokeHandler: "core-scan.undo-split",
   userInvokable: true,

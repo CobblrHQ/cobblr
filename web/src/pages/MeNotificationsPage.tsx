@@ -216,6 +216,7 @@ export function MeNotificationsPage() {
                   tabIndex={0}
                   onClick={() => open(n)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       open(n);

@@ -15,7 +15,7 @@ export function ActiveScanSessionNotice({ settled, session, onEnd }: {
         {session.count ? ` (${session.count} item${session.count === 1 ? "" : "s"})` : ""}
       </span>
       <span className="hidden sm:inline">· groups until 30 min idle</span>
-      <span className="ml-auto inline-flex items-center gap-2 shrink-0">
+      <span className="ml-auto inline-flex min-w-0 max-w-full flex-wrap items-center gap-[8px]">
         {session.batchId && (
           <Link
             to={`/scan?batch=${session.batchId}`}

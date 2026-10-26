@@ -21,7 +21,7 @@ import { usePlatformWeb } from "./context";
 import { useToast } from "./ToastContext";
 import { ChoiceCombobox, matchChoice, type ChoiceDetail, type ChoiceOption } from "./ChoiceCombobox";
 import { canCarryNote, offersClarifier } from "./field-note";
-import { refreshAfterAction, useRunAction } from "./run-action";
+import { refreshAfterAction, runUndoSteps, undoStepsOf, useRunAction } from "./run-action";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UsedValueBody } from "./types";
 
@@ -118,9 +118,7 @@ export function ChoiceField({ def, kind, value, onCommit, note, onCommitNote, de
         actionLabel: "Undo",
         onAction: async () => {
           await onCommit(before);
-          for (const s of steps) {
-            if (s.action_id) await run({ actionId: s.action_id, entityKind: "", entityId: "", args: s.args ?? {} }, { undo: "is-undo" });
-          }
+          await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(steps));
           refreshAfterAction(qc, [recordKind, def.entity_kind]);
           void qc.invalidateQueries({ queryKey: ["platform-field-defs"] });
         },

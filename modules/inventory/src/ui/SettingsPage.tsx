@@ -18,7 +18,7 @@ export function SettingsPage() {
     // Each card fills in from answers of its own; drawn as each came, the
     // fields arriving pushed the cards below them down under a finger. Shown
     // together once the page stops asking (#7790).
-    <OnceQuiet className="grid gap-5 sm:grid-cols-2">
+    <OnceQuiet className="grid grid-cols-1 gap-5 sm:grid-cols-2">
       <FieldsCard />
       <NounCard />
       <OfferedNounCard />

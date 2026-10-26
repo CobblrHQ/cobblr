@@ -1,3 +1,4 @@
+import { type Edit } from "@cobblr/platform-web";
 import { request, upload } from "./client";
 import { walkPages } from "../list-pages";
 
@@ -89,7 +90,8 @@ export const filesApi = {
   getFile: (slug: string, id: string) => request<FileRecord>("GET", `/orgs/${slug}/modules/core-files/files/${id}`),
   /** The records a file is attached to, titled and with where each opens. */
   fileUsedBy: (slug: string, id: string) => request<{ items: FileUsedBy[] }>("GET", `/orgs/${slug}/modules/core-files/files/${id}/used-by`),
-  updateFile: (slug: string, id: string, body: { filename?: string; folder_id?: string | null; metadata?: Record<string, unknown> }) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateFile: (slug: string, id: string, edit: Edit<{ filename?: string; folder_id?: string | null; metadata?: Record<string, unknown> }>) => request<FileRecord>("PATCH", `/orgs/${slug}/modules/core-files/files/${id}`, edit.body, edit.headers),
   uploadFile: async (slug: string, file: File, opts: { folderId?: string | null; onDuplicate?: "skip"; camera?: boolean } = {}): Promise<FileRecord> => {
     const form = new FormData();
     if (opts.folderId) form.set("folder_id", opts.folderId);

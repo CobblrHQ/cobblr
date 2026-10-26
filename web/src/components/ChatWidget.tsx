@@ -58,7 +58,7 @@ import {
 import { useDetailRoute, useListRoute } from "../lib/useDetailRoute";
 import { useAiStatus, AiOffNotice, aiStatusLine } from "./AiStatusNotice";
 import { RailTabContent, useRailTab } from "./SideRail";
-import { ContextChip, PopoverLayer, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
+import { ContextChip, PopoverLayer, useEscapeToClose, useMenuFocus, useCloseOnPageScroll } from "@cobblr/platform-web";
 import { ServiceJobCard } from "./ServiceJobCard";
 
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -244,6 +244,7 @@ export function ModelChip({
   useEffect(() => {
     if (shown) menuRef.current?.focus({ preventScroll: true });
   }, [shown]);
+  useMenuFocus(open, menuRef);
   useEscapeToClose(open, menuRef, () => {
     setOpen(false);
     btn.current?.focus();
@@ -505,12 +506,12 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       activeSlug
         ? {
             read: async () => (await api.aiChatConversation(activeSlug)).conversation,
-            write: async (msgs: unknown[], owner: string) => (await api.aiChatSaveConversation(activeSlug, msgs, owner)).updated_at,
+            write: async (msgs: unknown[], owner: string, expectedAt: string | null) => (await api.aiChatSaveConversation(activeSlug, msgs, owner, expectedAt)).updated_at,
           }
         : undefined,
     [activeSlug],
   );
-  const [messages, setMessages, clearStoredConversation] = useStoredConversation<Msg>(me, activeSlug, CHAT_STORE_MAX, conversationRemote);
+  const [messages, setMessages, clearStoredConversation, conversationNotice] = useStoredConversation<Msg>(me, activeSlug, CHAT_STORE_MAX, conversationRemote);
   // The cards are the offers the server keeps: whenever the set of offers the
   // conversation names changes (a load, a reload, another tab's turn), they
   // are read back and redrawn as they now stand.
@@ -1888,9 +1889,10 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
           <button
             type="button"
             onClick={clearChat}
-            className="text-faint hover:text-content dark:hover:text-mortar-200 transition p-1"
+            disabled={busy}
+            className="text-faint hover:text-content dark:hover:text-mortar-200 transition p-1 disabled:opacity-50"
             aria-label="Clear conversation"
-            title="Clear this conversation"
+            title={busy ? "Wait for Cobb to finish before clearing this conversation" : "Clear this conversation"}
           >
             <Trash2 size={15} />
           </button>
@@ -2591,6 +2593,9 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
             )}
             {error && (
               <div className="text-xs text-ember-500 bg-ember-50 dark:bg-ember-900/20 rounded px-3 py-2">{error}</div>
+            )}
+            {conversationNotice && (
+              <div role="status" className="text-xs text-ember-500 bg-ember-50 dark:bg-ember-900/20 rounded px-3 py-2">{conversationNotice}</div>
             )}
             {waitingToSend && (
               <div role="status" data-testid="cobb-waiting-to-send" className="text-xs text-muted dark:text-slate-400 bg-surface dark:bg-slate-800 border border-line dark:border-slate-700 rounded px-3 py-2">

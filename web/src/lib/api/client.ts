@@ -2,12 +2,13 @@
 // one `request<T>` wrapper and its error shape, connectivity and upload.
 // Endpoints never live here; each goes in its area file (lint:api-client-by-area).
 import { getShareViewToken, setShareViewToken } from "../share-view";
-import { getStationTokenOverride } from "../station-token";
+import { getStationTokenOverride, noteStationTokenRefused } from "../station-token";
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, browserOffline, describeUnreadableBody, keepWaitingWrite, landedWrite, madeByAPerson, networkFailureMessage, noteWorkspaceWrite, OFFLINE_SENTENCE, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, withWaitingWrites } from "@cobblr/platform-web";
+import { UploadError, beginWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAPerson, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
+import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
 import { counted } from "../in-flight";
 import { AI_AVAILABILITY_WRITE } from "../ai-availability-keys";
@@ -333,6 +334,11 @@ async function sendRequest<T>(
   // withTenant resolves the tenant as the target member + enforces read-only.
   const impToken = getImpersonationToken();
   if (impToken) headers["X-Impersonation"] = impToken;
+  // Sent again while its outcome is unknown, a write is the same write, and
+  // the server answers it as it answered the first (write-identity.ts, #7923).
+  const bodyText = body === undefined ? undefined : JSON.stringify(body);
+  const write = beginWrite(method, path, bodyText ?? null);
+  if (write) headers["Idempotency-Key"] = write.key;
 
   let res: Response;
   try {
@@ -346,21 +352,24 @@ async function sendRequest<T>(
           fetch(`/api/v1${path}`, {
             method,
             headers,
-            body: body === undefined ? undefined : JSON.stringify(body),
+            body: bodyText,
           }),
         );
   } catch {
+    write?.settle("unknown");
     // fetch only rejects on a network-level failure (offline, server
     // unreachable, DNS) — raise the app-wide "down" banner + a clear error.
     setApiDown(true);
     if (browserOffline()) {
       // Never sent, so it can be sent later without doubling: it waits on
       // this device, not only in this page (waiting-writes.ts, #7863).
-      if (byAPerson && !impToken && !headers["x-cobblr-waited"]) keepWaitingWrite(method, path, body === undefined ? undefined : JSON.stringify(body), headers["Authorization"]);
+      if (byAPerson && !impToken && !headers["x-cobblr-waited"]) keepWaitingWrite(method, path, body === undefined ? undefined : JSON.stringify(body), headers["Authorization"], headers[EDITED_FROM_HEADER]);
       throw new ApiError(0, "offline", networkFailureMessage());
     }
     throw new ApiError(0, "network_error", networkFailureMessage());
   }
+  write?.settle(outcomeOf(res.status, res.headers.get("retry-after")));
+  if (res.status === 401) noteStationTokenRefused(token);
   // Offline, the service worker answered: a kept copy (marked with when it was
   // fetched) or "never kept". Either way we are not connected, and a kept copy
   // must be read as what you HAD, never as live.

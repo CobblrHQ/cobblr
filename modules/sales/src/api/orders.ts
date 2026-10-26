@@ -2,6 +2,7 @@
 // decrements the sold parts from inventory stock. customer_name is dual-written
 // from a linked customer's name so cross-module readers stay correct.
 
+import { isActionRefusal } from "@cobblr/platform-contract/action-refusal";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
@@ -396,7 +397,18 @@ ordersRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "order not found" } });
       return;
     }
-    const row = await changeLine(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, req.params.itemId!, parsed.data);
+    // A line inside an order is not a kind the kernel judges, so it asks
+    // here: an older tab's save over a price changed since is refused (#7925).
+    const now = await tenantDb(req).selectFrom("sales_order_items").selectAll().where("id", "=", req.params.itemId!).where("order_id", "=", req.params.id!).executeTakeFirst();
+    if (now && (await platform().http.refuseStaleEdit(req, res, req.params.itemId!, now as unknown as Record<string, unknown>))) return;
+    let row: Awaited<ReturnType<typeof changeLine>>;
+    try {
+      row = await changeLine(tenantDb(req), tenantContext(req).org.id, sessionUser(req)?.id ?? null, req.params.id!, req.params.itemId!, parsed.data);
+    } catch (error) {
+      if (!isActionRefusal(error)) throw error;
+      res.status(409).json({ error: { code: "qty_already_fulfilled", message: error.message } });
+      return;
+    }
     if (!row) {
       res.status(404).json({ error: { code: "not_found", message: "line item not found" } });
       return;

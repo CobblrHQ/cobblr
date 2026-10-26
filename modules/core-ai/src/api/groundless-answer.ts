@@ -52,6 +52,7 @@ const NOT_A_RECORD = new Set([
 const ABOUT_THE_APP =
   /^\s*(how (do|can|would|does|should)|where (do|can|should)|can (i|you|we)|could (i|you)|what can you|is there (a way|any way)|what is cobblr|what does this app|show me how|teach me|explain how)\b/i;
 
+// ascii-only: the shapes looked for below (a model code, a camel-cased name) are Latin ones; a name in another script is found by the record lookup, not by this guess
 const bareWord = (w: string): string => w.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
 
 /** A word that names something in particular ON ITS OWN. */

@@ -35,7 +35,7 @@ const WRITERS: Record<string, Record<string, string>> = {
   "museum-build.yml": { build: "pushes a museum build's images" },
   "nesting-wasm.yml": { publish: "publishes the nesting solver" },
   "registry-retention.yml": { prune: "deletes old package versions" },
-  "watch.yml": { watch: "checks that the publish token itself is still accepted" },
+  "watch.yml": { "watch-tokens": "checks that the publish token itself is still accepted" },
 };
 
 /** One offending place. `line` is 1-based for a clickable path:line. */

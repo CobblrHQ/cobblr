@@ -73,7 +73,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
   });
 
   const togglePin = useMutation({
-    mutationFn: (e: Entry) => api.updateEntry(e.id, { pinned: !e.pinned }),
+    mutationFn: (e: Entry) => api.updateEntry(e.id, editOf(e, { pinned: !e.pinned })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: key }),
     onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
   });
@@ -89,14 +89,14 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           knowledge base
         </h1>
         <button
           type="button"
           onClick={() => setEditing("new")}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700"
+          className="inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700"
         >
           <Plus size={14} /> New entry
         </button>
@@ -104,7 +104,7 @@ export function KnowledgeUI({ orgSlug, getToken }: Props) {
 
       {/* Search + category filter chips (in-vault organisation) */}
       <div className="flex flex-wrap items-center gap-2">
-        <SearchInput value={q} onChange={setQ} placeholder="Search entries…" wrapperClassName="w-full flex-1 min-w-[12rem]" />
+        <SearchInput value={q} onChange={setQ} placeholder="Search entries…" wrapperClassName="w-full flex-1 basis-48 min-w-0" />
         <div className="flex flex-wrap gap-1">
           <Chip active={kindFilter === null} onClick={() => setKindFilter(null)}>
             All
@@ -259,7 +259,7 @@ function EntryEditor({
   // edited, like every other sheet's; Save is for the entry's text above.
   const [fields, setFields] = useState<Record<string, unknown>>(entry?.metadata ?? {});
   const setField = useMutation({
-    mutationFn: (m: Record<string, unknown>) => api.updateEntry(entry!.id, { metadata: m }),
+    mutationFn: (m: Record<string, unknown>) => api.updateEntry(entry!.id, editOf(entry, { metadata: m })),
     onSuccess: (e) => setFields(e.metadata ?? {}),
     onError: (e) => toast.error(e instanceof KnowledgeApiError ? e.message : String(e)),
   });
@@ -277,8 +277,8 @@ function EntryEditor({
       if (!entry) return api.createEntry(input);
       // Only what this editor changed, with what it was: a title saved in
       // another tab stands, or this save says it changed (#7980, #7925).
-      const edit = editOf(entry as unknown as Record<string, unknown>, input as unknown as Record<string, unknown>);
-      return Object.keys(edit.body).length ? api.updateEntry(entry.id, edit.body as Partial<EntryInput>, edit.headers) : Promise.resolve(entry);
+      const edit = editOf(entry, input);
+      return Object.keys(edit.body).length ? api.updateEntry(entry.id, edit) : Promise.resolve(entry);
     },
     onSuccess: () => {
       toast.success(entry ? "Saved" : "Entry created");

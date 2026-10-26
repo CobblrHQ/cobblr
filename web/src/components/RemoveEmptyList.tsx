@@ -6,7 +6,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { useRunAction, useToast } from "@cobblr/platform-web";
+import { runUndoSteps, undoStepsOf, useRunAction, useToast } from "@cobblr/platform-web";
 import type { ModuleInstance } from "../lib/api";
 
 type Undo = Array<{ action_id: string; args?: Record<string, unknown> }>;
@@ -61,7 +61,7 @@ function RemoveStrip({ slug, inst }: { slug: string; inst: ModuleInstance }) {
     toast.action(r.summary ?? `Removed the ${name} list.`, {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
+        await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(steps));
         refresh();
       },
     });

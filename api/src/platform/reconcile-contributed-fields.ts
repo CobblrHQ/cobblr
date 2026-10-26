@@ -15,9 +15,10 @@
 // them, on the kind and on each named collection of it (`tools:item` for a
 // collection of assets). A def that says whether its list learns brings the
 // rows it made earlier into line with that, so the answer does not depend on
-// when the workspace enabled the module (#4516). Cost on a current instance:
-// two small reads, one INSERT per contributed def that adds no rows, and one
-// UPDATE per def that declares `learns` that changes none. cobblr_meta only:
+// when the workspace enabled the module (#4516). A declared semantic role
+// fills a missing role on module-owned rows too, preserving explicit choices.
+// Cost on a current instance: small metadata reads, one INSERT per contributed
+// def that adds no rows, and no-op UPDATEs for its declared properties. cobblr_meta only:
 // it opens no tenant pool.
 
 import { meta } from "../db/meta.js";

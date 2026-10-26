@@ -7,7 +7,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import { Bluetooth, Check, ChevronDown, Download, Hash, Monitor, Pencil, Plus, Printer, RotateCcw, RotateCw, Send, Settings2, Trash2, Wifi, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { NumberStepper, usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
+import { NumberStepper, useRoleAtLeast, usePageTitle, usePageWidth, useToast, Modal, BACKDROP_LAYER_CLASS, useFieldDraft, NfcTags, isWebNfcAvailable, type NfcTarget } from "@cobblr/platform-web";
+import { PRINTER_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { useLabels } from "./context";
 import { BrowsePanel } from "./BrowsePanel";
 import { CodesPanel } from "./CodesPanel";
@@ -86,6 +87,7 @@ export function QueuePage() {
   usePageTitle("Labels");
   usePageWidth("wide");
   const { api, orgSlug } = useLabels();
+  const mayConfigurePrinter = useRoleAtLeast(PRINTER_MANAGERS);
   const toast = useToast();
   const qc = useQueryClient();
   // Shared key with BasketWidget + Dashboard's LabelsTile so the
@@ -184,7 +186,7 @@ export function QueuePage() {
   // this copy can never pin a recalibrated bridge.
   useEffect(() => {
     const p = defaultPrinter;
-    if (!p || !hasLocalBridge) return;
+    if (!p || !hasLocalBridge || !mayConfigurePrinter) return;
     const st = (p.settings ?? {}) as Record<string, unknown>;
     const bridge = st.bridge as { instance?: string; driver?: string; device?: unknown } | undefined;
     const info = bridge?.instance ? instanceInfo[bridge.instance] : undefined;
@@ -192,7 +194,7 @@ export function QueuePage() {
     const next = { ...bridge, driver: bridge?.driver ?? info.driver, device: info.device };
     if (JSON.stringify(next) === JSON.stringify(bridge)) return; // refetch after save re-enters here
     void api.updatePrinter(p.id, { settings: { ...st, bridge: next } }).catch(() => {});
-  }, [defaultPrinter, instanceInfo, hasLocalBridge, api])
+  }, [defaultPrinter, instanceInfo, hasLocalBridge, mayConfigurePrinter, api])
   // What this printer last told us about ITSELF. Subscribed here rather than
   // further down because the capability below prefers it: a printer that has
   // reported a 40 x 30 roll has settled the question of what it can feed, and
@@ -278,6 +280,7 @@ export function QueuePage() {
    *  the same contract as the size memory below. Media only — battery drains,
    *  so a stored battery would come back confidently wrong. */
   const rememberReading = (p: { id: string; settings?: Record<string, unknown> }, r: { widthMm?: number; heightMm?: number }) => {
+    if (!mayConfigurePrinter) return;
     const st = (p.settings ?? {}) as Record<string, unknown>;
     if (!needsReportedRemember(st, r)) return;
     void api.updatePrinter(p.id, {
@@ -516,7 +519,7 @@ export function QueuePage() {
   // follows an update from looping.
   useEffect(() => {
     const p = defaultPrinter;
-    if (!p || !sizeKey || restoredFor.current !== p.id) return;
+    if (!p || !sizeKey || restoredFor.current !== p.id || !mayConfigurePrinter) return;
     if (skipWriteOnce.current) { skipWriteOnce.current = false; return; }
     const st = (p.settings ?? {}) as Record<string, unknown>;
     if (!needsRemember(st, { sizeKey, paperKey, rotate, rotateExplicit: rotateExplicit.current })) return;
@@ -534,7 +537,7 @@ export function QueuePage() {
         },
       })
       .catch(() => {});
-  }, [defaultPrinter, sizeKey, paperKey, rotate, api]);
+  }, [defaultPrinter, sizeKey, paperKey, rotate, mayConfigurePrinter, api]);
 
   const items = list.data?.items ?? [];
   const total = items.reduce((acc, i) => acc + i.qty, 0);
@@ -732,7 +735,9 @@ export function QueuePage() {
     mutationFn: async () => {
       const { items: printers } = await api.listPrinters();
       if (!printers.length) {
-        throw new Error("No printer configured. Add one at Configuration → Printers.");
+        throw new Error(mayConfigurePrinter
+          ? "No printer configured. Add one at Configuration → Printers."
+          : "No printer configured. Ask an owner, admin or editor to add one.");
       }
       // The ACTIVE target (the toolbar selector), not blindly the saved default —
       // so "Print to X" prints to whichever printer the selector shows.
@@ -780,7 +785,7 @@ export function QueuePage() {
         // NEWLY paired printers would ever carry a device id, and every printer
         // paired before today would stay ambiguous against a same-model twin.
         // Best-effort: a binding is a convenience and must never fail a print.
-        if (defaultPrinter && res.deviceId) {
+        if (mayConfigurePrinter && defaultPrinter && res.deviceId) {
           const st = (defaultPrinter.settings ?? {}) as Record<string, unknown>;
           if (st.deviceId !== res.deviceId) {
             void api.updatePrinter(defaultPrinter.id, { settings: { ...st, deviceId: res.deviceId } }).catch(() => {});
@@ -823,7 +828,7 @@ export function QueuePage() {
       // shows the job the same way a taskbar does. Cleared in onSettled.
       const netTotal = items.reduce((n, it) => n + it.qty, 0);
       setPrintProgress({ done: 0, total: netTotal, deviceName: printer.name });
-      const { pdf_base64, warnings, rendered } = await api.renderPdf(sizeKey);
+      const { pdf_base64, warnings, rendered } = await api.renderPdf(sizeKey, undefined, { send: true });
       // A printer on a bridge on this machine is sent from this browser; the
       // server cannot reach it (#7607).
       const job = await sendPdfToPrinter(printer, pdf_base64, api.printToPrinter);
@@ -874,7 +879,7 @@ export function QueuePage() {
         onAction: async () => {
           try {
             await api.recordPrinted(nr.sent);
-            void qc.invalidateQueries({ queryKey: ["labels-queue"] });
+            await qc.invalidateQueries({ queryKey: ["labels-queue"] });
             toast.success("Batch recorded");
           } catch (e) {
             toast.error(e instanceof Error ? e.message : "Couldn't record the batch");
@@ -921,7 +926,7 @@ export function QueuePage() {
         {/* Main row: identity + the action buttons. The sheet/label size pickers
             live on their own thin row below (they wrapped ugly inline). */}
         <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
-        <div className="flex items-baseline gap-3">
+        <div className="flex flex-wrap gap-y-1 items-baseline gap-3">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">labels</h1>
           <span className="text-[10px] font-mono text-faint dark:text-slate-500">
             {items.length} item{items.length === 1 ? "" : "s"} · {total} label{total === 1 ? "" : "s"}
@@ -942,7 +947,7 @@ export function QueuePage() {
             Bluetooth roll hides the sheet paper/size pickers (it prints one label
             at a time from its own media); network + no-printer keep them. */}
         {!hasPrinter ? (
-          <>
+          mayConfigurePrinter && <>
             <button
               onClick={() => setConnectOpen(true)}
               className="rounded-md border border-line dark:border-slate-600 hover:border-accent text-content dark:text-mortar-200 text-sm font-medium px-3 py-2 transition flex items-center gap-1.5"
@@ -991,7 +996,7 @@ export function QueuePage() {
               <ChevronDown size={13} className="text-faint" />
             </button>
             {targetMenuOpen && (
-              <div className="absolute right-0 z-20 mt-1.5 min-w-[252px] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl p-1.5">
+              <div className="absolute left-0 z-20 mt-1.5 w-max min-w-[252px] max-w-[calc(100vw-3rem)] rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl p-1.5">
                 <TargetItem
                   icon={<Monitor size={15} />}
                   title="System print"
@@ -1019,6 +1024,7 @@ export function QueuePage() {
                     />
                   );
                 })}
+                {mayConfigurePrinter && <>
                 <div className="h-px bg-line dark:bg-slate-700 my-1.5 mx-1" />
                 {/* ONE entry. Bluetooth-vs-serial is our transport split, not a
                     distinction the user can make: both are "my Bluetooth label
@@ -1034,14 +1040,14 @@ export function QueuePage() {
                   title="All printer settings…"
                   onClick={() => { setTargetMenuOpen(false); navigate("/configuration/print"); }}
                 />
-                {defaultPrinter && (
+                {defaultPrinter && mayConfigurePrinter && (
                   <TargetItem
                     icon={<Settings2 size={15} />}
                     title={`${printerDisplayName(defaultPrinter.name)} settings…`}
                     onClick={() => { setTargetMenuOpen(false); if (isBleDefault) setPrinterConfigOpen(true); else navigate("/configuration/print"); }}
                   />
                 )}
-                {defaultPrinter && (
+                {defaultPrinter && mayConfigurePrinter && (
                   <TargetItem
                     icon={<Trash2 size={15} />}
                     title={`Forget ${printerDisplayName(defaultPrinter.name)}…`}
@@ -1049,6 +1055,7 @@ export function QueuePage() {
                     onClick={() => { setTargetMenuOpen(false); setConfirmForget({ id: defaultPrinter.id, name: printerDisplayName(defaultPrinter.name) }); }}
                   />
                 )}
+                </>}
               </div>
             )}
           </div>
@@ -1120,12 +1127,12 @@ export function QueuePage() {
             {/* "What are you printing on?" — only when no printer's capability is
                 filtering (system print). Lets you narrow to a roll and reach 50×30. */}
             {toolbar.connectCtas && (
-              <label className="flex items-center gap-1.5">
+              <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
                 <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">printing on</span>
                 <select
                   value={mediaType}
                   onChange={(e) => setMediaType(e.target.value as MediaTypeFilter)}
-                  className="input !w-auto !py-1 text-xs"
+                  className="input min-w-0 max-w-full !w-auto !py-1 text-xs"
                 >
                   <option value="all">Anything</option>
                   <option value="roll">Label roll</option>
@@ -1133,7 +1140,7 @@ export function QueuePage() {
                 </select>
               </label>
             )}
-            <label className="flex items-center gap-1.5">
+            <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">media</span>
               <select
                 value={paperKey}
@@ -1141,7 +1148,7 @@ export function QueuePage() {
                   if (e.target.value === "__newsize__") openSize(null);
                   else setPaperKey(e.target.value);
                 }}
-                className="input !w-auto !py-1 text-xs"
+                className="input min-w-0 max-w-full !w-auto !py-1 text-xs"
               >
                 {/* Blank = the stored pick does not fit this printer and we will
                     not invent one. Without an explicit option the browser would
@@ -1190,7 +1197,7 @@ export function QueuePage() {
                 printer has {reportedRoll.widthMm} × {reportedRoll.heightMm} mm
               </button>
             )}
-            <label className="flex items-center gap-1.5">
+            <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
               <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">label</span>
               <select
                 value={sizeKey}
@@ -1198,7 +1205,7 @@ export function QueuePage() {
                   if (e.target.value === "__new__") openSize(null);
                   else setPickedSize(e.target.value);
                 }}
-                className="input !w-72 !py-1 text-xs"
+                className="input min-w-0 max-w-full !w-full sm:!w-72 !py-1 text-xs"
               >
                 {!sizeKey && <option value="">Pick media first</option>}
                 {recentSizes.length > 0 && (
@@ -1302,7 +1309,7 @@ export function QueuePage() {
               {items.map((it) => (
                 <li key={it.id} className="px-4 py-3 space-y-1.5 text-sm">
                   {/* Line 1 — identity + controls. */}
-                  <div className="flex items-baseline gap-3">
+                  <div className="flex flex-wrap items-baseline gap-3">
                     <span className="font-mono text-[10px] text-faint dark:text-slate-500 shrink-0">
                       {it.kind_label ?? `${it.module_name}/${it.entity_type}`}
                     </span>
@@ -1416,7 +1423,7 @@ export function QueuePage() {
       />}
 
       <AutoPrintModal open={autoPrintOpen} onClose={() => setAutoPrintOpen(false)} />
-      {defaultPrinter && isBleDefault && (
+      {defaultPrinter && isBleDefault && mayConfigurePrinter && (
         <PrinterConfigModal
           printer={defaultPrinter}
           // The size comes FROM the toolbar rather than being re-entered in the
@@ -1427,7 +1434,7 @@ export function QueuePage() {
           onClose={() => setPrinterConfigOpen(false)}
         />
       )}
-      <ConnectPrinterModal
+      {mayConfigurePrinter && <ConnectPrinterModal
         open={connectOpen}
         onClose={() => setConnectOpen(false)}
         createPrinter={async (input) => {
@@ -1445,9 +1452,9 @@ export function QueuePage() {
         }}
         onNeedsManualSetup={() => navigate("/configuration/print")}
         onConnected={(name) => toast.success(`${name} connected. You're ready to print.`)}
-      />
+      />}
       <Modal
-        open={!!confirmForget}
+        open={mayConfigurePrinter && !!confirmForget}
         onClose={() => setConfirmForget(null)}
         title="Forget this printer?"
         subtitle={confirmForget?.name}

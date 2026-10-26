@@ -188,6 +188,8 @@ function layout(): void {
   if (clearance > 0) root.style.setProperty(BOTTOM_CLEARANCE_VAR, `${clearance}px`);
   else root.style.removeProperty(BOTTOM_CLEARANCE_VAR);
   document.body.style.paddingBottom = clearance > 0 ? `calc(var(--inset-bottom, 0px) + ${clearance}px)` : "";
+  // Native focus scrolling must clear the dock anywhere in the page.
+  root.style.scrollPaddingBottom = total > 0 ? `calc(var(--inset-bottom, 0px) + ${total}px)` : "";
   // Measured after the stacking above, so the rect is where the piece now is.
   const reserve = overlayBottomReserve(vh, [...overOverlays].filter((el) => !el.hasAttribute(NO_ROOM_ATTR)).map((el) => {
     const r = el.getBoundingClientRect();

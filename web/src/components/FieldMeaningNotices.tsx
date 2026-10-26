@@ -13,7 +13,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { useRunAction, useToast } from "@cobblr/platform-web";
+import { runUndoSteps, undoStepsOf, useRunAction, useToast } from "@cobblr/platform-web";
 import { api, type PlatformEntityKind } from "../lib/api";
 
 type Undo = Array<{ action_id: string; args?: Record<string, unknown> }>;
@@ -60,7 +60,7 @@ export function FieldMeaningNotices({ slug, kinds }: { slug: string; kinds: Plat
     toast.action(r.summary ?? "Done.", {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
+        await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(steps));
         refresh();
       },
     });

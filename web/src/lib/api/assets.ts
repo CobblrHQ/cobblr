@@ -1,6 +1,7 @@
 import type { MoneyTotal } from "@cobblr/platform-contract/money";
 import { walkPages } from "../list-pages";
 import { primaryBase, request } from "./client";
+import type { Edit } from "@cobblr/platform-web";
 
 export interface Asset {
   id: string;
@@ -59,8 +60,9 @@ export const assetsApi = {
     request<Asset>("GET", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
   createAsset: (slug: string, body: Partial<Asset>, instance?: string) =>
     request<Asset>("POST", primaryBase(slug, "assets/assets", instance), body),
-  updateAsset: (slug: string, id: string, body: Partial<Asset>, instance?: string) =>
-    request<Asset>("PATCH", `${primaryBase(slug, "assets/assets", instance)}/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateAsset: (slug: string, id: string, edit: Edit<Asset>, instance?: string) =>
+    request<Asset>("PATCH", `${primaryBase(slug, "assets/assets", instance)}/${id}`, edit.body, edit.headers),
   deleteAsset: (slug: string, id: string, instance?: string) =>
     request<void>("DELETE", `${primaryBase(slug, "assets/assets", instance)}/${id}`),
 };

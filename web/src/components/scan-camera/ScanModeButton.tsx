@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeftRight, Check, Hash, Plus, Zap, type LucideIcon } from "lucide-react";
-import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose, useMenuFocus } from "@cobblr/platform-web";
 import { SCAN_MODES, scanModeLabel, type ScanMode } from "./scanMode";
 
 const ICON: Record<ScanMode, LucideIcon> = { add: Plus, move: ArrowLeftRight, count: Hash, sort: Zap };
@@ -35,6 +35,7 @@ export function ScanModeButton({ mode, onChoose }: { mode: ScanMode; onChoose: (
     return () => document.removeEventListener("pointerdown", away);
   }, [open]);
   useEscapeToClose(open, menu, () => setOpen(false));
+  useMenuFocus(open, menu);
   const Icon = ICON[mode];
   return (
     <div className="shrink-0">

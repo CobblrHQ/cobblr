@@ -131,6 +131,23 @@ export interface RunOptions {
   done?: string;
 }
 
+/** Run an outcome's way back exactly as the action handed it: each step
+ *  with its own target, its own args and its undo_id, so the server judges
+ *  the press it issued. A way back written by the surface instead ended the
+ *  loan made since in another tab (#7899): it named the record and nothing
+ *  else, so it matched no issued step and ran as a fresh return. */
+export async function runUndoSteps(runBack: (body: ActionBody) => Promise<ActionRun>, steps: readonly UndoStep[]): Promise<void> {
+  // Issued inverses are authorized with their own target, which may be
+  // absent or differ from the record that started the action.
+  for (const step of steps) await runBack({
+    actionId: step.action_id,
+    ...(step.entity_kind !== undefined ? { entityKind: step.entity_kind } : {}),
+    ...(step.entity_id !== undefined ? { entityId: step.entity_id } : {}),
+    ...(step.undo_id ? { undo_id: step.undo_id } : {}),
+    args: step.args ?? {},
+  });
+}
+
 /** Offer an outcome's Undo: a toast saying what was done, whose Undo runs the
  *  action's own way back through the door. Nothing to undo, nothing offered.
  *  Returns whether it offered one. */
@@ -148,15 +165,7 @@ export function offerUndo(
     duration: 8000,
     onAction: async () => {
       try {
-        // Issued inverses are authorized with their own target, which may
-        // be absent or differ from the record that started the action.
-        for (const step of steps) await runBack({
-          actionId: step.action_id,
-          ...(step.entity_kind !== undefined ? { entityKind: step.entity_kind } : {}),
-          ...(step.entity_id !== undefined ? { entityId: step.entity_id } : {}),
-          ...(step.undo_id ? { undo_id: step.undo_id } : {}),
-          args: step.args ?? {},
-        });
+        await runUndoSteps(runBack, steps);
         toast.success("Undone.");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Couldn't undo that.");

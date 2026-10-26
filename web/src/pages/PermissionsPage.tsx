@@ -18,7 +18,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { EyeOff, Plus, X } from "lucide-react";
-import { useToast, usePageTitle, useOnceQuiet } from "@cobblr/platform-web";
+import { useToast, usePageTitle, useOnceQuiet, useStillAsking } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -103,6 +103,12 @@ function PermissionsOverview() {
     queryFn: () => api.listCustomRoles(activeSlug),
   });
 
+  const approvalsQ = useQuery({
+    queryKey: ["approval-requests", activeSlug, "open"],
+    queryFn: () => api.listApprovalRequests(activeSlug, "open"),
+    enabled: !!activeSlug,
+  });
+
   const members = matrixQ.data?.members ?? [];
   const actions = actionsQ.data?.items ?? [];
 
@@ -176,6 +182,9 @@ function PermissionsOverview() {
   // Drawn once every section has its answer: the approvals card and the member
   // list land above the field-visibility form and push its buttons.
   const settled = useOnceQuiet();
+
+  const asking = useStillAsking(matrixQ, actionsQ, kindsQ, scopesQ, customRolesQ, approvalsQ);
+  if (asking) return <div className="text-xs text-faint">loading…</div>;
 
   return (
     <>

@@ -23,7 +23,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { kindOptionLabels } from "../lib/kind-option-labels";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
@@ -96,7 +96,7 @@ export function ViewsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">Views</h1>
         <span className="text-sm text-muted dark:text-slate-400">
           {items.length} saved
@@ -1118,17 +1118,24 @@ function VendingRenderer({ items, cfg }: { items: ViewRow[]; cfg: ViewConfig }) 
     const key = `${row.kind}:${row.id}`;
     setBusy(key);
     const actionId = dir === -1 ? "inventory:use-one" : "inventory:restock-one";
-    const inverse = dir === -1 ? "inventory:restock-one" : "inventory:use-one";
     // The panel knows where it is standing; the server must not guess a
     // calendar day from a UTC clock (a 9pm tap would date tomorrow).
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     try {
-      await runAction({ actionId, entityKind: row.kind, entityId: row.id, args: { timezone } }, { undo: "shown-here" });
-      setLastAction({
+      const outcome = await runAction({ actionId, entityKind: row.kind, entityId: row.id, args: { timezone } }, { undo: "shown-here" });
+      // The way back the tap handed over (the record as it was, with its
+      // undo_id), never the opposite tap: that ran over a take someone made
+      // since and was never judged as an Undo (#7899, #7813).
+      const back = undoStepsOf(outcome.undo);
+      if (back.length) setLastAction({
         id: key,
         title: row.title ?? "that",
         undo: async () => {
-          await runAction({ actionId: inverse, entityKind: row.kind, entityId: row.id, args: { timezone } }, { undo: "is-undo" });
+          try {
+            await runUndoSteps((b) => runAction(b, { undo: "is-undo" }), back);
+          } catch (e) {
+            toast.error((e as Error).message);
+          }
           setLastAction(null);
         },
       });

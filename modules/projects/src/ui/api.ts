@@ -1,4 +1,4 @@
-import { noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
+import { noteWorkspaceWrite, workspaceFetch, type Edit } from "@cobblr/platform-web";
 
 export type ProjectStatus = "planning" | "active" | "blocked" | "done" | "abandoned";
 export type Priority = "low" | "med" | "high" | "urgent";
@@ -88,8 +88,8 @@ export class ProjectsApi {
       : `${this.base()}/projects`;
   }
 
-  private async requestUrl<T>(method: string, url: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async requestUrl<T>(method: string, url: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { ...(extra ?? {}) };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -112,11 +112,11 @@ export class ProjectsApi {
     return parsed as T;
   }
 
-  private request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return this.requestUrl<T>(method, `${this.base()}${path}`, body);
+  private request<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    return this.requestUrl<T>(method, `${this.base()}${path}`, body, extra);
   }
-  private projectsRequest<T>(method: string, subpath: string, body?: unknown): Promise<T> {
-    return this.requestUrl<T>(method, `${this.projectsBase()}${subpath}`, body);
+  private projectsRequest<T>(method: string, subpath: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    return this.requestUrl<T>(method, `${this.projectsBase()}${subpath}`, body, extra);
   }
 
   listProjects = () => this.projectsRequest<{ items: Project[] }>("GET", "");
@@ -133,8 +133,9 @@ export class ProjectsApi {
      *  captured at creation. The create route routes these into metadata. */
     metadata?: Record<string, unknown>;
   }) => this.projectsRequest<Project>("POST", "", b);
-  updateProject = (id: string, b: Record<string, unknown>) =>
-    this.projectsRequest<Project>("PATCH", `/${id}`, b);
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateProject = (id: string, edit: Edit<Record<string, unknown>>) =>
+    this.projectsRequest<Project>("PATCH", `/${id}`, edit.body, edit.headers);
   deleteProject = (id: string) => this.projectsRequest<void>("DELETE", `/${id}`);
 
   listTasks = (q: { project_id?: string; status?: TaskStatus; energy?: Energy; assignee?: "me" | string } = {}) => {
@@ -149,8 +150,9 @@ export class ProjectsApi {
   getTask = (id: string) => this.request<Task & { dependencies: TaskDependency[]; blocked_deps: number }>("GET", `/tasks/${id}`);
   createTask = (b: { project_id?: string | null; title: string; status?: TaskStatus; priority?: Priority | null; energy?: Energy | null }) =>
     this.request<Task>("POST", "/tasks", b);
-  updateTask = (id: string, b: Record<string, unknown>) =>
-    this.request<Task>("PATCH", `/tasks/${id}`, b);
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateTask = (id: string, edit: Edit<Record<string, unknown>>) =>
+    this.request<Task>("PATCH", `/tasks/${id}`, edit.body, edit.headers);
   deleteTask = (id: string) => this.request<void>("DELETE", `/tasks/${id}`);
   /** A project's tasks in a new order, top first. */
   reorderTasks = (projectId: string, ids: string[]) =>

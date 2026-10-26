@@ -1,5 +1,5 @@
 import { AssemblyOrdersCard } from "./AssemblyOrders.js";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FieldPack, QueryError, fieldNeed, RecordFormModal, usePlatformWeb, runAction, offerUndo, useToast, downloadBlob, type EntityDetailPanelCtx, NumberField } from "@cobblr/platform-web";
@@ -36,6 +36,7 @@ export function BoardProjectPanel({ ctx, api }: { ctx: EntityDetailPanelCtx; api
   const [revision, setRevision] = useState("");
   const [bom, setBom] = useState("");
   const [positions, setPositions] = useState("");
+  const fileReads = useRef({ bom: 0, positions: 0 });
   const [format, setFormat] = useState("kicad");
   const [units, setUnits] = useState("mm");
   const [mirrored, setMirrored] = useState(false);
@@ -46,10 +47,19 @@ export function BoardProjectPanel({ ctx, api }: { ctx: EntityDetailPanelCtx; api
   const busy = operation.isPending;
   if (revisions.isError) return <QueryError what="board revisions" onRetry={() => { void revisions.refetch(); }} />;
   if (!revisions.data?.enabled) return null;
-  async function read(file: File | undefined, set: (text: string) => void) {
+  async function read(file: File | undefined, source: "bom" | "positions") {
+    const selected = ++fileReads.current[source];
+    const set = source === "bom" ? setBom : setPositions;
+    set("");
     if (!file) return;
     if (file.size > 2_000_000) { setError("Use a file smaller than 2 MB."); return; }
-    try { set(await file.text()); setError(""); } catch { setError("That file could not be read."); }
+    try {
+      const text = await file.text();
+      if (selected !== fileReads.current[source]) return;
+      set(text); setError("");
+    } catch {
+      if (selected === fileReads.current[source]) setError("That file could not be read.");
+    }
   }
   return <section className="space-y-3 rounded border border-line p-3">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">Board revisions</h3><button type="button" className={button} onClick={() => setOpen(true)}>Import board revision</button></div>
@@ -64,8 +74,8 @@ export function BoardProjectPanel({ ctx, api }: { ctx: EntityDetailPanelCtx; api
         <FieldPack maxCols={2} items={[
           { need: fieldNeed("revision", { control: "text", label: "Revision" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Revision</span><input aria-label="Revision" required value={revision} onChange={e => setRevision(e.target.value)} className={control} /></label> },
           { need: fieldNeed("format", { control: "choice", label: "Export format" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Export format</span><select aria-label="Export format" value={format} onChange={e => setFormat(e.target.value)} className={control}><option value="kicad">KiCad</option><option value="altium">Altium CSV</option><option value="eagle">Eagle CSV</option></select></label> },
-          { need: fieldNeed("bom", { control: "picker", label: "BOM CSV" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">BOM CSV</span><input aria-label="BOM CSV" type="file" accept=".csv,.txt" onChange={e => void read(e.target.files?.[0], setBom)} className={control} /></label> },
-          { need: fieldNeed("positions", { control: "picker", label: "Centroid file" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Centroid file</span><input aria-label="Centroid file" type="file" accept=".csv,.pos,.txt" onChange={e => void read(e.target.files?.[0], setPositions)} className={control} /></label> },
+          { need: fieldNeed("bom", { control: "picker", label: "BOM CSV" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">BOM CSV</span><input aria-label="BOM CSV" type="file" accept=".csv,.txt" onChange={e => void read(e.target.files?.[0], "bom")} className={control} /></label> },
+          { need: fieldNeed("positions", { control: "picker", label: "Centroid file" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Centroid file</span><input aria-label="Centroid file" type="file" accept=".csv,.pos,.txt" onChange={e => void read(e.target.files?.[0], "positions")} className={control} /></label> },
           { need: fieldNeed("units", { control: "choice", label: "Exported coordinate units" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Exported coordinate units</span><select aria-label="Exported coordinate units" value={units} onChange={e => setUnits(e.target.value)} className={control}><option value="mm">Millimetres</option><option value="in">Inches</option></select></label> },
           { need: fieldNeed("mirrored", { control: "checkbox", label: "Bottom X coordinates were mirrored on export" }), node: <label className="flex gap-2 text-sm"><input type="checkbox" checked={mirrored} onChange={e => setMirrored(e.target.checked)} />Bottom X coordinates were mirrored on export</label> },
           { need: fieldNeed("notes", { control: "markdown", label: "Revision notes" }), node: <label className="space-y-1 block text-sm"><span className="block text-muted">Revision notes</span><textarea aria-label="Revision notes" value={notes} onChange={e => setNotes(e.target.value)} className={control} /></label> },

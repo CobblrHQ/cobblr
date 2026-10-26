@@ -27,7 +27,7 @@ export function StationDevicesPanel() {
   const [address, setAddress] = useState(DEFAULT_STATION_ADDRESS);
   const canvas = useRef<HTMLCanvasElement | null>(null);
 
-  const devices = useQuery({ queryKey: ["station-devices", slug], queryFn: () => api.listStationDevices(slug).then((r) => r.items) });
+  const devices = useQuery({ queryKey: ["station-devices", slug], queryFn: () => api.listStationDevices(slug).then((r) => r.items), refetchInterval: 2000 });
   const approve = useMutation({
     mutationFn: () => api.approveStation(slug, code, label.trim() || undefined),
     onSuccess: (r) => {

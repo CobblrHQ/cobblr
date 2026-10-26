@@ -144,7 +144,7 @@ import { useUndoSplit } from "../lib/useUndoSplit";
 import { recordHref } from "@cobblr/platform-contract/instance-detail";
 import { DestinationPicker } from "../components/DestinationPicker";
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { formatUnitPrice } from "@cobblr/platform-contract/money";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 // ── scan-drives-screen (Phase 1) ─────────────────────────────────────────────
@@ -3078,7 +3078,7 @@ export function InboxCard({
                 {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? ""}
                 {typeof (item.suggested_metadata as { unit_price?: unknown }).unit_price === "number" && (
                   <span className="ml-1 font-normal opacity-90">
-                    · {formatStoredMoney((item.suggested_metadata as { unit_price: number }).unit_price, "amount")}/
+                    · {formatUnitPrice((item.suggested_metadata as { unit_price: number }).unit_price)}/
                     {(item.suggested_metadata as { weight_unit?: string }).weight_unit ?? "unit"}
                   </span>
                 )}
@@ -4061,7 +4061,7 @@ export function InboxCard({
           {item.status === "pending" && (
             <TrackedMatchBanner item={item} locationId={item.target_location_id} stamped={restockMatch} />
           )}
-          <div className="grid lg:grid-cols-2 gap-3 items-stretch">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-stretch">
           <div className="space-y-2 min-w-0 flex flex-col">
           {/* Catalog vs YOUR photo, side by side (whichever exist). The catalog
               caption says when it is still being checked — it used to read a

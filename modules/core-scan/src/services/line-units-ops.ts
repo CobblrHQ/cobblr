@@ -60,7 +60,7 @@ export async function setLineUnits(d: LineDoor, itemId: string, mode: "same" | "
   const meta = (row.suggested_metadata ?? {}) as Record<string, unknown>;
   // A part of a split line speaks for the line it came from.
   if (mode === "same" && (typeof meta.split_from === "string" || Array.isArray(meta.split_into))) {
-    const back = await undoSplit(d.db, d.orgId, row.id, purchaseOf(d));
+    const back = await undoSplit(d.db, d.orgId, row.id, purchaseOf(d), d.userId);
     if (!back.ok) return refuse(back.status, back.error.code, back.error.message, back.error.item_id);
     await d.db.updateTable("core_scan_inbox_items").set({ suggested_metadata: mergeMeta({ line_units: { mode: "same", by: "person" } }) as never }).where("id", "=", back.parent.id).execute();
     return { ok: true, ids: [back.parent.id] };

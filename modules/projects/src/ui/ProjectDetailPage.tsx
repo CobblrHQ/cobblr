@@ -1,4 +1,4 @@
-import { NewItemMenu } from "@cobblr/platform-web";
+import { NewItemMenu, editOf, useRecordEdits } from "@cobblr/platform-web";
 // Project detail — header + inline tasks list. Tasks are added,
 // checked off, deleted inline. Cross-module dependencies render as
 // pill chips on the task row.
@@ -168,8 +168,10 @@ export function ProjectDetailPage() {
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["project-tasks", id] }),
   });
+  const edits = useRecordEdits(project.data);
   const updateProject = useMutation({
-    mutationFn: (patch: Record<string, unknown>) => api.updateProject(id!, patch),
+    // Judged against the project as this page shows it (#7925).
+    mutationFn: (patch: Record<string, unknown>) => edits(patch, (e) => api.updateProject(id!, e)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["project", id] });
       void qc.invalidateQueries({ queryKey: ["projects-list"] });
@@ -517,7 +519,7 @@ function TaskRow({
   const qc = useQueryClient();
   const confirm = useConfirm();
   const setStatus = useMutation({
-    mutationFn: (status: TaskStatus) => api.updateTask(task.id, { status }),
+    mutationFn: (status: TaskStatus) => api.updateTask(task.id, editOf(task, { status })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["project-tasks", task.project_id] }),
   });
   const remove = useMutation({

@@ -70,7 +70,7 @@ export function StationNewFace(p: StationNewFaceProps) {
                 icons
                 iconSize={24}
                 className="inline-flex min-h-[64px] items-center rounded-2xl border border-line bg-surface text-2xl dark:border-slate-600 dark:bg-slate-800"
-                buttonClassName="h-full px-4 text-content disabled:opacity-40"
+                buttonClassName="h-full px-[16px] text-content disabled:opacity-40"
                 inputClassName="w-[3ch] bg-transparent text-center text-2xl font-semibold tabular-nums text-content dark:text-mortar-100"
               />
             )}
@@ -79,10 +79,10 @@ export function StationNewFace(p: StationNewFaceProps) {
                 type="button"
                 onClick={p.commit.onAdd}
                 disabled={p.commit.busy}
-                className="inline-flex min-h-[64px] flex-1 items-center justify-center gap-2 rounded-2xl bg-cobble-600 px-5 text-xl font-semibold text-white transition hover:bg-cobble-700 disabled:opacity-40"
+                className="inline-flex min-h-[64px] min-w-0 flex-1 flex-wrap items-center justify-center gap-[8px] rounded-2xl bg-cobble-600 px-[20px] py-[8px] text-xl font-semibold text-white transition hover:bg-cobble-700 disabled:opacity-40"
               >
                 <Plus size={26} /> {p.commit.label}
-                <span className="truncate text-base font-normal opacity-80">· {p.commit.destination}</span>
+                <span className="min-w-0 max-w-full break-words text-base font-normal opacity-80">· {p.commit.destination}</span>
               </button>
             )}
           </div>

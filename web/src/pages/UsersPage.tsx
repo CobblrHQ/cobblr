@@ -96,7 +96,7 @@ export function UsersPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   return (
     <div className={embedded ? "space-y-5" : "space-y-5 max-w-4xl mx-auto"}>
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-2 items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             {embedded ? "accounts" : "users"}

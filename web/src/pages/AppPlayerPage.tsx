@@ -207,7 +207,7 @@ export function AppPlayerPage() {
         <ArrowLeft size={12} /> All apps
       </Link>
 
-      <div className="border-b border-line dark:border-slate-700 pb-3 flex items-start justify-between gap-3">
+      <div className="border-b border-line dark:border-slate-700 pb-3 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold text-content dark:text-mortar-100">
             {app.data.name}

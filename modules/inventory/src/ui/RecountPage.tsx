@@ -82,6 +82,7 @@ export function RecountPage() {
   };
   const takeOut = async (scanId: string, title: string) => {
     try {
+      // OWN-WAY-BACK: it takes one scan out of an open recount; a scan already out is refused.
       await runAction({ actionId: "inventory:recount-remove-scan", args: { recount_id: id, scan_id: scanId } }, { undo: "is-undo" });
       void qc.invalidateQueries({ queryKey: ["inventory-recount", orgSlug, id] });
       toast.success(`Took ${title} back out.`);
@@ -123,6 +124,7 @@ export function RecountPage() {
   };
   const undoAll = async () => {
     try {
+      // OWN-WAY-BACK: the recount's own row is claimed undone once; a second press is refused.
       await runAction({ actionId: "inventory:undo-recount", args: { recount_id: id } }, { undo: "is-undo" });
       void qc.invalidateQueries({ queryKey: ["inventory-recount", orgSlug, id] });
       toast.success("Put everything back as it was.");
@@ -231,7 +233,7 @@ export function RecountPage() {
                       ? `That could be ${countOf(answer.candidates.length, "thing")} you have. Which is it?`
                       : `That is new here, and could be ${countOf(answer.candidates.length, "kind")} you keep. Which kind is it?`}
                   </p>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {answer.candidates.map((c) => (
                       <button key={c.id} type="button" disabled={busy} onClick={() => void scan(answer.kind === "ask" ? { record_id: c.id } : { ...(asked ?? {}), new: true, type_id: c.id })} className="flex min-h-11 items-center gap-2 rounded-md border border-line dark:border-slate-600 p-2 text-left hover:border-cobble-400">
                         <EntityPhoto src={c.image_path} alt={c.title} size={40} className="rounded-md bg-subtle text-muted shrink-0" />

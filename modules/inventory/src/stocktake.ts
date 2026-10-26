@@ -20,7 +20,7 @@ import type { Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { countOf } from "@cobblr/platform-contract/plural";
 import type { InventoryDB } from "./db.js";
-import { bringAllBack, markAllGone, setCount, unsetCount } from "./reconcile-engine.js";
+import { bringAllBack, markAllGone, refuseOverLaterChange, setCount, unsetCount, type CountChange } from "./reconcile-engine.js";
 
 /** Where the stocktake looks: a place (and everything inside it, a shelf in
  *  the Fridge included), everything of a collection that has no place, or the
@@ -232,15 +232,21 @@ export async function runStocktake(orgId: string, userId: string | null, input: 
     .returning("id")
     .executeTakeFirstOrThrow();
 
-  // Gone first, all or nothing (the one engine both stocktakes and recounts
-  // end through, reconcile-engine.ts): a refusal leaves nothing marked.
+  let marked = false;
+  const counted: CountChange[] = [];
   try {
     await markAllGone(orgId, userId, plan.gone.map(ref), `Stocktake of ${plan.label}`);
+    marked = true;
+    for (const c of plan.counted) {
+      await setCount(orgId, userId, c, { kind: "stocktake", id: row.id }, "stocktake");
+      counted.push(c);
+    }
   } catch (err) {
+    for (const c of counted.reverse()) await unsetCount(orgId, userId, c, { kind: "stocktake", id: row.id }, "stocktake rolled back");
+    if (marked) await bringAllBack(orgId, userId, plan.gone.map(ref));
     await t.deleteFrom("inventory_stocktakes").where("id", "=", row.id).execute();
     throw err;
   }
-  for (const c of plan.counted) await setCount(orgId, userId, c, { kind: "stocktake", id: row.id }, "stocktake");
   await platform().activity.log({
     orgId,
     userId,
@@ -258,6 +264,10 @@ export async function undoStocktake(orgId: string, userId: string | null, id: st
   const row = await t.selectFrom("inventory_stocktakes").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) throw new ActionRefusal("That stocktake no longer exists.");
   if (row.undone_at) throw new ActionRefusal(`The stocktake of ${row.scope_label} is already undone.`);
+  await refuseOverLaterChange(orgId, userId, { entityId: id, action: "stocktake_taken" }, [
+    ...(row.gone as unknown as Array<{ id: string }>).map((g) => g.id),
+    ...(row.counted as unknown as CountChange[]).map((c) => c.id),
+  ]);
   const claimed = await t
     .updateTable("inventory_stocktakes")
     .set({ undone_at: new Date(), undone_by: userId })
@@ -267,19 +277,26 @@ export async function undoStocktake(orgId: string, userId: string | null, id: st
   if (!Number(claimed.numUpdatedRows)) throw new ActionRefusal(`The stocktake of ${row.scope_label} is already undone.`);
 
   const gone = row.gone as unknown as Array<{ id: string; kind: string }>;
-  const counted = row.counted as unknown as Array<{ id: string; before: number; after: number }>;
+  const counted = row.counted as unknown as CountChange[];
   const ids = [...gone.map((g) => g.id), ...counted.map((c) => c.id)];
   const present = new Set(ids.length ? (await t.selectFrom("inventory_parts").select("id").where("id", "in", ids).execute()).map((r) => r.id) : []);
-  let back: number;
+  let back = 0;
+  let relisted = false;
+  const restored: CountChange[] = [];
+  const presentGone = gone.filter((g) => present.has(g.id)).map((g) => ({ ...g, title: "" }));
   try {
-    back = await bringAllBack(orgId, userId, gone.filter((g) => present.has(g.id)).map((g) => ({ ...g, title: "" })));
+    back = await bringAllBack(orgId, userId, presentGone);
+    relisted = true;
+    for (const c of counted.filter((x) => present.has(x.id))) {
+      await unsetCount(orgId, userId, c, { kind: "stocktake", id }, "stocktake undone");
+      restored.push(c);
+      back += 1;
+    }
   } catch (err) {
+    for (const c of restored.reverse()) await setCount(orgId, userId, c, { kind: "stocktake", id }, "stocktake undo rolled back");
+    if (relisted) await markAllGone(orgId, userId, presentGone, `Stocktake of ${row.scope_label}`);
     await t.updateTable("inventory_stocktakes").set({ undone_at: null, undone_by: null }).where("id", "=", id).execute();
     throw err;
-  }
-  for (const c of counted.filter((x) => present.has(x.id))) {
-    await unsetCount(orgId, userId, { ...c, title: "" }, { kind: "stocktake", id }, "stocktake undone");
-    back += 1;
   }
   await platform().activity.log({
     orgId,

@@ -19,6 +19,7 @@
 // poller settles the job, and the handler is a no-op for a step already moved.
 
 import { createHash } from "node:crypto";
+import { readGramsByTool } from "@cobblr/platform-contract/filament-draw";
 import { canonicalJson } from "@cobblr/platform-contract/service-consent";
 import type { Kysely } from "kysely";
 import { platform, type ActionHandler } from "@cobblr/platform-contract";
@@ -43,7 +44,7 @@ function roleOf(filename: string, mime: string): "stl" | "step" | "3mf" | "gcode
   if (f.endsWith(".stl") || mime === "model/stl") return "stl";
   if (/\.(step|stp)$/.test(f) || mime === "model/step") return "step";
   if (f.endsWith(".3mf") || mime === "model/3mf") return "3mf";
-  if (f.endsWith(".gcode") || f.endsWith(".bgcode") || mime === "text/x.gcode") return "gcode";
+  if (/\.(gcode|bgcode|gco)$/.test(f) || mime === "text/x.gcode") return "gcode";
   return null;
 }
 
@@ -55,14 +56,15 @@ async function loadMake(db: Kysely<DigifabDB>, id: string): Promise<MakeRow | un
 
 /** The model file a Make's Model step (or its Slice step, for G-code) holds. */
 async function modelOf(orgId: string, db: Kysely<DigifabDB>, makeId: string): Promise<{ fileId: string; role: "stl" | "step" | "3mf" | "gcode"; report: unknown } | null> {
-  const steps = await db.selectFrom("digifab_make_steps").select(["id", "step", "data"]).where("make_id", "=", makeId).where("step", "in", ["model", "slice"]).execute();
-  for (const want of ["model", "slice"] as const) {
+  const steps = await db.selectFrom("digifab_make_steps").select(["id", "step", "status", "data"]).where("make_id", "=", makeId).where("step", "in", ["model", "slice"]).execute();
+  for (const want of ["slice", "model"] as const) {
     const step = steps.find((s) => s.step === want);
-    if (!step) continue;
+    if (!step || (want === "slice" && step.status !== "done")) continue;
     const files = (await platform().files.listAttachments(orgId, { source_module: "digifab", source_type: "make-step", source_id: step.id })) ?? [];
     for (const f of files) {
       const role = want === "model" ? (MODEL_ROLES.includes(f.role as MakeFileRole) ? (f.role as "stl" | "step" | "3mf") : roleOf(f.filename, f.mimeType)) : roleOf(f.filename, f.mimeType);
-      if (role && (want === "slice" ? role === "gcode" : role !== "gcode")) return { fileId: f.fileId, role, report: (step.data as Record<string, unknown>)?.report };
+      if (want === "slice" && (role === "gcode" || role === "3mf")) return { fileId: f.fileId, role: "gcode", report: step.data.report ?? step.data.printer };
+      if (want === "model" && role && role !== "gcode") return { fileId: f.fileId, role, report: (step.data as Record<string, unknown>)?.report };
     }
   }
   return null;
@@ -91,7 +93,7 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
     if (!make) return { ok: false, code: "not_found", error: "That Make was not found." };
     model = await modelOf(orgId, db, make.id);
     if (!model) return startDesign(db, orgId, userId, make, ask);
-    const existing = await db.selectFrom("digifab_make_steps").select("id").where("make_id", "=", make.id).where("step", "in", make.start_step === "slice" ? ["print"] : ["slice", "print"]).executeTakeFirst();
+    const existing = await db.selectFrom("digifab_make_steps").select("id").where("make_id", "=", make.id).where("step", "in", model.role === "gcode" ? ["print"] : ["slice", "print"]).executeTakeFirst();
     if (existing) return { ok: false, code: "already_prepared", error: "This Make already has a slice or print. Make it again from that step to change it.", make_id: make.id };
   } else if (ask.file_id) {
     const file = await platform().files.read(orgId, ask.file_id, "original");
@@ -158,11 +160,20 @@ async function preparePrintThis(db: Kysely<DigifabDB>, orgId: string, userId: st
 
   // A G-code is already sliced: straight to the one yes.
   if (model.role === "gcode") {
-    const sliceStep = await db.selectFrom("digifab_make_steps").select(["id", "data"]).where("make_id", "=", make.id).where("step", "=", "slice").executeTakeFirst();
+    const sliceStep = await db.selectFrom("digifab_make_steps").selectAll().where("make_id", "=", make.id).where("step", "=", "slice").executeTakeFirst();
     const bytes = await platform().files.read(orgId, model.fileId, "original");
     const metadata = bytes ? extractPlateMetadata(bytes.filename, Buffer.from(bytes.bytes)) : {};
-    await recordMakeStep(db, orgId, userId, make, "slice", { data: { ...((sliceStep?.data as Record<string, unknown>) ?? {}), ...choice, grams_by_tool: metadata.filament_g_by_tool ?? null, time_s: metadata.estimated_sec ?? null }, produced_by: { kind: "upload" } });
-    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams: metadata.filament_g ?? null, gramsByTool: metadata.filament_g_by_tool, seconds: metadata.estimated_sec ?? null, previewFileId: null });
+    const prior = (sliceStep?.data as Record<string, unknown> | undefined) ?? {};
+    const gramsByTool = metadata.filament_g_by_tool ?? readGramsByTool(prior.grams_by_tool);
+    const grams = metadata.filament_g ?? (gramsByTool ? gramsByTool.reduce((sum, g) => sum + g, 0) : typeof prior.total_grams === "number" ? prior.total_grams : null);
+    const seconds = metadata.estimated_sec ?? (typeof prior.time_s === "number" ? prior.time_s : null);
+    await recordMakeStep(db, orgId, userId, make, "slice", {
+      data: { ...prior, ...choice, grams_by_tool: gramsByTool, time_s: seconds },
+      produced_by: sliceStep?.produced_by ?? { kind: "upload" },
+      service_job_id: sliceStep?.service_job_id,
+      copied_from: sliceStep?.copied_from,
+    });
+    const ready = await readyToPrint(db, orgId, make, { gcodeFileId: model.fileId, choice, grams, gramsByTool, seconds, previewFileId: null });
     if (!ready.ok) return fail(ready.code, ready.error);
     return { ok: true, make_id: make.id, created_make: created, printer: { machine: printer.machine, reason: printer.reason }, slice_job_id: null, summary: `Ready to print on ${printer.machine ?? printer.device ?? "the printer"}. Confirm it on the Make.` };
   }

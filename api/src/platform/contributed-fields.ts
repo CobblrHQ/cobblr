@@ -98,7 +98,8 @@ export async function insertForLiveWorkspaces<T extends { orgId: string }>(
 }
 
 /** Write these contributed field defs into the given workspaces where they are
- *  missing, on their kind and its collections. Returns the rows added. */
+ *  missing, on their kind and its collections, and fill missing roles on
+ *  rows owned by the module. Returns the rows added. */
 export async function applyContributedFieldDefs(
   moduleName: string,
   fieldDefs: ReadonlyArray<ContributedFieldDef>,
@@ -106,8 +107,10 @@ export async function applyContributedFieldDefs(
 ): Promise<number> {
   if (fieldDefs.length === 0 || orgIds.length === 0) return 0;
   let added = 0;
+  let rolesChanged = false;
   for (const fd of fieldDefs) {
-    const rows = await insertForLiveWorkspaces(await kindsCarrying(fd.entity_kind, orgIds), ({ orgId, kind }) => ({
+    const targets = await kindsCarrying(fd.entity_kind, orgIds);
+    const rows = await insertForLiveWorkspaces(targets, ({ orgId, kind }) => ({
           org_id: orgId,
           entity_kind: kind,
           name: fd.name,
@@ -125,6 +128,21 @@ export async function applyContributedFieldDefs(
       field_role: fd.field_role ?? null,
     }));
     added += rows;
+    // Missing meaning on an old module-owned field must not hide its records
+    // from role readers. Keep explicit choices, including on other kinds.
+    if (fd.field_role) {
+      const result = await meta
+        .updateTable("module_field_defs")
+        .set({ field_role: fd.field_role })
+        .where("source_module", "=", moduleName)
+        .where("name", "=", fd.name)
+        .where("field_role", "is", null)
+        .where((eb) => eb.or(targets.map(({ orgId, kind }) => eb.and([
+          eb("org_id", "=", orgId), eb("entity_kind", "=", kind),
+        ]))))
+        .executeTakeFirst();
+      rolesChanged ||= result.numUpdatedRows > 0n;
+    }
     // Whether the list learns is the module's to say (lint:field-learns-declared),
     // so a row it made before it said so follows the manifest: a workspace
     // born today and one from last month read the same field the same way.
@@ -154,7 +172,7 @@ export async function applyContributedFieldDefs(
   }
   // A contributed def may be server_managed, a relation or a member: drop the
   // per-kind caches so the next read/write sees it, not after the TTL.
-  if (added > 0) {
+  if (added > 0 || rolesChanged) {
     clearServerManagedCache();
     clearRelationDefsCache();
     clearMemberFieldCaches();

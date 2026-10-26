@@ -11,12 +11,18 @@
  * failure when it finally moves is a credential read that comes back empty: a 401, or
  * a webhook that posts nowhere, pointing at everything except the missing file.
  *
- * So: two rules, and behaviour fixtures for the resolvers themselves (a string check
+ * A third place the same drift hides: the agent skills (`.claude/skills`). They are read, not
+ * run, so rule 1 never sees them, and a skill that still names `~/claude-feedback-reply-x-token.txt`
+ * after the file moved sends the next session to a 401 and a hunt for the token (2026-10-25).
+ *
+ * So: three rules, and behaviour fixtures for the resolvers themselves (a string check
  * would happily pass a resolver whose logic had been mangled).
  *   1. No literal home-relative path to a credential-looking dotfile, outside the
  *      resolvers that must name the legacy location.
  *   2. Both resolvers must prefer ~/.secrets, fall back to the legacy dotfile, report
  *      the PREFERRED path when neither exists, and skip comment/blank lines.
+ *   3. A skill names a credential as `~/.secrets/<name>`, never as a file loose in the home
+ *      directory (`~/<name>-token.txt`), which is where they were before the move.
  */
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,7 +50,7 @@ const HOME_PATH = /(?:\$\{?HOME\}?|\$\{process\.env\.HOME\}|~)\/\.([A-Za-z0-9._-
 // join(homedir(), ".x") and join(process.env.HOME, ".x")
 const JOIN_HOME = /(?:homedir\(\)|process\.env\.HOME(?:\s*\?\?\s*"")?)\s*,\s*["'`]\.([A-Za-z0-9._-]+)["'`]/g;
 
-function walk(dir: string, out: string[] = []): string[] {
+function walk(dir: string, out: string[] = [], exts: string[] = SCAN_EXT): string[] {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -55,8 +61,8 @@ function walk(dir: string, out: string[] = []): string[] {
     const full = join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === "dist" || e.name === ".git") continue;
-      walk(full, out);
-    } else if (SCAN_EXT.some((x) => e.name.endsWith(x))) {
+      walk(full, out, exts);
+    } else if (exts.some((x) => e.name.endsWith(x))) {
       out.push(full);
     }
   }
@@ -87,6 +93,30 @@ for (const abs of files) {
             `    ${line.trim().slice(0, 100)}`,
         );
       }
+    }
+  });
+}
+
+// ── Rule 3: a skill names a credential under ~/.secrets, not loose in $HOME ───
+// A file directly in the home directory (the match is not followed by a `/`, so a directory
+// such as ~/.secrets/ or ~/Documents/ is not one) whose name reads like a credential.
+const LOOSE_HOME_FILE = /(?:\$\{?HOME\}?|~)\/([A-Za-z0-9._-]+)(?![A-Za-z0-9._/-])/g;
+const SKILL_DIRS = [".claude/skills"];
+const skillDocs = SKILL_DIRS.flatMap((d) => walk(join(ROOT, d), [], [".md"]));
+for (const abs of skillDocs) {
+  const rel = relative(ROOT, abs);
+  readFileSync(abs, "utf8").split("\n").forEach((line, i) => {
+    LOOSE_HOME_FILE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = LOOSE_HOME_FILE.exec(line))) {
+      const name = m[1]!.replace(/^\./, "");
+      if (!credentialish(name)) continue;
+      fails.push(
+        `${rel}:${i + 1} names a credential file loose in the home directory (\`~/${m[1]}\`).\n` +
+          `    Credential files live in ~/.secrets/ (the resolvers still read the old place, a reader of this skill does not).\n` +
+          `    Write \`~/.secrets/${name.replace(/\.txt$/, "")}\`.\n` +
+          `    ${line.trim().slice(0, 100)}`,
+      );
     }
   });
 }
@@ -166,4 +196,4 @@ if (fails.length) {
   for (const f of fails) console.error(`  ✗ ${f}\n`);
   process.exit(1);
 }
-console.log(`lint:secret-paths OK (${files.length} files, both resolvers exercised)`);
+console.log(`lint:secret-paths OK (${files.length} files, ${skillDocs.length} skill docs, both resolvers exercised)`);

@@ -20,7 +20,7 @@ import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal } from "lucide-react";
-import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, SearchInput, Swatch, swatchFill, useConfirm, useEscapeToClose, useToast, useUnits } from "@cobblr/platform-web";
+import { AmountControl, colorSwatch, LocationPicker, PopoverLayer, SearchInput, Swatch, swatchFill, useConfirm, useEscapeToClose, useMenuFocus, useToast, useUnits, useCan } from "@cobblr/platform-web";
 import { countOf, pluralise, withArticle } from "@cobblr/platform-contract";
 import { valuesAnswer } from "@cobblr/platform-contract/measure";
 import { InventoryProvider, useInventory } from "./context";
@@ -208,6 +208,7 @@ function ToConfirm({ type, noun }: { type: FamilyType; noun: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const n = Number(type.metadata.spools_to_confirm ?? 0);
+  const mayEdit = useCan("inventory:update-part");
   const settle = useMutation({
     mutationFn: async (add: boolean) => {
       if (add) for (let i = 0; i < n; i++) await api.addToFamily({ type_id: type.id, qty: 1 });
@@ -216,7 +217,7 @@ function ToConfirm({ type, noun }: { type: FamilyType; noun: string }) {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-family"] }),
     onError: (e) => toast.error(e instanceof Error ? e.message : String(e)),
   });
-  if (!(n > 0)) return null;
+  if (!(n > 0) || !mayEdit) return null;
   return (
     <div data-testid="family-to-confirm" className="mx-3 mb-2 rounded-lg bg-subtle dark:bg-slate-800 px-3 py-2 text-xs text-content dark:text-mortar-100">
       A scan counted {n === 1 ? `one more ${noun}` : `${n} more ${pluralise(noun)}`} of this than {type.count === 1 ? "is" : "are"} listed. Is there really {n === 1 ? "another" : "that many more"}?
@@ -365,6 +366,7 @@ function PopMenu({ label, children, size = "sm" }: { label: string; children: (c
     return () => document.removeEventListener("pointerdown", away);
   }, [at]);
   useEscapeToClose(!!at, layer, () => setAt(null));
+  useMenuFocus(!!at, layer);
   const close = () => setAt(null);
   return (
     <>
@@ -374,6 +376,7 @@ function PopMenu({ label, children, size = "sm" }: { label: string; children: (c
         type="button"
         onClick={() => setAt((cur) => (cur ? null : trigger.current?.getBoundingClientRect() ?? null))}
         aria-label={label}
+        aria-haspopup="menu"
         aria-expanded={!!at}
         className={`${size === "md" ? "w-11 h-11" : "w-9 h-9"} grid place-items-center rounded-md border border-line dark:border-slate-700 text-muted`}
       >

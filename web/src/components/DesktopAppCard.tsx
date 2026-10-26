@@ -167,9 +167,11 @@ export function DesktopAppCard() {
   // and this must not read as a thing they are missing.
   if (!look) {
     return (
-      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex items-center gap-2 text-muted">
-        <Laptop size={15} className="shrink-0" />
-        <span>Using the {productName()} desktop app on this computer?</span>
+      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex flex-wrap items-center gap-2 text-muted">
+        <span className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+          <Laptop size={15} className="shrink-0" />
+          <span>Using the {productName()} desktop app on this computer?</span>
+        </span>
         <button
           type="button"
           onClick={() => { allowLocalAccess("desktop-app-check"); setLook(true); }}
@@ -185,7 +187,7 @@ export function DesktopAppCard() {
   // button is not mistaken for a broken control.
   if (!app.data) {
     return (
-      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex items-center gap-2 text-muted">
+      <li className="rounded-lg border border-line dark:border-slate-800 px-3 py-2 text-sm flex flex-wrap items-center gap-2 text-muted">
         <Laptop size={15} className="shrink-0" />
         <span>{app.isFetching ? "Looking for the desktop app…" : "No desktop app running on this computer."}</span>
         {!app.isFetching && (

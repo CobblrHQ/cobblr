@@ -121,7 +121,12 @@ jobsRouter.get(
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) return badBody(res, parsed.error);
     const { limit, cursor, status } = parsed.data;
-    let q = tenantDb(req).selectFrom("digifab_jobs").select(JOB_COLS);
+    let q = tenantDb(req).selectFrom("digifab_jobs").select(JOB_COLS)
+      .select((eb) => eb.or([
+        eb.and([eb("status", "=", "completed"), eb("outcome_at", "is", null)]),
+        eb.exists(eb.selectFrom("digifab_device_attention").select("job_id").whereRef("job_id", "=", "digifab_jobs.id")),
+      ]).as("needs_bed_verdict"))
+      .select((eb) => eb("send_token", "is not", null).as("sending"));
     if (status) q = q.where("status", "=", status);
     const c = decodeKeysetCursor(cursor);
     if (c) {
@@ -156,7 +161,7 @@ jobsRouter.get(
         outcome: null, outcome_good_qty: null, outcome_scrap_qty: null, outcome_at: null, outcome_source: null,
         build_output_deferred: false, build_output_at: null,
         created_at: o.started_at ?? o.created_at, updated_at: o.started_at ?? o.created_at,
-        last_polled_at: null, metadata: {}, external: true,
+        last_polled_at: null, metadata: {}, external: true, needs_bed_verdict: false, sending: false,
       })) as typeof base;
       items = [...ext, ...base];
     }
@@ -752,8 +757,9 @@ jobsRouter.post("/:id/resume", asyncHandler((req, res) => controlJob(req, res, "
 /** Remove a job from the queue, never one that may still be on a printer:
  *  the route's DELETE and digifab:delete-job. */
 export async function deleteQueuedJob(db: ReturnType<typeof tenantDb>, id: string): Promise<JobReply> {
-  const job = await db.selectFrom("digifab_jobs").select(["id", "status", "file_ref", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run"]).where("id", "=", id).executeTakeFirst();
+  const job = await db.selectFrom("digifab_jobs").select(["id", "status", "file_ref", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run", "outcome_at", "send_token"]).where("id", "=", id).executeTakeFirst();
   if (!job) return reply(404, { error: { code: "not_found", message: "no such job" } });
+  if (job.send_token) return reply(409, { error: { code: "already_sending", message: "This job is being sent to its printer. Wait for the send to finish before removing it." } });
   if (job.cnc_setup && !job.cnc_usage_recorded_at) return reply(409, { error: { code: "stock_use_pending", message: "Record this CNC attempt's stock use and outcome at the station first." } });
   if (job.embroidery_run) return reply(409, { error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
   // `paused` is physically mid-print too, and an `unknown`-status job may be —
@@ -762,7 +768,14 @@ export async function deleteQueuedJob(db: ReturnType<typeof tenantDb>, id: strin
   if (!["queued", "awaiting-assignment", "completed", "failed", "cancelled"].includes(job.status)) {
     return reply(409, { error: { code: "active", message: "cancel the job before deleting (it may still be on a printer)" } });
   }
-  await db.deleteFrom("digifab_jobs").where("id", "=", job.id).execute();
+  const attention = await db.selectFrom("digifab_device_attention").select("job_id").where("job_id", "=", job.id).executeTakeFirst();
+  if (attention || job.status === "completed" && !job.outcome_at) return reply(409, { error: { code: "bed_verdict_pending", message: "Record good or scrap at the machine before removing this job." } });
+  const removed = await db.deleteFrom("digifab_jobs")
+    .where("id", "=", job.id)
+    .where("status", "=", job.status)
+    .where("send_token", "is", null)
+    .executeTakeFirst();
+  if (Number(removed.numDeletedRows) === 0) return reply(409, { error: { code: "job_changed", message: "This job changed while it was being removed. Refresh the queue before trying again." } });
   return reply(204, { file_ref: job.file_ref });
 }
 

@@ -57,9 +57,9 @@ export default function PdfRenderer({ blobUrl, bytes, filename }: PreviewRendere
 
   if (failed) return <div className="text-xs text-faint italic">This PDF could not be read. Download it to open it elsewhere.</div>;
   return (
-    <div className="flex flex-col gap-2" data-testid="pdf-viewer">
+    <div className="h-[75vh] flex flex-col gap-2" data-testid="pdf-viewer">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-        <span>{doc ? `${doc.numPages} page${doc.numPages === 1 ? "" : "s"}` : "Opening…"}</span>
+        <span className="w-20 shrink-0">{doc ? `${doc.numPages} page${doc.numPages === 1 ? "" : "s"}` : "Opening…"}</span>
         <span className="flex-1" />
         <button type="button" className="rounded border border-line px-2 py-1 hover:text-content" onClick={() => step(-1)} aria-label="Zoom out">−</button>
         <button type="button" className="rounded border border-line px-2 py-1 hover:text-content" onClick={() => setZoom(1)}>Fit</button>
@@ -71,7 +71,7 @@ export default function PdfRenderer({ blobUrl, bytes, filename }: PreviewRendere
       </div>
       <div
         ref={box}
-        className="max-h-[75vh] overflow-auto rounded border border-line bg-subtle dark:bg-slate-800 p-2"
+        className="min-h-0 flex-1 overflow-auto rounded border border-line bg-subtle dark:bg-slate-800 p-2"
         style={{ touchAction: "pan-x pan-y pinch-zoom" }}
       >
         {doc &&

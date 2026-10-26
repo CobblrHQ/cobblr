@@ -11,7 +11,7 @@
 // handed to whoever signs in next.
 const PREFIX = "cobblr.mine.";
 
-export type PersonalChatPart = "chat" | "chat.at" | "chat.cleared" | "draft" | "turn" | "input" | "waiting";
+export type PersonalChatPart = "chat" | "chat.at" | "chat.server-at" | "chat.unsaved" | "chat.cleared" | "draft" | "turn" | "input" | "waiting";
 
 const UNOWNED_PREFIXES = ["cobblr.cobbchat.", "cobblr.cobbinput.", "cobblr.chat.draft.", "cobblr.chat.turn."];
 

@@ -89,7 +89,28 @@ const LANE_LABELS = new Set(["ci-test", "pr-check"]);
 const SCHEDULED_ON_LANES_OK: Record<string, string> = {
   "ci.yml": "its daily heartbeat is the pull requests' own workflow, proving their lane and the freshly baked image there",
   "new-app-proof.yml": "it runs on pull requests too and proves pr-check's image; 15 min at 10:15Z, nothing waits on it",
+  "watch.yml": "the hourly watch's light job: a minute of checks holding no secret but the run's token; on docker-build it waited up to 2 h behind main (the coordinator, 2026-10-26)",
 };
+/** The secrets a pr-check job may hold: the run's own token and the alert hook. */
+const PR_CHECK_SECRETS = new Set(["GITHUB_TOKEN", "INFRA_ALERT_WEBHOOK"]);
+/** The pr-check jobs that held another secret when the rule came (2026-10-26): a list that only shrinks. Each is a
+ *  token on the test-only boxes, to move to a main-lane job; a pair not here is refused. */
+const PR_CHECK_SECRETS_HELD = new Set([
+  "ci-recheck-rules.yml BUNDLE_SYNC_TOKEN",
+  "ci-recheck-rules.yml CLOUD_DISPATCH_TOKEN",
+  "ci-recheck-rules.yml FEEDBACK_TOKEN",
+  "ci-recheck-rules.yml REGISTRY_READ_TOKEN",
+  "ci-recheck.yml BUNDLE_SYNC_TOKEN",
+  "ci-recheck.yml CLOUD_DISPATCH_TOKEN",
+  "ci-recheck.yml FEEDBACK_TOKEN",
+  "ci-recheck.yml REGISTRY_READ_TOKEN",
+  "ci.yml BUNDLE_SYNC_TOKEN",
+  "ci.yml CLOUD_DISPATCH_TOKEN",
+  "ci.yml FEEDBACK_TOKEN",
+  "ci.yml REGISTRY_READ_TOKEN",
+  "nesting-wasm.yml REGISTRY_TOKEN",
+  "new-app-proof.yml REGISTRY_READ_TOKEN",
+]);
 // One list of what publishes, for both rules below (a test-only box and a pr-check job never ship anything).
 // push-main-and-verify.sh is how the showcase site publishes (e2e-suite.yml): a test-only box must not run it either
 // (#7764, the yardsticks' two legs; the rule could not see it before).
@@ -276,6 +297,7 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
   errors.push(...mainLaneErrors(f, readFileSync(join(DIR, f), "utf8")));
 }
 
+const heldSeen = new Set<string>();
 // pr-check RUNS ON THE TEST-ONLY BOXES (b550 and z87 until memtest passes, the lent XPS: owner,
 // 2026-10-07), so a job asking for it must never publish, push or ship anything: a flipped bit there
 // may turn a check red, never reach something shared. A step that does must be guarded to a push to
@@ -289,6 +311,15 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     while (end < lines.length && !/^ {2}[\w-]+:\s*$/.test(lines[end] ?? "") && !/^\S/.test(lines[end] ?? "")) end++;
     const job = lines.slice(i, end);
     if (!job.some((l) => /^ {4}runs-on:\s*pr-check\s*$/.test(l))) continue;
+    // NOR DOES IT HOLD A SECRET THAT SHIPS (2026-10-26, the hourly watch): moving it to pr-check would have handed the
+    // release's publish tokens, the cloud dispatch token and the bundle-sync token to the test-only boxes. A pr-check job
+    // holds the run's own token and the alert hook only (PR_CHECK_SECRETS); anything else goes in a job on a main lane.
+    job.forEach((l, k) => {
+      for (const m of l.matchAll(/secrets\.([A-Za-z0-9_]+)/g)) {
+        if (PR_CHECK_SECRETS_HELD.has(`${f} ${m[1]}`)) heldSeen.add(`${f} ${m[1]}`);
+        if (!PR_CHECK_SECRETS.has(m[1]!) && !PR_CHECK_SECRETS_HELD.has(`${f} ${m[1]}`)) errors.push(`.forgejo/workflows/${f}:${i + k + 1} a pr-check job holds secrets.${m[1]}: pr-check runs on the test-only boxes, which must hold nothing that ships. Move the step that needs it to a job on a main lane (light-main), or say why it is safe in PR_CHECK_SECRETS.`);
+      }
+    });
     let s0: number;
     const steps: number[] = [];
     job.forEach((l, k) => { if (/^ {6}- (name|uses|run):/.test(l)) steps.push(k); });
@@ -302,6 +333,8 @@ for (const f of readdirSync(DIR).filter((n) => n.endsWith(".yml") || n.endsWith(
     }
   }
 }
+// The held list only shrinks: an entry no job holds any more is taken off it.
+for (const h of PR_CHECK_SECRETS_HELD) if (!heldSeen.has(h)) errors.push(`scripts/lint-ci-runner-labels.ts: PR_CHECK_SECRETS_HELD still lists "${h}", which no pr-check job holds now: take it off the list`);
 
 if (errors.length === 0) {
   console.log(`[lint:ci-runner-labels] ✓ ${seen.size} distinct runner label(s), all real`);

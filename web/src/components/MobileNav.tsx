@@ -195,7 +195,7 @@ export function MobileNav() {
         aria-label={open ? "Close menu" : "Open menu"}
         aria-expanded={open}
         data-tour="menu"
-        className="md:hidden relative text-muted dark:text-slate-400 hover:text-accent transition p-1.5"
+        className="md:hidden relative text-muted dark:text-slate-400 hover:text-accent transition p-[6px]"
       >
         {/* The dots ride the icon, not the button: on a phone the button is a
             44 px box and its corner sits away from the icon, up by the status

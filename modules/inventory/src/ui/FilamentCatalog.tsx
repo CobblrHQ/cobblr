@@ -1,17 +1,20 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MutationError, QueryError } from "@cobblr/platform-web";
+import { MutationError, QueryError, useCan } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 export function FilamentCatalog() {
   const { api } = useInventory();
+  const mayImport = useCan("inventory:create-item");
   const qc = useQueryClient();
   const [input, setInput] = useState("");
   const [search, setSearch] = useState("");
   const [imported, setImported] = useState<string | null>(null);
   const q = useQuery({ queryKey: ["filament-catalog", search], queryFn: () => api.searchFilamentCatalog(search), enabled: search.length >= 2 });
   const add = useMutation({ mutationFn: (id: string) => api.importFilamentType(id), onSuccess: () => { setImported("Filament type added. Add a physical spool from its type when you have one."); void qc.invalidateQueries({ queryKey: ["inventory-parts"] }); void qc.invalidateQueries({ queryKey: ["inventory-family"] }); } });
+  // Importing adds a type: a person who may not add one is not offered the search for it.
+  if (!mayImport) return null;
   return <section className="rounded-xl border border-line p-3 space-y-2" data-testid="filament-catalog">
     <h3 className="text-sm font-semibold">Import a filament type</h3>
     <p className="text-xs text-muted">Search the public SpoolmanDB catalog by maker, material or product name. This adds a type and vendor, with no spool or stock count.</p>

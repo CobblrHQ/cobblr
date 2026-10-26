@@ -838,8 +838,8 @@ export const aiApi = {
     request<{ conversation: { messages: unknown[]; updated_at: string } | null }>("GET", `/orgs/${slug}/modules/core-ai/chat/conversation`),
   /** `owner` is the account the panel read these messages for; the server
    *  refuses them when it is not the one signed in (#7062). */
-  aiChatSaveConversation: (slug: string, messages: unknown[], owner: string) =>
-    request<{ updated_at: string }>("PUT", `/orgs/${slug}/modules/core-ai/chat/conversation`, { messages, owner }),
+  aiChatSaveConversation: (slug: string, messages: unknown[], owner: string, expectedAt: string | null) =>
+    request<{ updated_at: string }>("PUT", `/orgs/${slug}/modules/core-ai/chat/conversation`, { messages, owner, expected_at: expectedAt }),
   /** Ask Cobb tool consent (per-user, per-workspace): may the chat read your
    *  workspace data into prompts, and the write mode (off / ask / auto)?
    *  Enforced server-side; auto still asks for ACTIONS (irreversible). */

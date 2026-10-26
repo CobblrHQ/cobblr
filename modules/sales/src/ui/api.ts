@@ -3,7 +3,7 @@
 
 import type { IntakeSetting } from "../intake.js";
 import type { LineAvailability } from "../availability.js";
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, uploadJson } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, uploadJson, type Edit } from "@cobblr/platform-web";
 
 export const orderWriteKey = (id: string) => ["sales-order-write", id] as const;
 
@@ -221,11 +221,11 @@ export class SalesApi {
     return parsed as T;
   }
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
     const url = `/api/v1/orgs/${this.slug}/modules/sales${path}`;
     const res = await workspaceFetch(url, {
       method,
-      headers: this.headers(body !== undefined),
+      headers: { ...this.headers(body !== undefined), ...(extra ?? {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const out = await this.parse<T>(res);
@@ -259,7 +259,8 @@ export class SalesApi {
   }
   getOrder(id: string) { return this.req<SalesOrderDetail>("GET", `/orders/${id}`); }
   createOrder(body: Partial<SalesOrder>) { return this.req<SalesOrder>("POST", "/orders", body); }
-  updateOrder(id: string, body: Partial<SalesOrder>) { return this.req<SalesOrder>("PATCH", `/orders/${id}`, body); }
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateOrder(id: string, edit: Edit<SalesOrder>) { return this.req<SalesOrder>("PATCH", `/orders/${id}`, edit.body, edit.headers); }
   deleteOrder(id: string) { return this.req<void>("DELETE", `/orders/${id}`); }
   fulfillOrder(id: string, ship: "all" | "available" = "all") {
     return this.req<{ order: SalesOrder; decremented: Array<{ part_id: string; qty: number }>; complete: boolean }>("POST", `/orders/${id}/fulfill`, { ship });
@@ -278,8 +279,8 @@ export class SalesApi {
     return this.req<SalesOrderItem>("POST", `/orders/${orderId}/items`, body);
   }
   removeItem(orderId: string, itemId: string) { return this.req<void>("DELETE", `/orders/${orderId}/items/${itemId}`); }
-  updateItem(orderId: string, itemId: string, body: { qty?: number; unit_price?: number | null; description?: string | null }) {
-    return this.req<SalesOrderItem>("PATCH", `/orders/${orderId}/items/${itemId}`, body);
+  updateItem(orderId: string, itemId: string, edit: Edit<{ qty?: number; unit_price?: number | null; description?: string | null }>) {
+    return this.req<SalesOrderItem>("PATCH", `/orders/${orderId}/items/${itemId}`, edit.body, edit.headers);
   }
   /** Cancel; a shipped order answers 409 ask_returned until returned is given. */
   cancelOrder(orderId: string, returned?: boolean) {
@@ -300,7 +301,7 @@ export class SalesApi {
   }
   getCustomer(id: string) { return this.req<CustomerSummary>("GET", `/customers/${id}`); }
   createCustomer(body: Partial<Customer>) { return this.req<Customer>("POST", "/customers", body); }
-  updateCustomer(id: string, body: Partial<Customer>) { return this.req<Customer>("PATCH", `/customers/${id}`, body); }
+  updateCustomer(id: string, edit: Edit<Customer>) { return this.req<Customer>("PATCH", `/customers/${id}`, edit.body, edit.headers); }
   deleteCustomer(id: string) { return this.req<void>("DELETE", `/customers/${id}`); }
 
   // following sent parcels

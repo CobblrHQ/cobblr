@@ -13,6 +13,14 @@
     text-decoration-line: underline;
     text-underline-offset: 2px;
   }
+  /* A form field shrinks with its row. A text box's own width is about twenty
+     letters, and in a flex row that is its floor: at 200% text "New heading
+     name" and a metric's quick-log box held their rows 69 and 214 px past a
+     phone (#8430). Zero specificity, so a min-w-* that asks for a floor
+     keeps it. */
+  :where(input, select, textarea) {
+    min-width: 0;
+  }
   /* Semantic role tokens — defaults = the EXACT current palette (as
      R G B triplets for <alpha-value>), so unthemed renders identically.
      AppLayout overrides these on <html> when a workspace admin_theme is
@@ -310,6 +318,7 @@
    (138 spots use dark:text-slate-500 alone). Share the readable tokens
    so explicit variants and semantic text cannot drift. Unlayered, so it beats
    Tailwind's own layered `dark:` utilities. */
+html.dark .dark\:text-slate-300 { color: rgb(var(--c-content)); }
 html.dark .dark\:text-slate-500 { color: rgb(var(--c-faint)); }
 html.dark .dark\:text-slate-400 { color: rgb(var(--c-muted)); }
 html.dark .dark\:text-slate-600 { color: rgb(var(--c-faint)); }

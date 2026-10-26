@@ -37,9 +37,9 @@ export function UnconfirmedReceiptsBanner({ slug }: { slug: string }) {
   };
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 mb-4">
+      <div className="flex flex-wrap items-center gap-[12px] rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 mb-4">
         <PackageCheck className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0" aria-hidden />
-        <p className="text-sm text-content dark:text-mortar-100 flex-1 min-w-[12rem]">
+        <p className="text-sm text-content dark:text-mortar-100 flex-1 min-w-[min(12rem,calc(100%_-_32px))]">
           {items.length === 1 ? "One thing you ordered" : `${items.length} things you ordered`} {items.length === 1 ? "has" : "have"} not reached your stock, or may not have, when {items.length === 1 ? "it was" : "they were"} delivered.
         </p>
         <button type="button" onClick={() => setOpen(true)} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white">

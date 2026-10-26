@@ -20,7 +20,7 @@ import { ProjectsUI } from "@cobblr/projects/ui";
 import { MachinesPage } from "./MachinesPage";
 import { AssetsPage } from "./AssetsPage";
 import { RecordsPage } from "./RecordsPage";
-import { BundleFeaturesStrip } from "../components/BundleFeaturesStrip";
+import { WithBundleFeatures } from "../components/BundleFeaturesStrip";
 import { RemoveEmptyList } from "../components/RemoveEmptyList";
 import { api, getToken } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -293,8 +293,9 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       <CreatedSuccessStrip />
       {/* "More you can turn on from <bundle>" — surfaces the instance's bundle's
           not-yet-enabled features (maintenance, connected-car…) + opens the
-          bundle modal to enable them. Renders nothing when there's nothing more. */}
-      <BundleFeaturesStrip slug={activeSlug} instance={inst.instance_name} />
+          bundle modal to enable them. Renders nothing when there's nothing more;
+          what is under it waits for it to know (#6881). */}
+      <WithBundleFeatures slug={activeSlug} instance={inst.instance_name}>
       {/* An empty list made from a module can be taken away from here. */}
       {!showsOneThing && <RemoveEmptyList slug={activeSlug} inst={inst} />}
       {shownView && showsOneThing && (
@@ -339,6 +340,7 @@ export function InstancePage({ instanceName }: { instanceName?: string } = {}) {
       ) : (
         body
       )}
+      </WithBundleFeatures>
     </div>
   );
 }

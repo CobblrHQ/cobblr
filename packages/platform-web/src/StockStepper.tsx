@@ -66,6 +66,7 @@ function CountStepper({ qty, onStep, label, size }: { qty: number; onStep: (delt
     <span className="inline-flex flex-col items-end" data-testid="stock-stepper">
       <NumberStepper
         className="inline-flex items-center gap-1.5"
+        preserveConcurrentChanges
         value={value}
         min={0}
         busy={busy}

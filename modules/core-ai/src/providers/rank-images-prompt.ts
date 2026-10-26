@@ -59,6 +59,7 @@ const MEDIA_TOKENS = new Set([
 ]);
 
 export function categoryGuidance(input: Record<string, unknown>): string {
+  // ascii-only: matched against the English category words below
   const tokens = str(input.category).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const anyIn = (set: Set<string>): boolean => tokens.some((t) => set.has(t));
 

@@ -134,6 +134,15 @@ export async function moveEverything(
   const db = await dbOf(orgId);
   const { from, to, toId, holder, container, children, moving } = await readMove(db, orgId, fromId, toRef, opts);
 
+  if (holder) {
+    const path = (await platform().placement.pathsOf({ orgId, containees: [holder] })).get(`${holder.kind}:${holder.id}`) ?? [];
+    const movingKeys = new Set(moving.map((t) => `${t.kind}:${t.id}`));
+    const ancestor = path.find((step) => movingKeys.has(`${step.kind}:${step.id}`));
+    if (ancestor) {
+      throw new MoveRefused(`${to.name} is inside ${ancestor.name}, so ${ancestor.name} cannot move into it. Nothing has moved.`);
+    }
+  }
+
   const things: MovedThing[] = [];
   for (const t of moving) {
     await platform().placement.place({
@@ -142,6 +151,7 @@ export async function moveEverything(
       container,
       placedBy: opts.userId ?? null,
       via: "Move everything",
+      preserveIdentity: true,
     });
     things.push({ kind: t.kind, id: t.id, slot: t.slot ?? null, position: t.position ?? null });
   }
@@ -205,14 +215,17 @@ export async function putBackEverything(
     throw new MoveRefused(`${move.from.name} cannot be put back any more.`);
   }
   let places = 0;
+  let leftWhereTheyAre = 0;
   for (const id of move.places) {
     const row = await db.selectFrom("core_locations_locations").select("parent_id").where("id", "=", id).executeTakeFirst();
-    if (row?.parent_id !== move.to.id) continue;
+    if (row?.parent_id !== move.to.id) {
+      leftWhereTheyAre++;
+      continue;
+    }
     await reparent(db, id, move.from.id);
     places++;
   }
   let things = 0;
-  let leftWhereTheyAre = 0;
   for (const t of move.things) {
     const now = await platform().placement.containerOf({ orgId, containee: { kind: t.kind, id: t.id } }).catch(() => null);
     if (!now || now.kind !== (move.to.kind ?? LOCATION) || now.id !== move.to.id) {
@@ -227,6 +240,7 @@ export async function putBackEverything(
       ...(t.position ? { position: t.position as never } : {}),
       placedBy: userId ?? null,
       via: "Undo",
+      preserveIdentity: true,
     });
     things++;
   }

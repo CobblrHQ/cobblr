@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { capabilityAllows, NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
+import { capabilityAllows, myCapabilitiesKey, NumberField, QueryError, SearchInput, useToast, WorkspaceLink } from "@cobblr/platform-web";
 import { randomId } from "@cobblr/platform-contract/random-id";
 import { api, type PlatformResolvedEntity } from "../../lib/api";
 import { useEnabledModules } from "../../lib/useEnabledModules";
@@ -26,7 +26,10 @@ export function KilnRecords({ ctx, station = false }: { ctx: EntityDetailPanelCt
  const screen = credential?.key === storageKey ? credential : saved;
  async function run(work: () => Promise<unknown>) { setBusy(true); try { await work(); } catch(e) { toast.error(e instanceof Error ? e.message : "The firing log could not be saved."); } finally { await qc.invalidateQueries({ queryKey: ["kiln", slug, machine] }); setBusy(false); } }
  if (query.isError) return <QueryError what="Firing logs could not be loaded." onRetry={() => void query.refetch()} />;
- if (!query.data) return <p className="text-sm text-muted">Loading firing logs…</p>;
+ // What the viewer may do decides which buttons head the log: drawn before
+ // it was known, Kiln settings arrived above Cone charts and moved it (#8414).
+ const capsAsking = !caps && qc.getQueryState(myCapabilitiesKey(slug))?.status !== "error";
+ if (!query.data || capsAsking) return <p className="text-sm text-muted">Loading firing logs…</p>;
  const data = query.data, profile = data.profile, t = data.telemetry;
  if (!profile && !editing) return <details className="text-sm"><summary className="min-h-11 cursor-pointer flex items-center">Firing logs for a kiln</summary><p>Keep schedules, pieces and firing hours here, even without a connected controller.</p>{canRecord && <button className={button} disabled={busy} onClick={() => setEditing(true)}>Set up firing logs</button>}</details>;
  return <section data-testid="kiln-records" className="rounded-lg border border-line p-3 space-y-4 text-content">

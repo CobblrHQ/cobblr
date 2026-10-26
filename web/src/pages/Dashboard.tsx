@@ -717,7 +717,9 @@ function AttentionRow({ slug, item: it, tone, glyph }: { slug: string; item: Att
             type="button"
             disabled={!expandable}
             onClick={() => setOpen((o) => !o)}
-            className={"min-w-0 flex items-center gap-3 text-left disabled:cursor-default shrink-0" + (inlineActs && !open ? "" : " flex-1")}
+            // It may shrink, so its line truncates: held whole, "1 overdue
+            // maintenance" ran past a phone at 200% text (#8431).
+            className={"min-w-0 flex items-center gap-3 text-left disabled:cursor-default" + (inlineActs && !open ? "" : " flex-1")}
             title={expandable ? (open ? "Collapse" : "Show the items and act on them right here") : undefined}
           >
             <span className="shrink-0">{glyph}</span>
@@ -900,7 +902,7 @@ function SetupCardsPanel({ slug }: { slug: string }) {
               <X size={15} />
             </button>
           </div>
-          <div className="grid sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {card.nextSteps.filter(stepShown).map((s, i) => (
               <button
                 key={i}
@@ -1964,7 +1966,10 @@ function PinnedView({
     // inside (the title row's min-w-0 is powerless if the card itself grew).
     // e2e/mobile-overflow.mjs guards the class.
     <div className="min-w-0 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4">
-      <div className="flex items-baseline gap-2 mb-2 min-w-0">
+      {/* The gaps and the subject's floor are px: in rem they doubled at 200%
+          text and, beside a count that never wraps, held the row past a
+          phone (#8429). */}
+      <div className="flex items-baseline gap-[8px] mb-2 min-w-0">
         <LayoutList size={13} className="text-accent shrink-0" />
         {/* Subject FIRST, then the lens: "Vehicles · By make". The view name on
             its own is a grouping, not an answer to "what is this card?".
@@ -1975,7 +1980,7 @@ function PinnedView({
             (reported 2026-07-18). */}
         {subject && (
           <>
-            <span className="font-medium text-content dark:text-mortar-100 truncate shrink-[2] min-w-[4rem]">{subject}</span>
+            <span className="font-medium text-content dark:text-mortar-100 truncate shrink-[2] min-w-[64px]">{subject}</span>
             <span className="text-faint shrink-0">·</span>
           </>
         )}

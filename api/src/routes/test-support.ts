@@ -443,6 +443,41 @@ testSupportRouter.post("/test-support/hold-tenant-connections", async (req, res,
     next(err);
   }
 });
+// Start deleting a workspace, as another request's delete does, and hold it
+// there for `ms`: its pool ends and nothing may reopen it, so a read already in
+// flight meets the deletion mid-answer (#7682). With `whenWaiting`, it begins
+// once a read is queued on the workspace's pool (a test holds the connections
+// first), so the read is surely in flight. Answers once the deletion began.
+testSupportRouter.post("/test-support/hold-workspace-deleting", async (req, res, next) => {
+  try {
+    const { slug, ms, whenWaiting } = (req.body ?? {}) as { slug?: string; ms?: number; whenWaiting?: boolean };
+    const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
+    if (!o || typeof ms !== "number") {
+      res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + ms required" } });
+      return;
+    }
+    const { evictTenantPool, getTenantPool, withTenantDeleting } = await import("../db/tenant.js");
+    if (whenWaiting) {
+      const pool = await getTenantPool(o.id);
+      const until = Date.now() + 10_000;
+      while (poolCounts(pool).waiting === 0) {
+        if (Date.now() > until) {
+          res.status(409).json({ error: { code: "nothing_waiting", message: "no read queued on this workspace's pool within 10 s" } });
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    // DETACHED: the hold is the point: it outlives this answer so the read already in flight meets it.
+    void withTenantDeleting(o.id, async () => {
+      await evictTenantPool(o.id, { drainMs: 0 });
+      await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 30_000)));
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
 testSupportRouter.post("/test-support/edits-queue-fails", async (req, res, next) => {
   try {
     const { slug, times } = (req.body ?? {}) as { slug?: string; times?: number };

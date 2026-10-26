@@ -293,6 +293,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
                   tabIndex={0}
                   onClick={() => handleItemClick(n)}
                   onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
                       handleItemClick(n);
@@ -454,7 +455,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     <div className="relative" ref={wrapperRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className={asRow ? "relative " + "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5 relative"}
+        className={asRow ? "relative " + "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-[6px] relative"}
         title={
           count === 0
             ? "Notifications"

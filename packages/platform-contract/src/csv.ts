@@ -8,7 +8,8 @@
 // spreadsheet reads as "this is text" and does not display. Numbers are
 // written as they are: -5 is a number, not a formula.
 
-const FORMULA_START = /^[=+\-@\t\r]/;
+// An existing apostrophe needs its own guard so a re-import removes only ours.
+const FORMULA_START = /^'*[=+\-@\t\r]/;
 
 /** One cell, RFC 4180: quoted when it holds a quote, a comma, a line break or
  *  edge spaces, with quotes doubled. Null and undefined are empty. */
@@ -57,7 +58,7 @@ export function csvDownloadHeaders(filename: string, complete = true): Record<st
  *  front of = + - @ comes off, so a file exported here and read back in names
  *  a record exactly as it was named. Any other text is left as written. */
 export function unguardCsvText(text: string): string {
-  return /^'[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
+  return /^'+[=+\-@\t\r]/.test(text) ? text.slice(1) : text;
 }
 
 /** Parse CSV text into rows of cells. Handles quoted cells with embedded

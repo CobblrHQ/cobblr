@@ -7,13 +7,14 @@
 
 import type { Kysely } from "kysely";
 import { z } from "zod";
+import { AssetDate } from "./asset-date.js";
 import { platform, type EntityUpdateContext, type EntityUpdateResult } from "@cobblr/platform-contract";
 import { coerceMetadata, splitFieldsForUpdate, withMetadataMerged } from "@cobblr/platform-contract/entity-metadata";
 import type { AssetsDB } from "../db.js";
 
 const EditableNative = z
   .object({
-    name: z.string().min(1).max(200),
+    name: z.string().trim().min(1, "Give this equipment a name.").max(200),
     short_name: z.string().max(40).nullable(),
     manufacturer: z.string().max(120).nullable(),
     model: z.string().max(120).nullable(),
@@ -21,11 +22,11 @@ const EditableNative = z
     excitement: z.number().int().min(0).max(5),
     quantity: z.number().int().min(0),
     serial_number: z.string().max(160).nullable(),
-    purchased_at: z.string().nullable(),
+    purchased_at: AssetDate,
     purchase_price_cents: z.number().int().min(0).max(10_000_000_000).nullable(),
     vendor: z.string().max(200).nullable(),
-    warranty_until: z.string().nullable(),
-    last_service_at: z.string().nullable(),
+    warranty_until: AssetDate,
+    last_service_at: AssetDate,
     notes: z.string().max(8_000).nullable(),
     location_id: z.string().uuid().nullable(),
     flags: z.array(z.string()),

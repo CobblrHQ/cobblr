@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { useRunAction, useToast } from "@cobblr/platform-web";
+import { runUndoSteps, undoStepsOf, useRunAction, useToast } from "@cobblr/platform-web";
 import type { TidyCandidate } from "@cobblr/platform-contract";
 import { api } from "../lib/api";
 import { useBundleDetail } from "./useBundleDetail";
@@ -33,10 +33,10 @@ export function TidySuggestionCard({ slug, suggestion }: { slug: string; suggest
       }
       await api.decideTidySuggestion(slug, id, "done");
       await refresh();
-      if (undo.length) toast.action("Moved the things you reviewed.", { actionLabel: "Undo", duration: 8000, onAction: async () => { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }, { undo: "is-undo" }); await refresh(); } });
+      if (undo.length) toast.action("Moved the things you reviewed.", { actionLabel: "Undo", duration: 8000, onAction: async () => { await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(undo)); await refresh(); } });
       else toast.success("Done.");
     } catch (err) {
-      try { for (const step of undo) await run({ actionId: step.action_id, args: step.args ?? {} }, { undo: "is-undo" }); }
+      try { await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(undo)); }
       catch (rollback) { toast.error(`Some moves could not be undone: ${(rollback as Error).message}`); }
       toast.error((err as Error).message);
     }

@@ -248,6 +248,7 @@ export function HistoryPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
                   ) : null}
                   {time(e.occurred_at)}
                   </div>
+                  {e.action === "record_returned" && <SaidList entry={{ ...e, said: e.said?.filter((c) => c.field === "repaired" || c.field === "work") }} name={name(e)} />}
                   {versions([e])}
                 </li>
               );

@@ -12,7 +12,7 @@ import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { countOf } from "@cobblr/platform-contract/plural";
-import { relativeTime, usePageTitle, useRunAction, useToast } from "@cobblr/platform-web";
+import { relativeTime, runUndoSteps, undoStepsOf, usePageTitle, useRunAction, useToast } from "@cobblr/platform-web";
 import { api, type ShareEditItem } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 
@@ -52,13 +52,14 @@ export function SuggestionsPage() {
       const r = await runAction({ actionId, ...on, args: { ids } }, { undo: "shown-here" });
       const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
       if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
-      toast.success(res.summary ?? "Done.", {
+      const back = undoStepsOf(r.undo);
+      toast.success(res.summary ?? "Done.", back.length ? {
         actionLabel: "Undo",
         onAction: async () => {
-          await runAction({ actionId: "platform:reopen-suggestions", ...on, args: { ids } }, { undo: "is-undo" });
+          await runUndoSteps((b) => runAction(b, { undo: "is-undo" }), back);
           await qc.invalidateQueries({ queryKey: key });
         },
-      });
+      } : undefined);
       await qc.invalidateQueries({ queryKey: key });
     } catch (e) {
       toast.error((e as Error).message);

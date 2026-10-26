@@ -74,13 +74,13 @@ export function ActivityPage() {
             </button>
           ))}
         </div>
-        <label className="flex items-center gap-1.5">
+        <label className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">
           <span className="uppercase tracking-widest text-[10px] text-muted">about</span>
           <input
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
             placeholder="what it was about"
-            className="input !w-44 !py-1 text-xs"
+            className="input !w-44 min-w-0 max-w-full !py-1 text-xs"
           />
         </label>
       </div>

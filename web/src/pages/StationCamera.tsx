@@ -135,12 +135,12 @@ export function StationCamera({ lens, onCode, onFlip }: { lens: StationLens; onC
           <video ref={video} muted playsInline className={`aspect-[4/3] w-full object-cover ${lens === "front" ? "-scale-x-100" : ""}`} />
         </div>
       )}
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-[12px]">
         <span className="text-base text-muted">Hold the barcode up to the {lens === "front" ? "front" : "back"} camera.</span>
         <button
           type="button"
           onClick={onFlip}
-          className="inline-flex min-h-[48px] shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-line px-4 text-lg text-content hover:border-cobble-400 dark:border-slate-600"
+          className="inline-flex min-h-[48px] min-w-0 max-w-full items-center gap-[8px] rounded-xl border border-line px-[16px] text-lg text-content hover:border-cobble-400 dark:border-slate-600"
         >
           <SwitchCamera size={20} /> Flip camera
         </button>

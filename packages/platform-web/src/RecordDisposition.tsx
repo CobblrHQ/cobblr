@@ -28,7 +28,7 @@ import { usePlatformWeb } from "./context";
 import { Modal } from "./Modal";
 import { MoneyInput } from "./MoneyInput";
 import { useToast } from "./ToastContext";
-import { undoStepsOf, useRunAction, type RunOptions } from "./run-action";
+import { runUndoSteps, undoStepsOf, useRunAction, type RunOptions } from "./run-action";
 
 const money = (n: number) => formatMoney(centsFromAmount(n));
 const PRICED: ReadonlySet<Disposition> = new Set(["sold", "traded"]);
@@ -77,7 +77,7 @@ export function RecordDisposition({
     const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], ...args } }, opts);
     const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
     if (!res?.ok) throw Object.assign(new Error(res?.error ?? "That did not go through."), { blocked: (res as { blocked?: unknown } | null)?.blocked });
-    return { said: res.summary ?? "Done.", offered: !opts?.undo && undoStepsOf(r.undo).length > 0 };
+    return { said: res.summary ?? "Done.", offered: !opts?.undo && undoStepsOf(r.undo).length > 0, back: undoStepsOf(r.undo) };
   };
 
   if (gone) {
@@ -136,7 +136,7 @@ export function RecordDisposition({
             onClick={async () => {
               setBusy(true);
               try {
-                await api.withdrawShareOffer!(orgSlug, offered.offer_id);
+                await api.withdrawShareOffer!(orgSlug, offered.offer_id, { kind, id });
                 toast.success("Withdrawn.");
                 await shares.refetch();
                 changed();
@@ -196,15 +196,22 @@ export function RecordDisposition({
           <GoneForm
             onCancel={() => setAsking(false)}
             onSave={async (args) => {
-              const { said } = await run("platform:mark-gone", args, { undo: "shown-here" });
+              const { said, back } = await run("platform:mark-gone", args, { undo: "shown-here" });
               setAsking(false);
-              toast.success(said, {
+              // The way back the action handed over, never one written here:
+              // it carries its undo_id, so a second press or an older tab's
+              // Undo is judged as the press it is (#7899).
+              toast.success(said, back.length ? {
                 actionLabel: "Undo",
                 onAction: async () => {
-                  await run("platform:bring-back", {}, { undo: "is-undo" });
+                  try {
+                    await runUndoSteps((b) => runAction(b, { undo: "is-undo" }), back);
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  }
                   changed();
                 },
-              });
+              } : undefined);
               changed();
             }}
           />

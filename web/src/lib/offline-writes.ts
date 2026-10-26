@@ -7,6 +7,7 @@ import { MutationCache, onlineManager, type Mutation, type MutationOptions, type
 import { IDEMPOTENCY_KEY, asAPersonsWrite, browserOffline, sendWaitingWrites, type WaitingWrite } from "@cobblr/platform-web";
 import { ApiError, getToken } from "./api";
 import { request } from "./api/client";
+import { EDITED_FROM_HEADER, encodeEditedFrom } from "@cobblr/platform-contract/edited-from";
 
 export const WAITING_MUTATIONS = {
   networkMode: "offlineFirst",
@@ -46,7 +47,7 @@ export function sendWaitingWritesNow(): ReturnType<typeof sendWaitingWrites> {
   const token = getToken();
   return sendWaitingWrites(token ? `Bearer ${token}` : null, async (w: WaitingWrite) => {
     try {
-      await request(w.method, w.path, w.body, { [SENDING_A_WAITING_WRITE]: "1", ...(w.key ? { [IDEMPOTENCY_KEY]: w.key } : {}) });
+      await request(w.method, w.path, w.body, { [SENDING_A_WAITING_WRITE]: "1", ...(w.key ? { [IDEMPOTENCY_KEY]: w.key } : {}), ...(w.editedFrom ? { [EDITED_FROM_HEADER]: encodeEditedFrom(w.editedFrom) } : {}) });
       return { outcome: "landed" };
     } catch (e) {
       if (e instanceof ApiError && (e.status === 0 || e.status >= 500)) return { outcome: "unreachable" };

@@ -38,9 +38,15 @@ export interface ScanRevision {
   beforeConfidence: string | null;
 }
 
+/** What a person's edit of a row changed, in the words History says. */
+export type ScanEditPart = "name" | "count" | "place" | "fields" | "category" | "table";
+
 export type ScanHistoryEntry =
   | { action: ScanRewriteAction; revision: ScanRevision; note?: string | null }
-  | { action: ScanOwnInverseAction; note?: string | null };
+  | { action: ScanOwnInverseAction; note?: string | null }
+  // A person's own edit (#8557): who, and what. An Undo that would throw a
+  // row away reads it, so someone else's edit since is never lost unseen.
+  | { action: "edit"; by: string | null; changed: readonly ScanEditPart[] };
 
 /** Every column a rewrite can change. A put-back writes all of them back. */
 export const REVISION_COLUMNS = [
@@ -215,7 +221,11 @@ export async function appendScanHistory(
       ? ((meta as { history: unknown[] }).history as unknown[])
       : [];
     const e: Record<string, unknown> = { action: entry.action, at: new Date().toISOString() };
-    if (entry.note && entry.note.trim()) e.note = entry.note.trim();
+    if ("note" in entry && entry.note && entry.note.trim()) e.note = entry.note.trim();
+    if (entry.action === "edit") {
+      e.by = entry.by;
+      e.changed = [...entry.changed];
+    }
     if ("revision" in entry) {
       e.revision = entry.revision.id;
       e.before_name = entry.revision.beforeName;

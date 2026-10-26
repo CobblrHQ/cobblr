@@ -1,6 +1,6 @@
 import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useCan, useRoleAtLeast } from "../lib/can";
-import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName } from "@cobblr/platform-web";
+import { SelectBox, useNewRecordBarcode, RecordFormModal, NewItemMenu, BulkGiveTo, BulkShareWith, CustomFieldsPanel, EditField, EditSelect, EntityActionsBar, FaceSection, FacesOn, faceShows, FieldPack, RecordFaces, editFieldItem, fieldNeed, useAskCobbAboutSelection, useTickedRows, Modal, SegmentedChoice, useToast, useConfirm, usePageTitle, usePageWidth, BackdropLayer, TILE_GRID, InboxWaitingStrip, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PresentationGate, useFaces, UsedValueInput, usedValueFieldItem, productName, useRecordEdits } from "@cobblr/platform-web";
 // /machines — list view for the machines module, with a detail
 // modal launched per row. URL pattern:
 //
@@ -1190,8 +1190,11 @@ export function MachineDetailModal({
     queryFn: () => api.getMachine(activeSlug, machineId!, instance),
     enabled: !!machineId,
   });
+  const edits = useRecordEdits(machine.data);
   const update = useMutation({
-    mutationFn: (patch: Partial<Machine>) => api.updateMachine(activeSlug, machineId!, patch, instance),
+    // Judged against the record as this page shows it: a newer save from
+    // another tab stands, or this one is refused and says so (#7925).
+    mutationFn: (patch: Partial<Machine>) => edits(patch, (e) => api.updateMachine(activeSlug, machineId!, e, instance)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["machine", activeSlug, machineId] });
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
@@ -1292,7 +1295,7 @@ export function MachineDetailModal({
               so the modal uses width instead of scrolling tall. Stacks on
               phones. */}
           <RecordFaces kind={instance ? `${instance}:item` : ENTITY_KIND}>
-          <div className="grid gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(180px,240px)_1fr]">
             <div className="space-y-2">
               {/* The photo, a suggestion in its place when it has none
                   (#3818, #4373), and the one web search. */}

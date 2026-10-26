@@ -1,0 +1,10 @@
+{
+  "lint": "lint:an-undo-runs-the-step-it-was-handed",
+  "run": "node scripts/lint-an-undo-runs-the-step-it-was-handed.ts",
+  "rows": [
+    "generic-web-component"
+  ],
+  "ms": 602,
+  "recorded": "2026-10-25",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

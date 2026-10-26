@@ -2,7 +2,7 @@ import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch } from "@cobblr/platform-web";
+import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -21,7 +21,7 @@ import { QtyStepper } from "./QtyStepper";
 import { availableOnHand } from "../stock-derived";
 import { listStockReading } from "../stock-shapes";
 import { HoldingRows, RollupLine } from "./HoldingRows";
-import { CombineSuggestionsBanner } from "./CombineSuggestions";
+import { CombineSuggestionsBanner, useCombineSuggestions } from "./CombineSuggestions";
 import { openUnitsLabel } from "./consumption/perUnit";
 import { assortedQty, isAssorted } from "./assorted";
 import { noteOf, rowOpen, TableConnectorImport, useCreateDoor, viewCardFields } from "@cobblr/platform-web";
@@ -33,7 +33,7 @@ import { NewPartDialog } from "./NewPartDialog";
 import { BulkMoveToPlace } from "./BulkMoveToPlace";
 import { ImportDialog } from "./ImportDialog";
 import { PartDetailModal } from "./PartDetailPage";
-import type { PartListItem, InvFieldDef } from "./api";
+import type { PartListItem, PartListQuery, InvFieldDef } from "./api";
 import { countOf, viewQuery } from "@cobblr/platform-contract";
 import { strayRecords } from "@cobblr/platform-contract/instance-for-category";
 import { withArticle } from "@cobblr/platform-contract/plural";
@@ -70,6 +70,7 @@ export function PartsListPage() {
   const { api, orgSlug, getToken, entityKind, itemNoun, itemNounPlural, nounWords, basePath, instance, connectorImport } = useInventory();
   const { appMode } = usePlatformWeb();
   const qc = useQueryClient();
+  const combineSuggestions = useCombineSuggestions();
   // /inventory/parts/:id keeps this list mounted and opens the detail
   // modal (D4). Closing returns to where it was opened from: this list, or a
   // floor plan's drawer (#6266); a record opened by its link closes to the list.
@@ -110,6 +111,7 @@ export function PartsListPage() {
   const noFilterBar = nothingToFilter(facets.data, activeFilters, !!search);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [adding, setAdding] = useState(false);
+  const mayCreate = useCan("inventory:create-part");
   const [addingSeveral, setAddingSeveral] = useState(false);
   // `?new=1` (a view's empty state, a card) opens the form on arrival.
   const closeCreateDoor = useCreateDoor(useCallback(() => setAdding(true), []));
@@ -232,6 +234,23 @@ export function PartsListPage() {
     queryFn: () => api.partsDoesntFit(),
     staleTime: 30_000,
   });
+  const listQuery: PartListQuery = {
+    search: search.trim() || undefined,
+    category_id: categoryId || undefined,
+    location_id: locationId || undefined,
+    state: state === "all" ? undefined : state,
+    low_stock: lowOnly || undefined,
+    hide_unavailable: hideUnavailable || undefined,
+    show_archived: archivedFilter === "include" || undefined,
+    archived_only: archivedFilter === "only" || undefined,
+    warranty_expires_within_days: warrantyWithin,
+    insured_only: insuredOnly || undefined,
+    needs_value: needsOnly || undefined,
+    doesnt_fit: misfitOnly || undefined,
+    lifecycle: lifecycle || undefined,
+    rows: byPlace ? "flat" : undefined,
+    ...viewQ,
+  };
   const parts = useInfiniteQuery({
     // entityKind (`<instance>:item`, or `inventory:part` for the default) MUST
     // be in the key — yarn + hooks are both inventory instances and the API is
@@ -244,24 +263,7 @@ export function PartsListPage() {
     ],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
-      api.listParts({
-        search: search.trim() || undefined,
-        category_id: categoryId || undefined,
-        location_id: locationId || undefined,
-        state: state === "all" ? undefined : state,
-        low_stock: lowOnly || undefined,
-        hide_unavailable: hideUnavailable || undefined,
-        show_archived: archivedFilter === "include" || undefined,
-        archived_only: archivedFilter === "only" || undefined,
-        warranty_expires_within_days: warrantyWithin,
-        insured_only: insuredOnly || undefined,
-        needs_value: needsOnly || undefined,
-        doesnt_fit: misfitOnly || undefined,
-        lifecycle: lifecycle || undefined,
-        rows: byPlace ? "flat" : undefined,
-        cursor: pageParam,
-        ...viewQ,
-      }),
+      api.listParts({ ...listQuery, cursor: pageParam }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
   // The records changed (one added, archived, a field filled), so which
@@ -274,13 +276,7 @@ export function PartsListPage() {
   async function exportCsv() {
     setExporting(true);
     try {
-      const got = await api.partsExportCsv({
-        search: search.trim() || undefined,
-        state: state === "all" ? undefined : state,
-        show_archived: archivedFilter === "include" || undefined,
-        archived_only: archivedFilter === "only" || undefined,
-        insured_only: insuredOnly || undefined,
-      });
+      const got = await api.partsExportCsv(listQuery);
       if (got.secretsOmitted) toast.info("Secret fields were left out.");
       toast.success("CSV downloaded.");
     } catch (err) {
@@ -320,7 +316,15 @@ export function PartsListPage() {
         return 0;
       });
   // Ticked rows survive a reload of this list and its filters (#4587).
-  const [selected, setSelected, clearTicks] = useTickedRows(parts.data ? partItems.map((p) => p.id) : null);
+  const [selected, setSelected, clearTicks] = useTickedRows(parts.data && !parts.hasNextPage ? partItems.map((p) => p.id) : null);
+  const shownIds = new Set(partItems.map(p => p.id));
+  const selectionPending = [...selected].some(id => !shownIds.has(id));
+  const fetchNextPage = parts.fetchNextPage;
+  // A partial page cannot establish that a saved selection was deleted.
+  // Restore its rows before offering actions that need their current data.
+  useEffect(() => {
+    if (selectionPending && parts.hasNextPage && !parts.isFetching && !parts.isError) void fetchNextPage();
+  }, [selectionPending, parts.hasNextPage, parts.isFetching, parts.isError, fetchNextPage]);
   // Things filed in the catch-all wearing a category that NAMES one of this
   // module's own lists ("Teas" on a base-Inventory row, in a workspace with a
   // Teas list) belong in that list; nobody looks for tea under Inventory. The
@@ -503,7 +507,7 @@ export function PartsListPage() {
   // changed later asks again, and the search box must stay where it is.
   // The unit vocabulary too: a stepper drawn without it is drawn again as the
   // other form, and every cell beside it moves (#7792).
-  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions) && units.settled;
+  const drawn = !useStillAsking(facets, needsValue, doesntFit, savedViews, siblingLists, cats, locs, fieldDefs, parts, recordActions, combineSuggestions) && units.settled;
 
   return (
     <div className="space-y-4">
@@ -810,7 +814,7 @@ export function PartsListPage() {
             <ScanLine size={14} /> Scan
           </Link>
         )}
-        <NewItemMenu kind="inventory:part" instance={instance}>
+        {mayCreate && <NewItemMenu kind="inventory:part" instance={instance}>
           <button
             onClick={() => setAdding(true)}
             data-testid="new-part"
@@ -818,7 +822,7 @@ export function PartsListPage() {
           >
             <Plus size={14} /> New {itemNoun}
           </button>
-        </NewItemMenu>
+        </NewItemMenu>}
       </div>
 
       {instance === "filament-types" && <FilamentCatalog />}
@@ -884,7 +888,7 @@ export function PartsListPage() {
                     ? `Tap below to add ${withArticle(noun)} by hand, or use Scan in the top bar to add one from a label.`
                     : `No ${plural} here yet. Add your first ${noun} to get started.`}
             </p>
-            {!hasFilters && (
+            {!hasFilters && mayCreate && (
               <button
                 onClick={() => setAdding(true)}
                 className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-sm font-medium px-4 py-2 transition"
@@ -944,7 +948,7 @@ export function PartsListPage() {
         : (
           <>
             {/* The same thing entered once per place: offered as one item. */}
-            {partItems.length > 1 && <CombineSuggestionsBanner />}
+            {partItems.length > 1 && <CombineSuggestionsBanner items={combineSuggestions.data?.items ?? []} />}
             {partItems.length > 0 && viewMode === "tiles" && <PartsTileGrid items={partItems} basePath={basePath} />}
             {partItems.length > 0 && viewMode === "list" && (
               <PartsTable
@@ -960,6 +964,7 @@ export function PartsListPage() {
             )}
           </>
         )}
+      {parts.isFetchNextPageError && <QueryError what={`more ${itemNounPlural.toLowerCase()}`} onRetry={() => void parts.fetchNextPage()} />}
       {parts.hasNextPage && (
         <div className="flex justify-center">
           <button
@@ -988,7 +993,7 @@ export function PartsListPage() {
       </div>
 
       {addingSeveral && <AddSeveralItems onClose={() => setAddingSeveral(false)} />}
-      {adding && (
+      {adding && mayCreate && (
         <NewPartDialog
           onClose={(created) => {
             setAdding(false);
@@ -1038,7 +1043,7 @@ export function PartsListPage() {
       <BulkActionBar
         records={{ kind: instance && instance !== "inventory" ? `${instance}:item` : "inventory:part", ids: Array.from(selected) }}
         onAskCobb={askCobb}
-        count={selected.size}
+        count={selectionPending ? 0 : selected.size}
         onClear={() => setSelected(new Set())}
         actions={
           <>
@@ -1128,15 +1133,19 @@ function useCellCommit() {
   const qc = useQueryClient();
   const toast = useToast();
   return useMutation({
+    // Judged against the row as the list showed it: a list row can be minutes
+    // stale, and a change made since is refused rather than written over (#7925).
     mutationFn: ({
       id,
       patch,
       meta,
+      shown,
     }: {
       id: string;
       patch?: Partial<Record<NativePartCol, unknown>>;
       meta?: Record<string, unknown>;
-    }) => (meta ? api.patchPartMetadata(id, meta) : api.updatePart(id, patch ?? {})),
+      shown: PartListItem;
+    }) => api.updatePart(id, meta ? editOf({ metadata: shown.metadata }, { metadata: meta }) : editOf(shown, patch ?? {})),
     onSuccess: (_r, { id, patch, meta }) => {
       // Patch the edited row in place across every cached list variant. The
       // list is an INFINITE query: invalidating it refetches every loaded page
@@ -1220,12 +1229,12 @@ function PartsTable({
     [cats.data],
   );
   const setCol = (p: PartListItem, col: NativePartCol, v: unknown) =>
-    commit.mutate({ id: p.id, patch: { [col]: v } });
+    commit.mutate({ id: p.id, patch: { [col]: v }, shown: p });
   // Send only the edited key: the server merges it into the metadata bag. A
   // list row can be minutes stale, so spreading the row's cached metadata here
   // would write those stale siblings back over anything changed since.
   const setMeta = (p: PartListItem, name: string, v: unknown) =>
-    commit.mutate({ id: p.id, meta: { [name]: v } });
+    commit.mutate({ id: p.id, meta: { [name]: v }, shown: p });
   // Honor the workspace's native-field overrides the way the create/detail
   // modals already do — a yarn instance that hides Category/Location/Min
   // shouldn't see them as table columns either. Overrides are scoped to the

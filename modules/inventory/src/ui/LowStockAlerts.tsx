@@ -26,6 +26,7 @@ export function LowStockAlerts() {
         {enabled ? "Low-stock alerts are on." : "Want to hear when stock runs low?"} One daily summary, with each item's count and minimum, through your usual notification channels.
       </p>
       <div className="flex flex-wrap items-center gap-3 text-sm">
+        {/* GATED-BY: canManage, the server's own answer for this person */}
         {canManage && (
           <button type="button" className="rounded-md border border-line dark:border-slate-700 px-3 py-2 text-sm font-medium text-content dark:text-mortar-100 hover:bg-subtle dark:hover:bg-slate-800 disabled:opacity-50" disabled={save.isPending} onClick={() => save.mutate(!enabled)}>
             {enabled ? "Turn off low-stock alerts" : "Turn on low-stock alerts"}

@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the tracking REST surface. Auth via getToken().
 // Routes mounted at /api/v1/orgs/:slug/modules/tracking/...
 
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, type Edit } from "@cobblr/platform-web";
 
 export type GoalDirection = "up" | "down" | "hit";
 
@@ -39,8 +39,8 @@ export class TrackingApiError extends Error {
 export class TrackingApi {
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { ...(extra ?? {}) };
     if (body !== undefined) headers["Content-Type"] = "application/json";
     const token = this.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -81,9 +81,10 @@ export class TrackingApi {
   createMetric(body: { name: string; unit?: string; goal_value?: number; goal_direction?: GoalDirection }) {
     return this.req<MetricSummary>("POST", "/metrics", body);
   }
-  /** Save custom fields on a metric; merged into what it holds. */
-  setMetricFields(id: string, metadata: Record<string, unknown>) {
-    return this.req<MetricSummary>("PATCH", `/metrics/${id}`, { metadata });
+  /** Save custom fields on a metric; merged into what it holds. `edit` from
+   *  editOf (#7925). */
+  updateMetric(id: string, edit: Edit<{ metadata: Record<string, unknown> }>) {
+    return this.req<MetricSummary>("PATCH", `/metrics/${id}`, edit.body, edit.headers);
   }
   deleteMetric(id: string) {
     return this.req<void>("DELETE", `/metrics/${id}`);

@@ -231,10 +231,11 @@ export async function http<T = unknown>(
   // Network-only retry: absorbs a transient "fetch failed" when http() is used
   // in a beforeAll/afterAll (which vitest's per-test retry never re-runs), but
   // does NOT retry 5xx — a test may legitimately assert one via expectStatus.
+  // The api's own "busy" is asked again unless the test expects that 503.
   const res = await fetchTransient(
     `${BASE}${path}`,
     { method: init?.method ?? "GET", headers, body },
-    { retryServerErrors: false },
+    { retryServerErrors: false, retryBusy: init?.expectStatus !== 503 },
   );
   if (init?.expectStatus !== undefined) {
     if (res.status !== init.expectStatus) {

@@ -434,6 +434,7 @@ export function recordRound(
   try {
     mkdirSync(dir, { recursive: true });
     const ask = lastUserMessage(turns);
+    // ascii-only: a cassette file name
     const slug = ask.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "turn";
     const file = join(dir, `${slug}.json`);
     const existing: Cassette = existsSync(file)

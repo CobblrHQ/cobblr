@@ -43,7 +43,7 @@ import {
 function AccountHead({ title, blurb }: { title: string; blurb?: string }) {
   return (
     <div className="border-b border-line dark:border-slate-700 pb-3">
-      <div className="flex items-baseline gap-3">
+      <div className="flex flex-wrap items-baseline gap-3">
         <UserCog size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">{title}</h1>
       </div>
@@ -119,18 +119,18 @@ function AccountCard({
       {/* The header and the blurb are the CARD's own link, to the section page.
           Pointing it at the first leaf instead would make "You" mean "Identity",
           which stays true only until somebody reorders the list. */}
-      <div className="flex items-center gap-2.5">
-        <Link to={to} className="flex items-center gap-2.5 min-w-0">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <Link to={to} className="flex items-center gap-2.5 min-w-0 max-w-full">
           <span className="w-8 h-8 rounded-lg bg-accent/10 text-accent grid place-items-center shrink-0">
             <Icon size={18} />
           </span>
-          <div className="font-medium text-content dark:text-mortar-100 truncate">{meta.label}</div>
+          <div className="min-w-0 break-words font-medium text-content dark:text-mortar-100">{meta.label}</div>
         </Link>
         {/* Beside the title, amber, exactly as Configuration renders one. */}
         {meta.action && (
           <Link
             to={meta.action.to}
-            className="shrink-0 rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
+            className="shrink-0 max-w-full rounded-md bg-amber-100 dark:bg-amber-500/20 text-amber-800 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-500/30 px-2 py-0.5 text-xs font-medium transition"
           >
             {meta.action.label}
           </Link>
@@ -335,7 +335,7 @@ function ThemeChoiceRow<T extends string | null>({
         <span className="font-medium text-content dark:text-slate-300">{label}</span>{" "}
         <span className="text-faint">— {sub}</span>
       </div>
-      <div className={"grid gap-1.5 " + (options.length >= 4 ? "grid-cols-4" : "grid-cols-3")}>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,8rem),1fr))] gap-1.5">
         {options.map((o) => {
           const selected = value === o.value;
           return (
@@ -624,7 +624,7 @@ function PasswordSection({ onChanged }: { onChanged: () => void }) {
           {change.isPending ? "updating…" : "Change password"}
         </button>
       </div>
-      <div className="border-t border-line dark:border-slate-700 pt-3 flex items-center justify-between gap-3">
+      <div className="border-t border-line dark:border-slate-700 pt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="text-xs text-muted">
           Signed in somewhere you no longer trust? Sign out of every other device.
           This one stays signed in.

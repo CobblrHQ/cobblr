@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { PopoverLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose, useLockPageScroll, useMenuFocus } from "@cobblr/platform-web";
 
 interface Props {
   /** The button. Gets the open state so it can show a pressed style. */
@@ -123,6 +123,16 @@ export function HeaderMenu({
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
   useEscapeToClose(open, menuRef, () => setOpen(false));
+  useMenuFocus(open, menuRef);
+  // The trigger says it opens a menu, and whether it is open: a screen reader
+  // announces it as one, and the walk finds every menu by it (#8423). The
+  // caller draws the button; it need not remember to.
+  useEffect(() => {
+    const button = hostRef.current?.querySelector<HTMLElement>('button, [role="button"]');
+    if (!button) return;
+    button.setAttribute("aria-haspopup", "menu");
+    button.setAttribute("aria-expanded", String(open));
+  });
 
   return (
     <span

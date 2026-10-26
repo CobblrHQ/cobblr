@@ -19,6 +19,19 @@ export function setStationTokenOverride(token: string | null): void {
   override = token;
 }
 
+const refusedListeners = new Set<() => void>();
+
+export function subscribeStationTokenRefused(listener: () => void): () => void {
+  refusedListeners.add(listener);
+  return () => { refusedListeners.delete(listener); };
+}
+
+/** A late refusal for an earlier token cannot stop a newly approved screen. */
+export function noteStationTokenRefused(token: string | null): void {
+  if (!token || token !== override) return;
+  for (const listener of refusedListeners) listener();
+}
+
 const key = (slug: string, address: string) => `cobblr.station.${slug}.${address}`;
 const LAST = "cobblr.station.last";
 

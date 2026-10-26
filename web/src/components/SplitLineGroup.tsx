@@ -14,7 +14,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, MoreHorizontal, Scissors } from "lucide-react";
-import { BackdropLayer, EntityPhoto, PopoverLayer, useCloseOnPageScroll, useEscapeToClose, useToast } from "@cobblr/platform-web";
+import { BackdropLayer, EntityPhoto, PopoverLayer, useCloseOnPageScroll, useEscapeToClose, useMenuFocus, useToast } from "@cobblr/platform-web";
 import { MetaParts } from "./MetaParts";
 import { formatStoredMoney, moneyStorageOf } from "@cobblr/platform-contract/money";
 import { alikeParts, titleWords, type AlikeField, type AlikeParts } from "@cobblr/platform-contract/split-line";
@@ -88,6 +88,7 @@ export function SplitLineGroup({
     moreBtn.current?.focus();
   };
   useEscapeToClose(!!moreAt, moreMenu, closeMore);
+  useMenuFocus(!!moreAt, moreMenu);
   useCloseOnPageScroll(!!moreAt, () => setMoreAt(null));
   const [adding, setAdding] = useState(false);
   const [opened, setOpened] = useState<string | null>(null);

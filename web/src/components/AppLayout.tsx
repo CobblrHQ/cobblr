@@ -15,9 +15,10 @@ import { Fragment, Suspense, useEffect, useRef, useState, type ReactNode } from 
 import { lazyShellHost } from "../lib/lazyShellHost";
 import { Moon, PanelLeft, PanelTop, Pin, PinOff, Sliders, Sun } from "lucide-react";
 import { ModuleOffGate } from "./ModuleOffGate";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { CobblestoneMark } from "../CobblestoneMark";
+import { BrandHomeLink } from "./BrandHomeLink";
 import { DesktopDragStrip } from "./DesktopDragStrip";
 import { NotificationsBell } from "./NotificationsBell";
 import { PhoneHeaderShortcuts } from "./PhoneHeaderShortcuts";
@@ -73,7 +74,7 @@ const GuidedTour = lazyShellHost(() => import("../tour/GuidedTour").then((m) => 
 import { useTour } from "../tour/useTour";
 import { DASHBOARD_TOUR } from "../tour/tour.config";
 import { useTheme } from "../theme/ThemeContext";
-import { FloatingChrome, useScrollToHash, useToast } from "@cobblr/platform-web";
+import { FloatingChrome, PageHoldsStill, useScrollToHash, useToast } from "@cobblr/platform-web";
 // Loaded with the shell: a ⌘K or an Add pressed before the palette or the
 // sheet has arrived is held for it from the start.
 import "./palette-events";
@@ -453,10 +454,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
         {/* The brand row is the wordmark + controls ONLY. The env chip lives on
             the workspace row below, so no badge (Staging/Dev/Test, any label
             length) can crowd "Cobblr" down to "Co..." — reported 2026-07-29. */}
-        <Link to="/" title="Home" aria-label="Home" className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
+        <BrandHomeLink className="flex items-center gap-1.5 min-w-0 shrink-0 hover:opacity-80 transition">
           <CobblestoneMark size={20} dot={envDot} />
           <span className="font-display font-extrabold text-content dark:text-mortar-100 text-[15px]">{productName()}</span>
-        </Link>
+        </BrandHomeLink>
         <span className="flex-1" />
         <span className="shrink-0">{sidebarControls}</span>
       </div>
@@ -644,7 +645,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
             moves all three together. */}
         {/* A phone on its side has the Dynamic Island or the notch at one side
             and rounded corners at both: the row keeps clear of them (#6782). */}
-        <div className="desktop-topnav-pad pl-[max(1.25rem,var(--inset-left))] pr-[max(1.25rem,var(--inset-right))] pt-1 pb-3 md:py-3 flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="desktop-topnav-pad pl-[max(20px,var(--inset-left))] pr-[max(20px,var(--inset-right))] pt-1 pb-3 md:py-3 flex items-center gap-[8px] sm:gap-[12px] min-w-0">
           {/* Nav-placement flip (desktop): top bar ⇄ left sidebar. Sits LEFT
               of the wordmark, à la Vivaldi's panel toggle. Icon shows the
               layout you'd switch TO. */}
@@ -659,16 +660,15 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
           </button>
           {/* Brand. On mobile the distinctive mark alone carries it and the
               "Cobblr" wordmark is dropped, so the WORKSPACE NAME (the real context)
-              gets that ~100px instead of truncating. Desktop keeps the full mark +
-              wordmark. */}
-          <Link
-            to="/"
-            title="Home"
-            aria-label="Home"
+              gets that ~100px instead of truncating. A wide desktop keeps the full
+              mark + wordmark; below xl it is dropped too, with the env chip moved
+              onto the mark: a phone on its side gets the desk header, and at 200%
+              text the wordmark and chip ran the account menu 135 px off (#8423). */}
+          <BrandHomeLink
             className={`relative flex items-center gap-2 hover:opacity-80 transition ${appMode && navSuffix ? "min-w-0" : "shrink-0"}`}
           >
             <CobblestoneMark size={26} dot={envDot} />
-            <span className="hidden sm:inline font-display font-extrabold text-content dark:text-mortar-100">
+            <span className="hidden xl:inline font-display font-extrabold text-content dark:text-mortar-100">
               {productName()}
             </span>
             {/* Managed app: the wordmark IS the "Cobblr", so append the suffix
@@ -685,18 +685,18 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
                 the chip ran past the wordmark it sits on (#7853). */}
             {envBanner && (
               <span
-                className={`sm:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-[4px] py-[2px] text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
+                className={`xl:hidden absolute right-0 top-1/2 -translate-y-1/2 rounded px-[4px] py-[2px] text-[9px] font-bold uppercase tracking-widest ${envBanner.chip}`}
               >
                 {envBanner.label}
               </span>
             )}
-          </Link>
+          </BrandHomeLink>
           {/* Desktop: the chip sits inline beside the wordmark (room to spare). */}
           {envBanner && (
             <button
               type="button"
               onClick={demoToast}
-              className={`hidden sm:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest ${envBanner.chip}`}
+              className={`hidden xl:inline-block shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest ${envBanner.chip}`}
               title={`You are on the ${envBanner.label} environment, not production. Click: fire a sample toast.`}
             >
               {envBanner.label}
@@ -734,13 +734,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               its platform affordances (dashboard, Configuration gear) in
               app mode. */}
           {navMode === "top" ? (
-            <nav data-tour="nav" className="hidden md:flex flex-nowrap items-center gap-0.5 flex-1 min-w-min">
-              {/* min-w-min: never narrower than the row's own minimum (Home, more, the apps door), so the workspace name truncates instead (#6782). */}
-              {/* The tour's welcome step asks the layout question itself, so
-                  the fold offer stays quiet while the tour is open: a fresh
-                  account at a narrow window got both at once. */}
-              <ModuleNav quiet={tour.open} />
-            </nav>
+            <ModuleNav quiet={tour.open} />
           ) : (
             <div className="hidden md:block flex-1 min-w-0" />
           )}
@@ -749,7 +743,7 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               row (super-admin / calendar / configuration / profile /
               theme / sign-out) is folded into UserMenu; scan, search +
               notifications stay as their own affordances. */}
-          <div data-tour="actions" className="hidden md:flex items-center gap-1 shrink-0">
+          <div data-tour="actions" className="hidden md:flex items-center gap-[4px] shrink-0">
             {/* Module-contributed critical quick-actions (e.g. scan). */}
             <HeaderActions />
             <SearchBar />
@@ -763,6 +757,10 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
               quick-action + AI launcher live here too (were desktop-only) so
               the phone navbar has the buttons, not just the hamburger. */}
           <div className="flex-1 md:hidden" />
+          {/* Each icon here is padded in px, as its icon is sized, and so are the
+              bar's sides and gaps: in rem the six of them doubled with the
+              phone's text at 200%, ran the menu 15 px off the screen (18 on a
+              320 px phone) and left the workspace name no room (#8423). */}
           <div className="shrink-0 md:hidden flex items-center gap-0.5">
             <HeaderActions />
             {/* An app-mode workspace keeps its menu to the app, the same way
@@ -865,7 +863,12 @@ export function AppLayout({ activeSlug }: { activeSlug: string }) {
                     bar went blank under "loading…" on every first load
                     (#6635). aria-busy: not settled (wait-settled.mjs). */}
                 <Suspense fallback={<div aria-busy="true" data-page-code-arriving className="min-h-[60vh]" />}>
-                  <Outlet />
+                  {/* Every page shows once its first reads have answered,
+                      so none moves a control under a finger by default
+                      (#8414); usePageShowsAtOnce opts out. */}
+                  <PageHoldsStill>
+                    <Outlet />
+                  </PageHoldsStill>
                 </Suspense>
               </AiNoticeGiven>
             </ModuleOffGate>

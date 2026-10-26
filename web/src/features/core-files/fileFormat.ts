@@ -24,3 +24,7 @@ export function formatBytes(n: number): string {
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
+
+export function deleteFileMessage(filename: string): string {
+  return `${filename} goes to Recently deleted for 30 days. It will disappear from any records using it until you restore it.`;
+}

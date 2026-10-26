@@ -189,6 +189,7 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
         onAction: async () => {
           if (!data?.stocktake_id) return;
           try {
+            // OWN-WAY-BACK: the stocktake's own row is marked undone once; a second press is refused.
             await runAction({ actionId: "inventory:undo-stocktake", args: { stocktake_id: data.stocktake_id } }, { undo: "is-undo" });
             refresh();
             toast.success(`Put ${label} back as it was.`);

@@ -70,7 +70,7 @@ for (const selector of ["html.dark:not([data-ws-themed])", ".force-dark"]) {
   for (const [name, value] of tokens) {
     if (!grounds.has(name) && name !== "line") check(`${selector} --c-${name}`, value, grounds);
   }
-  for (const utility of ["text-slate-400", "text-slate-500", "text-slate-600", "text-cobble-300"]) {
+  for (const utility of ["text-slate-300", "text-slate-400", "text-slate-500", "text-slate-600", "text-cobble-300"]) {
     const marker = `html.dark .dark\\:${utility}`;
     const ruleStart = css.indexOf(marker);
     if (ruleStart < 0) throw new Error(`${file}: missing ${marker} lift`);

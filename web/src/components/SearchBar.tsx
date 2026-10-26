@@ -168,7 +168,7 @@ export function SearchBar() {
           onClick={() => setExpanded(true)}
           title="Search"
           aria-label="Search"
-          className="text-faint dark:text-slate-500 hover:text-accent transition p-1.5"
+          className="text-faint dark:text-slate-500 hover:text-accent transition p-[6px]"
         >
           <Search size={15} />
         </button>

@@ -15,7 +15,8 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Undo2 } from "lucide-react";
 import { MoneyInput, useToast } from "@cobblr/platform-web";
-import { formatStoredMoney, roundMoneyAmount } from "@cobblr/platform-contract/money";
+import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { REFUND_ALREADY_RECORDED, suggestedPurchaseRefund } from "@cobblr/platform-contract/purchase-refund";
 import { ApiError, api, type Order, type OrderItem, type OrderReturn, type ReturnStage } from "../lib/api";
 
 const STEPS: Array<{ stage: Exclude<ReturnStage, "cancelled">; label: string; press: string }> = [
@@ -154,9 +155,9 @@ function ReturnRow({ slug, order, ret, line }: { slug: string; order: Order; ret
   const qc = useQueryClient();
   const toast = useToast();
   const money = (v: number | null) => formatStoredMoney(v, "amount", { currency: order.currency });
-  const each = line?.unit_cost != null ? Number(line.unit_cost) : null;
+  const suggestion = line ? suggestedPurchaseRefund(line, ret.qty, order.currency ?? "USD") : null;
   const [asking, setAsking] = useState(false);
-  const [amount, setAmount] = useState<number | null>(ret.refund_amount ?? (each != null ? roundMoneyAmount(each * ret.qty, order.currency ?? "USD") : null));
+  const [amount, setAmount] = useState<number | null>(ret.refund_amount ?? suggestion);
   const advance = useMutation({
     mutationFn: (body: { stage: ReturnStage; refund_amount?: number | null }) => api.advanceOrderReturn(slug, ret.id, body),
     onSuccess: (out, body) => {
@@ -164,7 +165,7 @@ function ReturnRow({ slug, order, ret, line }: { slug: string; order: Order; ret
       void qc.invalidateQueries({ queryKey: ["order", slug, order.id] });
       void qc.invalidateQueries({ queryKey: ["orders", slug] });
       setAsking(false);
-      if (!out.moved) toast.success("That return was already further along.");
+      if (!out.moved) toast.success(body.stage === "refunded" && out.return?.stage === "refunded" ? REFUND_ALREADY_RECORDED : "That return was already further along.");
       else if (body.stage === "received") toast.success(out.return?.off_shelf && line?.part_id ? "Received by the store. Its count came off the shelf." : "Received by the store.");
       else if (body.stage === "refunded") toast.success("Refund recorded. It comes off what this order cost.");
       else if (body.stage === "cancelled") toast.success("Return cancelled.");
@@ -237,7 +238,8 @@ function ReturnRow({ slug, order, ret, line }: { slug: string; order: Order; ret
             <span className="block text-xs text-muted mb-1">Refund</span>
             <MoneyInput currency={order.currency} value={amount} storage="amount" live onCommit={setAmount} ariaLabel="Refund amount" />
           </label>
-          <button type="submit" disabled={advance.isPending} className="px-3 py-1.5 rounded-md text-sm font-medium bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">
+          {amount == null && <p className="text-xs text-muted">Enter the actual refund in {order.currency ?? "USD"}.</p>}
+          <button type="submit" disabled={advance.isPending || amount == null} className="px-3 py-1.5 rounded-md text-sm font-medium bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">
             Record refund
           </button>
           <button type="button" onClick={() => setAsking(false)} className="px-3 py-1.5 rounded-md text-sm text-content dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-800">

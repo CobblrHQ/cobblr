@@ -82,7 +82,7 @@ export function ModuleNav({ quiet = false }: {
   // each one the first time it's in the DOM and recompute on resize —
   // shrinking the visible set as the window narrows, growing it back as
   // it widens. Nothing past the fold is lost; it's in "more".
-  const rowRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLElement>(null);
   const widthCache = useRef<Map<string, number>>(new Map());
   const [visibleCount, setVisibleCount] = useState(Number.MAX_SAFE_INTEGER);
   // The row's width as last measured. Zero means the desktop nav is not on
@@ -185,11 +185,12 @@ export function ModuleNav({ quiet = false }: {
 
   return (
     <>
-      <div
+      <nav
+        data-tour="nav"
         ref={rowRef}
         // Clipped sideways only, so a link's finger room above and below is
         // not cut (touch-targets.css, #6782).
-        className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-clip"
+        className="hidden md:flex items-center gap-0.5 flex-1 min-w-0 overflow-x-clip"
         style={{ minWidth: minRow }}
       >
         {!appMode && (
@@ -237,7 +238,7 @@ export function ModuleNav({ quiet = false }: {
         {/* The nav-customize control was moved out of the navbar into
             Configuration → "Customize navigation" (it's settings, not a
             nav heading). */}
-      </div>
+      </nav>
 
       <ModulePickerModal
         open={pickerScope !== null}

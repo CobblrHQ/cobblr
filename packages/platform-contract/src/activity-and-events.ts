@@ -124,6 +124,14 @@ export interface PlatformActivity {
    *  first said, since a heal's own rewrite is not an entry (#6303). A record
    *  whose entry is gone (retention) is not in the answer. */
   createdNamesMatching(orgId: string, p: { module: string; entityType: string; pattern: string; limit?: number }): Promise<Array<{ entityId: string; name: string }>>;
+  /** The newest entry of `action` on one record, or null for none: where a
+   *  run that logs its own line when it is done ends. */
+  entryOf(orgId: string, p: { entityId: string; action: string }): Promise<number | null>;
+  /** What someone else changed on these records after entry `after`, as the
+   *  sentence an Undo refuses with, or null when nobody did. The same rule an
+   *  issued Undo is judged by (#7924): the platform's own changes and the
+   *  person's own later changes do not count. */
+  changeSince(orgId: string, p: { ids: readonly string[]; after: number; userId: string | null }): Promise<string | null>;
 }
 
 export type EventHandler = (payload: unknown) => void | Promise<void>;

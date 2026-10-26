@@ -23,25 +23,31 @@ export function changedFrom<T extends Record<string, unknown>>(opened: Partial<R
   return out;
 }
 
+declare const EDIT: unique symbol;
+
+/** A save built by editOf: only the fields that changed, and what they were
+ *  when the form opened. An update helper of a record takes this, never a bare
+ *  body, so a form cannot send its old copy back unjudged (#7925). */
+export type Edit<T> = { readonly body: Partial<T>; readonly headers: Record<string, string>; readonly [EDIT]: true };
+
 /** A save from an edit form: the body holds only what changed (a `metadata`
  *  bag in `next` is judged key by key, and only its changed keys are sent),
- *  and the headers say what those fields were when the form opened. Pass both
- *  to the request; a save someone else's change would reverse is answered 409
- *  with who changed what. */
-export function editOf<T extends Record<string, unknown>>(
-  opened: Record<string, unknown>,
-  next: T,
-): { body: Partial<T>; headers: Record<string, string> } {
+ *  and the headers say what those fields were when the form opened. Hand it to
+ *  the record's update helper; a save someone else's change would reverse is
+ *  answered 409 with who changed what. `opened` is the record as the form
+ *  showed it. */
+export function editOf<T extends object>(opened: object | null | undefined, next: T): Edit<T> {
+  const was0 = (opened ?? {}) as Record<string, unknown>;
   const { metadata, ...fields } = next as Record<string, unknown>;
-  const body = changedFrom(opened, fields) as Partial<T>;
-  const was: Record<string, unknown> = Object.fromEntries(Object.keys(body).map((k) => [k, opened[k] ?? null]));
+  const body = changedFrom(was0, fields) as Record<string, unknown>;
+  const was: Record<string, unknown> = Object.fromEntries(Object.keys(body).map((k) => [k, was0[k] ?? null]));
   if (metadata && typeof metadata === "object") {
-    const before = bag(opened.metadata);
+    const before = bag(was0.metadata);
     const changed = Object.fromEntries(Object.entries(bag(metadata)).filter(([k, v]) => !sameStored(v, before[k])));
     if (Object.keys(changed).length) {
-      (body as Record<string, unknown>).metadata = changed;
+      body.metadata = changed;
       was.metadata = Object.fromEntries(Object.keys(changed).map((k) => [k, before[k] ?? null]));
     }
   }
-  return { body, headers: Object.keys(body).length ? { [EDITED_FROM_HEADER]: encodeEditedFrom(was) } : {} };
+  return { body: body as Partial<T>, headers: Object.keys(body).length ? { [EDITED_FROM_HEADER]: encodeEditedFrom(was) } : {} } as Edit<T>;
 }

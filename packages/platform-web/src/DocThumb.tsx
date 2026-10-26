@@ -79,7 +79,7 @@ export function DocThumb({
     </div>
   );
   return onOpen ? (
-    <button type="button" onClick={onOpen} title={filename} className={`block overflow-hidden ${className ?? ""}`}>
+    <button type="button" onClick={onOpen} aria-label={`Open ${filename}`} title={`Open ${filename}`} className={`block overflow-hidden ${className ?? ""}`}>
       {body}
     </button>
   ) : (

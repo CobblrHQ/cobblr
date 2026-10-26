@@ -55,7 +55,7 @@ export function ListShareFlow({ args, onClose }: { args: Record<string, unknown>
   const sample = preview.data?.sample ?? [];
   const more = (preview.data?.count ?? 0) - sample.length;
   return <Modal open onClose={onClose} title={picks.length ? (picks.length === 1 ? "Share this record" : `Share the ${picks.length} selected`) : `Share ${title}`} size="content">
-    <div className="grid gap-6 lg:grid-cols-2" data-testid="list-share-sheet">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2" data-testid="list-share-sheet">
       <div className="space-y-5">
         <section className="space-y-2" aria-labelledby="share-what">
           <h3 id="share-what" className={heading}>What's shared</h3>

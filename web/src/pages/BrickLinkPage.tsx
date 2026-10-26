@@ -10,7 +10,7 @@ import { CheckCircle2, Diff, FileText, ShoppingCart, Upload } from "lucide-react
 import { usePageTitle, usePageWidth, usePasteImage, useToast } from "@cobblr/platform-web";
 import { ApiError, api } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { formatStoredMoney, formatUnitPrice } from "@cobblr/platform-contract/money";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 interface ParsedItem {
@@ -642,7 +642,7 @@ function ParsedOrderTable({ result }: { result: ParseOrderResponse }) {
                 {line.color_id >= 0 ? line.color_id : "—"}
               </Td>
               <Td mono align="right">{line.qty}</Td>
-              <Td mono align="right">{formatStoredMoney(line.unit_price, "amount")}</Td>
+              <Td mono align="right">{formatUnitPrice(line.unit_price)}</Td>
               <Td mono align="right">{formatStoredMoney(line.line_total, "amount")}</Td>
               <Td dim>
                 {line.condition === "N" ? "New" : line.condition === "U" ? "Used" : "Any"}

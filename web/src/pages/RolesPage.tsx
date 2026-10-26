@@ -65,7 +65,7 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
 
   return (
     <div className={embedded ? "space-y-5" : "space-y-5 max-w-5xl mx-auto"}>
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-2 items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <div>
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
             custom roles
@@ -229,28 +229,33 @@ export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
         </div>
       )}
 
-      <RoleEditorModal
-        open={creating}
-        role={null}
-        actions={grantableQ.data?.items ?? []}
-        slug={activeSlug}
-        onClose={() => setCreating(false)}
-        onSaved={() => {
-          setCreating(false);
-          void qc.invalidateQueries({ queryKey: ["custom-roles", activeSlug] });
-        }}
-      />
-      <RoleEditorModal
-        open={!!editing}
-        role={editing}
-        actions={grantableQ.data?.items ?? []}
-        slug={activeSlug}
-        onClose={() => setEditing(null)}
-        onSaved={() => {
-          setEditing(null);
-          void qc.invalidateQueries({ queryKey: ["custom-roles", activeSlug] });
-        }}
-      />
+      {creating && (
+        <RoleEditorModal
+          open
+          role={null}
+          actions={grantableQ.data?.items ?? []}
+          slug={activeSlug}
+          onClose={() => setCreating(false)}
+          onSaved={() => {
+            setCreating(false);
+            void qc.invalidateQueries({ queryKey: ["custom-roles", activeSlug] });
+          }}
+        />
+      )}
+      {editing && (
+        <RoleEditorModal
+          key={editing.id}
+          open
+          role={editing}
+          actions={grantableQ.data?.items ?? []}
+          slug={activeSlug}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            void qc.invalidateQueries({ queryKey: ["custom-roles", activeSlug] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -315,13 +320,6 @@ function RoleEditorModal({
   const [name, setName] = useState(role?.name ?? "");
   const [description, setDescription] = useState(role?.description ?? "");
   const [picked, setPicked] = useState<Set<string>>(new Set(role?.capabilities ?? []));
-
-  // Re-seed when role changes.
-  useState(() => {
-    setName(role?.name ?? "");
-    setDescription(role?.description ?? "");
-    setPicked(new Set(role?.capabilities ?? []));
-  });
 
   // Grouped by owning module. A flat list of 30 checkboxes reads as noise;
   // grouped, you scan for the module you care about. The id prefix IS the
@@ -419,7 +417,7 @@ function RoleEditorModal({
                 <div className="text-[10px] uppercase tracking-widest text-accent mb-1 px-1">
                   {mod}
                 </div>
-                <div className="grid sm:grid-cols-2 gap-x-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3">
                   {list.map((a) => (
                     <label
                       key={a.action_id}

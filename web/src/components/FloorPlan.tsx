@@ -1,4 +1,4 @@
-import { RecordFormModal, Modal, isShortcut, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, Modal, editOf, isShortcut, stillAsking, useImageSrc, useToast } from "@cobblr/platform-web";
 // The floor plan — a location's children drawn where they physically stand.
 // Third lens on the same hierarchy the tree and the scanner use; every rect
 // IS a location record. Spec: docs/design-decisions/location-floor-plan.md.
@@ -606,12 +606,15 @@ function PlanFor({
   const saveKey = ["floorplan-save", slug] as const;
   const saveMeta = useMutation({
     mutationKey: saveKey,
+    // In turn: each layout write is judged against the one before it (#7925),
+    // so the second of two quick drags must not reach the server first.
+    scope: { id: `floorplan-save:${slug}` },
     // The server MERGES metadata: a key left out is kept, and only null removes
     // one. The geometry helpers return the whole bag they want, deleting
     // `floorplan` when nothing is left in it, so the bag itself would never
     // take a place off the plan; the patch between the two does.
     mutationFn: (p: { id: string; metadata: Record<string, unknown>; before: Record<string, unknown> | null | undefined }) =>
-      api.updateLocation(slug, p.id, { metadata: jsonbPatchBetween(p.before, p.metadata) }),
+      api.updateLocation(slug, p.id, editOf({ metadata: p.before }, { metadata: jsonbPatchBetween(p.before, p.metadata) })),
     onMutate: async (p) => {
       await qc.cancelQueries({ queryKey: listKey });
       const before = qc.getQueryData<LocList>(listKey)?.items.find((l) => l.id === p.id)?.metadata;
@@ -698,14 +701,14 @@ function PlanFor({
   };
 
   const rename = useMutation({
-    mutationFn: (p: { id: string; name: string }) => api.updateLocation(slug, p.id, { name: p.name }),
+    mutationFn: (p: { id: string; name: string; was: string }) => api.updateLocation(slug, p.id, editOf({ name: p.was }, { name: p.name })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
 
   const reparent = useMutation({
-    mutationFn: (p: { id: string; parent_id: string; label: string }) =>
-      api.updateLocation(slug, p.id, { parent_id: p.parent_id }),
+    mutationFn: (p: { id: string; parent_id: string; label: string; was: string | null }) =>
+      api.updateLocation(slug, p.id, editOf({ parent_id: p.was }, { parent_id: p.parent_id })),
     onSuccess: (_r, p) => {
       toast.success(`Moved into ${p.label}`);
       invalidate();
@@ -941,7 +944,7 @@ function PlanFor({
             note(`Moved ${loc.name} into ${label}`, [
               { kind: "place", id: loc.id, before: { parent_id: loc.parent_id, metadata: base }, after: { parent_id: target, metadata } },
             ]);
-            reparent.mutate({ id: loc.id, parent_id: target, label });
+            reparent.mutate({ id: loc.id, parent_id: target, label, was: loc.parent_id });
             rememberMeta(`place:${loc.id}`, metadata);
             saveMeta.mutate({ id: loc.id, before: base, metadata });
             return;
@@ -1815,6 +1818,7 @@ function PlanFor({
             canDrag={edit}
             shelf={t.shelfId ? (sized.fits.find((f) => f.shelfId === t.shelfId) ?? null) : null}
             planEl={planRef.current}
+            planPx={planPx}
             onOpen={() => {
               const href = routeFor(t.kind, t.id);
               if (href) navigate(href);
@@ -1915,7 +1919,7 @@ function PlanFor({
           }}
           onRename={(loc, name) => {
             note(`Renamed ${loc.name} to ${name}`, [{ kind: "place", id: loc.id, before: { name: loc.name }, after: { name } }]);
-            rename.mutate({ id: loc.id, name });
+            rename.mutate({ id: loc.id, name, was: loc.name });
           }}
           onOpen={(loc) => setPeekId(loc.id)}
           onTurn={turnPlace}
@@ -1983,7 +1987,7 @@ function PlanFor({
           children={ownContainers}
           onPlaced={async (loc, rect) => {
             const metadata = withRect(loc.metadata, rect, { keepFace: hasOwnLayout(loc.metadata) || (placedByOwner.get(loc.id)?.length ?? 0) > 0 });
-            await api.updateLocation(slug, loc.id, { metadata: jsonbPatchBetween(loc.metadata, metadata) });
+            await api.updateLocation(slug, loc.id, editOf(loc, { metadata: jsonbPatchBetween(loc.metadata, metadata) }));
             return { kind: "place", id: loc.id, before: { metadata: loc.metadata }, after: { metadata } } satisfies PlanChange;
           }}
           onClose={() => setDrawersOpen(false)}
@@ -2029,7 +2033,7 @@ function PlanFor({
   // Drawn once everything it draws has answered: drawn from the places
   // alone, the drawers, the things in them and their sizes arrived one by one
   // and moved what is on the plan and below it (#7791).
-  const waiting = [locs, tags, held, holders, ...attachedTags].some(stillAsking) || placeableLoading || kindDefsPending || sized.pending;
+  const waiting = [locs, tags, held, holders, ...attachedTags].some(stillAsking) || placeableLoading || kindDefsPending || sized.pending || (sized.things.length > 0 && planPx === 0);
   // Laid out all the same, invisible, so the drawing is measured at its real
   // width and shows already laid out.
   const shown = (
@@ -2573,7 +2577,7 @@ function BoundSetup({
     onSet({ w_mm: wmm, d_mm: dmm, unit, view });
   };
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
+    <span className="flex w-full min-w-0 flex-wrap items-center gap-1.5">
       <input
         value={w}
         onChange={(e) => setW(e.target.value)}

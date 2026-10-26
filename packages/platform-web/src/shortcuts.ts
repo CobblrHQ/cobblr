@@ -92,6 +92,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     binds: ["ArrowUp", "ArrowDown"],
   },
   {
+    id: "first-last",
+    keys: ["Home", "End"],
+    does: "The first choice, or the last",
+    where: "An open menu",
+    binds: ["Home", "End"],
+  },
+  {
     id: "previous",
     keys: ["←"],
     does: "The previous photo, or the previous step of the tour",
@@ -130,7 +137,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
     id: "tab",
     keys: ["Tab"],
     does: "The next control, Shift+Tab the one before; in the chat box, take the suggested wording",
-    where: "Everywhere; inside a dialog it stays inside the dialog",
+    where: "Everywhere; inside a dialog or an open menu it stays inside it",
     binds: ["Tab"],
   },
 ];

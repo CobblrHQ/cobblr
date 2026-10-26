@@ -430,7 +430,7 @@ export function EmbroideryPage() {
       )}
       <section className={panel}>
         <h2 className="text-sm font-semibold">Machine and hoop</h2>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <label>
             Machine
             <select
@@ -592,7 +592,7 @@ export function EmbroideryPage() {
             <fieldset className="space-y-3">
               <legend>Usable hoops</legend>
               {config.hoops.map((h, i) => (
-                <div className="grid gap-3 sm:grid-cols-4" key={i}>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-4" key={i}>
                   <label>
                     Hoop name
                     <input
@@ -687,7 +687,7 @@ export function EmbroideryPage() {
                 ))}
               </div>
             </fieldset>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <label>
                 Stitches per minute
                 <NumberField
@@ -1217,7 +1217,7 @@ export function EmbroideryPage() {
           and code to your thread's Inventory record. Confirm the physical
           colour.
         </p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label>
             Brand chart
             <select
@@ -1248,7 +1248,7 @@ export function EmbroideryPage() {
           </label>
         </div>
         {chart.error && <p role="alert">{message(chart.error)}</p>}
-        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {chart.data?.items.map((t) => (
             <li
               key={`${t.brand}:${t.code}`}

@@ -105,7 +105,9 @@ export function BellPushRow({ onNavigate }: { onNavigate: () => void }) {
         failed: (
           <>
             <AlertTriangle size={14} className="text-ember-600 dark:text-ember-300 shrink-0 self-start mt-0.5" aria-hidden />
-            <span className="flex-1 min-w-[12rem]" role="alert" data-testid="bell-push-problem">
+            {/* Its floor is 12rem or the room beside the sign, whichever is
+                less: 12rem is 384 px at 200% text, wider than a phone (#8431). */}
+            <span className="flex-1 min-w-[min(12rem,calc(100%_-_22px))]" role="alert" data-testid="bell-push-problem">
               {failure?.says} {failure?.next}
             </span>
             <button type="button" className={act} disabled={turnOn.isPending} onClick={() => turnOn.mutate()} data-testid="bell-push-retry">

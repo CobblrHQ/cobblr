@@ -68,9 +68,11 @@ export function RunningLowOffer({ lists }: { lists: ListSummary[] }) {
   return (
     <div className="rounded-lg border border-line dark:border-slate-700 px-3 py-2.5 flex flex-wrap items-center gap-2 text-sm" data-testid="running-low-offer">
       <ShoppingCart size={15} className="text-accent shrink-0" aria-hidden />
+      {/* The sentence's floor is 12rem or the room beside the cart, whichever
+          is less: at 200% text 12rem is 384 px, wider than a phone (#8432). */}
       {on ? (
         <>
-          <span className="flex-1 min-w-[12rem] text-content dark:text-mortar-100">
+          <span className="flex-1 min-w-[min(12rem,calc(100%_-_23px))] text-content dark:text-mortar-100">
             Things running low go on <strong>{wireListName(on, lists)}</strong> by themselves.
           </span>
           {!on.bundle_id && (
@@ -83,7 +85,7 @@ export function RunningLowOffer({ lists }: { lists: ListSummary[] }) {
         <span className="flex-1 text-muted">Make a list, and things running low can go on it by themselves.</span>
       ) : (
         <>
-          <span className="flex-1 min-w-[12rem] text-content dark:text-mortar-100">Add running-low items to a list automatically?</span>
+          <span className="flex-1 min-w-[min(12rem,calc(100%_-_23px))] text-content dark:text-mortar-100">Add running-low items to a list automatically?</span>
           <select aria-label="Which list" value={listId} onChange={(e) => setPick(e.target.value)} className="input !w-auto text-xs">
             {lists.map((l) => (
               <option key={l.id} value={l.id}>

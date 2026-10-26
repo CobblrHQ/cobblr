@@ -168,6 +168,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
   const goesAt = toast.duration > 0 ? shownAt + toast.duration : undefined;
 
   useEffect(() => {
+    if (busy) return undefined;
     if (toast.duration > 0) {
       timerRef.current = window.setTimeout(() => dismiss(toast.id), toast.duration);
       return () => {
@@ -175,7 +176,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
       };
     }
     return undefined;
-  }, [toast.id, toast.duration, dismiss]);
+  }, [toast.id, toast.duration, dismiss, busy]);
 
   async function handleAction() {
     if (!toast.onAction || busy) return;
@@ -207,6 +208,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
         palette.container
       }
       role="status"
+      aria-busy={busy || undefined}
       aria-live={toast.kind === "error" ? "assertive" : "polite"}
       data-shown-at={shownAt}
       data-goes-at={goesAt}
@@ -228,6 +230,7 @@ function ToastCard({ toast, dismiss }: { toast: Toast; dismiss: (id: number) => 
             </button>
             <button
               onClick={handleSecondary}
+              disabled={busy}
               className="text-xs text-muted hover:text-slate-800 dark:hover:text-slate-200"
             >
               {toast.secondaryLabel ?? "Dismiss"}

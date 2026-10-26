@@ -4,7 +4,7 @@ import { Pencil } from "lucide-react";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { usePlatformWeb } from "./context";
 import { FooterActionPopover } from "./FooterActionPopover";
-import { useRunAction } from "./run-action";
+import { undoStepsOf, useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 import { FieldValueEditor } from "./CustomFieldsPanel";
 import { FieldPack } from "./FieldPack";
@@ -55,10 +55,10 @@ function SetFieldForm({ records, fields, close, onDone }: { records: Ref[]; fiel
         if (!result?.ok) throw new Error(result?.error ?? "That did not go through.");
         const skipped = result.data?.failed ?? [];
         setFailed(skipped);
-        const steps = (Array.isArray(out.undo) ? out.undo : out.undo ? [out.undo] : []) as Array<{ action_id: string; args: Record<string, unknown> }>;
+        const steps = undoStepsOf(out.undo);
         if (steps.length) toast.action(result.summary ?? "Fields changed.", { actionLabel: "Undo", onAction: async () => {
           for (const step of steps) {
-            const back = await run({ actionId: step.action_id, entityKind: "", entityId: "", args: step.args }, { undo: "is-undo" });
+            const back = await run({ actionId: step.action_id, entityKind: "", entityId: "", undo_id: step.undo_id, args: step.args ?? {} }, { undo: "is-undo" });
             const restored = back.result as Result;
             if (!restored?.ok) { toast.error(restored?.error ?? "The batch could not be undone."); return; }
             const failures = restored.data?.failed ?? [];

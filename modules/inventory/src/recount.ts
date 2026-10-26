@@ -9,6 +9,7 @@
 // records changes while it is open: the reconcile at the end is previewed
 // and applied in one step, with one Undo, the way "What's still here?" is.
 import { sql, type Kysely } from "kysely";
+import { withRecountLock } from "./recount-lock.js";
 import { ActionRefusal, placeLine, platform, viewQuery } from "@cobblr/platform-contract";
 import { readSavedView } from "@cobblr/platform-contract/saved-view-reader";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -258,7 +259,13 @@ export async function scanIntoRecount(
   id: string,
   input: RecountScanInput & { place_id?: string | null; amount?: number | null; type_id?: string | null },
 ): Promise<RecountScanResult> {
-  const t = await db(orgId);
+  return withRecountLock(orgId, id, trx => scanIntoRecountLocked(trx, orgId, userId, id, input));
+}
+
+async function scanIntoRecountLocked(
+  t: Kysely<InventoryDB>, orgId: string, userId: string | null, id: string,
+  input: RecountScanInput & { place_id?: string | null; amount?: number | null; type_id?: string | null },
+): Promise<RecountScanResult> {
   const row = await t.selectFrom("inventory_recounts").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) throw new ActionRefusal("That recount no longer exists.");
   if (row.status !== "open") throw new ActionRefusal(`The recount of ${row.scope_label} is finished. Start a new one to scan again.`);
@@ -335,12 +342,16 @@ async function withNew(t: Kysely<InventoryDB>, id: string, p: { seen: number; ex
 /** Take a scan back out (a mis-scan, or the wrong pick): the record it
  *  counted is expected again. */
 export async function removeRecountScan(orgId: string, id: string, scanId: string): Promise<{ title: string; label: string }> {
-  const t = await db(orgId);
+  return withRecountLock(orgId, id, trx => removeRecountScanLocked(trx, id, scanId));
+}
+
+async function removeRecountScanLocked(t: Kysely<InventoryDB>, id: string, scanId: string): Promise<{ title: string; label: string }> {
   const row = await t.selectFrom("inventory_recounts").select(["status", "scope_label"]).where("id", "=", id).executeTakeFirst();
   if (!row) throw new ActionRefusal("That recount no longer exists.");
   if (row.status !== "open") throw new ActionRefusal(`The recount of ${row.scope_label} is finished.`);
   const gone = await t.deleteFrom("inventory_recount_scans").where("id", "=", scanId).where("recount_id", "=", id).returning("title").executeTakeFirst();
   if (!gone) throw new ActionRefusal("That scan is not in this recount.");
+  await t.updateTable("inventory_recounts").set({ updated_at: new Date() }).where("id", "=", id).execute();
   return { title: gone.title, label: row.scope_label };
 }
 

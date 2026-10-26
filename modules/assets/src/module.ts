@@ -124,9 +124,8 @@ export default defineModule({
   contributes: {
     fieldDefs: [
       { entity_kind: "assets:asset", name: "assigned_to", display_label: "Who has it", type: "person" as const, field_role: "assignee" as const }, // VOCAB-ENUMERATION OK: declares what this field means
-      // When a lent thing is due back: a date named like a deadline, so Needs
-      // you raises it once it is overdue with no code of its own.
-      { entity_kind: "assets:asset", name: "due_back", display_label: "Due back", type: "date" as const },
+      // The explicit role lets reminder sweeps find this deadline too.
+      { entity_kind: "assets:asset", name: "due_back", display_label: "Due back", type: "date" as const, field_role: "due" as const },
     ],
   },
 

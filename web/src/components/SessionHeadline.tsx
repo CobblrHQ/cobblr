@@ -11,6 +11,11 @@
 // separator and all, so no "·" is left hanging; the long form is on the
 // tooltip.
 //
+// The order is decided here, one step at a time, never by flex-shrink: shrink
+// takes from every part at once in proportion, so a date that lost a fraction
+// of a pixel dropped while the order number kept its room. A receipt read
+// "STITCH & SPARK · #77142 · 1" at 393px with no date (#8541).
+//
 // It was three separate spans with no order, and the order number sat in a
 // no-shrink tail beside the date and count. A long invoice number took the
 // whole line: the row opened on "· #REVIEW-2026-…", the merchant was gone,
@@ -83,12 +88,39 @@ export function SessionHeadline({
 }) {
   const ref = orderRef ? `${SEP}#${orderRef}` : null;
   const items = count == null ? null : `${count} item${count === 1 ? "" : "s"}`;
+  // What gives way, in order, once the order number has nothing left: the word
+  // "items", then the count, then the date. After the last, the name shrinks.
+  const steps = [...(items ? (["countShort", "countGone"] as const) : []), ...(date ? (["dateGone"] as const) : [])];
+  const [given, setGiven] = useState(0);
+  const box = useRef<HTMLSpanElement>(null);
+  const key = [name, nameFits?.join("\u0000"), orderRef, date, count].join("\u0001");
+  useLayoutEffect(() => setGiven(0), [key]);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (el && given < steps.length && el.scrollWidth > el.clientWidth + 0.5) setGiven(given + 1);
+  });
+  useLayoutEffect(() => {
+    const line = box.current?.parentElement;
+    if (!line || typeof ResizeObserver === "undefined") return;
+    let last = line.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (line.clientWidth !== last) {
+        last = line.clientWidth;
+        setGiven(0);
+      }
+    });
+    ro.observe(line);
+    return () => ro.disconnect();
+  }, []);
+  const gone = new Set(steps.slice(0, given));
+  const nameGives = given >= steps.length;
+  const countText = !items || gone.has("countGone") ? null : gone.has("countShort") ? `${SEP}${count}` : `${SEP}${items}`;
   return (
-    <span data-session-headline className="flex min-w-0 items-baseline">
+    <span ref={box} data-session-headline className="flex min-w-0 items-baseline overflow-hidden">
       {nameFits?.length ? (
-        <Fit variants={nameFits} title={nameFits[0]} shrink="shrink" isName />
+        <Fit variants={nameFits} title={nameFits[0]} shrink={nameGives ? "shrink" : "shrink-0"} isName />
       ) : (
-        <span data-headline-name className="truncate min-w-[6ch] shrink">
+        <span data-headline-name className={`truncate ${nameGives ? "min-w-[6ch] shrink" : "shrink-0"}`}>
           {name}
         </span>
       )}
@@ -111,16 +143,16 @@ export function SessionHeadline({
             {ref}
           </span>
         ))}
-      {date && (
+      {date && !gone.has("dateGone") && (
         // The separator goes with its word: a date that does not fit leaves
         // nothing behind, never "Oct 12 ·" (#6095).
-        <span data-session-date title={dateTitle} className="flex min-w-0 shrink-[1000] font-normal text-faint">
-          <Fit variants={[`${SEP}${date}`, ""]} shrink="shrink-[1000]" />
+        <span data-session-date title={dateTitle} className="shrink-0 whitespace-nowrap font-normal text-faint">
+          {`${SEP}${date}`}
         </span>
       )}
-      {items && (
-        <span data-headline-count className="flex min-w-0 shrink-[10000] font-normal text-faint" title={items}>
-          <Fit variants={[`${SEP}${items}`, `${SEP}${count}`, ""]} shrink="shrink-[10000]" />
+      {countText && (
+        <span data-headline-count className="shrink-0 whitespace-nowrap font-normal text-faint" title={items ?? undefined}>
+          {countText}
         </span>
       )}
     </span>

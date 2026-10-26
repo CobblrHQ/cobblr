@@ -1,3 +1,4 @@
+import { type Edit } from "@cobblr/platform-web";
 import { request } from "./client";
 
 /** Built-in renderers Cobblr's web UI knows how to draw against a
@@ -109,11 +110,13 @@ export const catalogsApi = {
       `/orgs/${slug}/modules/core-catalogs/catalogs`,
       body,
     ),
-  updateCatalog: (slug: string, id: string, body: Partial<Catalog>) =>
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateCatalog: (slug: string, id: string, edit: Edit<Catalog>) =>
     request<Catalog>(
       "PATCH",
       `/orgs/${slug}/modules/core-catalogs/catalogs/${id}`,
-      body,
+      edit.body,
+      edit.headers,
     ),
   deleteCatalog: (slug: string, id: string) =>
     request<void>(

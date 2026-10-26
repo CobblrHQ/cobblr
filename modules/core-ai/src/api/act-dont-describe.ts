@@ -86,7 +86,7 @@ export function actionNamedIn(reply: string, actionNames: Iterable<string>): str
     const needle = name.toLowerCase();
     if (!hay.includes(needle)) continue;
     // A whole phrase, not a fragment of a longer word.
-    if (!new RegExp(`(^|[^a-z0-9])${escapeRe(needle)}([^a-z0-9]|$)`).test(hay)) continue;
+    if (!new RegExp(`(^|[^\\p{L}\\p{M}\\p{N}])${escapeRe(needle)}([^\\p{L}\\p{M}\\p{N}]|$)`, "u").test(hay)) continue;
     if (!best || name.length > best.length) best = name;
   }
   return best;

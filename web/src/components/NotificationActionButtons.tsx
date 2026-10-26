@@ -21,9 +21,10 @@
 // subject's own record): component state alone forgot a Deny the moment the
 // popover closed (#3594).
 
-import { useState } from "react";
+import { useId, useState } from "react";
+import { REPLY_ACTION_ID, REPLY_MAX } from "@cobblr/platform-contract/notifications";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { relativeTime, undoStepsOf, useRunAction } from "@cobblr/platform-web";
+import { relativeTime, runUndoSteps, undoStepsOf, useRunAction } from "@cobblr/platform-web";
 import { api, ApiError, type CrossOrgNotificationEntry } from "../lib/api";
 import { notificationKeys } from "../lib/notification-keys";
 import { repeatsMessage } from "../lib/notification-lines";
@@ -54,9 +55,7 @@ function UndoPress({ undo, onUndone }: { undo: unknown; onUndone: () => void }) 
         e.stopPropagation();
         setState("busy");
         try {
-          for (const step of undoStepsOf(undo)) {
-            await run({ actionId: step.action_id, ...(step.entity_kind !== undefined ? { entityKind: step.entity_kind } : {}), ...(step.entity_id !== undefined ? { entityId: step.entity_id } : {}), args: step.args ?? {} }, { undo: "is-undo" });
-          }
+          await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(undo));
           onUndone();
         } catch {
           setState("failed");
@@ -90,11 +89,17 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
   /** The way back for what was pressed here, by the same key. */
   const [undos, setUndos] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<{ actionId: string; rowKey: string } | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const replyFieldId = useId();
   const press = useMutation({
-    mutationFn: ({ actionId }: { actionId: string; rowKey: string }) => api.pressNotificationAction(n.id, actionId),
+    mutationFn: ({ actionId, body }: { actionId: string; rowKey: string; body?: string }) =>
+      api.pressNotificationAction(n.id, actionId, body === undefined ? undefined : { body }),
     onSuccess: (r, vars) => {
       setError(null);
-      setDone((d) => ({ ...d, [vars.rowKey]: r.label }));
+      setDone((d) => ({ ...d, [vars.rowKey]: vars.actionId === REPLY_ACTION_ID ? "Reply sent." : r.label }));
+      setReplyTo(null);
+      setReplyBody(""); // own-words: the reply box and Cancel are disabled while sending.
       setUndos((u) => (r.undo?.length ? { ...u, [vars.rowKey]: r.undo } : u));
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
     },
@@ -131,12 +136,55 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
         // Both inboxes navigate on a row click; a button is a different
         // instruction and must not also move you.
         e.stopPropagation();
-        press.mutate({ actionId: a.id, rowKey });
+        if (a.id === REPLY_ACTION_ID) {
+          setError(null);
+          setReplyTo({ actionId: a.id, rowKey });
+        } else {
+          press.mutate({ actionId: a.id, rowKey });
+        }
       }}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
       className={"max-w-full [overflow-wrap:anywhere] " + STYLES[a.style ?? "secondary"]}
     >
       {label}
     </button>
+  );
+
+  const replyEditor = (rowKey: string) => replyTo?.rowKey === rowKey && (
+    <form
+      className="w-full min-w-0 space-y-2"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const body = replyBody.trim();
+        if (body && !press.isPending) press.mutate({ ...replyTo, body });
+      }}
+    >
+      <label htmlFor={replyFieldId} className="block text-xs font-medium">Your reply</label>
+      <textarea
+        id={replyFieldId}
+        autoFocus
+        value={replyBody}
+        onChange={(e) => setReplyBody(e.target.value)}
+        maxLength={REPLY_MAX}
+        rows={3}
+        required
+        disabled={press.isPending}
+        className="input w-full resize-y"
+      />
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={press.isPending || !replyBody.trim()} className={STYLES.primary}>
+          {press.isPending ? "Sending…" : "Send reply"}
+        </button>
+        <button type="button" disabled={press.isPending} className={STYLES.secondary} onClick={() => {
+          setReplyTo(null);
+          setReplyBody("");
+          setError(null);
+        }}>Cancel</button>
+      </div>
+    </form>
   );
 
   const rows = n.card?.rows;
@@ -164,10 +212,11 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
               ) : (
                 <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5">{acts.map((a) => buttonFor(a, key, a.short ?? a.label))}</span>
               )}
+              {replyEditor(key)}
             </div>
           );
         })}
-        {error && <span className="text-[11px] text-ember-500">{error}</span>}
+        {error && <span role="alert" className="text-[11px] text-ember-500">{error}</span>}
       </div>
     );
   }
@@ -182,7 +231,8 @@ export function NotificationActionButtons({ n }: { n: CrossOrgNotificationEntry 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
       {(n.actions ?? []).map((a) => buttonFor(a, "", a.label))}
-      {error && <span className="text-[11px] text-ember-500">{error}</span>}
+      {replyEditor("")}
+      {error && <span role="alert" className="text-[11px] text-ember-500">{error}</span>}
     </div>
   );
 }

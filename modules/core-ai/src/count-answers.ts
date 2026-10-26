@@ -15,6 +15,7 @@
 // it always did.
 
 import type { KindWords } from "./live-answers.js";
+import { normQuestion } from "./question-text.js";
 
 export interface KindFields extends KindWords {
   /** Exposed field names, as the tool result will carry them. */
@@ -33,11 +34,13 @@ export type CountQuestion =
     }
   | { kind: "most-of"; field: string; entityKinds: string[] };
 
-const norm = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9'\s]+/g, " ").replace(/\s+/g, " ").trim();
+const norm = normQuestion;
 
 /** Words that name nothing on their own, so "how many things" is not a count of "things". */
 const EMPTY_NOUN = /^(?:things?|items?|entries|stuff|of them|them|these|those|rec(?:ord)?s?)$/;
+
+/** The value being counted: words of any script, a hyphen inside one. */
+const VALUE = String.raw`[\p{L}\p{N}][\p{L}\p{M}\p{N}' -]*?`;
 
 const singular = (w: string): string =>
   w.endsWith("ies") ? `${w.slice(0, -3)}y` : w.endsWith("ses") || w.endsWith("xes") ? w.slice(0, -2) : w.endsWith("s") ? w.slice(0, -1) : w;
@@ -80,14 +83,14 @@ export function countQuestionOf(message: string, kinds: KindFields[]): CountQues
   }
 
   // "how many bambus", "how many bambu printers", "how many things mention pla"
-  const howMany = /\bhow many\s+(?:of\s+(?:my|the|our)\s+)?([a-z0-9][a-z0-9' ]*?)(?:\s+(?:do|have|are|is|does|did|in|under|left|remain)\b.*)?\s*\??$/.exec(m);
+  const howMany = new RegExp(String.raw`\bhow many\s+(?:of\s+(?:my|the|our)\s+)?(${VALUE})(?:\s+(?:do|have|are|is|does|did|in|under|left|remain)\b.*)?\s*\??$`, "u").exec(m);
   if (howMany) return countText(howMany[1]!.trim(), kinds);
 
   // "do I have any deltas", "any deltas?", "is there a delta", "are there any bambus"
   const TAIL = "(?:\\s+(?:left|here|at all|around|in stock|in (?:my |the )?[a-z ]+))?";
   const any =
-    new RegExp(`^(?:do i have|have i got|is there|are there|got)\\s+(?:any\\s+|a\\s+|an\\s+)?([a-z0-9][a-z0-9' ]*?)${TAIL}\\s*\\??$`).exec(m) ??
-    new RegExp(`^any\\s+([a-z0-9][a-z0-9' ]*?)${TAIL}\\s*\\??$`).exec(m);
+    new RegExp(`^(?:do i have|have i got|is there|are there|got)\\s+(?:any\\s+|a\\s+|an\\s+)?(${VALUE})${TAIL}\\s*\\??$`, "u").exec(m) ??
+    new RegExp(`^any\\s+(${VALUE})${TAIL}\\s*\\??$`, "u").exec(m);
   if (any) return countText(any[1]!.trim(), kinds);
 
   return null;

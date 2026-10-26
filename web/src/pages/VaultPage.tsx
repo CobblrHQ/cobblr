@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Lock } from "lucide-react";
-import { downloadBlob, raisePersonalDocument, useConfirm, useLater, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
+import { downloadBlob, raisePersonalDocument, useConfirm, useFieldDraft, useLater, usePageTitle, usePasteImage, useToast, OnceQuiet } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useAuth } from "../auth/AuthContext";
 import { api, type VaultEvent, type VaultFile, type VaultFolder } from "../lib/api";
@@ -50,7 +50,7 @@ function said(e: VaultEvent): string {
 export function VaultPage() {
   const { folderId } = useParams();
   usePageTitle("Vault");
-  return folderId ? <FolderView folderId={folderId} /> : <FolderList />;
+  return folderId ? <OnceQuiet key={folderId}><FolderView folderId={folderId} /></OnceQuiet> : <FolderList />;
 }
 
 function Explainer() {
@@ -274,7 +274,10 @@ function FolderView({ folderId }: { folderId: string }) {
           ))}
         </ul>
       )}
-      {f.mine && <OwnerPanel folder={f} onChanged={refresh} onDeleted={() => navigate("/vault")} />}
+      {f.mine && <OwnerPanel folder={f} onChanged={refresh} onDeleted={() => {
+        void qc.invalidateQueries({ queryKey: ["vault-folders", activeSlug] });
+        navigate("/vault");
+      }} />}
     </div>
   );
 }
@@ -286,7 +289,7 @@ function OwnerPanel({ folder, onChanged, onDeleted }: { folder: VaultFolder & { 
   const members = useQuery({ queryKey: ["members", activeSlug], queryFn: () => api.listMembers(activeSlug), enabled: !!activeSlug });
   const history = useQuery({ queryKey: ["vault-history", activeSlug, folder.id], queryFn: () => api.vaultHistory(activeSlug, folder.id), enabled: !!activeSlug });
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const [name, setName] = useState(folder.name);
+  const name = useFieldDraft(folder.name);
   const chosen = picked ?? new Set(folder.people.map((p) => p.id));
   const self = members.data?.self.user_id;
   const save = useMutation({
@@ -336,7 +339,8 @@ function OwnerPanel({ folder, onChanged, onDeleted }: { folder: VaultFolder & { 
           onSubmit={async (e) => {
             e.preventDefault();
             try {
-              await api.vaultUpdateFolder(activeSlug, folder.id, { name: name.trim() });
+              await api.vaultUpdateFolder(activeSlug, folder.id, { name: name.draft.trim() });
+              name.committed(name.draft);
               toast.success("Renamed.");
               onChanged();
             } catch (err) {
@@ -345,8 +349,8 @@ function OwnerPanel({ folder, onChanged, onDeleted }: { folder: VaultFolder & { 
           }}
         >
           <label className="sr-only" htmlFor="vault-folder-name">Folder name</label>
-          <input id="vault-folder-name" value={name} onChange={(e) => setName(e.target.value)} className="flex-1 min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-sm" />
-          <button type="submit" className={btn} disabled={!name.trim() || name.trim() === folder.name}>Rename</button>
+          <input id="vault-folder-name" value={name.draft} onChange={(e) => name.setDraft(e.target.value)} className="flex-1 min-w-0 rounded-md border border-line bg-surface px-3 py-2 text-sm" />
+          <button type="submit" className={btn} disabled={!name.draft.trim() || name.draft.trim() === folder.name}>Rename</button>
         </form>
         <button
           type="button"

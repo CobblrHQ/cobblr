@@ -8,24 +8,42 @@
 // the page→page lint. Renders nothing unless the instance's bundle has a
 // not-yet-enabled feature.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { stillAsking } from "@cobblr/platform-web";
 import { Sparkles } from "lucide-react";
 import { api } from "../lib/api";
 import { BundleDetailModal } from "./BundleDetailModalLazy";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
+
+const useBundles = (slug: string) =>
+  useQuery({
+    queryKey: ["bundles", slug],
+    queryFn: () => api.listBundles(slug),
+    enabled: !!slug,
+    staleTime: 60_000,
+  });
+
+/** The strip, then what sits under it, drawn once the strip knows whether it
+ *  has anything to say: drawn as each came, the strip arrived at the top of a
+ *  collection and pushed its view tabs and every row 212 px down under a
+ *  finger (#6881). */
+export function WithBundleFeatures({ slug, instance, children }: { slug: string; instance: string; children: ReactNode }) {
+  if (stillAsking(useBundles(slug))) return <p aria-busy="true" className="text-sm text-muted">Loading…</p>;
+  return (
+    <>
+      <BundleFeaturesStrip slug={slug} instance={instance} />
+      {children}
+    </>
+  );
+}
 
 export function BundleFeaturesStrip({ slug, instance }: { slug: string; instance: string }) {
   // Open, and with which feature ticked: the chip tapped, or none extra for
   // the general button.
   const [open, setOpen] = useState<{ turnOn: string[] } | null>(null);
   const { activeOrg } = useActiveOrg();
-  const bundlesQ = useQuery({
-    queryKey: ["bundles", slug],
-    queryFn: () => api.listBundles(slug),
-    enabled: !!slug,
-    staleTime: 60_000,
-  });
+  const bundlesQ = useBundles(slug);
   // The bundle that created THIS instance = the installed bundle whose manifest
   // declares it in provides_instances. (Owner/admin only ever see this act, but
   // the query is harmless for anyone; the server refuses anyone else.)

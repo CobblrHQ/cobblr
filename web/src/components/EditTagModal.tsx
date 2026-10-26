@@ -1,4 +1,4 @@
-import { fieldNeed, FieldPack, RecordFormModal, DragInput, useConfirm, useToast } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, useConfirm, useToast, editOf } from "@cobblr/platform-web";
 // Edit a tag: its name, colour, icon and parent, or merge it into another.
 // Shared by the tags list and a tag's own page.
 import { useState } from "react";
@@ -48,12 +48,12 @@ export function EditTagModal({
   const confirm = useConfirm();
   const save = useMutation({
     mutationFn: () =>
-      api.updateTag(slug, tag.id, {
+      api.updateTag(slug, tag.id, editOf(tag, {
         name: name.trim(),
         color,
         icon: icon.trim() || null,
         parent_id: parentId || null,
-      }),
+      })),
     onSuccess: () => {
       toast.success("Tag updated - change applies everywhere it's attached");
       onSaved();

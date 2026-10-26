@@ -1,6 +1,6 @@
 import type { PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import { request } from "./client";
-import type { AddressSuggestionsBody } from "@cobblr/platform-web";
+import type { AddressSuggestionsBody, Edit } from "@cobblr/platform-web";
 
 export interface LocationImportRow {
   row_number: number;
@@ -144,13 +144,13 @@ export const locationsApi = {
       `/orgs/${slug}/modules/core-locations/locations`,
       body,
     ),
-  /** `headers` from editOf: what the edited fields were when the form opened. */
-  updateLocation: (slug: string, id: string, body: Partial<Location> & { allow_duplicate?: boolean }, headers?: Record<string, string>) =>
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateLocation: (slug: string, id: string, edit: Edit<Location & { allow_duplicate?: boolean }>) =>
     request<Location>(
       "PATCH",
       `/orgs/${slug}/modules/core-locations/locations/${id}`,
-      body,
-      headers,
+      edit.body,
+      edit.headers,
     ),
   /** Deletes the place, every place inside it, and takes out what was kept
    *  there; says how much went, for the Undo toast. */

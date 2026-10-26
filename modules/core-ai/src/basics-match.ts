@@ -7,11 +7,12 @@
 import type { BasicRule } from "./basics-catalog.js";
 import { NO_MATCH_REPLY } from "./basics-catalog.js";
 
-/** lowercase, strip punctuation to spaces, collapse whitespace. */
+/** lowercase, strip punctuation to spaces, collapse whitespace. Letters of
+ *  every script are kept: a rule or a message can be written in any. */
 export function normalize(s: string): string {
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9'\s]+/g, " ")
+    .replace(/[^\p{L}\p{M}\p{N}'\s]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }

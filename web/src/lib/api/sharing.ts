@@ -100,7 +100,7 @@ export const sharingApi = {
       "GET",
       kind ? `/orgs/${slug}/record-shares?kind=${encodeURIComponent(kind)}${id ? `&id=${encodeURIComponent(id)}` : ""}` : `/orgs/${slug}/record-shares`,
     ),
-  withdrawShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/withdraw`, {}),
+  withdrawShareOffer: (slug: string, id: string, record?: { kind: string; id: string }) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/withdraw`, record ? { record } : {}),
   sendBackShareOffer: (slug: string, id: string) => request<{ ok: true }>("POST", `/orgs/${slug}/share-offers/${id}/send-back`, {}),
   /** How many records a scope selects, and the first few: the scope editor's
    *  live count. Shares and public pages read the same scope. */

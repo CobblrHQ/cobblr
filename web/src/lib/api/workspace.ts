@@ -116,8 +116,9 @@ export interface AttentionFeedItem {
 export const workspaceApi = {
   workspaceCurrency: (slug: string) => request<{ currency: string }>("GET", `/orgs/${slug}/currency`),
   setWorkspaceCurrency: (slug: string, currency: string) => request<{ currency: string }>("PUT", `/orgs/${slug}/currency`, { currency }),
-  request: <T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown) =>
-    request<T>(method, path, body),
+  /** `headers`: a record's save carries editOf's (#7925). */
+  request: <T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, headers?: Record<string, string>) =>
+    request<T>(method, path, body, headers),
   // Feedback: any authed user submits; super-admin lists / triages.
   /** Environment facts for a public bug report. See api/src/routes/diagnostics.ts
    *  for what is deliberately absent — this payload becomes public. */

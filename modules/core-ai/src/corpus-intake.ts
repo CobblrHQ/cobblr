@@ -8,6 +8,8 @@
 // or drop. It writes nothing to the repo; the guess is a starting point, and
 // a wrong claim that got pasted unread would be enforced as truth.
 
+import { normQuestion } from "./question-text.js";
+
 export interface IntakeMiss {
   sample: string;
   times?: number;
@@ -32,7 +34,7 @@ export interface CorpusDraft {
   times: number;
 }
 
-const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9'\s]+/g, " ").replace(/\s+/g, " ").trim();
+const norm = normQuestion;
 
 const QUESTION_LEAD = /^(how|what|what's|whats|where|where's|which|who|when|why|is|are|do|does|did|can|could|should|any|anything)\b/;
 const COUNT_SHAPE = /\b(how many|how much|do i have any|any\b.*\?$|is there|are there|most of|most common)\b/;

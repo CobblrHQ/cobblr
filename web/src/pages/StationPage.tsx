@@ -53,6 +53,7 @@ import { InboxCard } from "./ScanInboxCard";
 import { StationPhoto } from "./StationNewFace";
 import {
   flushQueue,
+  QUEUE_KEEP_MS,
   isRepeatScan,
   loadQueue,
   newRequestId,
@@ -60,7 +61,7 @@ import {
   stationScanOf,
   type QueuedMove,
 } from "../lib/station-screen";
-import { lastStation, readStationToken, rememberStation, saveStationToken, readStationQrToken, saveStationQrToken, setStationTokenOverride } from "../lib/station-token";
+import { lastStation, readStationToken, rememberStation, saveStationToken, subscribeStationTokenRefused, readStationQrToken, saveStationQrToken, setStationTokenOverride } from "../lib/station-token";
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** A request that never reached the server (no network), as opposed to one
@@ -219,7 +220,7 @@ function PersonOrApproval({ slug, address, kiosk, personToken, fromQr, qrKey, on
     retry: false,
   });
   if (personToken && (me.isLoading || (mayUse && asPerson.isLoading))) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
-  if (personToken && mayUse && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} onForget={() => {}} />;
+  if (personToken && mayUse && asPerson.data) return <StationLoader slug={slug} address={address} kiosk={kiosk} device={false} personRole={role ?? undefined} onForget={() => {}} />;
   // A member signed in on their phone used it above, as themselves. Anyone
   // else who came from the printed label spends its key, or is asked to sign in.
   if (qrKey) return <QrClaim slug={slug} address={address} qrKey={qrKey} onClaimed={onQrClaimed} />;
@@ -291,8 +292,8 @@ function ApprovalView({ slug, address, onApproved }: { slug: string; address: st
           , approve it from a phone or computer that is signed in to this workspace: scan the code, or open Configuration → Devices → Stations and type it.
         </p>
         {ask ? (
-          <div className="flex flex-col items-center gap-6 sm:flex-row sm:gap-10">
-            <div className="font-mono text-6xl font-bold tracking-[0.2em] max-sm:text-5xl" data-testid="station-code" aria-label={`Code ${ask.code.split("").join(" ")}`}>
+          <div className="flex max-w-full flex-col items-center gap-6 sm:flex-row sm:gap-10">
+            <div className="min-w-0 max-w-full break-all font-mono text-6xl font-bold tracking-[0.2em] max-sm:text-5xl" data-testid="station-code" aria-label={`Code ${ask.code.split("").join(" ")}`}>
               {ask.code}
             </div>
             {/* White in both themes: a phone's camera reads dark on light. */}
@@ -317,11 +318,19 @@ function ApprovalView({ slug, address, onApproved }: { slug: string; address: st
 
 // ── The station ────────────────────────────────────────────────────────────
 
-function StationLoader({ slug, address, kiosk, device, qr, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; onForget: () => void }) {
+function StationLoader({ slug, address, kiosk, device, qr, personRole, onForget }: { slug: string; address: string; kiosk: boolean; device: boolean; qr?: boolean; personRole?: OrgMembership["role"]; onForget: () => void }) {
+  const [stopped, setStopped] = useState(false);
+  useEffect(() => {
+    if (!device) return;
+    return subscribeStationTokenRefused(() => {
+      saveQueue(slug, address, []);
+      setStopped(true);
+    });
+  }, [device, slug, address]);
   const screen = useQuery({ queryKey: ["station-screen", slug, address], queryFn: () => api.stationScreen(slug, address), retry: 1 });
   if (screen.isPending) return <Shell kiosk={kiosk}><Centered title="Opening…" /></Shell>;
-  if (screen.error) {
-    const gone = screen.error instanceof ApiError && (screen.error.status === 401 || screen.error.status === 403);
+  if (stopped || screen.error) {
+    const gone = stopped || (screen.error instanceof ApiError && (screen.error.status === 401 || screen.error.status === 403));
     return (
       <Shell kiosk={kiosk}>
         <Centered
@@ -332,7 +341,7 @@ function StationLoader({ slug, address, kiosk, device, qr, onForget }: { slug: s
       </Shell>
     );
   }
-  const org: OrgMembership = { id: "", name: screen.data.label, slug, role: device ? "member" : "admin" };
+  const org: OrgMembership = { id: "", name: screen.data.label, slug, role: personRole ?? "member" };
   return (
     <FixedActiveOrgProvider org={org}>
       {/* The workspace's own platform context: the inbox card a new thing
@@ -390,7 +399,10 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The station's settings are the admin tier's to change, as its route says.
   const setsUp = useRoleAtLeast(ADMIN_TIER);
+  const canConfigure = props.device || setsUp;
   const [queue, setQueue] = useState<QueuedMove[]>(() => loadQueue(slug, address, Date.now()));
+  const unsavedQueue = useRef<QueuedMove[] | null>(null);
+  const shownMoves = useRef(new Map<string, LastMove>());
   const replaying = useRef(new Map<string, Promise<void>>());
   const flushing = useRef<Promise<void> | null>(null);
   const undoing = useRef(new Set<string>());
@@ -440,90 +452,102 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       if (view.kind === "ready" || view.kind === "looking" || keypad || mover || settingsOpen) return;
       if (Date.now() - touchedAt.current > settings.reset_seconds * 1000) {
         setView({ kind: "ready" });
-        setLast(null);
       }
     }, 1000);
     return () => window.clearInterval(id);
   }, [view.kind, keypad, mover, settingsOpen, settings.reset_seconds]);
 
   // ── Moving stock, with the offline queue ────────────────────────────────
+  const waitingQueue = useCallback(
+    () => unsavedQueue.current?.filter((move) => Date.now() - move.at < QUEUE_KEEP_MS) ?? loadQueue(slug, address, Date.now()),
+    [slug, address],
+  );
   const persistQueue = useCallback(
     (q: QueuedMove[]) => {
       setQueue(q);
-      saveQueue(slug, address, q);
+      unsavedQueue.current = saveQueue(slug, address, q) ? null : q;
     },
     [slug, address],
-  );
-
-  const count = useCallback(
-    async (record: StationRecord, op: StationStockOp, value?: number, shown = true) => {
-      const request_id = newRequestId();
-      const words = moveWords(op, value);
-      try {
-        const moved = await api.stationCount(slug, address, { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}) });
-        // An answer with no count is not a count of none (#7860).
-        setView((v) => (v.kind === "record" && v.record.id === record.id ? { ...v, record: { ...v.record, qty: moved.qty ?? v.record.qty } } : v));
-        if (!shown) return;
-        setLast({ request_id, words: moved.note ? `${words}. ${moved.note}` : words, status: "applied", at: Date.now(), of: record });
-        signal(true);
-      } catch (e) {
-        if (unreachable(e)) {
-          const q = [...loadQueue(slug, address, Date.now()), { request_id, kind: record.kind, entity_id: record.id, op, ...(value !== undefined ? { value } : {}), title: record.title, at: Date.now() }];
-          persistQueue(q);
-          if (!shown) return;
-          setLast({ request_id, words, status: "waiting", at: Date.now(), of: record });
-          signal(true);
-          return;
-        }
-        if (!shown) return;
-        setView({ kind: "error", message: errText(e) });
-        signal(false);
-      }
-    },
-    [slug, address, signal, persistQueue],
   );
 
   const flush = useCallback(() => {
     if (flushing.current) return flushing.current;
     const run = async () => {
-      const q = loadQueue(slug, address, Date.now());
-      const r = await flushQueue(
-        q,
-        async (m) => {
-          if (!loadQueue(slug, address, Date.now()).some((waiting) => waiting.request_id === m.request_id)) return;
-          const send = async () => {
-            setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "sending" } : previous);
+      for (;;) {
+        const q = waitingQueue();
+        if (!q.length) return;
+        const r = await flushQueue(
+          q,
+          async (m) => {
+            if (!waitingQueue().some((waiting) => waiting.request_id === m.request_id)) return;
+            const send = async () => {
+              setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "sending" } : previous);
+              try {
+                const moved = await api.stationCount(slug, address, { request_id: m.request_id, kind: m.kind, entity_id: m.entity_id, op: m.op, ...(m.value !== undefined ? { value: m.value } : {}) });
+                setView((v) => v.kind === "record" && v.record.kind === m.kind && v.record.id === m.entity_id ? { ...v, record: { ...v.record, qty: moved.qty ?? v.record.qty } } : v);
+                const shown = shownMoves.current.get(m.request_id);
+                setLast((previous) => {
+                  // A count already in flight still owns its Undo when the next
+                  // scan clears the card, without replacing a newer change.
+                  const own = previous?.request_id === m.request_id ? previous : previous ? null : shown;
+                  return own ? { ...own, status: "applied", words: moved.note ? `${own.words}. ${moved.note}` : own.words } : previous;
+                });
+                persistQueue(waitingQueue().filter((waiting) => waiting.request_id !== m.request_id));
+                signal(true);
+              } catch (e) {
+                setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "waiting" } : previous);
+                throw e;
+              }
+            };
+            const pending = send();
+            replaying.current.set(m.request_id, pending);
             try {
-              const moved = await api.stationCount(slug, address, { request_id: m.request_id, kind: m.kind, entity_id: m.entity_id, op: m.op, ...(m.value !== undefined ? { value: m.value } : {}) });
-              setView((v) => v.kind === "record" && v.record.kind === m.kind && v.record.id === m.entity_id ? { ...v, record: { ...v.record, qty: moved.qty ?? v.record.qty } } : v);
-              setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "applied", words: moved.note ? `${previous.words}. ${moved.note}` : previous.words } : previous);
-              persistQueue(loadQueue(slug, address, Date.now()).filter((waiting) => waiting.request_id !== m.request_id));
-            } catch (e) {
-              setLast((previous) => previous?.request_id === m.request_id ? { ...previous, status: "waiting" } : previous);
-              throw e;
+              await pending;
+            } finally {
+              replaying.current.delete(m.request_id);
             }
-          };
-          const pending = send();
-          replaying.current.set(m.request_id, pending);
-          try {
-            await pending;
-          } finally {
-            replaying.current.delete(m.request_id);
-          }
-        },
-        unreachable,
-      );
-      if (r.refused.length) {
-        const refused = new Set(r.refused.map(({ move }) => move.request_id));
-        persistQueue(loadQueue(slug, address, Date.now()).filter((waiting) => !refused.has(waiting.request_id)));
-        setLast((previous) => previous && refused.has(previous.request_id) ? null : previous);
-        setView({ kind: "error", message: `${r.refused.length} waiting ${r.refused.length === 1 ? "change was" : "changes were"} refused: ${r.refused[0]!.why}` });
+          },
+          unreachable,
+        );
+        if (r.refused.length) {
+          const refused = new Set(r.refused.map(({ move }) => move.request_id));
+          persistQueue(waitingQueue().filter((waiting) => !refused.has(waiting.request_id)));
+          setLast((previous) => previous && refused.has(previous.request_id) ? null : previous);
+          signal(false);
+          setView({ kind: "error", message: `${r.refused.length} waiting ${r.refused.length === 1 ? "change was" : "changes were"} refused: ${r.refused[0]!.why}` });
+        }
+        if (r.waiting.length) return;
       }
     };
     const pending = run().finally(() => { flushing.current = null; });
     flushing.current = pending;
     return pending;
-  }, [slug, address, persistQueue]);
+  }, [slug, address, persistQueue, waitingQueue, signal]);
+
+  const count = useCallback(
+    async (record: StationRecord, op: StationStockOp, value?: number, shown = true) => {
+      const request_id = newRequestId();
+      const words = moveWords(op, value);
+      // Every press joins the same queue, including while connected: a later
+      // total must never overtake an earlier addition waiting to sync.
+      persistQueue([...waitingQueue(), {
+        request_id, kind: record.kind, entity_id: record.id, op,
+        ...(value !== undefined ? { value } : {}), title: record.title, at: Date.now(),
+      }]);
+      if (shown) {
+        const last: LastMove = { request_id, words, status: "waiting", at: Date.now(), of: record };
+        shownMoves.current.set(request_id, last);
+        setLast(last);
+      }
+      try {
+        await flush();
+        if (shown && waitingQueue().some((move) => move.request_id === request_id)) signal(true);
+      } finally {
+        shownMoves.current.delete(request_id);
+      }
+    },
+    [signal, persistQueue, waitingQueue, flush],
+  );
 
   useEffect(() => {
     void flush();
@@ -600,7 +624,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
       // before deciding whether to cancel locally or reverse it on the server.
       const pending = replaying.current.get(last.request_id);
       if (pending) await pending.catch(() => {});
-      const waiting = loadQueue(slug, address, Date.now());
+      const waiting = waitingQueue();
       if (waiting.some((m) => m.request_id === last.request_id)) {
         persistQueue(waiting.filter((m) => m.request_id !== last.request_id));
       } else {
@@ -613,7 +637,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
     } finally {
       undoing.current.delete(last.request_id);
     }
-  }, [last, slug, address, persistQueue, showNow]);
+  }, [last, slug, address, persistQueue, waitingQueue, showNow]);
 
   // ── One scan ────────────────────────────────────────────────────────────
   // Each scan takes a number. An answer that arrives after a newer scan has
@@ -762,12 +786,12 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
         onPointerDown={() => (touchedAt.current = Date.now())}
         data-testid="station"
       >
-        <header className="flex items-center justify-between gap-3 px-4 pt-3 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className="flex flex-wrap items-center justify-between gap-[12px] px-[16px] pt-3 sm:px-6">
+          <div className="flex min-w-0 max-w-full flex-wrap items-center gap-[12px]">
             {settings.back_url && (
               // The dashboard this station was opened from (Home Assistant): the
               // way back on a wall tablet that has no browser bar (#5353).
-              <a href={settings.back_url} className="inline-flex min-h-[44px] shrink-0 items-center gap-1.5 rounded-full border border-line px-3 text-sm font-medium text-content hover:border-cobble-400 dark:border-slate-600" data-testid="station-back">
+              <a href={settings.back_url} className="inline-flex min-h-[44px] min-w-0 max-w-full items-center gap-[6px] rounded-full border border-line px-[12px] text-sm font-medium text-content hover:border-cobble-400 dark:border-slate-600" data-testid="station-back">
                 <ArrowLeft size={16} /> Back to {settings.back_label}
               </a>
             )}
@@ -780,13 +804,13 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
             )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center gap-[8px]">
             {queue.length > 0 && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" data-testid="station-waiting">
                 <WifiOff size={14} /> {queue.length} waiting to sync
               </span>
             )}
-            {!props.qr && setsUp && (
+            {!props.qr && canConfigure && (
               <button
                 type="button"
                 onClick={() => setSettingsOpen(true)}
@@ -909,7 +933,7 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           />
         )}
         <AskBeforeRun asking={asking} />
-        {settingsOpen && (
+        {settingsOpen && canConfigure && (
           <SettingsSheet
             slug={slug}
             address={address}
@@ -939,7 +963,7 @@ const CAMERA_WORDS: Record<StationCameraSetting, string> = {
 
 function Ready({ label, last, onUndo, camera, children }: { label: string; last: LastMove | null; onUndo: () => void; camera?: boolean; children?: ReactNode }) {
   return (
-    <div className={`flex flex-col items-center text-center ${camera ? "gap-4 py-4" : "gap-6 py-16"}`} data-testid="station-ready">
+    <div className={`flex w-full min-w-0 flex-col items-center text-center ${camera ? "gap-4 py-4" : "gap-6 py-16"}`} data-testid="station-ready">
       <div className="text-5xl font-semibold max-sm:text-4xl">Ready to scan</div>
       <p className="max-w-md text-lg text-muted">
         {camera ? `Hold a barcode or ${withArticle(productName())} label up to the camera, or use a scanner. ${label} shows what it is.` : `Scan a barcode or ${withArticle(productName())} label with the scanner. ${label} shows what it is.`}
@@ -953,7 +977,7 @@ function Ready({ label, last, onUndo, camera, children }: { label: string; last:
 function UndoBar({ last, onUndo, showing }: { last: LastMove; onUndo: () => void; showing?: StationRecord }) {
   const elsewhere = showing && (showing.kind !== last.of.kind || showing.id !== last.of.id);
   return (
-    <div className="inline-flex items-center gap-3 rounded-full bg-moss-100 px-4 py-2 text-lg text-moss-900 dark:bg-moss-900/40 dark:text-moss-100" role="status" data-testid="station-last">
+    <div className="inline-flex max-w-full flex-wrap items-center gap-[12px] rounded-full bg-moss-100 px-[16px] py-2 text-lg text-moss-900 dark:bg-moss-900/40 dark:text-moss-100" role="status" data-testid="station-last">
       <Check size={20} /> {elsewhere ? `${last.of.title}: ` : ""}{last.words}{last.status === "waiting" ? " (waiting to sync)" : last.status === "sending" ? " (syncing)" : ""}
       {last.undoable !== false && <button type="button" onClick={onUndo} className="inline-flex items-center gap-1 rounded-full px-3 py-1 font-medium underline-offset-2 hover:underline">
         <Undo2 size={18} /> Undo
@@ -1004,7 +1028,7 @@ function RecordCard(props: {
           <UndoBar last={props.last} onUndo={props.onUndo} showing={r} />
         </div>
       )}
-      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-[12px]">
         {props.countable && (
           <>
             {props.may({ op: "add" }) && (
@@ -1031,7 +1055,7 @@ function RecordCard(props: {
         )}
       </div>
       {actions.length > 0 && (
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4" data-testid="station-record-actions">
+        <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,9rem),1fr))] gap-[12px]" data-testid="station-record-actions">
           {actions.map((a) => (
             <BigButton key={a.id} tone="plain" onClick={() => props.onAction(a)}>
               {a.label}
@@ -1071,7 +1095,7 @@ function Keypad({ title, start, decimal = false, onCancel, onDone }: { title: st
       <div className="my-4 rounded-xl bg-black/5 py-4 text-center text-5xl font-bold dark:bg-white/10" data-testid="station-keypad-value">
         {v || "0"}
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-[12px]">
         {keys.map((k) =>
           k === "ok" ? (
             set
@@ -1101,7 +1125,7 @@ function RecountAnswer(props: { answer: StationRecountAnswer; onPick: (body: { r
         </div>
       )}
       {asks && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {(a.candidates ?? []).map((c) => (
             <BigButton key={c.id} tone="plain" onClick={() => props.onPick(a.result === "ask" ? { record_id: c.id } : { type_id: c.id, new: true })}>
               <span className="text-left">
@@ -1185,7 +1209,7 @@ function SettingsSheet(props: {
   const actionWords: Record<StationAction, string> = { ask: "Ask: show the buttons", "add-one": "One-tap: every scan adds 1", "use-one": "One-tap: every scan uses 1" };
   return (
     <Overlay onCancel={props.onClose} label="Station settings" wide>
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-[12px]">
         <div className="text-xl font-medium">{props.label} settings</div>
         <button title="Close" type="button" onClick={props.onClose} className="rounded-full p-2 hover:bg-black/5 dark:hover:bg-white/10" aria-label="Close">
           <X size={20} />
@@ -1195,7 +1219,7 @@ function SettingsSheet(props: {
         <div className="mt-4 space-y-3">
           <p className="text-muted">{props.hasPin ? "Type the owner PIN to change this station." : "This station has no PIN. Change its settings from a signed-in phone or computer, where an owner can also set a PIN."}</p>
           {props.hasPin && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-[8px]">
               <input inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 8))} className="w-40 rounded-xl border border-line px-4 py-3 text-2xl tracking-widest dark:border-slate-600 dark:bg-slate-800" aria-label="Owner PIN" />
               <BigButton onClick={() => setUnlocked(pin.length >= 4)}>Unlock</BigButton>
             </div>
@@ -1250,7 +1274,7 @@ function SettingsSheet(props: {
             )}
           </Field>
           <Field label="New things go to">
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <select value={draft.new_kind ?? ""} onChange={(e) => set("new_kind", e.target.value || null)} className="rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="Collection for new things">
                 <option value="">Wherever the scan inbox routes them</option>
                 {props.menu.map((m) => (
@@ -1375,7 +1399,7 @@ function Overlay({ children, onCancel, label, wide }: { children: ReactNode; onC
   useEscapeToClose(true, ref, onCancel);
   return (
     <OverlayLayer ref={ref} className="z-50 flex items-end justify-center bg-black/40 sm:items-center" role="dialog" aria-modal="true" aria-label={label} onClick={onCancel}>
-      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} rounded-t-2xl bg-surface p-5 pb-[max(1.25rem,var(--inset-bottom))] shadow-xl dark:bg-slate-900 sm:rounded-2xl`} onClick={(e) => e.stopPropagation()}>
+      <div className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} max-h-[calc(var(--overlay-height)-var(--safe-top))] overflow-y-auto rounded-t-2xl bg-surface p-[20px] pb-[max(20px,var(--inset-bottom))] shadow-xl dark:bg-slate-900 sm:rounded-2xl`} onClick={(e) => e.stopPropagation()}>
         {children}
       </div>
     </OverlayLayer>
@@ -1404,7 +1428,7 @@ function BigButton({ children, onClick, tone = "solid", disabled, label }: { chi
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className={`inline-flex min-h-[64px] items-center justify-center gap-2 rounded-2xl px-5 text-xl font-semibold transition disabled:opacity-40 ${
+      className={`inline-flex min-h-[64px] min-w-0 max-w-full items-center justify-center gap-[8px] rounded-2xl px-[12px] py-[8px] [overflow-wrap:normal] text-xl font-semibold transition disabled:opacity-40 ${
         tone === "solid" ? "bg-cobble-600 text-white hover:bg-cobble-700" : "border border-line bg-surface text-content hover:border-cobble-400 dark:border-slate-600 dark:bg-slate-800 dark:text-mortar-100"
       }`}
     >

@@ -268,7 +268,7 @@ export function DesignFiles({ designId }: { designId: string }) {
               <button
                 type="button"
                 onClick={() =>
-                  canPreviewFile(a.filename)
+                  canPreviewFile(a.filename, a.mime_type)
                     ? setReading(a)
                     : void openAuthedFile(`${base}/files/${a.file_id}/raw`, { getToken, mime: a.mime_type, filename: a.filename })
                 }

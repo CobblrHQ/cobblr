@@ -7,6 +7,7 @@ import { useFlowHost, usePlatformWeb } from "./context";
 import { headerButton } from "./CollectionHeader";
 import { BackdropLayer, PopoverLayer } from "./fixed-layers";
 import { useEscapeToClose } from "./useEscapeToClose";
+import { useMenuFocus } from "./useMenuFocus";
 
 export function CollectionShare({ kind, title, ids, selectionList }: { kind: string; title: ReactNode; ids?: readonly string[]; selectionList?: string }) {
   const { pathname, search } = useLocation();
@@ -18,6 +19,7 @@ export function CollectionShare({ kind, title, ids, selectionList }: { kind: str
   const menu = useRef<HTMLDivElement>(null);
   const close = () => { setAnchor(null); trigger.current?.focus(); };
   useEscapeToClose(!!anchor, menu, close);
+  useMenuFocus(!!anchor, menu);
   const open = () => { close(); openFlow("platform:share-list", { kind, ids: [...(ids ?? currentTickedRows(pathname, search, selectionList))], title: typeof title === "string" ? title : "this list" }); };
   const people = shares.data?.shared_with ?? [];
   // Drawn while the answer comes, and pressable once it has: arriving late at

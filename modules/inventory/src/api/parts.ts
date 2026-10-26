@@ -1,3 +1,4 @@
+import { LOAN_KEY, loanActionRefusal } from "@cobblr/platform-contract/loan";
 import { stockViews } from "./stock-shapes.js";
 import { recordName } from "@cobblr/platform-contract/record-name";
 import { logPartCreated } from "./part-created.js";
@@ -414,6 +415,56 @@ const listSelect = (db: ReturnType<typeof tenantDb>) =>
         .as("assigned_qty"),
     ]);
 
+async function matchingParts(req: Request, filter: z.output<typeof ListQuery>, today: string, unapplied: FilterPredicate[]) {
+  let query = applyPartFilters(listSelect(tenantDb(req)), { filter: filter.filter, where: filter.where, today }, { table: "p", unapplied });
+  query = applyPartSearch(query, filter.search, { table: "p", unreadable: unreadableFieldsOf(req) });
+  if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
+  if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
+  if (filter.state) query = query.where("p.state", "=", filter.state);
+  if (filter.lifecycle === "bulk") {
+    // Match either the new `lifecycle` field (Lego bundle v0.3+) or
+    // a missing field (default = loose). The legacy `state` key is
+    // accepted for backwards compat on workspaces that haven't
+    // re-installed the bundle.
+    query = query.where(
+      sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state', 'loose') in ('loose', 'bulk', 'spare')`,
+    );
+  } else if (filter.lifecycle === "kit") {
+    query = query.where(
+      sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') in ('sealed', 'built')`,
+    );
+  } else if (filter.lifecycle === "parted-out") {
+    query = query.where(
+      sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') = 'parted-out'`,
+    );
+  }
+
+  // Archived defaults to hidden. archived_only takes precedence;
+  // otherwise show_archived widens the result set.
+  if (isTruthy(filter.archived_only)) {
+    query = query.where("p.archived", "=", true);
+  } else if (!isTruthy(filter.show_archived)) {
+    query = query.where("p.archived", "=", false);
+  }
+  if (isTruthy(filter.insured_only)) {
+    query = query.where("p.insured", "=", true);
+  }
+  if (isTruthy(filter.needs_value)) {
+    query = query.where(needsValueSql((await requiredFieldsOf(req)).map((f) => f.name)));
+  }
+  if (isTruthy(filter.doesnt_fit)) {
+    query = query.where(doesntFitSql(await fitFieldsOf(req)));
+  }
+  if (filter.warranty_expires_within_days) {
+    const days = filter.warranty_expires_within_days;
+    query = query.where(
+      sql<boolean>`p.warranty_expires is not null and p.warranty_expires <= (current_date + ${days} * interval '1 day')`,
+    );
+  }
+
+  return { query };
+}
+
 // AI-REACH: exempt — dashboard-only aggregate; Cobb reads the stock records.
 partsRouter.get("/dashboard", asyncHandler(async (req, res) => {
   const db = tenantDb(req);
@@ -444,14 +495,13 @@ partsRouter.get(
     // edited since its values were last read is read again first (one index
     // probe when nothing is stale).
     if (readsValues(filter)) await refreshMeasureReadings(db, { instance: req.query.all_instances === "1" ? undefined : instanceOf(req) });
-    let query = listSelect(db);
     // A view's own query, first, so its predicates AND with the page's.
     // The reader's day: what a view's "today" compares against (a "Ready to
     // drink" window), and the warranty countdown below. Their client's day
     // when it sent one, else what the platform knows of them.
     const today = await platform().accounts.dayFor(sessionUser(req).id, { said: req.query.today });
     const unapplied: FilterPredicate[] = [];
-    query = applyPartFilters(query, { filter: filter.filter, where: filter.where, today }, { table: "p", unapplied });
+    let { query } = await matchingParts(req, filter, today, unapplied);
     // Ordering. A view's sort orders by whatever it names (a metadata date,
     // a native column) with id as the tiebreaker; without one the list keeps
     // its (name, id) keyset order, which the cursor below depends on.
@@ -467,51 +517,6 @@ partsRouter.get(
     // "hooks", etc. Read-only widening; writes stay instance-scoped.
     if (req.query.all_instances !== "1") {
       query = query.where("p.instance", "=", instanceOf(req));
-    }
-
-    query = applyPartSearch(query, filter.search, { table: "p", unreadable: unreadableFieldsOf(req) });
-    if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
-    if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
-    if (filter.state) query = query.where("p.state", "=", filter.state);
-    if (filter.lifecycle === "bulk") {
-      // Match either the new `lifecycle` field (Lego bundle v0.3+) or
-      // a missing field (default = loose). The legacy `state` key is
-      // accepted for backwards compat on workspaces that haven't
-      // re-installed the bundle.
-      query = query.where(
-        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state', 'loose') in ('loose', 'bulk', 'spare')`,
-      );
-    } else if (filter.lifecycle === "kit") {
-      query = query.where(
-        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') in ('sealed', 'built')`,
-      );
-    } else if (filter.lifecycle === "parted-out") {
-      query = query.where(
-        sql<boolean>`coalesce(p.metadata->>'lifecycle', p.metadata->>'state') = 'parted-out'`,
-      );
-    }
-
-    // Archived defaults to hidden. archived_only takes precedence;
-    // otherwise show_archived widens the result set.
-    if (isTruthy(filter.archived_only)) {
-      query = query.where("p.archived", "=", true);
-    } else if (!isTruthy(filter.show_archived)) {
-      query = query.where("p.archived", "=", false);
-    }
-    if (isTruthy(filter.insured_only)) {
-      query = query.where("p.insured", "=", true);
-    }
-    if (isTruthy(filter.needs_value)) {
-      query = query.where(needsValueSql((await requiredFieldsOf(req)).map((f) => f.name)));
-    }
-    if (isTruthy(filter.doesnt_fit)) {
-      query = query.where(doesntFitSql(await fitFieldsOf(req)));
-    }
-    if (filter.warranty_expires_within_days) {
-      const days = filter.warranty_expires_within_days;
-      query = query.where(
-        sql<boolean>`p.warranty_expires is not null and p.warranty_expires <= (current_date + ${days} * interval '1 day')`,
-      );
     }
 
     // Cursor: keyset pagination on the (name, id) ordering; under a view's
@@ -532,191 +537,196 @@ partsRouter.get(
     const lowStockOnly =
       filter.low_stock === "1" || filter.low_stock === "true";
 
-    // low_stock is a post-filter (it depends on the computed
-    // available qty). Mixing it with keyset pagination would make
-    // next_cursor unreliable, so when it's on we fetch a generous
-    // single page — the low-stock subset is inherently small.
     const hideUnavailable = filter.hide_unavailable === "1" || filter.hide_unavailable === "true";
-    const fetchLimit = lowStockOnly || hideUnavailable ? 200 : filter.limit + 1;
-    const rows = await query.limit(fetchLimit).execute();
+    for (;;) {
+      const rows = await query.limit(filter.limit + 1).execute();
+      const hasMore = rows.length > filter.limit;
+      const pageRows = rows.slice(0, filter.limit);
 
-    let hasMore = false;
-    let pageRows = rows;
-    if (!lowStockOnly && !hideUnavailable && rows.length > filter.limit) {
-      hasMore = true;
-      pageRows = rows.slice(0, filter.limit);
-    }
-
-    // A model tracked unit by unit keeps its opened skeins as child records;
-    // the count face alone read "0 yarn" over 160 m on the needles (on-hand.ts).
-    const openUnits = await openUnitsFor(db, pageRows.map((r) => r.id));
-    // What is left in an open unit is measured in the kind's consumption
-    // unit (metres off a skein), never the count's (consumption-unit.ts).
-    const remainderUnit = openUnits.size ? await consumptionUnitFor(req) : null;
-    const toItem = (r: (typeof rows)[number], openUnits: Awaited<ReturnType<typeof openUnitsFor>>, remainderUnit: string | null) => {
-      const qty = Number(r.qty);
-      const assigned = Number(r.assigned_qty ?? 0);
-      const minQty = r.min_qty != null ? Number(r.min_qty) : null;
-      const available = qty - assigned;
-      const open = openUnitsSummary(openUnits.get(r.id), remainderUnit);
-      const onHand = onHandCount(qty, open?.remaining ?? []);
-      // Calendar days until the warranty ends, the one countdown (day.ts):
-      // null when there is no warranty date. It took the ceiling of an
-      // instant, so it changed its answer in the evening (#3641).
-      const warranty_days_until = daysUntilField(r.warranty_expires, today);
-      const approximate = r.approximate_qty == null ? null : Number(r.approximate_qty);
-      return {
-        ...r,
-        qty,
-        cost: r.cost == null ? null : Number(r.cost),
-        min_qty: minQty,
-        approximate_qty: approximate,
-        assigned_qty: assigned,
-        available_qty: available,
-        on_hand: onHand,
-        open_units: open,
-        // An estimate is never low stock: its `qty` is 0 because nobody counted,
-        // not because the bin is empty, so comparing it to a minimum would put a
-        // reorder warning on a bin holding fifty of the thing. Compared on what
-        // is on hand, so an open skein with plenty left is not "out".
-        low_stock: isLowStock({ onHand, assigned, minQty, approximate }),
-        warranty_days_until,
-        location_name: null as string | null,
+      // A model tracked unit by unit keeps its opened skeins as child records;
+      // the count face alone read "0 yarn" over 160 m on the needles (on-hand.ts).
+      const openUnits = await openUnitsFor(db, pageRows.map((r) => r.id));
+      // What is left in an open unit is measured in the kind's consumption
+      // unit (metres off a skein), never the count's (consumption-unit.ts).
+      const remainderUnit = openUnits.size ? await consumptionUnitFor(req) : null;
+      const toItem = (r: (typeof rows)[number], openUnits: Awaited<ReturnType<typeof openUnitsFor>>, remainderUnit: string | null) => {
+        const qty = Number(r.qty);
+        const assigned = Number(r.assigned_qty ?? 0);
+        const minQty = r.min_qty != null ? Number(r.min_qty) : null;
+        const available = qty - assigned;
+        const open = openUnitsSummary(openUnits.get(r.id), remainderUnit);
+        const onHand = onHandCount(qty, open?.remaining ?? []);
+        // Calendar days until the warranty ends, the one countdown (day.ts):
+        // null when there is no warranty date. It took the ceiling of an
+        // instant, so it changed its answer in the evening (#3641).
+        const warranty_days_until = daysUntilField(r.warranty_expires, today);
+        const approximate = r.approximate_qty == null ? null : Number(r.approximate_qty);
+        return {
+          ...r,
+          qty,
+          cost: r.cost == null ? null : Number(r.cost),
+          min_qty: minQty,
+          approximate_qty: approximate,
+          assigned_qty: assigned,
+          available_qty: available,
+          on_hand: onHand,
+          open_units: open,
+          // An estimate is never low stock: its `qty` is 0 because nobody counted,
+          // not because the bin is empty, so comparing it to a minimum would put a
+          // reorder warning on a bin holding fifty of the thing. Compared on what
+          // is on hand, so an open skein with plenty left is not "out".
+          low_stock: isLowStock({ onHand, assigned, minQty, approximate }),
+          warranty_days_until,
+          location_name: null as string | null,
+        };
       };
-    };
-    const items = pageRows.map((r) => toItem(r, openUnits, remainderUnit));
-    let filtered = lowStockOnly
-      ? items.filter((p) => p.low_stock)
-      : items;
-    const cursorRow = filtered[filtered.length - 1];
+      const items = pageRows.map((r) => toItem(r, openUnits, remainderUnit));
+      let filtered = lowStockOnly
+        ? items.filter((p) => p.low_stock)
+        : items;
+      const cursorRow = pageRows[pageRows.length - 1];
 
-    // One card per thing (docs/design-decisions/holdings-and-units.md): a
-    // place's row stands in for its card, so a search or a low filter that
-    // catches one ambulance finds the card, and the card carries its rows
-    // below. `rows=flat` (the spreadsheet view) and a one-location filter keep
-    // a line per place, which is what those views are for.
-    const nest = filter.rows !== "flat" && !filter.location_id;
-    if (nest) {
-      filtered = await liftHoldingsToCards(holdingsCtx(req), filtered, async (ids) => {
-        const cards = await listSelect(db).where("p.id", "in", ids).where("p.instance", "=", instanceOf(req)).execute();
-        const ou = await openUnitsFor(db, cards.map((c) => c.id));
-        const ru = ou.size ? await consumptionUnitFor(req) : null;
-        return cards.map((c) => toItem(c, ou, ru));
-      });
-    }
-
-    // Cross-module read for the location name: go through the
-    // resolver (no direct table read) per module-layers.md.
-    const ctx = tenantContext(req);
-    const locationIds = Array.from(
-      new Set(
-        filtered
-          .map((p) => p.location_id)
-          .filter((id): id is string => !!id),
-      ),
-    );
-    if (locationIds.length > 0) {
-      const resolved = await platform().entities.lookupMany(
-        ctx.org.id,
-        locationIds.map((id) => ({ kind: "core-locations:location", id })),
-      );
-      const byId = new Map(resolved.map((r) => [r.id, r.title]));
-      for (const p of filtered) {
-        if (p.location_id) p.location_name = byId.get(p.location_id) ?? null;
+      // One card per thing (docs/design-decisions/holdings-and-units.md): a
+      // place's row stands in for its card, so a search or a low filter that
+      // catches one ambulance finds the card, and the card carries its rows
+      // below. `rows=flat` (the spreadsheet view) and a one-location filter keep
+      // a line per place, which is what those views are for.
+      const nest = filter.rows !== "flat" && !filter.location_id;
+      if (nest) {
+        filtered = await liftHoldingsToCards(holdingsCtx(req), filtered, async (ids) => {
+          const cards = await listSelect(db).where("p.id", "in", ids).where("p.instance", "=", instanceOf(req)).execute();
+          const ou = await openUnitsFor(db, cards.map((c) => c.id));
+          const ru = ou.size ? await consumptionUnitFor(req) : null;
+          return cards.map((c) => toItem(c, ou, ru));
+        });
       }
-    }
-    // A thing inside another thing (a Backpack) has no place of its own: the
-    // Location column says what it is in, and where that is.
-    for (const [id, line] of await heldInLines(ctx.org.id, "inventory:part", filtered)) {
-      const p = filtered.find((x) => x.id === id);
-      if (p) p.location_name = line;
-    }
 
-    // Catalog-image fallback: for parts that don't carry their own
-    // image_path, walk the `matches → core-catalogs:entry` pairing
-    // and use the matched entry's image_path. One batched pairings
-    // lookup + one batched lookupMany — no N+1.
-    // Skip parts whose identity is a colour SWATCH (a valid colour hex, e.g. a
-    // yarn's colourway): a generic catalog photo would suppress the swatch the
-    // user wants (the thumbnail prefers a photo over a colour).
-    const hasColorSwatch = (p: { metadata?: unknown }) =>
-      /^#[0-9a-fA-F]{3,8}$/.test(String((p.metadata as Record<string, unknown> | null | undefined)?.color ?? "").trim());
-    const partsNeedingImage = filtered
-      .filter((p) => !p.image_path && !hasColorSwatch(p))
-      .map((p) => p.id);
-    if (partsNeedingImage.length > 0) {
-      const pairs = await platform().pairings.findBySources({
-        orgId: ctx.org.id,
-        sourceKind: "inventory:part",
-        sourceIds: partsNeedingImage,
-        targetKind: "core-catalogs:entry",
-        relationshipKind: "matches",
-      });
-      if (pairs.length > 0) {
-        // Some parts may have multiple matches (e.g. matched in two
-        // different catalogs). Keep the first one — order is undefined
-        // but stable per call.
-        const targetByPart = new Map<string, string>();
-        for (const p of pairs) {
-          if (!targetByPart.has(p.sourceId)) {
-            targetByPart.set(p.sourceId, p.targetId);
+      // Cross-module read for the location name: go through the
+      // resolver (no direct table read) per module-layers.md.
+      const ctx = tenantContext(req);
+      const locationIds = Array.from(
+        new Set(
+          filtered
+            .map((p) => p.location_id)
+            .filter((id): id is string => !!id),
+        ),
+      );
+      if (locationIds.length > 0) {
+        const resolved = await platform().entities.lookupMany(
+          ctx.org.id,
+          locationIds.map((id) => ({ kind: "core-locations:location", id })),
+        );
+        const byId = new Map(resolved.map((r) => [r.id, r.title]));
+        for (const p of filtered) {
+          if (p.location_id) p.location_name = byId.get(p.location_id) ?? null;
+        }
+      }
+      // A thing inside another thing (a Backpack) has no place of its own: the
+      // Location column says what it is in, and where that is.
+      for (const [id, line] of await heldInLines(ctx.org.id, "inventory:part", filtered)) {
+        const p = filtered.find((x) => x.id === id);
+        if (p) p.location_name = line;
+      }
+
+      // Catalog-image fallback: for parts that don't carry their own
+      // image_path, walk the `matches → core-catalogs:entry` pairing
+      // and use the matched entry's image_path. One batched pairings
+      // lookup + one batched lookupMany — no N+1.
+      // Skip parts whose identity is a colour SWATCH (a valid colour hex, e.g. a
+      // yarn's colourway): a generic catalog photo would suppress the swatch the
+      // user wants (the thumbnail prefers a photo over a colour).
+      const hasColorSwatch = (p: { metadata?: unknown }) =>
+        /^#[0-9a-fA-F]{3,8}$/.test(String((p.metadata as Record<string, unknown> | null | undefined)?.color ?? "").trim());
+      const partsNeedingImage = filtered
+        .filter((p) => !p.image_path && !hasColorSwatch(p))
+        .map((p) => p.id);
+      if (partsNeedingImage.length > 0) {
+        const pairs = await platform().pairings.findBySources({
+          orgId: ctx.org.id,
+          sourceKind: "inventory:part",
+          sourceIds: partsNeedingImage,
+          targetKind: "core-catalogs:entry",
+          relationshipKind: "matches",
+        });
+        if (pairs.length > 0) {
+          // Some parts may have multiple matches (e.g. matched in two
+          // different catalogs). Keep the first one — order is undefined
+          // but stable per call.
+          const targetByPart = new Map<string, string>();
+          for (const p of pairs) {
+            if (!targetByPart.has(p.sourceId)) {
+              targetByPart.set(p.sourceId, p.targetId);
+            }
+          }
+          const entries = await platform().entities.lookupMany(
+            ctx.org.id,
+            Array.from(new Set(targetByPart.values())).map((id) => ({
+              kind: "core-catalogs:entry",
+              id,
+            })),
+          );
+          const imageByEntryId = new Map<string, string>();
+          for (const e of entries) {
+            if (e.image_path) imageByEntryId.set(e.id, e.image_path);
+          }
+          for (const p of filtered) {
+            if (p.image_path) continue;
+            const targetId = targetByPart.get(p.id);
+            if (!targetId) continue;
+            const img = imageByEntryId.get(targetId);
+            if (img) p.image_path = img;
           }
         }
-        const entries = await platform().entities.lookupMany(
-          ctx.org.id,
-          Array.from(new Set(targetByPart.values())).map((id) => ({
-            kind: "core-catalogs:entry",
-            id,
-          })),
-        );
-        const imageByEntryId = new Map<string, string>();
-        for (const e of entries) {
-          if (e.image_path) imageByEntryId.set(e.id, e.image_path);
-        }
-        for (const p of filtered) {
-          if (p.image_path) continue;
-          const targetId = targetByPart.get(p.id);
-          if (!targetId) continue;
-          const img = imageByEntryId.get(targetId);
-          if (img) p.image_path = img;
-        }
       }
+
+      // Units on file, for the whole page in ONE query — bolted onto the batched
+      // enrichment above (location names, catalog images) rather than resolved per
+      // row. `items` here is what the parts list renders, so a per-row count would
+      // be an N+1 on the hottest read in the module.
+      const stocks = await stockViews(db, filtered);
+      const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
+      const withUnits = filtered.map((p) => ({ ...p, stock: stocks.get(p.id), stock_used: stocks.get(p.id)?.used ?? 0, units_count: unitCounts.get(p.id)?.count ?? 0 }));
+      const withHoldings = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
+      // What of each is installed in an asset or machine, and what is spare: the
+      // row says "0 spare · 1 installed in Gaming PC" and Hide unavailable reads it.
+      const annotated = await annotateInstalled(ctx.org.id, withHoldings);
+      const withRows = hideUnavailable ? annotated.filter((p) => p.spare_qty > 0) : annotated;
+
+      const last = cursorRow;
+      const next_cursor = !hasMore || !last
+        ? null
+        : viewSorted
+          ? encodeOffsetCursor(viewOffset + pageRows.length)
+          : encodeCursor(last.name, last.id);
+
+      // This route is a SECOND read path over the same rows the generic entity
+      // resolver serves, and only that one post-processed. So a relation or
+      // member field printed its raw uuid here while reading correctly through
+      // /entities/:kind. One helper, applied at both, until the two queries are
+      // collapsed into one.
+      const labelled = await platform().entities.withFieldLabels(
+        ctx.org.id,
+        // Field defs are keyed by the kind the caller asked for: a non-default
+        // instance carries its own defs under `<instance>:item`.
+        instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`,
+        withRows,
+      );
+
+      // Computed stock filters may leave a whole raw page empty. Advance
+      // by the raw boundary, so neither an empty page nor lifted holdings
+      // can hide the rest of the inventory.
+      if (labelled.length === 0 && next_cursor && last) {
+        if (viewSorted) {
+          viewOffset += pageRows.length;
+          query = query.offset(viewOffset);
+        } else {
+          query = query.where(sql<boolean>`(p.name, p.id) > (${last.name}, ${last.id})`);
+        }
+        continue;
+      }
+      res.json({ items: labelled, next_cursor, ...(unapplied.length ? { unapplied } : {}) });
+      return;
     }
-
-    // Units on file, for the whole page in ONE query — bolted onto the batched
-    // enrichment above (location names, catalog images) rather than resolved per
-    // row. `items` here is what the parts list renders, so a per-row count would
-    // be an N+1 on the hottest read in the module.
-    const stocks = await stockViews(db, filtered);
-    const unitCounts = await unitCountsFor(req, ctx.org.id, filtered.map((p) => p.id));
-    const withUnits = filtered.map((p) => ({ ...p, stock: stocks.get(p.id), stock_used: stocks.get(p.id)?.used ?? 0, units_count: unitCounts.get(p.id)?.count ?? 0 }));
-    const withHoldings = nest ? await attachHoldings(holdingsCtx(req), withUnits) : withUnits;
-    // What of each is installed in an asset or machine, and what is spare: the
-    // row says "0 spare · 1 installed in Gaming PC" and Hide unavailable reads it.
-    const annotated = await annotateInstalled(ctx.org.id, withHoldings);
-    const withRows = hideUnavailable ? annotated.filter((p) => p.spare_qty > 0) : annotated;
-
-    const last = cursorRow;
-    const next_cursor = !hasMore || !last
-      ? null
-      : viewSorted
-        ? encodeOffsetCursor(viewOffset + pageRows.length)
-        : encodeCursor(last.name, last.id);
-
-    // This route is a SECOND read path over the same rows the generic entity
-    // resolver serves, and only that one post-processed. So a relation or
-    // member field printed its raw uuid here while reading correctly through
-    // /entities/:kind. One helper, applied at both, until the two queries are
-    // collapsed into one.
-    const labelled = await platform().entities.withFieldLabels(
-      ctx.org.id,
-      // Field defs are keyed by the kind the caller asked for: a non-default
-      // instance carries its own defs under `<instance>:item`.
-      instanceOf(req) === "inventory" ? "inventory:part" : `${instanceOf(req)}:item`,
-      withRows,
-    );
-
-    res.json({ items: labelled, next_cursor, ...(unapplied.length ? { unapplied } : {}) });
   }),
 );
 
@@ -775,54 +785,35 @@ partsRouter.get(
     const filter = q.data;
     const db = tenantDb(req);
 
-    let query = db
-      .selectFrom("inventory_parts as p")
-      .leftJoin("inventory_categories as c", "c.id", "p.category_id")
-      .select([
-        "p.id",
-        "p.asset_id",
-        "p.name",
-        "p.description",
-        "p.qty",
-        "p.approximate_qty",
-        "p.unit",
-        "p.cost",
-        "p.min_qty",
-      "p.instance",
-      "p.stock_revision",
-        "p.manufacturer",
-        "p.serial_number",
-        "p.model_number",
-        "p.assigned_to",
-        "p.supplier_url",
-        "p.notes",
-        "p.warranty_expires",
-        "p.lifetime_warranty",
-        "p.warranty_details",
-        "p.insured",
-        "p.archived",
-        "p.state",
-        "c.name as category_name",
-        "p.location_id",
-        "p.created_at",
-        "p.metadata",
-      ])
-      .orderBy("p.asset_id", "asc")
-      .where("p.instance", "=", instanceOf(req));
-
     if (readsValues(filter)) await refreshMeasureReadings(db, { instance: instanceOf(req) });
-    query = applyPartSearch(query, filter.search, { table: "p", unreadable: unreadableFieldsOf(req) });
-    if (filter.category_id) query = query.where("p.category_id", "=", filter.category_id);
-    if (filter.location_id) query = query.where("p.location_id", "=", filter.location_id);
-    if (filter.state) query = query.where("p.state", "=", filter.state);
-    if (isTruthy(filter.archived_only)) {
-      query = query.where("p.archived", "=", true);
-    } else if (!isTruthy(filter.show_archived)) {
-      query = query.where("p.archived", "=", false);
+    const today = await platform().accounts.dayFor(sessionUser(req).id, { said: req.query.today });
+    const unapplied: FilterPredicate[] = [];
+    const { query: matching } = await matchingParts(req, filter, today, unapplied);
+    const query = matching
+      .select("p.assigned_to")
+      .where("p.instance", "=", instanceOf(req));
+    if (unapplied.length) {
+      res.status(422).json({ error: { code: "unapplied_filter", message: "Some filters could not be applied. Change them before exporting." } });
+      return;
     }
-    if (isTruthy(filter.insured_only)) query = query.where("p.insured", "=", true);
-
-    const rows = await query.execute();
+    let rows = await applyPartSort(query, filter.sort ?? ["asset_id"], { table: "p" }).orderBy("p.id").execute();
+    if (isTruthy(filter.low_stock)) {
+      const openUnits = await openUnitsFor(db, rows.map(row => row.id));
+      rows = rows.filter(row => isLowStock({
+        onHand: onHandCount(Number(row.qty), openUnits.get(row.id) ?? []),
+        assigned: Number(row.assigned_qty ?? 0),
+        minQty: row.min_qty == null ? null : Number(row.min_qty),
+        approximate: row.approximate_qty == null ? null : Number(row.approximate_qty),
+      }));
+    }
+    if (isTruthy(filter.hide_unavailable)) {
+      const annotated = await annotateInstalled(tenantContext(req).org.id, rows.map(row => ({
+        id: row.id, qty: Number(row.qty),
+        approximate_qty: row.approximate_qty == null ? null : Number(row.approximate_qty),
+      })));
+      const available = new Set(annotated.filter(row => row.spare_qty > 0).map(row => row.id));
+      rows = rows.filter(row => available.has(row.id));
+    }
 
     // Where each row is, by name: its place, or what it is inside ("Backpack,
     // in Desk drawer"), the same line the list and the record show.
@@ -1510,6 +1501,12 @@ partsRouter.patch(
       return;
     }
 
+    const moving = parsed.data.location_id !== undefined && parsed.data.location_id !== before.location_id;
+    if (moving) {
+      const refusal = loanActionRefusal("core-placement:place", before);
+      if (refusal) return void res.status(409).json({ error: { code: "record_lent", message: refusal } });
+    }
+
     // A record marked gone has nothing on hand: its kept count is history for
     // Undo, not a number to edit, unless this same edit brings it back (#6153).
     if (isGone(before.metadata) && parsed.data.qty != null && parsed.data.archived !== false && Number(parsed.data.qty) !== Number(before.qty)) {
@@ -1556,14 +1553,18 @@ partsRouter.patch(
     }
     patch.updated_at = new Date();
 
-    const updated = await db
+    let write = db
       .updateTable("inventory_parts")
       .set(patch)
       .where("id", "=", id)
-      .where("instance", "=", instanceOf(req))
+      .where("instance", "=", instanceOf(req));
+    // A checkout can land after the read above; the UPDATE must see the same loan.
+    if (moving) write = write.where(sql<boolean>`coalesce(metadata -> ${LOAN_KEY}, 'null'::jsonb) = ${JSON.stringify(coerceMetadata(before.metadata)[LOAN_KEY] ?? null)}::jsonb`);
+    const updated = await write
       .returning(["id", "name", "qty", "state", "updated_at"])
       .executeTakeFirst();
     if (!updated) {
+      if (moving) return void res.status(409).json({ error: { code: "changed_since", message: "The item or its loan changed before the move was saved. Look at it again before moving it." } });
       res.status(404).json({ error: { code: "not_found", message: "part not found" } });
       return;
     }

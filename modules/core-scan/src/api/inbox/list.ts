@@ -20,6 +20,7 @@ import { refreshCatalogImageByName } from "../../services/enrich-photo.js";
 import { rechoosePictureForColour, withholdContradictedPicture } from "../../services/withhold-picture.js";
 import { themeFromReply, themeScope, type ThemeItem } from "../../services/session-theme.js";
 import { restampTrackedMatch } from "../../services/tracked-stamp.js";
+import { appendScanHistory, type ScanEditPart } from "../../services/scan-history.js";
 import { filingDestination } from "../../services/destination.js";
 import { splitParentsOf } from "../../services/split-groups.js";
 import { reportBarcodeCorrection, unitLotsOf } from "../../services/barcode-corrections.js";
@@ -649,6 +650,17 @@ listRouter.patch(
       res.status(404).json({ error: { code: "not_found", message: "inbox item not found" } });
       return;
     }
+    // Who changed what, on the row's History: an Undo split reads it, so a
+    // teammate's rename of a piece is never discarded unseen (#8557).
+    const changed: ScanEditPart[] = [
+      ...(parsed.data.name !== undefined ? (["name"] as const) : []),
+      ...(parsed.data.quantity !== undefined ? (["count"] as const) : []),
+      ...(parsed.data.target_location_id !== undefined ? (["place"] as const) : []),
+      ...(parsed.data.fields !== undefined ? (["fields"] as const) : []),
+      ...(parsed.data.category !== undefined ? (["category"] as const) : []),
+      ...(parsed.data.destination !== undefined ? (["table"] as const) : []),
+    ];
+    if (changed.length) await appendScanHistory(db, id, { action: "edit", by: sessionUser(req)?.id ?? null, changed });
     // An inline rename of a barcode item ALSO propagates to the Barcode
     // Intelligence DB — the resolver's name was wrong and the human's is truth,
     // so the next scan of this UPC (any workspace) gets the fix. Mirrors the

@@ -15,7 +15,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
-import { csvCell } from "@cobblr/platform-contract/csv";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
+import { csvCell, parseCsv, unguardCsvText } from "@cobblr/platform-contract/csv";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { planByKey, planByName, PATH_SEPARATOR } from "./import-plan.js";
@@ -33,28 +34,6 @@ export const locationsImportRouter = Router({ mergeParams: true });
 
 const KNOWN = new Set(["name", "short_name", "kind", "parent"]);
 
-// ── tiny CSV parser (RFC-4180-ish: quoted fields, "" escapes, CRLF) ──
-function parseCsvRaw(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cur = "";
-  let inQ = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQ) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false;
-      } else cur += c;
-    } else if (c === '"') inQ = true;
-    else if (c === ",") { row.push(cur); cur = ""; }
-    else if (c === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
-    else if (c === "\r") { /* skip */ }
-    else cur += c;
-  }
-  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
-  return rows.filter((r) => r.some((f) => f.trim() !== ""));
-}
-
 interface ParsedRow {
   row_number: number;
   name: string;
@@ -65,8 +44,13 @@ interface ParsedRow {
   metadata: Record<string, string>;
 }
 
-function parseLocations(csv: string, matchOn: string): { headers: string[]; rows: ParsedRow[]; errors: { row_number: number; message: string }[] } {
-  const raw = parseCsvRaw(csv);
+export function parseLocations(csv: string, matchOn: string): { headers: string[]; rows: ParsedRow[]; errors: { row_number: number; message: string }[] } {
+  let raw: string[][];
+  try {
+    raw = parseCsv(csv, { strict: true }).filter((r) => r.some((f) => f.trim() !== ""));
+  } catch (e) {
+    return { headers: [], rows: [], errors: [{ row_number: 0, message: (e as Error).message }] };
+  }
   if (raw.length === 0) return { headers: [], rows: [], errors: [] };
   const headers = raw[0]!.map((h) => h.trim());
   const idx = (name: string) => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
@@ -75,7 +59,7 @@ function parseLocations(csv: string, matchOn: string): { headers: string[]; rows
   const errors: { row_number: number; message: string }[] = [];
   for (let r = 1; r < raw.length; r++) {
     const cells = raw[r]!;
-    const get = (i: number) => (i >= 0 && i < cells.length ? cells[i]!.trim() : "");
+    const get = (i: number) => (i >= 0 && i < cells.length ? unguardCsvText(cells[i]!.trim()) : "");
     const name = nameI >= 0 ? get(nameI) : "";
     if (!name) { errors.push({ row_number: r, message: "Missing name, skipped" }); continue; }
     const kindRaw = get(idx("kind")).toLowerCase();
@@ -115,7 +99,7 @@ const ImportBody = z.object({
 locationsImportRouter.post(
   "/import",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, ...ADMIN_TIER)) return;
     const parsed = ImportBody.safeParse(req.body);
     if (!parsed.success) return void badBody(res, parsed.error);
     const { csv, match_on } = parsed.data;

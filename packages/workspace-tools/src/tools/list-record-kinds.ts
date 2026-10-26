@@ -14,7 +14,7 @@ const tool: WorkspaceTool = {
     return toolOk(
       kinds.map((k) => ({
         ...summarizeKind(k),
-        can_create: resolveCreatePath(k.id, kinds) !== null,
+        can_create: k.can_create !== false && resolveCreatePath(k.id, kinds) !== null,
       })),
     );
   },

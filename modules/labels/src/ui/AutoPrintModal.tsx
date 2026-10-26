@@ -7,7 +7,8 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useRoleAtLeast, useToast } from "@cobblr/platform-web";
+import { PRINTER_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { printerCapability, labelSizesForPrinter, customWidthFits } from "../label-sizes";
 import type { FireMode } from "./api";
 import { useLabels } from "./context";
@@ -20,6 +21,7 @@ const MODE_LABEL: Record<Exclude<FireMode, "manual">, string> = {
 
 export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { api, orgSlug } = useLabels();
+  const mayConfigurePrinter = useRoleAtLeast(PRINTER_MANAGERS);
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -109,7 +111,9 @@ export function AutoPrintModal({ open, onClose }: { open: boolean; onClose: () =
                 ))}
               </select>
               {printers.length === 0 && (
-                <span className="text-xs text-amber-700 dark:text-amber-400">No printer yet. Add one under Configuration → Printers.</span>
+                <span className="text-xs text-amber-700 dark:text-amber-400">{mayConfigurePrinter
+                  ? "No printer yet. Add one under Configuration → Printers."
+                  : "No printer yet. Ask an owner, admin or editor to add one."}</span>
               )}
               {isBle && (
                 <span className="text-xs text-faint dark:text-slate-400">This printer prints from this browser tab. Auto-print fires while the tab is open and the printer is connected on the Labels page.</span>

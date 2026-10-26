@@ -52,7 +52,7 @@ export default function DxfRenderer({ bytes }: PreviewRendererProps) {
       ref={ref}
       width={480}
       height={480}
-      className="mx-auto block bg-surface rounded border border-line"
+      className="mx-auto block max-w-full max-h-[50vh] h-auto bg-surface rounded border border-line"
     />
   );
 }

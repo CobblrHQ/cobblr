@@ -31,6 +31,7 @@ export const KERNEL_NOTIFICATION_KINDS: readonly NotificationKindDecl[] = [
   { eventType: "warranty.ending", label: "Warranty ending", description: "A warranty ends within 30 days.", module: "calendar" },
   ...BRIDGE_NOTIFICATION_KINDS.map((k) => ({ ...k, module: "bridges" })),
   { eventType: "test.notification", label: "Test notification", description: "The one you send yourself to check a channel." },
+  { eventType: "platform.self-test", label: "Delivery test", description: "The one you send yourself to check your notification settings." },
   { eventType: "notifications.channel_paused", label: "A channel paused", description: "One of your channels sent its hour's worth; the rest wait for its next summary." },
   { eventType: "platform.approval.requested", label: "Approval requested", description: "Someone asked to do something that needs an owner's or admin's yes." },
   { eventType: "platform.approval.decided", label: "Approval answered", description: "Your request was approved or declined." },

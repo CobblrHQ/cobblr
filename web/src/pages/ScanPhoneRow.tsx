@@ -18,7 +18,7 @@ import { Link } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Camera, CheckCircle, ChevronDown, ChevronRight, Download, Loader2, MoreHorizontal, PackagePlus, RotateCcw, ScanLine, Scissors } from "lucide-react";
 import type { ScanInboxItem } from "../lib/api";
-import { NumberStepper, OverlayLayer, useEscapeToClose, useLockPageScroll } from "@cobblr/platform-web";
+import { NumberStepper, OverlayLayer, useEscapeToClose, useMenuFocus, useLockPageScroll } from "@cobblr/platform-web";
 import { ScanReceiptUnread, type ScanReceiptUnreadProps } from "../components/ScanReceiptUnread";
 import { DestinationPicker } from "../components/DestinationPicker";
 import { RECEIPT_UNREAD_TITLE } from "@cobblr/platform-contract/scan-copy";
@@ -150,11 +150,11 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
   // 64px photo column with a 12px gap leave 293px; the quantity control
   // (~84px) and three 40px tools with 6px gaps take 222px. One rendered
   // row, on every ordinary card, whatever the picture's height.
-  const tool = "inline-flex min-h-9 min-w-10 shrink-0 items-center justify-center gap-1 rounded-md border border-line dark:border-slate-700 px-2 text-xs text-content dark:text-mortar-100 disabled:opacity-50";
+  const tool = "inline-flex min-h-9 min-w-[40px] shrink-0 items-center justify-center gap-1 rounded-md border border-line dark:border-slate-700 px-[8px] text-xs text-content dark:text-mortar-100 disabled:opacity-50";
   return (
     <div
       className={
-        "relative flex items-start gap-2.5 border-b border-line dark:border-slate-800 px-2.5 py-1.5 " +
+        "relative flex items-start gap-[10px] border-b border-line dark:border-slate-800 px-[10px] py-1.5 " +
         (p.selection?.selected ? "bg-cobble-50/60 dark:bg-cobble-900/20" : "bg-surface dark:bg-slate-900")
       }
     >
@@ -168,12 +168,12 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
         onClick={p.onViewImage ?? p.onOpen}
         aria-label={p.thumb ? "View the picture full size" : "Open the item"}
         title={p.thumb ? "View the picture full size" : "Open the item"}
-        className="w-16 shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
+        className="w-[64px] shrink-0 overflow-hidden rounded-lg bg-subtle dark:bg-slate-800 flex items-center justify-center"
       >
         {p.thumb ? (
           // Turned: a 128 by 64 box, contained, rotated a quarter about its
           // centre, sits inside a 64 by 128 frame (the row's height budget).
-          <span className={thumbFit.rotate ? "relative block h-32 w-16 overflow-hidden" : "block w-full"} data-rotate={thumbFit.rotate || undefined}>
+          <span className={thumbFit.rotate ? "relative block h-[128px] w-[64px] overflow-hidden" : "block w-full"} data-rotate={thumbFit.rotate || undefined}>
             <img
               src={p.thumb}
               alt=""
@@ -340,14 +340,17 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
                 decreaseLabel={q.signed ? "One less" : "Decrease quantity"}
                 increaseLabel={q.signed ? "One more" : "Increase quantity"}
                 inputTestId={q.signed ? "row-change" : undefined}
-                buttonClassName="min-h-9 w-7 text-muted disabled:opacity-40"
-                inputClassName={"w-9 bg-transparent text-center font-semibold tabular-nums " + (q.signed && q.value < 0 ? "text-ember-700 dark:text-ember-300" : "text-content dark:text-mortar-100")}
+                // Widths in px, the input's by its digits: in rem the three
+                // doubled at 200% text and the stepper alone ran past a 320 px
+                // phone (#8423).
+                buttonClassName="min-h-9 w-[28px] text-muted disabled:opacity-40"
+                inputClassName={"w-[max(36px,3ch)] bg-transparent text-center font-semibold tabular-nums " + (q.signed && q.value < 0 ? "text-ember-700 dark:text-ember-300" : "text-content dark:text-mortar-100")}
                 onChange={q.onChange}
               />
             );
           })()}
-          <span className="flex shrink-0 items-center gap-1.5">
-          <button type="button" onClick={p.onCapture} className={tool + " min-w-10 justify-center"} aria-label="Photograph this item" title="Photograph this item">
+          <span className="flex shrink-0 items-center gap-[6px]">
+          <button type="button" onClick={p.onCapture} className={tool + " min-w-[40px] justify-center"} aria-label="Photograph this item" title="Photograph this item">
             <Camera size={15} />
           </button>
           <button
@@ -358,7 +361,7 @@ export function ScanPhoneRow(p: ScanPhoneRowProps) {
             aria-label={p.rerun.running ? (p.rerun.replaying ? "Replaying" : "Re-running the AI") : p.rerun.failed ? "Retry the AI" : "Re-run AI"}
             data-state={p.rerun.running ? "running" : p.rerun.failed ? "failed" : "idle"}
             title={p.rerun.running ? "Re-running: the AI is working on this item" : p.rerun.failed ? "Retry: ask the AI again" : "Re-run AI: a fresh look at the photo and the code"}
-            className={tool + " min-w-10 justify-center" + (p.rerun.failed && !p.rerun.running ? " border-amber-400/70 text-amber-700 dark:text-amber-300" : p.rerun.running ? " border-accent text-accent" : "")}
+            className={tool + " min-w-[40px] justify-center" + (p.rerun.failed && !p.rerun.running ? " border-amber-400/70 text-amber-700 dark:text-amber-300" : p.rerun.running ? " border-accent text-accent" : "")}
           >
             {p.rerun.running ? <Loader2 size={15} className="animate-spin" /> : <RotateCcw size={15} />}
           </button>
@@ -505,6 +508,7 @@ function PhoneActionSheet({ title, actions, hints, onClose }: { title: string; a
   useLockPageScroll();
   const sheetRef = useRef<HTMLDivElement>(null);
   useEscapeToClose(true, sheetRef, onClose);
+  useMenuFocus(true, sheetRef);
   return createPortal(
     <OverlayLayer ref={sheetRef} className="z-50 flex items-end bg-slate-900/50" onClick={onClose} role="presentation">
       <div

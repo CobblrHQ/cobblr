@@ -121,7 +121,7 @@ export function ScanLivePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-6" data-scan-live>
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="text-lg font-semibold text-content dark:text-mortar-100">Live scans</h1>
         <Link to="/scan" className="text-xs text-faint hover:text-accent">
           the inbox →

@@ -10,7 +10,7 @@ import { useState } from "react";
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Pencil, RotateCcw, SlidersHorizontal } from "lucide-react";
-import { Modal, NounChoiceButtons, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useRunAction, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { Modal, NounChoiceButtons, OnceQuiet, nounChoiceHeading, changeWorkspaceShape, useChangeWorkspaceShape, useRunAction, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
 import {
   ApiError,
   api,
@@ -129,7 +129,7 @@ export function PresentationPage() {
   });
 
   return (
-    <div className="space-y-4">
+    <OnceQuiet className="space-y-4">
       <ConfigHeaderActions>
         <span className="text-sm text-muted dark:text-slate-400">
           {countOf(rows.length, "thing")} in your workspace
@@ -208,7 +208,7 @@ export function PresentationPage() {
           onSaved={() => setAddingFor(null)}
         />
       )}
-    </div>
+    </OnceQuiet>
   );
 }
 

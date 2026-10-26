@@ -209,7 +209,7 @@ function Row({
         )}
       </div>
       {editing && (
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <input type="email" value={draftEmail} onChange={(e) => setDraftEmail(e.target.value)} placeholder="Email (optional)" aria-label="Email" className="input min-w-0" data-testid="people-edit-email" />
           <input type="tel" value={draftPhone} onChange={(e) => setDraftPhone(e.target.value)} placeholder="Phone, with the country code (+1 …)" aria-label="Phone" className="input min-w-0" data-testid="people-edit-phone" />
           <p className="sm:col-span-2 text-xs text-faint">An automation can email or text them only once an owner or admin allows it, under Configuration, Email.</p>

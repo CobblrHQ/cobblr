@@ -139,7 +139,7 @@ export function SignInSettingsTab() {
             save.mutate();
           }}
         >
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label>
               <span className={label}>Name on the button</span>
               <input className={input} required value={editing.form.display_name} onChange={(e) => set({ display_name: e.target.value })} placeholder="Authentik" />

@@ -1,7 +1,8 @@
 // The box you type a thing into, with the other two ways in beside it
 // (photos you already took, and the camera or a paired phone). The
 // dashboard's "Just add it" and the palette's "Add a thing" sheet are this.
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useSentWords } from "@cobblr/platform-web";
 import { Link } from "react-router-dom";
 import { Camera, Loader2, Plus } from "lucide-react";
 import { AddPhotosTile } from "./AddPhotosTile";
@@ -25,15 +26,20 @@ export function FreeformAdd({
   onAdded?: (text: string) => void;
 }) {
   const [text, setText] = useState("");
+  const sending = useRef(false);
+  const sentWords = useSentWords(text);
   const isTouch = useIsTouch();
   const submit = () => {
     const t = text.trim();
-    if (!t) return;
+    if (!t || add.isPending || sending.current) return;
+    sending.current = true;
+    sentWords.sending();
     add.mutate(t, {
       onSuccess: () => {
-        setText("");
+        if (sentWords.landed()) setText("");
         onAdded?.(t);
       },
+      onSettled: () => { sending.current = false; },
     });
   };
   return (
@@ -52,12 +58,12 @@ export function FreeformAdd({
           }}
         />
       </div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-[8px]">
         <button
           type="button"
           disabled={!text.trim() || add.isPending}
           onClick={submit}
-          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 text-sm font-medium px-3 py-1.5 hover:border-cobble-400 transition disabled:opacity-50"
+          className="flex-1 min-w-fit inline-flex items-center justify-center gap-1.5 rounded-lg border border-cobble-300 dark:border-cobble-700 bg-surface dark:bg-slate-900 text-content dark:text-mortar-100 text-sm font-medium px-3 py-1.5 hover:border-cobble-400 transition disabled:opacity-50"
         >
           {add.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add it
         </button>

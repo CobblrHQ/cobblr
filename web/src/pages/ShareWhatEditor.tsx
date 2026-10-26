@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
-import { useToast, SegmentedChoice } from "@cobblr/platform-web";
+import { useToast, SegmentedChoice, QueryError } from "@cobblr/platform-web";
 import { EMPTY_SCOPE, VISIBILITY_NONE, type ScopeDef, type ScopeRule, type VisibilityDef } from "@cobblr/platform-contract/share-scope";
 import { api, type ShareEditMode } from "../lib/api";
 
@@ -92,6 +92,7 @@ export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: 
   const kindName = (id: string) => kinds.data?.items.find((k) => k.id === id)?.display_name_plural ?? kinds.data?.items.find((k) => k.id === id)?.display_name ?? id;
   const setRules = (rules: ScopeRule[]) => setScope({ ...scope, rules });
 
+  if (what.isError) return <QueryError what="what's shared" onRetry={() => void what.refetch()} />;
   if (!what.data) return <p className="text-sm text-muted">Loading…</p>;
   return (
     <div className="space-y-4" data-testid="share-what">
@@ -130,10 +131,12 @@ export function ScopeEditor({ slug, who, onDone, source }: { slug: string; who: 
           <input type="checkbox" checked={scope.with_contents} onChange={(e) => setScope({ ...scope, with_contents: e.target.checked })} className="accent-cobble-500" />
           With what is inside them
         </label>
-        <p className="text-sm text-content" data-testid="share-what-count">
-          {preview.isFetching && !preview.data ? "Counting…" : `${preview.data?.count ?? 0}${preview.data && !preview.data.complete ? "+" : ""} thing${preview.data?.count === 1 ? "" : "s"} match`}
-          {preview.data?.sample.length ? <span className="text-muted">: {preview.data.sample.map((x) => x.title).join(", ")}{(preview.data.count ?? 0) > preview.data.sample.length ? ", …" : ""}</span> : null}
-        </p>
+        {preview.isError ? <QueryError what="the matching things" onRetry={() => void preview.refetch()} /> : (
+          <p className="text-sm text-content" data-testid="share-what-count">
+            {!preview.data ? "Counting…" : `${preview.data.count}${!preview.data.complete ? "+" : ""} thing${preview.data.count === 1 ? "" : "s"} match`}
+            {preview.data?.sample.length ? <span className="text-muted">: {preview.data.sample.map((x) => x.title).join(", ")}{(preview.data.count ?? 0) > preview.data.sample.length ? ", …" : ""}</span> : null}
+          </p>
+        )}
       </section>
 
       <section className="space-y-2">

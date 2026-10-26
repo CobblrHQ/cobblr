@@ -11,7 +11,7 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Pencil, Pin, Tag as TagIcon, Trash2 } from "lucide-react";
-import { CustomFieldsPanel, useConfirm, useToast, usePageTitle } from "@cobblr/platform-web";
+import { CustomFieldsPanel, useConfirm, useToast, usePageTitle, editOf } from "@cobblr/platform-web";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { ApiError, api, type TagAttachment } from "../lib/api";
@@ -70,12 +70,12 @@ export function TagDetailPage() {
     void qc.invalidateQueries({ queryKey: ["tag-attachments"] });
   };
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateTag(activeSlug, tag!.id, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateTag(activeSlug, tag!.id, editOf(tag, { metadata })),
     onSuccess: refresh,
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });
   const pin = useMutation({
-    mutationFn: () => api.updateTag(activeSlug, tag!.id, { pinned: !tag!.pinned }),
+    mutationFn: () => api.updateTag(activeSlug, tag!.id, editOf(tag, { pinned: !tag!.pinned })),
     onSuccess: () => {
       toast.success(tag!.pinned ? `Unpinned ${tag!.name}` : `Pinned ${tag!.name}`);
       refresh();
@@ -150,7 +150,9 @@ export function TagDetailPage() {
         )}
         <div className="flex-1" />
         {canWrite && (
-          <div className="flex items-center gap-2">
+          // Its three actions wrap: held on one line, Delete ran 67 px past a
+          // phone at 200% text (#8430).
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => pin.mutate()}

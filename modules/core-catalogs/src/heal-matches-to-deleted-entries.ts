@@ -3,7 +3,8 @@
 //
 // DONE WHEN: no entity_pairings row with relationship_kind = 'matches' and
 // target_kind = 'core-catalogs:entry' names an entry that is not in its
-// tenant's core_catalogs_entries. Check prod, staging and dev, then delete
+// tenant's core_catalogs_entries, or a hosted entry (`<catalog>::<id>`) whose
+// catalog is not in core_catalogs_catalogs. Check prod, staging and dev, then delete
 // this file and its onBoot call.
 //
 // BORN WITH: DELETE /catalogs/:id removes the matches pointing at the
@@ -30,11 +31,28 @@ export async function healMatchesToDeletedEntries(orgId: string, db: Kysely<Core
     const targets = await platform().pairings.listTargets({ orgId, targetKind: KIND, relationshipKind: REL, madeBefore: since, ...(after ? { afterTargetId: after } : {}), limit: PAGE });
     if (!targets.length) return found;
     after = targets[targets.length - 1];
-    const live = new Set((await db.selectFrom("core_catalogs_entries").select("id").where("id", "in", targets).execute()).map((e) => e.id));
-    const gone = targets.filter((t) => !live.has(t));
+    const gone = await goneTargets(db, targets);
     if (gone.length) found += (await platform().pairings.removeByTargets({ orgId, targetKind: KIND, targetIds: gone, relationshipKind: REL })).removed;
     if (targets.length < PAGE) return found;
   }
+}
+
+// A stored entry is named by its uuid; a hosted-search match by
+// `<catalog id>::<external id>`, whose entry lives in the hosted dataset, so only
+// its catalog can be checked here. Any other shape is left alone.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function goneTargets(db: Kysely<CoreCatalogsDB>, targets: string[]): Promise<string[]> {
+  const entryIds = targets.filter((t) => UUID.test(t));
+  const hostedCatalog = new Map<string, string>();
+  for (const t of targets) {
+    const catalogId = t.split("::")[0]!;
+    if (t.includes("::") && UUID.test(catalogId)) hostedCatalog.set(t, catalogId);
+  }
+  const catalogIds = [...new Set(hostedCatalog.values())];
+  const liveEntries = new Set(entryIds.length ? (await db.selectFrom("core_catalogs_entries").select("id").where("id", "in", entryIds).execute()).map((e) => e.id) : []);
+  const liveCatalogs = new Set(catalogIds.length ? (await db.selectFrom("core_catalogs_catalogs").select("id").where("id", "in", catalogIds).execute()).map((c) => c.id) : []);
+  return targets.filter((t) => (UUID.test(t) ? !liveEntries.has(t) : hostedCatalog.has(t) && !liveCatalogs.has(hostedCatalog.get(t)!)));
 }
 
 export function registerMatchesToDeletedEntriesHeal(): void {

@@ -23,7 +23,7 @@ export function registerUndoSplitAction(): void {
     const id = itemId(ctx);
     if (!id) return { ok: false, error: "Say which split: item_id, the group's or one piece's." };
     const { db, http } = await door(ctx);
-    const r = await undoSplit(db, ctx.orgId, id, http);
+    const r = await undoSplit(db, ctx.orgId, id, http, ctx.userId ?? null);
     if (!r.ok) return { ok: false, error: r.error.message };
     await appendScanHistory(db, r.parent.id, { action: "unsplit", note: `${r.live.length} split item${r.live.length === 1 ? "" : "s"} discarded` });
     return { ok: true, summary: `Back as one photo; ${r.live.length} piece${r.live.length === 1 ? "" : "s"} taken out.`, data: { item_id: r.parent.id, discarded: r.live } };

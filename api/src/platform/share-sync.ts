@@ -283,6 +283,17 @@ const loopPasses: Array<() => Promise<void>> = [];
 export function addShareSyncPass(fn: () => Promise<void>): void {
   loopPasses.push(fn);
 }
+
+const endingPasses: Array<(link: ShareLinkRow) => Promise<void>> = [];
+/** What a share leaves behind it in other workspaces, settled while its own
+ *  rows still say what that is: an ended share space takes its ledger with
+ *  it, and a giver's record kept an offer nothing could withdraw (#8264). */
+export function addShareEndingPass(fn: (link: ShareLinkRow) => Promise<void>): void {
+  endingPasses.push(fn);
+}
+export async function settleEndingShare(link: ShareLinkRow): Promise<void> {
+  for (const fn of endingPasses) await fn(link).catch((err) => console.error(`[share] settling ended share ${link.id}:`, err));
+}
 const runLoop = () =>
   // SKIP-IF-BUSY OK: hands the outcome back; each caller reads .ran or says why it may skip
   runExclusive("share.sync-loop", async () => {

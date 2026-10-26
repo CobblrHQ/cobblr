@@ -21,9 +21,11 @@ export function NewFromTemplateButton({ args = {}, onOpen }: { args?: TemplateCr
 
 export function NewItemMenu({ children, ...args }: TemplateCreateArgs & { children: ReactNode }) {
   return (
-    <div className="inline-flex shrink-0 items-center gap-1">
+    // Never wider than its row: its button's words wrap rather than run past a
+    // phone ("New licence or subscription" at 200% text, #8430).
+    <div className="inline-flex min-w-0 max-w-full items-center gap-1">
       {children}
-      <details className="relative">
+      <details className="relative shrink-0">
         <summary aria-label="More ways to add" className="list-none cursor-pointer rounded-md border border-line dark:border-slate-600 p-2 text-content hover:bg-subtle dark:hover:bg-slate-800">
           <ChevronDown size={16} />
         </summary>

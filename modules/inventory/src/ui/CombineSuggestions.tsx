@@ -56,12 +56,14 @@ function SuggestionRow({ s, onDone }: { s: CombineSuggestion; onDone: () => void
 
 /** On the list: how many things look duplicated across places, and each one's
  *  question on request. Renders nothing when there are none. */
-export function CombineSuggestionsBanner() {
+export function useCombineSuggestions() {
   const { api, entityKind } = useInventory();
+  return useQuery({ queryKey: ["inventory-combine-suggestions", entityKind], queryFn: () => api.combineSuggestions() });
+}
+
+export function CombineSuggestionsBanner({ items }: { items: CombineSuggestion[] }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
-  const q = useQuery({ queryKey: ["inventory-combine-suggestions", entityKind], queryFn: () => api.combineSuggestions() });
-  const items = q.data?.items ?? [];
   if (!items.length) return null;
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["inventory-combine-suggestions"] });

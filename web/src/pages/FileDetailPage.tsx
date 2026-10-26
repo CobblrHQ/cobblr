@@ -11,8 +11,8 @@ import { ArrowLeft, ExternalLink, File as FileIcon, Pencil, Trash2 } from "lucid
 import { api, ApiError } from "../lib/api";
 import { openAuthedFile } from "../lib/authed-file";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { canPreviewFile, CustomFieldsPanel, EntityPhoto, FilePreview, useConfirm, useFilePreviewRegistry, usePageTitle, useToast } from "@cobblr/platform-web";
-import { folderPaths, formatBytes } from "../features/core-files/fileFormat";
+import { canPreviewFile, CustomFieldsPanel, EntityPhoto, FilePreview, useConfirm, useFilePreviewRegistry, usePageTitle, useToast, editOf } from "@cobblr/platform-web";
+import { folderPaths, formatBytes, deleteFileMessage } from "../features/core-files/fileFormat";
 import { ContributedDetailPanels } from "../panels/registry";
 import { ImageLightbox } from "../components/ImageLightbox";
 
@@ -32,9 +32,11 @@ export function FileDetailPage() {
   // a file that is gone and logged a 404 (#7290).
   const [deleting, setDeleting] = useState(false);
   const file = useQuery({ queryKey: ["file", activeSlug, id], queryFn: () => api.getFile(activeSlug, id), enabled: !!activeSlug && !!id && !deleting, retry: false });
-  const usedBy = useQuery({ queryKey: ["file-used-by", activeSlug, id], queryFn: () => api.fileUsedBy(activeSlug, id), enabled: !!file.data && !deleting });
+  // 404-is: a-state: the file was deleted while its cached detail was open.
+  const gone = file.error instanceof ApiError && file.error.status === 404;
+  const usedBy = useQuery({ queryKey: ["file-used-by", activeSlug, id], queryFn: () => api.fileUsedBy(activeSlug, id), enabled: !!file.data && !deleting && !gone });
   const folders = useQuery({ queryKey: ["file-folders", activeSlug], queryFn: () => api.listFileFolders(activeSlug), enabled: !!activeSlug });
-  usePageTitle(file.data?.filename ?? "File");
+  usePageTitle(gone ? "File" : (file.data?.filename ?? "File"));
 
   const paths = useMemo(() => folderPaths(folders.data?.items ?? []), [folders.data]);
   const pathLabel = (folderId: string | null | undefined) => (folderId ? (paths.get(folderId) ?? []).map((f) => f.name).join(" / ") || "a folder" : "Top level");
@@ -46,7 +48,7 @@ export function FileDetailPage() {
   };
 
   const update = useMutation({
-    mutationFn: (body: { filename?: string; folder_id?: string | null }) => api.updateFile(activeSlug, id, body),
+    mutationFn: (body: { filename?: string; folder_id?: string | null }) => api.updateFile(activeSlug, id, editOf(file.data, body)),
     onSuccess: (_r, body) => {
       if (body.folder_id !== undefined) toast.success(`Moved to ${pathLabel(body.folder_id)}`);
       refresh();
@@ -54,7 +56,7 @@ export function FileDetailPage() {
     onError: fail,
   });
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateFile(activeSlug, id, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateFile(activeSlug, id, editOf(file.data, { metadata })),
     onSuccess: refresh,
     onError: fail,
   });
@@ -83,9 +85,8 @@ export function FileDetailPage() {
   });
 
   if (file.isLoading) return <div className="text-sm text-muted">Loading…</div>;
-  if (!file.data) {
+  if (!file.data || gone) {
     // 404-is: a-state: a file link can outlive the file
-    const gone = file.error instanceof ApiError && file.error.status === 404;
     return (
       <div className="space-y-3" data-testid="file-missing">
         <BackToFiles />
@@ -101,7 +102,7 @@ export function FileDetailPage() {
     setRenaming(null);
   };
   const askDelete = async () => {
-    const ok = await confirm({ title: "Delete this file?", message: `${f.filename} goes to Recently deleted; things it is attached to keep it.`, confirmLabel: "Delete", destructive: true });
+    const ok = await confirm({ title: "Delete this file?", message: deleteFileMessage(f.filename), confirmLabel: "Delete", destructive: true });
     if (ok) remove.mutate();
   };
   const open = () => void openAuthedFile(activeSlug, f.id, { mime: f.mime_type, filename: f.filename });
@@ -147,8 +148,8 @@ export function FileDetailPage() {
           <button title={`Open ${f.filename}`} type="button" onClick={() => setViewing(true)} aria-label={`Open ${f.filename}`} className="relative block w-full aspect-[4/3] max-h-[70vh] cursor-zoom-in">
             <EntityPhoto src={api.fileRawUrl(activeSlug, f.id, "medium")} alt={f.filename} fill fit="contain" />
           </button>
-        ) : canPreviewFile(f.filename) ? (
-          <FilePreview src={api.fileRawUrl(activeSlug, f.id, "original")} filename={f.filename} className="min-h-[50vh]" />
+        ) : canPreviewFile(f.filename, f.mime_type) ? (
+          <FilePreview src={api.fileRawUrl(activeSlug, f.id, "original")} filename={f.filename} className="min-h-[75vh]" />
         ) : (
           <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted">
             <FileIcon size={32} className="text-faint" />
@@ -218,10 +219,12 @@ export function FileDetailPage() {
         )}
       </section>
 
-      {/* The file's own fields, as a bundle or a person defines them. */}
-      <CustomFieldsPanel entityKind="core-files:file" entityId={f.id} values={f.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
-
-      <ContributedDetailPanels target="core-files:file" ctx={{ slug: activeSlug, entityId: f.id, entityTitle: f.filename }} />
+      {!usedBy.isLoading && (
+        <>
+          <CustomFieldsPanel entityKind="core-files:file" entityId={f.id} values={f.metadata ?? {}} onCommit={(name, value) => setField.mutate({ [name]: value })} />
+          <ContributedDetailPanels target="core-files:file" ctx={{ slug: activeSlug, entityId: f.id, entityTitle: f.filename }} />
+        </>
+      )}
     </div>
   );
 }

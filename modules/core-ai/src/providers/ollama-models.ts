@@ -17,6 +17,7 @@ const VISION: RegExp[] = [
   /minicpm-?v/i,
   /granite.*vision/i,
   /llama.*vision/i,
+  // ascii-only: a model tag, which is ASCII
   /(^|[^a-z])gemma3/i, // gemma3 is multimodal; gemma2 is not
   /internvl/i,
   /pixtral/i,

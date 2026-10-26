@@ -9,6 +9,7 @@
 //
 // THE RULE. A notification type is sent when the code passes it as
 // `eventType:` (dispatch) or `notificationType:` (notifyAccount), as a string,
+// including a string schema’s default for one of these fields,
 // as a constant naming one (resolved in the same file), or as a template whose
 // fixed front is `<a>.<b>.` (then some declared kind must start with it).
 // Each must be declared in one of:
@@ -97,7 +98,7 @@ if (existsSync(ACCOUNT_CATALOG)) {
 
 // ── What is sent ──────────────────────────────────────────────────────────
 const SKIP = new Set([KERNEL_LIST, ACCOUNT_CATALOG, bridgeKinds, ...manifests]);
-const SENT = /(?<![.\w])(?:eventType|notificationType|event_type)\s*:\s*(["'`])((?:(?!\1).)*)\1|(?<![.\w])(?:eventType|notificationType|event_type)\s*:\s*([A-Z][A-Z0-9_]*)\b/g;
+const SENT = /(?<![.\w])(?:eventType|notificationType|event_type)\s*:\s*(?:z\.string\(\)(?:\.\w+\([^)]*\))*?\.default\(\s*)?(["'`])((?:(?!\1).)*)\1|(?<![.\w])(?:eventType|notificationType|event_type)\s*:\s*([A-Z][A-Z0-9_]*)\b/g;
 const out: string[] = [];
 let sent = 0;
 const sentExact = new Set<string>();

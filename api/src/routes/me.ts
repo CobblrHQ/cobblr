@@ -66,6 +66,7 @@ import { decodeKeysetCursor, encodeKeysetCursor } from "@cobblr/platform-contrac
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { REPLY_ACTION_ID, REPLY_MAX } from "@cobblr/platform-contract/notifications";
 
 export const meRouter = Router();
 
@@ -999,6 +1000,8 @@ meRouter.post("/me/notifications/:id/read", requireAuth, async (req, res, next) 
   }
 });
 
+const NotificationReplyBody = z.object({ body: z.string().trim().min(1).max(REPLY_MAX) }).strict();
+
 // POST /me/notifications/:id/actions/:actionId — press a button on a
 // notification, in the app.
 //
@@ -1017,11 +1020,17 @@ meRouter.post("/me/notifications/:id/actions/:actionId", requireAuth, async (req
       res.status(400).json({ error: { code: "missing_id", message: "id and actionId required" } });
       return;
     }
+    const reply = actionId === REPLY_ACTION_ID ? NotificationReplyBody.safeParse(req.body) : null;
+    if (reply && !reply.success) {
+      res.status(400).json({ error: { code: "invalid_body", message: invalidBodyMessage(reply.error.issues), details: reply.error.issues } });
+      return;
+    }
     const outcome = await pressNotificationAction({
       notificationId: id,
       actionId,
       userId: req.session!.id,
       actorName: req.session!.display_name ?? null,
+      ...(reply?.success ? { extraArgs: reply.data } : {}),
     });
     if (!outcome.ok && outcome.reason === "declined") {
       // The person was allowed to press; the thing they pressed answered no,

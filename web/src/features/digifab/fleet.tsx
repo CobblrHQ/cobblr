@@ -962,7 +962,7 @@ export function FleetView({ slug, machineIds, scopeNoun }: {
             { value: "cams", label: "Cameras" },
           ]}
         />
-        {fleet.isFetching && <RefreshCw size={13} className="animate-spin text-faint" />}
+        <RefreshCw size={13} aria-hidden className={"shrink-0 animate-spin text-faint " + (fleet.isFetching ? "" : "invisible")} />
       </div>
       {(() => {
         // Group machines by POOL (a pool reads as one farm even across
@@ -1324,6 +1324,7 @@ export function DeviceCard({ d, connId, slug, title, subtitle, dense, cams, sele
       );
       setSplitOpen(false);
       invalidateFleet();
+      void qc.invalidateQueries({ queryKey: ["digifab-jobs", slug] });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : String(e)),
   });

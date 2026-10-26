@@ -1,7 +1,7 @@
 // Thin fetch wrapper for the knowledge REST surface. Auth via getToken().
 // Routes are mounted at /api/v1/orgs/:slug/modules/knowledge/...
 
-import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, UploadError, walkPages, workspaceFetch } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, UploadError, walkPages, workspaceFetch, type Edit } from "@cobblr/platform-web";
 
 export interface Entry {
   id: string;
@@ -88,8 +88,9 @@ export class KnowledgeApi {
   createEntry(body: EntryInput) {
     return this.req<Entry>("POST", "/entries", body);
   }
-  updateEntry(id: string, body: Partial<EntryInput>, headers?: Record<string, string>) {
-    return this.req<Entry>("PATCH", `/entries/${id}`, body, headers);
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateEntry(id: string, edit: Edit<EntryInput>) {
+    return this.req<Entry>("PATCH", `/entries/${id}`, edit.body, edit.headers);
   }
   deleteEntry(id: string) {
     return this.req<void>("DELETE", `/entries/${id}`);

@@ -1,3 +1,4 @@
+import { type Edit } from "@cobblr/platform-web";
 import type { PlatformResolvedEntity } from "./placement";
 import type { CutterProfile, CutterProgram } from "@cobblr/platform-contract/cutter-program";
 import { ApiError, getToken, request, upload } from "./client";
@@ -413,6 +414,8 @@ export interface MachineStationView {
 }
 
 export interface DigifabJob {
+  sending?: boolean;
+  needs_bed_verdict?: boolean;
   material_pending?: boolean;
   embroidery_run?: boolean;
   id: string;
@@ -988,8 +991,9 @@ export const digifabApi = {
    *  404s when the builds module isn't enabled — callers tolerate an empty list. */
   listDigifabBuilds: (slug: string) =>
     request<{ items: Array<{ id: string; name: string }> }>("GET", `/orgs/${slug}/modules/builds/builds`),
-  updateDigifabJob: (slug: string, id: string, body: { priority?: number; max_attempts?: number; metadata?: Record<string, unknown> }) =>
-    request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateDigifabJob: (slug: string, id: string, edit: Edit<{ priority?: number; max_attempts?: number; metadata?: Record<string, unknown> }>) =>
+    request<DigifabJob>("PATCH", `/orgs/${slug}/modules/digifab/jobs/${id}`, edit.body, edit.headers),
   // ─── Makes: one fabrication run, request to outcome (services.md §13) ───
   listMakes: (slug: string, q?: string) =>
     request<{ items: MakeSummary[] }>("GET", `/orgs/${slug}/modules/digifab/makes${q ? `?q=${encodeURIComponent(q)}` : ""}`),
@@ -1014,8 +1018,9 @@ export const digifabApi = {
   },
   getMake: (slug: string, id: string) => request<MakeDetail>("GET", `/orgs/${slug}/modules/digifab/makes/${id}`),
   createMake: (slug: string, body: MakeCreateBody) => request<MakeSummary>("POST", `/orgs/${slug}/modules/digifab/makes`, body),
-  patchMake: (slug: string, id: string, body: { name?: string; outcome?: "pass" | "fail" | null; outcome_notes?: string; metadata?: Record<string, unknown> }) =>
-    request<MakeSummary>("PATCH", `/orgs/${slug}/modules/digifab/makes/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  patchMake: (slug: string, id: string, edit: Edit<{ name?: string; outcome?: "pass" | "fail" | null; outcome_notes?: string; metadata?: Record<string, unknown> }>) =>
+    request<MakeSummary>("PATCH", `/orgs/${slug}/modules/digifab/makes/${id}`, edit.body, edit.headers),
   deleteMake: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/digifab/makes/${id}`),
   addMakeFiles: (slug: string, id: string, body: { step: "model" | "slice"; files: Array<{ file_id: string; role: MakeFileRole }> }) =>
     request<{ id: string }>("POST", `/orgs/${slug}/modules/digifab/makes/${id}/files`, body),

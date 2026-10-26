@@ -24,6 +24,10 @@ export type ActionUndoStep =
       /** Set by the door that issued it: pressed, the Undo presents it, so it
        *  runs once and only while what it puts back is as it was (#7924). */
       undo_id?: string;
+      /** The records the step puts back, when its args name a run rather
+       *  than them (an import, a batch): watched with the ids its args name,
+       *  so someone else's later change to one refuses the Undo (#8533). */
+      puts_back?: string[];
     }
   | {
       tool: "delete" | "update";

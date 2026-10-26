@@ -484,7 +484,7 @@ photosRouter.post(
     const db = tenantDb(req);
     const ctx = tenantContext(req);
     const tok = bearer(req);
-    const r = await undoSplit(db, ctx.org.id, id, tok ? { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } } : null);
+    const r = await undoSplit(db, ctx.org.id, id, tok ? { baseUrl: (req.headers["x-cobblr-base-url"] as string | undefined) ?? INTERNAL_API, slug: ctx.org.slug, headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" } } : null, sessionUser(req)?.id ?? null);
     if (!r.ok) {
       res.status(r.status).json({ error: r.error });
       return;

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { downloadBlob, fieldPackControlClass, headerButton, NumberField, useConfirm, useFieldDraft, usePasteImage, useToast } from "@cobblr/platform-web";
+import { downloadBlob, fieldPackControlClass, headerButton, NumberField, useCan, useConfirm, useFieldDraft, usePasteImage, useToast } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { orderWriteKey, type SalesApi, type DocumentRow } from "./api.js";
 
@@ -8,6 +8,7 @@ export function OrderDocuments({ api, orderId, disabled }: { api: SalesApi; orde
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
+  const maySend = useCan("sales:send-document");
   const [editing, setEditing] = useState<"quote" | "invoice" | null>(null);
   const list = useQuery({ queryKey: ["sales-documents", api.workspace, orderId], queryFn: () => api.documents(orderId) });
   const documents = list.data?.items ?? [];
@@ -43,11 +44,11 @@ export function OrderDocuments({ api, orderId, disabled }: { api: SalesApi; orde
       <p>{doc.kind === "invoice" ? "Issued" : "Prepared"} {doc.snapshot.date}{doc.snapshot.deadline ? ` · ${doc.kind === "quote" ? "Valid until" : "Due"} ${doc.snapshot.deadline}` : ""} · {formatStoredMoney(doc.snapshot.total, "amount", { currency: doc.snapshot.currency })}</p>
       <div className="flex flex-wrap gap-2">
         <button type="button" className={headerButton()} disabled={downloading} onClick={() => void download(doc.kind)}>Download {doc.kind === "quote" ? "quote" : "invoice"}</button>
-        <button type="button" className={headerButton()} disabled={!list.data?.email?.available || sent.isPending} onClick={async () => {
+        {maySend && <button type="button" className={headerButton()} disabled={!list.data?.email?.available || sent.isPending} onClick={async () => {
           const to = list.data?.email?.to;
           if (!to) return;
           if (await confirm({ title: `Send ${doc.kind}?`, message: `Email ${doc.number} and its PDF to ${to} from ${list.data?.email?.from}?`, confirmLabel: `Send ${doc.kind}` })) sent.mutate({ doc, to });
-        }}>Email {doc.kind === "quote" ? "quote" : "invoice"}</button>
+        }}>Email {doc.kind === "quote" ? "quote" : "invoice"}</button>}
       </div>
       {doc.kind === "invoice" && <p className="text-xs text-muted">The issued lines and total are saved. Later changes to the order do not change this invoice.</p>}
     </div>)}

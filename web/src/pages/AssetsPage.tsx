@@ -1,4 +1,4 @@
-import { SelectBox, useStillAsking, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem } from "@cobblr/platform-web";
+import { SelectBox, useCloseToOrigin, useNewRecordBarcode, RecordFormModal, NewItemMenu, MoneyTotalNotice, useMoneyCurrency, PresentationGate, useFaces, usePlatformWeb, UsedValueInput, usedValueFieldItem, useRecordEdits, useStillAsking } from "@cobblr/platform-web";
 // /assets — list + detail modal for the assets module. Same shape
 // as MachinesPage. No specialisations yet (no assets:asset Pillar-E
 // modules ship), so no lens UI here — but the column rendering is
@@ -717,8 +717,11 @@ export function AssetDetailModal({
     enabled: !!assetId,
     staleTime: 60_000,
   });
+  const edits = useRecordEdits(asset.data);
   const update = useMutation({
-    mutationFn: (patch: Partial<Asset>) => api.updateAsset(activeSlug, assetId!, patch, instance),
+    // Judged against the record as this page shows it: a newer save from
+    // another tab stands, or this one is refused and says so (#7925).
+    mutationFn: (patch: Partial<Asset>) => edits(patch, (e) => api.updateAsset(activeSlug, assetId!, e, instance)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["asset", activeSlug, instance ?? null, assetId] });
       void qc.invalidateQueries({ queryKey: ["assets", activeSlug] });
@@ -775,7 +778,7 @@ export function AssetDetailModal({
             placement="summary"
             ctx={{ slug: activeSlug, entityId: a.id, entityTitle: a.name, hints: { collection: instance ? `${instance}:item` : undefined } }}
           />
-          <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
             <div className="space-y-3">
               <RecordPhoto
                 kind={kind}

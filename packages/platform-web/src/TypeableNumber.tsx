@@ -55,7 +55,7 @@ export function TypeableNumber({
    *  number, and the phone opens its decimal keypad. */
   decimal?: boolean;
   /** A whole number the person committed. May equal the value; the caller decides. */
-  onCommit: (n: number) => void;
+  onCommit: (n: number, before: number) => void;
   label: string;
   allowNegative?: boolean;
   /** Show a "+" before a positive value (a change, not a count). */
@@ -95,7 +95,7 @@ export function TypeableNumber({
       setText(wholeText(value, signedText));
       return;
     }
-    onCommit(n);
+    onCommit(n, !controlled && !wasEdited ? value : before.current);
     // Until the caller confirms its answer, keep the last confirmed number.
     setText(wholeText(value, signedText));
   };

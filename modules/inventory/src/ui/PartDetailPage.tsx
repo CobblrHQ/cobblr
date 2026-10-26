@@ -1,8 +1,9 @@
+import { loanActionRefusal } from "@cobblr/platform-contract/loan";
 import { PastePanel } from "./PastePanel";
 import { readRecordDisposition } from "@cobblr/platform-contract/disposition";
 import { useStockWrites } from "./stock-writes";
 import { StoragePanel } from "./StoragePanel";
-import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete, useCan, type FieldPackItem } from "@cobblr/platform-web";
+import { LocationPicker, RecordFormModal, useMoneyCurrency, RecordPhoto, PresentationGate, StickyBottomBar, MutationError, AssortmentCard, ContentsPanel, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FaceSection, faceShows, useHoldsContents, FieldPack, LabeledField, Modal, RecordFaces, RecordHeaderChips, AllergenPills, editFieldItem, moneyFieldItem, usedValueFieldItem, fieldNeed, useFaces, MoveToInstanceModal, UnitInput, useConfirm, usePageTitle, useToast, useUnits, usedInUnit, useMayDelete, useCan, type FieldPackItem, editOf, useRecordEdits } from "@cobblr/platform-web";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
 // Part detail — fields inline-editable, allocations panel below.
 // Stock adjustments are explicit (a button) so accidental qty edits
@@ -313,6 +314,8 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
 
   const placeIn = useMutation({
     mutationFn: async (pick: string) => {
+      const refusal = loanActionRefusal("core-placement:place", part.data);
+      if (refusal) throw new Error(refusal);
       // "kind|id" for a holder, a bare location id for a place, "" for nowhere.
       const [kind, ref] = pick.split("|");
       const to: PartPlace = pick.includes("|") ? { location_id: null, inside: { kind: kind!, id: ref! } } : { location_id: pick || null, inside: null };
@@ -327,8 +330,11 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
     onError: (e: unknown) => toast.error((e as Error).message),
   });
 
+  const edits = useRecordEdits(part.data);
   const update = useMutation({
-    mutationFn: (patch: Record<string, unknown>) => api.updatePart(id!, patch),
+    // Judged against the part as this page shows it: a newer save from
+    // another tab stands, or this one is refused and says so (#7925).
+    mutationFn: (patch: Record<string, unknown>) => edits(patch, (e) => api.updatePart(id!, e)),
     onSuccess: (_r, patch) => {
       void qc.invalidateQueries({ queryKey: ["inventory-part", id] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });
@@ -363,10 +369,10 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
     mutationFn: async () => {
       const r = part.data?.reconcile;
       if (!r) return;
-      await api.updatePart(id!, {
+      await api.updatePart(id!, editOf(part.data, {
         // Only the key this changes: the server merges it (#3625).
         metadata: { reconcile_dismissed: { qty: r.qty, units_count: r.units_count } },
-      });
+      }));
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["inventory-part", id] }),
   });
@@ -377,6 +383,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   // where each used to open, take the edit, and answer 403 (#7888). Taking
   // one and putting it back is theirs, so the stepper and the actions stay.
   const mayEdit = useCan("inventory:update-part");
+  const mayCreate = useCan("inventory:create-part");
   const editable = (node: ReactNode) => <fieldset disabled={mayEdit !== true} className="contents">{node}</fieldset>;
   const editableItem = (item: FieldPackItem | null): FieldPackItem | null => item && { ...item, node: editable(item.node) };
   const remove = useMutation({
@@ -406,6 +413,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   }
   if (!part.data) return null;
   const p = part.data;
+  const locationRefusal = loanActionRefusal("core-placement:place", p);
   // The collection decides what this item shows: its field presentation, its
   // stock face and its faces. Until all three are known nothing is drawn, and
   // a failed read is said, never replaced by the generic part's fields.
@@ -743,13 +751,16 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
                   need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
-                      <LocationPicker
-                        value={inside ? null : (p.location_id ?? null)}
-                        onChange={(id) => placeIn.mutate(id ?? "")}
-                        pickedHolder={inside ? { kind: inside.kind, id: inside.id, title: where.data?.line ?? "", line: "" } : null}
-                        onPickHolder={(h) => (h.id === p.id ? toast.error("A thing cannot go inside itself.") : placeIn.mutate(`${h.kind}|${h.id}`))}
-                        noneLabel="No location"
-                      />
+                      <fieldset disabled={!!locationRefusal}>
+                        <LocationPicker
+                          value={inside ? null : (p.location_id ?? null)}
+                          onChange={(id) => placeIn.mutate(id ?? "")}
+                          pickedHolder={inside ? { kind: inside.kind, id: inside.id, title: where.data?.line ?? "", line: "" } : null}
+                          onPickHolder={(h) => (h.id === p.id ? toast.error("A thing cannot go inside itself.") : placeIn.mutate(`${h.kind}|${h.id}`))}
+                          noneLabel="No location"
+                        />
+                      </fieldset>
+                      {locationRefusal && <span className="text-xs text-muted">{locationRefusal}</span>}
                     </Field>
                   ),
                 }
@@ -957,12 +968,12 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
         {/* Its one word keeps its width: the phone's min-width took a flex
             item's own minimum away, and on a 360 px phone it shrank under
             "Duplicate" while its neighbours wrapped (#7108). */}
-        <button
+        {mayCreate && <button
           onClick={() => setDup(true)}
           className="shrink-0 text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
         >
           <Copy size={12} /> Duplicate
-        </button>
+        </button>}
         <button
           onClick={() => setMoving(true)}
           className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
@@ -1006,7 +1017,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
         }}
       />
 
-      {dup && (
+      {dup && mayCreate && (
         // Seed a fresh create form from this item — the user reviews + saves,
         // so it's a new row, not a silent clone. Custom fields carry over.
         <NewPartDialog
@@ -1182,7 +1193,7 @@ function ConsumptionPanel({
   // (archived, harmless): disclosure is never destructive.
   const setPerUnit = useMutation({
     mutationFn: (on: boolean) =>
-      api.updatePart(partId, { metadata: { [PER_UNIT_TRACKING_KEY]: on } }),
+      api.updatePart(partId, editOf({ metadata }, { metadata: { [PER_UNIT_TRACKING_KEY]: on } })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["inventory-part", partId] });
       void qc.invalidateQueries({ queryKey: ["inventory-parts"] });

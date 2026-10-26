@@ -61,8 +61,10 @@ export interface RenderedRows {
  *
  *  `markPrinted` FREEZES the code prefixes (a printed sticker's code can't change),
  *  and defaults to FALSE because this same render powers the PREVIEW — a preview is
- *  NOT a print. Only a caller that actually puts the PDF on paper (auto-flush, which
- *  records a labels_batches row) passes true. Real bug this fixes: `/render`
+ *  NOT a print. Only a caller that actually puts the PDF on paper passes true:
+ *  auto-flush, which records a labels_batches row, and a send to a printer
+ *  (`/render` with send), whose codes are on paper before its batch is
+ *  confirmed (#7884). Real bug this fixes: `/render`
  *  (preview) used to freeze on the first preview, locking a prefix the user never
  *  printed (2026-07-22). The manual /print and /record routes freeze themselves. */
 export async function renderRowsToPdf(

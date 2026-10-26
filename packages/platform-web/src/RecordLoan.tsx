@@ -18,7 +18,7 @@ import { OFF_WHILE_LENT, lentWhy, loanOfFields, loanOverdue, sayLoan, type Recor
 import { usePlatformWeb } from "./context";
 import { Modal } from "./Modal";
 import { useToast } from "./ToastContext";
-import { undoStepsOf, useRunAction, type RunOptions } from "./run-action";
+import { runUndoSteps, undoStepsOf, useRunAction, type RunOptions } from "./run-action";
 
 const REASONS = ["repair", "borrowed"] as const;
 const REPAIR = /repair|fix|servic/i;
@@ -62,7 +62,7 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
     const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], ...args } }, opts);
     const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
     if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
-    return { said: res.summary ?? "Done.", offered: !opts?.undo && undoStepsOf(r.undo).length > 0 };
+    return { said: res.summary ?? "Done.", offered: !opts?.undo && undoStepsOf(r.undo).length > 0, back: undoStepsOf(r.undo) };
   };
 
   if (loan) {
@@ -136,14 +136,21 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
             people={people.data?.items ?? []}
             onCancel={() => setAsking(false)}
             onSave={async (args) => {
-              const { said } = await run("platform:lend", args, { undo: "shown-here" });
+              const { said, back } = await run("platform:lend", args, { undo: "shown-here" });
               setAsking(false);
-              toast.success(said, {
+              // The way back the action handed over, never one written here:
+              // it names this loan's holder and its undo_id, so an older tab's
+              // Undo cannot end a loan made since (#7899).
+              toast.success(said, back.length ? {
                 actionLabel: "Undo",
                 onAction: async () => {
-                  await run("platform:return", {}, { undo: "is-undo" });
+                  try {
+                    await runUndoSteps((b) => runAction(b, { undo: "is-undo" }), back);
+                  } catch (e) {
+                    toast.error((e as Error).message);
+                  }
                 },
-              });
+              } : undefined);
             }}
           />
         )}
@@ -268,7 +275,7 @@ function ReturnForm({ holder, onCancel, onSave }: { holder: string; onCancel: ()
           <input data-testid="return-work" className="w-full rounded-lg border border-line bg-surface px-3 py-2 text-content dark:border-slate-600" value={work} onChange={(e) => setWork(e.target.value)} placeholder="Optional" />
         </label>
       )}
-      <p className="text-xs text-muted">{repaired === "yes" ? `Its service log gets "Repaired by ${holder}".` : "It is home again, as it was."}</p>
+      <p className="text-xs text-muted">{repaired === "yes" ? `History keeps the repair details. When available, its service log gets "Repaired by ${holder}".` : "It is home again, as it was."}</p>
       {error && <p className="text-sm text-ember-600 dark:text-ember-400">{error}</p>}
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-lg px-3 py-2 text-sm text-muted hover:text-content">

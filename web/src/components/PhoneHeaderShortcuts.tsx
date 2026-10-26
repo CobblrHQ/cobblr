@@ -20,7 +20,7 @@ export function PhoneHeaderShortcuts({ search = true }: { search?: boolean }) {
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
           aria-label="Search"
           title="Search"
-          className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-1.5"
+          className="text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-[6px]"
         >
           <Search size={16} />
         </button>

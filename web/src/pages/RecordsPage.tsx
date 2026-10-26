@@ -1,4 +1,4 @@
-import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu, useStillAsking } from "@cobblr/platform-web";
+import { useCloseToOrigin, useNewRecordBarcode, RecordFormModal, PresentationGate, useFaces, NewItemMenu, useStillAsking, useRecordEdits } from "@cobblr/platform-web";
 // /records — list + detail modal for the records module, the neutral
 // generic-record substrate. Same shape as AssetsPage minus the domain
 // columns: a record carries ONLY the universal base (name, image, notes,
@@ -362,8 +362,11 @@ export function RecordDetailModal({
     // backoff before showing the error state; only retry transient network fails.
     retry: (n, e) => !(e instanceof ApiError) && n < 2,
   });
+  const edits = useRecordEdits(record.data);
   const update = useMutation({
-    mutationFn: (patch: Partial<RecordItem>) => api.updateRecord(activeSlug, recordId!, patch, instance),
+    // Judged against the record as this page shows it: a newer save from
+    // another tab stands, or this one is refused and says so (#7925).
+    mutationFn: (patch: Partial<RecordItem>) => edits(patch, (e) => api.updateRecord(activeSlug, recordId!, e, instance)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["record", activeSlug, instance ?? null, recordId] });
       void qc.invalidateQueries({ queryKey: ["records", activeSlug] });
@@ -428,7 +431,7 @@ export function RecordDetailModal({
           {/* Wide record layout: the cover large on the LEFT, fields on the
               RIGHT — so an image-bearing record (a book, a film, a bottle)
               uses the width instead of scrolling tall. Stacks on phones. */}
-          <div className="grid gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(200px,260px)_1fr]">
             <div className="space-y-3">
               {/* The cover keeps its OWN proportions. A square thumb
                   object-cover-cropped a portrait book jacket top and bottom

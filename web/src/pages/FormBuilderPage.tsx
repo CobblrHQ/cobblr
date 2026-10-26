@@ -192,7 +192,7 @@ export function FormBuilderPage({ embedded = false }: { embedded?: boolean } = {
   return (
     <div className={embedded ? "space-y-5" : "space-y-5 max-w-2xl"}>
       {!embedded && (
-        <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+        <div className="flex flex-wrap gap-y-1 items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
           <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">form builder</h1>
           <span className="page-subtitle">drag your fields into order and under sections</span>
         </div>

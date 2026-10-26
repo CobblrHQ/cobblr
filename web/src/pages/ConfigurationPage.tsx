@@ -81,7 +81,7 @@ export function ConfigurationPage() {
   return (
     <div className="space-y-5 max-w-4xl mx-auto">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line dark:border-slate-700 pb-3">
-        <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">
+        <h1 className="min-w-0 break-words hyphens-auto font-display text-2xl font-extrabold text-content dark:text-mortar-100">
           Configuration
         </h1>
         {activeOrg && (

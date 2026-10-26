@@ -105,6 +105,7 @@ import * as counters from "./platform/counters.js";
 import * as deletedRecords from "./platform/deleted-records.js";
 import * as dispositions from "./platform/dispositions.js";
 import { registerIssuedUndosSweep } from "./platform/issued-undos.js";
+import { registerRequestReplaysSweep } from "./platform/request-replays.js";
 import { registerHistoryWriter } from "./platform/history-store.js";
 import { announceWrites } from "./platform/entity-saved.js";
 import * as files from "./platform/files.js";
@@ -419,7 +420,7 @@ async function boot() {
     deletedRecords,
     dispositions: { markGone: dispositions.markGone, bringBack: dispositions.bringBack },
     money,
-    activity: { log: activity.log, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, registerHistoryWriter },
+    activity: { log: activity.log, logMany: activity.logMany, createdNamesMatching: activity.createdNamesMatching, entryOf: activity.entryOf, changeSince: activity.changeSince, registerHistoryWriter },
     events: { emit: events.emit, on: events.on },
     tenants: {
       getDb: async (orgId) => secretPresenceDb(orgId, await getTenantDb(orgId)),
@@ -1956,6 +1957,7 @@ async function boot() {
   registerDeletedRelations();
   deletedRecords.registerDeletedRecordsSweep();
   registerIssuedUndosSweep();
+  registerRequestReplaysSweep();
   registerWarrantyReminders();
   registerStationSweep();
   startExchangeRates();

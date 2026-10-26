@@ -1,5 +1,6 @@
 import type { MoneyTotal } from "@cobblr/platform-contract/money";
 import { primaryBase, request } from "./client";
+import type { Edit } from "@cobblr/platform-web";
 
 export interface Vendor {
   id: string;
@@ -316,8 +317,9 @@ export const purchasesApi = {
     request<Order & { items: OrderItem[] }>("GET", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
   createOrder: (slug: string, body: Partial<Order>, instance?: string) =>
     request<Order>("POST", primaryBase(slug, "purchases/orders", instance), body),
-  updateOrder: (slug: string, id: string, body: Partial<Order>, instance?: string) =>
-    request<Order>("PATCH", `${primaryBase(slug, "purchases/orders", instance)}/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateOrder: (slug: string, id: string, edit: Edit<Order>, instance?: string) =>
+    request<Order>("PATCH", `${primaryBase(slug, "purchases/orders", instance)}/${id}`, edit.body, edit.headers),
   deleteOrder: (slug: string, id: string, instance?: string) =>
     request<void>("DELETE", `${primaryBase(slug, "purchases/orders", instance)}/${id}`),
   // Order items are keyed by orderId (their instance rides the parent
@@ -326,9 +328,9 @@ export const purchasesApi = {
     request<OrderItem>("POST", `/orgs/${slug}/modules/purchases/orders/${orderId}/items`, body),
   /** Correct a line: what it is, how many, the price. A line whose stock was
    *  already added refuses a new count (409 line_received). */
-  /** `headers` from editOf: what the edited fields were when the form opened. */
-  updateOrderItem: (slug: string, orderId: string, itemId: string, body: { description?: string | null; qty?: number; unit_cost?: number | null; currency?: string }, headers?: Record<string, string>) =>
-    request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, body, headers),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateOrderItem: (slug: string, orderId: string, itemId: string, edit: Edit<{ description?: string | null; qty?: number; unit_cost?: number | null; currency?: string }>) =>
+    request<OrderItem>("PATCH", `/orgs/${slug}/modules/purchases/orders/${orderId}/items/${itemId}`, edit.body, edit.headers),
   listOrderReturns: (slug: string, orderId: string) =>
     request<{ items: OrderReturn[] }>("GET", `/orgs/${slug}/modules/purchases/orders/${orderId}/returns`),
   /** Start a return on one line: how many and why. */
@@ -346,8 +348,9 @@ export const purchasesApi = {
     request<VendorDetail>("GET", `/orgs/${slug}/modules/purchases/vendors/${id}`),
   createVendor: (slug: string, body: Partial<Vendor>) =>
     request<Vendor>("POST", `/orgs/${slug}/modules/purchases/vendors`, body),
-  updateVendor: (slug: string, id: string, body: Partial<Vendor>) =>
-    request<Vendor>("PATCH", `/orgs/${slug}/modules/purchases/vendors/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateVendor: (slug: string, id: string, edit: Edit<Vendor>) =>
+    request<Vendor>("PATCH", `/orgs/${slug}/modules/purchases/vendors/${id}`, edit.body, edit.headers),
   deleteVendor: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/modules/purchases/vendors/${id}`),
   /** A part's purchase history + price stats, from purchases' own full-fat

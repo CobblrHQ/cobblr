@@ -199,6 +199,7 @@ export function SizedThingBox({
   canDrag,
   shelf,
   planEl,
+  planPx,
   onOpen,
 }: {
   slug: string;
@@ -208,6 +209,10 @@ export function SizedThingBox({
   canDrag: boolean;
   shelf: ShelfFit | null;
   planEl: HTMLElement | null;
+  /** The drawing's measured width: its label is laid out at the size it is
+   *  drawn, never at a width read before the plan was measured, which drew a
+   *  printer 128 px tall and then 102, moving it 26 px (#7791). */
+  planPx: number;
   onOpen: () => void;
 }) {
   const r = thing.rect;
@@ -219,8 +224,8 @@ export function SizedThingBox({
   // A finger has no hover: its first tap shows the whole name, the next opens.
   const pointer = useRef("mouse");
   const [peek, setPeek] = useState(false);
-  const pxW = planEl ? (r.w_mm / bound.w_mm) * planEl.clientWidth : 100;
-  const pxH = planEl ? (r.d_mm / bound.d_mm) * planEl.clientHeight : 100;
+  const pxW = planPx > 0 ? (r.w_mm / bound.w_mm) * planPx : 100;
+  const pxH = planPx > 0 ? (r.d_mm / bound.w_mm) * planPx : 100;
   const bad = colliding || thing.overhang || thing.tooTall || (shelf ? !shelf.row.fits && r.x_mm + r.w_mm > shelf.shelfRect.x_mm + shelf.shelfRect.w_mm : false);
   const why = [
     thing.overhang ? "deeper than the shelf: it hangs off the front" : null,

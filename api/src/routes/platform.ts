@@ -57,6 +57,7 @@ import { facesForKind } from "../platform/faces.js";
 import { argChoicesFor } from "../platform/action-arg-choices.js";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { deleteRefusal } from "../platform/kind-delete.js";
+import { createRefusal } from "../platform/kind-create.js";
 import { templateDataOf } from "@cobblr/platform-contract/entity-metadata";
 import { namePeopleForTemplate } from "../platform/member-fields.js";
 import type { ActionAppliesToDecl } from "@cobblr/platform-contract";
@@ -146,7 +147,14 @@ platformOrgRouter.get(
         const sc = getScannableForModule(k.module_name);
         const counted = sc?.qtyCountsThings && sc.qtyField ? { ...k, count_field: sc.qtyField } : k;
         const refused = k.endpoints?.delete ? await deleteRefusal(asker, k) : null;
-        return { ...counted, can_delete: !!k.endpoints?.delete && !refused, ...(refused ? { delete_refused: refused.message } : {}) };
+        const createRefused = k.endpoints?.create ? await createRefusal(asker, k) : null;
+        return {
+          ...counted,
+          can_create: !!k.endpoints?.create && !createRefused,
+          ...(createRefused ? { create_refused: createRefused } : {}),
+          can_delete: !!k.endpoints?.delete && !refused,
+          ...(refused ? { delete_refused: refused.message } : {}),
+        };
       }));
       // ?readable_by=me: the kinds as the asker may read them, for a screen that
       // builds something that will read these fields as them (the wire composer).

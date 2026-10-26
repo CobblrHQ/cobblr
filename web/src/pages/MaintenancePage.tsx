@@ -63,7 +63,7 @@ export function MaintenancePage() {
 
   return (
     <div className="space-y-4 max-w-3xl mx-auto">
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">
           maintenance
         </h1>
@@ -304,6 +304,7 @@ function EditEntryModal({
 }) {
   const toast = useToast();
   const [name, setName] = useState(entry.name);
+  const scheduledByRule = !!entry.schedule_id && !entry.performed_at;
   // When it is due is a day, not a moment (#5759): the day it names here.
   const scheduledDay = entry.scheduled_at ? dayStoredHere(entry.scheduled_at) ?? "" : "";
   const [scheduledAt, setScheduledAt] = useState(scheduledDay);
@@ -352,11 +353,16 @@ function EditEntryModal({
           <input
             type="text"
             value={name}
+            readOnly={scheduledByRule}
             onChange={(e) => setName(e.target.value)}
             className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
             autoFocus
           />
         </label>
+        {scheduledByRule && <p className="text-sm text-muted dark:text-slate-400">
+          The name and due date come from its service schedule.{" "}
+          <Link className="text-accent underline" onClick={onClose} to={`/open/${encodeURIComponent(`${entry.entity_module}:${entry.entity_type}`)}/${entry.entity_id}`}>Change the service schedule</Link> on the record.
+        </p>}
         <FieldPack items={[
           {
             need: { ...fieldNeed("scheduledAt", { control: "date", label: "Scheduled" }), minPx: 250 },
@@ -366,6 +372,7 @@ function EditEntryModal({
                 <input
                   type="date"
                   value={scheduledAt}
+                  readOnly={scheduledByRule}
                   onChange={(e) => setScheduledAt(e.target.value)}
                   className="w-full px-2 py-1 text-sm border border-line dark:border-slate-600 rounded bg-surface dark:bg-slate-900"
                 />

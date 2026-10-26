@@ -11,15 +11,16 @@ import { productName } from "@cobblr/platform-web";
 import { PushNotificationsCard } from "../components/PushNotificationsCard";
 import { useEffect, useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
-import { DeliveryWindows } from "../components/DeliveryWindows";
+import { DeliveryWindows, useDeliveryWindowsQuery } from "../components/DeliveryWindows";
 import { useLocation, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Lock, MessageCircle } from "lucide-react";
-import { StatusRow, usePageTitle, useToast, useConfirm } from "@cobblr/platform-web";
+import { OnceQuiet, StatusRow, usePageTitle, useToast, useConfirm, useStillAsking } from "@cobblr/platform-web";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../auth/AuthContext";
 import { discordConnectable } from "../lib/discord-connect";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
+import { PUSH_QUERY_KEY } from "../lib/usePushHere";
 
 const CHANNEL_LABEL: Record<string, string> = {
   in_app: "In-app",
@@ -38,6 +39,9 @@ export function CommunicationPreferencesPage() {
 
   const prefsQ = useQuery({ queryKey: ["comm-prefs"], queryFn: () => api.meCommunicationPrefs() });
   const discordQ = useDiscordStatus();
+  const pushQ = useQuery({ queryKey: PUSH_QUERY_KEY, queryFn: () => api.mePush(), staleTime: 60_000 });
+  const windowsQ = useDeliveryWindowsQuery();
+  const asking = useStillAsking(prefsQ, discordQ, pushQ, windowsQ);
 
   const setPref = useMutation({
     mutationFn: (b: { notification_type: string; channel: string; enabled: boolean }) =>
@@ -157,9 +161,23 @@ export function CommunicationPreferencesPage() {
   // Hide the Discord DM column until verified.
   const visibleColumns = columns.filter((c) => c !== "discord_dm" || verified);
 
+  if (asking) {
+    return (
+      <div className="space-y-6">
+        <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
+        <div className="text-sm text-faint">Loading notification settings…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <AreaTabs tabs={NOTIFICATION_TABS} area="notifications" />
+      {/* The Discord card says "Checking Discord…" until it knows, then may be
+          nothing at all for this person: drawn as it came, the push card under
+          it went 44 px up under a finger (#6881). So what is under the tabs
+          shows whole, once its reads have answered. */}
+      <OnceQuiet className="space-y-6">
       <p className="text-sm text-content dark:text-mortar-200">
         Choose how we reach you for each kind of notification. Critical account &
         security messages always go to email. Everything else is yours to route - 
@@ -289,6 +307,7 @@ export function CommunicationPreferencesPage() {
           </table>
         </div>
       )}
+      </OnceQuiet>
     </div>
   );
 }

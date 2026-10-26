@@ -440,7 +440,7 @@ function MintModal({
             </div>
             {/* Two columns from sm up, and a cap so a short viewport scrolls the
                 LIST rather than pushing the mint button off the dialog. */}
-            <div className="grid sm:grid-cols-2 gap-x-5 gap-y-2 max-h-[26rem] overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-2 max-h-[26rem] overflow-y-auto pr-1">
               {offered.map((s) => (
                 <label
                   key={s.key}

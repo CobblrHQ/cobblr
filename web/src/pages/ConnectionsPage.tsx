@@ -692,8 +692,10 @@ function ConnectionForm({
                     workspace, the pick marked with a check as well as its
                     fill, so whether the key is off, yours alone or offered to
                     everyone is never told by colour alone (#6045). */}
+                {/* Never wider than its row, so its choices wrap: held whole,
+                    they ran 111 px past a phone at 200% text (#8430). */}
                 <SegmentedChoice
-                  className="shrink-0"
+                  className="min-w-0 max-w-full"
                   label={`How ${o.name} uses this connection`}
                   value={cur ?? "off"}
                   onChange={(v) => {

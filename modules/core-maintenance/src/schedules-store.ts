@@ -111,21 +111,23 @@ async function ensureOccurrenceLocked(db: Db, orgId: string, s: ScheduleRow, now
   // Two open occurrences of one schedule is one too many: a race between a
   // log and a sweep. Keep the earliest.
   for (const e of extra) await db.deleteFrom("core_maintenance_entries").where("id", "=", e.id).execute();
-  if (!target) {
-    if (s.anchor && first) { await db.deleteFrom("core_maintenance_entries").where("id", "=", first.id).execute(); return null; }
-    return first ?? null;
+  if (!target && s.anchor && first) {
+    await db.deleteFrom("core_maintenance_entries").where("id", "=", first.id).execute();
+    return null;
   }
   if (first) {
-    if (first.scheduled_at && (byCounter ? first.scheduled_at.getTime() > target.getTime() : first.scheduled_at.getTime() !== target.getTime())) {
+    const dateChanged = target && first.scheduled_at && (byCounter ? first.scheduled_at.getTime() > target.getTime() : first.scheduled_at.getTime() !== target.getTime());
+    if (dateChanged || first.name !== s.name) {
       return db
         .updateTable("core_maintenance_entries")
-        .set({ scheduled_at: target, last_notified_at: null, updated_at: new Date() })
+        .set({ name: s.name, ...(dateChanged ? { scheduled_at: target, last_notified_at: null } : {}), updated_at: new Date() })
         .where("id", "=", first.id)
         .returningAll()
         .executeTakeFirstOrThrow();
     }
     return first;
   }
+  if (!target) return null;
   return db
     .insertInto("core_maintenance_entries")
     .values({

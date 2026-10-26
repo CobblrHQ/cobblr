@@ -55,7 +55,7 @@ import { actionLabelOf, invoke as invokeAction, registerHandler, registerPlanner
 import { getMover, instancesHolding, moveRecords } from "./move-records.js";
 import { bringBack, markGone } from "./dispositions.js";
 import { lend, returnLoan } from "./custody.js";
-import type { RecordLoan } from "@cobblr/platform-contract/loan";
+import { readRecordLoan, type RecordLoan } from "@cobblr/platform-contract/loan";
 import { offerRecords, offerTargets } from "./share-offers.js";
 import { findShareTarget, shareRecords, stopSharingRecords, shareCollection } from "./share-picks.js";
 import { describeInviteScope, inviteToShare } from "./share-invite.js";
@@ -2685,6 +2685,7 @@ export function registerPlatformActionHandlers(): void {
     const r = await lend(ctx.orgId, ctx.userId, kind, ids, {
       holder,
       holder_id: str(args.holder_id) || null,
+      expected_loan: readRecordLoan({ loan: args.expected_loan }),
       reason: str(args.reason) || null,
       since: str(args.since) || null,
       due_back: str(args.due_back) || null,
@@ -2695,7 +2696,7 @@ export function registerPlatformActionHandlers(): void {
     return {
       ok: true,
       summary: n === 1 ? `${r.done[0]!.title} is with ${r.holder}.` : `${n} records are with ${r.holder}.`,
-      data: { kind, holder: r.holder, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
+      data: { kind, holder: r.holder, loan: r.loan, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })) },
     };
   });
   registerPlanner("platform.lend", async (ctx: ActionInvokeContext) => {
@@ -2710,20 +2711,24 @@ export function registerPlatformActionHandlers(): void {
   // A loan that replaced an earlier one is undone by lending it back to the
   // earlier holder; a fresh loan by its return.
   registerUndo("platform.lend", (result) => {
-    const d = (result as { data?: { kind?: unknown; holder?: unknown; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
+    const d = (result as { data?: { kind?: unknown; holder?: unknown; loan?: RecordLoan; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
     const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordLoan | null } => typeof b.id === "string");
     if (!rows.length || typeof d?.kind !== "string") return null;
     if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...(typeof d.holder === "string" ? { only_if_holder: d.holder } : {}) } };
     const first = rows[0]!.before;
     if (!first || !rows.every((r) => JSON.stringify(r.before) === JSON.stringify(first))) return null;
-    return { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first } };
+    return { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first, expected_loan: d.loan } };
   });
 
   registerHandler("platform.return", async (ctx: ActionInvokeContext) => {
     const { kind, ids } = goneArgs(ctx);
     if (!kind) return { ok: false, error: "entity_kind (the kind of record) is required" };
     if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
-    const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids, { onlyIfHolder: str(ctx.args?.only_if_holder) || null });
+    const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids, {
+      onlyIfHolder: str(ctx.args?.only_if_holder) || null,
+      ...(typeof ctx.args?.repaired === "boolean" ? { repaired: ctx.args.repaired } : {}),
+      work: str(ctx.args?.work) || null,
+    });
     if (!r.ok) return { ok: false, error: r.error };
     const n = r.done.length;
     // Repaired: its service log says by whom and what, through the log's own
@@ -2746,9 +2751,13 @@ export function registerPlatformActionHandlers(): void {
         }
       }
     }
+    const repairSummary = ctx.args?.repaired !== true ? ""
+      : logged.length === n ? " The repair is in its service log."
+      : logged.length ? " The repair details are in History. Some service entries could not be saved."
+      : " The repair details are in History. No service entry was saved.";
     return {
       ok: true,
-      summary: `${n === 1 ? `${r.done[0]!.title} is back.` : `${n} records are back.`}${logged.length ? " The repair is in its service log." : ""}`,
+      summary: `${n === 1 ? `${r.done[0]!.title} is back.` : `${n} records are back.`}${repairSummary}`,
       data: { kind, touched: r.done.map((d) => ({ kind, id: d.id })), before: r.done.map((d) => ({ id: d.id, before: d.before })), service_entries: entries },
     };
   });

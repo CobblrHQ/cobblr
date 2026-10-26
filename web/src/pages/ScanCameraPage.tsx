@@ -1,5 +1,5 @@
 import { withArticle } from "@cobblr/platform-contract/plural";
-import { productName } from "@cobblr/platform-web";
+import { editOf, productName } from "@cobblr/platform-web";
 import type { ScanPurpose } from "@cobblr/platform-contract/scan-triage";
 import { useScanOrigins } from "../lib/useScanOrigins";
 // /scan/camera — full-screen immersive scanner, production-grade.
@@ -985,9 +985,9 @@ export function ScanCameraPage() {
         let nestFailed: string | null = null;
         if (decision.reparent) {
           try {
-            await api.updateLocation(activeSlug, decision.reparent.child, {
+            await api.updateLocation(activeSlug, decision.reparent.child, editOf(byId.get(decision.reparent.child), {
               parent_id: decision.reparent.parent,
-            });
+            }));
             await locations.refetch();
           } catch (e) {
             nestFailed = e instanceof Error ? e.message : "";

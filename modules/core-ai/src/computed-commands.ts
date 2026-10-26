@@ -19,6 +19,7 @@ import { rankFits, type FitTable } from "@cobblr/platform-contract/table-fit";
 import { fitTablesFor } from "./table-fit-menu.js";
 import { pluralise, countOf } from "@cobblr/platform-contract";
 import { withArticle } from "@cobblr/platform-contract/plural";
+import { wordsOf } from "./question-text.js";
 
 export interface ComputedPlan {
   /** What the confirm card says, in a sentence a person can check. */
@@ -243,8 +244,7 @@ async function scanScoped(wsApi: WorkspaceApi): Promise<{
 export function mentionsWord(value: string, term: string): boolean {
   const t = term.trim().toLowerCase();
   if (t.length < 2) return false;
-  for (const w of value.toLowerCase().split(/[^a-z0-9']+/)) {
-    if (!w) continue;
+  for (const w of wordsOf(value)) {
     if (w === t || w === `${t}s` || w === `${t}es`) return true;
     // "Groceries" for the grocery, and "teas" for the tea: a plural either
     // side, including the -y/-ies kind.
@@ -457,6 +457,7 @@ export function listNameOf(
  *  kernel derives the same when the name is left blank; it is sent so the
  *  move that follows can name the list before the kernel has said. */
 function instanceSlug(displayName: string): string {
+  // ascii-only: the same slug the kernel derives for a blank instance name
   return displayName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 

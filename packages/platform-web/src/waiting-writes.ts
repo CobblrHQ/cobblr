@@ -22,6 +22,7 @@
 //     away without a word: the page counts what it kept against what waits.
 
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
+import { decodeEditedFrom, type EditedFrom } from "@cobblr/platform-contract/edited-from";
 import { randomId } from "@cobblr/platform-contract/random-id";
 
 const KEY = "cobblr:waiting-writes";
@@ -36,6 +37,9 @@ export interface WaitingWrite {
   /** Under /api/v1, without its query string's absence mattering: as sent. */
   path: string;
   body?: unknown;
+  /** What its fields were when the form opened (edited-from.ts): sent with it
+   *  later, a change someone made meanwhile is not overwritten (#7925). */
+  editedFrom?: EditedFrom;
   /** Whose write: the account its token was for. */
   who: string;
   /** The document that made it, which sends it itself while it is open. */
@@ -132,7 +136,7 @@ export function browserOffline(): boolean {
  *  form) cannot be kept, and leaving the page then asks first. Two edits of
  *  one record fold into one, the later value winning, as they would have
  *  landed. Says whether it was kept. */
-export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined): boolean {
+export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined, editedFromHeader?: string | null): boolean {
   const m = method.toUpperCase();
   if (!WRITES.has(m) || (m === "POST" && ASKS.test(path))) return false;
   let parsed: unknown;
@@ -144,6 +148,7 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
       return false;
     }
   }
+  const editedFrom = decodeEditedFrom(editedFromHeader) ?? undefined;
   const who = writerOf(authorization);
   const list = read();
   let last = list.length - 1;
@@ -157,11 +162,13 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
       // Keep null deletion markers until the server applies the combined patch.
       body.metadata = { ...prior.body.metadata, ...parsed.metadata };
     }
-    list[last] = { ...prior, body, page: PAGE };
+    // A field's opened value is the first edit's: that is what the form showed.
+    const was = prior.editedFrom || editedFrom ? { ...(editedFrom ?? {}), ...(prior.editedFrom ?? {}) } : undefined;
+    list[last] = { ...prior, body, ...(was ? { editedFrom: was } : {}), page: PAGE };
   } else if (prior && (m === "PUT" || m === "DELETE") && (prior.method === "PATCH" || prior.method === "PUT")) {
     list[last] = { method: m, path, body: parsed, who, page: PAGE, at: new Date().toISOString() };
   } else {
-    list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), who, page: PAGE, at: new Date().toISOString() });
+    list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), ...(editedFrom ? { editedFrom } : {}), who, page: PAGE, at: new Date().toISOString() });
   }
   if (!save(list)) return false;
   const k = `${m} ${path}`;

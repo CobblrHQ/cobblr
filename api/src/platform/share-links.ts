@@ -40,6 +40,7 @@ import {
   peerFetch,
   registerShareOp,
   REVOKED_OP,
+  settleEndingShare,
   type ShareLinkRow,
 } from "./share-sync.js";
 import { shareRefusal } from "./kind-writer.js";
@@ -476,6 +477,7 @@ export async function revokeShareLink(orgId: string, linkId: string): Promise<bo
 }
 
 async function endLink(link: ShareLinkRow, opts: { keepSpaceToTell?: boolean } = {}): Promise<void> {
+  await settleEndingShare(link);
   await meta.updateTable("share_links").set({ status: "revoked", revoked_at: new Date(), invite_code_hash: null }).where("id", "=", link.id).execute();
   // Nothing else is said over an ended share.
   await outboxDelete((q) => q.where("link_id", "=", link.id).where("sent_at", "is", null).where("op", "!=", REVOKED_OP)).execute();

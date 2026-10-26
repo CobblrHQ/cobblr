@@ -336,13 +336,13 @@ export function OrderLineControls({ slug, order, item, onStartReturn }: { slug: 
     // tab saved while this was open stands, or this save says it changed
     // (#8118, #7925).
     mutationFn: () => {
-      const edit = editOf(item as unknown as Record<string, unknown>, {
+      const edit = editOf(item, {
         description: description.trim() || null,
         ...(settled ? {} : { qty: Number(qty) }),
         unit_cost: unitCost,
         currency,
       });
-      return Object.keys(edit.body).length ? api.updateOrderItem(slug, order.id, item.id, edit.body, edit.headers) : Promise.resolve(item);
+      return Object.keys(edit.body).length ? api.updateOrderItem(slug, order.id, item.id, edit) : Promise.resolve(item);
     },
     onSuccess: () => {
       refresh();

@@ -15,7 +15,7 @@
   "modules/builds/src/api/board-revisions.ts": 1,
   "modules/builds/src/api/builds.ts": 1,
   "modules/core-ai/src/api/basics.ts": 3,
-  "modules/core-ai/src/api/offers.ts": 5,
+  "modules/core-ai/src/api/offers.ts": 3,
   "modules/core-ai/src/api/turns.ts": 1,
   "modules/core-import/src/services/sheet-import.ts": 1,
   "modules/core-maintenance/src/api/schedules.ts": 1,

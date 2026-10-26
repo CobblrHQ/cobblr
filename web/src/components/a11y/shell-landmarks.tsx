@@ -29,7 +29,7 @@ export function SkipToContent() {
         main.focus();
         main.scrollIntoView?.({ block: "start" });
       }}
-      className="sr-only focus:not-sr-only focus:fixed focus:left-2 focus:top-2 focus:z-[3000] focus:rounded-md focus:bg-surface focus:dark:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-accent focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent"
+      className="sr-only focus:not-sr-only focus:fixed focus:left-[calc(var(--inset-left,0px)+0.5rem)] focus:top-[calc(var(--inset-top,0px)+0.5rem)] focus:z-[3000] focus:rounded-md focus:bg-surface focus:dark:bg-slate-900 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-accent focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-accent"
     >
       Skip to content
     </a>

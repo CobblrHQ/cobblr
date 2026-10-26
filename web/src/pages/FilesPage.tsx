@@ -15,10 +15,10 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { Link } from "react-router-dom";
 import { ChevronRight, File as FileIcon, Folder, FolderPlus, Info, Pencil, RotateCcw, Trash2, Upload } from "lucide-react";
 import { api, ApiError, type FileRecord } from "../lib/api";
-import { folderPaths, formatBytes } from "../features/core-files/fileFormat";
+import { deleteFileMessage, folderPaths, formatBytes } from "../features/core-files/fileFormat";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { ImageLightbox } from "../components/ImageLightbox";
-import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage } from "@cobblr/platform-web";
+import { canPreviewFile, FilePreview, FileIntakePanels, Modal, useFileIntake, useFilePreviewRegistry, useToast, useConfirm, usePageTitle, EntityPhoto, SearchInput, usePasteImage, editOf } from "@cobblr/platform-web";
 
 const TOP = "top";
 
@@ -38,7 +38,7 @@ export function FilesPage() {
     return asked && /^[0-9a-f-]{36}$/i.test(asked) ? asked : TOP;
   });
   const [search, setSearch] = useState("");
-  const [renaming, setRenaming] = useState<{ kind: "file" | "folder"; id: string; value: string } | null>(null);
+  const [renaming, setRenaming] = useState<{ kind: "file" | "folder"; id: string; value: string; was?: string } | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   // A file the app can show (a PDF, an SVG, a model) opens in place; the
   // rest open in a new tab.
@@ -113,7 +113,9 @@ export function FilesPage() {
     onError: fail,
   });
   const updateFile = useMutation({
-    mutationFn: (v: { id: string; filename?: string; folder_id?: string | null }) => api.updateFile(activeSlug, v.id, { filename: v.filename, folder_id: v.folder_id }),
+    // Judged against the row as the list showed it (#7925).
+    mutationFn: (v: { id: string; filename?: string; folder_id?: string | null; opened: { filename?: string; folder_id?: string | null } }) =>
+      api.updateFile(activeSlug, v.id, editOf(v.opened, { ...(v.filename !== undefined ? { filename: v.filename } : {}), ...(v.folder_id !== undefined ? { folder_id: v.folder_id } : {}) })),
     onSuccess: (r, v) => {
       if (v.folder_id !== undefined) toast.success(`Moved ${r.filename} to ${pathLabel(v.folder_id)}`);
       refresh();
@@ -140,7 +142,7 @@ export function FilesPage() {
     if (!renaming) return;
     const value = renaming.value.trim();
     if (value) {
-      if (renaming.kind === "file") updateFile.mutate({ id: renaming.id, filename: value });
+      if (renaming.kind === "file") updateFile.mutate({ id: renaming.id, filename: value, opened: { filename: renaming.was } });
       else updateFolder.mutate({ id: renaming.id, name: value });
     }
     setRenaming(null);
@@ -164,7 +166,7 @@ export function FilesPage() {
   const images = items.filter((f) => f.kind === "image");
   const others = items.filter((f) => f.kind !== "image");
   const askDelete = async (f: FileRecord) => {
-    const ok = await confirm({ title: "Delete this file?", message: `${f.filename} goes to Recently deleted for 30 days, where you can restore it.`, confirmLabel: "Delete", destructive: true });
+    const ok = await confirm({ title: "Delete this file?", message: deleteFileMessage(f.filename), confirmLabel: "Delete", destructive: true });
     if (ok) deleteFile.mutate({ id: f.id, filename: f.filename });
   };
   const moveMenu = (f: FileRecord, width = "shrink-0 max-w-[9rem]") => (
@@ -173,7 +175,7 @@ export function FilesPage() {
       value=""
       onChange={(e) => {
         const to = e.target.value;
-        if (to) updateFile.mutate({ id: f.id, folder_id: to === TOP ? null : to });
+        if (to) updateFile.mutate({ id: f.id, folder_id: to === TOP ? null : to, opened: { folder_id: f.folder_id ?? null } });
       }}
       className={`${width} min-w-0 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-xs text-muted px-1 py-1`}
     >
@@ -213,7 +215,7 @@ export function FilesPage() {
           </button>
         ) : (
           <form
-            className="inline-flex items-center gap-1"
+            className="inline-flex max-w-full flex-wrap items-center gap-1"
             onSubmit={(e) => {
               e.preventDefault();
               const name = newFolder.trim();
@@ -228,9 +230,9 @@ export function FilesPage() {
               placeholder="Folder name"
               onChange={(e) => setNewFolder(e.target.value)}
               onKeyDown={(e) => e.key === "Escape" && setNewFolder(null)}
-              className="w-36 rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
+              className="w-36 max-w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
             />
-            <button type="submit" className="rounded border border-line dark:border-slate-700 px-2 py-1.5 text-sm hover:text-accent">
+            <button type="submit" className="shrink-0 rounded border border-line dark:border-slate-700 px-2 py-1.5 text-sm hover:text-accent">
               Make
             </button>
           </form>
@@ -324,7 +326,7 @@ export function FilesPage() {
                   {renaming?.kind === "file" && renaming.id === f.id ? (
                     renameInput
                   ) : (
-                    <button type="button" onClick={() => setRenaming({ kind: "file", id: f.id, value: f.filename })} className="flex-1 min-w-0 truncate text-left text-xs text-muted hover:text-accent" title="Rename">
+                    <button type="button" onClick={() => setRenaming({ kind: "file", id: f.id, value: f.filename, was: f.filename })} className="flex-1 min-w-0 truncate text-left text-xs text-muted hover:text-accent" title="Rename">
                       {f.filename}
                     </button>
                   )}
@@ -353,7 +355,7 @@ export function FilesPage() {
                   // openAuthedFile fetches with the token.
                   <button
                     type="button"
-                    onClick={() => (canPreviewFile(f.filename) ? setReading(f) : void openAuthedFile(activeSlug, f.id, { mime: f.mime_type, filename: f.filename }))}
+                    onClick={() => (canPreviewFile(f.filename, f.mime_type) ? setReading(f) : void openAuthedFile(activeSlug, f.id, { mime: f.mime_type, filename: f.filename }))}
                     className="flex-1 min-w-0 truncate text-left hover:text-accent"
                   >
                     {f.filename}
@@ -364,7 +366,7 @@ export function FilesPage() {
                 <Link to={`/files/${f.id}`} title="Details" aria-label={`Details of ${f.filename}`} className="text-faint hover:text-accent p-1">
                   <Info size={13} />
                 </Link>
-                <button type="button" title="Rename" aria-label={`Rename ${f.filename}`} onClick={() => setRenaming({ kind: "file", id: f.id, value: f.filename })} className="text-faint hover:text-accent p-1">
+                <button type="button" title="Rename" aria-label={`Rename ${f.filename}`} onClick={() => setRenaming({ kind: "file", id: f.id, value: f.filename, was: f.filename })} className="text-faint hover:text-accent p-1">
                   <Pencil size={13} />
                 </button>
                 {moveMenu(f)}

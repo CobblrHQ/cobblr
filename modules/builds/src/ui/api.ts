@@ -6,7 +6,7 @@
 // when inventory isn't enabled.
 
 import type { ResolvedEntity } from "@cobblr/platform-contract";
-import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, workspaceFetch } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, uploadJson, workspaceFetch, type Edit } from "@cobblr/platform-web";
 
 export interface BuildSummary {
   id: string;
@@ -237,11 +237,11 @@ export class BuildsApi {
     return parsed as T;
   }
 
-  private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
     const url = `/api/v1/orgs/${this.slug}/modules/builds${path}`;
     const res = await workspaceFetch(url, {
       method,
-      headers: this.headers(body !== undefined),
+      headers: { ...this.headers(body !== undefined), ...(extra ?? {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const out = await this.parse<T>(res);
@@ -275,8 +275,9 @@ export class BuildsApi {
   createBuild(body: { name: string; description?: string | null; output_part_id?: string | null; output_part_name?: string; notes?: string | null }) {
     return this.req<BuildSummary>("POST", "/builds", body);
   }
-  updateBuild(id: string, body: Partial<{ name: string; description: string | null; output_part_id: string | null; output_part_name: string; output_qty: number; notes: string | null; metadata: Record<string, unknown> }>) {
-    return this.req<BuildSummary>("PATCH", `/builds/${id}`, body);
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateBuild(id: string, edit: Edit<{ name: string; description: string | null; output_part_id: string | null; output_part_name: string; output_qty: number; notes: string | null; metadata: Record<string, unknown> }>) {
+    return this.req<BuildSummary>("PATCH", `/builds/${id}`, edit.body, edit.headers);
   }
   deleteBuild(id: string) {
     return this.req<void>("DELETE", `/builds/${id}`);

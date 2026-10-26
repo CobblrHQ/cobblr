@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withImportAgain } from "./src/lib/import-again";
+import { apiProxyTarget } from "./src/lib/api-proxy-target";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -168,7 +169,7 @@ export default defineConfig({
     // handles the same job at port 8080.
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY ?? "http://api:4000",
+        target: apiProxyTarget(process.env.VITE_API_PROXY),
         changeOrigin: true,
       },
     },
@@ -183,7 +184,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: process.env.VITE_API_PROXY ?? "http://api:4000",
+        target: apiProxyTarget(process.env.VITE_API_PROXY),
         changeOrigin: true,
       },
     },

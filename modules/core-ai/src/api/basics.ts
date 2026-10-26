@@ -21,8 +21,8 @@ import { asyncHandler, badBody, requireRole } from "./util.js";
 import { matchBasics, normalize } from "../basics-match.js";
 import { CONTROL_KEYS, actReply, resolveControlAct } from "../control-context.js";
 import { COMPUTED_COMMANDS, computedCommandFor } from "../computed-commands.js";
-import { getTool, unitsCounted, type WorkspaceApi } from "@cobblr/workspace-tools";
-import { bindCommand, deriveCommand, oneAtATimeReply, sayCommand, splitInstructions, type LearnedCommand, type Operation, writeOf } from "../learned-commands.js";
+import { getTool, type WorkspaceApi } from "@cobblr/workspace-tools";
+import { bindCommand, deriveCommand, oneAtATimeReply, splitInstructions, type LearnedCommand, type Operation, writeOf, sayCommand } from "../learned-commands.js";
 import { readQuestionOf, MIN_PEEK_LENGTH, type KindWords } from "../live-answers.js";
 import { countQuestionOf, phraseCountText, phraseMostOf, type KindFields, type CountResult } from "../count-answers.js";
 import { performWrite, performWrites, bulkMessage, touchedBy, type WriteOutcome } from "./chat-ledger.js";
@@ -870,6 +870,7 @@ basicsRouter.get(
     }
     const plan = (row.plan as Operation[]) ?? [];
     const moduleName = String(plan[0]?.entity_kind ?? "").split(":")[0] || "your-module";
+    // ascii-only: a manifest command id, which is an ASCII identifier
     const slug = row.template.replace(/\{[a-z0-9_]+\}/gi, "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "command";
     // The manifest shape, not the stored shape: no pattern (it is compiled from
     // the template) and camelCase keys, so it can be pasted straight in.
@@ -1117,6 +1118,17 @@ function kindFieldsOf(
 
 const COUNT_EXACT_MAX = 2000;
 
+/** Every record of one kind, counted exactly, or null when it could not be.
+ *  An incomplete count is null too: a number that is quietly a page size is
+ *  the wrong answer this exists to not give. */
+async function countRecords(wsApi: WorkspaceApi, kind: string): Promise<{ total: number; units?: number } | null> {
+  const tool = getTool("count_records");
+  if (!tool) return null;
+  const r = (await tool.execute(wsApi, { kind })) as { ok: boolean; data?: { total?: unknown; units?: unknown; complete?: unknown } };
+  if (!r.ok || !r.data || r.data.complete !== true || typeof r.data.total !== "number") return null;
+  return { total: r.data.total, ...(typeof r.data.units === "number" ? { units: r.data.units } : {}) };
+}
+
 async function countAnswer(
   message: string,
   wsApi: WorkspaceApi,
@@ -1258,26 +1270,22 @@ basicsRouter.post(
     try {
       if (q.kind === "count") {
         const label = kinds.find((k) => k.id === q.entityKind);
-        // /entities returns rows, not a count, so ask for one more than the
-        // cap and count them. Past the cap the honest answer is "more than",
-        // never a number that is quietly the page size.
-        const CAP = 500;
-        const r = await wsApi.request("GET", `/entities/${encodeURIComponent(q.entityKind)}?limit=${CAP + 1}`);
-        const items = (r.body as { items?: unknown[] }).items;
-        if (!Array.isArray(items)) {
+        // Counted by the tool the model and the MCP server count with: the
+        // kind's own total, asked once. Counting the rows of one list page
+        // said "200 parts" for a workspace of 3,006, because the page stops
+        // at 200 whatever limit is asked for (#7816).
+        const counted = await countRecords(wsApi, q.entityKind);
+        if (!counted) {
           res.json({ answer: null });
           return;
         }
-        const over = items.length > CAP;
-        const n = over ? CAP : items.length;
+        const n = counted.total;
         // A record can stand for several identical things (one entry for five
         // printers). "How many printers" is the things; the entries go beside.
-        const countField = (kindRows as Array<{ id: string; count_field?: string | null }>).find((k) => k.id === q.entityKind)?.count_field;
-        const things = countField && !over ? unitsCounted(items as Array<Record<string, unknown>>, countField) : null;
-        if (things !== null && things !== n) {
-          const thingNoun = things === 1 ? label?.singular : label?.plural;
+        if (counted.units !== undefined && counted.units !== n) {
+          const thingNoun = counted.units === 1 ? label?.singular : label?.plural;
           if (thingNoun) {
-            res.json({ answer: `${things} ${thingNoun}`, detail: `in ${n} ${n === 1 ? "entry" : "entries"}` });
+            res.json({ answer: `${counted.units} ${thingNoun}`, detail: `in ${n} ${n === 1 ? "entry" : "entries"}` });
             return;
           }
         }
@@ -1285,15 +1293,12 @@ basicsRouter.post(
         // it found in this workspace's own kinds, so this cannot normally
         // happen — and inventing a generic noun to fill the gap would put a
         // number next to a word the user never used.
-        const noun = n === 1 && !over ? label?.singular : label?.plural;
+        const noun = n === 1 ? label?.singular : label?.plural;
         if (!noun) {
           res.json({ answer: null });
           return;
         }
-        res.json({
-          answer: `${over ? "more than " : ""}${n} ${noun}`,
-          detail: over ? "too many to count from here" : "in this workspace",
-        });
+        res.json({ answer: `${n} ${noun}`, detail: "in this workspace" });
         return;
       }
       if (q.kind === "attention") {

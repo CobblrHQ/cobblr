@@ -13,6 +13,7 @@
 // order they happened.
 
 import { jsonbPatchBetween } from "@cobblr/platform-contract/jsonb-merge";
+import { editOf, type Edit } from "@cobblr/platform-web";
 import { api, type Location } from "./api";
 
 /** One record's state on either side of a step. */
@@ -39,8 +40,8 @@ export interface PlanStep {
 }
 
 export interface PlanWriter {
-  updatePlace(id: string, body: Partial<Location>): Promise<unknown>;
-  updateRecord(path: string, body: Record<string, unknown>): Promise<unknown>;
+  updatePlace(id: string, edit: Edit<Location>): Promise<unknown>;
+  updateRecord(path: string, edit: Edit<Record<string, unknown>>): Promise<unknown>;
   deletePlace(id: string): Promise<unknown>;
   restorePlace(id: string): Promise<unknown>;
 }
@@ -91,8 +92,11 @@ export function createPlanHistory(writer: PlanWriter): PlanHistory {
     // moved another puts them back in the reverse of how they happened.
     const order = side === "before" ? [...step.changes].reverse() : step.changes;
     for (const c of order) {
-      if (c.kind === "place") await writer.updatePlace(c.id, patchFrom(c, side) as Partial<Location>);
-      else if (c.kind === "record") await writer.updateRecord(c.path, patchFrom(c, side));
+      // Judged against the side it is leaving: a place someone moved since is
+      // not put back over their move (#7925).
+      const was = side === "before" ? "after" : "before";
+      if (c.kind === "place") await writer.updatePlace(c.id, editOf(c[was], patchFrom(c, side) as Partial<Location>));
+      else if (c.kind === "record") await writer.updateRecord(c.path, editOf(c[was], patchFrom(c, side)));
       else if (side === "before") await writer.deletePlace(c.id);
       else await writer.restorePlace(c.id);
     }
@@ -178,8 +182,8 @@ export function planHistoryFor(slug: string): PlanHistory {
   let h = bySlug.get(slug);
   if (!h) {
     h = createPlanHistory({
-      updatePlace: (id, body) => api.updateLocation(slug, id, body),
-      updateRecord: (path, body) => api.request("PATCH", path, body),
+      updatePlace: (id, edit) => api.updateLocation(slug, id, edit),
+      updateRecord: (path, edit) => api.request("PATCH", path, edit.body, edit.headers),
       deletePlace: (id) => api.deleteLocation(slug, id),
       restorePlace: (id) => api.restoreDeletedLocation(slug, id),
     });

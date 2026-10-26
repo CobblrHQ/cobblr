@@ -74,14 +74,18 @@ const blank = (channel: string): DeliveryWindowRow => ({
   pending_schedule: 0,
 });
 
-export function DeliveryWindows() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const q = useQuery({
+export function useDeliveryWindowsQuery() {
+  return useQuery({
     queryKey: ["delivery-windows"],
     queryFn: () => api.meDeliveryWindows(),
     staleTime: 60_000,
   });
+}
+
+export function DeliveryWindows() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useDeliveryWindowsQuery();
 
   const save = useMutation({
     mutationFn: (body: Parameters<typeof api.setMeDeliveryWindow>[0]) =>
@@ -129,7 +133,7 @@ export function DeliveryWindows() {
             <ChannelCadence
               key={c.key}
               channel={c}
-              row={byChannel.get(c.key) ?? blank(c.key)}
+              row={byChannel.get(c.key)}
               saving={save.isPending}
               onSave={(body) => save.mutate(body)}
             />
@@ -142,15 +146,17 @@ export function DeliveryWindows() {
 
 function ChannelCadence({
   channel,
-  row,
+  row: saved,
   saving,
   onSave,
 }: {
   channel: { key: string; label: string; hint: string; batchedOnly?: boolean };
-  row: DeliveryWindowRow;
+  row?: DeliveryWindowRow;
   saving: boolean;
   onSave: (body: Parameters<typeof api.setMeDeliveryWindow>[0]) => void;
 }) {
+  const [initial] = useState(() => blank(channel.key));
+  const row = saved ?? initial;
   const [draft, setDraft] = useState<DeliveryWindowRow>(row);
   // The saved row is the truth; a fresh one after saving replaces the draft.
   const [seen, setSeen] = useState(row);

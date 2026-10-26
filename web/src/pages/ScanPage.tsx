@@ -34,7 +34,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle, ChevronDown, ExternalLink, Image as ImagePlus, LayoutGrid, List, Loader2, Mail, MapPin, MonitorSmartphone, Pencil, ReceiptText, RotateCcw, ScanLine, Search, Sparkles, Tag, Trash2, Truck, X, Zap, MoreHorizontal, Undo2 } from "lucide-react";
-import { useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
+import { editOf, useLater, useTickedRows, useAskCobbAboutSelection, Modal, useToast, usePageTitle, PopoverLayer, OverlayLayer, relativeTime, TILE_GRID, useEscapeToClose, useCloseOnPageScroll } from "@cobblr/platform-web";
 import { ScanImportModal } from "../components/ScanImportModal";
 import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
@@ -1524,9 +1524,9 @@ export function ScanPage() {
           let nestFailed: string | null = null;
           if (decision.reparent) {
             try {
-              await api.updateLocation(activeSlug, decision.reparent.child, {
+              await api.updateLocation(activeSlug, decision.reparent.child, editOf(byId.get(decision.reparent.child), {
                 parent_id: decision.reparent.parent,
-              });
+              }));
               await locsQ.refetch();
             } catch (e) {
               nestFailed = e instanceof Error ? e.message : "";
@@ -1606,7 +1606,7 @@ export function ScanPage() {
 
   /** An icon-sized header control. */
   const headerIcon =
-    "inline-flex items-center justify-center rounded border border-line dark:border-slate-700 text-content hover:bg-subtle dark:hover:bg-slate-800/70 p-1.5 transition shrink-0";
+    "inline-flex items-center justify-center rounded border border-line dark:border-slate-700 text-content hover:bg-subtle dark:hover:bg-slate-800/70 p-[6px] transition shrink-0";
 
   // ── the one intake box ────────────────────────────────────────────────────
   const [omniOpen, setOmniOpen] = useState(false);
@@ -2414,7 +2414,7 @@ export function ScanPage() {
         data-inbox-header
         data-toolbar="row"
         className={
-          "relative flex items-center gap-2 max-sm:gap-1.5 max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5 " +
+          "relative flex items-center gap-[8px] max-sm:gap-[6px] max-sm:justify-between flex-nowrap border-b border-line dark:border-slate-700 pb-2.5 " +
           // A phone's open search is a line of its own under the row (see the
           // box below), the one time this row has two lines.
           (omniOpen ? "max-sm:flex-wrap max-sm:gap-y-2" : "")
@@ -3778,12 +3778,12 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                   // sideways only: the receipt's 44 px target reaches into
                   // the row's padding on a desk, and clipping it top and
                   // bottom left 34 px to press (#6881).
-                  className={`flex w-full items-center gap-1.5 max-sm:gap-0 overflow-x-clip rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-0 max-sm:py-0 text-left text-xs max-sm:[&>button]:min-h-11 ${batchId ? "max-sm:[&>button]:min-w-11 max-sm:[&>a]:min-w-11" : "min-[360px]:max-sm:[&>button]:min-w-11 min-[360px]:max-sm:[&>a]:min-w-11 max-[359px]:[&>a]:px-1"} max-sm:[&>button]:justify-center max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-11 max-sm:[&>a]:items-center max-sm:[&>a]:justify-center`}
+                  className={`flex w-full items-center gap-1.5 max-sm:gap-0 overflow-x-clip rounded-md bg-mortar-50 dark:bg-slate-800/40 px-2.5 py-1.5 max-sm:px-0 max-sm:py-0 text-left text-xs max-sm:[&>button]:min-h-[44px] ${batchId ? "max-sm:[&>button]:min-w-[44px] max-sm:[&>a]:min-w-[44px]" : "min-[360px]:max-sm:[&>button]:min-w-[44px] min-[360px]:max-sm:[&>a]:min-w-[44px] max-[359px]:[&>a]:px-1"} max-sm:[&>button]:justify-center max-sm:[&>a]:inline-flex max-sm:[&>a]:min-h-[44px] max-sm:[&>a]:items-center max-sm:[&>a]:justify-center`}
                 >
                   {/* Burst select-all: grab the whole session for the
                       bulk toolbar (location / confirm / discard). The label
                       is its finger's target on a phone; the box stays small. */}
-                  <label className={`contents max-sm:inline-flex max-sm:h-11 ${batchId ? "max-sm:w-11" : "min-[360px]:max-sm:w-11 max-[359px]:px-1.5"} max-sm:shrink-0 max-sm:items-center max-sm:justify-center max-sm:cursor-pointer`} onClick={(e) => e.stopPropagation()}>
+                  <label className={`contents max-sm:inline-flex max-sm:h-[44px] ${batchId ? "max-sm:w-[44px]" : "min-[360px]:max-sm:w-[44px] max-[359px]:px-1.5"} max-sm:shrink-0 max-sm:items-center max-sm:justify-center max-sm:cursor-pointer`} onClick={(e) => e.stopPropagation()}>
                   <input
                     type="checkbox"
                     checked={allGroupSelected}
@@ -3842,7 +3842,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                         // A finger's target around a 13 px glyph (#6144); on a
                         // wide screen it reaches into the row's padding rather
                         // than making the row taller.
-                        className="inline-flex min-h-11 min-w-11 items-center justify-center sm:-my-3 text-faint hover:text-accent transition"
+                        className="inline-flex min-h-[44px] min-w-[44px] items-center justify-center sm:-my-3 text-faint hover:text-accent transition"
                       >
                         <ReceiptText size={13} />
                       </ReceiptPeek>
@@ -3880,7 +3880,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       // under shrink pressure at any width the desktop layout
                       // runs at. truncate + min-w-0 keeps it able to give way
                       // last if that ever stops being true.
-                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0 max-sm:flex-1 max-sm:basis-0 max-sm:min-w-0 max-sm:min-h-11 max-sm:text-left"
+                      className="font-medium text-content dark:text-mortar-100 truncate min-w-0 max-sm:flex-1 max-sm:basis-0 max-sm:min-w-0 max-sm:min-h-[44px] max-sm:text-left"
                       // The DATE is the session's identity; the word was
                       // boilerplate on every row of a view already called "By
                       // session", and truncation ate the date to keep it
@@ -4034,7 +4034,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                           // over a 16px box lay over File, so a tap on File
                           // opened this menu (#3717). No overlay: a target
                           // never reaches past its own box.
-                          className={`${themeOffer || mergeInto ? "" : "sm:hidden "}shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-11 max-sm:min-w-11 max-sm:p-0 text-faint hover:text-accent`}
+                          className={`${themeOffer || mergeInto ? "" : "sm:hidden "}shrink-0 inline-flex min-h-6 items-center justify-center rounded p-0.5 max-sm:min-h-[44px] max-sm:min-w-[44px] max-sm:p-0 text-faint hover:text-accent`}
                         >
                           <MoreHorizontal size={14} />
                         </button>
@@ -4538,7 +4538,7 @@ className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate
                       )}
                       className="group shrink-0 inline-flex items-center justify-center disabled:opacity-50"
                     >
-                      <span className="inline-flex items-center gap-1 rounded-md bg-cobble-600 group-hover:bg-cobble-700 px-2 py-1 text-[11px] font-medium text-white">
+                      <span className="inline-flex items-center gap-[4px] rounded-md bg-cobble-600 group-hover:bg-cobble-700 px-[8px] py-1 text-[11px] font-medium text-white">
                       {/* Say what the tap will DO. It used to read "File all 3
                           into Clothing" even when nothing had a location yet, so
                           it promised to file and then asked instead - the label

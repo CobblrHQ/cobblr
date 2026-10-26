@@ -2,9 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-26
+
+### Fixes
+- Undoing a recount or a stocktake never takes away someone's later change. If someone took one of a recounted part, or moved it, after the recount, its Undo used to put the old count or place back over theirs. Now that Undo is refused, says who changed what, and leaves everything as it is.
+- A floor plan import's Undo is refused, with what changed, once someone else has changed a place it made, instead of deleting their change with it.
+- An offer still waiting when its share ends is called off: your record no longer says it is offered, and the arrival leaves the other inbox. A record already left marked by an ended share is cleared by its Withdraw.
+- A laser station no longer moves its Authorize, Scan sheet QR and Review buttons when its Stop and Pause controls load: the station shows once its first reads have answered.
+
 ## 2026-10-25
 
 ### Fixes
+- Undo after lending something ends only the loan you made: lent again since, from another tab or by someone else, it says who has it now and leaves their loan alone.
 - Off-box backup copies can read the nightly dump again. Since an earlier fix, each dump was saved readable only by its owner, so a copy run as another user missed it; dumps are readable again, and the ones saved meanwhile are fixed on the next start. If you copy dumps off the box, check that the last few nights arrived.
 
 ## 2026-10-24
@@ -16,6 +25,10 @@ User-facing changes, newest first. Dates are release dates.
 
 ### Fixes
 - On a phone, a message no longer covers the scanner's own controls after a scan, and the workspace menu's members, rename and default buttons take a tap
+- Unsaved delivery times stay in place when you change another notification setting.
+- Notification settings keeps its controls in place while its checks finish loading.
+- Delivery test notifications have a readable name in the inbox and channel picker.
+- Notification buttons respond to Enter and Space without opening their row.
 - A thing you add offline is now kept on the device and sent once when you are back, the offline bar counts what is waiting to send, and a message to Ask Cobb sent offline waits in the box and goes by itself
 
 ## 2026-10-22

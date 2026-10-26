@@ -45,12 +45,17 @@ export function missingActionArgs(
   schema: Record<string, ArgSpec> | null | undefined,
   given: unknown,
 ): string | null {
-  const names = Object.keys(schema ?? {});
-  if (names.length === 0) return null;
+  if (Object.keys(schema ?? {}).length === 0) return null;
   const refused = requiredArgsRefusal(actionId, schema, given);
   if (refused) return `${refused} ${NEXT}`;
   const passed = given && typeof given === "object" ? Object.keys(given as Record<string, unknown>) : [];
   if (passed.length > 0) return null;
+  // `required: false` says the action runs without it (core-placement:remove
+  // runs on its record alone; `expected` is for its own Undo). An argument
+  // that says nothing is still asked for: older declarations leave
+  // `required` off arguments the handler cannot do without.
+  const names = Object.entries(schema ?? {}).filter(([, spec]) => spec?.required !== false).map(([name]) => name);
+  if (names.length === 0) return null;
   return `${actionId} takes arguments and none were given: ${describeArgs(schema, names)}. ${NEXT}`;
 }
 
@@ -81,13 +86,14 @@ export function missingActionArgs(
 // Actions always keep the confirm gate, so a corrected call is still a card
 // the person reads before anything happens.
 
+// ascii-only: an argument or field KEY (module_name, fieldId), never a value somebody typed
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** module_name -> ["module","name"]; fieldId -> ["field","id"]. */
 const words = (s: string): string[] =>
   s
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
+    .split(/[^A-Za-z0-9]+/) // ascii-only: the words of a key, as above
     .map((w) => w.toLowerCase())
     .filter(Boolean);
 

@@ -1,4 +1,4 @@
-import { RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft } from "@cobblr/platform-web";
+import { RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, EntityActionsBar, FieldPack, MutationError, fieldNeed, useConfirm, useFieldDraft, useRecordEdits } from "@cobblr/platform-web";
 // One task, whole: everything a task has, settable in one place. The row on a
 // project shows a line of it; this sheet is where the due date, the details,
 // the priority, the status and what it waits on are read and changed, and
@@ -123,7 +123,9 @@ export function TaskSheet({ taskId, onClose }: { taskId: string; onClose: () => 
     void qc.invalidateQueries({ queryKey: taskKey(taskId) });
     if (t?.project_id) void qc.invalidateQueries({ queryKey: ["project-tasks", t.project_id] });
   };
-  const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => api.updateTask(taskId, patch), onSuccess: refresh });
+  // Judged against the task as this sheet shows it (#7925).
+  const edits = useRecordEdits(t);
+  const update = useMutation({ mutationFn: (patch: Record<string, unknown>) => edits(patch, (e) => api.updateTask(taskId, e)), onSuccess: refresh });
   const remove = useMutation({
     mutationFn: () => api.deleteTask(taskId),
     onSuccess: () => {

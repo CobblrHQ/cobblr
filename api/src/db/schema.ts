@@ -1685,6 +1685,20 @@ export interface AiHeldChangesTable {
   decided_at: Date | null;
 }
 
+/** A write's answer, kept a day per person and Idempotency-Key, so a repeat
+ *  of it is answered the same and changes nothing more (20261022-242). */
+export interface RequestReplaysTable {
+  org_id: string;
+  user_id: string;
+  key: string;
+  fingerprint: string;
+  state: Generated<"running" | "done" | "unreplayable">;
+  status: number | null;
+  content_type: string | null;
+  body: string | null;
+  created_at: Generated<Date>;
+}
+
 /** An undo step handed back to the person who ran its run (20261007-204). */
 export interface IssuedUndosTable {
   id: Generated<string>;
@@ -2022,6 +2036,7 @@ export interface MetaDB {
   service_capability_policies: ServiceCapabilityPoliciesTable;
   ai_held_changes: AiHeldChangesTable;
   issued_undos: IssuedUndosTable;
+  request_replays: RequestReplaysTable;
   service_job_cards: ServiceJobCardsTable;
   service_pending_confirms: { org_id: string; job_id: string; since: Generated<Date> };
   service_confirm_triggers: {

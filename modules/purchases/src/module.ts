@@ -191,7 +191,7 @@ export default defineModule({
         // UI-SCREEN: /purchases/:id (the stage pills on each return)
         id: "purchases:advance-return", changes: "records", group: "buy", label: "Move a return along", examples: ["I dropped the return off", "the refund came through"],
         runBy: "member",
-        description: "Move a return to its next stage: dropped_off, received (its count comes off the shelf, once), refunded (with refund_amount, default the line's cost; it comes off the order's spend once) or cancelled (only before the store has it). Stages only move forward.",
+        description: "Move a return to its next stage: dropped_off, received (its count comes off the shelf, once), refunded (with refund_amount in the order currency, default the returned share of the receipt amount for a line in that currency; it comes off the order's spend once) or cancelled (only before the store has it). Stages only move forward.",
         scope: "workspace" as const, invokeHandler: "purchases.advance-return", userInvokable: false, undoable: true,
         argsSchema: {
           return_id: { label: "Which return", type: "text", required: true },

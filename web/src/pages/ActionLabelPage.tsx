@@ -24,6 +24,7 @@ type Button = ActionLabelPreview["buttons"][number];
 
 interface UndoStep {
   action_id: string;
+  undo_id?: string;
   args: Record<string, unknown>;
   entity_kind?: string;
   entity_id?: string;
@@ -161,6 +162,7 @@ function LabelButton({ slug, code, button }: { slug: string; code: string; butto
           actionId: step.action_id,
           entityKind: step.entity_kind ?? "",
           entityId: step.entity_id ?? "",
+          undo_id: step.undo_id,
           args: step.args,
           label: code,
         }, { undo: "is-undo" });

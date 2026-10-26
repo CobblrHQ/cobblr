@@ -13,7 +13,9 @@ import { ApiError, api } from "../lib/api";
 import { TOKEN_ACCESS_LABEL, TOKEN_ACCESS_MEANS } from "@cobblr/platform-contract/token-access";
 
 
-const CARD = "w-full max-w-md rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-4";
+// Padded in px, as the page around it: in rem both doubled at 200% text and
+// the card ran 40 px past a phone (#8431).
+const CARD = "w-full max-w-md min-w-0 rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-[20px] space-y-4";
 
 export function OAuthConsentPage() {
   usePageTitle("Connect an AI assistant");
@@ -53,7 +55,7 @@ export function OAuthConsentPage() {
   if (check.isError || !check.data) {
     const why = check.error instanceof ApiError ? check.error.message : "This sign-in request could not be checked.";
     return (
-      <div className="min-h-screen grid place-items-center p-4">
+      <div className="min-h-screen grid place-items-center p-[16px]">
         <div className={CARD}>
           <h1 className="text-lg font-semibold text-content dark:text-mortar-100">This connection can't continue</h1>
           <p className="text-sm text-muted dark:text-slate-400">{why}</p>
@@ -66,7 +68,7 @@ export function OAuthConsentPage() {
   const d = check.data;
   const name = d.client_name?.trim() || "An AI assistant";
   return (
-    <div className="min-h-screen grid place-items-center p-4">
+    <div className="min-h-screen grid place-items-center p-[16px]">
       <div className={CARD}>
         <div>
           <h1 className="text-lg font-semibold text-content dark:text-mortar-100">Connect to {productName()}</h1>

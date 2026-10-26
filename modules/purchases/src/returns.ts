@@ -30,7 +30,8 @@
 
 import { sql, type Kysely, type Transaction } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
-import { fieldCurrency, roundMoneyAmount } from "@cobblr/platform-contract/money";
+import { fieldCurrency } from "@cobblr/platform-contract/money";
+import { suggestedPurchaseRefund } from "@cobblr/platform-contract/purchase-refund";
 import type { PurchasesDB, ReturnStage } from "./db.js";
 import { ORDER_ITEM_RETURNED_KEYS } from "./return-keys.js";
 
@@ -97,7 +98,7 @@ export interface StepOutcome {
   stockRestored: boolean;
 }
 
-type Line = { id: string; part_id: string | null; description: string | null; qty: string; unit_cost: string | null; line_amount: string | null };
+type Line = { id: string; part_id: string | null; description: string | null; qty: string; unit_cost: string | null; line_amount: string | null; metadata: unknown };
 
 const lower = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
 
@@ -119,7 +120,7 @@ export async function recordReturnStep(db: Kysely<PurchasesDB>, step: ReturnStep
     const currency = fieldCurrency(order.metadata, "total_cost", main);
     const lines = (await trx
       .selectFrom("purchases_order_items")
-      .select(["id", "part_id", "description", "qty", "unit_cost", "line_amount"])
+      .select(["id", "part_id", "description", "qty", "unit_cost", "line_amount", "metadata"])
       .where("order_id", "=", step.orderId)
       .execute()) as Line[];
     const all = (await trx.selectFrom("purchases_returns").selectAll().where("order_id", "=", step.orderId).orderBy("created_at").execute()) as unknown as ReturnRow[];
@@ -214,16 +215,18 @@ async function applyStage(
     throw new ActionRefusal("This return was cancelled. Start a new one instead.");
   }
   const moved = to !== from || fresh;
-  steps.push({ stage: step.stage, at, by: step.by, source: step.source, ...(step.refundAmount != null ? { refund_amount: step.refundAmount } : {}), ...(to !== step.stage ? { ignored: true } : {}) });
+  steps.push({ stage: step.stage, at, by: step.by, source: step.source, ...(step.refundAmount != null ? { refund_amount: step.refundAmount } : {}), ...(!moved ? { ignored: true } : {}) });
 
-  // The refund: an amount given is the amount (set, not added). Reaching
-  // "refunded" with none prefills the line's cost for what was returned.
+  // Only entering refunded can set its amount. A repeated or older step
+  // keeps the recorded money, even when it carries a different amount.
   const line = ret.line_id ? lines.find((l) => l.id === ret.line_id) : undefined;
   let refund = ret.refund_amount == null ? null : Number(ret.refund_amount);
-  if (step.refundAmount != null && (to === "refunded" || from === "refunded")) refund = step.refundAmount;
-  if (to === "refunded" && refund == null && line) {
-    const each = line.unit_cost != null ? Number(line.unit_cost) : line.line_amount != null && Number(line.qty) > 0 ? Number(line.line_amount) / Number(line.qty) : null;
-    if (each != null) refund = roundMoneyAmount(each * Number(ret.qty), currency);
+  if (moved && to === "refunded" && step.refundAmount != null) refund = step.refundAmount;
+  if (moved && to === "refunded" && refund == null && line) {
+    refund = suggestedPurchaseRefund(line, Number(ret.qty), currency);
+    if (refund == null && fieldCurrency(line.metadata, "unit_cost", currency) !== currency) {
+      throw new ActionRefusal(`Enter the actual refund in ${currency}.`);
+    }
   }
   const leavingRefund = step.revert && from === "refunded" && to !== "refunded";
 

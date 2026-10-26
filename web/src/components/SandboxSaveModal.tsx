@@ -291,7 +291,7 @@ export function SandboxSaveModal({
               aria-label="Your email"
               className="input w-full"
             />
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={keep}
@@ -336,7 +336,7 @@ function TwoPaths({ paths }: { paths: Paths }) {
   return (
     <div className="pt-1">
       <p className="text-xs uppercase tracking-widest text-faint mb-2">Two ways to carry on</p>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {paths.cloud_url && (
         <a
           href={paths.cloud_url}

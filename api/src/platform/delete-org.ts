@@ -11,6 +11,7 @@ import { createClient } from "../db/client-error-guard.js";
 import { metaPool } from "../db/meta.js";
 import { env } from "../env.js";
 import { evictTenantPool, withTenantDeleting } from "../db/tenant.js";
+import { currentRequestScope } from "../lib/request-context.js";
 import { getSandboxedModuleInfo } from "../sandbox/sandboxed-module-info.js";
 import {removeServerBridgeEnrollment} from "./server-bridge-files.js";
 import { dropModuleRole } from "../sandbox/module-role.js";
@@ -22,6 +23,10 @@ import { dropModuleRole } from "../sandbox/module-role.js";
 const DRAIN_MS = Number(process.env.COBBLR_DELETE_DRAIN_MS) || 5_000;
 
 export async function hardDeleteOrg(orgId: string): Promise<void> {
+  // Who asked, by route and (in a test run) the test file, so a read that
+  // meets a workspace mid-deletion can be traced to the request that removed
+  // it (#7682: a search met one and nothing said whose teardown it was).
+  console.log(`[delete-org] deleting workspace ${orgId}, asked by ${currentRequestScope()?.label ?? "no request (a sweep or a boot pass)"}`);
   // The workspace's stored files first, while its database (which lists them)
   // still opens: inside withTenantDeleting nothing can open it. Dropping the
   // database used to be the whole delete, so every photo and file of every

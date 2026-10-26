@@ -1203,6 +1203,12 @@ export async function list(
     // only what the reader may not read: the number would say they matched.
     total = query.q && fieldReadScopes && rows.length < result.items.length ? undefined : result.total;
   } catch (err) {
+    // A workspace being deleted is not a kind that could not be read: the
+    // request answers that the workspace is going (tenant-errors), never "Parts
+    // could not be searched" for every kind it holds (#7682).
+    // By its code, not its class: importing db/tenant here would load the
+    // tenant credentials key into every test that reads entities.
+    if ((err as { code?: unknown } | null)?.code === "workspace_deleting") throw err;
     console.error(`[entities] list resolver for ${kind} failed:`, err);
     noteResolverFailure(kind, err);
     if (by.length) throw err;

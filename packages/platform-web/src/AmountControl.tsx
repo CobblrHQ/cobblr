@@ -72,8 +72,10 @@ export function AmountControl({
       setBusy(false);
     }
   };
+  // Sized in px, as its icons are: in rem the buttons doubled at 200% text and
+  // a pantry or yarn row's stepper ran past the phone (#8432).
   const btn =
-    (size === "sm" ? "w-8 h-8" : "w-11 h-11") +
+    (size === "sm" ? "w-[32px] h-[32px]" : "w-[44px] h-[44px]") +
     " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition";
   // A counted unit agrees with the number ("2 balls", "1 skein"); a measured
   // one reads as its symbol (#5079: the stepper said "2 ball").
@@ -90,9 +92,10 @@ export function AmountControl({
 
   if (!used) {
     return (
-      <span className="inline-flex flex-col items-end" data-testid="amount-control" data-mode="count">
+      <span className="inline-flex max-w-full flex-col items-end" data-testid="amount-control" data-mode="count">
         <NumberStepper
-          className={(size === "sm" ? "text-sm" : "text-base") + " inline-flex items-center gap-1.5 text-content dark:text-mortar-100"}
+          className={(size === "sm" ? "text-sm" : "text-base") + " inline-flex max-w-full items-center gap-1.5 text-content dark:text-mortar-100"}
+          preserveConcurrentChanges
           value={value}
           suffix={shownUnit}
           min={0}

@@ -333,17 +333,12 @@ export function WhatToDoPanel({
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't add that"),
   });
-  // "Show me": the sample barcode through the REAL scan pipeline, no camera.
-  // For the person on a desktop who will not take a phone out right now, and
-  // the person on a phone with nothing to hand. The row that lands below is
-  // exactly what a scan of their own would produce (a name, a photo, a home
-  // offered), which is the one thing the product has to show before anything
-  // else is worth explaining. It is a real inbox row; discarding it is a tap.
   const sampleScanMut = useMutation({
     mutationFn: () => api.scanBarcode(slug, { barcode: DEMO_BARCODE, source_kind: "barcode" }),
-    onSuccess: () => {
+    onSuccess: (item) => {
       void qc.invalidateQueries({ queryKey: ["capture-inbox", slug] });
-      toast.success("Scanned a sample for you. Watch it land below.");
+      toast.success("Scanned a sample. Review it in the inbox.");
+      navigate(`/scan?item=${item.id}`);
     },
     onError: (e) => toast.error(e instanceof Error ? e.message : "Couldn't run the sample scan"),
   });
@@ -872,7 +867,7 @@ export function WhatToDoPanel({
                 className={startRow}
               >
                 {sampleScanMut.isPending ? <Loader2 size={16} className="shrink-0 animate-spin text-accent" /> : <ScanLine size={16} className="shrink-0 text-accent" />}
-                <span className="min-w-0 leading-snug"><span className="font-medium text-content dark:text-mortar-100">Try a sample scan</span><span className="text-faint dark:text-slate-500"> · {isTouch ? "watch one file itself" : "no camera needed"}</span></span>
+                <span className="min-w-0 leading-snug"><span className="font-medium text-content dark:text-mortar-100">Try a sample scan</span><span className="text-faint dark:text-slate-500"> · review one in the inbox</span></span>
               </button>
             </li>
             <li>
@@ -894,7 +889,7 @@ export function WhatToDoPanel({
           {typed.length > 0 && (
             <div data-testid="capture-panel" className="mt-3 min-w-0 space-y-3 rounded-xl border border-line bg-surface/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
               <div className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">what you've added ({typed.length})</div>
-              <div className="grid min-w-0 gap-4 lg:grid-cols-2">
+              <div className="grid grid-cols-1 min-w-0 gap-4 lg:grid-cols-2">
                 {orderedGroups.map(([key, group]) => {
                   const d = group.captures[0]!.resolved_destination;
                   return <section key={key} aria-label={group.label} data-testid="capture-group" className="min-w-0">

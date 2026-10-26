@@ -82,3 +82,10 @@ export const OFF_WHILE_LENT: ReadonlySet<string> = new Set([
   "inventory:move-all-stock",
   "labels:print",
 ]);
+
+/** The same loan restriction for an action and a native field that moves it. */
+export function loanActionRefusal(actionId: string, fields: unknown): string | null {
+  if (!OFF_WHILE_LENT.has(actionId)) return null;
+  const loan = loanOfFields(fields);
+  return loan ? lentWhy(loan) : null;
+}

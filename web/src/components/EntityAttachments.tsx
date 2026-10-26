@@ -588,15 +588,22 @@ export function FilesSection({
     }
   }
 
+  const uploadStatus = uploadAndAttach.isPending && uploadAndAttach.variables ? (
+    <span role="status" className="block mt-2 text-xs text-muted break-all">
+      Adding {uploadAndAttach.variables.name}…
+    </span>
+  ) : null;
+
   // Compact + empty → a small "+ File" pill (no header, no big dropzone). Grows
   // into the full grid below once a file is attached.
   if (compact && items.length === 0 && !main) {
     return (
       <>
-        <button onClick={() => fileInput.current?.click()} className={ADD_PILL}>
+        <button onClick={() => fileInput.current?.click()} disabled={uploadAndAttach.isPending} className={`${ADD_PILL} disabled:opacity-50`}>
           <Upload size={10} /> File
         </button>
-        <input ref={fileInput} type="file" multiple className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+        <input ref={fileInput} type="file" multiple disabled={uploadAndAttach.isPending} className="hidden" onChange={(e) => void handleFiles(e.target.files)} />
+        {uploadStatus}
       </>
     );
   }
@@ -697,7 +704,7 @@ export function FilesSection({
               onOpen={() => setPreview({ file_id: att.file_id, filename: /\.pdf$/i.test(att.filename) ? att.filename : `${att.filename}.pdf` })}
               className="w-20 h-20 shrink-0 rounded border border-line dark:border-slate-700 hover:border-cobble-500 transition"
             />
-          ) : canPreviewFile(att.filename) ? (
+          ) : canPreviewFile(att.filename, att.mime_type) ? (
             // Previewable model/job file (STL / G-code / SVG / …) — click
             // to render it (core-file-preview, via the FilePreview seam).
             <button
@@ -731,7 +738,8 @@ export function FilesSection({
         )}
         <button
           onClick={() => fileInput.current?.click()}
-          className="w-20 h-20 shrink-0 flex flex-col items-center justify-center gap-1 text-xs text-muted border border-dashed border-line dark:border-slate-600 rounded hover:border-cobble-500 hover:text-accent transition"
+          disabled={uploadAndAttach.isPending}
+          className="w-20 h-20 shrink-0 flex flex-col items-center justify-center gap-1 text-xs text-muted border border-dashed border-line dark:border-slate-600 rounded hover:border-cobble-500 hover:text-accent transition disabled:opacity-50"
         >
           <Upload size={14} />
           <span>Add</span>
@@ -740,10 +748,12 @@ export function FilesSection({
           ref={fileInput}
           type="file"
           multiple
+          disabled={uploadAndAttach.isPending}
           className="hidden"
           onChange={(e) => void handleFiles(e.target.files)}
         />
       </div>
+      {uploadStatus}
       {paperwork && (
         <PaperworkConflicts slug={activeSlug} record={record} noun={paperwork.noun} conflicts={paperwork.conflicts} onChanged={refreshFields} />
       )}

@@ -76,7 +76,7 @@ export function WorkspacePlatformWeb({ orgSlug, role, appMode, children }: { org
           ownConnections: api.ownConnections, connectCobblr: api.connectCobblr, revokeOwnConnection: api.revokeOwnConnection,
           previewSendFile: api.previewSendFile, exportSendFile: api.exportSendFile, downloadSendFile: api.downloadSendFile, sendTargets: api.sendTargets, previewSend: api.previewSend, sendRecords: api.sendRecords, undoSend: api.undoSend,
           listShareOffers: (slug) => api.listShareOffers(slug),
-          withdrawShareOffer: (slug, id) => api.withdrawShareOffer(slug, id),
+          withdrawShareOffer: (slug, id, record) => api.withdrawShareOffer(slug, id, record),
           recordShares: (slug, kind, id) => api.recordShares(slug, kind, id),
           listSuggestions: (slug, q) => api.listSuggestions(slug, q),
           copyNotes: (slug, kind, id) => api.copyNotes(slug, kind, id),

@@ -26,6 +26,7 @@ export function StocktakePage() {
   const undo = async () => {
     try {
       // The one argument the undo needs is this stocktake's id.
+      // OWN-WAY-BACK: the stocktake's own row is marked undone once; a second press is refused.
       await runAction({ actionId: "inventory:undo-stocktake", args: { stocktake_id: t.id } }, { undo: "is-undo" });
       void qc.invalidateQueries({ queryKey: ["stocktake", activeSlug, id] });
       toast.success(`Put ${t.label} back as it was.`);

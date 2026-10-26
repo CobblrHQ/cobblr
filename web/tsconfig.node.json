@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "src/lib/import-again.ts"]
+  "include": ["vite.config.ts", "src/lib/import-again.ts", "src/lib/api-proxy-target.ts"]
 }

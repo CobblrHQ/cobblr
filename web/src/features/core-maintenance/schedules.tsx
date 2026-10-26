@@ -20,7 +20,7 @@ import { ChoiceCombobox, useRunWithUndo, useToast, type ChoiceOption } from "@co
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
 import { api, type MaintenanceIntervalUnit, type MaintenanceSchedule, type MaintenanceReminder, type OverdueCadence } from "../../lib/api";
 import type { EntityDetailPanelCtx } from "../../panels/types";
-import { instantOnDay } from "@cobblr/platform-contract/day";
+import { dayLabel, dayStoredHere, instantOnDay } from "@cobblr/platform-contract/day";
 
 const UNITS: Array<{ value: MaintenanceIntervalUnit; one: string; many: string }> = [
   { value: "day", one: "day", many: "days" },
@@ -37,7 +37,7 @@ const STATE_STYLE: Record<MaintenanceSchedule["due"]["state"], string> = {
 
 function lastDone(s: MaintenanceSchedule): string | null {
   if (!s.last_done_at) return null;
-  return `last done ${new Date(s.last_done_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  return `last done ${dayLabel(dayStoredHere(s.last_done_at))}`;
 }
 
 export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
@@ -125,7 +125,10 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
     // Through the action, so the tap carries its Undo: a service marked done
     // by mistake goes back to due, with the schedule's last-done date as it was.
     mutationFn: (s: MaintenanceSchedule) =>
-      runWithUndo({
+      runWithUndo(s.occurrence ? {
+        actionId: "core-maintenance:complete",
+        args: { entry_id: s.occurrence.id },
+      } : {
         actionId: "core-maintenance:log",
         entityKind: `${s.entity_module}:${s.entity_type}`,
         entityId: s.entity_id,
@@ -260,7 +263,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
             {historyQ.data!.items.map((h) => (
               <li key={h.id} className="flex flex-wrap gap-x-2">
                 <span className="font-medium">{h.name}</span>
-                <span className="text-muted">{h.performed_at ? new Date(h.performed_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : ""}</span>
+                <span className="text-muted">{h.performed_at ? dayLabel(dayStoredHere(h.performed_at)) : ""}</span>
                 {h.cost_cents != null && <span className="text-muted">{formatStoredMoney(h.cost_cents, "cents")}</span>}
                 {h.attachments?.map((f) => <button type="button" key={f.fileId} className="text-accent underline" onClick={() => { void openAuthedFile(ctx.slug, f.fileId, { filename: f.filename }); }}>{f.filename}</button>)}
                 {h.notes && <span className="text-muted italic truncate">{h.notes}</span>}

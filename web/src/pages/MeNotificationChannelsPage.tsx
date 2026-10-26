@@ -293,14 +293,14 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
         <p className="text-sm">Check delivery to your own account using this workspace's notification settings.</p>
         <button type="button" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm disabled:opacity-50" disabled={selfTest.isPending} onClick={() => selfTest.mutate()}>Send me a test notification</button>
       </section>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => setAddOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-3 py-1.5 transition"
+          className="inline-flex shrink-0 max-w-full items-center gap-1.5 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-3 py-1.5 transition"
         >
           <Plus size={11} /> Add binding
         </button>
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex max-w-full flex-wrap items-center gap-1">
           <span
             className="text-[10px] uppercase tracking-widest text-faint"
             title="Fires a test.notification through EVERY binding in this workspace at the chosen priority. Use the per-row test button to fire one binding in isolation."
@@ -312,7 +312,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
               key={p}
               onClick={() => test.mutate(p)}
               disabled={test.isPending}
-              className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-line dark:border-slate-700 text-muted hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
+              className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border border-line dark:border-slate-700 text-muted hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
               title={`Fire a test.notification through every binding at priority=${p}`}
             >
               {p === "urgent" && <Zap size={9} className="inline -mt-0.5" />} {p}

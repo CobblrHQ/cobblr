@@ -103,16 +103,18 @@ export function planLabelPngs(input: {
  *  earlier in the zip while the count still said both were there. */
 export function zipFileNames(labels: readonly PngLabel[]): Array<{ name: string; index: number }> {
   const taken = new Set<string>();
+  // Windows and common macOS volumes treat these spellings as the same file.
+  const fileKey = (name: string) => name.normalize("NFC").toUpperCase().normalize("NFC");
   const out: Array<{ name: string; index: number }> = [];
   labels.forEach((l, index) => {
     for (let c = 0; c < l.copies; c++) {
       let n = 1;
       let name = `${l.name}.png`;
-      while (taken.has(name)) {
+      while (taken.has(fileKey(name))) {
         n += 1;
         name = `${l.name} (${n}).png`;
       }
-      taken.add(name);
+      taken.add(fileKey(name));
       out.push({ name, index });
     }
   });

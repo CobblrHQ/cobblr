@@ -15,6 +15,8 @@
 // general inflector and deliberately does not try to be: irregulars belong in
 // the data (`item_noun`), where the person who knows the word can say it.
 
+import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
+
 /** Plural of a noun, by the rules that cover almost every count noun. */
 export function pluralise(noun: string): string {
   const n = noun.trim();
@@ -89,7 +91,7 @@ export function quantityWithUnit(
   known: readonly CountWords[] = [],
   fractionDigits = 3,
 ): string {
-  const num = Number.isInteger(n) ? String(n) : String(parseFloat(n.toFixed(fractionDigits)));
+  const num = quantityNumber(n, fractionDigits);
   const typed = (raw ?? "").trim();
   if (!typed) return num;
   if (resolved && resolved.category !== "count") return `${num} ${resolved.symbol}`;

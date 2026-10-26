@@ -1,5 +1,5 @@
 import { useCan } from "../lib/can";
-import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, DragInput, SearchInput, useToast, useConfirm, usePageTitle, editOf } from "@cobblr/platform-web";
 // /tags — list every tag the workspace has, what each is attached
 // to, and a quick "new tag" affordance. The attach-to-entity UX
 // happens module-side (Files page, parts page, etc.) — this page
@@ -140,7 +140,7 @@ export function TagsPage() {
   });
 
   const pin = useMutation({
-    mutationFn: (t: TagRecord) => api.updateTag(activeSlug, t.id, { pinned: !t.pinned }),
+    mutationFn: (t: TagRecord) => api.updateTag(activeSlug, t.id, editOf(t, { pinned: !t.pinned })),
     onSuccess: (_r, t) => {
       toast.success(t.pinned ? `Unpinned ${t.name}` : `Pinned ${t.name}`);
       void qc.invalidateQueries({ queryKey: ["tags", activeSlug] });

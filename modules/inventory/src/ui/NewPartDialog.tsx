@@ -78,6 +78,7 @@ const UNIT_SUGGESTIONS = [
   "m", "cm", "ft", "roll", "sheet",
 ];
 
+// GATED-BY: its openers, the list's New and a part's Duplicate, ask inventory:create-part.
 export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) {
   const { api, instance, entityKind, itemNoun, qtyUnit, parent, basePath, orgSlug, recordTemplates, receiptDraft } = useInventory();
   const toast = useToast();

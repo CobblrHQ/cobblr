@@ -1,3 +1,4 @@
+import { EDITED_FROM_HEADER, encodeEditedFrom, type EditedFrom } from "@cobblr/platform-contract/edited-from";
 // Agentic chat — Cobb can READ the workspace and PROPOSE writes, in a real
 // tool-calling loop (agent-loop.ts): read tools (search/list/get/kinds/
 // actions) auto-run under the caller's own permissions and feed back into the
@@ -37,14 +38,17 @@ import { replyDespiteRefusal, withPlanCard } from "./plan-card.js";
 import { withDeleteThisCard } from "./delete-this.js";
 import { tenantContext, sessionUserId, sessionDisplayName, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
+import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { chosenModel, storedModel } from "./model-follows.js";
 import {
   WORKSPACE_TOOLS,
+  recordCreateRefusal,
   WRITE_TOOLS,
   getTool,
   jsonSchemaOf,
   resolveCreatePath,
   resolveUpdatePath,
+  withKindsTitleField,
   resolveDeletePath,
   fetchKinds,
   workspaceLinks,
@@ -57,7 +61,7 @@ import { recordsFromToolResult, withMentions, type ChatMention } from "./mention
 import { createTurn, emitTurnEvent, finishTurn, readTurn, eventsAfter, openTurnFor, subscribe, sweepTurns } from "./turns.js";
 import { answerOffer, claimOffer, offerAnsweredSentence, readConversation, readOffers, sweepOffers, withOffers, writeConversation } from "./offers.js";
 import { recordRound } from "../providers/replay.js";
-import { performWrite, performWrites, undoWrite, undoableOf, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
+import { performWrite, performWrites, undoWrite, undoableOf, mayUndoWrite, type WriteRequest, type WriteOutcome } from "./chat-ledger.js";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { summariseAction, type ActionCopy } from "./action-summary.js";
 import { actionArgValues, writeValues } from "./write-values.js";
@@ -191,12 +195,12 @@ const WRITE_NAMES = new Set(WRITE_TOOLS.filter((t) => !t.consentBy).map((t) => t
 
 /** The registry's transport seam, bound to this request's workspace + auth —
  *  read tools run with exactly the caller's permissions. */
-export function chatWorkspaceApi(c: Ctx): WorkspaceApi {
+export function chatWorkspaceApi(c: Ctx, opened?: EditedFrom): WorkspaceApi {
   return {
     // The chat is read in the app, on this origin: same-origin paths open.
     link: workspaceLinks({ apiBase: "/api/v1", appOrigin: "" }, c.slug),
     async request(method, path, body) {
-      return callApi(c, method, path, body);
+      return callApi(c, method, path, body, method === "PATCH" && opened ? { [EDITED_FROM_HEADER]: encodeEditedFrom(opened) } : undefined);
     },
   };
 }
@@ -327,12 +331,13 @@ async function callApi(
   method: string,
   path: string,
   body?: unknown,
+  headers?: Record<string, string>,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   let r: Awaited<ReturnType<typeof fetch>>;
   try {
     r = await platform().selfFetch(`${c.base}/orgs/${c.slug}${path}`, {
       method,
-      headers: { "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}), ...(c.reader ? { "x-cobblr-reader": c.reader } : {}) },
+      headers: { ...headers, "content-type": "application/json", authorization: c.auth, ...(c.client ? { "x-cobblr-client": c.client } : {}), ...(c.reader ? { "x-cobblr-reader": c.reader } : {}) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (err) {
@@ -600,7 +605,7 @@ async function asOnePlan(c: Ctx, result: unknown, asked: string): Promise<unknow
 
 /** Turn one WRITE tool call into a user-facing proposal — or an honest error
  *  when the call couldn't succeed on confirm (undeclared kind, missing args). */
-async function proposalOf(
+export async function proposalOf(
   c: Ctx,
   wsApi: WorkspaceApi,
   kinds: KindRec[],
@@ -621,6 +626,8 @@ async function proposalOf(
       // since it would fail the moment it was confirmed (#7895).
       const unfilled = missingRequired(call, kinds);
       if (unfilled.length) return { error: `Before I can add that I need its ${unfilled.map((n) => n.replace(/_/g, " ")).join(" and ")}. What should ${unfilled.length === 1 ? "it" : "they"} be?` };
+      const refused = recordCreateRefusal(kind, kinds);
+      if (refused) return { error: refused };
       const fields = (a.fields as Record<string, unknown>) ?? {};
       const name = String(fields.title ?? fields.name ?? "").trim();
       // The card's line is what the person confirms: "Create a location:
@@ -704,15 +711,17 @@ async function proposalOf(
       if (!kind || !id || !resolveUpdatePath(kind, id, kinds)) {
         return { error: `Records of "${kind || "that"}" can't be updated from chat yet.` };
       }
-      const fields = (a.fields as Record<string, unknown>) ?? {};
+      const { fields } = withKindsTitleField(kind, kinds, (a.fields as Record<string, unknown>) ?? {});
       const label = await labelOf(wsApi, kind, id);
       // What each field is now and what it will be, in the form's words.
-      const now = await getTool("get_record")!.execute(wsApi, { kind, id }).catch(() => null);
-      const current = now?.ok ? ((now.data as { fields?: Record<string, unknown> }).fields ?? null) : null;
+      const now = await wsApi.request("GET", `/entities/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`).catch(() => null);
+      const current = now && now.status < 400 ? ((now.body as { fields?: Record<string, unknown> }).fields ?? null) : null;
+      if (!current) return { error: "I could not read the current values. Open the record and ask again before confirming a change." };
+      const opened = Object.fromEntries(Object.keys(fields).map((key) => [key, current[key] ?? null]));
       const values = await writeValues({ kind, kinds, fields, said, titleOf, current, update: true });
       return {
         summary: `Update “${label}”${values.length ? `: ${values.map((v) => v.label).join(", ")}` : ""}`,
-        proposal: { kind: "update", entity_kind: kind, entity_id: id, fields, entity_label: label, ...(values.length ? { values } : {}) },
+        proposal: { kind: "update", entity_kind: kind, entity_id: id, fields, opened, entity_label: label, ...(values.length ? { values } : {}) },
       };
     }
     case "delete_record": {
@@ -1044,6 +1053,10 @@ async function answerTurn(
         // turn carries them as taps. See ask-dont-rank.ts.
         const ranked = ambiguity.validate(call);
         if (ranked) return ranked;
+        if (call.name === "create_record" || call.name === "create_records") {
+          const refused = recordCreateRefusal(String(call.args?.kind ?? ""), await kindsOnce());
+          if (refused) return refused;
+        }
         // A value a field cannot take ("bin" for a location's kind) is handed
         // back with the values it can, before any card. See field-choices.ts.
         if (call.name === "create_record" || call.name === "update_record") {
@@ -2116,7 +2129,7 @@ chatRouter.get(
         // with its message, and worth showing: "you asked for X" is the only
         // thing that makes a list of changes readable a week later.
         prompt: r.prompt,
-        undoable: undoableOf(r, kinds),
+        undoable: mayUndoWrite(r, sessionUserId(req) ?? "", roleHoldsEveryCapability(tenantContext(req).role)) && undoableOf(r, kinds),
       })),
     });
   }),
@@ -2230,6 +2243,7 @@ const ExecStep = z.union([
     entity_kind: z.string(),
     entity_id: z.string(),
     fields: z.record(z.unknown()),
+    opened: z.record(z.unknown()).optional(),
   }),
   z.object({ kind: z.literal("delete"), entity_kind: z.string(), entity_id: z.string() }),
   z.object({
@@ -2335,8 +2349,9 @@ chatRouter.post(
     // path, confirmed or auto — the ONLY way chat writes happen.
     const runOne = async (step: ExecStepT): Promise<WriteOutcome & { status?: number }> => {
       if (step.kind === "create" || step.kind === "update" || step.kind === "delete") {
+        if (step.kind === "update" && !step.opened) return { ok: false, message: "That change was offered before its current values were kept. Ask again to review the record before confirming." };
         return performWrite(
-          chatWorkspaceApi(c),
+          chatWorkspaceApi(c, step.kind === "update" ? step.opened : undefined),
           tenantDb(req),
           me,
           {
@@ -2502,11 +2517,11 @@ chatRouter.post(
 // another member signed into still held the last one's conversation, and saved
 // it to the new account (#7062); a write for anyone but the person signed in is
 // refused, whatever the panel believes.
-const ConversationBody = z.object({ messages: z.array(z.record(z.unknown())).max(200), owner: z.string().min(1) });
+const ConversationBody = z.object({ messages: z.array(z.record(z.unknown())).max(200), owner: z.string().min(1), expected_at: z.string().datetime().nullable() });
 
 // GET /chat/conversation         → my conversation, as the panel keeps it, so
 //                                  another tab or device opens on the same one.
-// PUT /chat/conversation         → replace it (the panel writes what it shows).
+// PUT /chat/conversation         → replace the version this device read.
 chatRouter.get(
   "/conversation",
   asyncHandler(async (req, res) => {
@@ -2531,7 +2546,12 @@ chatRouter.put(
       res.status(413).json({ error: { code: "too_large", message: "That conversation is too long to keep; the newest part is kept on this device." } });
       return;
     }
-    res.json({ updated_at: await writeConversation(tenantDb(req), me, parsed.data.messages) });
+    const at = await writeConversation(tenantDb(req), me, parsed.data.messages, parsed.data.expected_at);
+    if (!at) {
+      res.status(409).json({ error: { code: "conversation_changed", message: "This conversation changed on another device. Your messages are kept on this device, but could not be saved to the shared conversation." } });
+      return;
+    }
+    res.json({ updated_at: at });
   }),
 );
 

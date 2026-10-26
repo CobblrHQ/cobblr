@@ -1,0 +1,10 @@
+{
+  "lint": "lint:cobb-reads-every-script",
+  "run": "node scripts/lint-cobb-reads-every-script.ts",
+  "rows": [
+    "lint"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-22",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

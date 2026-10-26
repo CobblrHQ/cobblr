@@ -1,5 +1,6 @@
 import { walkPages } from "../list-pages";
 import { primaryBase, request } from "./client";
+import type { Edit } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
 
 /** A row in the records module — the neutral generic-record substrate.
@@ -26,8 +27,9 @@ export const recordsApi = {
     request<RecordItem>("GET", `${primaryBase(slug, "records/records", instance)}/${id}`),
   createRecord: (slug: string, body: Partial<RecordItem>, instance?: string) =>
     request<RecordItem>("POST", primaryBase(slug, "records/records", instance), body),
-  updateRecord: (slug: string, id: string, body: Partial<RecordItem>, instance?: string) =>
-    request<RecordItem>("PATCH", `${primaryBase(slug, "records/records", instance)}/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateRecord: (slug: string, id: string, edit: Edit<RecordItem>, instance?: string) =>
+    request<RecordItem>("PATCH", `${primaryBase(slug, "records/records", instance)}/${id}`, edit.body, edit.headers),
   deleteRecord: (slug: string, id: string, instance?: string) =>
     request<void>("DELETE", `${primaryBase(slug, "records/records", instance)}/${id}`),
   recordStreamTicket: (slug: string) => request<{ ticket: string }>("POST", `/orgs/${slug}/records/stream-ticket`),

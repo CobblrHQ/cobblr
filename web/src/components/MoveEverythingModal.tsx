@@ -19,7 +19,13 @@ export function putBackSentence(m: PlaceMove, back: { things: number; places: nu
   const left = back.leftWhereTheyAre
     ? ` ${countOf(back.leftWhereTheyAre, "thing")} ${back.leftWhereTheyAre === 1 ? "was" : "were"} moved again since, so ${back.leftWhereTheyAre === 1 ? "it stays" : "they stay"} where ${back.leftWhereTheyAre === 1 ? "it is" : "they are"}.`
     : "";
-  return `Put everything back in ${m.from.name}.${left}`;
+  const restored = [back.things ? countOf(back.things, "thing") : null, back.places ? countOf(back.places, "place") : null].filter(Boolean);
+  const putBack = !back.leftWhereTheyAre
+    ? `Put everything back in ${m.from.name}.`
+    : restored.length
+      ? `Put ${restored.join(" and ")} back in ${m.from.name}.`
+      : `Nothing was put back in ${m.from.name}.`;
+  return `${putBack}${left}`;
 }
 
 export function MoveEverythingModal({

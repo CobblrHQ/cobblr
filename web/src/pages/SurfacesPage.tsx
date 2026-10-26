@@ -104,7 +104,7 @@ export function SurfacesPage() {
               <button
                 aria-label="Edit"
                 onClick={() => setEditFor(s)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
+                className="inline-flex h-[44px] w-[44px] items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Edit"
               >
                 <Pencil size={14} />
@@ -114,7 +114,7 @@ export function SurfacesPage() {
                 href={`/p/${s.token}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
+                className="inline-flex h-[44px] w-[44px] items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Open public page"
               >
                 <ExternalLink size={14} />
@@ -127,7 +127,7 @@ export function SurfacesPage() {
                   );
                   toast.success("Public URL copied");
                 }}
-                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
+                className="inline-flex h-[44px] w-[44px] items-center justify-center rounded text-faint hover:text-accent transition"
                 title="Copy public URL"
               >
                 <Copy size={14} />
@@ -135,7 +135,7 @@ export function SurfacesPage() {
               <button
                 aria-label="View stats"
                 onClick={() => setStatsFor(s)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-accent transition"
+                className="inline-flex h-[44px] w-[44px] items-center justify-center rounded text-faint hover:text-accent transition"
                 title="View stats"
               >
                 <BarChart3 size={14} />
@@ -151,7 +151,7 @@ export function SurfacesPage() {
                   });
                   if (ok) revoke.mutate(s.id);
                 }}
-                className="inline-flex h-11 w-11 items-center justify-center rounded text-faint hover:text-ember-500 transition"
+                className="inline-flex h-[44px] w-[44px] items-center justify-center rounded text-faint hover:text-ember-500 transition"
                 title="Revoke"
               >
                 <Trash2 size={14} />

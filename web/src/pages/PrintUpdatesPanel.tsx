@@ -240,7 +240,7 @@ function RuleEditor({
 
   return (
     <Modal open onClose={onClose} title={rule ? "Edit rule" : "New print-update rule"} size="lg">
-      <div className="grid md:grid-cols-2 gap-4 text-sm">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         {/* Left — the rule */}
         <div className="space-y-3">
           <label className="block">

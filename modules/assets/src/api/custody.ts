@@ -64,7 +64,7 @@ async function mirrorLoan(ctx: ActionInvokeContext, db: Kysely<AssetsDB>, id: st
   const r = next.assigned_to
     ? open?.holder_id === next.assigned_to && open.due_back === next.due_back
       ? null
-      : await platform().actions.invoke("platform:lend", { ...base, args: { entity_kind: "assets:asset", ids: [id], holder_id: next.assigned_to, ...(next.due_back ? { due_back: next.due_back } : {}) } })
+      : await platform().actions.invoke("platform:lend", { ...base, args: { entity_kind: "assets:asset", ids: [id], expected_loan: open, holder_id: next.assigned_to, ...(next.due_back ? { due_back: next.due_back } : {}) } })
     : open
       ? await platform().actions.invoke("platform:return", { ...base, args: { entity_kind: "assets:asset", ids: [id] } })
       : null;

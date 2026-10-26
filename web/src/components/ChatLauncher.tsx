@@ -55,7 +55,7 @@ export function ChatLauncher({ open, setOpen, asRow = false }: { open: boolean; 
       <button
         type="button"
         onClick={openCobb}
-        className="transition p-1.5 text-faint dark:text-slate-500 hover:text-accent"
+        className="transition p-[6px] text-faint dark:text-slate-500 hover:text-accent"
         title={open ? "Hide Cobb" : "Ask Cobb"}
         aria-label={open ? "Hide Cobb" : "Ask Cobb"}
       >

@@ -291,7 +291,7 @@ export class LabelsApi {
 
   /** Render the queue to a print-ready PDF (server-side, pdf-lib). `warnings`
    *  flags any label whose center code would crowd the QR past scannable. */
-  renderPdf = (size_key: string, item_ids?: string[]) =>
+  renderPdf = (size_key: string, item_ids?: string[], opts: { send?: boolean } = {}) =>
     this.request<{
       pdf_base64: string;
       sheets: number;
@@ -299,7 +299,7 @@ export class LabelsApi {
       /** Each queue row the PDF holds and its copies: what a send of it puts on paper. */
       rendered: Array<{ id: string; qty: number }>;
       warnings?: Array<{ kind: string; code: string; reason: string; coveredFraction: number }>;
-    }>("POST", "/print/render", { size_key, item_ids });
+    }>("POST", "/print/render", { size_key, item_ids, ...(opts.send ? { send: true } : {}) });
 
   // ── human-readable codes ────────────────────────────────────────────
   /** Get-or-assign codes for a batch of entity refs. */

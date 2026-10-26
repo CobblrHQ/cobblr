@@ -16,6 +16,9 @@ export interface ScanHistoryEntryStored {
   before_brand?: string | null;
   before_confidence?: string | number | null;
   ai_answered?: boolean;
+  /** A person's edit: who made it (a user id) and what it changed (#8557). */
+  by?: string | null;
+  changed?: string[];
 }
 
 export interface ScanHistoryLine {
@@ -56,6 +59,7 @@ const ACTION_WORDS: Record<string, string> = {
   "prose-name": "Cleared a photo read that described it instead of naming it",
   "label-name": "Named from the biggest words on its label",
   "label-cleared": "Cleared a name read off its label that could not be trusted",
+  edit: "Edited",
 };
 
 /** Notes that only repeat what the name change already says. */
@@ -63,8 +67,13 @@ const NOTE_SAID_BY_CHANGE = new Set(["undo-rerun", "put-back", "store-code"]);
 
 function stepWords(e: ScanHistoryEntryStored): string {
   const label = ACTION_WORDS[e.action] ?? e.action;
+  if (e.action === "edit" && e.changed?.length) return `${label} ${wordsList(e.changed.map((c) => `the ${c}`))}`;
   if (!e.note || NOTE_SAID_BY_CHANGE.has(e.action)) return label;
   return e.action === "barcode" ? `${label} to ${e.note}` : `${label}: "${e.note}"`;
+}
+
+function wordsList(parts: string[]): string {
+  return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
 }
 
 function lowerFirst(s: string): string {

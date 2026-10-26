@@ -1,5 +1,5 @@
-import { lineAmount, lineFigures } from "./purchase-line-figures";
-import { SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { lineFigures, lineAmount } from "./purchase-line-figures";
+import { SelectBox, OnceQuiet, entityInitial, useCloseToOrigin, RecordFormModal, NewItemMenu, CurrencyPicker, MoneyTotalNotice, useMoneyCurrency, BulkActionBar, BulkSetField, useTickedRows, ChoiceCombobox, CustomFieldsPanel, EditSelect, EntityActionsBar, EntityThumb, FieldPack, LabeledField, Modal, editFieldItem, moneyFieldItem, fieldNeed, useToast, useConfirm, usePageTitle, usePageWidth, SearchInput, CollectionHeader, HEADER_CONTROL, headerButton, PhoneRecordList, usePhoneLayout, useRecordEdits, editOf } from "@cobblr/platform-web";
 import { formatUnitPrice } from "@cobblr/platform-contract/money";
 // /purchases — list of orders with a detail modal that shows the
 // order's line items. Same overall shape as MachinesPage /
@@ -114,7 +114,7 @@ function PurchasesInsights({ summary }: { summary: OrderSummary }) {
   const card = "rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4";
 
   return (
-    <div className="grid md:grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       <div className={card}>
         <div className={head}>spend, last 6 months</div>
         <div className="flex items-end gap-2 h-28 mt-3">
@@ -700,8 +700,11 @@ function OrderDetailModal({ orderId, onClose }: { orderId: string | null; onClos
     queryFn: () => api.getOrder(activeSlug, orderId!),
     enabled: !!orderId,
   });
+  const edits = useRecordEdits(order.data);
   const update = useMutation({
-    mutationFn: (patch: Partial<Order>) => api.updateOrder(activeSlug, orderId!, patch),
+    // Judged against the record as this page shows it: a newer save from
+    // another tab stands, or this one is refused and says so (#7925).
+    mutationFn: (patch: Partial<Order>) => edits(patch, (e) => api.updateOrder(activeSlug, orderId!, e)),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["order", activeSlug, orderId] });
       void qc.invalidateQueries({ queryKey: ["orders", activeSlug] });
@@ -1378,7 +1381,7 @@ function VendorDetailPane({
   const v = vendor.data;
   const toast = useToast();
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateVendor(slug, vendorId, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateVendor(slug, vendorId, editOf(v, { metadata })),
     onSuccess: () => {
       void vendor.refetch();
       onChanged();
@@ -1534,7 +1537,7 @@ function VendorForm({
         lead_time_days: lead.trim() ? Number(lead) : null,
         notes: notes.trim() || null,
       };
-      return vendor ? api.updateVendor(slug, vendor.id, body) : api.createVendor(slug, body);
+      return vendor ? api.updateVendor(slug, vendor.id, editOf(vendor, body)) : api.createVendor(slug, body);
     },
     onSuccess: () => { toast.success(vendor ? "Vendor updated." : "Vendor added."); onDone(); },
     onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Couldn't save."),

@@ -137,7 +137,7 @@ export function LocationDetailPage() {
   // A field a bundle or a person adds to places, saved on its own and merged
   // into the place's metadata server-side (the floor-plan keys beside it stay).
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateLocation(activeSlug, id!, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateLocation(activeSlug, id!, editOf(location.data, { metadata })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["location", activeSlug, id] });
       void qc.invalidateQueries({ queryKey: ["locations", activeSlug] });
@@ -620,7 +620,8 @@ function EditLocationModal({
       // the place may have moved or been renamed since, in another tab or by
       // someone else, and sending the old copy back undid theirs in silence
       // (#7906, #7925). The interior size is one key of the bag.
-      const edit = editOf(location as unknown as Record<string, unknown>, {
+      const edit = editOf(location, {
+        ...(allowDuplicate ? { allow_duplicate: true } : {}),
         parent_id: parentId,
         name: name.trim(),
         short_name: shortName.trim() || null,
@@ -629,7 +630,7 @@ function EditLocationModal({
         notes: notes.trim() || null,
         metadata: { interior_mm: interiorOf(kind, [dimX, dimY, dimZ]) },
       });
-      return api.updateLocation(activeSlug, location.id, { ...(allowDuplicate ? { allow_duplicate: true } : {}), ...edit.body }, edit.headers);
+      return api.updateLocation(activeSlug, location.id, edit);
     },
     onSuccess: () => {
       toast.success("Location updated.");

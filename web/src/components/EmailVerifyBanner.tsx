@@ -76,17 +76,19 @@ export function EmailVerifyBanner({ variant = "bar" }: { variant?: "bar" | "side
 
   return (
     <div className="bg-cobble-50 dark:bg-cobble-900/20 border-b border-cobble-200 dark:border-cobble-900/40">
-      <div className="max-w-6xl mx-auto px-5 py-2 flex items-center gap-3 text-xs text-content dark:text-mortar-200">
-        <MailWarning size={14} className="shrink-0 text-accent" />
-        <span className="flex-1 min-w-0">
-          {sent ? (
-            "Verification email sent. Check your inbox (and spam)."
-          ) : (
-            <>
-              Verify your email <strong className="break-all">{user.email}</strong> to secure your
-              account.
-            </>
-          )}
+      <div className="max-w-6xl mx-auto px-5 py-2 flex flex-wrap items-center gap-3 text-xs text-content dark:text-mortar-200">
+        <span className="flex min-w-0 flex-1 basis-64 items-start gap-3">
+          <MailWarning size={14} className="mt-1 shrink-0 text-accent" />
+          <span className="min-w-0">
+            {sent ? (
+              "Verification email sent. Check your inbox (and spam)."
+            ) : (
+              <>
+                Verify your email <strong className="break-all">{user.email}</strong> to secure your
+                account.
+              </>
+            )}
+          </span>
         </span>
         {!sent && (
           <button

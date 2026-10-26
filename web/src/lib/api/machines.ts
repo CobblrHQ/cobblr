@@ -1,5 +1,6 @@
 import { walkPages } from "../list-pages";
 import { primaryBase, request } from "./client";
+import type { Edit } from "@cobblr/platform-web";
 
 export interface Machine {
   id: string;
@@ -117,8 +118,9 @@ export const machinesApi = {
     request<Machine>("GET", `${primaryBase(slug, "machines/machines", instance)}/${id}`),
   createMachine: (slug: string, body: Partial<Machine>, instance?: string) =>
     request<Machine>("POST", primaryBase(slug, "machines/machines", instance), body),
-  updateMachine: (slug: string, id: string, body: Partial<Machine>, instance?: string) =>
-    request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, body),
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updateMachine: (slug: string, id: string, edit: Edit<Machine>, instance?: string) =>
+    request<Machine>("PATCH", `${primaryBase(slug, "machines/machines", instance)}/${id}`, edit.body, edit.headers),
   nameMachineUnit: (slug: string, id: string, body: { name?: string | null; serial_number?: string | null }, instance?: string) =>
     request<{ id: string; parent_id: string }>("POST", `${primaryBase(slug, "machines/machines", instance)}/${id}/units`, body),
   splitMachineUnit: (slug: string, id: string, instance?: string) =>

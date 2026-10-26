@@ -54,11 +54,6 @@ export type SearchDoor = "search" | "list" | "cobb" | "find-box";
  *  it. The test asserts it STILL differs, so the fix fails it until its line
  *  is taken out: the list only shrinks. Keyed `<door> <q>`. */
 export const SEARCH_CORPUS_GAPS: Readonly<Record<string, string>> = {
-  "cobb 0.1uF": "#7817",
-  "cobb 日本語": "#7817",
-  "cobb مفك": "#7817",
-  "cobb Ключ": "#7817",
-  "cobb SER7724-00025": "#7817",
 };
 
 /** The issue a door's gap on this query waits for, if any. */

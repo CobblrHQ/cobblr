@@ -87,7 +87,7 @@ export function FirstScanCard() {
           </Link>
         </>
       ) : (
-        <div className="mt-2 grid gap-3 sm:grid-cols-[auto_1fr] sm:items-center">
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-[auto_1fr] sm:items-center">
           <div className="rounded-md border border-line dark:border-slate-700 bg-white p-2 w-fit">
             <Ean13 code={DEMO_BARCODE} height={54} />
           </div>

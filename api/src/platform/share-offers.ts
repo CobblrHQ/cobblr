@@ -16,11 +16,13 @@
 import { productName } from "./product-name.js";
 import { titleVariantsOf } from "@cobblr/platform-contract/display-identity";
 import { randomUUID } from "node:crypto";
-import { sql } from "kysely";
+import { sql, type Transaction } from "kysely";
+import type { MetaDB } from "../db/schema.js";
 import { platform } from "@cobblr/platform-contract";
 import {
   RECORD_OFFER_KEY,
   SEND_BACK_DAYS,
+  readRecordOffer,
   type OfferDecision,
   type OfferIntake,
   type OfferState,
@@ -34,7 +36,7 @@ import { lookup, resolveKind } from "./entities.js";
 import { resolveFieldDefsForKind } from "./field-defs.js";
 import { PROVENANCE_FIELDS } from "@cobblr/platform-contract/provenance-fields";
 import { fileIdFromRawPath } from "./file-paths.js";
-import { enqueueShareOp, getShareLink, registerShareOp, type ShareLinkRow } from "./share-sync.js";
+import { addShareEndingPass, enqueueShareOp, getShareLink, registerShareOp, type ShareLinkRow } from "./share-sync.js";
 
 type RecordSource = { org_id: string; kind: string; id: string };
 type InboxSource = { org_id: string; inbox_id: string };
@@ -179,6 +181,21 @@ async function nameOf(userId: string | null): Promise<string | null> {
   return u?.display_name || u?.email?.split("@")[0] || null;
 }
 
+async function sourceAlreadyOffered(source: Source): Promise<string | null> {
+  // The ledger survives a failed source mark, and a record has the same id
+  // through its collection and module kinds.
+  const identity = isRecord(source) ? { org_id: source.org_id, id: source.id } : source;
+  const active = await meta.selectFrom("share_offers").select(["id", "status"])
+    .where("direction", "=", "out")
+    .where("source", "@>", JSON.stringify(identity) as never)
+    .where("status", "in", ["offered", "maybe", "taken"])
+    .executeTakeFirst();
+  if (!active) return null;
+  return active.status === "taken"
+    ? "has already been taken. Ask its recipient to send it back first."
+    : "is already offered. Withdraw that offer before offering it again.";
+}
+
 /** Offer records of this workspace to the person a share links to. Each is
  *  marked "offered to <them>" until they answer. */
 export async function offerRecords(
@@ -188,21 +205,29 @@ export async function offerRecords(
   kind: string,
   ids: readonly string[],
 ): Promise<{ ok: true; offered: number; to: string } | { ok: false; error: string }> {
-  const link = await mayOfferOver(orgId, userId, linkId);
-  if (!link) return { ok: false, error: "That share is not one you can hand things over through from here." };
-  const items: Array<{ source: Source; thing: OfferedThing }> = [];
-  for (const id of ids) {
-    const thing = await recordAsThing(orgId, kind, id);
-    if (!thing) return { ok: false, error: `no ${kind} record with id ${id}` };
-    items.push({ source: { org_id: orgId, kind, id }, thing });
-  }
-  const offerIds = await sendOffers(link, userId, items);
-  const to = link.peer_name ?? "them";
-  for (const [i, it] of items.entries()) {
-    const s = it.source as RecordSource;
-    await platform().entities.mergeMetadata(orgId, s.kind, s.id, { [RECORD_OFFER_KEY]: { offer_id: offerIds[i], to } });
-  }
-  return { ok: true, offered: items.length, to };
+  return platform().exclusive.serial(`share-offers:${orgId}`, async () => {
+    const link = await mayOfferOver(orgId, userId, linkId);
+    if (!link) return { ok: false, error: "That share is not one you can hand things over through from here." };
+    const items: Array<{ source: Source; thing: OfferedThing }> = [];
+    for (const id of new Set(ids)) {
+      const ent = await lookup(orgId, kind, id);
+      if (!ent) return { ok: false, error: `no ${kind} record with id ${id}` };
+      const fields = ent.fields as Record<string, unknown>;
+      if (readRecordDisposition(fields.metadata ?? fields)) return { ok: false, error: `${ent.title} is no longer yours. Bring it back before offering it.` };
+      const refusal = await sourceAlreadyOffered({ org_id: orgId, kind, id });
+      if (refusal) return { ok: false, error: `${ent.title} ${refusal}` };
+      const thing = await recordAsThing(orgId, kind, id);
+      if (!thing) return { ok: false, error: `no ${kind} record with id ${id}` };
+      items.push({ source: { org_id: orgId, kind, id }, thing });
+    }
+    const offerIds = await sendOffers(link, userId, items);
+    const to = link.peer_name ?? "them";
+    for (const [i, it] of items.entries()) {
+      const s = it.source as RecordSource;
+      await platform().entities.mergeMetadata(orgId, s.kind, s.id, { [RECORD_OFFER_KEY]: { offer_id: offerIds[i], to } });
+    }
+    return { ok: true, offered: items.length, to };
+  });
 }
 
 /** Offer rows of a share space's scan inbox to its sharer. */
@@ -211,19 +236,23 @@ export async function offerInboxItems(
   inboxIds: string[],
   opts: { userId: string },
 ): Promise<{ ok: true; offered: number } | { ok: false; error: string }> {
-  const link = await meta.selectFrom("share_links").select("id").where("org_id", "=", orgId).where("side", "=", "share").where("status", "=", "active").where(sql<boolean>`coalesce(settings->>'purpose', '') <> 'own'`).executeTakeFirst();
-  if (!link) return { ok: false, error: "Only a shared workspace offers its scans to the person who shared it." };
-  const row = await getShareLink(link.id);
-  if (!row) return { ok: false, error: "That share has ended." };
-  const items: Array<{ source: Source; thing: OfferedThing }> = [];
-  for (const inboxId of inboxIds) {
-    const thing = await intake().asThing(orgId, inboxId);
-    if (!thing) return { ok: false, error: "One of those scans is no longer in the inbox." };
-    items.push({ source: { org_id: orgId, inbox_id: inboxId }, thing });
-  }
-  await sendOffers(row, opts.userId, items);
-  for (const it of items) await intake().mark(orgId, (it.source as InboxSource).inbox_id, "offered");
-  return { ok: true, offered: items.length };
+  return platform().exclusive.serial(`share-offers:${orgId}`, async () => {
+    const link = await meta.selectFrom("share_links").select("id").where("org_id", "=", orgId).where("side", "=", "share").where("status", "=", "active").where(sql<boolean>`coalesce(settings->>'purpose', '') <> 'own'`).executeTakeFirst();
+    if (!link) return { ok: false, error: "Only a shared workspace offers its scans to the person who shared it." };
+    const row = await getShareLink(link.id);
+    if (!row) return { ok: false, error: "That share has ended." };
+    const items: Array<{ source: Source; thing: OfferedThing }> = [];
+    for (const inboxId of new Set(inboxIds)) {
+      const refusal = await sourceAlreadyOffered({ org_id: orgId, inbox_id: inboxId });
+      if (refusal) return { ok: false, error: `That scan ${refusal}` };
+      const thing = await intake().asThing(orgId, inboxId);
+      if (!thing) return { ok: false, error: "One of those scans is no longer in the inbox." };
+      items.push({ source: { org_id: orgId, inbox_id: inboxId }, thing });
+    }
+    await sendOffers(row, opts.userId, items);
+    for (const it of items) await intake().mark(orgId, (it.source as InboxSource).inbox_id, "offered");
+    return { ok: true, offered: items.length };
+  });
 }
 
 /** The offer an inbox row came as. The row is in the inbox before its offer
@@ -281,9 +310,33 @@ export async function decideOffer(
   decision: OfferDecision,
   opts: { userId: string; into?: string | null },
 ): Promise<{ ok: true; landed?: { orgId: string; inboxId: string } } | { ok: false; error: string }> {
-  const row = await inRowFor(orgId, inboxId);
-  if (!row) return { ok: false, error: "That is not an offer here." };
-  if (!open(row.status)) return { ok: false, error: `That offer was already ${row.status}.` };
+  const found = await inRowFor(orgId, inboxId);
+  if (!found) return { ok: false, error: "That is not an offer here." };
+  // One answer per offer: two tabs pressing Take together each found it open
+  // and each landed a copy (#7861). The offer's row is held for the length of
+  // the answer, and its status read again once held, so the second waits and
+  // is told it was already taken. No key update, so the rows that point at it
+  // can still be written while it is held.
+  const answered = await meta.transaction().execute(async (trx) => {
+    const held = await trx.selectFrom("share_offers").select("status").where("id", "=", found.id).forNoKeyUpdate().executeTakeFirst();
+    if (!held || !open(held.status)) return { done: false as const, status: held?.status ?? found.status };
+    const r = await answerOffer(trx, orgId, inboxId, { ...found, status: held.status }, decision, opts);
+    return { done: true as const, ...r };
+  });
+  if (!answered.done) return { ok: false, error: `That offer was already ${answered.status}.` };
+  if (!answered.ok) return answered;
+  await enqueueShareOp(found.link_id!, "offer.decided", { offer_id: found.peer_offer_id, decision, by_name: await nameOf(opts.userId) }, `offer.decided:${found.id}:${decision}:${Date.now()}`);
+  return { ok: true, ...(answered.landed ? { landed: answered.landed } : {}) };
+}
+
+async function answerOffer(
+  trx: Transaction<MetaDB>,
+  orgId: string,
+  inboxId: string,
+  row: NonNullable<Awaited<ReturnType<typeof inRowFor>>>,
+  decision: OfferDecision,
+  opts: { userId: string; into?: string | null },
+): Promise<{ ok: true; landed?: { orgId: string; inboxId: string } } | { ok: false; error: string }> {
   const it = intake();
   let landed: Landed = row.landed as Landed;
   if (decision === "taken") {
@@ -314,12 +367,11 @@ export async function decideOffer(
   } else {
     await it.mark(orgId, inboxId, "maybe");
   }
-  await meta
+  await trx
     .updateTable("share_offers")
     .set({ status: decision, decided_at: new Date(), ...(decision === "taken" ? { taken_at: new Date() } : {}), landed: JSON.stringify(landed) as never })
     .where("id", "=", row.id)
     .execute();
-  await enqueueShareOp(row.link_id!, "offer.decided", { offer_id: row.peer_offer_id, decision, by_name: await nameOf(opts.userId) }, `offer.decided:${row.id}:${decision}:${Date.now()}`);
   return { ok: true, ...(landed.org_id !== orgId ? { landed: { orgId: landed.org_id, inboxId: landed.inbox_id } } : {}) };
 }
 
@@ -350,13 +402,19 @@ export async function mayManageOffer(orgId: string, userId: string, offerId: str
   return !!src && src.org_id === orgId && (await offerTargets(orgId, userId)).length > 0;
 }
 
-/** The giver takes an open offer back. */
-export async function withdrawOffer(orgId: string, offerId: string, userId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+/** The giver takes an open offer back. Pressed on the record (`record`), an
+ *  offer whose share has gone, ledger and all, leaves nothing to take back,
+ *  so the record's mark of it is cleared and that is the withdrawal (#8264). */
+export async function withdrawOffer(orgId: string, offerId: string, userId: string, record?: { kind: string; id: string }): Promise<{ ok: true } | { ok: false; error: string }> {
   const row = await meta
     .selectFrom("share_offers")
     .select(["id", "link_id", "direction", "status", "source"])
     .where("id", "=", offerId)
     .executeTakeFirst();
+  if (!row && record && (await markedWith(orgId, record, offerId))) {
+    await clearSourceMark({ org_id: orgId, kind: record.kind, id: record.id });
+    return { ok: true };
+  }
   if (!row || row.direction !== "out" || !(await mayManageOffer(orgId, userId, offerId))) return { ok: false, error: "That is not an offer you made." };
   if (!open(row.status)) return { ok: false, error: `It was already ${row.status}.` };
   await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", row.id).execute();
@@ -410,6 +468,32 @@ export async function receivedOffer(orgId: string, id: string): Promise<{ offer_
     }
   }
   return null;
+}
+
+async function markedWith(orgId: string, record: { kind: string; id: string }, offerId: string): Promise<boolean> {
+  const rec = await lookup(orgId, record.kind, record.id).catch(() => null);
+  return readRecordOffer(((rec?.fields ?? {}) as Record<string, unknown>).metadata)?.offer_id === offerId;
+}
+
+/** A share that ends calls its open offers off, both ways: the giver's record
+ *  is no longer marked offered, and what waited in an inbox, unanswered,
+ *  leaves it. What was taken stays taken (#8264). */
+async function callOffOpenOffers(link: ShareLinkRow): Promise<void> {
+  const rows = await meta
+    .selectFrom("share_offers")
+    .select(["id", "direction", "source", "landed"])
+    .where("link_id", "=", link.id)
+    .where("status", "in", ["offered", "maybe"])
+    .execute();
+  for (const r of rows) {
+    const called = await meta.updateTable("share_offers").set({ status: "withdrawn", decided_at: new Date() }).where("id", "=", r.id).where("status", "in", ["offered", "maybe"]).executeTakeFirst();
+    if (!Number(called.numUpdatedRows)) continue;
+    if (r.direction === "out") await clearSourceMark(r.source as Source | null);
+    else {
+      const landed = r.landed as Landed | null;
+      if (landed && (await intake().state(landed.org_id, landed.inbox_id)).status === "waiting") await intake().remove(landed.org_id, landed.inbox_id);
+    }
+  }
 }
 
 async function clearSourceMark(src: Source | null): Promise<void> {
@@ -556,6 +640,7 @@ async function stillHeld(src: { org_id: string; kind: string; id: string }): Pro
 }
 
 export function registerShareOfferOps(): void {
+  addShareEndingPass(callOffOpenOffers);
   platform().events.on("core-scan.scan.confirmed", "platform", (payload) => noteHandedOverFiled((payload ?? {}) as Record<string, unknown>).catch((err) => console.error("[share] noting a hand-over filed failed:", (err as Error).message)));
   // A thing offered: it lands in this side's scan inbox, as an offer.
   registerShareOp("offer.create", async (link, p) => {

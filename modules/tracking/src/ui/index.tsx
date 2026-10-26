@@ -1,4 +1,5 @@
-import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, useRecordInPath, useToast, useConfirm, usePageTitle, editOf, useRoleAtLeast } from "@cobblr/platform-web";
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 // tracking UI — host mounts <TrackingUI /> at /tracking. A grid of metrics
 // (each with a progress bar + sparkline); clicking one opens a detail MODAL to
 // log values and see the trend. Modals not pages; toasts not dialogs; confirm
@@ -35,6 +36,7 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
 
   const metrics = useQuery({ queryKey: ["tracking", orgSlug], queryFn: () => api.listMetrics() });
 
+  const mayDelete = useRoleAtLeast(ADMIN_TIER);
   const del = useMutation({
     mutationFn: (id: string) => api.deleteMetric(id),
     onSuccess: () => { toast.success("Metric deleted"); void qc.invalidateQueries({ queryKey: ["tracking", orgSlug] }); },
@@ -43,7 +45,7 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-2 items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">tracking</h1>
         <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-cobble-600 text-white hover:bg-cobble-700">
           <Plus size={14} /> New metric
@@ -55,13 +57,13 @@ export function TrackingUI({ orgSlug, getToken }: Props) {
         <div className="text-sm text-muted italic">Track anything over time toward a goal - weight, runs, a habit, a budget.</div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {metrics.data?.items.map((m) => (
-          <MetricCard key={m.id} metric={m} api={api} orgSlug={orgSlug} onOpen={() => setOpen(m.id)} onDelete={async () => {
+          <MetricCard key={m.id} metric={m} api={api} orgSlug={orgSlug} onOpen={() => setOpen(m.id)} onDelete={mayDelete ? async () => {
             if (await confirm({ title: `Delete "${m.name}"?`, message: "This removes the metric and all its measurements.", confirmLabel: "Delete", destructive: true })) {
               del.mutate(m.id);
             }
-          }} />
+          } : undefined} />
         ))}
       </div>
 
@@ -84,7 +86,7 @@ function ProgressBar({ p }: { p: number | null }) {
   );
 }
 
-function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: MetricSummary; api: TrackingApi; orgSlug: string; onOpen: () => void; onDelete: () => void }) {
+function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: MetricSummary; api: TrackingApi; orgSlug: string; onOpen: () => void; onDelete?: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [val, setVal] = useState("");
@@ -98,18 +100,20 @@ function MetricCard({ metric, api, orgSlug, onOpen, onDelete }: { metric: Metric
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
   return (
-    <div className="rounded-lg border border-line dark:border-slate-700 p-3 hover:border-cobble-400 transition group">
+    // min-w-0: a grid cell's floor is its widest content, and at 200% text the
+    // card ran 214 px past a phone (#8430).
+    <div className="min-w-0 rounded-lg border border-line dark:border-slate-700 p-3 hover:border-cobble-400 transition group">
       <div className="flex items-start justify-between">
-        <button type="button" onClick={onOpen} className="text-left flex-1">
-          <div className="font-medium text-content dark:text-mortar-100">{metric.name}</div>
+        <button type="button" onClick={onOpen} className="text-left flex-1 min-w-0">
+          <div className="font-medium text-content dark:text-mortar-100 break-words">{metric.name}</div>
           <div className="text-xs text-muted mt-0.5">
             {metric.latest_value != null ? valueWithUnit(Number(metric.latest_value), metric.unit) : "no data"}
             {metric.goal_value != null && <span className="text-faint"> · goal {metric.goal_value}</span>}
           </div>
         </button>
-        <button title="Delete metric" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete metric">
+        {onDelete && <button title="Delete metric" type="button" onClick={onDelete} className="text-slate-300 hover:text-red-500 hover-reveal transition" aria-label="Delete metric">
           <Trash2 size={15} />
-        </button>
+        </button>}
       </div>
       <div className="mt-2"><ProgressBar p={metric.progress} /></div>
       {/* Quick-log: one number, no modal — the "three seconds" path. */}
@@ -207,7 +211,7 @@ function MetricDetailModal({ metricId, api, orgSlug, onClose }: { metricId: stri
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });
   const setField = useMutation({
-    mutationFn: (m: Record<string, unknown>) => api.setMetricFields(metricId, m),
+    mutationFn: (m: Record<string, unknown>) => api.updateMetric(metricId, editOf(detail.data, { metadata: m })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof TrackingApiError ? e.message : String(e)),
   });

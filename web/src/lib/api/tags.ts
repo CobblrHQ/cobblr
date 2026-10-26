@@ -1,3 +1,4 @@
+import { type Edit } from "@cobblr/platform-web";
 import { request } from "./client";
 
 export interface TagRecord {
@@ -50,19 +51,20 @@ export const tagsApi = {
   updateTag: (
     slug: string,
     id: string,
-    body: {
+    edit: Edit<{
       name?: string;
       color?: string | null;
       parent_id?: string | null;
       icon?: string | null;
       pinned?: boolean;
       metadata?: Record<string, unknown>;
-    },
+    }>,
   ) =>
     request<TagRecord>(
       "PATCH",
       `/orgs/${slug}/modules/core-tags/tags/${id}`,
-      body,
+      edit.body,
+      edit.headers,
     ),
   /** Takes the tag off every record carrying it; kept for 30 days so
    *  `restoreTag` can put it back. Owner or admin, or a grant. */

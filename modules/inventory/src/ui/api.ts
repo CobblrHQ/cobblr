@@ -25,7 +25,7 @@ export interface MaterialView extends MaterialNumbers {
 
 import type { NounChoiceDecl } from "@cobblr/platform-contract/kind-label";
 import type { CardRollup } from "@cobblr/platform-contract/holdings";
-import type { FieldRendererId, FieldType } from "@cobblr/platform-web";
+import type { Edit, FieldRendererId, FieldType } from "@cobblr/platform-web";
 import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch } from "@cobblr/platform-web";
 import { downloadBlob } from "@cobblr/platform-web";
 import { dayHere } from "@cobblr/platform-contract/day";
@@ -328,6 +328,60 @@ export interface InventoryApiOptions {
   instance?: string;
 }
 
+export interface PartListQuery {
+  search?: string;
+  category_id?: string;
+  location_id?: string;
+  state?: "active" | "draft" | "needs_review";
+  low_stock?: boolean;
+  /** Leave out rows with nothing on hand (all installed, or none left). */
+  hide_unavailable?: boolean;
+  show_archived?: boolean;
+  archived_only?: boolean;
+  insured_only?: boolean;
+  /** Only records with a required field still empty. */
+  needs_value?: boolean;
+  /** Only records holding a value that does not fit its field. */
+  doesnt_fit?: boolean;
+  warranty_expires_within_days?: number;
+  /** Lego-style lifecycle filter, see the API ListQuery comment. */
+  lifecycle?: "bulk" | "kit" | "parted-out";
+  /** "flat": one line per place instead of one card per thing. */
+  rows?: "flat";
+  cursor?: string;
+  /** A saved view's own query (filter / where / sort), see viewQuery. */
+  filter?: Record<string, unknown>;
+  where?: unknown[];
+  sort?: string[];
+}
+
+function partListParams(q: PartListQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  // This browser's day: a view's "today" (a "Ready to drink" window) is the
+  // reader's, and the server cannot tell it from a UTC clock.
+  params.set("today", dayHere());
+  if (q.search) params.set("search", q.search);
+  if (q.filter && Object.keys(q.filter).length) params.set("filter", JSON.stringify(q.filter));
+  if (q.where && q.where.length) params.set("where", JSON.stringify(q.where));
+  if (q.sort && q.sort.length) params.set("sort", q.sort.join(","));
+  if (q.hide_unavailable) params.set("hide_unavailable", "1");
+  if (q.category_id) params.set("category_id", q.category_id);
+  if (q.location_id) params.set("location_id", q.location_id);
+  if (q.state) params.set("state", q.state);
+  if (q.low_stock) params.set("low_stock", "1");
+  if (q.show_archived) params.set("show_archived", "1");
+  if (q.archived_only) params.set("archived_only", "1");
+  if (q.insured_only) params.set("insured_only", "1");
+  if (q.needs_value) params.set("needs_value", "1");
+  if (q.doesnt_fit) params.set("doesnt_fit", "1");
+  if (q.warranty_expires_within_days)
+    params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
+  if (q.lifecycle) params.set("lifecycle", q.lifecycle);
+  if (q.rows) params.set("rows", q.rows);
+  if (q.cursor) params.set("cursor", q.cursor);
+  return params;
+}
+
 export class InventoryApi {
   /** Everything still listed where a stocktake looks: a place (and the places
    *  inside it), the records picked in a table, or a collection's things with
@@ -389,12 +443,12 @@ export class InventoryApi {
       ? `/api/v1/orgs/${this.slug}/instances/${this.opts.instance}/items`
       : `${this.base()}/parts`;
   }
-  private partsRequest<T>(method: string, subpath: string, body?: unknown): Promise<T> {
-    return this.requestAbs<T>(method, `${this.partsBase()}${subpath}`, body);
+  private partsRequest<T>(method: string, subpath: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    return this.requestAbs<T>(method, `${this.partsBase()}${subpath}`, body, extra);
   }
 
-  private async requestAbs<T>(method: string, url: string, body?: unknown): Promise<T> {
-    const headers: Record<string, string> = {};
+  private async requestAbs<T>(method: string, url: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
+    const headers: Record<string, string> = { ...(extra ?? {}) };
     if (body !== undefined && !(body instanceof FormData)) headers["Content-Type"] = "application/json";
     const token = this.opts.getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -565,55 +619,8 @@ export class InventoryApi {
     b,
   );
 
-  listParts = (q: {
-    search?: string;
-    category_id?: string;
-    location_id?: string;
-    state?: "active" | "draft" | "needs_review";
-    low_stock?: boolean;
-    /** Leave out rows with nothing on hand (all installed, or none left). */
-    hide_unavailable?: boolean;
-    show_archived?: boolean;
-    archived_only?: boolean;
-    insured_only?: boolean;
-    /** Only records with a required field still empty. */
-    needs_value?: boolean;
-    /** Only records holding a value that does not fit its field. */
-    doesnt_fit?: boolean;
-    warranty_expires_within_days?: number;
-    /** Lego-style lifecycle filter, see the API ListQuery comment. */
-    lifecycle?: "bulk" | "kit" | "parted-out";
-    /** "flat": one line per place instead of one card per thing. */
-    rows?: "flat";
-    cursor?: string;
-    /** A saved view's own query (filter / where / sort), see viewQuery. */
-    filter?: Record<string, unknown>;
-    where?: unknown[];
-    sort?: string[];
-  } = {}) => {
-    const params = new URLSearchParams();
-    // This browser's day: a view's "today" (a "Ready to drink" window) is the
-    // reader's, and the server cannot tell it from a UTC clock.
-    params.set("today", dayHere());
-    if (q.search) params.set("search", q.search);
-    if (q.filter && Object.keys(q.filter).length) params.set("filter", JSON.stringify(q.filter));
-    if (q.where && q.where.length) params.set("where", JSON.stringify(q.where));
-    if (q.sort && q.sort.length) params.set("sort", q.sort.join(","));
-    if (q.hide_unavailable) params.set("hide_unavailable", "1");
-    if (q.category_id) params.set("category_id", q.category_id);
-    if (q.location_id) params.set("location_id", q.location_id);
-    if (q.state) params.set("state", q.state);
-    if (q.low_stock) params.set("low_stock", "1");
-    if (q.show_archived) params.set("show_archived", "1");
-    if (q.archived_only) params.set("archived_only", "1");
-    if (q.insured_only) params.set("insured_only", "1");
-    if (q.needs_value) params.set("needs_value", "1");
-    if (q.doesnt_fit) params.set("doesnt_fit", "1");
-    if (q.warranty_expires_within_days)
-      params.set("warranty_expires_within_days", String(q.warranty_expires_within_days));
-    if (q.lifecycle) params.set("lifecycle", q.lifecycle);
-    if (q.rows) params.set("rows", q.rows);
-    if (q.cursor) params.set("cursor", q.cursor);
+  listParts = (q: PartListQuery = {}) => {
+    const params = partListParams(q);
     const qs = params.toString();
     return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null; unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }> }>(
       "GET",
@@ -632,20 +639,8 @@ export class InventoryApi {
    *  blob round-trip). Token has to come from the cookie — the API
    *  side accepts both. For Bearer-only clients, fetch the URL and
    *  pipe the blob to a download. */
-  partsExportCsvUrl = (q: {
-    search?: string;
-    state?: "active" | "draft" | "needs_review";
-    show_archived?: boolean;
-    archived_only?: boolean;
-    insured_only?: boolean;
-  } = {}) => {
-    const params = new URLSearchParams();
-    if (q.search) params.set("search", q.search);
-    if (q.state) params.set("state", q.state);
-    if (q.show_archived) params.set("show_archived", "1");
-    if (q.archived_only) params.set("archived_only", "1");
-    if (q.insured_only) params.set("insured_only", "1");
-    const qs = params.toString();
+  partsExportCsvUrl = (q: Omit<PartListQuery, "cursor" | "rows"> = {}) => {
+    const qs = partListParams(q).toString();
     return `${this.partsBase()}/export.csv${qs ? "?" + qs : ""}`;
   };
 
@@ -658,7 +653,8 @@ export class InventoryApi {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!res.ok) {
-      throw new InventoryApiError(res.status, "csv_export_failed", `HTTP ${res.status}`);
+      const body = await res.json().catch(() => null) as { error?: { message?: string } } | null;
+      throw new InventoryApiError(res.status, "csv_export_failed", body?.error?.message || `HTTP ${res.status}`);
     }
     const blob = await res.blob();
     // UTC-DAY OK: the download filename's stamp, not a claim about anybody's calendar.
@@ -753,8 +749,9 @@ export class InventoryApi {
 
   createPart = (b: Partial<Omit<PartListItem, "id" | "created_at" | "updated_at" | "assigned_qty" | "available_qty" | "low_stock">> & { name: string }) =>
     this.partsRequest<Part>("POST", "", b);
-  updatePart = (id: string, b: Record<string, unknown>) =>
-    this.partsRequest<Part>("PATCH", `/${id}`, b);
+  /** `edit` from editOf: only what changed, and what it was when the form opened (#7925). */
+  updatePart = (id: string, edit: Edit<Record<string, unknown>>) =>
+    this.partsRequest<Part>("PATCH", `/${id}`, edit.body, edit.headers);
   /** Change SOME custom fields, leaving the rest of the bag alone. Prefer this
    *  over `updatePart({ metadata })` for a single-field edit: that one replaces
    *  the whole bag, so it needs a local copy of every other field, and any copy

@@ -15,6 +15,10 @@ export interface NotificationCardRow {
   actions?: string[];
 }
 
+/** A reply press collects text before invoking its stored action. */
+export const REPLY_ACTION_ID = "reply";
+export const REPLY_MAX = 4000;
+
 export interface NotificationAction {
   /** Stable within one notification; this is what a client sends back. */
   id: string;

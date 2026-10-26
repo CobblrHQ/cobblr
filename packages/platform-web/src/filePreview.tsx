@@ -16,6 +16,7 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
   type ComponentType,
@@ -100,10 +101,10 @@ function extOf(filename: string): string {
   return (filename.split(".").pop() ?? "").toLowerCase();
 }
 
-/** Is there a registered renderer for this filename's extension? Lets a
- *  surface decide whether to offer a preview at all. */
-export function canPreviewFile(filename: string): boolean {
-  return REGISTRY.has(extOf(filename));
+/** Offer a registered preview for the stored type or filename. A rename
+ *  changes the label, not whether a PDF can be read. */
+export function canPreviewFile(filename: string, mimeType?: string | null): boolean {
+  return !!rendererForType(mimeType ?? null) || REGISTRY.has(extOf(filename));
 }
 
 const TOKEN_KEY = "cobblr.token";
@@ -127,13 +128,16 @@ export function FilePreview({
   // when the bytes name nothing: a PDF stored without its extension, or under
   // a wrong one, still opens in the PDF viewer (#4523).
   const [loader, setLoader] = useState<RendererLoader | undefined>(() => byName);
-  const [data, setData] = useState<{ blobUrl: string; bytes: ArrayBuffer } | null>(null);
+  const [data, setData] = useState<{ src: string; blobUrl: string; bytes: ArrayBuffer } | null>(null);
   const [err, setErr] = useState(false);
   const [probed, setProbed] = useState(false);
+  const loaded = useRef<{ src: string; loader: RendererLoader } | null>(null);
 
   useEffect(() => {
+    // A label change must not replace an open, byte-identified document.
+    if (loaded.current?.src === src && loaded.current.loader === rendererForType("application/pdf")) return;
+    loaded.current = null;
     let cancelled = false;
-    let blobUrl: string | null = null;
     setData(null);
     setErr(false);
     setProbed(false);
@@ -145,7 +149,8 @@ export function FilePreview({
         // No renderer by name: read only the first bytes to learn what it is
         // before fetching all of it (a large file with no preview stays unread).
         if (!byName) {
-          const probe = await fetch(src, { headers: { ...auth, Range: "bytes=0-63" } });
+          // A cached full download can give Chromium an empty range body.
+          const probe = await fetch(src, { cache: "no-store", headers: { ...auth, Range: "bytes=0-63" } });
           if (!probe.ok) throw new Error(`HTTP ${probe.status}`);
           const head = new Uint8Array(await probe.arrayBuffer()).subarray(0, 64);
           const bySniff = rendererForType(sniffType(head));
@@ -160,18 +165,23 @@ export function FilePreview({
         const ab = await blob.arrayBuffer();
         if (cancelled) return;
         const bySniff = rendererForType(sniffType(new Uint8Array(ab, 0, Math.min(64, ab.byteLength))));
-        if (bySniff) setLoader(() => bySniff);
-        blobUrl = URL.createObjectURL(blob);
-        setData({ blobUrl, bytes: ab });
+        if (bySniff) {
+          setLoader(() => bySniff);
+          loaded.current = { src, loader: bySniff };
+        }
+        setData({ src, blobUrl: URL.createObjectURL(blob), bytes: ab });
       } catch {
         if (!cancelled) setErr(true);
       }
     })();
     return () => {
       cancelled = true;
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
     };
   }, [src, byName]);
+
+  useEffect(() => () => {
+    if (data) URL.revokeObjectURL(data.blobUrl);
+  }, [data]);
 
   const Comp = useMemo(() => (loader ? lazy(loader) : null), [loader]);
 
@@ -179,7 +189,7 @@ export function FilePreview({
     return <div className={`text-xs text-faint italic ${className ?? ""}`}>No preview for {ext ? `.${ext} ` : "these "}files</div>;
   if (err)
     return <div className={`text-xs text-faint italic ${className ?? ""}`}>Couldn't load preview</div>;
-  if (!data || !Comp)
+  if (!data || data.src !== src || !Comp)
     return <div className={`text-xs text-faint ${className ?? ""}`}>Loading preview…</div>;
 
   return (

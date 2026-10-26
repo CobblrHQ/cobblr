@@ -828,7 +828,8 @@ function ServiceInputForm({
 function RecurrenceBuilder({ value, onChange }: { value: Recurrence; onChange: (r: Recurrence) => void }) {
   return (
     <div className="mt-2 space-y-2 rounded-lg border border-line dark:border-slate-700 p-3">
-      <div className="flex items-center gap-2 text-xs">
+      {/* Wraps: "every 1 month(s)" ran 90 px past a phone at 200% text (#8430). */}
+      <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-faint">every</span>
         <NumberField label="Every"
           min={1}

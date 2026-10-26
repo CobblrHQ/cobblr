@@ -147,6 +147,60 @@ export async function createdNamesMatching(
   return out;
 }
 
+/** The newest change anyone recorded on these records, or null for none. */
+export async function newestChangeOn(orgId: string, ids: readonly string[]): Promise<number | null> {
+  if (!ids.length) return null;
+  const row = await meta
+    .selectFrom("activity_log")
+    .select((eb) => eb.fn.max("id").as("id"))
+    .where("org_id", "=", orgId)
+    .where("entity_id", "in", [...ids])
+    .executeTakeFirst();
+  return row?.id == null ? null : Number(row.id);
+}
+
+/** The newest entry of this action on one record: where a run that logs its
+ *  own line once it is done (a recount applied) ends. */
+export async function entryOf(orgId: string, p: { entityId: string; action: string }): Promise<number | null> {
+  const row = await meta
+    .selectFrom("activity_log")
+    .select((eb) => eb.fn.max("id").as("id"))
+    .where("org_id", "=", orgId)
+    .where("entity_id", "=", p.entityId)
+    .where("action", "=", p.action)
+    .executeTakeFirst();
+  return row?.id == null ? null : Number(row.id);
+}
+
+/** What someone else changed on these records after entry `after`, as the
+ *  sentence an Undo refuses with, or null when nobody did. A change the
+ *  platform made on its own (a wire, a sweep) is not someone's change, and
+ *  the person's own later change is theirs to stack (#7924). */
+export async function changeSince(orgId: string, p: { ids: readonly string[]; after: number; userId: string | null }): Promise<string | null> {
+  if (!p.ids.length) return null;
+  const userId = p.userId;
+  const later = await meta
+    .selectFrom("activity_log as a")
+    .leftJoin("users as u", "u.id", "a.user_id")
+    .select(["a.user_id", "a.action", "u.display_name"])
+    .where("a.org_id", "=", orgId)
+    .where("a.entity_id", "in", [...p.ids])
+    .where("a.id", ">", p.after)
+    .where("a.auth_method", "!=", "system")
+    .where((eb) => (userId ? eb.or([eb("a.user_id", "is", null), eb("a.user_id", "!=", userId)]) : eb.val(true)))
+    .orderBy("a.id", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!later) return null;
+  const who = later.display_name ?? "someone else";
+  return `This changed after it was done (${who} ${saidAs(later.action)} it since), so Undo would take that away too. Nothing was undone; look at it and change it back yourself if you still need to.`;
+}
+
+function saidAs(action: string): string {
+  const verb = action.replace(/^.*?_?(created|updated|deleted|lent|returned|restored|moved|adjusted|archived)$/, "$1");
+  return verb === action ? "changed" : verb;
+}
+
 /** One row of a bulk write (an import of thousands): `diff.import_row` marks
  *  it, so a record's own History carries it while the workspace's and the
  *  person's feeds leave it to the bulk write's one summary line (#5963). */

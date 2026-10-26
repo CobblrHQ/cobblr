@@ -14,7 +14,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, CircleDashed, FileText, Loader2, RotateCcw, Sparkles, Upload, XCircle } from "lucide-react";
-import { RecordFormModal, CustomFieldsPanel, EntityPhoto, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, usePageTitle, usePasteImage, useToast } from "@cobblr/platform-web";
+import { RecordFormModal, CustomFieldsPanel, EntityPhoto, FilePreview, Modal, SearchInput, useConfirm, useFilePreviewRegistry, useMayDelete, usePageTitle, usePasteImage, useToast, editOf } from "@cobblr/platform-web";
 import { api, ApiError, MAKE_STEPS, type MakeDetail, type MakeFileRole, type MakeStepName, type MakeStepRecord, type MakeSummary } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
 import { useEnabledModules } from "../lib/useEnabledModules";
@@ -225,6 +225,7 @@ function NewMakeModal({ onClose }: { onClose: () => void }) {
 // ── one Make: its timeline ──────────────────────────────────────────────────
 
 export function MakePage() {
+  const kindAllowsDelete = useMayDelete("digifab:make");
   const { id = "" } = useParams();
   const { activeSlug } = useActiveOrg();
   const qc = useQueryClient();
@@ -234,11 +235,12 @@ export function MakePage() {
   useFilePreviewRegistry();
   const [reading, setReading] = useState<MakeStepRecord["files"][number] | null>(null);
   const [rerunning, setRerunning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const on = useEnabledModules(activeSlug);
   const one = useQuery({
     queryKey: makeKeys.one(activeSlug, id),
     queryFn: () => api.getMake(activeSlug, id),
-    enabled: !!activeSlug && !!id && !!on?.has("digifab"),
+    enabled: !!activeSlug && !!id && !!on?.has("digifab") && !deleting,
     // A step a service is doing (a slice) and a print in progress both move on
     // their own; the page follows them. A slice that finishes turns into the
     // print's confirm card without a reload.
@@ -253,24 +255,25 @@ export function MakePage() {
   const fail = (err: unknown) => toast.error(err instanceof ApiError ? err.message : (err as Error).message);
 
   const setOutcome = useMutation({
-    mutationFn: (body: { outcome?: "pass" | "fail" | null; outcome_notes?: string }) => api.patchMake(activeSlug, id, body),
+    mutationFn: (body: { outcome?: "pass" | "fail" | null; outcome_notes?: string }) => api.patchMake(activeSlug, id, editOf(one.data?.make, body)),
     onSuccess: refresh,
     onError: fail,
   });
-  const mayDelete = useRoleAtLeast(ADMIN_TIER);
+  const mayDelete = useRoleAtLeast(ADMIN_TIER) && kindAllowsDelete;
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.patchMake(activeSlug, id, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.patchMake(activeSlug, id, editOf(one.data?.make, { metadata })),
     onSuccess: refresh,
     onError: fail,
   });
   const remove = useMutation({
     mutationFn: () => api.deleteMake(activeSlug, id),
+    onMutate: () => setDeleting(true),
     onSuccess: () => {
-      refresh();
+      void qc.invalidateQueries({ queryKey: makeKeys.all(activeSlug), refetchType: "none" });
       toast.success("Make deleted. Its files are still in Files.");
       navigate("/makes");
     },
-    onError: fail,
+    onError: (err) => { setDeleting(false); fail(err); },
   });
   const bring = useMutation({
     mutationFn: async (v: { file: File; step: "model" | "slice" }) => {
@@ -545,6 +548,9 @@ function StepBody({ row, detail, onOutcome }: { row: MakeStepRecord; detail: Mak
           {live && <ServiceJobCard slug={activeSlug} jobId={row.service_job_id!} capability="slice.model" />}
           {d.source === "uploaded" && rows.length === 0 && <p className="text-sm text-muted">Sliced by you, brought as G-code.</p>}
           {rows.length > 0 && <Facts rows={rows} />}
+          {row.status === "done" && row.files.some((file) => file.role === "gcode" || file.role === "3mf") && !detail.steps.some((step) => step.step === "print") && (
+            <PrintThisDoor makeId={detail.make.id} what={detail.make.name} quantity={typeof row.data.quantity === "number" ? row.data.quantity : 1} />
+          )}
           {settings.length > 0 && (
             <details className="mt-1">
               <summary className="text-xs text-muted cursor-pointer">All {countOf(settings.length, "setting")}{str(d.profile_hash) ? ` · profile ${str(d.profile_hash)!.slice(0, 16)}` : ""}</summary>

@@ -9,7 +9,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { usePlatformWeb } from "./context";
-import { useRunAction } from "./run-action";
+import { runUndoSteps, undoStepsOf, useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 
 export function SellerOfferNotice({ kind }: { kind: string }) {
@@ -39,7 +39,7 @@ export function SellerOfferNotice({ kind }: { kind: string }) {
     toast.action(r.summary ?? "Done.", {
       actionLabel: "Undo",
       onAction: async () => {
-        for (const st of steps) await run({ actionId: st.action_id, entityKind: "", entityId: "", args: st.args ?? {} }, { undo: "is-undo" });
+        await runUndoSteps((b) => run(b, { undo: "is-undo" }), undoStepsOf(steps));
         void qc.invalidateQueries({ queryKey: ["platform-field-defs", orgSlug] });
         void qc.invalidateQueries({ queryKey: ["seller-offer", orgSlug] });
       },

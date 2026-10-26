@@ -1,7 +1,8 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FieldPack, fieldNeed, NumberField, QueryError, useStationWakeLock, useConfirm, usePageTitle } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, NumberField, QueryError, useStationWakeLock, useConfirm, usePageTitle, useCan, useRoleAtLeast } from "@cobblr/platform-web";
 import { reflowTarget } from "@cobblr/platform-contract/reflow-profile";
 import { useBoardAction } from "./BoardRevisions.js";
 import { ReflowReport } from "./Reflow.js";
@@ -11,6 +12,7 @@ const button = "min-h-12 rounded border border-line px-4 py-3 disabled:opacity-5
 const input = "block w-full rounded border border-line bg-surface p-3";
 export function ReflowStation({ slug, machineId, orderId, api }: { slug: string; machineId: string; orderId: string; api: BuildsApi }) {
  usePageTitle("Reflow station");
+ const setsUp = useRoleAtLeast(ADMIN_TIER), mayRevoke = useCan("digifab:revoke-station");
  const call = useBoardAction(slug), confirm = useConfirm(), qc = useQueryClient();
  const key = `cobblr.assembly-station.${slug}.${machineId}.reflow`;
  const [credential, setCredential] = useState<{ id: string; token: string } | null>(null), [error, setError] = useState("");
@@ -39,7 +41,7 @@ export function ReflowStation({ slug, machineId, orderId, api }: { slug: string;
  {run && !belongs && <p role="alert">This batch belongs to another oven. Open its station from the work order.</p>}
  {belongs && run && <>
  <p>{countOf(Number(order.data?.qty ?? 0), "board")} · {run.profile.name} · {run.state}</p>
- {!credential && <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold">Set up this screen beside the oven</h2><p>An owner or admin must authorize this screen before it can send a profile or record a run.</p><button className={button} disabled={operation.isPending} onClick={() => operation.mutate(async () => { const next = await api.authorizeMachineStation(run.machine_kind, machineId, "reflow"); localStorage.setItem(key, JSON.stringify({ id: next.id, token: next.token })); setCredential(next); })}>Authorize reflow station</button></section>}
+ {!credential && <section className="rounded border border-line p-4 space-y-3"><h2 className="text-xl font-semibold">Set up this screen beside the oven</h2><p>An owner or admin must authorize this screen before it can send a profile or record a run.</p>{setsUp && <button className={button} disabled={operation.isPending} onClick={() => operation.mutate(async () => { const next = await api.authorizeMachineStation(run.machine_kind, machineId, "reflow"); localStorage.setItem(key, JSON.stringify({ id: next.id, token: next.token })); setCredential(next); })}>Authorize reflow station</button>}</section>}
  {credential && <>
  <p className="text-sm">{run.model === "t962-ue" ? "The bridge selects the checked firmware slot and records its actual temperature reports." : run.model === "yarc" ? "Upload the profile here, then Start at YARC's oven controls. The bridge records its temperature reports." : "Load the selected profile on the oven. Record measured values after its full cooldown."}</p>
  {["prepared", "controller-prepared"].includes(run.state) && <div className="flex flex-wrap gap-3"><button className={button} disabled={operation.isPending} onClick={() => operation.mutate(async () => { if (!open && !await confirm({ title: "Confirm oven profile?", message: "Check the profile loaded on this oven against the selected paste profile before confirming.", confirmLabel: "Confirm profile" })) return; await call("builds:send-reflow-profile", args()); })}>{open ? "Send oven profile" : "Confirm loaded oven profile"}</button><button className={button} disabled={operation.isPending || run.state !== "controller-prepared" || run.station_id !== credential.id} onClick={() => void startRun()}>Start reflow</button></div>}
@@ -50,7 +52,7 @@ export function ReflowStation({ slug, machineId, orderId, api }: { slug: string;
  </div>}
  {!!run.samples?.length && <TemperatureCurve run={run} />}
  {run.report && <ReflowReport run={run} />}
- <details className="rounded border border-line p-3"><summary className="cursor-pointer min-h-11">Station settings</summary><button className={`${button} mt-3`} disabled={operation.isPending || stop.isPending} onClick={() => operation.mutate(async () => { await api.revokeMachineStation(credential.id); localStorage.removeItem(key); setCredential(null); })}>Revoke this station</button></details>
+ <details className="rounded border border-line p-3"><summary className="cursor-pointer min-h-11">Station settings</summary>{mayRevoke && <button className={`${button} mt-3`} disabled={operation.isPending || stop.isPending} onClick={() => operation.mutate(async () => { await api.revokeMachineStation(credential.id); localStorage.removeItem(key); setCredential(null); })}>Revoke this station</button>}</details>
  </>}
  </>}
  {error && <p role="alert" className="text-ember-700 dark:text-ember-300">{error}</p>}

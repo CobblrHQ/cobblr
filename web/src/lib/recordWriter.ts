@@ -9,7 +9,7 @@
 // The server's answer is then read again, so a value it normalised (a label,
 // a derived date) is what stays on screen.
 import { useQuery, useQueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
-import { useToast } from "@cobblr/platform-web";
+import { editOf, useToast, type Edit } from "@cobblr/platform-web";
 import { entityEndpointPath } from "@cobblr/platform-contract/entity-endpoints";
 import { api, ApiError, type ViewDataResponse } from "./api";
 
@@ -28,10 +28,10 @@ export function useKindWriter(slug: string) {
     ready: !!kinds.data,
     /** Can a record of this kind be written from a view at all? */
     writable: (kind: string) => entityEndpointPath(kindOf(kind), "update", "_") !== null,
-    write: async (kind: string, id: string, body: Record<string, unknown>) => {
+    write: async (kind: string, id: string, edit: Edit<Record<string, unknown>>) => {
       const path = entityEndpointPath(kindOf(kind), "update", id);
       if (!path) throw new ApiError(400, "not_writable", "This kind of record can't be changed from a view.");
-      return api.request("PATCH", `/orgs/${slug}/${path}`, body);
+      return api.request("PATCH", `/orgs/${slug}/${path}`, edit.body, edit.headers);
     },
   };
 }
@@ -59,6 +59,9 @@ export function useViewRecordEdit(slug: string) {
   const key: QueryKey = ["view-data", slug];
   const edit = async (row: Row, changes: Record<string, unknown>, done?: string): Promise<boolean> => {
     const before = qc.getQueriesData<InfiniteData<ViewDataResponse>>({ queryKey: key });
+    // The row as the view showed it: a card someone moved since is not moved
+    // back from this older copy in silence (#7925).
+    const shown = before.flatMap(([, d]) => d?.pages ?? []).flatMap((p) => p.items).find((it) => it.id === row.id && it.kind === row.kind)?.fields;
     qc.setQueriesData<InfiniteData<ViewDataResponse>>({ queryKey: key }, (old) =>
       old
         ? {
@@ -71,7 +74,7 @@ export function useViewRecordEdit(slug: string) {
         : old,
     );
     try {
-      await writer.write(row.kind, row.id, changes);
+      await writer.write(row.kind, row.id, editOf(shown, changes));
       if (done) toast.success(done);
       void qc.invalidateQueries({ queryKey: key });
       return true;

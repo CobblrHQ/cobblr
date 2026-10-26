@@ -1,6 +1,7 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Modal, useToast } from "@cobblr/platform-web";
+import { Modal, useCan, useRoleAtLeast, useToast } from "@cobblr/platform-web";
 import { useInventory } from "./context";
 
 export function SpoolmanModal({
@@ -15,6 +16,7 @@ export function SpoolmanModal({
   const { api } = useInventory();
   const qc = useQueryClient();
   const toast = useToast();
+  const mayConnect = useRoleAtLeast(ADMIN_TIER), maySync = useCan("inventory:pull-connected-stock");
   const [label, setLabel] = useState("Spoolman");
   const [authority, setAuthority] = useState<"" | "spoolman" | "cobblr">("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -71,19 +73,20 @@ export function SpoolmanModal({
               <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">{c.label}</div>
               <div className="text-[11px] font-mono text-faint truncate">{c.base_url}</div>
             </div>
-            <button
+            {maySync && <button
               onClick={() => sync.mutate(c.id)}
               disabled={sync.isPending}
               className="rounded bg-cobble-600 hover:bg-cobble-700 text-white text-xs px-2.5 py-1 disabled:opacity-50"
             >
               {sync.isPending ? "syncing…" : "Sync now"}
-            </button>
-            <button onClick={() => del.mutate(c.id)} className="text-[11px] text-faint hover:text-ember-500 px-1">
+            </button>}
+            {mayConnect && <button onClick={() => del.mutate(c.id)} className="text-[11px] text-faint hover:text-ember-500 px-1">
               Remove
-            </button>
+            </button>}
           </div>
         ))}
-        {items.length === 0 && !conns.isLoading && (
+        {items.length === 0 && !conns.isLoading && !mayConnect && <p className="text-sm text-muted">An owner or admin connects Spoolman.</p>}
+        {items.length === 0 && !conns.isLoading && mayConnect && (
           <form
             onSubmit={(e) => {
               e.preventDefault();

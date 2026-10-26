@@ -22,7 +22,7 @@ const DuplicateRecordsSheet = lazy(() => import("../pages/DuplicateRecordsSheet"
 type Entry = NonNullable<AttentionFeedItem["entries"]>[number];
 /** An action's way back: the invoke route answers a list of steps, run in
  *  order (a single step is accepted too). */
-type UndoStep = { action_id: string; args?: Record<string, unknown> };
+type UndoStep = { action_id: string; undo_id?: string; args?: Record<string, unknown> };
 const undoSteps = (u: unknown): UndoStep[] => (Array.isArray(u) ? u : u ? [u] : []).filter((s): s is UndoStep => !!s && typeof (s as UndoStep).action_id === "string");
 
 type Finish = NonNullable<NonNullable<AttentionFeedItem["collection"]>["finish"]>[number];
@@ -91,7 +91,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
         actionLabel: "Undo",
         duration: 8000,
         onAction: async () => {
-          for (const step of undo) await runAction({ actionId: step.action_id, entityKind: rec.kind, entityId: rec.id, args: step.args ?? {} }, { undo: "is-undo" });
+          for (const step of undo) await runAction({ actionId: step.action_id, entityKind: rec.kind, entityId: rec.id, undo_id: step.undo_id, args: step.args ?? {} }, { undo: "is-undo" });
           hide(e.id, false);
         },
       });
@@ -152,7 +152,7 @@ export function DatedCard({ slug, card }: { slug: string; card: DatedCardModel }
     setBusy(null);
     const undoAll = async () => {
       for (const b of back) {
-        for (const step of b.steps) await runAction({ actionId: step.action_id, entityKind: kind, entityId: b.id, args: step.args ?? {} }, { undo: "is-undo" });
+        for (const step of b.steps) await runAction({ actionId: step.action_id, entityKind: kind, entityId: b.id, undo_id: step.undo_id, args: step.args ?? {} }, { undo: "is-undo" });
         hide(b.id, false);
       }
     };

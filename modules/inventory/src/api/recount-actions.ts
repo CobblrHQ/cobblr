@@ -72,7 +72,7 @@ export function registerRecountActions(): void {
     };
   });
 
-  const reconcileInput = (a: Record<string, unknown>): ReconcileInput => ({ truth: a.truth, not_seen: a.not_seen, not_seen_all: a.not_seen_all, new: a.new });
+  const reconcileInput = (a: Record<string, unknown>): ReconcileInput => ({ preview: a.preview, truth: a.truth, not_seen: a.not_seen, not_seen_all: a.not_seen_all, new: a.new });
   platform().actions.registerHandler("inventory.apply-recount", async (ctx) => {
     const a = args(ctx.args);
     const id = str(a.recount_id);

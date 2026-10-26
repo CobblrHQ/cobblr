@@ -14,12 +14,14 @@
 // amount as a correction on the lots, a new thing through inventory's own
 // create. A recount never deletes: Undo brings gone things back, moves and
 // amounts back, and marks what it added gone, each with its history.
+import { createHash } from "node:crypto";
 import type { Kysely } from "kysely";
 import { ActionRefusal, platform, type ActionInvokeContext } from "@cobblr/platform-contract";
 import { actionActed } from "@cobblr/platform-contract/action-result";
 import { countOf } from "@cobblr/platform-contract/plural";
 import type { InventoryDB } from "./db.js";
-import { bringAllBack, markAllGone, setCount, unsetCount } from "./reconcile-engine.js";
+import { bringAllBack, markAllGone, refuseOverLaterChange, setCount, unsetCount } from "./reconcile-engine.js";
+import { withRecountLock } from "./recount-lock.js";
 import { expectedOf, familyOfCollection } from "./recount.js";
 
 const PART = "inventory:part";
@@ -30,6 +32,7 @@ export type NotSeenChoice = "gone" | "keep" | "later";
 export type NewChoice = "add" | "skip";
 
 export interface ReconcileInput {
+  preview?: unknown;
   truth?: unknown;
   /** Per not-seen record: gone, keep or later. */
   not_seen?: unknown;
@@ -40,6 +43,7 @@ export interface ReconcileInput {
 }
 
 export interface ReconcilePlan {
+  preview: string;
   id: string;
   label: string;
   truth: boolean;
@@ -77,7 +81,7 @@ export async function planReconcile(orgId: string, id: string, input: ReconcileI
   const perNew = choiceMap<NewChoice>(input.new, ["add", "skip"]);
 
   const expected = await expectedOf(orgId, row.scope);
-  const scans = await t.selectFrom("inventory_recount_scans").selectAll().where("recount_id", "=", id).orderBy("created_at").execute();
+  const scans = await t.selectFrom("inventory_recount_scans").selectAll().where("recount_id", "=", id).orderBy("created_at").orderBy("id").execute();
   const byRecord = new Map(scans.filter((s) => s.record_id).map((s) => [s.record_id!, s]));
   const ids = expected.map((e) => e.id);
   const located = new Map(ids.length ? (await t.selectFrom("inventory_parts").select(["id", "location_id"]).where("id", "in", ids).execute()).map((r) => [r.id, r.location_id]) : []);
@@ -105,7 +109,7 @@ export async function planReconcile(orgId: string, id: string, input: ReconcileI
   const fresh = scans
     .filter((s) => !s.record_id)
     .map((s) => ({ scan_id: s.id, title: s.title, like_id: s.like_id, like_type_id: s.like_type_id ?? null, place_id: s.place_id, amount: s.amount == null ? null : Number(s.amount), choice: perNew.get(s.id) ?? ("add" as NewChoice) }));
-  return {
+  const plan: Omit<ReconcilePlan, "preview"> = {
     id,
     label: row.scope_label,
     truth,
@@ -122,6 +126,7 @@ export async function planReconcile(orgId: string, id: string, input: ReconcileI
       later: notSeen.filter((n) => n.choice === "later").length,
     },
   };
+  return { ...plan, preview: createHash("sha256").update(JSON.stringify(plan)).digest("hex") };
 }
 
 /** The preview's one line: what Apply does. */
@@ -142,11 +147,14 @@ export function planLine(p: ReconcilePlan): string {
 export async function applyRecount(ctx: ActionInvokeContext, id: string, input: ReconcileInput): Promise<{ label: string; applied: RecountApplied; line: string }> {
   const { orgId } = ctx;
   const userId = ctx.userId ?? null;
-  const plan = await planReconcile(orgId, id, input);
   const t = await db(orgId);
-  // Claimed first: two presses of Apply never write twice.
-  const claimed = await t.updateTable("inventory_recounts").set({ status: "applied", truth: plan.truth, applied_at: new Date(), applied_by: userId }).where("id", "=", id).where("status", "=", "open").executeTakeFirst();
-  if (!Number(claimed.numUpdatedRows)) throw new ActionRefusal(`The recount of ${plan.label} is already finished.`);
+  const plan = await withRecountLock(orgId, id, async trx => {
+    const next = await planReconcile(orgId, id, input);
+    if (input.preview != null && input.preview !== next.preview) throw new ActionRefusal("This recount changed. Review the new preview before applying it.");
+    const claimed = await trx.updateTable("inventory_recounts").set({ status: "applied", truth: next.truth, applied_at: new Date(), applied_by: userId }).where("id", "=", id).where("status", "=", "open").executeTakeFirst();
+    if (!Number(claimed.numUpdatedRows)) throw new ActionRefusal(`The recount of ${next.label} is already finished.`);
+    return next;
+  });
   const applied: RecountApplied = { gone: [], moved: [], counted: [], added: [], later: plan.not_seen.filter((n) => n.choice === "later").map((n) => ({ id: n.id, title: n.title })) };
   try {
     // Gone and counted through the one engine What's still here? ends
@@ -256,11 +264,14 @@ async function reverse(orgId: string, userId: string | null, applied: RecountApp
   return back;
 }
 
+const touchedBy = (a: RecountApplied): string[] => [...a.gone, ...a.moved, ...a.counted, ...a.added].map((r) => r.id);
+
 export async function undoRecount(orgId: string, userId: string | null, id: string): Promise<{ label: string; back: number }> {
   const t = await db(orgId);
   const row = await t.selectFrom("inventory_recounts").selectAll().where("id", "=", id).executeTakeFirst();
   if (!row) throw new ActionRefusal("That recount no longer exists.");
   if (row.status !== "applied" || !row.applied) throw new ActionRefusal(row.status === "undone" ? `The recount of ${row.scope_label} is already undone.` : `The recount of ${row.scope_label} has not been applied.`);
+  await refuseOverLaterChange(orgId, userId, { entityId: id, action: "recount_applied" }, touchedBy(row.applied));
   const claimed = await t.updateTable("inventory_recounts").set({ status: "undone", undone_at: new Date(), undone_by: userId }).where("id", "=", id).where("status", "=", "applied").executeTakeFirst();
   if (!Number(claimed.numUpdatedRows)) throw new ActionRefusal(`The recount of ${row.scope_label} is already undone.`);
   let back: number;

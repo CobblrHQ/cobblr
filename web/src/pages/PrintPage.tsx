@@ -172,7 +172,7 @@ export function PrintPage({ embedded = false }: { embedded?: boolean } = {}) {
 
       {list.isLoading && <div className="text-sm text-muted">Loading…</div>}
       {!list.isLoading && items.length === 0 && (
-        <div className="grid sm:grid-cols-2 gap-3 max-w-2xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
           <div className="rounded-xl border border-line dark:border-slate-700 hover:border-accent bg-surface dark:bg-slate-900 p-4 transition">
             {/* onClick must WRAP the call: passing the handler directly hands React's
                 MouseEvent in as the first argument, which is truthy and would make

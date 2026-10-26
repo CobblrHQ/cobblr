@@ -198,10 +198,11 @@ export const notificationsApi = {
    *  leaving the invite to expire in silence, and creates no membership. */
   /** Press a button a notification offered. One endpoint for every kind of
    *  notification: what the button does is declared at dispatch, not here. */
-  pressNotificationAction: (id: string, actionId: string) =>
+  pressNotificationAction: (id: string, actionId: string, body?: { body: string }) =>
     request<{ ok: true; label: string; undo?: Array<{ action_id: string; args?: Record<string, unknown>; entity_kind?: string; entity_id?: string }> }>(
       "POST",
       `/me/notifications/${id}/actions/${encodeURIComponent(actionId)}`,
+      body,
     ),
 
   // Notifications — per-org variants (still used by some pages).

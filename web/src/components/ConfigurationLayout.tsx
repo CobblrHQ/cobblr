@@ -206,15 +206,15 @@ function ConfigCrumb() {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex items-center gap-1.5 text-xs text-muted dark:text-slate-400 mb-3"
+      className="flex flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400 mb-3"
     >
-      <NavLink to="/configuration" className="inline-flex min-h-11 min-w-11 items-center gap-1 hover:text-accent md:min-h-0 md:min-w-0">
-        <ChevronLeft size={13} /> Configuration
+      <NavLink to="/configuration" className="shrink-0 inline-flex min-h-11 min-w-11 items-center gap-1 hover:text-accent md:min-h-0 md:min-w-0">
+        <ChevronLeft size={13} className="shrink-0" /> Configuration
       </NavLink>
       {section && (
         <>
           <span aria-hidden>›</span>
-          <NavLink to={`/configuration/s/${section}`} className="inline-flex min-h-11 min-w-11 items-center hover:text-accent md:min-h-0 md:min-w-0">
+          <NavLink to={`/configuration/s/${section}`} className="shrink-0 inline-flex min-h-11 min-w-11 items-center hover:text-accent md:min-h-0 md:min-w-0">
             {CONFIG_SECTIONS[section].label}
           </NavLink>
         </>
@@ -332,7 +332,10 @@ export function ConfigurationLayout() {
   }
   return (
     <ConfigHeaderProvider>
-    <div className="md:grid md:grid-cols-[13.5rem_1fr] md:gap-6 md:items-start">
+    {/* The sidebar's column is 216 px, not 13.5rem: in rem it doubled to 432 px
+        at 200% text and left a tablet's page 208 px, so the invite form ran
+        past the edge (#8431). */}
+    <div className="md:grid md:grid-cols-[216px_minmax(0,1fr)] md:gap-6 md:items-start">
       <aside className="hidden md:block sticky-under-header fill-under-header [--sticky-gap:1rem] overflow-y-auto pr-1">
         <ConfigSidebarBody />
       </aside>

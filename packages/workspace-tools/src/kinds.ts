@@ -17,7 +17,9 @@ export interface KindRec {
   display_name_plural?: string | null;
   module_name?: string;
   endpoints?: { get?: string; list?: string; create?: string; update?: string; delete?: string } | null;
-  /** Whether the asker may delete a record of this kind (the kind's own rule). */
+  /** Whether the asker may create or delete a record of this kind. */
+  can_create?: boolean;
+  create_refused?: string;
   can_delete?: boolean;
   /** When they may not: the sentence the delete would be refused with. */
   delete_refused?: string;
@@ -81,6 +83,11 @@ export async function fetchKinds(api: WorkspaceApi): Promise<KindRec[]> {
   // same payload without the extra key, so this degrades cleanly.
   const res = await api.request("GET", "/entity-kinds?include=custom_fields");
   return ((res.body.items as KindRec[] | undefined) ?? []).filter((k) => !!k.id);
+}
+
+export function recordCreateRefusal(kind: string, kinds: KindRec[]): string | null {
+  const rec = kinds.find((k) => k.id === kind);
+  return rec?.can_create === false ? rec.create_refused ?? "You cannot create records of this kind here." : null;
 }
 
 /** Org-relative POST path ("modules/…" | "instances/…") that creates one
@@ -164,7 +171,8 @@ export function summarizeKind(k: KindRec): Record<string, unknown> {
     // Declared fields the read projection strips: the model must know they
     // exist and are hidden, or it calls their absence "none".
     ...hiddenFieldsOf(k),
-    can_create: null as boolean | null, // filled by the tool with full kind context
+    can_create: k.can_create ?? null, // the tool fills an older core's answer from its routes
+    ...(k.create_refused ? { create_refused: k.create_refused } : {}),
     can_update: !!k.endpoints?.update,
     can_delete: k.can_delete ?? !!k.endpoints?.delete,
   };

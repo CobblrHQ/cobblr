@@ -542,7 +542,7 @@ export function MembersModal({ open, onClose, slug, inline, chromeless, focus }:
                 </span>
               </label>
             )}
-            <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2">
               {inviteKind === "workspace" && joinLink ? (
               <>
               <label className="flex-1 block min-w-0">

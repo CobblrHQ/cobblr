@@ -259,7 +259,9 @@ export interface PlatformWebApi {
   sendRecords?(slug: string, p: import("./SendRecords").WorkspaceSendRequest): Promise<{ summary: string; offer_ids: string[]; connected?: boolean }>;
   undoSend?(slug: string, id: string, restore?: boolean): Promise<{summary?: string; restore_available?: boolean}>;
   listShareOffers?(slug: string): Promise<{ items: Array<{ id: string; direction: "out" | "in"; status: string; can_withdraw: boolean }>; targets: Array<{ link_id: string; to: string }> }>;
-  withdrawShareOffer?(slug: string, id: string): Promise<unknown>;
+  /** `record`: the offered record it is pressed on, so an offer whose share
+   *  has ended can still be taken off it. */
+  withdrawShareOffer?(slug: string, id: string, record?: { kind: string; id: string }): Promise<unknown>;
   /** The shares of this workspace's own things, and which of them hold this
    *  record now ("Shared with Vince"). */
   /** Edits suggested through shares on one record, waiting for a decision. */

@@ -24,7 +24,7 @@ export interface ConversationRemote {
   read: () => Promise<{ messages: unknown[]; updated_at: string } | null>;
   /** `owner` is the account the messages were read for: the server refuses
    *  them for anyone else. */
-  write: (messages: unknown[], owner: string) => Promise<string>;
+  write: (messages: unknown[], owner: string, expectedAt: string | null) => Promise<string>;
 }
 
 /** How long the panel waits after the last change before keeping the
@@ -41,7 +41,7 @@ export function useStoredConversation<M extends StoredChatMessage>(
   slug: string | null | undefined,
   max: number,
   remote?: ConversationRemote,
-): [M[], Dispatch<SetStateAction<M[]>>, () => void] {
+): [M[], Dispatch<SetStateAction<M[]>>, () => void, string | null] {
   const scope = owner && slug ? `${owner}/${slug}` : null;
   const [messages, setMessages] = useState<M[]>([]);
   const [messagesFor, setMessagesFor] = useState<string | null>(null);
@@ -50,6 +50,38 @@ export function useStoredConversation<M extends StoredChatMessage>(
   // The server copy is only written once it has been READ, so an empty tab
   // opening never overwrites the conversation another device is having.
   const [remoteReadFor, setRemoteReadFor] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const server = useRef<{ scope: string | null; version: string | null; saved: string | null; stopped: boolean; active: boolean; tail: Promise<void> | null } | null>(null);
+
+  const save = useCallback((slim: unknown[]) => {
+    const r = remoteRef.current;
+    const state = server.current;
+    if (!r || !owner || !state || state.scope !== scope || state.stopped) return;
+    const work = async () => {
+      if (!state.active || state.stopped || state.saved === JSON.stringify(slim)) return;
+      try {
+        const at = await r.write(slim, owner, state.version);
+        state.version = at;
+        state.saved = JSON.stringify(slim);
+        if (state.active) {
+          setNotice(null);
+          try {
+            const local = localStorage.getItem(chatStoreKey(owner, slug)!) ?? "[]";
+            if (local === JSON.stringify(slim)) {
+              localStorage.setItem(personalChatKey("chat.server-at", owner, slug)!, at);
+              localStorage.removeItem(personalChatKey("chat.unsaved", owner, slug)!);
+            }
+          } catch { /* storage disabled */ }
+        }
+      } catch (error) {
+        if ((error as { code?: string }).code === "conversation_changed") state.stopped = true;
+        if (state.active) setNotice(error instanceof Error ? error.message : "This conversation could not be saved. Your messages are kept on this device.");
+      }
+    };
+    const pending = state.tail ? state.tail.then(work) : work();
+    state.tail = pending;
+    void pending.then(() => { if (state.tail === pending) state.tail = null; });
+  }, [owner, slug, scope]);
 
   useEffect(() => {
     if (messagesFor !== scope) return; // not yet read back for this person in this workspace
@@ -63,11 +95,20 @@ export function useStoredConversation<M extends StoredChatMessage>(
       if (slim.length) localStorage.setItem(key, JSON.stringify(slim));
       else localStorage.removeItem(key);
       localStorage.setItem(personalChatKey("chat.at", owner, slug)!, new Date().toISOString());
+      const state = server.current;
+      const unsavedKey = personalChatKey("chat.unsaved", owner, slug)!;
+      if (state?.saved === JSON.stringify(slim)) localStorage.removeItem(unsavedKey);
+      else localStorage.setItem(unsavedKey, "true");
+      if (state?.scope === scope && remoteReadFor === scope) {
+        const versionKey = personalChatKey("chat.server-at", owner, slug)!;
+        if (state.version) localStorage.setItem(versionKey, state.version);
+        else localStorage.removeItem(versionKey);
+      }
     } catch {
       /* quota exceeded / storage disabled: history just won't persist */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, scope, messagesFor, max]);
+  }, [messages, scope, messagesFor, remoteReadFor, max]);
 
   // The same conversation, kept server-side, a moment after it settles.
   useEffect(() => {
@@ -75,13 +116,11 @@ export function useStoredConversation<M extends StoredChatMessage>(
     if (!r || !owner || !scope || messagesFor !== scope || remoteReadFor !== scope) return;
     const slim = slimForStore(messages, max);
     const t = setTimeout(() => {
-      void r.write(slim, owner).catch(() => {
-        /* offline: this device still has it, and the next change tries again */
-      });
+      save(slim);
     }, REMOTE_WRITE_DELAY_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages, scope, messagesFor, remoteReadFor, max]);
+  }, [messages, scope, messagesFor, remoteReadFor, max, save]);
 
   useEffect(() => {
     forgetUnownedChat();
@@ -99,6 +138,9 @@ export function useStoredConversation<M extends StoredChatMessage>(
     setMessages(loaded);
     setMessagesFor(scope);
     setRemoteReadFor(null);
+    setNotice(null);
+    const state = { scope, version: null as string | null, saved: null as string | null, stopped: false, active: true, tail: null as Promise<void> | null };
+    server.current = state;
     // The server's copy, when it is newer than this device's: another tab or
     // device carried the conversation on.
     const r = remoteRef.current;
@@ -113,6 +155,12 @@ export function useStoredConversation<M extends StoredChatMessage>(
     } catch {
       /* private mode */
     }
+    let cachedVersion: string | null = null;
+    let unsaved = false;
+    try {
+      cachedVersion = localStorage.getItem(personalChatKey("chat.server-at", owner, slug)!);
+      unsaved = localStorage.getItem(personalChatKey("chat.unsaved", owner, slug)!) === "true";
+    } catch { /* private mode */ }
     let clearedAt = "";
     try {
       clearedAt = localStorage.getItem(personalChatKey("chat.cleared", owner, slug)!) ?? "";
@@ -122,22 +170,36 @@ export function useStoredConversation<M extends StoredChatMessage>(
     void r
       .read()
       .then((kept) => {
-        if (cancelled || !kept) return;
+        if (cancelled) return;
+        if (!kept) {
+          state.saved = "[]";
+          setRemoteReadFor(scope);
+          return;
+        }
         // A newer copy wins, an empty one too: another device cleared it. An
         // empty device takes the server's copy only when it was not cleared
         // after it: a clear whose write a reload cut off is still a clear (#7597).
         const newer = kept.updated_at > localAt;
         const unseen = !loaded.length && kept.messages.length > 0 && kept.updated_at > clearedAt;
-        if (newer || unseen) setMessages(kept.messages as M[]);
+        const same = JSON.stringify(slimForStore(loaded, max)) === JSON.stringify(kept.messages);
+        if (((newer || unseen) && !unsaved) || same) {
+          state.version = kept.updated_at;
+          state.saved = JSON.stringify(kept.messages);
+          try { localStorage.setItem(personalChatKey("chat.server-at", owner, slug)!, kept.updated_at); } catch { /* private mode */ }
+          // A read requested before a local edit cannot replace that edit,
+          // including a clear. Compare inside the updater so queued edits count.
+          if (!same) setMessages((current) => current === loaded ? kept.messages as M[] : current);
+        } else {
+          state.version = cachedVersion;
+        }
+        setRemoteReadFor(scope);
       })
       .catch(() => {
         /* offline: this device's copy stands */
-      })
-      .finally(() => {
-        if (!cancelled) setRemoteReadFor(scope);
       });
     return () => {
       cancelled = true;
+      state.active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
@@ -158,11 +220,9 @@ export function useStoredConversation<M extends StoredChatMessage>(
     }
     const r = remoteRef.current;
     if (r && owner && scope && remoteReadFor === scope) {
-      void r.write([], owner).catch(() => {
-        /* offline: the mark above keeps it cleared here, and the next change writes again */
-      });
+      save([]);
     }
-  }, [owner, slug, scope, remoteReadFor]);
+  }, [owner, slug, scope, remoteReadFor, save]);
 
-  return [messages, setMessages, clear];
+  return [messages, setMessages, clear, notice];
 }

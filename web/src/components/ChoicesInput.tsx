@@ -65,12 +65,13 @@ export function ChoicesInput({ value, onChange, placeholder }: Props) {
           </span>
         ))}
         <input
+          aria-label="Add a choice"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKey}
           onBlur={() => draft.trim() && commit(draft)}
           placeholder={value.length ? "" : (placeholder ?? "Type a choice, press Enter")}
-          className="flex-1 min-w-[10rem] bg-transparent text-sm text-content dark:text-mortar-100 placeholder:text-faint outline-none py-0.5"
+          className="flex-1 basis-40 min-w-0 bg-transparent text-sm text-content dark:text-mortar-100 placeholder:text-faint outline-none py-0.5"
         />
       </div>
       <span className="mt-1 block text-[10px] text-faint dark:text-slate-600">

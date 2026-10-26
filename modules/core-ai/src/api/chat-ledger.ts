@@ -184,6 +184,10 @@ function destinationOf(result: unknown): { kind: string; label: string } | null 
   return { kind: d.kind, label: d.label };
 }
 
+export function mayUndoWrite(row: { user_id: string }, userId: string, managesWorkspace: boolean): boolean {
+  return row.user_id === userId || managesWorkspace;
+}
+
 /** Can this ledger row be undone? (Its own state + the kind's declared routes,
  *  or, for an action, the inverse it stored.) */
 export function undoableOf(
@@ -753,6 +757,10 @@ export async function undoWrite(
     .where("id", "=", writeId)
     .executeTakeFirst();
   if (!row) return { ok: false, message: "No such change." };
+  const managesWorkspace = row.user_id !== userId && await platform().auth.userHasRole({ orgId, userId, minRole: "admin" });
+  if (!mayUndoWrite(row, userId, managesWorkspace)) {
+    return { ok: false, message: "You can undo your own changes. Only an owner, an admin or an editor can undo another person's change." };
+  }
   if (row.undone_at) return { ok: false, message: "Already undone." };
 
   const before = parseJsonb<RecordImage>(row.before);

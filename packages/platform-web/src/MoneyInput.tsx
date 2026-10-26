@@ -73,7 +73,7 @@ export function MoneyInput({
   };
 
   return (
-    <div className={"flex items-center gap-1 " + (className ?? "")}>
+    <div className={"flex min-w-0 max-w-full flex-wrap items-center gap-1 " + (className ?? "")}>
       <span className="text-muted dark:text-slate-400 select-none" aria-hidden>
         {currencySymbol(selectedCurrency)}
       </span>
@@ -106,7 +106,7 @@ export function MoneyInput({
             onCancel?.();
           }
         }}
-        className={"input w-full min-w-0 flex-1 tabular-nums " + (bad ? "border-ember-500 dark:border-ember-400" : "")}
+        className={"input w-full min-w-[5ch] flex-1 tabular-nums " + (bad ? "border-ember-500 dark:border-ember-400" : "")}
       />
       {onCurrencyChange && <CurrencyPicker value={selectedCurrency} onChange={onCurrencyChange} label={`${ariaLabel || "Price"} currency`} />}
       {bad && <span className="shrink-0 text-xs text-ember-600 dark:text-ember-400">not an amount</span>}

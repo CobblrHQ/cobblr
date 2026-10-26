@@ -82,7 +82,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
 
   return (
     <div className="space-y-4 max-w-4xl">
-      <div className="flex items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap gap-x-3 gap-y-2 items-baseline justify-between border-b border-line dark:border-slate-700 pb-3">
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title">lists</h1>
         <Link className="text-xs text-muted underline" to="/configuration/recently-deleted?kind=lists:list">Recently deleted</Link>
         <button
@@ -104,7 +104,7 @@ export function ListsUI({ orgSlug, getToken }: Props) {
         <div className="text-sm text-muted italic">No lists yet. Create one - a shopping list, a to-do, a packing list.</div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {offerKnown && lists.data?.items.map((l) => (
           <ListCard key={l.id} list={l} onOpen={() => setOpen(l.id)} onDelete={async () => {
             if (await confirm({ title: `Delete "${l.title}"?`, message: "This removes the list and its items.", confirmLabel: "Delete", destructive: true })) {
@@ -263,7 +263,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   // again, which on a shared list also dropped who said they'd get it.
   const [renaming, setRenaming] = useState<string | null>(null);
   const rename = useMutation({
-    mutationFn: (title: string) => api.renameList(listId, title),
+    mutationFn: (title: string) => api.updateList(listId, editOf(detail.data, { title })),
     onSuccess: () => { setRenaming(null); invalidate(); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
@@ -275,18 +275,18 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     // (#7889, #7925).
     mutationFn: (e: LineEdit) => {
       const edit = editOf(e.opened, { title: e.title.trim(), qty: e.qty.trim(), note: e.note.trim() });
-      return Object.keys(edit.body).length ? api.updateItem(e.id, edit.body, edit.headers) : Promise.resolve(null);
+      return Object.keys(edit.body).length ? api.updateItem(e.id, edit) : Promise.resolve(null);
     },
     onSuccess: async () => { await invalidate(); setEditing(null); },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   const setListField = useMutation({
-    mutationFn: (m: Record<string, unknown>) => api.setListFields(listId, m),
+    mutationFn: (m: Record<string, unknown>) => api.updateList(listId, editOf(detail.data, { metadata: m })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   const setItemField = useMutation({
-    mutationFn: ({ id, m }: { id: string; m: Record<string, unknown> }) => api.setItemFields(id, m),
+    mutationFn: ({ id, m }: { id: string; m: Record<string, unknown> }) => api.updateItem(id, editOf(detail.data?.items.find((i) => i.id === id), { metadata: m })),
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });

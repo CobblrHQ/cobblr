@@ -16,20 +16,31 @@
 // `retryServerErrors` (default true): retry 5xx/429 as transient. Callers that
 // legitimately ASSERT a 5xx (via expectStatus) pass `false` so an expected
 // server error returns immediately instead of eating four backoffs.
+//
+// `retryBusy` (default true): a 503 whose body says `busy` is the api's own
+// "no connection came free, try again in a moment" (server-error.ts), with a
+// Retry-After. It is asked again after that wait even when retryServerErrors
+// is false, because http() turns 5xx retries off for every call and a busy
+// then failed whichever test happened to land in the moment (#8600). Only a
+// caller that asserts the 503 itself passes `false`.
 
 export async function fetchTransient(
   url: string,
   init?: RequestInit,
-  opts?: { retries?: number; retryServerErrors?: boolean },
+  opts?: { retries?: number; retryServerErrors?: boolean; retryBusy?: boolean },
 ): Promise<Response> {
   const MAX = opts?.retries ?? 4;
   const retry5xx = opts?.retryServerErrors !== false;
+  const retryBusy = opts?.retryBusy !== false;
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX; attempt++) {
+    let waitMs: number | null = null;
     try {
       const res = await fetch(url, init);
-      const transientStatus = retry5xx && (res.status >= 500 || res.status === 429);
+      const busy = retryBusy && (await saysBusy(res));
+      const transientStatus = busy || (retry5xx && (res.status >= 500 || res.status === 429));
       if (!transientStatus || attempt === MAX) return res;
+      if (busy) waitMs = retryAfterMs(res);
       lastErr = new Error(`HTTP ${res.status} (attempt ${attempt}/${MAX})`);
     } catch (e) {
       // Network-level failure (ECONNRESET/refused, fetch timeout) → retry.
@@ -37,7 +48,22 @@ export async function fetchTransient(
       if (attempt === MAX) throw e;
     }
     // Jittered backoff so 8 forks that collided don't retry in lockstep.
-    await new Promise((r) => setTimeout(r, attempt * 300 + Math.floor(Math.random() * 200)));
+    await new Promise((r) => setTimeout(r, (waitMs ?? attempt * 300) + Math.floor(Math.random() * 200)));
   }
   throw lastErr instanceof Error ? lastErr : new Error("request failed after retries");
+}
+
+async function saysBusy(res: Response): Promise<boolean> {
+  if (res.status !== 503) return false;
+  try {
+    const body = (await res.clone().json()) as { error?: { code?: string } };
+    return body.error?.code === "busy";
+  } catch {
+    return false;
+  }
+}
+
+function retryAfterMs(res: Response): number | null {
+  const s = Number(res.headers.get("retry-after"));
+  return Number.isFinite(s) && s >= 0 ? Math.min(s, 10) * 1000 : null;
 }

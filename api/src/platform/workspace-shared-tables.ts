@@ -119,6 +119,7 @@ export const SHARED_WORKSPACE_TABLES: Record<string, SharedTablePolicy> = {
   approval_requests: { travels: "never", why: "a request to a person in this workspace; it lapses rather than travels" },
   ai_held_changes: { travels: "never", why: "a change an assistant asked for, waiting on a person in this workspace; it lapses in a day and never replays somewhere else" },
   issued_undos: { travels: "never", why: "an undo step handed to one person for their own run; it is theirs for a week and means nothing in another workspace" },
+  request_replays: { travels: "never", why: "the answer to one person's write, kept a day so a repeat of it changes nothing more; a restored workspace starts with no writes in flight" },
   notifications: { travels: "never", why: PERSONAL },
   notification_subscriptions: { travels: "never", why: PERSONAL },
   notification_deferred: { travels: "never", why: PERSONAL },

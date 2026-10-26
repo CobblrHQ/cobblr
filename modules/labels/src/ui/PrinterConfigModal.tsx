@@ -32,6 +32,7 @@ interface PrinterLite {
   settings?: Record<string, unknown>;
 }
 
+// GATED-BY: QueuePage draws it only for an owner or admin (mayConfigure).
 export function PrinterConfigModal({
   printer,
   open,

@@ -66,16 +66,21 @@ const RenderBody = z.object({
   // 80 chars: a workspace size is `custom:<uuid>` (43), longer than any preset key.
   size_key: z.string().min(1).max(80).default("roll-2x2"),
   item_ids: z.array(z.string().uuid()).optional(),
+  // Rendered to be sent to a printer now: the codes it draws are on paper from
+  // this moment, so their groups are locked here, not when the batch is
+  // confirmed, and a code sent to a printer is never handed to another record
+  // while its confirmation waits (#7884).
+  send: z.boolean().optional(),
 });
 
-// AI-REACH: exempt — writes nothing; renders label images for the person's
-// browser or printer to print. The assistant queues labels through labels:print
+// AI-REACH: exempt — renders label images for the person's browser or printer
+// to print (and, for a send, locks the codes it drew). The assistant queues labels through labels:print
 printRouter.post(
   "/render",
   asyncHandler(async (req, res) => {
     const parsed = RenderBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
-    const { size_key, item_ids } = parsed.data;
+    const { size_key, item_ids, send } = parsed.data;
 
     const db = tenantDb(req);
     const session = sessionUser(req);
@@ -93,7 +98,7 @@ printRouter.post(
 
     try {
       const base = await qrBaseFor(req);
-      const { pdf, sheets, warnings, labels } = await renderRowsToPdf(db, org.id, base, rows as never, size_key);
+      const { pdf, sheets, warnings, labels } = await renderRowsToPdf(db, org.id, base, rows as never, size_key, { markPrinted: send === true });
       // Each row and its copies as rendered: a send of this PDF records exactly these (#7593).
       res.json({ pdf_base64: pdf.toString("base64"), sheets, labels, rendered: rows.map((r) => ({ id: r.id, qty: r.qty })), warnings });
     } catch (e) {

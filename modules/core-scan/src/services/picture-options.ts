@@ -72,11 +72,42 @@ export interface PictureSources {
  *  lasted over an hour (2026-09-06). The library is not queued; it has a
  *  stated rate policy we are nowhere near. */
 const SEARCH_SPACING_MS = 1500;
-let searchChain: Promise<unknown> = Promise.resolve();
-function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
-  const run = searchChain.then(fn, fn);
-  searchChain = run.catch(() => undefined).then(() => new Promise<void>((r) => setTimeout(r, SEARCH_SPACING_MS)));
-  return run;
+/** How long the engine rests after a wall. Every ask in that time, and every
+ *  one already waiting its turn, is answered "refused" at once: the row says
+ *  busy and the pictures sweep asks again later. Without it an unreachable
+ *  engine cost each queued ask its full timeout in turn, and a split's pieces
+ *  waited minutes for their match behind pictures nobody would get (#8541). */
+export const ENGINE_REST_MS = 10 * 60 * 1000;
+
+/** The engine as every ask reaches it: one at a time, a breath between asks,
+ *  and a rest after a wall. Exported for the test, with the clock and the
+ *  breath injectable. */
+export function queuedEngine(
+  ask: (query: string, limit: number) => Promise<DdgImageResult[]>,
+  opts: { spacingMs?: number; restMs?: number; now?: () => number } = {},
+): (query: string, limit: number) => Promise<DdgImageResult[]> {
+  const { spacingMs = SEARCH_SPACING_MS, restMs = ENGINE_REST_MS, now = Date.now } = opts;
+  let restUntil = 0;
+  let chain: Promise<unknown> = Promise.resolve();
+  const resting = () => now() < restUntil;
+  return (query, limit) => {
+    const turn = async () => {
+      if (resting()) throw new DdgThrottledError(0, "unreachable");
+      try {
+        return await ask(query, limit);
+      } catch (err) {
+        if (err instanceof DdgThrottledError) {
+          restUntil = now() + restMs;
+          console.warn(`[core-scan] picture engine ${err.reason}; resting it for ${Math.round(restMs / 60_000)} min, asks meanwhile read as busy`);
+        }
+        throw err;
+      }
+    };
+    const run = chain.then(turn, turn);
+    // No breath after an ask the rest answered: nothing went to the engine.
+    chain = run.catch(() => undefined).then(() => (resting() ? undefined : new Promise<void>((r) => setTimeout(r, spacingMs))));
+    return run;
+  };
 }
 
 /** The same switch the barcode web search honours (the self-host privacy
@@ -88,7 +119,7 @@ function withSearchSlot<T>(fn: () => Promise<T>): Promise<T> {
  *  engine was in a mood (2026-09-07). One switch, read at ask time so a
  *  test can flip it. */
 const NONE: PictureSources = { engine: async () => [], library: async () => [] };
-const REAL: PictureSources = { engine: (q, n) => withSearchSlot(() => engineSearch(q, n)), library: librarySearch };
+const REAL: PictureSources = { engine: queuedEngine(engineSearch), library: librarySearch };
 // Replaying (web-replay.ts) reads cassettes and never the network, so the
 // web-search switch has nothing to protect there.
 const REPLAY: PictureSources = { engine: engineSearch, library: librarySearch };

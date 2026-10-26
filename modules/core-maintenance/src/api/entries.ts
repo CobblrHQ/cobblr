@@ -14,9 +14,11 @@ import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { completeEntry, rollForward, reconcileSchedules } from "../schedules-store.js";
 import { present } from "./schedules.js";
+import { MaintenanceRefusal } from "../refusal.js";
 import { calendarDue } from "../schedule.js";
 import { asAddress } from "@cobblr/platform-contract/address";
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { CompletionBody } from "./completion-input.js";
 
 export const entriesRouter = Router({ mergeParams: true });
 
@@ -268,6 +270,11 @@ entriesRouter.patch(
       const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirst();
       if (!before) return null;
       if (before.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
+      if (before.schedule_id && !before.performed_at) {
+        const dateChanged = parsed.data.scheduled_at !== undefined && instantFromInput(parsed.data.scheduled_at)?.getTime() !== before.scheduled_at?.getTime();
+        const nameChanged = parsed.data.name !== undefined && parsed.data.name !== before.name;
+        if (dateChanged || nameChanged) throw new MaintenanceRefusal("This service's name and due date come from its service schedule. Change the schedule on the record instead.");
+      }
       const updated = await tx.updateTable("core_maintenance_entries").set(patch as never).where("id", "=", id).returningAll().executeTakeFirst();
       if (!updated || !parsed.data.performed_at) return updated;
       if (!before.performed_at) {
@@ -341,10 +348,12 @@ entriesRouter.post(
       res.status(400).json({ error: { code: "missing_id", message: "id required" } });
       return;
     }
+    const parsed = CompletionBody.safeParse(req.body ?? {});
+    if (!parsed.success) return badBody(res, parsed.error);
     const session = sessionUser(req);
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const completedAt = instantFromInput(req.body?.performed_at) ?? new Date();
+    const completedAt = instantFromInput(parsed.data.performed_at) ?? new Date();
     const completed = await completeEntry(db, ctx.org.id, id, session.id, completedAt);
     if (!completed) {
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });

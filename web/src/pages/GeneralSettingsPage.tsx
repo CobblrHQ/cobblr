@@ -8,7 +8,7 @@
 import { useAuth } from "../auth/AuthContext";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, LogOut, Trash2 } from "lucide-react";
 import { CurrencyPicker, usePageTitle, useToast } from "@cobblr/platform-web";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -273,19 +273,19 @@ function LeaveWorkspaceCard({ slug, name }: { slug: string; name: string }) {
 function CurrencyCard({ slug, editable }: { slug: string; editable: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [busy, setBusy] = useState(false);
   const query = useQuery({ queryKey: ["workspace-currency", slug], queryFn: () => api.workspaceCurrency(slug) });
-  const change = async (currency: string) => {
-    setBusy(true);
-    try {
+  // A mutation, so the page says it is busy from the pick until the totals are read again.
+  const change = useMutation({
+    mutationFn: async (currency: string) => {
       await api.setWorkspaceCurrency(slug, currency);
       await qc.invalidateQueries();
-    } catch (err) { toast.error(err instanceof Error ? err.message : "Couldn't change currency"); }
-    finally { setBusy(false); }
-  };
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Couldn't change currency"),
+  });
+  const busy = change.isPending;
   return <section className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-4 space-y-2">
     <h2 className="text-sm font-semibold">Main currency</h2>
-    <CurrencyPicker value={query.data?.currency || "USD"} disabled={!editable || busy || query.isLoading} onChange={(c) => void change(c)} label="Main currency" />
+    <CurrencyPicker value={query.data?.currency || "USD"} disabled={!editable || busy || query.isLoading} onChange={(c) => change.mutate(c)} label="Main currency" />
     <p className="text-sm text-muted">Totals use this currency at the purchase-date rate, or the entry-date rate when no purchase date is recorded. Older prices with no currency read as this currency. Prices with no known rate are left out and listed beside the total.</p>
   </section>;
 }

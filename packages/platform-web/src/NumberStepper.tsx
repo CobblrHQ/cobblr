@@ -44,6 +44,8 @@ export interface NumberStepperProps {
   value: number;
   /** A new value, from a tap or a typed commit. Never called with the value it already has. */
   onChange: (next: number) => void;
+  /** Stock corrections keep changes made by others while the count was typed. */
+  preserveConcurrentChanges?: boolean;
   min?: number;
   max?: number;
   /** A write is in flight: taps still count, and the next write waits for it. */
@@ -81,6 +83,7 @@ export function NumberStepper({
   value,
   onChange,
   min: minProp,
+  preserveConcurrentChanges = false,
   max,
   busy = false,
   typed,
@@ -95,7 +98,7 @@ export function NumberStepper({
   testId,
   inputTestId,
   className = "inline-flex items-center",
-  buttonClassName = "min-h-9 w-8 text-muted disabled:opacity-40",
+  buttonClassName = "min-h-9 w-[32px] text-muted disabled:opacity-40",
   inputClassName = "w-10 bg-transparent text-center font-semibold tabular-nums text-content dark:text-mortar-100",
   icons = false,
   iconSize = 14,
@@ -171,7 +174,9 @@ export function NumberStepper({
       >
         {glyph("−", Minus)}
       </button>
-      <span className="inline-flex items-baseline" data-stepper-number="">
+      {/* The number and its unit wrap, the unit under the number, before the
+          stepper runs past its row: "1 ingredient" at 200% text (#8432). */}
+      <span className="inline-flex min-w-0 flex-wrap items-baseline justify-center" data-stepper-number="">
         {prefix && !signed && <span aria-hidden="true" className="pointer-events-none font-semibold tabular-nums">{prefix}</span>}
         <TypeableNumber
           value={shown}
@@ -184,11 +189,11 @@ export function NumberStepper({
           text={typed?.text}
           onTextChange={typed?.onTextChange}
           onRevert={typed?.onRevert}
-          onCommit={(n) => {
+          onCommit={(n, before) => {
             typed?.onCommit?.();
             // A typed zero is no change either: refused, the field goes back.
             if (signed && n === 0) return;
-            apply(n);
+            apply(preserveConcurrentChanges ? shown + n - before : n);
           }}
         />
         {suffix && <span className="pointer-events-none whitespace-pre font-mono tabular-nums">{suffix}</span>}

@@ -1115,7 +1115,7 @@ export default defineModule({
         examples: ["finish the filament recount", "the scan is the truth, apply it", "mark the ones I didn't see gone"],
         label: "Finish a recount",
         description:
-          "Finish an open recount (previewed first: the card lists every change). Seen records are confirmed; with truth on, their places and amounts come from the scans. New things are added (new: { <scan_id>: 'add' | 'skip' }, default add), like the type they read as. Not seen records: not_seen: { <record_id>: 'gone' | 'keep' | 'later' }, or not_seen_all for all of them; the default is gone when truth is on, keep when off. Gone is 'gone, not recorded how' (never finished or thrown out). Nothing is deleted, and one Undo (inventory:undo-recount) puts everything back. Args: { recount_id, truth?, not_seen?, not_seen_all?, new? }.",
+          "Finish an open recount (previewed first: the card lists every change). Seen records are confirmed; with truth on, their places and amounts come from the scans. New things are added (new: { <scan_id>: 'add' | 'skip' }, default add), like the type they read as. Not seen records: not_seen: { <record_id>: 'gone' | 'keep' | 'later' }, or not_seen_all for all of them; the default is gone when truth is on, keep when off. Gone is 'gone, not recorded how' (never finished or thrown out). Nothing is deleted, and one Undo (inventory:undo-recount) puts everything back. Args: { recount_id, truth?, not_seen?, not_seen_all?, new?, preview? }. Pass the preview fingerprint from the plan to refuse changes since it was reviewed.",
         scope: "workspace" as const,
         invokeHandler: "inventory.apply-recount",
         userInvokable: true,

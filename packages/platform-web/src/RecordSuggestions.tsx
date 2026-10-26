@@ -14,7 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { MessageSquareDiff } from "lucide-react";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { usePlatformWeb } from "./context";
-import { useRunAction } from "./run-action";
+import { runUndoSteps, undoStepsOf, useRunAction } from "./run-action";
 import { useToast } from "./ToastContext";
 import type { SuggestedEdit } from "./types";
 
@@ -46,14 +46,15 @@ export function RecordSuggestions({ kind, id, onChanged }: { kind: string; id: s
       const r = await runAction({ actionId, entityKind: kind, entityId: id, args: { ids } }, { undo: "shown-here" });
       const res = r.result as { ok?: boolean; error?: string; summary?: string } | null;
       if (!res?.ok) throw new Error(res?.error ?? "That did not go through.");
-      toast.success(res.summary ?? "Done.", {
+      const back = undoStepsOf(r.undo);
+      toast.success(res.summary ?? "Done.", back.length ? {
         actionLabel: "Undo",
         onAction: async () => {
-          await runAction({ actionId: "platform:reopen-suggestions", entityKind: kind, entityId: id, args: { ids } }, { undo: "is-undo" });
+          await runUndoSteps((b) => runAction(b, { undo: "is-undo" }), back);
           await q.refetch();
           onChanged?.();
         },
-      });
+      } : undefined);
       await q.refetch();
       onChanged?.();
     } catch (e) {

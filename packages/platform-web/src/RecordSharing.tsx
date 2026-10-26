@@ -46,6 +46,7 @@ export function RecordSharing({ kind, id, className }: { kind: string; id: strin
       toast.success(res.summary ?? "Done.", {
         actionLabel: "Undo",
         onAction: async () => {
+          // OWN-WAY-BACK: sharing has no issued Undo; it adds or removes this one link and no other, and twice is the same as once.
           await runAction({ actionId: back, entityKind: kind, entityId: id, args: { entity_kind: kind, ids: [id], with: linkId } }, { undo: "is-undo" });
           await q.refetch();
         },

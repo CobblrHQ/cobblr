@@ -148,7 +148,7 @@ export function ImportLocationsDialog({ slug, onClose }: { slug: string; onClose
         {!preview ? (
           <button type="button" onClick={() => dry.mutate()} disabled={dry.isPending || !csv.trim()} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{dry.isPending ? "…" : "Preview"}</button>
         ) : (
-          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending || (preview.blocking?.length ?? 0) > 0} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
+          <button type="button" onClick={() => commit.mutate()} disabled={commit.isPending || !preview.rows?.length || (preview.blocking?.length ?? 0) > 0} className="px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50">{commit.isPending ? "Importing…" : `Import ${(preview.rows ?? []).length} row${(preview.rows ?? []).length === 1 ? "" : "s"}`}</button>
         )}
         <button type="button" onClick={onClose} className="text-sm text-faint hover:text-content">Cancel</button>
       </div>

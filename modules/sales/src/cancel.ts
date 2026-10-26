@@ -118,16 +118,18 @@ export async function reinstateOrder(
     if (order.status !== "cancelled") return { ok: false, code: "not_cancelled", message: `This order is ${order.status}, not cancelled.` };
     const retaken: Restocked[] = [];
     for (const r of undo.restocked) {
-      const took = await adjust(orgId, userId, orderId, r.part_id, -r.qty, "sale-reinstated");
+      const line = await db.selectFrom("sales_order_items").select(["part_id", "qty", "qty_fulfilled"]).where("id", "=", r.line_id).where("order_id", "=", orderId).executeTakeFirst();
+      if (!line || line.part_id !== r.part_id) continue;
+      const needed = Math.max(0, Number(line.qty) - Number(line.qty_fulfilled));
+      const qty = Math.min(r.qty, needed);
+      if (!(qty > 0)) continue;
+      const took = await adjust(orgId, userId, orderId, r.part_id, -qty, "sale-reinstated");
       if (took <= 0) continue;
-      const line = await db.selectFrom("sales_order_items").select(["qty_fulfilled"]).where("id", "=", r.line_id).where("order_id", "=", orderId).executeTakeFirst();
-      if (line) {
-        await db
-          .updateTable("sales_order_items")
-          .set({ qty_fulfilled: String((Number(line.qty_fulfilled) || 0) + took), updated_at: new Date() })
-          .where("id", "=", r.line_id)
-          .execute();
-      }
+      await db
+        .updateTable("sales_order_items")
+        .set({ qty_fulfilled: String((Number(line.qty_fulfilled) || 0) + took), updated_at: new Date() })
+        .where("id", "=", r.line_id)
+        .execute();
       retaken.push({ ...r, qty: took });
     }
     const complete = await orderStockComplete(db, orderId);

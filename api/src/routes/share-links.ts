@@ -351,7 +351,11 @@ shareLinksOrgRouter.get("/:slug/share-offers", requireAuth, withTenant, async (r
 shareLinksOrgRouter.post("/:slug/share-offers/:id/withdraw", requireAuth, withTenant, async (req, res, next) => {
   try {
     if (!requireRole(req, res, "owner", "admin", "editor", "member")) return;
-    const r = await withdrawOffer(req.tenant!.org.id, String(req.params.id), req.session!.id);
+    // Pressed on an offered record, it names the record, so an offer whose
+    // share has ended can still be taken off it (#8264).
+    const b = (req.body ?? {}) as { record?: { kind?: unknown; id?: unknown } };
+    const record = typeof b.record?.kind === "string" && typeof b.record?.id === "string" ? { kind: b.record.kind, id: b.record.id } : undefined;
+    const r = await withdrawOffer(req.tenant!.org.id, String(req.params.id), req.session!.id, record);
     if (!r.ok) return bad(res, 409, "cannot_withdraw", r.error);
     res.json({ ok: true });
   } catch (err) {

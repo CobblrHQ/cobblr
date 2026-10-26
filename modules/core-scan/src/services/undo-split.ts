@@ -23,14 +23,15 @@ async function parentRow(db: Kysely<CoreScanDB>, id: string) {
 }
 
 /** Undo the split `id` belongs to: it may be the split line or one of its
- *  parts. */
-export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: string, http: PurchaseHttp | null): Promise<UndoSplitResult> {
+ *  parts. `by` is the person pressing it: their own edits to the parts go
+ *  with the parts, someone else's refuse it (#8557). */
+export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: string, http: PurchaseHttp | null, by: string | null): Promise<UndoSplitResult> {
     // One transaction, the line and its parts locked before their statuses
     // are read (#7144): a part filed between the read and the write was
     // discarded after its record was made, and the line came back holding
     // it again. A Confirm now either lands first (and this refuses) or waits
     // and finds the part discarded.
-    const r = await db.transaction().execute((tx) => undoSplitLocked(tx as unknown as Kysely<CoreScanDB>, id));
+    const r = await db.transaction().execute((tx) => undoSplitLocked(tx as unknown as Kysely<CoreScanDB>, id, by));
     if (!r.ok) return r;
     const { parent: restored, live } = r;
     // Its parts' order lines become its one line again (#5734).
@@ -45,7 +46,7 @@ export async function undoSplit(db: Kysely<CoreScanDB>, orgId: string, id: strin
     return { ok: true as const, parent: restored, live };
 }
 
-async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string): Promise<UndoSplitResult> {
+async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string, by: string | null): Promise<UndoSplitResult> {
     const start = await db
       .selectFrom("core_scan_inbox_items")
       .select(["id", "suggested_metadata"])
@@ -90,6 +91,22 @@ async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string): Promise<Undo
           item_id: combined.id,
         } };
     }
+    // A part someone else edited since the split (renamed it, changed its
+    // count or place) is their work, and discarding the part would lose it
+    // with nothing said. Read from each part's History, where every person's
+    // edit is written with who made it (#8557).
+    const since = parent.resolved_at ? new Date(parent.resolved_at).getTime() : 0;
+    for (const c of children) {
+      if (c.status === "discarded") continue;
+      const edit = editsSince(c.suggested_metadata, since).find((e) => e.by !== by);
+      if (edit) {
+        return { ok: false as const, status: 409, error: {
+            code: "child_edited",
+            message: `"${c.suggested_name ?? "One of the split items"}" was edited by someone else since the split (${(edit.changed ?? []).join(", ") || "changed"}). ${SCAN_UNDO_ACTIONS.undoSplit} would discard their change, so the split is kept. Look at that item first.`,
+            item_id: c.id,
+          } };
+      }
+    }
     const now = new Date();
     const live = children.filter((c) => c.status !== "discarded").map((c) => c.id);
     // What the split was, kept on its parts so Split again can put it back
@@ -122,6 +139,16 @@ async function undoSplitLocked(db: Kysely<CoreScanDB>, id: string): Promise<Undo
       .returningAll()
       .executeTakeFirstOrThrow();
     return { ok: true as const, parent: restored, live };
+}
+
+/** A part's edits by a person after `since` (ms), from its History. */
+function editsSince(meta: unknown, since: number): Array<{ by: string; changed?: string[] }> {
+  const history = ((meta ?? {}) as { history?: unknown }).history;
+  if (!Array.isArray(history)) return [];
+  return history.filter(
+    (e): e is { action: "edit"; at: string; by: string; changed?: string[] } =>
+      !!e && typeof e === "object" && (e as { action?: unknown }).action === "edit" && typeof (e as { by?: unknown }).by === "string" && new Date(String((e as { at?: unknown }).at)).getTime() > since,
+  );
 }
 
 export type RedoSplitResult =

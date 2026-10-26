@@ -35,22 +35,16 @@
 // pulls the database and therefore env validation, which exits the process, so
 // the payload shape would otherwise be untestable.
 
+import { REPLY_MAX, REPLY_ACTION_ID } from "@cobblr/platform-contract/notifications";
+
 /** The interaction type a submitted modal arrives as. */
 export const MODAL_SUBMIT = 5;
 /** The callback type that opens one. */
 export const MODAL_RESPONSE = 9;
 
-/** Discord's cap on a text input value. */
-export const REPLY_MAX = 4000;
+export { REPLY_MAX, REPLY_ACTION_ID } from "@cobblr/platform-contract/notifications";
 /** Our own floor for the field, so the modal cannot post an empty comment. */
 export const REPLY_MIN = 1;
-
-/** The action id that means "let them write something back".
- *
- *  A reserved id rather than a per-module convention: the interactions handler
- *  has to recognise it BEFORE it resolves the action, because this press opens
- *  a box instead of doing anything. */
-export const REPLY_ACTION_ID = "reply";
 
 /** `cbl:<notificationId>:<actionId>` is the existing scheme and this reuses it
  *  verbatim, so a modal submit parses with the very same parsePress and cannot

@@ -120,10 +120,10 @@ export const MAX_CHOICES = 6;
 
 const STOP = new Set(["a", "an", "the", "of", "in", "on", "for", "to", "and", "or", "at", "by", "with", "it", "is", "my", "me", "i", "one", "this", "that"]);
 
-/** Words and numbers, lowercased; "#10" reads as "10". */
+/** Words and numbers of any script, lowercased; "#10" reads as "10". */
 export function tokensOf(s: string): Set<string> {
   const out = new Set<string>();
-  for (const t of s.toLowerCase().split(/[^a-z0-9]+/)) if (t && !STOP.has(t)) out.add(t);
+  for (const t of s.toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u)) if (t && !STOP.has(t)) out.add(t);
   return out;
 }
 

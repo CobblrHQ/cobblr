@@ -50,7 +50,7 @@ export function namedByModel(text: string, also: ReadonlyArray<{ id: string; tit
     const bare = full.replace(/\s*\([^)]*\)\s*$/, "");
     for (const t of new Set([full, bare])) {
       if (t.length < 3) continue;
-      if (new RegExp(`(^|[^a-z0-9])${escapeRe(t)}([^a-z0-9]|$)`).test(hay)) return true;
+      if (new RegExp(`(^|[^\\p{L}\\p{M}\\p{N}])${escapeRe(t)}([^\\p{L}\\p{M}\\p{N}]|$)`, "u").test(hay)) return true;
     }
     return false;
   });

@@ -338,8 +338,8 @@ export function ImageSearchPicker({
     const hasOwn = !!leading;
     return (
       <div ref={rootRef} className="min-w-0 space-y-1.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-content shrink-0">{hasOwn ? "Your photos and the web" : "Pictures on the web"}</span>
+        <div className="flex flex-wrap items-center gap-[8px]">
+          <span className="text-xs font-medium text-content">{hasOwn ? "Your photos and the web" : "Pictures on the web"}</span>
           <span className="flex-1" />
           {searchable && (
             <button

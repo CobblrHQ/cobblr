@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
-import { fetchKinds, resolveCreatePath, withKindsTitleField } from "../kinds.js";
+import { fetchKinds, resolveCreatePath, recordCreateRefusal, withKindsTitleField } from "../kinds.js";
 import { type WorkspaceTool } from "../tool-kit.js";
 
 const tool: WorkspaceTool = {
@@ -21,6 +21,8 @@ const tool: WorkspaceTool = {
     const rows = Array.isArray(args.records) ? (args.records as Array<Record<string, unknown>>) : [];
     if (rows.length === 0) return toolFail("no records given");
     const kinds = await fetchKinds(api);
+    const refused = recordCreateRefusal(kind, kinds);
+    if (refused) return toolFail(refused);
     const path = resolveCreatePath(kind, kinds);
     if (!path) return toolFail(`records of "${kind}" can't be created this way (no create route declared)`);
     const created: unknown[] = [];

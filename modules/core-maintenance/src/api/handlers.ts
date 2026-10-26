@@ -31,6 +31,8 @@ import { TermBody } from "../term-fields.js";
 import { updateTerm, endRenewal } from "../terms-store.js";
 
 import { instantFromInput } from "@cobblr/platform-contract/day";
+import { CompletionBody } from "./completion-input.js";
+import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 const str = (v: unknown): string | null =>
   typeof v === "string" && v.trim() ? v.trim() : null;
@@ -285,7 +287,9 @@ export function registerMaintenanceHandlers(): void {
       };
     }
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const completed = await completeEntry(db, ctx.orgId, id, ctx.userId, when(args.performed_at) ?? new Date());
+    const parsed = CompletionBody.safeParse(args);
+    if (!parsed.success) return { ok: false, error: invalidBodyMessage(parsed.error.issues) };
+    const completed = await completeEntry(db, ctx.orgId, id, ctx.userId, when(parsed.data.performed_at) ?? new Date());
     if (!completed) return { ok: false, error: "This service is no longer scheduled." };
     const { row, rolled, before } = completed;
     if (completed.skipped) return { ok: true, skipped: true, summary: "This service was already done." };

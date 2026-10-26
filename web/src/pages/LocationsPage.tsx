@@ -94,8 +94,8 @@ export function LocationsPage() {
   const [editTarget, setEditTarget] = useState<Location | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
-  // Importing places is the admin tier's; their order is its own action.
-  const mayImport = useRoleAtLeast(ADMIN_TIER);
+  const canImport = useRoleAtLeast(ADMIN_TIER);
+  useEffect(() => { if (!canImport) setImportOpen(false); }, [canImport]);
   // Fold + filter (lib/tree-fold.ts). Filtering wins: while a query is typed
   // every surviving node is open and fold memory is left alone.
   const [q, setQ] = useState("");
@@ -408,10 +408,10 @@ export function LocationsPage() {
       {/* Below `sm`, Export and Import live on this small line instead of the
           title row: there the title, the Floor Plan / List switch and three
           icon buttons came to 416 px and every phone scrolled sideways (#6930). */}
-      <div className="flex items-center gap-3 text-xs text-muted">
-        <Link className="inline-flex items-center underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
-        <button type="button" onClick={exportCsv} className="inline-flex items-center sm:hidden underline" title="Download all locations as a CSV">Export</button>
-        {mayImport && <button type="button" onClick={() => setImportOpen(true)} className="inline-flex items-center sm:hidden underline" title="Import locations from a file">Import</button>}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
+        <Link className="inline-flex shrink-0 items-center underline" to="/configuration/recently-deleted?kind=core-locations:location">Recently deleted</Link>
+        <button type="button" onClick={exportCsv} className="inline-flex shrink-0 items-center sm:hidden underline" title="Download all locations as a CSV">Export</button>
+        {canImport && <button type="button" onClick={() => setImportOpen(true)} className="inline-flex shrink-0 items-center sm:hidden underline" title="Import locations from a file">Import</button>}
       </div>
       {/* ONE row on every width. It used to wrap, which kept the page from
           scrolling sideways but spent three of a phone's rows on chrome before
@@ -474,7 +474,7 @@ export function LocationsPage() {
         >
           <Download size={14} /> <span className="hidden sm:inline">Export</span>
         </button>
-        {mayImport && <button
+        {canImport && <button
           onClick={() => setImportOpen(true)}
           aria-label="Import"
           title="Import locations from a file"
@@ -483,7 +483,7 @@ export function LocationsPage() {
           <Upload size={14} /> <span className="hidden sm:inline">Import</span>
         </button>}
       </div>
-      {importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
+      {canImport && importOpen && <ImportLocationsDialog slug={activeSlug} onClose={() => setImportOpen(false)} />}
 
       {list.isLoading && (
         <div className="text-sm text-muted">Loading…</div>
@@ -1358,13 +1358,14 @@ export function LocationFormModal({
       if (editing && target) {
         // Only what changed, with what it was: a newer move or rename from
         // another tab stands, or this save is refused and says so (#7906, #7925).
-        const edit = editOf(target as unknown as Record<string, unknown>, {
+        const edit = editOf(target, {
+          ...(allowDuplicate ? { allow_duplicate: true } : {}),
           name: name.trim(),
           short_name: shortName.trim() || null,
           kind,
           parent_id: parentId || null,
         });
-        await api.updateLocation(slug, target.id, { ...edit.body, ...(allowDuplicate ? { allow_duplicate: true } : {}) }, edit.headers);
+        await api.updateLocation(slug, target.id, edit);
         toast.success("Location updated");
       } else if (expansion && expansion.names.length > 1) {
         // Bulk-create N siblings from a "Foo 1-3" range. Sequential

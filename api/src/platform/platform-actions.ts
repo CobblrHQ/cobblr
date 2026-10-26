@@ -959,6 +959,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       reason: { label: "Why: repair, borrowed, or your own words", type: "text" },
       since: { label: "The day it went (YYYY-MM-DD; today when left out)", type: "text" },
       due_back: { label: "Due back (YYYY-MM-DD)", type: "text" },
+      expected_loan: { label: "For a deliberate transfer, the complete current loan read from the record", type: "json", required: false },
       note: { label: "A note", type: "text" },
     },
     version: "0.1.0",
@@ -970,7 +971,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "It's back",
     description:
-      "Things lent out are back: the loan ends, and each is at its own place again in the state it was in. Back from a repair, say whether it was repaired (repaired: true or false) and what was done (work); a repair goes in its service log as \"Repaired by <who>\". Read the records first and pass their real ids and their kind.",
+      "Things lent out are back: the loan ends, and each is at its own place again in the state it was in. Back from a repair, say whether it was repaired (repaired: true or false) and what was done (work). History keeps these details; a repair also goes in its service log as \"Repaired by <who>\" when available. Read the records first and pass their real ids and their kind.",
     icon: "undo-2",
     scope: "workspace",
     invoke_handler: "platform.return",

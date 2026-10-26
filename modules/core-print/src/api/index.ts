@@ -18,6 +18,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { PRINTER_MANAGERS } from "@cobblr/platform-contract/org-roles";
 import { assertSafePrinterUrl } from "../drivers/ssrf.js";
 import { isDriverKind } from "../drivers/registry.js";
 import { isEdgeManagerUrl } from "../edge.js";
@@ -169,7 +170,7 @@ router.get(
 router.post(
   "/printers",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, ...PRINTER_MANAGERS)) return;
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const body = parsed.data;
@@ -245,7 +246,7 @@ router.post(
 router.patch(
   "/printers/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, ...PRINTER_MANAGERS)) return;
     const parsed = PatchBody.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const body = parsed.data;
@@ -301,7 +302,7 @@ router.patch(
 router.delete(
   "/printers/:id",
   asyncHandler(async (req, res) => {
-    if (!requireRole(req, res, "owner", "admin")) return;
+    if (!requireRole(req, res, ...PRINTER_MANAGERS)) return;
     const db = tenantDb(req);
     const r = await db.deleteFrom("core_print_printers").where("id", "=", req.params.id as string).executeTakeFirst();
     if (!r.numDeletedRows) {

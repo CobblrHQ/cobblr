@@ -58,6 +58,7 @@ export function registerPackageReceiving() {
     if (!details?.fields || details.outcome === "miss" || details.outcome === "unavailable") throw new ActionRefusal("This label is not readable. Scan its 2D package code again.");
     const fields = { ...details.fields, ...p.fields };
     if (fields.msl != null && fields.msl !== "" && !MslSchema.safeParse(fields.msl).success) throw new ActionRefusal("Choose a valid MSL from the part's manufacturer data.");
+    if (fields.attrition_pct != null && !z.number().finite().min(0).max(100).safeParse(fields.attrition_pct).success) throw new ActionRefusal("Give an attrition percentage between 0 and 100.");
     const identityField = receiveCfg.data.identity_field;
     const identity = p.identity ?? fields[identityField];
     if (typeof identity !== "string" || !identity.trim()) throw new ActionRefusal("Confirm the manufacturer part number before receiving.");

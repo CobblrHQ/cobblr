@@ -22,7 +22,9 @@ import { awaitBlockedAction, carriesOnItself, raiseBlockedAction, refusedRequest
 import { primedRead } from "./primed-reads";
 import { sharedRead } from "./shared-reads";
 import { networkFailureMessage } from "./network-failure";
+import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
 import { browserOffline, keepWaitingWrite, landedWrite, madeByAPerson, withWaitingWrites } from "./waiting-writes";
+import { beginWrite, outcomeOf } from "./write-identity";
 
 const roles = new Map<string, string>();
 const shared = new Map<string, PortalShares>();
@@ -100,9 +102,9 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
   for (;;) {
     let res: Response;
     try {
-      res = await send(input, init, method);
+      res = await sendOnce(input, init, method, path);
     } catch (e) {
-      if (keeps && byAPerson && browserOffline()) keepWaitingWrite(method, path, init?.body, authorization);
+      if (keeps && byAPerson && browserOffline()) keepWaitingWrite(method, path, init?.body, authorization, new Headers(init?.headers).get(EDITED_FROM_HEADER));
       if (!path.startsWith("/orgs/") || (e && typeof e === "object" && "name" in e && e.name === "AbortError")) throw e;
       throw new Error(networkFailureMessage(), { cause: e });
     }
@@ -124,6 +126,25 @@ export async function workspaceFetch(input: string | URL | Request, init?: Reque
     }
     if ((await awaitBlockedAction({ blocked, refused, subject: null })) !== "applied") return res;
     applied = key;
+  }
+}
+
+/** One write carries its identity (write-identity.ts, #7923): sent again
+ *  while its outcome is unknown, it is the same write, and the server
+ *  answers it as it answered the first. */
+async function sendOnce(input: string | URL | Request, init: RequestInit | undefined, method: string, path: string): Promise<Response> {
+  const body = typeof init?.body === "string" ? init.body : init?.body == null ? null : undefined;
+  const write = path.startsWith("/orgs/") && body !== undefined && !(input instanceof Request) ? beginWrite(method, path, body) : null;
+  if (!write) return send(input, init, method);
+  const headers = new Headers(init?.headers);
+  headers.set("Idempotency-Key", write.key);
+  try {
+    const res = await send(input, { ...init, headers }, method);
+    write.settle(outcomeOf(res.status, res.headers.get("retry-after")));
+    return res;
+  } catch (e) {
+    write.settle("unknown");
+    throw e;
   }
 }
 

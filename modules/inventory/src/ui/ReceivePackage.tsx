@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { LocationPicker, Modal, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction } from "@cobblr/platform-web";
+import { LocationPicker, Modal, useCan, useFieldPresentation, usePhotoPick, usePlatformWeb, useRunAction } from "@cobblr/platform-web";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { useInventory } from "./context";
 import type { FamilyPayload } from "./api";
@@ -11,6 +11,9 @@ type Receipt = { part_id: string; already_received: boolean; quantity: number };
 export function ReceivePackage({ data }: { data: FamilyPayload }) {
   const { basePath } = useInventory();
   const { decodeBarcodeImage } = usePlatformWeb();
+  const canReceive = useCan("inventory:receive-package");
+  const canDecode = useCan("core-scan:decode-identifier");
+  const canPrint = useCan("labels:print");
   const { label } = useFieldPresentation(`${data.child}:item`);
   // PRESS-ARGS: the receiving form supplies the label, confirmed count and collection; print carries the saved package.
   const run = useRunAction();
@@ -58,6 +61,7 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
   }, { title: "Scan a package label", label: "Package label photo" });
 
   async function print(id: string) {
+    if (!canPrint) return;
     setBusy(true); setError(null);
     try { await run({ actionId: "labels:print", entityKind: "inventory:part", entityId: id }); setPrinted(true); }
     catch (e) { setError(`Stock was received. Its label was not queued: ${e instanceof Error ? e.message : "try again"}`); }
@@ -74,17 +78,18 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
       if (!out.ok || !out.data) throw new Error(typeof out.error === "string" ? out.error : "This package was not received.");
       const received = out.data as Receipt;
       setReceipt(received);
-      if (!received.already_received) await print(received.part_id);
+      if (!received.already_received && canPrint) await print(received.part_id);
     } catch (e) { setError(e instanceof Error ? e.message : "This package was not received."); }
     finally { setBusy(false); }
   }
   const input = "input w-full";
+  if (!canReceive || !canDecode) return null;
   return <>
     <button type="button" className="rounded border border-line px-3 py-1.5 text-sm" onClick={() => setOpen(true)}>Receive a package</button>
     <Modal open={open} onClose={() => setOpen(false)} title="Receive a package" size="md">
       <div className="space-y-3" data-testid="package-receiving">
         {/* base-noun-ok: a distributor's label names an electronic part and its MPN */}
-        <p className="text-sm text-muted">Scan the distributor’s 2D label. Review its part and count, then receive it and queue its QR label.</p>
+        <p className="text-sm text-muted">Scan the distributor’s 2D label. Review its part and count before receiving it.</p>
         {error && <p role="alert" className="text-sm text-ember-700 dark:text-ember-300">{error}</p>}
         <form onSubmit={e => { e.preventDefault(); void decode(code); }} className="space-y-2">
           <label className="block text-sm">Distributor label<textarea className={input} value={code} onChange={e => { setCode(e.target.value); setFields(null); setReceipt(null); setReceiptKey(undefined); }} rows={2} /></label>
@@ -108,12 +113,12 @@ export function ReceivePackage({ data }: { data: FamilyPayload }) {
             <label>Receive into<select className={input} value={topUp} onChange={e => setTopUp(e.target.value)}><option value="">New package</option>{packages.filter(p => String(p.metadata.mpn ?? "").toLowerCase() === mpn.toLowerCase()).map(p => <option key={p.id} value={p.id}>{p.name} · {p.metadata.lot_code ? String(p.metadata.lot_code) : "no lot"} · {p.qty} left</option>)}</select></label>
           </div>
           <p className="text-xs text-muted">Lot: {String(fields.lot_code ?? "not on label")} · Date code: {String(fields.date_code ?? "not on label")}. An unknown MSL blocks use until confirmed on the part.</p>
-          <button type="submit" disabled={busy} className="rounded bg-cobble-600 text-white px-3 py-2 text-sm">Receive and print label</button>
+          <button type="submit" disabled={busy} className="rounded bg-cobble-600 text-white px-3 py-2 text-sm">{canPrint ? "Receive and print label" : "Receive package"}</button>
         </form>}
         {receipt && <div className="space-y-2 text-sm" role="status">
-          <p>{receipt.already_received ? "This label was already received. Its count is unchanged." : `Received ${receipt.quantity}. ${printed ? "QR label queued." : "QR label needs printing."}`}</p>
+          <p>{receipt.already_received ? "This label was already received. Its count is unchanged." : `Received ${receipt.quantity}.${canPrint ? ` ${printed ? "QR label queued." : "QR label needs printing."}` : ""}`}</p>
           <Link to={`${childPath}/parts/${receipt.part_id}`} onClick={() => setOpen(false)} className="text-accent underline">Open package</Link>
-          <div className="flex flex-wrap gap-2"><button disabled={busy} type="button" onClick={() => void print(receipt.part_id)} className="rounded border border-line px-3 py-2">Print label</button>
+          <div className="flex flex-wrap gap-2">{canPrint && <button disabled={busy} type="button" onClick={() => void print(receipt.part_id)} className="rounded border border-line px-3 py-2">Print label</button>}
             <button type="button" onClick={() => { setReceiptKey(randomId()); setReceipt(null); setPrinted(false); }} className="rounded border border-line px-3 py-2">Receive another package with this label</button></div>
         </div>}
       </div>

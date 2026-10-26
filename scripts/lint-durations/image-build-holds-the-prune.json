@@ -1,0 +1,10 @@
+{
+  "lint": "lint:image-build-holds-the-prune",
+  "run": "node scripts/lint-image-build-holds-the-prune.ts",
+  "rows": [
+    "ci-workflow"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-25",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

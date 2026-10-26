@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import { MoreHorizontal } from "lucide-react";
-import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose, useMenuFocus } from "@cobblr/platform-web";
 import { joinNavRow, splitNavRow } from "../lib/nav-order";
 import { navTargetFor, stripNavStem } from "./useNavModules";
 
@@ -14,6 +14,7 @@ export function NavRowMenu({ slug, label, members, candidates, overflow = [], on
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   useEscapeToClose(!!pos, panel, () => setPos(null));
+  useMenuFocus(!!pos, panel);
   useEffect(() => {
     if (!pos) return;
     const dismiss = (e: PointerEvent) => { if (!panel.current?.contains(e.target as Node) && !trigger.current?.contains(e.target as Node)) setPos(null); };
@@ -21,8 +22,11 @@ export function NavRowMenu({ slug, label, members, candidates, overflow = [], on
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [pos]);
   const choices = candidates.filter((c) => !members.some((m) => m.name === c.name));
+  // Nothing to show, split or join: no button. It opened an empty menu, and
+  // the keyboard had no choice to go to (#8423).
+  if (overflow.length === 0 && members.length < 2 && choices.length === 0) return null;
   return <>
-    <button title={`Arrange ${label}`} ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-expanded={!!pos} className={"shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent " + className} onClick={() => {
+    <button title={`Arrange ${label}`} ref={trigger} type="button" aria-label={`Arrange ${label}`} aria-haspopup="menu" aria-expanded={!!pos} className={"shrink-0 p-1 text-muted dark:text-slate-400 hover:text-accent " + className} onClick={() => {
       const rect = trigger.current?.getBoundingClientRect();
       setJoining(false);
       setPos(pos || !rect ? null : { left: rect.left, top: rect.bottom });

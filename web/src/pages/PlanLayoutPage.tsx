@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Plus, Printer, Trash2 } from "lucide-react";
-import { SearchInput, stillAsking, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
+import { SearchInput, editOf, stillAsking, useConfirm, usePageTitle, useToast } from "@cobblr/platform-web";
 import { EMPTY_PLAN_DRAFT, PLANNED_PREFIX, bodyAsApplied, draftSummary, plannedRack, renamePlannedRack, type PlanDraftBody } from "@cobblr/platform-contract/plan-draft";
 import { parseOuterSize } from "@cobblr/platform-contract/outer-size";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -449,7 +449,7 @@ export function PlanLayoutPage() {
           {loading || !board ? (
             <p className="text-sm text-muted">Loading…</p>
           ) : other && otherBoard ? (
-            <div className="grid gap-4 md:grid-cols-2" data-testid="layout-compare">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2" data-testid="layout-compare">
               <div ref={colRef} className="min-w-0">
                 <h2 className="mb-2 text-sm font-semibold text-content dark:text-slate-200">{draft.name}</h2>
                 <LayoutBoard board={board} editable={false} onDrop={onDrop} onMoveRack={onMoveRack} maxFaceHeight={220} faceWidth={faceW} />
@@ -553,7 +553,7 @@ function AisleCheck({ slug, room }: { slug: string; room: Location }) {
   const save = useMutation({
     mutationFn: (aisle: number | undefined) => {
       const metadata = withBound(room.metadata, { ...bound!, aisle_mm: aisle }, "area");
-      return api.updateLocation(slug, room.id, { metadata: jsonbPatchBetween(room.metadata, metadata) });
+      return api.updateLocation(slug, room.id, editOf(room, { metadata: jsonbPatchBetween(room.metadata, metadata) }));
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["core-locations", slug] }),
     onError: (e) => toast.error(`Could not change the aisle check: ${e instanceof ApiError ? e.message : String(e)}`),

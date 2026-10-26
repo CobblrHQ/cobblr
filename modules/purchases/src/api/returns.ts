@@ -13,6 +13,7 @@
 // the card to whoever owns the parcel. A person does not get a card about
 // the step they just took.
 
+import { REFUND_ALREADY_RECORDED } from "@cobblr/platform-contract/purchase-refund";
 import { Router } from "express";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
 import { sql, type Kysely } from "kysely";
@@ -75,7 +76,7 @@ export async function takeReturnStep(orgId: string, userId: string | null, order
     });
   }
   await platform().events.emit("purchases.order.return_recorded", { orgId, orderId, stage: ret?.stage ?? body.stage, returnId: ret?.id ?? null });
-  if (source === "email") await cardTheOwner(db, orgId, orderId, body, ret);
+  if (source === "email" && (outcome.moved || outcome.created || !ret)) await cardTheOwner(db, orgId, orderId, body, ret);
   return outcome;
 }
 
@@ -214,7 +215,7 @@ export function registerReturnActions(): void {
     if (!parsed.success) throw new ActionRefusal("Choose a stage: dropped off, received, refunded or cancelled.");
     const revert = args.revert === true;
     const out = await takeReturnStep(ctx.orgId, ctx.userId ?? null, row.order_id, parsed.data, ctx.event?.actor?.auth_method === "session" ? "person" : "assistant", revert);
-    return { ok: true, changed: out.moved, return_id: returnId, stage: out.ret?.stage ?? null, from: out.from, summary: out.moved ? `Return is now ${RETURN_WORDS[out.ret!.stage]}.` : "That return was already further along." };
+    return { ok: true, changed: out.moved, return_id: returnId, stage: out.ret?.stage ?? null, from: out.from, summary: out.moved ? `Return is now ${RETURN_WORDS[out.ret!.stage]}.` : parsed.data.stage === "refunded" && out.ret?.stage === "refunded" ? REFUND_ALREADY_RECORDED : "That return was already further along." };
   });
 
   // Undo: a started return is cancelled; a stage is taken back to where it

@@ -9,10 +9,13 @@
 // what is missing and who can give it), and lint:mutations-say-why-they-failed
 // refuses a mutation that neither handles its error nor shows it.
 import type { ReactNode } from "react";
+import { argumentRefusal } from "@cobblr/platform-contract/action-refusal";
 
 /** The sentence for a failed write: the server's own message when it sent
  *  one, else a plain fallback. Never a status code alone. */
 export function errorSentence(e: unknown): string {
+  const validation = argumentRefusal(e);
+  if (validation) return validation;
   const m = e instanceof Error ? e.message : typeof e === "string" ? e : "";
   if (!m || /^HTTP \d+$/.test(m)) return "That did not go through. Try again, or ask whoever runs this workspace.";
   return m;

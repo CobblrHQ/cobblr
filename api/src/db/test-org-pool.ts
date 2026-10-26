@@ -181,7 +181,7 @@ export async function checkoutTestOrg(opts: { reserved?: boolean } = {}): Promis
   // 503ing whichever test happened to draw one.
   const claimed = await sql<{ org_id: string; slug: string; owner_user_id: string }>`
     update test_org_pool set status = 'taken'
-    where org_id = (
+    where status = 'available' and org_id = (
       select p.org_id from test_org_pool p
       join orgs o on o.id = p.org_id
       where p.status = 'available' and o.db_credentials_encrypted is not null

@@ -1,11 +1,13 @@
+import { ADMIN_TIER } from "@cobblr/platform-contract/org-roles";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { FieldPack, fieldNeed, fieldPackControlClass, useToast, SearchInput, downloadBlob } from "@cobblr/platform-web";
+import { FieldPack, fieldNeed, fieldPackControlClass, useToast, SearchInput, downloadBlob, useRoleAtLeast } from "@cobblr/platform-web";
 import { ownAddressName, ownAddressSentWords, ownAddressVCard } from "@cobblr/platform-contract/address-name";
 import type { SalesApi, IntakeView } from "./api.js";
 
 export function IntakeSettings({ api }: { api: SalesApi }) {
+  const setsUp = useRoleAtLeast(ADMIN_TIER);
   const address = useQuery({ queryKey: ["sales-order-email-address", api.workspace], queryFn: () => api.orderEmailAddress() });
   const q = useQuery({ queryKey: ["sales-intake", api.workspace], queryFn: () => api.intake(), refetchInterval: 15_000 });
   if (q.isError) return <p role="alert">Order intake settings could not be read. Reopen Sales settings to try again.</p>;
@@ -14,7 +16,7 @@ export function IntakeSettings({ api }: { api: SalesApi }) {
     <h3 className="font-medium">Order emails</h3>
     {address.data?.order_address ? <><p className="text-xs text-muted">Forward sales emails here. Each order becomes a draft with the email for you to review and confirm.</p><p className="text-sm break-all select-all">{address.data.order_address}</p><OrderAddressActions api={api} address={address.data.order_address} name={address.data.order_name ?? ownAddressName("orders", null)} /></> : <p className="text-xs text-muted">Order email forwarding needs the operator's inbound email setup.</p>}
     {address.isError && <p role="alert">The order email address could not be read.</p>}
-  </section><IntakeForm key={`${q.data.setting?.connection ?? "new"}:${q.data.setting?.on}`} api={api} view={q.data} /></>;
+  </section>{setsUp ? <IntakeForm key={`${q.data.setting?.connection ?? "new"}:${q.data.setting?.on}`} api={api} view={q.data} /> : <p className="text-xs text-muted border-t border-line pt-3">An owner or administrator sets up automatic order intake.</p>}</>;
 }
 /** "Email it to me" and "Add to contacts" for the orders address, so typing
  *  "Cobblr" in a To field finds "Cobblr Orders" (#5462). */

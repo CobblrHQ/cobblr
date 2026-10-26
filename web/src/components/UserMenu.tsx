@@ -27,7 +27,7 @@ import { PairPhoneButton } from "./PairPhoneButton";
 import { api, isFocused, setFocused } from "../lib/api";
 import { COMMUNITY_HEADING, CommunityLinks } from "./CommunityLinks";
 import { useMyEdgeBridge } from "../lib/useMyEdgeBridge";
-import { PopoverLayer, useEscapeToClose } from "@cobblr/platform-web";
+import { PopoverLayer, useEscapeToClose, useMenuFocus } from "@cobblr/platform-web";
 import { asksToVerifyEmail } from "../lib/email-verify";
 
 /** Account-menu row for how Cobblr reaches you, with Discord's state beside
@@ -149,6 +149,7 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [open]);
   useEscapeToClose(open, menuRef, () => setOpen(false));
+  useMenuFocus(open && pos !== null, menuRef);
 
   if (!user) return null;
   const isAdmin = !!user.is_platform_admin;
@@ -370,6 +371,9 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
           </span>
           <button
             ref={btnRef}
+            onKeyDown={(e) => {
+              if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); setOpen(true); }
+            }}
             type="button"
             onClick={() => setOpen((v) => !v)}
             aria-haspopup="menu"
@@ -393,9 +397,15 @@ export function UserMenu({ themed, inline = false }: { themed: boolean; inline?:
     <div className="relative">
       <button
         ref={btnRef}
+        onKeyDown={(e) => {
+              if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); setOpen(true); }
+            }}
         data-tour="account"
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
+        className="relative flex items-center gap-[6px] px-[8px] py-[4px] rounded-md text-xs text-muted dark:text-slate-300 hover:bg-subtle dark:hover:bg-slate-700/60 transition"
         title={`${user.display_name}: account menu`}
       >
         <span className="font-medium">{user.display_name}</span>

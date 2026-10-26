@@ -75,7 +75,9 @@ export function ConfigSectionPage() {
         <ChevronLeft size={13} /> all of configuration
       </Link>
 
-      <div className="flex items-center gap-3 border-b border-line dark:border-slate-700 pb-3">
+      {/* Wraps, so the section's action goes under its title rather than past
+          a phone's edge at 200% text (#8431). */}
+      <div className="flex flex-wrap items-center gap-3 border-b border-line dark:border-slate-700 pb-3">
         <span className="w-9 h-9 rounded-lg bg-accent/10 text-accent grid place-items-center shrink-0">
           <Icon size={19} />
         </span>

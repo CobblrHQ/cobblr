@@ -107,7 +107,7 @@ function saidIn(message: string, value: string): boolean {
 /** Words of a message, lowercased, punctuation dropped — the same shape the
  *  basics matcher normalizes to, so the two agree about what a message "is". */
 function words(s: string): string[] {
-  return s.toLowerCase().replace(/[^a-z0-9'\s]+/g, " ").split(/\s+/).filter(Boolean);
+  return s.toLowerCase().replace(/[^\p{L}\p{M}\p{N}'\s]+/gu, " ").split(/\s+/).filter(Boolean);
 }
 
 /** Every string value in a payload, with the key that held it. */

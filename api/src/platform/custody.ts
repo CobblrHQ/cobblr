@@ -20,6 +20,7 @@ import { baseKindOf, detailPathForEntity, getEntityWriterFor, listKindsForOrg, l
 export interface LendDetails {
   /** Who has it, as said; filled from the People entry when only holder_id is given. */
   holder?: string | null;
+  expected_loan?: RecordLoan | null;
   holder_id?: string | null;
   reason?: string | null;
   since?: string | null;
@@ -32,6 +33,12 @@ export interface CustodyOutcome {
   title: string;
   /** The loan before this call, so an undo puts exactly that back. */
   before: RecordLoan | null;
+}
+
+export interface ReturnDetails {
+  onlyIfHolder?: string | null;
+  repaired?: boolean;
+  work?: string | null;
 }
 
 export const LENT = "record_lent";
@@ -67,7 +74,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}/;
 
 /** Lend these records to someone. Refuses the whole call, before writing,
  *  when a record is missing: half a batch lent is worse than none. Lending a
- *  thing that is already out to someone else replaces the loan (it moved on);
+ *  thing that is already out requires its current loan as expected_loan;
  *  the History keeps both. */
 export async function lend(
   orgId: string,
@@ -75,20 +82,20 @@ export async function lend(
   kind: string,
   ids: readonly string[],
   details: LendDetails,
-): Promise<{ ok: true; done: CustodyOutcome[]; holder: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; done: CustodyOutcome[]; holder: string; loan: RecordLoan } | { ok: false; error: string }> {
   const holderId = details.holder_id?.trim() || null;
   const holder = details.holder?.trim() || (holderId ? ((await personNamesFor(orgId).catch(() => new Map<string, string>())).get(holderId) ?? "") : "");
-  if (!holder) return { ok: false, error: holderId ? "no one on the People list has that id" : "who has it (holder) is required" };
-  if (details.due_back && !DAY.test(details.due_back)) return { ok: false, error: "due_back is a day, YYYY-MM-DD" };
-  const f = await found(orgId, kind, ids);
-  if (!f.ents) return { ok: false, error: f.error };
-  const today = await platform().accounts.dayFor(userId);
-  // A kind nobody lent before wears the Lending face from now on.
-  await switchFaceOn(orgId, kind, "lendable").catch((err) => console.error(`[custody] Lending face for ${kind}:`, (err as Error).message));
-  const done: CustodyOutcome[] = [];
-  for (const ent of f.ents) {
-    const fields = (ent.fields ?? {}) as Record<string, unknown>;
-    const before = loanOfFields(fields);
+  if (!holder) return { ok: false as const, error: holderId ? "no one on the People list has that id" : "who has it (holder) is required" };
+  if (details.due_back && !DAY.test(details.due_back)) return { ok: false as const, error: "due_back is a day, YYYY-MM-DD" };
+  return platform().exclusive.serial(`custody:${orgId}`, async () => {
+    const f = await found(orgId, kind, ids);
+    if (!f.ents) return { ok: false as const, error: f.error };
+    const changed = f.ents.find((ent) => JSON.stringify(loanOfFields(ent.fields)) !== JSON.stringify(readRecordLoan({ loan: details.expected_loan })));
+    if (changed) return { ok: false as const, error: `${changed.title} is already lent out or its loan changed. Review the current loan before transferring it.` };
+    const today = await platform().accounts.dayFor(userId);
+    // A kind nobody lent before wears the Lending face from now on.
+    await switchFaceOn(orgId, kind, "lendable").catch((err) => console.error(`[custody] Lending face for ${kind}:`, (err as Error).message));
+    const done: CustodyOutcome[] = [];
     const loan: RecordLoan = {
       holder,
       holder_id: holderId,
@@ -97,12 +104,16 @@ export async function lend(
       due_back: details.due_back ? details.due_back.slice(0, 10) : null,
       note: details.note?.trim() || null,
     };
-    await platform().entities.mergeMetadata(orgId, kind, ent.id, { [LOAN_KEY]: loan });
-    await f.writer.onLoan?.(orgId, ent.id, { holder_id: loan.holder_id, due_back: loan.due_back });
-    await activity.log({ orgId, userId, action: LENT, ref: await refOf(orgId, kind, ent.id), diff: { name: ent.title, said: sayLoan(loan), ...loan } });
-    done.push({ id: ent.id, title: ent.title, before });
-  }
-  return { ok: true, done, holder };
+    for (const ent of f.ents) {
+      const fields = (ent.fields ?? {}) as Record<string, unknown>;
+      const before = loanOfFields(fields);
+      await platform().entities.mergeMetadata(orgId, kind, ent.id, { [LOAN_KEY]: loan });
+      await f.writer.onLoan?.(orgId, ent.id, { holder_id: loan.holder_id, due_back: loan.due_back });
+      await activity.log({ orgId, userId, action: LENT, ref: await refOf(orgId, kind, ent.id), diff: { name: ent.title, said: sayLoan(loan), ...loan } });
+      done.push({ id: ent.id, title: ent.title, before });
+    }
+    return { ok: true as const, done, holder, loan };
+  });
 }
 
 /** It is back: the loan ends, and the record is as it was, at its own place,
@@ -112,34 +123,40 @@ export async function returnLoan(
   userId: string | null,
   kind: string,
   ids: readonly string[],
-  opts: { onlyIfHolder?: string | null } = {},
+  details: ReturnDetails = {},
 ): Promise<{ ok: true; done: CustodyOutcome[] } | { ok: false; error: string }> {
-  const f = await found(orgId, kind, ids);
-  if (!f.ents) return { ok: false, error: f.error };
-  const home = f.ents.find((e) => !loanOfFields(e.fields));
-  if (home) return { ok: false, error: `${home.title} is not lent out.` };
-  // A loan's own Undo ends that loan and no other: lent again since, it is
-  // someone else's loan now, and ending it would say the thing is on its
-  // shelf while a borrower has it (#7899).
-  if (opts.onlyIfHolder) {
-    const moved = f.ents.find((e) => loanOfFields(e.fields)?.holder !== opts.onlyIfHolder);
-    if (moved) return { ok: false, error: `${moved.title} was lent to ${loanOfFields(moved.fields)?.holder ?? "someone else"} since, so this Undo would end their loan. Nothing was changed.` };
-  }
-  const done: CustodyOutcome[] = [];
-  for (const ent of f.ents) {
-    const before = loanOfFields(ent.fields)!;
-    await platform().entities.mergeMetadata(orgId, kind, ent.id, { [LOAN_KEY]: null });
-    await f.writer.onLoan?.(orgId, ent.id, null);
-    await activity.log({
-      orgId,
-      userId,
-      action: RETURNED,
-      ref: await refOf(orgId, kind, ent.id),
-      diff: { name: ent.title, said: `Back from ${before.holder}`, holder: before.holder, reason: before.reason, since: before.since },
-    });
-    done.push({ id: ent.id, title: ent.title, before });
-  }
-  return { ok: true, done };
+  return platform().exclusive.serial(`custody:${orgId}`, async () => {
+    const f = await found(orgId, kind, ids);
+    if (!f.ents) return { ok: false as const, error: f.error };
+    const home = f.ents.find((e) => !loanOfFields(e.fields));
+    if (home) return { ok: false as const, error: `${home.title} is not lent out.` };
+    // A loan's own Undo ends that loan and no other: lent again since, it is
+    // someone else's loan now, and ending it would say the thing is on its
+    // shelf while a borrower has it (#7899).
+    if (details.onlyIfHolder) {
+      const moved = f.ents.find((e) => loanOfFields(e.fields)?.holder !== details.onlyIfHolder);
+      if (moved) return { ok: false as const, error: `${moved.title} was lent to ${loanOfFields(moved.fields)?.holder ?? "someone else"} since, so this Undo would end their loan. Nothing was changed.` };
+    }
+    const done: CustodyOutcome[] = [];
+    for (const ent of f.ents) {
+      const before = loanOfFields(ent.fields)!;
+      await platform().entities.mergeMetadata(orgId, kind, ent.id, { [LOAN_KEY]: null });
+      await f.writer.onLoan?.(orgId, ent.id, null);
+      await activity.log({
+        orgId,
+        userId,
+        action: RETURNED,
+        ref: await refOf(orgId, kind, ent.id),
+        diff: {
+          name: ent.title, said: `Back from ${before.holder}`, holder: before.holder, reason: before.reason, since: before.since,
+          ...(typeof details.repaired === "boolean" ? { repaired: details.repaired } : {}),
+          ...(details.work?.trim() ? { work: details.work.trim() } : {}),
+        },
+      });
+      done.push({ id: ent.id, title: ent.title, before });
+    }
+    return { ok: true as const, done };
+  });
 }
 
 export interface OpenLoan {

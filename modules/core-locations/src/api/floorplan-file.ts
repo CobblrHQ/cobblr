@@ -445,6 +445,8 @@ export function registerFloorplanFileHandlers(): void {
   h.registerUndo("core-locations.import-floorplan", (result) => {
     const r = (result as { result?: ImportResult } | null)?.result;
     if (!r || r.dry_run || (!r.created.length && !r.updated.length)) return null;
-    return { action_id: "core-locations:undo-floorplan-import", args: { import: { created: r.created, updated: r.updated } } };
+    // It deletes the places it made and draws back the ones it changed, so
+    // those are what someone else's later edit must stop (#8533).
+    return { action_id: "core-locations:undo-floorplan-import", args: { import: { created: r.created, updated: r.updated } }, puts_back: [...r.created, ...r.updated.map((u) => u.id)] };
   });
 }

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft } from "lucide-react";
-import { FooterActionPopover, MoveToInstancePanel, MoveToChoices, noteRecentPlace, useToast, type PlaceChoice } from "@cobblr/platform-web";
+import { FooterActionPopover, MoveToInstancePanel, MoveToChoices, noteRecentPlace, useCan, useToast, type PlaceChoice } from "@cobblr/platform-web";
 import { countOf } from "@cobblr/platform-contract";
 import { useInventory } from "./context";
 import { placeOfRow, putPart, type PartPlace } from "./move-part";
@@ -32,6 +32,8 @@ type ListMove = { fromInstance: string };
 
 /** `onMoved` clears the list's ticks and may return what Undo calls to tick them again. */
 export function BulkMoveToPlace({ rows, onMoved, listMove, label = "Move to…" }: { rows: Row[]; onMoved: () => (() => void) | void; listMove?: ListMove; label?: string }) {
+  const mayMove = useCan("inventory:update-part");
+  if (!mayMove) return null;
   return (
     <FooterActionPopover label={label} icon={<ArrowRightLeft size={12} />} title="Move to a place" data-testid="bulk-move">
       {(close) => <MoveBody rows={rows} close={close} onMoved={onMoved} listMove={listMove} />}

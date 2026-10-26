@@ -132,7 +132,9 @@ export function PhoneRecordList({ rows, onOpen, selection, maxFields = 3, label 
               </span>
               <ChevronRight size={14} className="shrink-0 text-faint dark:text-slate-600" aria-hidden />
             </button>
-            {r.trailing && <span className="shrink-0 ml-auto pr-2">{r.trailing}</span>}
+            {/* Never wider than the row: at 200% text a "− 1 ingredient +"
+                stepper went under the name and still ran past the phone (#8432). */}
+            {r.trailing && <span className="shrink-0 ml-auto max-w-full pr-2">{r.trailing}</span>}
           </li>
         );
       })}

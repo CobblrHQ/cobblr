@@ -63,12 +63,14 @@ export function loadQueue(slug: string, address: string, now: number): QueuedMov
   }
 }
 
-export function saveQueue(slug: string, address: string, q: readonly QueuedMove[]): void {
+export function saveQueue(slug: string, address: string, q: readonly QueuedMove[]): boolean {
   try {
     if (q.length) localStorage.setItem(qkey(slug, address), JSON.stringify(q));
     else localStorage.removeItem(qkey(slug, address));
+    return true;
   } catch {
-    // Storage full or off: the moves wait in memory for this page only.
+    // Storage full or off: the caller keeps these moves in memory for this page.
+    return false;
   }
 }
 

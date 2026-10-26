@@ -2,7 +2,7 @@
 // Shows schema, lets the user upload a CSV, browse entries with
 // fuzzy search.
 
-import { productName } from "@cobblr/platform-web";
+import { productName, editOf } from "@cobblr/platform-web";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { EntityAttachments } from "../components/EntityAttachments";
@@ -48,7 +48,7 @@ export function CatalogDetailPage() {
       toast.error("Couldn't pull from the source - check the catalog's source URL (large datasets like the BOM use the bulk seeder)."),
   });
   const setField = useMutation({
-    mutationFn: (metadata: Record<string, unknown>) => api.updateCatalog(activeSlug, id!, { metadata }),
+    mutationFn: (metadata: Record<string, unknown>) => api.updateCatalog(activeSlug, id!, editOf(catalogQ.data, { metadata })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["core-catalog", activeSlug, id] }),
     onError: (e) => toast.error(`Couldn't save that change: ${e instanceof Error ? e.message : String(e)}`),
   });
@@ -117,7 +117,7 @@ export function CatalogDetailPage() {
           <ArrowLeft size={10} /> back to catalogs
         </Link>
       </div>
-      <div className="flex items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
+      <div className="flex flex-wrap items-baseline gap-3 border-b border-line dark:border-slate-700 pb-3">
         <Library size={20} className="text-accent" />
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100">
           {catalog?.name ?? "…"}

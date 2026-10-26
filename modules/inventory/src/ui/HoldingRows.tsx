@@ -19,7 +19,7 @@ import { QtyStepper } from "./QtyStepper";
 
 import { countOf } from "@cobblr/platform-contract/plural";
 function fmt(n: number): string {
-  return quantityNumber(n);
+  return quantityNumber(n, 9);
 }
 
 /** "expires in 3d" for the soonest date, the one countdown every surface shows. */

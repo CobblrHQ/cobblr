@@ -138,7 +138,7 @@ export function HeaderActions({ asRows = false, trailing }: {
         data-testid={`header-action-${m.name}`}
         className={({ isActive }) =>
           inRow === "bar"
-            ? "relative transition p-1.5 flex items-center gap-1 " +
+            ? "relative transition p-[6px] flex items-center gap-1 " +
               (isActive ? "text-accent" : "text-faint dark:text-slate-500 hover:text-accent")
             : (inRow === "full" ? "w-full px-3 py-1.5 rounded " : "") +
               "flex items-center gap-2.5 whitespace-nowrap text-[13px] transition " +

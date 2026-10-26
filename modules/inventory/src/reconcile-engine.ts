@@ -8,6 +8,7 @@
 // never feeds shelf-life learning; a count is a correction on the lots. Both
 // are all-or-nothing per call, and every write has its exact reverse here.
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
+import { actionActed } from "@cobblr/platform-contract/action-result";
 import { consumeOldest } from "./batches.js";
 import { withBatches } from "./api/action-handlers.js";
 
@@ -67,15 +68,27 @@ export async function bringAllBack(orgId: string, userId: string | null, items: 
 export async function setCount(orgId: string, userId: string | null, c: CountChange, source: CountSource, reason: string): Promise<void> {
   const delta = c.after - c.before;
   if (!delta) return;
-  await withBatches(orgId, c.id, reason, delta, (batches) => (delta < 0 ? consumeOldest(batches, -delta).batches : batches), {
+  const result = await withBatches(orgId, c.id, reason, delta, (batches) => (delta < 0 ? consumeOldest(batches, -delta).batches : batches), {
     userId,
     correction: true,
     sourceKind: source.kind,
     sourceId: source.id,
   });
+  if (!actionActed(result)) throw new ActionRefusal(`The count for ${c.title || "this record"} could not be changed. Check its stock and usage tracker, then try again.`);
 }
 
 /** Put a count back the way it was before `setCount`. */
 export function unsetCount(orgId: string, userId: string | null, c: CountChange, source: CountSource, reason: string): Promise<void> {
   return setCount(orgId, userId, { ...c, before: c.after, after: c.before }, source, reason);
+}
+
+/** An Undo of a run never takes away a later change of someone else's (#8474):
+ *  a record the run touched that another person changed after the run's own
+ *  entry refuses the Undo, saying what changed, as an issued Undo does
+ *  (#7924). A run with no entry of its own is judged as before. */
+export async function refuseOverLaterChange(orgId: string, userId: string | null, run: { entityId: string; action: string }, ids: readonly string[]): Promise<void> {
+  const after = await platform().activity.entryOf(orgId, run);
+  if (after == null) return;
+  const since = await platform().activity.changeSince(orgId, { ids, after, userId });
+  if (since) throw new ActionRefusal(since);
 }

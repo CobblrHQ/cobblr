@@ -7,7 +7,7 @@
 // (packages/platform-contract/src/quantity-number.ts), which the unit formatter, the
 // sentences and the screens all call. A line that builds it again with
 // `parseFloat(<n>.toFixed(<digits>))` is a copy of the rule that can drift.
-// quantity-number.ts is the one place (plural.ts, mirrored into the edge bridge, keeps its own copy until a repin folds it in). A genuine other use (a price, an angle, a
+// quantity-number.ts is the one place. The files the edge bridge mirrors (plural.ts among them) are core files under the same roots, so they are judged here too, and the bridge's copies are byte copies of them. A genuine other use (a price, an angle, a
 // measured coordinate, not a quantity) opts out with `// ROUND-OK: <why>`.
 //
 // THE BOUNDARY, AND WHICH FALSE POSITIVE DREW IT. Only parseFloat around
@@ -49,7 +49,7 @@ function check(file: string, src: string): Violation[] {
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (file.endsWith("platform-contract/src/quantity-number.ts") || file.endsWith("platform-contract/src/plural.ts") || /\/\/ ROUND-OK: \S/.test(line)) continue;
+    if (file.endsWith("platform-contract/src/quantity-number.ts") || /\/\/ ROUND-OK: \S/.test(line)) continue;
     if (/parseFloat\(\s*[\w$.?()\[\]]+\.toFixed\(\s*\d+\s*\)\s*\)/.test(line)) out.push({ file, line: i + 1, what: "a number rounded for display with its own parseFloat(x.toFixed(n)); call quantityNumber" });
   }
   return out;

@@ -15,6 +15,8 @@
 // no number, so anything ambiguous (a noun matching two kinds, a name matching
 // six records) declines rather than guesses.
 
+import { keepWords, normQuestion } from "./question-text.js";
+
 /** A kind as the matcher needs to see it: its id and the words people use. */
 export interface KindWords {
   id: string;
@@ -30,8 +32,7 @@ export type Question =
   | { kind: "where"; name: string }
   | { kind: "attention" };
 
-const norm = (s: string): string =>
-  s.toLowerCase().replace(/[^a-z0-9'\s]+/g, " ").replace(/\s+/g, " ").trim();
+const norm = normQuestion;
 
 /** Match the noun somebody typed to exactly one kind, or nothing.
  *
@@ -66,7 +67,7 @@ export function readQuestionOf(message: string, kinds: KindWords[]): Question | 
   }
 
   // "how many parts (do I have)", "how many locations are there"
-  const count = /\bhow many ([a-z][a-z ]*?)(?:\s+(?:do|have|are|is|does|did|in|under|left|remain)\b.*)?$/.exec(m);
+  const count = /\bhow many (\p{L}[\p{L}\p{M} ]*?)(?:\s+(?:do|have|are|is|does|did|in|under|left|remain)\b.*)?$/u.exec(m);
   if (count) {
     const id = kindFor(count[1]!.trim(), kinds);
     if (id) return { kind: "count", entityKind: id };
@@ -74,11 +75,11 @@ export function readQuestionOf(message: string, kinds: KindWords[]): Question | 
   }
 
   // "where is my drill", "where's the blue spool", "where are my calipers"
-  const where = /\bwhere(?:'s| is| are)?\s+(?:my |the |our )?(.+?)\s*\??$/.exec(m);
+  const where = /\bwhere(?:'s| is| are)?\s+(?:my |the |our )?(.+?)\s*\??$/i.exec(keepWords(message));
   if (where) {
     const name = where[1]!.trim();
     // Two words of slack: "where is it" and "where are they" name nothing.
-    if (name.length >= 3 && !/^(it|they|them|this|that|those|these)$/.test(name)) {
+    if (name.length >= 3 && !/^(it|they|them|this|that|those|these)$/i.test(name)) {
       return { kind: "where", name };
     }
   }

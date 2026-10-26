@@ -127,10 +127,10 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
   const moreScans = queue.groups.slice(cap).reduce((n, g) => n + g.ids.length, 0);
   return (
     <section data-testid="scanner-queue" className="space-y-1.5">
-      <div className="flex items-center gap-2">
+      {/* Wraps: at 200% text the link held this row 42 px past a phone (#8429). */}
+      <div className="flex flex-wrap items-center gap-x-[8px] gap-y-1">
         <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">from your scanner - waiting to file ({queue.total})</span>
-        <div className="flex-1" />
-        <Link to="/scan" className="text-xs text-accent hover:underline shrink-0">
+        <Link to="/scan" className="ml-auto text-xs text-accent hover:underline">
           review all in the Scan Inbox →
         </Link>
       </div>
@@ -140,7 +140,9 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
           return (
             <li key={g.key} data-testid="scanner-queue-group" className="rounded-lg border border-cobble-300 dark:border-cobble-700 bg-cobble-50/50 dark:bg-cobble-900/15 px-3 py-2.5 space-y-1.5">
               {/* Header row: count/label + a compact inline CTA; the tile strip
-                  below gets the full card width. */}
+                  below gets the full card width. The CTA may shrink to the row
+                  and wrap its words: held at one line, 200% text ran it 21 px
+                  past a phone (#8429). */}
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100">
                   <strong>{g.ids.length}</strong> look{g.ids.length === 1 ? "s" : ""} like <span className="text-accent font-medium">{g.label}</span>
@@ -156,7 +158,7 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
                     type="button"
                     disabled={busy}
                     onClick={() => materialize.start(g.bundleId!, g.ids)}
-                    className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                    className="max-w-full inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs text-left font-medium px-[10px] py-1 transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
                     Create {g.label} & file all {g.ids.length}
@@ -166,7 +168,7 @@ export function ScannerQueue({ slug, queue, cap = 2 }: { slug: string; queue: Sc
                     type="button"
                     disabled={busy}
                     onClick={() => confirmGroup.mutate({ label: g.label, target: g.target!, ids: g.ids, updates: g.updates })}
-                    className="shrink-0 inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs font-medium px-2.5 py-1 transition disabled:opacity-50"
+                    className="max-w-full inline-flex items-center gap-1 rounded-md bg-cobble-600 hover:bg-cobble-700 text-white text-xs text-left font-medium px-[10px] py-1 transition disabled:opacity-50"
                   >
                     {busy ? <Loader2 size={12} className="animate-spin" /> : <ArrowRight size={12} />}
                     Add all {g.ids.length} to {g.label}

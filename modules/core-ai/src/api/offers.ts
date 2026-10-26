@@ -212,14 +212,17 @@ export async function readConversation(db: Kysely<CoreAiDB>, userId: string): Pr
   return { messages: Array.isArray(messages) ? messages : [], updated_at: new Date(row.updated_at).toISOString() };
 }
 
-export async function writeConversation(db: Kysely<CoreAiDB>, userId: string, messages: unknown[]): Promise<string> {
-  const now = new Date();
-  await db.transaction().execute(async (tx) => {
-    await tx
-      .insertInto("core_ai_conversations")
-      .values({ user_id: userId, messages: JSON.stringify(messages), updated_at: now } as never)
-      .onConflict((oc) => oc.column("user_id").doUpdateSet({ messages: JSON.stringify(messages), updated_at: now } as never))
-      .execute();
+export async function writeConversation(db: Kysely<CoreAiDB>, userId: string, messages: unknown[], expectedAt: string | null): Promise<string | null> {
+  const now = new Date(Math.max(Date.now(), expectedAt ? Date.parse(expectedAt) + 1 : 0));
+  return db.transaction().execute(async (tx) => {
+    const values = { messages: JSON.stringify(messages), updated_at: now };
+    const saved = expectedAt === null
+      ? await tx.insertInto("core_ai_conversations").values({ user_id: userId, ...values })
+        .onConflict((oc) => oc.column("user_id").doNothing()).returning("updated_at").executeTakeFirst()
+      : await tx.updateTable("core_ai_conversations").set(values)
+        .where("user_id", "=", userId).where("updated_at", "=", new Date(expectedAt))
+        .returning("updated_at").executeTakeFirst();
+    if (!saved) return null;
     // Delivery is durable only when the conversation and its Undo handles are kept together.
     const ids: string[] = [];
     const add = (value: unknown) => { if (typeof value === "string" && /^[0-9a-f-]{36}$/i.test(value)) ids.push(value); };
@@ -235,8 +238,8 @@ export async function writeConversation(db: Kysely<CoreAiDB>, userId: string, me
     }
     if (ids.length) await tx.updateTable("core_ai_command_runs").set({ delivered_at: now })
       .where("id", "in", ids).where("user_id", "=", userId).where("status", "=", "done").execute();
+    return now.toISOString();
   });
-  return now.toISOString();
 }
 
 /** Why an offer cannot be confirmed now, in a sentence. */

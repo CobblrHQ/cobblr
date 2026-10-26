@@ -203,7 +203,7 @@ export function PublicSurfacePage({ token: given, missing }: { token?: string; m
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {(data.sections ?? []).map((section, i) => (
             <div key={`${section.title}-${i}`} className="min-w-0">
-              <header className="mb-3 flex items-baseline gap-2 border-b border-line dark:border-slate-700 pb-2">
+              <header className="mb-3 flex flex-wrap gap-y-1 items-baseline gap-2 border-b border-line dark:border-slate-700 pb-2">
                 <h2 className="font-display text-lg font-extrabold text-content dark:text-mortar-100 page-title">
                   {section.title}
                 </h2>

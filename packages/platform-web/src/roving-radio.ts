@@ -54,6 +54,7 @@ export function rovingRadio(i: number, picked: number): RovingRadioProps {
 
 /** How long a save may hold the group disabled before focus is let go. */
 const SAVE_WINDOW_MS = 15_000;
+const focusSaves = new WeakMap<Element, () => void>();
 
 /** A group that saves its pick disables its options while the save runs, and a
  *  browser drops the focus of a disabled button to <body>: the next arrow then
@@ -63,7 +64,10 @@ const SAVE_WINDOW_MS = 15_000;
  *  alone. */
 function keepFocusThroughSave(group: Element, chosen: HTMLElement): void {
   if (typeof MutationObserver === "undefined") return;
+  focusSaves.get(group)?.();
+  let stopped = false;
   const restore = () => {
+    if (stopped) return;
     const active = group.ownerDocument.activeElement;
     // Still on an option: the save has not taken it yet, keep watching.
     if (active && group.contains(active)) return;
@@ -78,10 +82,16 @@ function keepFocusThroughSave(group: Element, chosen: HTMLElement): void {
     stop();
   };
   const watch = new MutationObserver(restore);
+  const onFocusOut = () => queueMicrotask(restore);
   const timer = setTimeout(() => stop(), SAVE_WINDOW_MS);
   function stop() {
+    stopped = true;
     watch.disconnect();
     clearTimeout(timer);
+    group.removeEventListener("focusout", onFocusOut);
+    if (focusSaves.get(group) === stop) focusSaves.delete(group);
   }
   watch.observe(group, { subtree: true, attributes: true, attributeFilter: ["disabled", "aria-disabled", "aria-checked"] });
+  group.addEventListener("focusout", onFocusOut);
+  focusSaves.set(group, stop);
 }

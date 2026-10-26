@@ -34,7 +34,7 @@ export function ChangelogPage() {
   return (
     <div className="min-h-screen bg-canvas dark:bg-slate-950 px-4 py-10">
       <div className="mx-auto w-full max-w-2xl">
-        <div className="mb-8 flex items-center justify-between">
+        <div className="mb-8 flex flex-wrap items-center justify-between">
           <div className="flex items-center gap-2">
             <Sparkles size={20} className="text-cobble-600 dark:text-cobble-400" />
             <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100">What's new</h1>
