@@ -419,24 +419,45 @@ stationsRouter.post(
       .where("address", "=", address)
       .where("request_id", "=", requestId)
       .where("undone_at", "is", null)
-      .returning(["kind", "entity_id", "delta", "op"])
+      .returning(["kind", "entity_id", "delta", "op", "created_at"])
       .executeTakeFirst();
     if (!move) return void res.status(404).json({ error: { code: "nothing_to_undo", message: "Nothing to undo." } });
     const delta = Number(move.delta);
     const target = await scanTargetOf(org.id, move.kind);
     const e = await platform().entities.lookup(org.id, move.kind, move.entity_id);
     if (!target?.scannable.qtyField || !e || delta === 0) return void res.json({ ok: true, qty: null });
+    // An Undo is a delta, and a count set since this move is what is there:
+    // taking the old move off it makes a number nobody counted (#8591). A
+    // module's own quantity door judges every count it keeps; a kind written
+    // through its route is judged by the counts stations set here.
+    const release = () => db.updateTable("core_scan_station_moves").set({ undone_at: null }).where("address", "=", address).where("request_id", "=", requestId).execute();
+    if (!target.scannable.adjustAction) {
+      const counted = await db
+        .selectFrom("core_scan_station_moves")
+        .select("request_id")
+        .where("kind", "=", move.kind)
+        .where("entity_id", "=", move.entity_id)
+        .where("op", "=", "total")
+        .where("undone_at", "is", null)
+        .where("created_at", ">", move.created_at)
+        .executeTakeFirst();
+      if (counted) {
+        await release();
+        return void res.status(409).json({ error: { code: "undo_refused", message: "It was counted after this was done, so taking this back would change that count. Nothing was changed; change the count yourself if it is still wrong." } });
+      }
+    }
     const cur = Number(e.fields[target.scannable.qtyField] ?? 0);
     const moved = await moveQuantity(org.id, target, { kind: move.kind, id: move.entity_id }, -delta, {
       userId: sessionUser(req).id,
       reason: `undo at ${label}`,
       correction: true,
+      takesBack: { at: move.created_at, ownCounts: move.op === "total" ? 1 : 0 },
       source: { kind: "core-scan:station", id: address },
       door: doorOf(req, org.slug),
       current: Number.isFinite(cur) ? cur : 0,
     });
     if (!moved.ok) {
-      await db.updateTable("core_scan_station_moves").set({ undone_at: null }).where("address", "=", address).where("request_id", "=", requestId).execute();
+      await release();
       return void res.status(409).json({ error: { code: "undo_refused", message: moved.refused ?? "That could not be undone." } });
     }
     res.json({ ok: true, qty: moved.newQty });

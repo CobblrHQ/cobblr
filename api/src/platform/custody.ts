@@ -16,6 +16,7 @@ import type { CalendarEvent, EntityWriter } from "@cobblr/platform-contract";
 import { personNamesFor } from "./people.js";
 import { registerSource } from "./calendar-registry.js";
 import { baseKindOf, detailPathForEntity, getEntityWriterFor, listKindsForOrg, lookup, titleForEntity } from "./entities.js";
+import { isRealDay } from "@cobblr/platform-contract/day";
 
 export interface LendDetails {
   /** Who has it, as said; filled from the People entry when only holder_id is given. */
@@ -70,7 +71,6 @@ async function found(orgId: string, kind: string, ids: readonly string[]): Promi
   return { ents: out, writer };
 }
 
-const DAY = /^\d{4}-\d{2}-\d{2}/;
 
 /** Lend these records to someone. Refuses the whole call, before writing,
  *  when a record is missing: half a batch lent is worse than none. Lending a
@@ -86,7 +86,11 @@ export async function lend(
   const holderId = details.holder_id?.trim() || null;
   const holder = details.holder?.trim() || (holderId ? ((await personNamesFor(orgId).catch(() => new Map<string, string>())).get(holderId) ?? "") : "");
   if (!holder) return { ok: false as const, error: holderId ? "no one on the People list has that id" : "who has it (holder) is required" };
-  if (details.due_back && !DAY.test(details.due_back)) return { ok: false as const, error: "due_back is a day, YYYY-MM-DD" };
+  if (details.due_back && !isRealDay(details.due_back.slice(0, 10))) return { ok: false as const, error: "due_back is a day that exists, YYYY-MM-DD" };
+  if (details.since && !isRealDay(details.since.slice(0, 10))) return { ok: false as const, error: "since is a day that exists, YYYY-MM-DD" };
+  if (details.due_back && details.since && details.due_back.slice(0, 10) < details.since.slice(0, 10)) {
+    return { ok: false as const, error: "due_back is before the day it was lent (since)" };
+  }
   return platform().exclusive.serial(`custody:${orgId}`, async () => {
     const f = await found(orgId, kind, ids);
     if (!f.ents) return { ok: false as const, error: f.error };
@@ -100,7 +104,9 @@ export async function lend(
       holder,
       holder_id: holderId,
       reason: details.reason?.trim() || null,
-      since: details.since && DAY.test(details.since) ? details.since.slice(0, 10) : today,
+      // A loan recorded after its due day began no later than that day: leaving
+      // the day it is recorded as its start would date it after its own due day.
+      since: details.since ? details.since.slice(0, 10) : details.due_back && details.due_back.slice(0, 10) < today ? details.due_back.slice(0, 10) : today,
       due_back: details.due_back ? details.due_back.slice(0, 10) : null,
       note: details.note?.trim() || null,
     };

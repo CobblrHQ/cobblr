@@ -10,7 +10,10 @@ import { useLabels } from "./context";
 import type { CodeGroup } from "./api";
 
 const BTN = "rounded-md bg-slate-700 hover:bg-slate-600 text-mortar-50 text-xs font-medium px-2.5 py-1 transition disabled:opacity-40";
-const NESTED = "flex items-center gap-2 rounded-md border border-line/60 dark:border-slate-700/60 bg-subtle/40 dark:bg-slate-800/40 px-2.5 py-1.5";
+// A row wraps: its name keeps room to be read, and the controls go under it,
+// right-aligned, when they do not fit beside it. Unwrapped, at 200% text Save
+// ran 27 and 40 px past a phone and the name truncated to nothing (#8437).
+const NESTED = "flex flex-wrap items-center gap-2 rounded-md border border-line/60 dark:border-slate-700/60 bg-subtle/40 dark:bg-slate-800/40 px-2.5 py-1.5";
 
 export function CodesPanel() {
   const { api, orgSlug } = useLabels();
@@ -179,8 +182,8 @@ function KindCard({
   if (solo) {
     const g = groups[0]!;
     return (
-      <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 flex items-center gap-2 px-3 py-2.5">
-        <div className="flex-1 min-w-0 text-sm font-semibold text-content dark:text-mortar-100 truncate" title={coded(g)}>
+      <div className="rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 flex flex-wrap items-center gap-2 px-3 py-2.5">
+        <div className="flex-1 min-w-[6rem] text-sm font-semibold text-content dark:text-mortar-100 truncate" title={coded(g)}>
           {kindLabel}
         </div>
         <GroupControls group={g} name={kindLabel} onRename={(p) => onRename(g.group_key, p)} onToggleOverlay={(on) => onToggleOverlay(g.group_key, on)} pending={pending} />
@@ -198,7 +201,7 @@ function KindCard({
           const name = g.group_label && g.group_label !== kindLabel ? g.group_label : "Other";
           return (
             <div key={g.group_key} className={NESTED}>
-              <div className="flex-1 min-w-0 text-sm text-content dark:text-mortar-100 truncate" title={coded(g)}>
+              <div className="flex-1 min-w-[6rem] text-sm text-content dark:text-mortar-100 truncate" title={coded(g)}>
                 {name}
               </div>
               <GroupControls group={g} name={name} onRename={(p) => onRename(g.group_key, p)} onToggleOverlay={(on) => onToggleOverlay(g.group_key, on)} pending={pending} />
@@ -237,7 +240,7 @@ function GroupControls({
   const willOptOut = norm.length === 0 && (committed || isSuggested);
   const dirty = isSuggested ? norm.length > 0 || willOptOut : (norm.length > 0 && norm !== group.prefix) || willOptOut;
   return (
-    <div className="flex items-center gap-2 shrink-0">
+    <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
       <button
         type="button"
         role="switch"

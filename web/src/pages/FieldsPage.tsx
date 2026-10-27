@@ -310,7 +310,7 @@ export function FieldsPage({ embedded = false }: { embedded?: boolean } = {}) {
                   <span className="font-mono text-xs text-faint dark:text-slate-500 w-32 truncate">
                     {f.name}
                   </span>
-                  <span className="flex-1">{f.display_label}</span>
+                  <span className="flex-1">{f.effective_label ?? f.display_label}</span>
                   <span className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">
                     {f.type}
                   </span>

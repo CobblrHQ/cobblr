@@ -384,6 +384,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
   // one and putting it back is theirs, so the stepper and the actions stay.
   const mayEdit = useCan("inventory:update-part");
   const mayCreate = useCan("inventory:create-part");
+  const mayMove = useCan("platform:move-records");
   const editable = (node: ReactNode) => <fieldset disabled={mayEdit !== true} className="contents">{node}</fieldset>;
   const editableItem = (item: FieldPackItem | null): FieldPackItem | null => item && { ...item, node: editable(item.node) };
   const remove = useMutation({
@@ -663,17 +664,14 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
         />
         <FieldPack
           items={[
-            // Quantity + unit read as ONE control: an inline +/- stepper sits
-            // flush against the unit ("[-] 1 [+] skein") so it's clear they
-            // belong together. The stepper writes through the same signed
-            // stock-adjust API as before, no modal hop. The row, whatever the
-            // width: a stepper and a unit box never split.
+            // Quantity and unit stay in one field, wrapping within it when
+            // larger text leaves too little room to read them side by side.
             !hide("qty") || !hide("unit")
               ? {
                   need: { key: "qty", minPx: 320, full: true },
                   node: (
                     <Field label="Qty">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {!hide("qty") &&
                           // An uncounted assortment showed "[-] 0 [+]" directly under a
                           // card reading "~50 estimated, not counted": the page
@@ -700,7 +698,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
                           // interconvertible (1000 g -> kg = 1); otherwise just the unit
                           // changes. (e55169b1)
                           editable(<UnitInput
-                            className="w-32"
+                            className="w-32 max-w-full"
                             value={p.unit}
                             count={Number(p.qty)}
                             known={countWords}
@@ -751,7 +749,8 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
                   need: fieldNeed("location", { control: "choice", label: fp.label("location", "Location"), choices: (locs.data?.items ?? []).map((l) => l.name) }),
                   node: (
                     <Field label={fp.label("location", "Location")}>
-                      <fieldset disabled={!!locationRefusal}>
+                      {/* A fieldset is at least as wide as its content by default; the picker ran past a phone at 200% text (#8612). */}
+                      <fieldset disabled={!!locationRefusal} className="min-w-0">
                         <LocationPicker
                           value={inside ? null : (p.location_id ?? null)}
                           onChange={(id) => placeIn.mutate(id ?? "")}
@@ -964,7 +963,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
       />
 
       {/* Stays in reach on a phone: this row used to be five screens down. */}
-      <StickyBottomBar className="flex items-center justify-center gap-4 pt-4 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
+      <StickyBottomBar className="flex flex-wrap items-center justify-center gap-4 pt-4 -mx-5 px-5 py-2 bg-surface dark:bg-slate-900 border-t border-line dark:border-slate-700">
         {/* Its one word keeps its width: the phone's min-width took a flex
             item's own minimum away, and on a 360 px phone it shrank under
             "Duplicate" while its neighbours wrapped (#7108). */}
@@ -974,12 +973,12 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
         >
           <Copy size={12} /> Duplicate
         </button>}
-        <button
+        {mayMove && <button
           onClick={() => setMoving(true)}
           className="text-xs text-faint dark:text-slate-500 hover:text-accent inline-flex items-center gap-1.5"
         >
           <ArrowRightLeft size={12} /> Move to another list…
-        </button>
+        </button>}
         {mayDelete && <button
           data-testid="delete-part"
           onClick={async () => {
@@ -998,7 +997,7 @@ function PartDetailBody({ id, onClose, onDeleted }: { id: string; onClose: () =>
       </StickyBottomBar>
 
       <MoveToInstanceModal
-        open={moving}
+        open={moving && mayMove === true}
         onClose={() => setMoving(false)}
         slug={orgSlug}
         getToken={getToken}

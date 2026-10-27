@@ -1361,7 +1361,7 @@ function SettingsSheet(props: {
           )}
           {!props.device && (
             <Field label={props.hasPin ? "Change the owner PIN" : "Owner PIN (lets the tablet change these)"}>
-              <input inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="4 to 8 digits" className="w-48 rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="New PIN" />
+              <input inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="4 to 8 digits" className="w-48 max-w-full rounded-xl border border-line px-3 py-2 dark:border-slate-600 dark:bg-slate-800" aria-label="New PIN" />
             </Field>
           )}
           {error && <p className="text-red-700 dark:text-red-300">{error}</p>}

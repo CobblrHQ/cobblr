@@ -79,6 +79,7 @@ export async function fetchAllMachines(slug: string): Promise<{ items: LinkableM
 
 export function CreateConnectionModal({
   types,
+  typeNames,
   onClose,
   onCreated,
   presetType,
@@ -86,6 +87,8 @@ export function CreateConnectionModal({
   presetDriver,
 }: {
   types: string[];
+  /** Each type's name, from the server's driver list (#8650). */
+  typeNames?: Record<string, string>;
   onClose: () => void;
   /** Receives the new connection's id (when known) so the caller can auto-select it. */
   onCreated: (connectionId?: string) => void;
@@ -140,7 +143,7 @@ export function CreateConnectionModal({
           <span className={lbl}>Type</span>
           <select value={type} onChange={(e) => setType(e.target.value)} className={field}>
             {types.map((t) => (
-              <option key={t} value={t}>{t === "fdm_monster" ? "FDM Monster" : t === "mock" ? "Mock (test)" : t === "bambu" ? "Bambu Lab" : t === "edge_adapter" ? "Your bridge" : t === "formlabs_dashboard" ? "Formlabs Dashboard (monitor)" : t}</option>
+              <option key={t} value={t}>{typeNames?.[t] ?? t}</option>
             ))}
           </select>
         </label>
@@ -2924,6 +2927,7 @@ export function MachineDigifabPanel({
   const connectModal = createConnOpen && (
     <CreateConnectionModal
       types={conns.data?.types ?? ["fdm_monster", "mock"]}
+      typeNames={conns.data?.type_names}
       presetType="edge_adapter"
       presetName={machineName}
       presetDriver={driverHint}

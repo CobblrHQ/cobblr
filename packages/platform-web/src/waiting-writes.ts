@@ -20,6 +20,12 @@
 //   - a waiting write the store did not keep (a create, a file, anything
 //     sent some other way) makes leaving the page ask first, so nothing is thrown
 //     away without a word: the page counts what it kept against what waits.
+// Since #8638 a person's write is kept as it leaves, not only when the browser
+// says it is offline: on a weak signal a reload before the answer dropped it
+// without a word, and a phone's Safari never asks before leaving. Marked
+// "sending", it is neither counted nor sent by the page that made it, and is
+// forgotten when it lands; a page loaded after sends it under the key it left
+// with, which the server answers as the first (#7923).
 
 import { applyJsonbMerge } from "@cobblr/platform-contract/jsonb-merge";
 import { decodeEditedFrom, type EditedFrom } from "@cobblr/platform-contract/edited-from";
@@ -47,6 +53,13 @@ export interface WaitingWrite {
   at: string;
   /** A create's own key, sent with it as Idempotency-Key. */
   key?: string;
+  /** Kept from a form, not a mutation: no page sends it again by itself, so
+   *  the store sends it as soon as it can, from this page too (#8637). */
+  orphan?: boolean;
+  /** On its way from the page that made it, answer not yet back: that page
+   *  neither counts nor sends it, and forgets it when it lands; a page loaded
+   *  after (a reload mid-save) sends it, under its key (#8638). */
+  sending?: boolean;
 }
 
 let personsWrites = 0;
@@ -76,6 +89,12 @@ if (typeof document !== "undefined") {
   document.addEventListener("submit", (e) => {
     if (e.isTrusted) submittedAt = Date.now();
   }, true);
+}
+
+/** Whether a person's mutation is sending this write (it sends it again by
+ *  itself when the connection returns), read as a door is entered. */
+export function madeByAMutation(): boolean {
+  return personsWrites > 0;
 }
 
 /** Read by a door as it is entered, before it waits on anything. */
@@ -136,7 +155,7 @@ export function browserOffline(): boolean {
  *  form) cannot be kept, and leaving the page then asks first. Two edits of
  *  one record fold into one, the later value winning, as they would have
  *  landed. Says whether it was kept. */
-export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined, editedFromHeader?: string | null): boolean {
+export function keepWaitingWrite(method: string, path: string, body: BodyInit | null | undefined, authorization: string | null | undefined, editedFromHeader?: string | null, opts: { key?: string; orphan?: boolean; sending?: boolean } = {}): boolean {
   const m = method.toUpperCase();
   if (!WRITES.has(m) || (m === "POST" && ASKS.test(path))) return false;
   let parsed: unknown;
@@ -151,11 +170,37 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
   const editedFrom = decodeEditedFrom(editedFromHeader) ?? undefined;
   const who = writerOf(authorization);
   const list = read();
+  if (opts.sending) {
+    // Kept as it is sent, under the request's own key, so a reload before
+    // its answer sends it again as the same write (#8638). Sent again from
+    // this page (a mutation's retry, a form pressed again), it is the one
+    // already kept under that key.
+    const again = opts.key ? list.findIndex((w) => w.page === PAGE && w.key === opts.key) : -1;
+    if (again >= 0) {
+      const was = list[again]!;
+      if (!was.sending) uncount(was.method, was.path);
+      list[again] = { ...was, sending: true };
+    } else {
+      list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), ...(editedFrom ? { editedFrom } : {}), who, page: PAGE, at: new Date().toISOString(), ...(opts.key ? { key: opts.key } : {}), ...(opts.orphan ? { orphan: true } : {}), sending: true });
+    }
+    return save(list);
+  }
+  return waitIn(list, { method: m, path, ...(parsed === undefined ? {} : { body: parsed }), ...(editedFrom ? { editedFrom } : {}), who, page: PAGE, at: new Date().toISOString(), ...(opts.key ? { key: opts.key } : {}), ...(opts.orphan ? { orphan: true } : {}) });
+}
+
+/** Put a write among those waiting: two edits of one record fold into one,
+ *  the later value winning, as they would have landed; a create waits with
+ *  its own key. Says whether it was kept. */
+function waitIn(list: WaitingWrite[], w: WaitingWrite): boolean {
+  const { method: m, path, who, editedFrom } = w;
+  const parsed = w.body;
   let last = list.length - 1;
   while (last >= 0 && !(list[last]!.who === who && list[last]!.path === path)) last -= 1;
-  const prior = last >= 0 && m !== "POST" ? list[last]! : null;
+  // A write still on its way is never folded into: it is forgotten when it lands.
+  const prior = last >= 0 && m !== "POST" && !list[last]!.sending ? list[last]! : null;
   if (m === "POST") {
-    list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), who, page: PAGE, at: new Date().toISOString(), key: randomId() });
+    // The request's own key, so the same create pressed again is one create (#8637).
+    list.push({ ...w, key: w.key ?? randomId() });
   } else if (prior && m === "PATCH" && prior.method === "PATCH" && isRecord(prior.body) && isRecord(parsed)) {
     const body = { ...prior.body, ...parsed };
     if (isRecord(prior.body.metadata) && isRecord(parsed.metadata)) {
@@ -164,11 +209,11 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
     }
     // A field's opened value is the first edit's: that is what the form showed.
     const was = prior.editedFrom || editedFrom ? { ...(editedFrom ?? {}), ...(prior.editedFrom ?? {}) } : undefined;
-    list[last] = { ...prior, body, ...(was ? { editedFrom: was } : {}), page: PAGE };
+    list[last] = { ...prior, body, ...(was ? { editedFrom: was } : {}), page: PAGE, ...(prior.orphan || w.orphan ? { orphan: true } : {}) };
   } else if (prior && (m === "PUT" || m === "DELETE") && (prior.method === "PATCH" || prior.method === "PUT")) {
-    list[last] = { method: m, path, body: parsed, who, page: PAGE, at: new Date().toISOString() };
+    list[last] = { ...w, ...(prior.orphan || w.orphan ? { orphan: true } : {}) };
   } else {
-    list.push({ method: m, path, ...(parsed === undefined ? {} : { body: parsed }), ...(editedFrom ? { editedFrom } : {}), who, page: PAGE, at: new Date().toISOString() });
+    list.push(w);
   }
   if (!save(list)) return false;
   const k = `${m} ${path}`;
@@ -176,54 +221,153 @@ export function keepWaitingWrite(method: string, path: string, body: BodyInit | 
   return true;
 }
 
-/** A write reached the server (answered at all): it no longer waits. */
-export function landedWrite(method: string, path: string, authorization: string | null | undefined): void {
-  const m = method.toUpperCase();
-  if (!WRITES.has(m)) return;
-  const k = `${m} ${path}`;
+/** A waiting write this page counted as kept goes back on its way. */
+function uncount(method: string, path: string): void {
+  const k = `${method} ${path}`;
   const n = keptHere.get(k);
-  if (n !== undefined) {
-    if (n > 1) keptHere.set(k, n - 1);
-    else keptHere.delete(k);
-  }
-  const who = writerOf(authorization);
+  if (n === undefined) return;
+  if (n > 1) keptHere.set(k, n - 1);
+  else keptHere.delete(k);
+}
+
+/** The write kept as it was sent, by its key, from this page. */
+const sentAs = (list: WaitingWrite[], key: string) => list.findIndex((w) => w.page === PAGE && w.sending && w.key === key);
+
+/** A write kept as it was sent could not go because the browser is offline:
+ *  it waits now, counted and sent like any kept write. Says whether it was kept. */
+export function sendingWaits(key: string): boolean {
   const list = read();
-  const i = list.findIndex((w) => w.page === PAGE && w.who === who && w.method === m && w.path === path);
+  const i = sentAs(list, key);
+  if (i < 0) return false;
+  const { sending: _sending, ...waiting } = list[i]!;
+  list.splice(i, 1);
+  return waitIn(list, waiting);
+}
+
+/** Set as the page goes (a reload, a pull to refresh): the browser then
+ *  cancels what is on its way, which is not a failure the page can report,
+ *  so what was kept stays for the next page to send (#8638). */
+let pageGoing = false;
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    pageGoing = true;
+  });
+  window.addEventListener("pageshow", () => {
+    pageGoing = false;
+  });
+}
+
+/** A write kept as it was sent failed online (the server unreachable, the
+ *  page told so): the page reports it, so the device does not keep it. */
+export function sendingFailed(key: string): void {
+  if (pageGoing) return;
+  const list = read();
+  const i = sentAs(list, key);
   if (i < 0) return;
   list.splice(i, 1);
   save(list);
 }
 
-/** What a read of `path` shows while edits to it wait: the edits over the
- *  answer, so a field still says what was typed into it. */
-export function withWaitingWrites<T>(path: string, answer: T, authorization: string | null | undefined): T {
-  if (!isRecord(answer)) return answer;
-  const who = writerOf(authorization);
-  const p = bare(path);
-  let out: Record<string, unknown> = answer;
-  for (const w of read()) {
-    if (w.who !== who || bare(w.path) !== p || !isRecord(w.body)) continue;
-    if (w.method === "PATCH" || w.method === "PUT") {
-      const metadata = w.method === "PATCH" && isRecord(w.body.metadata)
-        ? { metadata: applyJsonbMerge(isRecord(out.metadata) ? out.metadata : undefined, w.body.metadata) }
-        : {};
-      out = { ...out, ...w.body, ...metadata };
+/** A write reached the server (answered at all): it no longer waits. One
+ *  sent with a key is found by it, so the right one of two goes. */
+export function landedWrite(method: string, path: string, authorization: string | null | undefined, key?: string): void {
+  const m = method.toUpperCase();
+  if (!WRITES.has(m)) return;
+  const list = read();
+  if (key) {
+    const i = sentAs(list, key);
+    if (i >= 0) {
+      list.splice(i, 1);
+      save(list);
+      return;
     }
   }
-  return out as T;
+  uncount(m, path);
+  const who = writerOf(authorization);
+  const i = list.findIndex((w) => w.page === PAGE && w.who === who && w.method === m && w.path === path && !w.sending);
+  if (i < 0) return;
+  list.splice(i, 1);
+  save(list);
+}
+
+/** One waiting edit over a record. */
+function edited(record: Record<string, unknown>, w: WaitingWrite): Record<string, unknown> {
+  if (!isRecord(w.body) || (w.method !== "PATCH" && w.method !== "PUT")) return record;
+  const metadata = w.method === "PATCH" && isRecord(w.body.metadata)
+    ? { metadata: applyJsonbMerge(isRecord(record.metadata) ? record.metadata : undefined, w.body.metadata) }
+    : {};
+  return { ...record, ...w.body, ...metadata };
+}
+
+/** The rows a read carries (a list's lines, a page of records): the answer
+ *  itself when it is an array, else each array of records it holds. A row's
+ *  waiting edit is written to the row's own address, `<base>/<rows>/<id>`,
+ *  under the same module as the read, so it is matched by its id: a list's
+ *  line ticked or removed offline showed as it was after a reload, under a
+ *  banner counting that very change as waiting (#8636). */
+function overRows(answer: unknown, readPath: string, writes: WaitingWrite[]): unknown {
+  const rowWrites = writes.flatMap((w) => {
+    const parts = bare(w.path).split("/");
+    const id = parts.pop();
+    parts.pop();
+    const base = parts.join("/");
+    return id && base && readPath.startsWith(`${base}/`) && bare(w.path) !== readPath ? [{ id, w }] : [];
+  });
+  if (!rowWrites.length) return answer;
+  const rows = (list: unknown[]): unknown[] => {
+    let changed = false;
+    const out: unknown[] = [];
+    for (const row of list) {
+      if (!isRecord(row) || typeof row.id !== "string" || !rowWrites.some((r) => r.id === row.id)) {
+        out.push(row);
+        continue;
+      }
+      changed = true;
+      let shown: Record<string, unknown> | null = row;
+      for (const { id, w } of rowWrites) {
+        if (id !== row.id || !shown) continue;
+        shown = w.method === "DELETE" ? null : edited(shown, w);
+      }
+      if (shown) out.push(shown);
+    }
+    return changed ? out : list;
+  };
+  if (Array.isArray(answer)) return rows(answer);
+  if (!isRecord(answer)) return answer;
+  let out = answer;
+  for (const [k, v] of Object.entries(answer)) {
+    if (!Array.isArray(v)) continue;
+    const shown = rows(v);
+    if (shown !== v) out = { ...out, [k]: shown };
+  }
+  return out;
+}
+
+/** What a read of `path` shows while edits to it wait: the edits over the
+ *  answer, so a field still says what was typed into it, and the edits and
+ *  removals of the rows it carries over those rows. */
+export function withWaitingWrites<T>(path: string, answer: T, authorization: string | null | undefined): T {
+  if (!isRecord(answer) && !Array.isArray(answer)) return answer;
+  const who = writerOf(authorization);
+  const p = bare(path);
+  const mine = read().filter((w) => w.who === who);
+  let out: unknown = answer;
+  if (isRecord(out)) for (const w of mine) if (bare(w.path) === p) out = edited(out as Record<string, unknown>, w);
+  return overRows(out, p, mine) as T;
 }
 
 /** The writes waiting for this person that no open page will send: the ones
- *  an earlier page made. */
+ *  an earlier page made, and this page's own that no mutation sends again
+ *  (a form's create, #8637). */
 export function waitingWritesToSend(authorization: string | null | undefined): WaitingWrite[] {
   const who = writerOf(authorization);
-  return read().filter((w) => w.who === who && w.page !== PAGE);
+  return read().filter((w) => w.who === who && (w.page !== PAGE || (w.orphan && !w.sending)));
 }
 
 /** How many writes wait for this person, this page's own included. */
 export function waitingWriteCount(authorization: string | null | undefined): number {
   const who = writerOf(authorization);
-  return read().filter((w) => w.who === who).length;
+  return read().filter((w) => w.who === who && !(w.sending && w.page === PAGE)).length;
 }
 
 export type SendOutcome = "landed" | "refused" | "unreachable";

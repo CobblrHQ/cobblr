@@ -230,8 +230,21 @@ function withReserved(e: ResolvedEntity, row: { id: string; qty: string; instanc
   };
 }
 
+/** The values set: a blank text, a null and an unticked box are left out. */
+function held(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, v]) => v !== null && v !== undefined && v !== false && v !== ""));
+}
+
 export function toResolvedPart(row: {
   id: string;
+  asset_id?: number;
+  serial_number?: string | null;
+  model_number?: string | null;
+  assigned_to?: string | null;
+  warranty_expires?: string | null;
+  lifetime_warranty?: boolean;
+  warranty_details?: string | null;
+  insured?: boolean;
   name: string;
   description: string | null;
   qty: string;
@@ -278,6 +291,11 @@ export function toResolvedPart(row: {
     image_path: row.image_path ?? undefined,
     detailUrl,
     fields: {
+      asset_id: row.asset_id ?? null,
+      // What a part says only when it says it: a serial, a model, a warranty
+      // or "insured" nobody set is no value, so a send never offers to map an
+      // unset Lifetime warranty and an export's blank cell matches (#8710).
+      ...held({ serial_number: row.serial_number, model_number: row.model_number, assigned_to: row.assigned_to, warranty_expires: row.warranty_expires, lifetime_warranty: row.lifetime_warranty, warranty_details: row.warranty_details, insured: row.insured, archived: row.archived }),
       name: row.name,
       state: row.state ?? "active",
       description: row.description,

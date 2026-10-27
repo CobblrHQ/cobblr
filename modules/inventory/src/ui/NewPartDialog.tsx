@@ -1,6 +1,6 @@
 import type { RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import { moneyStorageOf } from "@cobblr/platform-contract/money";
-import { EntityThumb, LocationPicker, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage } from "@cobblr/platform-web";
+import { EntityThumb, LocationPicker, useNewRecordBarcode, RecordFormModal, useToast, useMoneyCurrency, ColourInput, MoneyInput, AddressPicker, fieldInputText, missingRequired, usePasteImage, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
 // Modal to create a new part. Minimum fields only — name + qty +
 // optional category/location.
 //
@@ -346,6 +346,13 @@ export function NewPartDialog({ onClose, onCreated, seed }: NewPartDialogProps) 
         navigate(`${basePath}/parts/${part.id}`);
       }
     } catch (err) {
+      // Offline, the part is kept on this device and goes by itself when the
+      // connection returns: said, and the form closes (#8637).
+      if (isKeptOffline(err)) {
+        toast.info(`${name.trim()}: ${KEPT_SENTENCE}`);
+        onClose(false);
+        return;
+      }
       // A refusal of the name is said beside the Name field; anything else below the form.
       if (err instanceof InventoryApiError && refusesField(err.details, "name")) setNameError(err.message);
       else setError(err instanceof InventoryApiError ? err.message : `Couldn't create ${itemNoun.toLowerCase()}`);

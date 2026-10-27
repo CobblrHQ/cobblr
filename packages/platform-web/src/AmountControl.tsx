@@ -124,8 +124,9 @@ export function AmountControl({
     void apply(-Math.min(inOwn, value));
   };
   return (
-    <span className="inline-flex flex-col items-end" data-testid="amount-control" data-mode="measured">
-      <span className="inline-flex items-center gap-2">
+    <span className="inline-flex max-w-full flex-col items-end" data-testid="amount-control" data-mode="measured">
+      {/* The amount and Use some wrap, Use some under the amount, before they run past a phone at 200% text (#8613). */}
+      <span className="inline-flex max-w-full flex-wrap items-center justify-end gap-2">
         {number}
         {!typing && (
           <button
@@ -139,7 +140,7 @@ export function AmountControl({
         )}
       </span>
       {typing && (
-        <form onSubmit={submit} className="mt-1.5 inline-flex items-center gap-1.5">
+        <form onSubmit={submit} className="mt-1.5 inline-flex max-w-full flex-wrap items-center justify-end gap-1.5">
           <label className="text-xs text-muted dark:text-slate-400" htmlFor={`used-${label}`}>
             Used
           </label>

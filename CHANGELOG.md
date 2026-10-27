@@ -2,6 +2,18 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-27
+
+### Features
+- A scrapped print keeps the filament it melted spent, and each part of a build can be marked to come back to stock instead.
+
+### Improvements
+- In Edit layout the arrow keys move a floor plan's rack, shelf, room or thing one grid step, ten with Shift. Each step can be undone, and a click on a piece lets the arrows move it too.
+
+### Fixes
+- A record saved while its workspace was busy is still matched to its library item (a cartridge to its ROM in RomM) and offered its picture, instead of waiting for the next quiet round.
+- A tool library's Lend form no longer starts every loan as a repair, refuses a due-back day before the day it was lent, and the Tool Library bundle stops adding Borrower and Due back fields the loan never filled (unused ones are hidden, none deleted). A lent tool now says who has it, and Overdue, in the Machines list, and a new Lent out page lists everything that is out by who has it.
+
 ## 2026-10-26
 
 ### Fixes

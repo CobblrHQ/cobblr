@@ -87,6 +87,8 @@ export function saidValue(value: unknown, field: SaidFieldType = {}): string | n
   // As written: a year is 2019, not "2,019" (money has its own formatter).
   if (typeof value === "number") return String(value);
   const text = String(value).trim();
+  // A numeric column arrives as a string: "12.000000000" is said 12, "1.500000000" 1.5 (#8639).
+  if (type === "number" && /^-?\d+(?:\.\d+)?$/.test(text)) return String(Number(text));
   const choice = field.choices?.find((c) => (typeof c === "string" ? c : c.value) === text);
   if (choice && typeof choice !== "string" && choice.label) return choice.label;
   // An id or a path that reached here unresolved is still never read out.

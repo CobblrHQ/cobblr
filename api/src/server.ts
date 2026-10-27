@@ -23,10 +23,12 @@ import { lastOrphanFilesReport } from "./platform/heal-orphan-files.js";
 import { WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "./platform/provision-workspace.js";
 import { SecretFieldError } from "./platform/secret-fields.js";
 import { ListReadError } from "./platform/entity-list-walk.js";
+import { GuestScopeError } from "./platform/entities.js";
 import { InvalidFieldValueError, UnknownFieldError } from "@cobblr/platform-contract/entity-metadata";
 import { failingResolvers } from "./platform/resolver-failures.js";
 import { oauthRouter, wellKnownRouter } from "./auth/oauth.js";
 import { pendingMigrationSummary } from "./modules/enable.js";
+import { catchUpBehindSoon } from "./platform/tenant-migrations-catch-up.js";
 import { failingTenantSweeps } from "./platform/tenant-sweeps.js";
 import { healShimRuns } from "./platform/heal-shim-log.js";
 import { passFailures } from "./platform/pass-failures.js";
@@ -70,6 +72,7 @@ import { orgsRouter } from "./routes/orgs.js";
 import { servicesRouter } from "./routes/services.js";
 import { servicesTestRouter } from "./platform/services-test-doors.js";
 import { platformOrgRouter } from "./routes/platform.js";
+import { fieldDefRestoreRouter } from "./routes/field-def-restore.js";
 import { calendarOrgRouter, calendarPublicRouter } from "./routes/calendar.js";
 import { bundlesRouter } from "./routes/bundles.js";
 import { quickstartRouter } from "./routes/quickstart.js";
@@ -313,6 +316,7 @@ export function createApp(): AppHandles {
     let dbOk = true;
     try {
       ({ pending, ahead } = await pendingMigrationSummary());
+      if (pending.count > 0) void catchUpBehindSoon().catch((err) => console.error("[healthz] catch-up ask failed:", (err as Error).message));
     } catch (err) {
       pending = null;
       dbOk = false;
@@ -525,6 +529,7 @@ export function createApp(): AppHandles {
   // platformOrgRouter mounts /:slug/entity-kinds, /:slug/entities/:kind/:id,
   // /:slug/actions, /:slug/bindings, /:slug/field-defs, etc. Composed
   // onto /orgs so it inherits the same routing tree.
+  v1.use("/orgs/:slug/field-defs/restore", fieldDefRestoreRouter);
   v1.use("/orgs", platformOrgRouter);
   // Services: capabilities, starting a job, reading and answering it.
   v1.use("/orgs", servicesRouter);
@@ -693,7 +698,7 @@ export function completeApp(app: Application): void {
       }
       // A write naming a field the kind does not have (entity-metadata.ts):
       // the caller's mistake, said with the names they could have meant.
-      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError || err instanceof FieldNotReadableError) {
+      if (err instanceof SecretFieldError || err instanceof UnknownFieldError || err instanceof InvalidFieldValueError || err instanceof GroupingError || err instanceof ListReadError || err instanceof FieldNotReadableError || err instanceof GuestScopeError) {
         res.status(err.status).json(err.toJSON());
         return;
       }

@@ -43,6 +43,12 @@ export async function changeLine(db: Db, orgId: string, userId: string | null, o
   return withOrderLock(db, orgId, userId, orderId, async () => {
     const before = await db.selectFrom("sales_order_items").selectAll().where("id", "=", lineId).where("order_id", "=", orderId).executeTakeFirst();
     if (!before) return null;
+    if (patch.qty !== undefined && patch.qty > Number(before.qty)) {
+      const order = await db.selectFrom("sales_orders").select("status").where("id", "=", orderId).executeTakeFirst();
+      if (order && (order.status === "fulfilled" || order.status === "shipped" || order.status === "closed")) {
+        throw new ActionRefusal(`This order is already ${order.status}. Cancel the order to return stock before increasing its line quantity.`);
+      }
+    }
     const taken = Number(before.qty_fulfilled);
     if (patch.qty !== undefined && patch.qty < taken) {
       throw new ActionRefusal(`This line has already taken ${taken} from stock. Its quantity cannot be less than ${taken}. Cancel the order to return stock first.`);

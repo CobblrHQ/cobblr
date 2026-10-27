@@ -19,9 +19,13 @@ export function nextTerm(state: {
   term: string;
   /** Has the user edited the box? */
   touched: boolean;
+  /** Is the cursor in the box? A person who has clicked in to paste has not
+   *  typed yet, and a search answer landing then put its phrase in front of
+   *  the link they pasted ("Photo lamphttps://…", #6881). */
+  focused?: boolean;
 }): string {
-  const { searched, term, touched } = state;
-  if (touched) return term; // never fight the user's cursor
+  const { searched, term, touched, focused } = state;
+  if (touched || focused) return term; // never fight the user's cursor
   if (!searched) return term; // nothing searched yet — don't blank an existing value
   return searched;
 }

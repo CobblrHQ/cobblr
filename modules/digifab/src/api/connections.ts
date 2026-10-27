@@ -17,7 +17,7 @@ import { platform } from "@cobblr/platform-contract";
 import { tenantDb, tenantContext, sessionUser } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
 import { requireCapability } from "@cobblr/platform-contract/action-gate";
-import { resolveDriver, availableDriverKeys } from "../drivers/registry.js";
+import { resolveDriver, availableDriverKeys, availableDriverNames } from "../drivers/registry.js";
 import { buildEdgeRelay, reverseBuildIfCommitted, markJobTerminal } from "../jobs-core.js";
 import { assertSafeMachineUrl } from "../drivers/ssrf.js";
 import type { Kysely } from "kysely";
@@ -104,10 +104,11 @@ connectionsRouter.get(
     // The device-connection store is SHARED across modules (inventory keeps its
     // Spoolman connection here too). Show only connections digifab can drive —
     // its own driver types — so a Spoolman (or other) connection never leaks in.
-    const types = await availableDriverKeys(tenantDb(req));
+    const type_names = await availableDriverNames(tenantDb(req));
+    const types = Object.keys(type_names);
     const driveable = new Set(types);
     const items = (await store().list(ctx.org.id)).filter((c) => driveable.has(c.type));
-    res.json({ items: await Promise.all(items.map(async c => c.type === "edge_adapter" ? { ...c, config: await readBridgeConfig(ctx.org.id, c.id) } : c)), types });
+    res.json({ items: await Promise.all(items.map(async c => c.type === "edge_adapter" ? { ...c, config: await readBridgeConfig(ctx.org.id, c.id) } : c)), types, type_names });
   }),
 );
 

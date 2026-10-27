@@ -2791,25 +2791,23 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
   {
     glyph: "🔧",
     blurb:
-      "Tool library: checkout/checkin tracking. Marks machines with borrower, due_date, condition. Pair with the labels module to print barcoded check-out tags.",
+      "Tool library: lend tools out and take them back. Adds condition, deposit and category to machines; who has one and when it is due is the loan on the tool. Pair with the labels module to print barcoded check-out tags.",
     manifest: {
       id: "cobblr.community.tool-library",
-      base_kind_fields_reason: "Adds lending fields (borrower, due date, condition, deposit) to the machines already kept as Machines; lending is a face on the workspace's own tools, not a table of its own.",
+      base_kind_fields_reason: "Adds condition, deposit and category fields to the machines already kept as Machines; who has a tool and until when is the platform loan (Lend... on the tool), not a field of its own.",
       catalog: "disabled",
-      version: "0.1.2",
-      releases: [{ version: "0.1.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }],
+      version: "0.2.0",
+      releases: [{ version: "0.2.0", released_at: "2026-10-27", notes: "Who has a tool and when it is due back is the loan you make with Lend on the tool, so the Borrower and Due back fields are gone from new installs. A workspace where nobody typed into them has them hidden; one that did keeps them as they were." }, { version: "0.1.2", released_at: "2026-10-07", notes: "A group's summary adds up only what adds up: a length or a weight per item is totalled as length or weight times how many you have, and a year, a size or a temperature is no longer summed." }],
       name: "Tool Library",
       description:
-        "Track who's borrowed a tool, when it's due back, and its condition. Custom machine:machine fields.",
+        "Lend your tools out: who has one, when it is due back and its condition. Condition, deposit and category fields on your machines; lending itself is Lend... on the tool.",
       author: "Cobblr community",
       requires: [{ module: "machines" }],
       wires: [],
       field_defs: [
-        { entity_kind: "machines:machine", name: "borrower", display_label: "Borrower", type: "text", position: 1 },
-        { entity_kind: "machines:machine", name: "due_date", display_label: "Due back", type: "date", position: 2 },
-        { entity_kind: "machines:machine", name: "condition", display_label: "Condition (1-5)", type: "number", aggregate: "none", position: 3 },
-        { entity_kind: "machines:machine", name: "deposit_paid", display_label: "Deposit paid?", type: "text", position: 4 },
-        { entity_kind: "machines:machine", name: "tool_category", display_label: "Category", type: "text", position: 5 },
+        { entity_kind: "machines:machine", name: "condition", display_label: "Condition (1-5)", type: "number", aggregate: "none", position: 1 },
+        { entity_kind: "machines:machine", name: "deposit_paid", display_label: "Deposit paid?", type: "text", position: 2 },
+        { entity_kind: "machines:machine", name: "tool_category", display_label: "Category", type: "text", position: 3 },
       ],
     },
   },

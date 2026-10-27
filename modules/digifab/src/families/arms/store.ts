@@ -2,6 +2,7 @@ import "./db.js";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
+import { bridgeAnswer } from "../../bridge-wait.js";
 import type { ArmInfo, ArmState } from "@cobblr/platform-contract/robot-arm";
 import type { DigifabDB } from "../../db.js";
 import { buildDriverById } from "../../jobs-core.js";
@@ -125,7 +126,7 @@ export async function readArm(db: Kysely<DigifabDB>, orgId: string, machineId: s
  if (!unit) return { unit: null, state: null, connection_error: null, link_lost: null, programs: [], families: [], compatibility: null, support: "untested" as const, ownership: null, approvals: [], open_run: null, runs: [], copies: [], outgoing: [], backups: [], guide: null, updates: [] };
  let state: ArmState | null = null, connection_error: string | null = null;
  if (unit.connection_id && unit.device_id) {
-  try { state = await (await armDriver(db, orgId, unit.connection_id)).state(unit.device_id); }
+  try { state = await bridgeAnswer((async () => (await armDriver(db, orgId, unit.connection_id!)).state(unit.device_id!))()); }
   catch { connection_error = "The arm's bridge did not answer. Its state is unknown; check the arm at the cell."; }
  }
  const programs = await db.selectFrom("digifab_arm_programs").selectAll().where("machine_id", "=", machineId).orderBy("name").orderBy("first_seen_at").execute();

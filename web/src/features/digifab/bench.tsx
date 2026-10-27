@@ -4,11 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SearchInput, useToast, useConfirm, useImageSrc, WorkspaceLink } from "@cobblr/platform-web";
 import { api, type BenchReport, type BenchOperation, type BenchCapture, type PlatformResolvedEntity } from "../../lib/api";
 import { useActiveOrg } from "../../auth/ActiveOrgContext";
+import { exactTime } from "../../lib/exact-time";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 export function BenchPanel({ctx}:{ctx:EntityDetailPanelCtx}){
  return <BenchInstrument slug={ctx.slug} machineId={ctx.entityId}/>;
 }
-export function BenchInstrument({slug,machineId}:{slug:string;machineId:string}){
+/** `station`: the page is this instrument's own, so it says what it is waiting
+ *  for; on a machine's page a machine that is no bench shows nothing. */
+export function BenchInstrument({slug,machineId,station=false}:{slug:string;machineId:string;station?:boolean}){
  const qc=useQueryClient(),toast=useToast(),confirm=useConfirm(),{activeOrg}=useActiveOrg();
  const [channels,setChannels]=useState("D0,D1"),[rate,setRate]=useState("1000000"),[duration,setDuration]=useState("1000"),[trigger,setTrigger]=useState(""),[decoder,setDecoder]=useState("uart"),[options,setOptions]=useState("tx=D0:baudrate=115200"),[voltage,setVoltage]=useState("3.3"),[current,setCurrent]=useState("0.1");
  const [busy,setBusy]=useState(false),[report,setReport]=useState<BenchReport|null>(null),[identity,setIdentity]=useState(""),[offset,setOffset]=useState(0);
@@ -42,11 +45,15 @@ export function BenchInstrument({slug,machineId}:{slug:string;machineId:string})
   if(file.size>2*1024*1024){toast.error("Choose a .sr capture of at most 2 MB.");return;}
   const bytes=new Uint8Array(await file.arrayBuffer());let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);capture(btoa(binary));
  }
- if(!page.data||(!page.data.instrument&&!page.data.total))return null;
+ if(!page.data){
+  if(!station)return null;
+  return <p className="text-sm text-muted" role={page.isError?"alert":"status"}>{page.isError?"The bench could not be read. Reload to try again.":"Reading the bench…"}</p>;
+ }
+ if(!page.data.instrument&&!page.data.total)return null;
  const instrument=page.data.instrument;
  return <section className="rounded-lg border border-line p-3 space-y-3" data-testid="bench-instrument">
-  <h3 className="text-sm font-semibold text-content">Bench instrument</h3>
-  <p className="text-sm text-muted break-words">{identity || instrument?.identity || instrument?.name || "Saved instrument readings"}</p>
+  <h3 className="text-sm font-semibold text-content break-words">{station&&page.data.machine_name?page.data.machine_name:"Bench instrument"}</h3>
+  <p className="text-sm text-muted break-words">{[page.data.instrument_label,identity || instrument?.identity || instrument?.name].filter(Boolean).join(" · ") || "Saved instrument readings"}</p>
   <p className="text-sm text-muted">Readings leave instrument settings alone. Set up measurements on the instrument.</p>
   {instrument?.profile==="riden"&&<p className="text-sm text-muted">Supply control is {instrument.control_enabled?"enabled":"off"}. Every change needs confirmation. Output off is always available.</p>}
   {!instrument&&<p className="text-sm text-muted">{page.data.connection_error || "Reconnect this instrument to collect more readings."}</p>}
@@ -65,7 +72,7 @@ export function BenchInstrument({slug,machineId}:{slug:string;machineId:string})
   </div>}
   {/* EXTERNAL-IMAGE-OK: the instrument screenshot is an inline data URI, never a stored file path. */}
   {/* photo-frame: an oscilloscope screenshot shown whole beside its readings. */}
-  {report&&<div aria-live="polite" className="space-y-2"><p className="text-sm text-muted">{report.at}</p><Measurements report={report}/>{report.screenshot&&<img className="max-w-full rounded" alt="Scope reading" src={`data:${report.screenshot.mime_type};base64,${report.screenshot.data_b64}`}/>}</div>}
+  {report&&<div aria-live="polite" className="space-y-2"><p className="text-sm text-muted"><time dateTime={report.at} title={report.at}>{exactTime(report.at)}</time></p><Measurements report={report}/>{report.screenshot&&<img className="max-w-full rounded" alt="Scope reading" src={`data:${report.screenshot.mime_type};base64,${report.screenshot.data_b64}`}/>}</div>}
   {instrument?.profile==="sigrok"&&<div className="space-y-2">
    <label className="block text-sm">Channels<input className="input w-full min-h-11" value={channels} onChange={e=>setChannels(e.target.value)}/></label>
    <label className="block text-sm">Sample rate (Hz)<input className="input w-full min-h-11" type="number" value={rate} onChange={e=>setRate(e.target.value)}/></label>
@@ -88,7 +95,7 @@ export function BenchInstrument({slug,machineId}:{slug:string;machineId:string})
    {instrument.profile==="sigrok"?<><button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>capture()}>{busy?"Waiting for analyser…":"Start capture"}</button><label className="block text-sm">Import .sr<input className="block w-full min-h-11" type="file" accept=".sr" disabled={busy||!record} onChange={e=>{const file=e.target.files?.[0];if(file)void importCapture(file);e.target.value="";}}/></label></>:<button type="button" className="min-h-11 rounded-md bg-accent px-3 text-sm text-white disabled:opacity-50" disabled={busy||!record} onClick={()=>void operate("log")}>{busy?"Waiting for instrument…":"Log fresh reading"}</button>}
   </div>}
   <h4 className="text-sm font-medium">Saved readings ({page.data.total})</h4>
-  <ul className="space-y-3">{page.data.items.map(row=><li key={row.id} className="border-t border-line pt-2 space-y-1"><p className="text-xs text-muted">{row.report.at}</p><Measurements report={row.report}/><RecordLink slug={slug} kind={row.record_kind} id={row.record_id}/>{row.capture_file_id&&<CaptureDownload slug={slug} id={row.capture_file_id}/>} {row.screenshot_file_id&&<WorkspaceLink className="text-sm text-accent" slug={slug} to={`/files/${row.screenshot_file_id}`}>Scope screenshot</WorkspaceLink>}</li>)}</ul>
+  <ul className="space-y-3">{page.data.items.map(row=><li key={row.id} className="border-t border-line pt-2 space-y-1"><p className="text-xs text-muted"><time dateTime={row.report.at} title={row.report.at}>{exactTime(row.report.at)}</time></p><Measurements report={row.report}/><RecordLink slug={slug} kind={row.record_kind} id={row.record_id}/>{row.capture_file_id&&<CaptureDownload slug={slug} id={row.capture_file_id}/>} {row.screenshot_file_id&&<WorkspaceLink className="text-sm text-accent" slug={slug} to={`/files/${row.screenshot_file_id}`}>Scope screenshot</WorkspaceLink>}</li>)}</ul>
   <div className="flex gap-2"><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm text-content hover:bg-subtle disabled:opacity-50" disabled={!offset} onClick={()=>setOffset(Math.max(0,offset-20))}>Previous readings</button><button type="button" className="min-h-11 rounded-md border border-line px-3 text-sm text-content hover:bg-subtle disabled:opacity-50" disabled={offset+page.data.items.length>=page.data.total} onClick={()=>setOffset(offset+20)}>More readings</button></div>
  </section>;
 }

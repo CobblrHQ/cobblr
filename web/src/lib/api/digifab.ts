@@ -616,7 +616,9 @@ export interface BenchCapture {channels:string[];samplerate:number;duration_ms:n
 export interface BenchOperation {machine_id:string;operation:"identify"|"read"|"log"|"output_off"|"capture"|"configure"|"output_on"|"set_voltage"|"set_current";record_kind?:string;record_id?:string;capture?:BenchCapture;confirmed?:boolean;control_enabled?:boolean;value?:number}
 export interface BenchReport {identity:string;profile:string;at:string;protection?:string;output_enabled?:boolean;capture?:{data_b64?:string;decoded:string};readings:{quantity:string;value:number;unit:string}[];screenshot?:{mime_type:"image/bmp";data_b64:string}}
 export interface BenchReading {id:string;machine_id:string;record_kind:string;record_id:string;report:BenchReport;screenshot_file_id:string|null;capture_file_id:string|null}
-export interface BenchPage {items:BenchReading[];total:number;connection_error:string|null;instrument:{connection_id:string;device_id:string;name:string;profile:string;identity:string;output_off:boolean;control_enabled?:boolean}|null}
+export interface BenchPage {items:BenchReading[];total:number;connection_error:string|null;
+ /** What the person called the machine and its instrument ("Bench power supply", "Bench PSU"), read from the workspace, never the bridge. */
+ machine_name?:string|null;instrument_label?:string|null;instrument:{connection_id:string;device_id:string;name:string;profile:string;identity:string;output_off:boolean;control_enabled?:boolean}|null}
 export interface CutterProfileRecord {id:string;profile:CutterProfile;connection_id:string;remote_device_id:string}
 export interface CutterRollView {id:string;name:string;kind:string;instance:string;remaining:number;revision:number;config:{width_mm:number;waste:number}}
 export interface CutterStationView {
@@ -664,7 +666,7 @@ export const digifabApi = {
 
   // ─── digifab (print-farm connections) ──────────────────────────
   listDigifabConnections: (slug: string) =>
-    request<{ items: DigifabConnection[]; types: string[] }>(
+    request<{ items: DigifabConnection[]; types: string[]; type_names?: Record<string, string> }>(
       "GET",
       `/orgs/${slug}/modules/digifab/connections`,
     ),

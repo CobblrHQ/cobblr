@@ -535,8 +535,10 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
                     ) : (
                       // A line's quantity and price are the two things a
                       // customer changes their mind about; changing them used
-                      // to mean removing the line and adding it again.
-                      <span className="inline-flex items-center gap-1 text-xs text-muted">
+                      // to mean removing the line and adding it again. The
+                      // group wraps so the price drops under the quantity
+                      // when enlarged text leaves no room beside it.
+                      <span className="flex min-w-0 max-w-full flex-wrap items-center gap-1 text-xs text-muted">
                         <NumberCell
                           label={`How many ${it.description || "of this line"}`}
                           value={String(Number(it.qty))}

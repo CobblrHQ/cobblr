@@ -76,8 +76,8 @@ export function PortalViewPage() {
         <ArrowLeft size={12} /> back
       </Link>
 
-      {/* On a phone the actions and the search take their own line under the
-          view's name: in one row the search ran 51 px past the edge (#7911). */}
+      {/* At enlarged text, the search's padding alone is wider than the
+          space left beside the access request, so it needs its own row. */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="min-w-0 break-words text-xl font-semibold text-content dark:text-mortar-100">
           {data.view?.name ?? "…"}
@@ -102,7 +102,7 @@ export function PortalViewPage() {
               subject={`Add to ${data.view?.name ?? "this view"}`}
             />
           )}
-          <SearchInput value={q} onChange={setQ} placeholder="search…" wrapperClassName="min-w-0 flex-1 sm:w-48 sm:flex-none" />
+          <SearchInput value={q} onChange={setQ} placeholder="search…" wrapperClassName="w-full min-w-0 sm:w-48" />
         </div>
       </div>
 

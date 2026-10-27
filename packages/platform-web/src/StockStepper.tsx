@@ -63,9 +63,9 @@ function CountStepper({ qty, onStep, label, size }: { qty: number; onStep: (delt
   };
   const sm = size === "sm";
   return (
-    <span className="inline-flex flex-col items-end" data-testid="stock-stepper">
+    <span className="inline-flex max-w-full flex-col items-end" data-testid="stock-stepper">
       <NumberStepper
-        className="inline-flex items-center gap-1.5"
+        className="inline-flex max-w-full items-center gap-1.5"
         preserveConcurrentChanges
         value={value}
         min={0}
@@ -75,8 +75,11 @@ function CountStepper({ qty, onStep, label, size }: { qty: number; onStep: (delt
         iconSize={16}
         testId="stock-stepper-control"
         inputTestId="stock-stepper-qty"
-        buttonClassName={(sm ? "w-8 h-8" : "w-11 h-11") + " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition"}
-        inputClassName={(sm ? "w-12 text-sm" : "w-14 text-base") + " bg-transparent text-center font-mono tabular-nums text-content dark:text-mortar-100"}
+        // Sized in px, as AmountControl's are: in rem the buttons doubled at
+        // 200% text and a part page's stepper ran past the phone (#8612). The
+        // number may shrink to three digits' width before that happens.
+        buttonClassName={(sm ? "w-[32px] h-[32px]" : "w-[44px] h-[44px]") + " grid place-items-center rounded-lg border border-line dark:border-slate-700 text-content dark:text-mortar-100 active:bg-subtle dark:active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition"}
+        inputClassName={(sm ? "w-12 text-sm" : "w-14 text-base") + " min-w-[3ch] bg-transparent text-center font-mono tabular-nums text-content dark:text-mortar-100"}
         // The ledger moves by a change: a typed count is the change that reaches it.
         onChange={(n) => void step(n - value)}
       />

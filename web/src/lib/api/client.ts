@@ -6,7 +6,7 @@ import { getStationTokenOverride, noteStationTokenRefused } from "../station-tok
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, beginWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAPerson, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE } from "@cobblr/platform-web";
+import { UploadError, beginWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
@@ -17,6 +17,7 @@ import { GUEST_NOT_SHARED, refusedForGuest } from "../acting-role";
 import { isPageLeaving } from "../page-leaving";
 import { busySentence, parseRetryAfter } from "../request-wait";
 import { markSandboxEnded } from "../sandbox-session";
+import { markWorkspaceUnavailable } from "../workspace-unavailable";
 import { markWorkspaceUnfinished, slugOfRequest } from "../workspace-unfinished";
 import { announceScanFiled } from "../scanFiled";
 import type { ScanFiledChange } from "../scanFiled";
@@ -318,6 +319,7 @@ async function sendRequest<T>(
 ): Promise<T> {
   // Read before anything is waited on: whether a person's mutation sent this (waiting-writes.ts).
   const byAPerson = madeByAPerson(method);
+  const byAMutation = madeByAMutation();
   // A guest's read the server would refuse is refused here, unsent (acting-role.ts).
   if (refusedForGuest(method, path)) throw new ApiError(403, "guest_not_shared", GUEST_NOT_SHARED);
   // The page is going, with other credentials than it ran on (leaving View
@@ -338,7 +340,13 @@ async function sendRequest<T>(
   // the server answers it as it answered the first (write-identity.ts, #7923).
   const bodyText = body === undefined ? undefined : JSON.stringify(body);
   const write = beginWrite(method, path, bodyText ?? null);
-  if (write) headers["Idempotency-Key"] = write.key;
+  // A kept write sent again by a later page brings the key it was first sent with.
+  if (write && !headers["Idempotency-Key"]) headers["Idempotency-Key"] = write.key;
+  const key = headers["Idempotency-Key"];
+  // A person's write is kept on the device as it leaves, and forgotten when it
+  // lands, so a reload before its answer sends it again as the same write
+  // instead of losing it without a word (#8638).
+  const keeping = !!key && byAPerson && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation, sending: true });
 
   let res: Response;
   try {
@@ -363,9 +371,14 @@ async function sendRequest<T>(
     if (browserOffline()) {
       // Never sent, so it can be sent later without doubling: it waits on
       // this device, not only in this page (waiting-writes.ts, #7863).
-      if (byAPerson && !impToken && !headers["x-cobblr-waited"]) keepWaitingWrite(method, path, body === undefined ? undefined : JSON.stringify(body), headers["Authorization"], headers[EDITED_FROM_HEADER]);
+      // A form's write (no mutation sends it again) is sent by the store when
+      // the connection returns, and the form is told so: it said "couldn't"
+      // under a banner counting it as waiting, and nothing sent it (#8637).
+      const kept = keeping && key ? sendingWaits(key) : byAPerson && !impToken && !headers["x-cobblr-waited"] && keepWaitingWrite(method, path, bodyText, headers["Authorization"], headers[EDITED_FROM_HEADER], { key, orphan: !byAMutation });
+      if (kept && !byAMutation) throw new ApiError(0, KEPT_OFFLINE, KEPT_SENTENCE);
       throw new ApiError(0, "offline", networkFailureMessage());
     }
+    if (keeping && key) sendingFailed(key);
     throw new ApiError(0, "network_error", networkFailureMessage());
   }
   write?.settle(outcomeOf(res.status, res.headers.get("retry-after")));
@@ -388,7 +401,7 @@ async function sendRequest<T>(
     if (!down) setOfflineAsOf(null);
   }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
-  if (isMutating(method) && !impToken) landedWrite(method, path, headers["Authorization"]);
+  if (isMutating(method) && !impToken) landedWrite(method, path, headers["Authorization"], key);
   if (res.ok && isMutating(method)) {
     noteWorkspaceWrite(path, res);
     noteAiAvailabilityWrite(path);
@@ -467,6 +480,11 @@ async function sendRequest<T>(
     if (res.status === 503 && err?.code === "tenant_unprovisioned") {
       const slug = slugOfRequest(path);
       if (slug) markWorkspaceUnfinished(decodeURIComponent(slug));
+    }
+    // 404-is: a-state: an open workspace link can outlive the share or membership that allowed it.
+    if ((res.status === 409 && err?.code === "workspace_deleting") || (res.status === 404 && err?.code === "org_not_found")) {
+      const slug = slugOfRequest(path);
+      if (slug) markWorkspaceUnavailable(decodeURIComponent(slug));
     }
     // A 429 is the server asking us to wait, and says so in the same words on
     // every page, whatever sentence the limiter that sent it happened to carry.

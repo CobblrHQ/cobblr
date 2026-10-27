@@ -9,6 +9,7 @@
 // fresh read of the record replaces the copy.
 import { useCallback, useRef } from "react";
 import { editOf, type Edit } from "./changed-from";
+import { asAPersonsWrite, madeByAPerson } from "./waiting-writes";
 
 const bag = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
 
@@ -31,9 +32,10 @@ export function useRecordEdits(record: object | null | undefined) {
     known.current = record ? { ...(record as Record<string, unknown>) } : null;
   }
   return useCallback(<T extends object, R>(next: T, send: (edit: Edit<T>) => Promise<R>): Promise<R> => {
+    const byAPerson = madeByAPerson();
     const run = turn.current.then(async () => {
       const edit = editOf(known.current, next);
-      const answer = await send(edit);
+      const answer = await (byAPerson ? asAPersonsWrite(() => send(edit)) : send(edit));
       known.current = withSaved(known.current, edit.body as Record<string, unknown>);
       return answer;
     });

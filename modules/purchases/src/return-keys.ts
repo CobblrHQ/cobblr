@@ -2,4 +2,4 @@
  *  line, with delta negative when the item went back to the store and
  *  positive when an undo brings it back. The manifest declares it from this
  *  list (exposes.eventPayloads) and returns.ts sets every key on every emit. */
-export const ORDER_ITEM_RETURNED_KEYS = ["orderId", "orderItemId", "returnId", "partId", "delta", "qty", "reason", "description"] as const;
+export const ORDER_ITEM_RETURNED_KEYS = ["orderId", "orderItemId", "returnId", "partId", "delta", "qty", "reason", "description", "sourceKind", "sourceId", "once", "reversible", "resolveHolding", "exact", "restoreSource"] as const;

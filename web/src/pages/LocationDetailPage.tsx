@@ -13,7 +13,7 @@ import { BinAdjustModal } from "../components/BinAdjustModal";
 import { QuickCreateLocation } from "../components/QuickCreateLocation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRightLeft, ChevronRight, MapPin, Plus, Save, Trash2 } from "lucide-react";
-import { MoveEverythingModal, movedSentence, putBackSentence } from "../components/MoveEverythingModal";
+import { MoveEverythingModal, movedNothing, movedSentence, putBackSentence } from "../components/MoveEverythingModal";
 
 import { ApiError, api, type Location, type PlatformEntityKind } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
@@ -556,6 +556,11 @@ export function LocationDetailPage() {
               void qc.invalidateQueries({ queryKey: ["location", activeSlug] });
             };
             refresh();
+            // A move that moved nothing offers no Undo of nothing (#8634).
+            if (movedNothing(move)) {
+              toast.info(movedSentence(move, children.length));
+              return;
+            }
             toast.action(movedSentence(move), {
               actionLabel: "Undo",
               onAction: async () => {

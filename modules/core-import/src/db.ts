@@ -17,6 +17,10 @@ export interface ImportRunsTable {
   finished_at: Date | null;
   undone_at: Date | null;
   undo_report: unknown | null;
+  /** When the worker carrying the run last said it was alive; null between its chunks. */
+  heartbeat_at: Date | null;
+  /** Where the run had got to, and what it had found so far, to carry on from. */
+  resume: unknown | null;
 }
 
 export interface ImportRunStepsTable {

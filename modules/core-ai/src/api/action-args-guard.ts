@@ -163,3 +163,40 @@ export function reconcileActionArgs(
   for (const k of leftoverKeys) out[k] = src[k];
   return renamed.length > 0 ? { args: out, renamed } : null;
 }
+
+// The record an action runs on, given as one of its arguments.
+//
+//   "log 12 prints on the X1 Carbon"  ->  machines:record-usage
+//     args {prints: 12, machineId: "<the X1's id>"}, and no record
+//
+// The model found the machine and named it: as the argument the action
+// declares for wires (machineId), not as the record the call runs on. The
+// door refused "entityKind and entityId are required for this action (it runs
+// on a record)", and the bench read it as a miss on three asks of three
+// (#8331, nightly 2026-10-27). The same class as reconcileActionArgs: the
+// right record, said in the wrong place. It is lifted into the call's record
+// when the argument is named for one of the kinds the action runs on
+// (machineId -> machines:machine) and holds an id; the argument stays, since
+// the action declares it. Anything less sure is left for the door to refuse.
+
+const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function recordTargetInArgs(
+  kinds: readonly string[],
+  given: unknown,
+): { kind: string; id: string } | null {
+  if (!kinds.length || !given || typeof given !== "object" || Array.isArray(given)) return null;
+  const typeOf = (kind: string) => words(kind.split(":").pop() ?? "").join("");
+  const found = new Map<string, string>();
+  for (const [key, value] of Object.entries(given as Record<string, unknown>)) {
+    if (typeof value !== "string" || !ID.test(value)) continue;
+    const w = words(key);
+    if (w.at(-1) !== "id" || w.length < 2) continue;
+    const stem = w.slice(0, -1).join("");
+    const kind = kinds.find((k) => typeOf(k) === stem);
+    if (kind && !found.has(kind)) found.set(kind, value);
+  }
+  if (found.size !== 1) return null;
+  const [kind, id] = [...found.entries()][0]!;
+  return { kind, id };
+}

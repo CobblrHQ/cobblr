@@ -86,6 +86,41 @@ function AutoGrowTextarea({
   );
 }
 
+/** The name, a draft over the record like ProjectInput, on as many lines as
+ *  it takes: a one-line input cut a long name on a phone ("Kitchen shelf
+ *  printer up") with no way to read the rest but to tap in and scroll it
+ *  (#8631). An unseen copy of the text sizes the cell the field fills, so it
+ *  is as tall as its words at any width and any text size, with no height
+ *  measured once and left behind. Enter saves rather than starting a line a
+ *  name cannot have. */
+function NameField({ value, onCommit, className = "", ...rest }: Omit<ComponentProps<"textarea">, "value" | "onChange" | "onBlur"> & { value: string; onCommit: (v: string) => void }) {
+  const f = useFieldDraft(value);
+  const face = "font-display text-2xl font-bold rounded px-1 [overflow-wrap:anywhere] whitespace-pre-wrap";
+  return (
+    <div className={`grid flex-1 min-w-0 ${className}`}>
+      <span aria-hidden className={`invisible [grid-area:1/1] ${face}`}>{f.draft || " "}</span>
+      <textarea
+        {...rest}
+        rows={1}
+        value={f.draft}
+        onChange={(e) => f.setDraft(e.target.value.replace(/[\r\n]+/g, " "))}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            e.currentTarget.blur();
+          }
+        }}
+        onBlur={(e) => {
+          if (e.target.value === value) return;
+          f.committed(e.target.value);
+          onCommit(e.target.value);
+        }}
+        className={`[grid-area:1/1] resize-none overflow-hidden text-content dark:text-mortar-100 bg-transparent focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 ${face}`}
+      />
+    </div>
+  );
+}
+
 /** The description, a draft over the record like ProjectInput. */
 function DescriptionField({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
   const { noun } = useProjects();
@@ -218,14 +253,12 @@ export function ProjectDetailPage() {
       <OnceQuiet key={project.data.id} className="space-y-5">
       <div className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-5 space-y-3">
         <div className="flex items-start gap-3">
-          <ProjectInput
+          <NameField
             aria-label={`${noun} name`}
             value={project.data.name}
-            commitOn="blur"
             onCommit={(v) => {
               if (v.trim() && v.trim() !== project.data!.name) updateProject.mutate({ name: v.trim() });
             }}
-            className="font-display text-2xl font-bold text-content dark:text-mortar-100 bg-transparent flex-1 min-w-0 focus:outline-none focus:bg-subtle dark:focus:bg-slate-800/70 rounded px-1"
           />
           <SaveStatus
             saving={updateProject.isPending}

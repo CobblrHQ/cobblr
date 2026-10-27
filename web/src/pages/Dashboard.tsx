@@ -90,7 +90,7 @@ import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { TipLine, pickTip, registeredTips, useRunWithUndo } from "@cobblr/platform-web";
 import { useTipState } from "../tips/useTipState";
 import "../tips/install-tip";
-import { MetaParts } from "../components/MetaParts";
+import { EmptyTablesLine } from "../components/EmptyTablesLine";
 
 /** Homepage quick-links: big tap targets for the destinations this workspace
  *  actually uses (Scan Inbox, each instance like "Yarn", the domain modules),
@@ -1648,23 +1648,7 @@ function TileGrid({
               );
             })}
           </div>
-          {alsoEnabled.length > 0 && (
-            <p className="mt-2 text-xs text-faint dark:text-slate-500">
-              {/* "Also enabled" only reads right when there ARE populated tiles
-                  above for it to be "also" to. When every module is empty the
-                  grid renders nothing, so "also" is orphaned (the author, 2026-07-05) —
-                  drop it to a plain "Enabled". */}
-              {empties.size >= visible.length ? "Enabled:" : "Also enabled:"}{" "}
-              <MetaParts
-                parts={alsoEnabled.map(([label, to]) => (
-                  <Link key={label} to={to} className="lowercase hover:text-accent underline decoration-dotted underline-offset-2">
-                    {label}
-                  </Link>
-                ))}
-              />
-              <span>  - nothing in them yet.</span>
-            </p>
-          )}
+          {alsoEnabled.length > 0 && <EmptyTablesLine tables={alsoEnabled} first={empties.size >= visible.length} />}
           </TileCollapseContext.Provider>
         )}
       </section>

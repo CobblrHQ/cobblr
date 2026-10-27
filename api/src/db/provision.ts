@@ -19,11 +19,12 @@ import { env } from "../env.js";
 import { encryptCreds } from "./crypto.js";
 import { runMigrations } from "./migrate.js";
 import { createClient, createPool } from "./client-error-guard.js";
+import { cloneTemplate, readyTemplate, type TemplateSet } from "./workspace-template.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // dist/db/provision.js → ../../migrations/tenant-base
 // src/db/provision.ts → ../../migrations/tenant-base
-const tenantBaseDir = resolve(__dirname, "..", "..", "migrations", "tenant-base");
+export const tenantBaseDir = resolve(__dirname, "..", "..", "migrations", "tenant-base");
 
 export interface ProvisionResult {
   /** Encrypted JSON of { user, password } — store in orgs.db_credentials_encrypted. */
@@ -153,7 +154,17 @@ async function provisionOnce(
   }
 }
 
-export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boolean } = {}): Promise<ProvisionResult> {
+/** The template a new workspace's database is copied from, when the flag is on
+ *  and one is built for today's migrations (db/workspace-template.ts). */
+async function cloneSource(opts: { orgId?: string; template?: TemplateSet }): Promise<string | null> {
+  if (!env.WORKSPACE_TEMPLATE || !opts.orgId) return null;
+  return readyTemplate(opts.template ?? "defaults", tenantBaseDir).catch((err) => {
+    console.error("[provision] the workspace template could not be read; taking the full path:", (err as Error).message);
+    return null;
+  });
+}
+
+export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boolean; orgId?: string; template?: TemplateSet } = {}): Promise<ProvisionResult> {
   if (!env.SUPERUSER_DATABASE_URL) {
     throw new Error("SUPERUSER_DATABASE_URL must be set to provision tenants");
   }
@@ -172,11 +183,28 @@ export async function provisionTenantDb(dbName: string, opts: { resetFirst?: boo
   // signups against the same catalog race — instead of shipping a broken org.
   const MAX_ATTEMPTS = 5;
   let migrationsApplied = 0;
+  // A copy of the template when there is one; any copy that fails for a reason
+  // that is not passing contention (the template gone under an older process,
+  // say) is set aside and the workspace takes the full path from a clean slate.
+  let template = await cloneSource(opts);
   for (let attempt = 1; ; attempt++) {
     try {
       // resetFirst: a later attempt at a workspace an earlier one left half
       // made (platform/provision-workspace.ts) starts from a clean slate too.
-      migrationsApplied = await provisionOnce(dbName, userName, password, attempt > 1 || !!opts.resetFirst);
+      const reset = attempt > 1 || !!opts.resetFirst;
+      if (template) {
+        try {
+          migrationsApplied = await cloneTemplate(template, dbName, userName, password, opts.orgId!, reset);
+          break;
+        } catch (err) {
+          if (isTransientProvisionError(err)) throw err;
+          console.error(`[provision] ${dbName}: copying ${template} failed, taking the full path:`, (err as Error).message);
+          template = null;
+          migrationsApplied = await provisionOnce(dbName, userName, password, true);
+          break;
+        }
+      }
+      migrationsApplied = await provisionOnce(dbName, userName, password, reset);
       break;
     } catch (err) {
       if (attempt < MAX_ATTEMPTS && isTransientProvisionError(err)) {

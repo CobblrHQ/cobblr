@@ -39,6 +39,15 @@ async function patchOf(db: Kysely<InventoryDB>, id: string, fields: Record<strin
   return patch;
 }
 
+/** Columns the system keeps up to date by itself, never a person's data, so a
+ *  record's snapshot leaves them out. Concurrency bookkeeping advances across
+ *  undo. A part's value readings ("100nF" is 1e-7) are filled in by the first
+ *  search that reads values (refreshMeasureReadings), and a snapshot that held
+ *  them made one search look like an edit to every part an import had just
+ *  written, so Undo held them all (#8726). A restore leaves them to be read
+ *  again from the restored text. */
+export const DERIVED_COLUMNS = ["stock_revision", "measures", "measures_for", "measures_key", "search_blob"] as const;
+
 export function registerInventoryWriter(): void {
   if (registered) return;
   registered = true;
@@ -116,8 +125,7 @@ export function registerInventoryWriter(): void {
      *  has something real to put back (EntityWriter.snapshot). */
     async snapshot(orgId, id) {
       const image = await snapshotRow(await platform().tenants.getDb(orgId), "inventory_parts", id);
-      // Concurrency bookkeeping advances across undo, without changing user data.
-      if (image) delete image.stock_revision;
+      if (image) for (const column of DERIVED_COLUMNS) delete image[column];
       return image;
     },
 

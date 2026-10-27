@@ -538,6 +538,13 @@ partsRouter.get(
       filter.low_stock === "1" || filter.low_stock === "true";
 
     const hideUnavailable = filter.hide_unavailable === "1" || filter.hide_unavailable === "true";
+    // How many records match, said on the first page: 12,200 parts read
+    // "load more (100 shown)" and nobody could learn how many there were
+    // (#8657). Only where the query is the whole answer: low stock and hide
+    // unavailable are judged after it, so their pages carry no count.
+    const matching = !filter.cursor && !lowStockOnly && !hideUnavailable
+      ? Number((await query.clearSelect().clearOrderBy().select(sql<string>`count(*)`.as("n")).executeTakeFirst())?.n ?? 0)
+      : undefined;
     for (;;) {
       const rows = await query.limit(filter.limit + 1).execute();
       const hasMore = rows.length > filter.limit;
@@ -724,7 +731,7 @@ partsRouter.get(
         }
         continue;
       }
-      res.json({ items: labelled, next_cursor, ...(unapplied.length ? { unapplied } : {}) });
+      res.json({ items: labelled, next_cursor, ...(matching !== undefined ? { matching } : {}), ...(unapplied.length ? { unapplied } : {}) });
       return;
     }
   }),

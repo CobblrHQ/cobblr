@@ -4,6 +4,7 @@
 //
 // Modules will compose this onto their own routers in later phases.
 
+import { guestMayReadRecord } from "../platform/entities.js";
 import { describeGuestWrite } from "../platform/approvals.js";
 import { guestMayRead, guestMayWrite, guestRouteKey, portalShares } from "../auth/guest-reads.js";
 import { holdForAPerson, workspacePath } from "../platform/ai-held-changes.js";
@@ -227,16 +228,25 @@ export async function withTenant(
       let shared: Promise<{ views: Set<string>; kinds: Set<string> }> | null = null;
       const shares = () => (shared ??= portalShares(row.portal_config, db as unknown as Kysely<unknown>));
       const fileKinds = async (fileId: string) => {
-        const { rows } = await sql<{ k: string }>`select source_module || ':' || source_type as k from core_files_attachments where file_id::text = ${fileId}`
+        const { rows } = await sql<{ k: string; source_id: string }>`select source_module || ':' || source_type as k, source_id from core_files_attachments where file_id::text = ${fileId}`
           .execute(db)
-          .catch(() => ({ rows: [] as { k: string }[] }));
-        return rows.map((r) => r.k);
+          .catch(() => ({ rows: [] as { k: string; source_id: string }[] }));
+        const visible = [];
+        for (const r of rows) if (await guestMayReadRecord(row.org_id, r.k, r.source_id)) visible.push(r.k);
+        return visible;
       };
       const key = guestRouteKey(req.baseUrl, req.route?.path as string | undefined, req.path, slug);
       if (!(await guestMayRead(key, req.route ? (req.params as Record<string, string>) : {}, shares, fileKinds))) {
         res.status(403).json({
           error: { code: "guest_not_shared", message: "A guest sees what this workspace shares in its portal, and this is not part of it." },
         });
+        return;
+      }
+    }
+    if (row.role === "guest" && (req.method === "GET" || req.method === "HEAD")) {
+      const match = /\/entities\/([^/]+)\/([^/]+)(?:\/|$)/.exec(req.originalUrl.split("?")[0]!);
+      if (match && match[2] !== "export.csv" && !(await guestMayReadRecord(row.org_id, decodeURIComponent(match[1]!), decodeURIComponent(match[2]!)))) {
+        res.status(404).json({ error: { code: "not_found", message: "That record is not here." } });
         return;
       }
     }
@@ -371,6 +381,13 @@ async function resolveImpersonatedTenant(
     .catch(() => {});
   try {
     const db = await getTenantDb(row.org_id);
+    if (row.role === "guest" && (req.method === "GET" || req.method === "HEAD")) {
+      const match = /\/entities\/([^/]+)\/([^/]+)(?:\/|$)/.exec(req.originalUrl.split("?")[0]!);
+      if (match && match[2] !== "export.csv" && !(await guestMayReadRecord(row.org_id, decodeURIComponent(match[1]!), decodeURIComponent(match[2]!)))) {
+        res.status(404).json({ error: { code: "not_found", message: "That record is not here." } });
+        return;
+      }
+    }
     serveShapeVersion(res, row.org_id, row.shape_version);
     req.tenant = { org: { id: row.org_id, name: row.org_name, slug: row.org_slug }, role: row.role, db };
     req.impersonation = { operatorId: claims.sub, targetId: claims.act, sessionId: sess.id, mode: sess.mode };

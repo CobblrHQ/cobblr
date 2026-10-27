@@ -1,0 +1,10 @@
+{
+  "lint": "lint:a-bundle-does-not-redeclare-the-loan",
+  "run": "node scripts/lint-a-bundle-does-not-redeclare-the-loan.ts",
+  "rows": [
+    "bundle"
+  ],
+  "ms": 500,
+  "recorded": "2026-10-27",
+  "source": "scaffolded by new-lint.sh at twice a local run (a shared box); replaced from its first CI measurement"
+}

@@ -28,7 +28,6 @@ export const BUILTIN_DRIVERS = [
   { key: "formlabs_dashboard", name: "Formlabs Dashboard (monitor)", kind: "builtin" as const },
   { key: "mock", name: "Mock (test)", kind: "builtin" as const },
 ];
-const BUILTIN_KEYS = new Set(BUILTIN_DRIVERS.map((d) => d.key));
 
 // The mock keeps in-memory job state, so it must be the SAME instance
 // across requests for a connection. HTTP drivers are stateless.
@@ -92,6 +91,13 @@ export async function resolveDriver(
 
 /** Keys a connection may use: built-ins + this workspace's installed drivers. */
 export async function availableDriverKeys(db: Kysely<DigifabDB>): Promise<string[]> {
-  const installed = await db.selectFrom("digifab_drivers").select("key").where("enabled", "=", true).execute();
-  return [...BUILTIN_KEYS, ...installed.map((r) => r.key)];
+  return Object.keys(await availableDriverNames(db));
+}
+
+/** The same keys, each with the name a person picks it by. The connection
+ *  dialog named the types it knew by hand and showed the rest as their key
+ *  ("elegoo_sdcp", #8650); the names come from here instead. */
+export async function availableDriverNames(db: Kysely<DigifabDB>): Promise<Record<string, string>> {
+  const installed = await db.selectFrom("digifab_drivers").select(["key", "name"]).where("enabled", "=", true).execute();
+  return Object.fromEntries([...BUILTIN_DRIVERS.map((d) => [d.key, d.name]), ...installed.map((r) => [r.key, r.name?.trim() || r.key])]);
 }

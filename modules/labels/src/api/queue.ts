@@ -2,7 +2,7 @@
 // renderer needs (qr_payload + pre-rendered description) so we don't
 // have to re-query the source module to print.
 
-import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { refuseIfLent, requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -107,6 +107,7 @@ queueRouter.post(
     if (!(await requireCapability(req, res, "labels:print"))) return;
     const parsed = QueueAdd.safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
+    if (await refuseIfLent(req, res, "labels:print", [{ kind: `${parsed.data.module_name}:${parsed.data.entity_type}`, id: parsed.data.entity_id }])) return;
     const db = tenantDb(req);
     const session = sessionUser(req);
     const ctx = tenantContext(req);

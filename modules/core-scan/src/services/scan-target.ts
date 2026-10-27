@@ -16,7 +16,7 @@
 // The instance-kind grammar is the kernel's (`resolveKind`), not re-parsed
 // here: which module a kind resolves to, and which instance it names, is one
 // answer from one place.
-import { platform, type ActionUndoStep, type ScannableInfo, type ScannableKind } from "@cobblr/platform-contract";
+import { isActionRefusal, platform, type ActionUndoStep, type ScannableInfo, type ScannableKind } from "@cobblr/platform-contract";
 import { apiFetch } from "@cobblr/platform-contract/self-api";
 
 export interface ScanTarget {
@@ -127,6 +127,9 @@ export async function moveQuantity(
     /** The move sets the count to what is actually there (a recount), so the
      *  ledger files it as a correction, never as use or a purchase. */
     correction?: boolean;
+    /** The move takes back one made at `at` (an Undo): the module refuses it
+     *  over a count set since, `ownCounts` of which are the move's own (#8591). */
+    takesBack?: { at: Date; ownCounts: number };
     source: { kind: string; id: string };
     door: QuantityDoor;
     current: number;
@@ -143,6 +146,8 @@ export async function moveQuantity(
       timestamp: new Date().toISOString(),
       trigger_type: "user-invoked" as const,
     };
+    // A module refuses by throwing its sentence (an Undo over a later count,
+    // #8591): that is an answer for the person, never a server error.
     const result = (await platform().actions.invoke(action, {
       orgId,
       userId: opts.userId,
@@ -154,9 +159,13 @@ export async function moveQuantity(
         ...(opts.restock ? { restock: true } : {}),
         ...(opts.lots?.length ? { lots: opts.lots } : {}),
         ...(opts.correction ? { correction: true } : {}),
+        ...(opts.takesBack ? { takesBack: { at: opts.takesBack.at.toISOString(), ownCounts: opts.takesBack.ownCounts } } : {}),
         sourceKind: opts.source.kind,
         sourceId: opts.source.id,
       },
+    }).catch((err: unknown) => {
+      if (isActionRefusal(err)) return { ok: false, error: err.message };
+      throw err;
     })) as { ok?: boolean; delta?: number; newQty?: number; error?: string; note?: string; clamped?: boolean } | null;
     if (!result?.ok) {
       return { ok: false, delta: 0, newQty: null, refused: result?.error ?? "the record's quantity could not be changed" };

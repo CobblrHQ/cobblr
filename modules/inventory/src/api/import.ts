@@ -343,6 +343,12 @@ export function planCsv(text: string, ownFields: DefinedField[] = []): ImportPla
   return { rows, errors, detected_headers, unread_columns };
 }
 
+class PlacesUnreadable extends Error {
+  constructor() {
+    super("Couldn't read all your places, so nothing was imported.");
+  }
+}
+
 interface Resolved {
   category_id: string | null;
   location_id: string | null;
@@ -351,14 +357,15 @@ interface Resolved {
 /** Each row's category and place by name, the same for the preview and the
  *  commit. A name the workspace has no match for is said on the row, with
  *  what the import uses instead. */
-async function resolveNames(req: Request, plan: ImportPlan, defaults: { category?: string | null; location?: string | null }): Promise<Resolved[]> {
+export async function resolveNames(req: Request, plan: ImportPlan, defaults: { category?: string | null; location?: string | null }): Promise<Resolved[]> {
   const db = tenantDb(req);
   const ctx = tenantContext(req);
   const cats = await db.selectFrom("inventory_categories").select(["id", "name"]).execute();
   const catByName = new Map(cats.map((c) => [c.name.toLowerCase(), c.id]));
   // Locations are owned by core-locations — cross-module read goes
   // through the platform resolver, never a direct SELECT.
-  const locsResult = await platform().entities.list(ctx.org.id, "core-locations:location", { limit: 500 });
+  const locsResult = await platform().entities.listAll(ctx.org.id, "core-locations:location", {}, undefined, { cap: 20_000 });
+  if (!locsResult.complete) throw new PlacesUnreadable();
   const locByName = new Map<string, string>();
   for (const loc of locsResult.items) {
     const name = String(loc.title ?? "").toLowerCase();
@@ -394,7 +401,14 @@ importRouter.post(
     const ctx = tenantContext(req);
     const ownFields = await platform().entities.fieldsFor(ctx.org.id, kind);
     const plan = planCsv(parsed.data.csv, ownFields);
-    const resolved = await resolveNames(req, plan, { category: parsed.data.default_category_id, location: parsed.data.default_location_id });
+    let resolved: Resolved[];
+    try {
+      resolved = await resolveNames(req, plan, { category: parsed.data.default_category_id, location: parsed.data.default_location_id });
+    } catch (e) {
+      if (!(e instanceof PlacesUnreadable)) throw e;
+      res.status(503).json({ error: { code: "places_unreadable", message: e.message } });
+      return;
+    }
     const answer = { rows: plan.rows, errors: plan.errors, detected_headers: plan.detected_headers, unread_columns: plan.unread_columns };
 
     if (parsed.data.dry_run || plan.rows.length === 0) {

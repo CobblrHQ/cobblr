@@ -363,7 +363,9 @@ const RAW_CORPUS: CorpusCase[] = [
     ai: "clarify",
     says: ["Bin 9"],
   },
-  ...ph("write", neverOffer, "action:platform:edit-field|update", [
+  // Bound in code by the platform's own command (#8331): asked of a model it
+  // read a kinds list cut before machines and said there was no Colour field.
+  ...ph("write", command, "action:platform:edit-field|update", [
     "rename the Colour field to Shade",
   ]),
   ...ph("write", neverOffer, "action:inventory:set-stock|update", [

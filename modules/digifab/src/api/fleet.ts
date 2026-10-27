@@ -35,6 +35,7 @@ import { recordRunVerdict } from "../runs-core.js";
 import { availableDriverKeys } from "../drivers/registry.js";
 import { lentDeviceRefs } from "../lent-machines.js";
 import { classify, fleetState } from "../state.js";
+import { offeredStationKind } from "../station-offer.js";
 import type { MachineDriver, RemoteDevice } from "../drivers/types.js";
 import { sql, type Kysely } from "kysely";
 import type { DigifabDB } from "../db.js";
@@ -249,7 +250,7 @@ fleetRouter.get(
               // Cockpit: live temps — the Bambu cloud-MQTT pump's reading wins
               // over the slower driver-reported one when fresh. Embed-only.
               temps: live?.temps ?? d.temps ?? null,
-              station_kind: d.raw?.bench ? "bench" : d.station_kind,
+              station_kind: d.raw?.bench ? "bench" : offeredStationKind(d.station_kind, driver),
               monitor_only: d.raw?.monitorOnly === true,
               print_process: d.raw?.resin === true ? "resin" : null,
               // Current job sub-stage (preheating/leveling/…) when reported —

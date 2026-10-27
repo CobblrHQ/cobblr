@@ -63,7 +63,9 @@ export function MarkdownEditor({
 
   return (
     <div className="rounded-md border border-line dark:border-slate-600 overflow-hidden bg-surface dark:bg-slate-900/40">
-      <div className="flex items-center gap-0.5 border-b border-line dark:border-slate-700 px-1 py-1">
+      {/* Wraps: at 200% text on a phone the tools and Write / Preview are wider than
+          the row, and Write ran 5 px past the screen's edge (#6881). */}
+      <div className="flex flex-wrap items-center gap-0.5 border-b border-line dark:border-slate-700 px-1 py-1">
         <Tool label="Bold" onClick={() => wrap("**")}>
           <span className="font-bold">B</span>
         </Tool>

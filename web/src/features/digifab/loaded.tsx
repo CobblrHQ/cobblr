@@ -16,12 +16,20 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal, SearchInput, useToast, useRunAction, WorkspaceLink } from "@cobblr/platform-web";
-import { api, ApiError, type DigifabLoaded, type PlatformResolvedEntity } from "../../lib/api";
+import { api, ApiError, type DigifabLoaded, type PlatformEntityKind, type PlatformResolvedEntity } from "../../lib/api";
 import { resolveScannedThing, useScanTarget, type ScannedThing } from "../../lib/scanTarget";
 import { ScanOneSheet } from "../../components/ScanOneSheet";
 import type { EntityDetailPanelCtx } from "../../panels/types";
 
 const SLOT_CHOICES = [1, 2, 3, 4, 5, 6, 8, 12, 16];
+
+// What loads on a printer: stock kept in any Inventory list (Parts, Spools),
+// never a catalog of filament types or vendors. The picker searched only Parts,
+// so a spool in Spools was never found (#8646); the picker and a scanned label
+// read this one rule.
+export function spoolKinds(kinds: readonly PlatformEntityKind[] | undefined): PlatformEntityKind[] {
+  return (kinds ?? []).filter((k) => k.module_name === "inventory" && k.profile === "stock-material");
+}
 
 function amount(t: PlatformResolvedEntity): string | null {
   const q = Number(t.fields?.qty);
@@ -44,7 +52,8 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   const [scanning, setScanning] = useState<string | null>(null);
 
   const set = (next: DigifabLoaded) => qc.setQueryData(key, next);
-  const isThing = (kind: string) => kind === "inventory:part" || kinds.data?.items.find((k) => k.id === kind)?.module_name === "inventory";
+  const stock = spoolKinds(kinds.data?.items);
+  const isThing = (kind: string) => stock.some((k) => k.id === kind);
 
   const load = async (thing: ScannedThing, slot?: string): Promise<string> => {
     const out = await api.digifabLoad(slug, machineId, thing.id, slot);
@@ -94,6 +103,7 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
         open={picking != null}
         slug={slug}
         slot={picking ?? "1"}
+        kinds={stock}
         onClose={() => setPicking(null)}
         onPick={async (t) => {
           const slot = picking ?? undefined;
@@ -208,14 +218,18 @@ export function LoadedSpoolsPanel({ ctx }: { ctx: EntityDetailPanelCtx }) {
   );
 }
 
-function PickThing({ open, slug, slot, onClose, onPick, onScan }: { open: boolean; slug: string; slot: string; onClose: () => void; onPick: (t: PlatformResolvedEntity) => void; onScan: () => void }) {
+function PickThing({ open, slug, slot, kinds, onClose, onPick, onScan }: { open: boolean; slug: string; slot: string; kinds: PlatformEntityKind[]; onClose: () => void; onPick: (t: PlatformResolvedEntity) => void; onScan: () => void }) {
   const [text, setText] = useState("");
   const found = useQuery({
-    queryKey: ["loaded-pick", slug, text],
-    queryFn: () => api.listEntities(slug, "inventory:part", text.trim() || undefined),
-    enabled: open,
+    queryKey: ["loaded-pick", slug, kinds.map((k) => k.id), text],
+    queryFn: async () => ({ items: (await Promise.all(kinds.map((k) => api.listEntities(slug, k.id, text.trim() || undefined)))).flatMap((r) => r.items) }),
+    enabled: open && kinds.length > 0,
     staleTime: 10_000,
   });
+  // Where a spool is added: the Spools list when there is one, else Parts.
+  const home = kinds.find((k) => k.instance_name) ?? kinds[0];
+  const homePath = home?.detail_route?.replace(/\/\{id\}$/, "") ?? "/inventory";
+  const none = kinds.length === 0 || (found.data?.items.length === 0 && !text.trim());
   return (
     <Modal open={open} onClose={onClose} title={`Load slot ${slot}`} size="sm">
       <div className="space-y-2" data-testid="loaded-pick">
@@ -234,7 +248,12 @@ function PickThing({ open, slug, slot, onClose, onPick, onScan }: { open: boolea
               </button>
             </li>
           ))}
-          {found.data && found.data.items.length === 0 && <li className="px-2 py-3 text-sm text-muted">Nothing matches.</li>}
+          {none ? (
+            <li className="px-2 py-3 text-sm text-muted">
+              No spools here yet.{" "}
+              <WorkspaceLink className="text-accent" slug={slug} to={homePath}>Add a spool</WorkspaceLink>
+            </li>
+          ) : found.data && found.data.items.length === 0 && <li className="px-2 py-3 text-sm text-muted">Nothing matches.</li>}
         </ul>
       </div>
     </Modal>

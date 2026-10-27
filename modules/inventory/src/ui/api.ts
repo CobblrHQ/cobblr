@@ -1,3 +1,4 @@
+import type { PlacementExpectation } from "@cobblr/platform-contract";
 import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
 import type { ReceiptDraftConfig, RenewalReceiptDraft } from "@cobblr/platform-contract/record-creation";
 import type { StockView, ConfigureStock, ConsumeStock, LoadStock } from "../api/stock-shapes";
@@ -622,7 +623,7 @@ export class InventoryApi {
   listParts = (q: PartListQuery = {}) => {
     const params = partListParams(q);
     const qs = params.toString();
-    return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null; unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }> }>(
+    return this.partsRequest<{ items: PartListItem[]; next_cursor: string | null; /** How many records match, on the first page when the query is the whole answer. */ matching?: number; unapplied?: Array<{ col: string; op: string; value?: unknown; ref_col?: string }> }>(
       "GET",
       qs ? `?${qs}` : "",
     );
@@ -719,16 +720,19 @@ export class InventoryApi {
     );
 
   /** Put a part inside something, a place or a holder, through placement. */
-  placePart = (id: string, container: { kind: string; id: string }) =>
+  placePart = (id: string, container: { kind: string; id: string }, expected?: PlacementExpectation) =>
     this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-placement/place`, {
       containee: { kind: "inventory:part", id },
       container,
+      preserve_identity: true,
+      ...(expected ? { expected } : {}),
     });
 
   /** Take a part out of whatever holds it. */
-  unplacePart = (id: string) =>
+  unplacePart = (id: string, expected?: PlacementExpectation) =>
     this.requestAbs("POST", `/api/v1/orgs/${this.slug}/modules/core-placement/remove`, {
       containee: { kind: "inventory:part", id },
+      ...(expected ? { expected } : {}),
     });
 
   /** Ask the record's photo what kinds are in there. Suggestion only. */

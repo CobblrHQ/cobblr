@@ -1,13 +1,13 @@
-import { NumberStepper, editOf, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
+import { NumberStepper, subscribeWaitingWrites, editOf, fieldNeed, FieldPack, RecordFormModal, ContributedDetailPanels, CustomFieldsPanel, QueryError, useToast, useConfirm, usePageTitle, usePlatformWeb, useViewerRole } from "@cobblr/platform-web";
 // lists UI — the host mounts <ListsUI /> at /lists. A grid of lists;
 // clicking one opens a detail MODAL with check-off, add-item, and clear-done.
 // Modals (not pages) for detail/create; toasts (not dialogs) for feedback;
 // destructive deletes confirm via useConfirm. Matches house conventions.
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useSyncExternalStore } from "react";
 import { roleSatisfies } from "@cobblr/platform-contract/org-roles";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useMutationState, useQueryClient } from "@tanstack/react-query";
 import { ListChecks, Plus, Trash2, X, RotateCcw, Hand, Pencil, ChevronDown } from "lucide-react";
 import { ListsApi, type ListSummary, type ListItem, ListsApiError, lineQuantity, lineUnit, restockAmount, willDatePhrase } from "./api.js";
 import { RunningLowOffer, useRunningLowKnown } from "./RunningLowOffer.js";
@@ -15,8 +15,9 @@ import { PickToLight } from "@cobblr/platform-web";
 
 
 /** A line's small icon button: the icon's own size on a wide screen, a
- *  44 by 44 px target on a phone. */
-const LINE_TOOL = "inline-flex shrink-0 items-center justify-center rounded max-sm:h-11 max-sm:w-11"
+ *  44 by 44 px target on a phone. In px, not rem: a finger stays the same
+ *  size when the text is enlarged, and three rem targets ran past the edge. */
+const LINE_TOOL = "inline-flex shrink-0 items-center justify-center rounded max-sm:h-[44px] max-sm:w-[44px]"
 const restockLineKey = (it: ListItem) => JSON.stringify([it.qty, it.metadata?.source_ref?.kind, it.metadata?.source_ref?.id]);
 export const navItems = [{ label: "Lists", path: "/lists", icon: ListChecks }];
 
@@ -191,11 +192,31 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     qc.invalidateQueries({ queryKey: ["lists-detail", listId] }),
     qc.invalidateQueries({ queryKey: ["lists"] }),
   ]);
+  // Each item added is its own write, sent the moment it is typed: the box
+  // clears at once for the next, and the item shows as waiting until it lands.
+  // Offline the first add waits, and the form refused every later one while it
+  // did, so only the first item of a basement list was kept (#8635). No
+  // mutation scope: a scoped add waited in memory behind the first, never
+  // reached the door that keeps it on the device, and a reload lost it (#8675).
+  // A refused add puts its words back if the box is empty (#8570).
   const add = useMutation({
-    mutationFn: (title: string) => api.addItem(listId, { title }),
-    onSuccess: () => { setDraft(""); invalidate(); },
-    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+    mutationKey: ["lists-add", listId],
+    mutationFn: ({ title }: { title: string; typed: string }) => api.addItem(listId, { title }),
+    onSuccess: () => invalidate(),
+    onError: (e, { typed }) => {
+      setDraft((d) => (d.trim() ? d : typed));
+      toast.error(e instanceof ListsApiError ? e.message : String(e));
+    },
   });
+  // What this page is adding, and what an earlier page added offline and left
+  // waiting on the device: after a reload the list showed only what had landed
+  // (#8675). One row each, until it lands.
+  const addingHere = useMutationState({
+    filters: { mutationKey: ["lists-add", listId], status: "pending" },
+    select: (m) => (m.state.variables as { title: string } | undefined)?.title ?? "",
+  });
+  const keptAdds = useSyncExternalStore(subscribeWaitingWrites, () => JSON.stringify(api.keptAdds(listId)));
+  const waitingAdds = [...(JSON.parse(keptAdds) as string[]), ...addingHere];
   const toggle = useMutation({
     mutationFn: ({ id, checked, quantity }: { id: string; checked: boolean; quantity?: number }) => api.toggleItem(id, checked, quantity),
     // Waits for the fresh list, so a line's box does not blink back to the old
@@ -257,7 +278,10 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
   const claim = useMutation({
     mutationFn: ({ id, claimed }: { id: string; claimed: boolean }) => api.claimItem(id, claimed),
     onSuccess: invalidate,
-    onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
+    onError: (e) => {
+      toast.error(e instanceof ListsApiError ? e.message : String(e));
+      return invalidate();
+    },
   });
   // A typo in the list's name or a line had no fix but deleting and typing it
   // again, which on a shared list also dropped who said they'd get it.
@@ -329,7 +353,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
         )}
         <form
           className="flex gap-2"
-          onSubmit={(e) => { e.preventDefault(); if (draft.trim()) add.mutate(draft.trim()); }}
+          onSubmit={(e) => { e.preventDefault(); if (!draft.trim()) return; add.mutate({ title: draft.trim(), typed: draft }); setDraft(""); }}
         >
           <input
             autoFocus
@@ -338,12 +362,12 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
             placeholder="Add an item…"
             className="flex-1 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-3 py-2 text-sm"
           />
-          <button type="submit" disabled={!draft.trim() || add.isPending} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
+          <button type="submit" disabled={!draft.trim()} className="px-3 py-2 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">Add</button>
         </form>
 
         {detail.isLoading && <div className="text-sm text-muted">Loading…</div>}
         {detail.isError && <QueryError what="this list" onRetry={() => void detail.refetch()} />}
-        {items.length === 0 && !detail.isLoading && !detail.isError && <div className="text-sm text-muted italic">Empty list.</div>}
+        {items.length === 0 && waitingAdds.length === 0 && !detail.isLoading && !detail.isError && <div className="text-sm text-muted italic">Empty list.</div>}
 
         <PickToLight key={listId} lines={items.flatMap(it => it.metadata?.source_ref?.kind && it.metadata.source_ref.id ? [{ id: it.id, label: it.title, checked: it.checked, ref: { kind: it.metadata.source_ref.kind, id: it.metadata.source_ref.id } }] : [])} onCheck={id => toggle.mutateAsync({ id, checked: true, quantity: amountFor(items.find(it => it.id === id)!) ?? undefined })} />
         <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
@@ -382,7 +406,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
             </li>
           ) : (
             <li key={it.id} className="px-3 py-2 text-sm group">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-[12px]">
               <input aria-label={it.title}
                 type="checkbox"
                 checked={isChecked(it)}
@@ -410,9 +434,10 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   </span>
                 )}
               </span>
-              {!it.checked && (
+              {!it.checked && (!it.claimed_by || it.claimed_by_me === true) && (
                 <button
                   type="button"
+                  disabled={claim.isPending}
                   onClick={() => claim.mutate({ id: it.id, claimed: !it.claimed_by })}
                   className={`shrink-0 rounded px-2 py-0.5 text-[11px] transition ${
                     it.claimed_by
@@ -427,7 +452,7 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   target on a phone (44 by 44 px, side by side, never on top
                   of each other), so a tap meant for the pencil never lands on
                   remove (#6059). Held by the list walk's tapTargets check. */}
-              <span data-line-tools className="flex shrink-0 items-center gap-0.5 max-sm:gap-1">
+              <span data-line-tools className="flex shrink-0 items-center gap-[2px] max-sm:gap-[4px]">
                 {!it.checked && (
                   <button
                     title="Correct this line"
@@ -497,6 +522,12 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   onCommit={(name, value) => setItemField.mutate({ id: it.id, m: { [name]: value } })}
                 />
               )}
+            </li>
+          ))}
+          {waitingAdds.map((title, i) => (
+            <li key={`waiting-${i}`} data-waiting-add="" className="flex items-center gap-[12px] px-3 py-2 text-sm text-muted dark:text-slate-400">
+              <span className="min-w-0 flex-1">{title}</span>
+              <span className="shrink-0 text-xs">waiting to send</span>
             </li>
           ))}
         </ul>

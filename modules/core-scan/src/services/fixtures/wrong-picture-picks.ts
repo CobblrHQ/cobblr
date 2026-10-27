@@ -37,6 +37,27 @@ export const WRONG_PICTURE_PICKS: PicturePick[] = [
     right: shot("Custom Sheet Metal enclosed 3D printer, black", "https://www.customsheetmetal.example/img/printer-black.jpg"),
   },
   {
+    // A new printer was given a Prusa XL straight from its create (#8651):
+    // the create path judged its search phrase, so "printer" was enough. The
+    // rest came back for the same search, seen live (2026-10-27).
+    record: { name: "Prusa MK4 3D printer", brand: null },
+    wrong: [
+      { ...shot("Original Prusa XL 3D printer", "https://www.prusa3d.example/content/images/product/original-prusa-xl.jpg"), why: "another of the maker's printers" },
+      { ...shot("Prusa 3D Printer Models Compared: i3 MK4 vs SL1S", "https://3dprintingbasics.example/images/65297.webp"), why: "a comparison of several" },
+      { ...shot("3D Printer Hotend Kit for Prusa MK4/XL Hot End Kit Assembly Print Head", "https://ae-pic.example-shop.com/kf/hotend-kit.jpg"), why: "a part made for it" },
+    ],
+    right: shot("Original Prusa MK4 3D Printer: Buy or Lease at Top3DShop", "https://top3dshop.example/image/catalog/products/original_prusa_mk4_3d_printer_image8.jpg"),
+  },
+  {
+    record: { name: "Prusa MK4", brand: "Prusa" },
+    wrong: [
+      { ...shot("Original Prusa XL 3D printer", "https://www.prusa3d.example/content/images/product/original-prusa-xl.jpg"), why: "another of the maker's printers" },
+      { ...shot("Prusa 3D Printer Models Compared: i3 MK4 vs SL1S", "https://3dprintingbasics.example/images/65297.webp"), why: "a comparison of several" },
+      { ...shot("3D Printer Hotend Kit for Prusa MK4/XL Hot End Kit Assembly Print Head", "https://ae-pic.example-shop.com/kf/hotend-kit.jpg"), why: "a part made for it" },
+    ],
+    right: shot("Original Prusa MK4 3D Printer: Buy or Lease at Top3DShop", "https://top3dshop.example/image/catalog/products/original_prusa_mk4_3d_printer_image8.jpg"),
+  },
+  {
     record: { name: "Dremel 3D20", brand: "Dremel" },
     wrong: [{ ...shot("Dremel 3000 rotary tool kit", "https://tools.example-shop.com/dremel-3000.jpg"), why: "another of the maker's products" }],
     right: shot("Dremel Digilab 3D20 3D Printer", "https://tools.example-shop.com/dremel-3d20.jpg"),

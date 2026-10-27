@@ -7,6 +7,7 @@
 //   - core-placement.remove — take the targeted record out of its container.
 
 import { contentsWordText, platform, requireActionEntity } from "@cobblr/platform-contract";
+import { ExpectedPlacement } from "./placement-expectation.js";
 import type { ActionUndoStep } from "@cobblr/platform-contract/action-undo";
 
 let registered = false;
@@ -62,7 +63,7 @@ export function registerPlacementActionHandlers(): void {
   registerPlanners();
 
   platform().actions.registerHandler("core-placement.place", async (ctx) => {
-    const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown; one_to_a_slot?: unknown; qty?: unknown } | null) ?? {};
+    const args = (ctx.args as { container_kind?: unknown; container_id?: unknown; slot?: unknown; one_to_a_slot?: unknown; qty?: unknown; preserve_identity?: unknown } | null) ?? {};
     const containerKind = String(args.container_kind ?? "").trim();
     const containerId = String(args.container_id ?? "").trim();
     if (!containerKind || !containerId) {
@@ -70,6 +71,8 @@ export function registerPlacementActionHandlers(): void {
     }
     const qty = args.qty === undefined || args.qty === null || args.qty === "" ? undefined : Number(args.qty);
     if (qty !== undefined && !(Number.isFinite(qty) && qty > 0)) return { ok: false, error: "qty is how many to put in, more than none" };
+    const expected = ExpectedPlacement.optional().safeParse(ctx.args?.expected);
+    if (!expected.success) return { ok: false, error: "expected must describe the placement this move is undoing" };
     const slot = typeof args.slot === "string" && args.slot.trim() ? args.slot.trim() : null;
     const oneToASlot = args.one_to_a_slot === true || args.one_to_a_slot === "true";
     if (oneToASlot && !slot) return { ok: false, error: "one_to_a_slot needs a slot" };
@@ -86,6 +89,8 @@ export function registerPlacementActionHandlers(): void {
         placedBy: ctx.userId ?? null,
         ...(oneToASlot ? { oneToASlot: true } : {}),
         ...(qty !== undefined ? { qty } : {}),
+        ...(args.preserve_identity === true || expected.data ? { preserveIdentity: true } : {}),
+        ...(expected.data ? { expected: expected.data } : {}),
       });
       displaced = done?.displaced ?? [];
       if (done?.placed) placed = done.placed;
@@ -136,10 +141,17 @@ export function registerPlacementActionHandlers(): void {
   platform().actions.registerHandler("core-placement.remove", async (ctx) => {
     const entity = requireActionEntity(ctx);
     const was = await platform().placement.containerOf({ orgId: ctx.orgId, containee: { kind: entity.kind, id: entity.id } }).catch(() => null);
-    await platform().placement.remove({
-      orgId: ctx.orgId,
-      containee: { kind: entity.kind, id: entity.id },
-    });
+    const expected = ExpectedPlacement.optional().safeParse(ctx.args?.expected);
+    if (!expected.success) return { ok: false, error: "expected must describe the placement this move is undoing" };
+    try {
+      await platform().placement.remove({
+        orgId: ctx.orgId,
+        containee: { kind: entity.kind, id: entity.id },
+        ...(expected.data ? { expected: expected.data } : {}),
+      });
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
     return { ok: true, removed: true, was };
   });
 }

@@ -8,7 +8,7 @@ export const ProfileSchema = z.object({ connection_id: z.string().uuid().nullabl
 export const FiringSchema = z.object({
  name: z.string().trim().min(1).max(200), schedule: ScheduleSchema, cone: z.string().trim().max(20).default(""), notes: z.string().max(10000).default(""),
  pieces: z.array(PieceSchema).max(500).default([]),
- glazes: z.array(z.object({ part_id: z.string().uuid(), kind: z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/).optional(), ml: z.number().positive().max(1000000) })).max(100).default([]),
+ glazes: z.array(z.object({ part_id: z.string().uuid(), title: PieceSchema.shape.title, kind: z.string().regex(/^[a-z0-9-]+:[a-z0-9-]+$/).optional(), ml: z.number().positive().max(1000000) })).max(100).default([]),
 }).superRefine((f, ctx) => {
  if (new Set(f.pieces.map(p => `${p.kind}:${p.id}`)).size !== f.pieces.length) ctx.addIssue({ code: "custom", message: "Each piece belongs in the load once." });
  if (new Set(f.glazes.map(g => g.part_id)).size !== f.glazes.length) ctx.addIssue({ code: "custom", message: "Record each glaze's total use once." });

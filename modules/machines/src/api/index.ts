@@ -6,8 +6,10 @@ import { registerMachinesResolvers } from "./resolvers.js";
 import { registerMachinesActionHandlers } from "./action-handlers.js";
 import { registerMachinesWriter } from "./sync-writer.js";
 import { registerSetVersionTargetAction } from "./set-version-target-action.js";
+import { registerToolLibraryFieldsHeal } from "../heal-tool-library-loan-fields.js";
 
 registerSetVersionTargetAction();
+registerToolLibraryFieldsHeal();
 
 registerMachinesResolvers();
 platform().devices.registerMachineRecords({

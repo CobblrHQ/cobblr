@@ -38,7 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ApiError, api, fetchCsv, type Location } from "../lib/api";
-import { downloadBlob, editOf } from "@cobblr/platform-web";
+import { downloadBlob, editOf, isKeptOffline, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { deleteDialogMessage, restorePlaces, restoredSentence } from "../lib/placeDelete";
 import { countOf } from "@cobblr/platform-contract/plural";
 import { useHideEmpty } from "../lib/useHideEmpty";
@@ -1374,13 +1374,26 @@ export function LocationFormModal({
         // Short_name is intentionally dropped for bulk — it's
         // per-location and wouldn't make sense duplicated.
         const created: string[] = [];
+        // Offline, each place is kept on this device and goes by itself when
+        // the connection returns (#8637): every one of a range, not the first.
+        const kept: string[] = [];
         for (const n of expansion.names) {
-          const loc = await api.createLocation(slug, {
-            name: n,
-            kind,
-            parent_id: parentId || null,
-          });
-          created.push(loc.id);
+          try {
+            const loc = await api.createLocation(slug, {
+              name: n,
+              kind,
+              parent_id: parentId || null,
+            });
+            created.push(loc.id);
+          } catch (e) {
+            if (!isKeptOffline(e)) throw e;
+            kept.push(n);
+          }
+        }
+        if (kept.length) {
+          toast.info(`${kept.join(", ")}: ${KEPT_SENTENCE}`);
+          onSaved();
+          return;
         }
         // Bottom-up numbering means the list must read the OTHER way, so
         // the group on screen looks like the rack in the room. /reorder is
@@ -1405,6 +1418,11 @@ export function LocationFormModal({
       }
       onSaved();
     } catch (err) {
+      if (isKeptOffline(err)) {
+        toast.info(`${name.trim()}: ${KEPT_SENTENCE}`);
+        onSaved();
+        return;
+      }
       const found = duplicatePlaceOf(err);
       if (found) setDup(found);
       else toast.error(err instanceof ApiError ? err.message : String(err));

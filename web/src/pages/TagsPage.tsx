@@ -37,9 +37,11 @@ function TagPillRow({
   onDelete?: () => void;
   onTogglePin: () => void;
 }) {
+  // Wraps inside the screen's width: one row of name, count, pin, edit and
+  // delete ran 40 px past a phone at 200% text and took Delete with it (#6881).
   return (
     <span
-      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border"
+      className="inline-flex flex-wrap max-w-full items-center gap-x-2 gap-y-1 px-3 py-1.5 rounded-2xl text-sm border"
       style={{
         borderColor: t.color ?? undefined,
         background: t.color ? `${t.color}22` : undefined,
@@ -50,7 +52,7 @@ function TagPillRow({
       ) : (
         <TagIcon size={12} style={{ color: t.color ?? undefined }} />
       )}
-      <Link to={`/tags/${t.id}`} className="hover:underline focus:outline-none" title={`Show what's tagged "${t.name}"`}>
+      <Link to={`/tags/${t.id}`} className="min-w-0 [overflow-wrap:anywhere] hover:underline focus:outline-none" title={`Show what's tagged "${t.name}"`}>
         {path && <span className="text-faint">{path} › </span>}
         {t.name}
       </Link>

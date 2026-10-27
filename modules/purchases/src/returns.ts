@@ -8,13 +8,12 @@
 // the person already pressed "Received") is kept in the history and changes
 // nothing; "cancelled" is refused once the store has the item.
 //
-// Two consequences, each happening once, stamped in the statement that
-// decides them so a second door, a retry or two people at once find nothing
-// left to do:
+// The order lock serializes stages across stock delivery and persistence.
+// Stock delivery is confirmed before saving a stage that claims it moved:
 //   - stock: when the return reaches "received" (or "refunded", which means
 //     the store has it), the line's count comes off the shelf. Through the
 //     stock wire, the way an arrival adds it (receive.ts): an event, never a
-//     write into inventory. stock_returned_at holds the once.
+//     write into inventory. The source ledger makes a retry harmless.
 //   - spend: a refund comes off the order's total in orderTotal(), so every
 //     spend figure nets it out. The amount is a column, set, never added to,
 //     so an email saying "refund issued $12" after a person typed $12 is one
@@ -28,9 +27,10 @@
 // except "cancelled", which with nothing to cancel is about the order itself
 // (the caller decides).
 
-import { sql, type Kysely, type Transaction } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { fieldCurrency } from "@cobblr/platform-contract/money";
+import { receivedPurchaseQty } from "@cobblr/platform-contract/purchase-line-actions";
 import { suggestedPurchaseRefund } from "@cobblr/platform-contract/purchase-refund";
 import type { PurchasesDB, ReturnStage } from "./db.js";
 import { ORDER_ITEM_RETURNED_KEYS } from "./return-keys.js";
@@ -82,6 +82,7 @@ export interface ReturnRow {
   refund_amount: string | null;
   refunded_at: Date | null;
   stock_returned_at: Date | null;
+  moved_in: boolean;
   steps: Array<{ stage: ReturnStage; at: string; by: string | null; source: ReturnSource; refund_amount?: number | null; ignored?: boolean }>;
   created_at: Date;
 }
@@ -98,7 +99,7 @@ export interface StepOutcome {
   stockRestored: boolean;
 }
 
-type Line = { id: string; part_id: string | null; description: string | null; qty: string; unit_cost: string | null; line_amount: string | null; metadata: unknown };
+type Line = { id: string; part_id: string | null; description: string | null; qty: string; unit_cost: string | null; line_amount: string | null; metadata: unknown; received_at: Date | null; received_qty: string | null };
 
 const lower = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
 
@@ -111,16 +112,20 @@ function namesLine(words: string, line: Pick<Line, "description">): boolean {
 /** Record one step of a return. Throws ActionRefusal for a step a person
  *  asked for that cannot happen (too many, cancelling what the store has). */
 export async function recordReturnStep(db: Kysely<PurchasesDB>, step: ReturnStep): Promise<StepOutcome> {
+  return platform().exclusive.serial(`purchases:return:${step.orgId}:${step.orderId}`, () => recordReturnStepSerial(db, step));
+}
+
+async function recordReturnStepSerial(db: Kysely<PurchasesDB>, step: ReturnStep): Promise<StepOutcome> {
   const at = step.at ?? new Date().toISOString();
   const main = await platform().money.currency(step.orgId);
   const outcome = await db.transaction().execute(async (trx) => {
     await sql`select pg_advisory_xact_lock(hashtextextended(${`purchases-return:${step.orderId}`}, 0))`.execute(trx);
-    const order = await trx.selectFrom("purchases_orders").select(["id", "instance", "metadata"]).where("id", "=", step.orderId).executeTakeFirst();
+    const order = await trx.selectFrom("purchases_orders").select(["id", "instance", "metadata", "status"]).where("id", "=", step.orderId).executeTakeFirst();
     if (!order) throw new ActionRefusal("That order is gone.");
     const currency = fieldCurrency(order.metadata, "total_cost", main);
     const lines = (await trx
       .selectFrom("purchases_order_items")
-      .select(["id", "part_id", "description", "qty", "unit_cost", "line_amount", "metadata"])
+      .select(["id", "part_id", "description", "qty", "unit_cost", "line_amount", "metadata", "received_at", "received_qty"])
       .where("order_id", "=", step.orderId)
       .execute()) as Line[];
     const all = (await trx.selectFrom("purchases_returns").selectAll().where("order_id", "=", step.orderId).orderBy("created_at").execute()) as unknown as ReturnRow[];
@@ -157,8 +162,9 @@ export async function recordReturnStep(db: Kysely<PurchasesDB>, step: ReturnStep
       const qty = step.qty ?? 1;
       if (line) {
         const already = all.filter((r) => r.line_id === line.id && r.stage !== "cancelled").reduce((s, r) => s + Number(r.qty), 0);
-        if (step.source !== "email" && already + qty > Number(line.qty)) {
-          throw new ActionRefusal(`Only ${Number(line.qty) - already} of that line can still be returned.`);
+        const received = receivedPurchaseQty(order, { qty: Number(line.qty), received_at: line.received_at ? String(line.received_at) : null, received_qty: line.received_qty == null ? null : Number(line.received_qty) });
+        if (step.source !== "email" && already + qty > received) {
+          throw new ActionRefusal(`Only ${Math.max(0, received - already)} received units of that line can still be returned.`);
         }
       }
       const created = (await trx
@@ -177,29 +183,42 @@ export async function recordReturnStep(db: Kysely<PurchasesDB>, step: ReturnStep
         .returningAll()
         .executeTakeFirstOrThrow()) as unknown as ReturnRow;
       target = created;
-      const moved = await applyStage(trx, created, { ...step, stage: step.stage }, at, lines, true, currency);
+      const moved = planStage(created, { ...step, stage: step.stage }, at, lines, true, currency);
+      if (!moved.stockReturned && !moved.stockRestored) moved.ret = await saveStage(trx, moved.ret);
       return { ...moved, created: true, from: null };
     }
 
-    const moved = await applyStage(trx, target, step, at, lines, false, currency);
+    const moved = planStage(target, step, at, lines, false, currency);
+    if (!moved.stockReturned && !moved.stockRestored) moved.ret = await saveStage(trx, moved.ret);
     return { ...moved, created: false, from: target.stage };
   });
 
   const ret = outcome.ret;
   if (ret && outcome.stockReturned) await tellStock(step.orgId, ret, -1);
   if (ret && outcome.stockRestored) await tellStock(step.orgId, ret, +1);
+  if (ret && (outcome.stockReturned || outcome.stockRestored)) outcome.ret = await saveStage(db, ret);
   return outcome;
 }
 
-async function applyStage(
-  trx: Transaction<PurchasesDB>,
+async function saveStage(db: Kysely<PurchasesDB>, ret: ReturnRow): Promise<ReturnRow> {
+  return (await db.updateTable("purchases_returns").set({
+    stage: ret.stage,
+    refund_amount: ret.refund_amount == null ? null : Number(ret.refund_amount),
+    refunded_at: ret.refunded_at?.toISOString() ?? null,
+    stock_returned_at: ret.stock_returned_at?.toISOString() ?? null,
+    steps: JSON.stringify(ret.steps),
+    updated_at: new Date(),
+  }).where("id", "=", ret.id).returningAll().executeTakeFirstOrThrow()) as unknown as ReturnRow;
+}
+
+function planStage(
   ret: ReturnRow,
   step: ReturnStep,
   at: string,
   lines: Line[],
   fresh: boolean,
   currency: string,
-): Promise<Omit<StepOutcome, "created" | "from">> {
+): Omit<StepOutcome, "created" | "from"> & { ret: ReturnRow } {
   const steps = Array.isArray(ret.steps) ? [...ret.steps] : [];
   const from = ret.stage;
   let to: ReturnStage = from;
@@ -230,31 +249,17 @@ async function applyStage(
   }
   const leavingRefund = step.revert && from === "refunded" && to !== "refunded";
 
-  const updated = (await trx
-    .updateTable("purchases_returns")
-    .set({
-      stage: to,
-      refund_amount: leavingRefund ? null : refund,
-      refunded_at: to === "refunded" ? (ret.refunded_at ? ret.refunded_at.toISOString() : at) : leavingRefund ? null : ret.refunded_at ? ret.refunded_at.toISOString() : null,
-      steps: JSON.stringify(steps),
-      updated_at: new Date(),
-    })
-    .where("id", "=", ret.id)
-    .returningAll()
-    .executeTakeFirstOrThrow()) as unknown as ReturnRow;
-
-  // The shelf, once each way. Off when the store has it; back on only when an
-  // undo takes the return back before the store had it.
-  let stockReturned = false;
-  let stockRestored = false;
-  if (OFF_SHELF.has(to)) {
-    const r = await sql<{ id: string }>`update purchases_returns set stock_returned_at = ${at} where id = ${ret.id} and stock_returned_at is null returning id`.execute(trx);
-    stockReturned = r.rows.length > 0;
-  } else if (step.revert) {
-    const r = await sql<{ id: string }>`update purchases_returns set stock_returned_at = null where id = ${ret.id} and stock_returned_at is not null and not moved_in returning id`.execute(trx);
-    stockRestored = r.rows.length > 0;
-  }
-  return { ret: { ...updated, stock_returned_at: stockReturned ? new Date(at) : stockRestored ? null : updated.stock_returned_at }, moved, stockReturned, stockRestored };
+  const stockReturned = OFF_SHELF.has(to) && ret.stock_returned_at == null;
+  const stockRestored = !!step.revert && !OFF_SHELF.has(to) && ret.stock_returned_at != null && !ret.moved_in;
+  const updated: ReturnRow = {
+    ...ret,
+    stage: to,
+    refund_amount: leavingRefund ? null : refund == null ? null : String(refund),
+    refunded_at: to === "refunded" ? ret.refunded_at ?? new Date(at) : leavingRefund ? null : ret.refunded_at,
+    stock_returned_at: stockReturned ? new Date(at) : stockRestored ? null : ret.stock_returned_at,
+    steps,
+  };
+  return { ret: updated, moved, stockReturned, stockRestored };
 }
 
 async function tellStock(orgId: string, ret: ReturnRow, sign: -1 | 1): Promise<void> {
@@ -273,8 +278,24 @@ async function tellStock(orgId: string, ret: ReturnRow, sign: -1 | 1): Promise<v
     qty,
     reason: sign < 0 ? `Returned to the store (${line.description ?? "item"})` : `Return undone (${line.description ?? "item"})`,
     description: line.description,
+    sourceKind: "purchases:return",
+    sourceId: ret.id,
+    once: true,
+    reversible: true,
+    resolveHolding: sign < 0,
+    restoreSource: sign > 0,
+    exact: sign < 0,
   };
-  await platform().events.emit("purchases.order_item.returned", payload);
+  let stockConfirmed = false;
+  try {
+    await platform().events.emit("purchases.order_item.returned", payload, {
+      id: `${ret.id}:${ret.steps.length}:${sign}`, completed: [],
+      acknowledge: async key => { if (key.startsWith("wire:inventory:adjust-stock ")) stockConfirmed = true; },
+    });
+  } catch (error) {
+    throw new ActionRefusal(`The return stage was not saved. ${(error as Error).message}`);
+  }
+  if (!stockConfirmed) throw new ActionRefusal("The stock adjustment was not confirmed. Check the return's source place and stock count before trying again.");
 }
 
 export async function listReturns(db: Kysely<PurchasesDB>, orderId: string): Promise<ReturnRow[]> {

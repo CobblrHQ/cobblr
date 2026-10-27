@@ -1,7 +1,7 @@
 // Capability Registry runtime. Mirrors entities.ts but for actions
 // rather than entities.
 
-import { OFF_WHILE_LENT, lentWhy, loanOfFields } from "@cobblr/platform-contract/loan";
+import { OFF_WHILE_LENT, loanActionRefusal } from "@cobblr/platform-contract/loan";
 import { isActionStep, onTheSameRecord, type ActionUndoStep, type ActionUndoer, type ActionUndoContext } from "@cobblr/platform-contract/action-undo";
 import type {
   ActionPlan,
@@ -213,8 +213,7 @@ export async function missingRecordRefusal(ctx: ActionInvokeContext, scope: "ent
  *  (OFF_WHILE_LENT, record-loans.md): "Lent to Sam Lee." */
 async function lentRefusal(actionId: string, ctx: ActionInvokeContext): Promise<string | null> {
   if (!OFF_WHILE_LENT.has(actionId) || !ctx.entity?.kind || !ctx.entity.id) return null;
-  const loan = loanOfFields(ctx.entity.fields) ?? (await lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id).then((e) => (e ? loanOfFields(e.fields) : null)).catch(() => null));
-  return loan ? lentWhy(loan) : null;
+  return loanActionRefusal(actionId, ctx.entity.fields) ?? (await lookup(ctx.orgId, ctx.entity.kind, ctx.entity.id).then((e) => loanActionRefusal(actionId, e?.fields)).catch(() => null));
 }
 
 export async function planFor(

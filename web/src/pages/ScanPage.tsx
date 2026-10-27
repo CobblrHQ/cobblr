@@ -147,6 +147,7 @@ import { type ScanTarget } from "./scanInboxShared";
 import { scanInboxKeys } from "../lib/scan-inbox-keys";
 import { useUndoSplit } from "../lib/useUndoSplit";
 import { countOf } from "@cobblr/platform-contract/plural";
+import { InboxFacets } from "./InboxFacets";
 export type { ScanTarget } from "./scanInboxShared";
 
 interface ScanDrive {
@@ -2452,97 +2453,28 @@ export function ScanPage() {
             rule's min-width replaces a flex item's own (its text), so a
             count could shrink under its words and "1 ready" drew over
             "1 to review" at 320 (#7100). */}
-        <div data-inbox-facets className="flex items-baseline gap-0 max-sm:gap-2 shrink min-w-0 leading-none overflow-x-auto [&>*]:shrink-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap text-[13px] text-muted dark:text-slate-400">
-          {/* The total. On a tablet the word is a luxury the counts paid ~55px
-              for, so it shows only on a desktop or on an empty inbox (a lone
-              "0" is a riddle). On a phone it leaves the row whenever a facet
-              is there (see rowCarriesFacet) and says its word when it stays:
-              "1  1 to review" read as two numbers side by side (#3497). */}
-          <span className={rowCarriesFacet ? "max-sm:hidden" : ""}>
-            <span className="text-sm font-semibold text-content dark:text-mortar-100">{totalPending}</span>
-            <span className={totalPending === 0 ? "" : "sm:hidden lg:inline"}>&nbsp;pending</span>
-          </span>
-          {showReadyFacet && (
-            <>
-              <span className="hidden sm:inline px-1 text-faint">·</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setReviewOnly(false);
-                  setStaleOnly(false);
-                }}
-                title="A confident name and destination, nothing flagged - these are what File all commits"
-className="rounded px-1 py-0.5 text-[12.5px] hover:bg-subtle dark:hover:bg-slate-800 transition"
-              >
-                <b className="font-semibold text-emerald-600 dark:text-emerald-400">
-                  {confidentCount}
-                </b>
-                {/* The word at every width. Under lg these facets dropped
-                    their words for a bare glyph, and on a phone that drew as a
-                    4px wedge a stranger at a stand had to decode (#3321): a
-                    count followed by a symbol says nothing; "1 to review"
-                    costs about 60px the row can spend, since it scrolls. */}
-                <span>&nbsp;ready</span>
-              </button>
-            </>
-          )}
-          {reviewCount > 0 && (
-            <>
-              <span className="hidden sm:inline px-1 text-faint">·</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setStaleOnly(false);
-                  setReviewOnly((v) => !v);
-                }}
-                aria-pressed={reviewOnly}
-                title="No clean name, low confidence, or the lookup was rate-limited - these need a human"
-                className={
-                  "max-sm:-order-1 rounded px-1 py-0.5 text-[12.5px] transition " +
-                  (reviewOnly
-                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
-                    : "hover:bg-subtle dark:hover:bg-slate-800")
-                }
-              >
-                <b className="font-semibold text-amber-600 dark:text-amber-400">{reviewCount}</b>
-                <span>&nbsp;to review</span>
-              </button>
-            </>
-          )}
-          {/* A facet covering the WHOLE set states one fact twice ("69 pending ·
-              69 waiting 2d+"), so it earns its space only as a subset. */}
-          {/* Desktop only. Of the four, this is the one that is NOT a disjoint
-              slice - a waiting item is also ready or needing review - so it is
-              the first to give up its spot when the row is tight. It stays
-              reachable in the ... menu on a phone. */}
-          {staleCount > 0 && staleCount < totalPending && (
-            <span className="hidden sm:contents">
-            <>
-              <span className="hidden sm:inline px-1 text-faint">·</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setReviewOnly(false);
-                  setStaleOnly((v) => !v);
-                }}
-                aria-pressed={staleOnly}
-                title="Waiting more than two days"
-                className={
-                  "ml-1.5 sm:ml-0 rounded px-1 py-0.5 text-[12.5px] transition " +
-                  (staleOnly
-                    ? "bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
-                    : "hover:bg-subtle dark:hover:bg-slate-800")
-                }
-              >
-                {/* Glyph at EVERY width: "waiting 2d+" is the longest label on
-                    the row and belongs to the facet that earns it least. The
-                    words live in the tooltip. */}
-                <b className="font-semibold">{staleCount}</b>&nbsp;⏱
-              </button>
-            </>
-            </span>
-          )}
-        </div>
+        <InboxFacets
+          totalPending={totalPending}
+          confidentCount={confidentCount}
+          reviewCount={reviewCount}
+          staleCount={staleCount}
+          showReadyFacet={showReadyFacet}
+          rowCarriesFacet={rowCarriesFacet}
+          reviewOnly={reviewOnly}
+          staleOnly={staleOnly}
+          onReady={() => {
+            setReviewOnly(false);
+            setStaleOnly(false);
+          }}
+          onReview={() => {
+            setStaleOnly(false);
+            setReviewOnly((v) => !v);
+          }}
+          onStale={() => {
+            setReviewOnly(false);
+            setStaleOnly((v) => !v);
+          }}
+        />
         </div>
 
         {/* Reviewing one session (?batch). Was a chip at the end of a wrapping

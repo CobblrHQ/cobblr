@@ -29,6 +29,8 @@ export interface TargetField {
   type: string;
   /** A column on the module's own table rather than a custom field. */
   native: boolean;
+  /** May identify a record, but never enters a write. */
+  readOnly?: boolean;
   choices?: string[] | null;
   field_role?: string | null;
   unit?: string | null;
@@ -386,7 +388,7 @@ function matchField(c: UnderstoodColumn, all: TargetField[]): TargetField | null
   // An empty column has no values to misfit, so it goes to the field its
   // header names whatever that field's type: an exported list's blank Cost
   // column is Cost, not a new text field called "Cost 2".
-  const fields = c.filled === 0 ? all : all.filter((f) => FITS[c.type].includes(f.type));
+  const fields = c.filled === 0 ? all : all.filter((f) => f.readOnly || FITS[c.type].includes(f.type));
   const h = norm(c.header);
   const hs = singular(h);
   const byName = fields.find((f) => [norm(f.name), norm(f.label)].some((n) => n === h || singular(n) === hs));
@@ -509,9 +511,12 @@ export function planColumns(sheet: UnderstoodSheet, target: Target, overrides: S
     } else if (c.type === "tags") {
       dest = { to: "tags" };
       why = "each value becomes a tag";
+    } else if (match?.readOnly && match.name !== "asset_id") {
+      dest = { to: "skip" };
+      why = "kept by Cobblr";
     } else if (match) {
       dest = { to: "field", field: match.name, label: match.label, native: match.native };
-      why = match.native ? `goes in ${match.label}` : `matches the ${match.label} field`;
+      why = match.readOnly ? "matches its existing asset number" : match.native ? `goes in ${match.label}` : `matches the ${match.label} field`;
     } else if (c.filled === 0) {
       dest = { to: "skip" };
       why = "nothing is written in it";
@@ -622,9 +627,14 @@ function locationByLeaf(locations: KnownLocation[]): Map<string, string | null> 
   return out;
 }
 
+/** An unticked box: false, as a sheet or a record says it. */
+const unticked = (v: unknown) => v === false || (typeof v === "string" && v.trim().toLowerCase() === "false");
+
 function same(a: unknown, b: unknown): boolean {
   if (a === b) return true;
-  if (a == null || b == null) return a == b || (a === "" && b == null) || (b === "" && a == null);
+  // A record says nothing about a box nobody ticked; its exported sheet says
+  // "false". Both mean no, so a re-import of the export changes nothing.
+  if (a == null || b == null) return a == b || (a === "" && b == null) || (b === "" && a == null) || (a == null && unticked(b)) || (b == null && unticked(a));
   if (typeof a === "number" || typeof b === "number") return Number(a) === Number(b);
   return String(a).trim() === String(b).trim();
 }
@@ -788,7 +798,9 @@ export function planSheet(input: PlanInput): SheetPlan {
   // Matching what is already there: by the key column when there is one,
   // otherwise by name when every name in the sheet is different, otherwise by
   // name and date together when that tells every row apart.
-  const keyPlan = columns.find((c) => sheet.columns[c.column]?.role === "key" && (c.dest.to === "field" || c.dest.to === "new-field"));
+  const readOnlyFields = new Set(target.fields.filter((f) => f.readOnly).map((f) => f.name));
+  const keyPlan = columns.find((c) => c.dest.to === "field" && c.dest.native && c.dest.field === "asset_id" && readOnlyFields.has(c.dest.field))
+    ?? columns.find((c) => sheet.columns[c.column]?.role === "key" && (c.dest.to === "field" || c.dest.to === "new-field"));
   const keyField = keyPlan && (keyPlan.dest.to === "field" || keyPlan.dest.to === "new-field") ? keyPlan.dest.field : null;
   const nameIdx = columns.findIndex((c) => c.dest.to === "name");
   const namesInSheet = nameIdx >= 0 ? sheet.rows.map((r) => display(r.values[nameIdx] ?? null).toLowerCase()).filter(Boolean) : [];
@@ -946,6 +958,9 @@ export function planSheet(input: PlanInput): SheetPlan {
         : !keyField && pairsUnique && dateField
           ? (byPair.get(pairKey(rec.name, rec.fields[dateField])) ?? undefined)
           : undefined;
+    // A native reference identifies the row but is never a write, even for
+    // an unmatched row or a mapping chosen by hand.
+    for (const field of readOnlyFields) delete rec.fields[field];
     if (!match) continue;
     rec.existing_id = match.id;
     const changes: FieldChange[] = [];

@@ -177,7 +177,7 @@ export default defineModule({
       {
         id: "purchases:start-return", changes: "records", group: "buy", label: "Start a return", examples: ["return two of those", "I'm sending this back"],
         runBy: "member",
-        description: "Start a return on an order that arrived: which line (line_id) or item, how many (qty, default 1) and why. One open return per line; a second start on the same line answers with the open one. The stock comes off the shelf when the store has it, the refund off the order's spend when it is refunded.",
+        description: "Start a return on a received line, even while other lines are still on their way: which line (line_id) or item, how many (qty, default 1) and why. Separate returns can be started up to the quantity received. The stock comes off the shelf when the store has it, the refund off the order's spend when it is refunded.",
         appliesTo: { kinds: ["purchases:order"] }, invokeHandler: "purchases.start-return", userInvokable: true, undoable: true,
         argsSchema: {
           order_id: { label: "Which order, defaults to the record this ran on", type: "text" },

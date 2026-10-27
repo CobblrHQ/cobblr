@@ -403,6 +403,7 @@ export function DigifabPage({
       {createOpen && (
         <CreateConnectionModal
           types={list.data?.types ?? ["fdm_monster", "mock"]}
+          typeNames={list.data?.type_names}
           onClose={() => setCreateOpen(false)}
           onCreated={() => {
             void qc.invalidateQueries({ queryKey: ["digifab-connections", activeSlug] });

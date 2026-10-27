@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { sql } from "kysely";
 import { fieldTypeTakesUnit, platform, SYSTEM_VIEWER } from "@cobblr/platform-contract";
 import { splitEntityKind } from "@cobblr/platform-contract/entity-kind";
+import { countOf } from "@cobblr/platform-contract/plural";
 import { isStockPreviewUrl } from "@cobblr/platform-contract/stock-preview";
 import type { CoreImportDB, ImportDb } from "../db.js";
 import type { SheetPlan, RecordPlan, SummaryCheck } from "./sheet-plan.js";
@@ -29,6 +30,14 @@ import { apiFetch } from "@cobblr/platform-contract/self-api";
 export const SHEET_IMPORT_QUEUE = "core-import.sheet";
 const LOCATION_KIND = "core-locations:location";
 const PROGRESS_EVERY = 20;
+/** A run beats as it works; one silent this long has lost its worker. */
+export const RUN_SILENT_MS = 2 * 60_000;
+/** Where a run had got to is kept this often, by rows or by time. */
+const RESUME_EVERY_ROWS = 500;
+const RESUME_EVERY_MS = 30_000;
+/** A job works this long, then hands the run to the next job: well inside the
+ *  queue's 15 minutes, after which it takes a job back as crashed. */
+export const CHUNK_MS = 4 * 60_000;
 
 // ─── what a run carries ──────────────────────────────────────────────────────
 
@@ -169,7 +178,7 @@ export class Ledger {
     write: () => Promise<string>,
     finish: (id: string) => Promise<void>,
   ): Promise<void> {
-    await this.add({ ...step, detail: { pending: true } });
+    await this.add({ ...step, detail: { ...(step.detail ?? {}), pending: true } });
     let seq = this.seq;
     const checkpoint = async (id: string) => {
       try {
@@ -178,7 +187,7 @@ export class Ledger {
         const after = await platform().entities.snapshot(orgId, step.entity_kind, id);
         const next = ++this.seq;
         // The record stays ahead of its attachments in reverse-order Undo.
-        await this.db.updateTable("core_import_run_steps").set({ seq: next, after_hash: stateHash(after), detail: JSON.stringify({ pending: false }) as never }).where("run_id", "=", this.runId).where("seq", "=", seq).execute();
+        await this.db.updateTable("core_import_run_steps").set({ seq: next, after_hash: stateHash(after), detail: JSON.stringify({ ...(step.detail ?? {}), pending: false }) as never }).where("run_id", "=", this.runId).where("seq", "=", seq).execute();
         seq = next;
       } catch (err) {
         throw new JournalError(`could not save Undo: ${(err as Error).message}`);
@@ -429,30 +438,85 @@ export async function storeRowPicture(orgId: string, url: string): Promise<{ fil
   return { fileId: w.fileId, existed: !!w.existed };
 }
 
-async function setProgress(db: ImportDb, runId: string, done: number): Promise<void> {
-  await db.updateTable("core_import_runs").set({ progress_done: done }).where("id", "=", runId).execute();
+/** Where a run had got to: the sheet and the row it starts on next, how many
+ *  rows it had done, and what it had found about them. */
+interface ResumePoint {
+  sheet: number;
+  record: number;
+  done: number;
+  summaries: SheetSummary[];
+}
+
+/** A record step already in the ledger, by its sheet and row. */
+async function rowsInLedger(db: ImportDb, runId: string): Promise<{ rows: Map<string, { id: string; kind: string; pending: boolean; entity_id: string | null }>; unplaced: number }> {
+  const steps = await db.selectFrom("core_import_run_steps").select(["id", "kind", "entity_id", "detail"]).where("run_id", "=", runId).where("kind", "in", ["record-create", "record-update"]).execute();
+  const rows = new Map<string, { id: string; kind: string; pending: boolean; entity_id: string | null }>();
+  let unplaced = 0;
+  for (const st of steps) {
+    const d = (typeof st.detail === "string" ? JSON.parse(st.detail) : st.detail) as { sheet?: string; row?: number; pending?: boolean } | null;
+    if (typeof d?.sheet !== "string" || typeof d.row !== "number") { unplaced++; continue; }
+    rows.set(`${d.sheet}|${d.row}`, { id: String(st.id), kind: st.kind, pending: d.pending === true, entity_id: st.entity_id ?? null });
+  }
+  return { rows, unplaced };
+}
+
+/** Take the run, if nobody else is carrying it: a queued run, or one marked
+ *  running whose worker has gone quiet (a restart, a crash, a hand-off). */
+export async function claimRun(db: ImportDb, runId: string, now = new Date()) {
+  return db.updateTable("core_import_runs")
+    .set({ status: "running", heartbeat_at: now })
+    .where("id", "=", runId)
+    .where((eb) => eb.or([
+      eb("status", "=", "queued"),
+      eb.and([eb("status", "=", "running"), eb.or([eb("heartbeat_at", "is", null), eb("heartbeat_at", "<", new Date(now.getTime() - RUN_SILENT_MS))])]),
+    ]))
+    .returningAll()
+    .executeTakeFirst();
 }
 
 export async function runImport(orgId: string, runId: string): Promise<void> {
   const db = (await platform().tenants.getDb(orgId)) as ImportDb;
-  const run = await db.selectFrom("core_import_runs").selectAll().where("id", "=", runId).executeTakeFirst();
-  if (!run || run.status !== "queued") return;
-  await db.updateTable("core_import_runs").set({ status: "running" }).where("id", "=", runId).execute();
+  // A job for a run another worker is still carrying (it beat in the last
+  // two minutes) leaves it to that worker.
+  const run = await claimRun(db, runId);
+  if (!run) return;
   const work = (typeof run.work === "string" ? JSON.parse(run.work) : run.work) as RunWork;
+  const saved = (typeof run.resume === "string" ? JSON.parse(run.resume) : run.resume) as ResumePoint | null;
+  const ledgered = await rowsInLedger(db, runId);
+  // A run cut off before its rows said which row they were (an older server)
+  // cannot be carried on exactly, so it ends as failed with what it did,
+  // which Undo can take back, never "running" forever (#8656).
+  if (ledgered.unplaced > 0 && !saved) {
+    await db.updateTable("core_import_runs").set({
+      status: "failed",
+      error: `The server restarted part-way through this import, after ${run.progress_done} of ${countOf(run.progress_total, "row")}. Undo takes back what came in, or import the sheet again: rows with a key column update what is already there.`,
+      finished_at: new Date(),
+      heartbeat_at: null,
+    }).where("id", "=", runId).execute();
+    return;
+  }
   const lastSeq = await db
     .selectFrom("core_import_run_steps")
     .select((eb) => eb.fn.max("seq").as("seq"))
     .where("run_id", "=", runId)
     .executeTakeFirst();
   const ledger = new Ledger(db, runId, Number(lastSeq?.seq ?? 0));
-  const summaries: SheetSummary[] = [];
-  let done = 0;
+  const summaries: SheetSummary[] = saved?.summaries ?? [];
+  let done = saved?.done ?? 0;
   const grownCategories = new Set<string>();
+  const started = Date.now();
+  let keptAt = Date.now(), keptRows = done;
+  const keep = async (point: Omit<ResumePoint, "summaries" | "done">, beat: Date | null = new Date()) => {
+    await db.updateTable("core_import_runs").set({ progress_done: done, heartbeat_at: beat, resume: sql`${JSON.stringify({ ...point, done, summaries })}::jsonb` as never }).where("id", "=", runId).execute(); // jsonb-replace-ok: the run's resume point has one writer, the worker carrying it
+    keptAt = Date.now(); keptRows = done;
+  };
 
   try {
-    for (const ws of work.sheets) {
-      const sum: SheetSummary = { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, retired: 0, ...(ws.checks ? { checks: ws.checks } : {}), problems: [], issues: [], issue_count: 0 };
-      summaries.push(sum);
+    for (const [sheetIndex, ws] of work.sheets.entries()) {
+      if (saved && sheetIndex < saved.sheet) continue;
+      const fresh = !saved || sheetIndex > saved.sheet || !summaries[sheetIndex];
+      const sum: SheetSummary = fresh ? { sheet: ws.sheet, label: ws.label, kind: ws.kind, created: 0, updated: 0, unchanged: 0, failed: 0, retired: 0, ...(ws.checks ? { checks: ws.checks } : {}), problems: [], issues: [], issue_count: 0 } : summaries[sheetIndex]!;
+      if (fresh) summaries[sheetIndex] = sum;
       const writer = await platform().entities.getWriter(orgId, ws.kind);
       if (!writer) {
         sum.failed = ws.records.length;
@@ -463,7 +527,32 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
       const axis = await platform().categoryAxis.for({ orgId, kind: ws.kind, instance: ws.instance });
       const knownValues = new Set((axis?.values ?? []).map((v) => v.toLowerCase()));
 
-      for (const rec of ws.records) {
+      for (const [recordIndex, rec] of ws.records.entries()) {
+        if (saved && sheetIndex === saved.sheet && recordIndex < saved.record) continue;
+        // Past a long stretch, the next job carries on, so no job outlives the
+        // queue's lock on it.
+        if (Date.now() - started > CHUNK_MS) {
+          await keep({ sheet: sheetIndex, record: recordIndex }, null);
+          await platform().queue.enqueue({ orgId, queue: SHEET_IMPORT_QUEUE, payload: { runId }, idempotencyKey: `${runId}:${done}` });
+          return;
+        }
+        // A row the ledger already holds came in before a restart: it is
+        // counted, never written twice.
+        const already = ledgered.rows.get(`${ws.sheet}|${rec.row}`);
+        let again = false;
+        if (already && !already.entity_id) {
+          // Its write never answered, so it is written again; the step that
+          // only promised it goes, or Undo would hold on a record that is not there.
+          await db.deleteFrom("core_import_run_steps").where("id", "=", already.id).execute();
+          again = true;
+        } else if (already) {
+          for (const p of rec.problems ?? []) note(sum, rec.row, rec.name, p);
+          if (already.kind === "record-create") sum.created++; else sum.updated++;
+          if (already.pending) note(sum, rec.row, rec.name, "came in as the server restarted; check its tags, place and picture");
+          done++;
+          continue;
+        }
+        if (again) note(sum, rec.row, rec.name, "written again after the server restarted part-way through it; check it is there once");
         // What the dry run found about this row's values (a date that is not a
         // date, a count that is not a number) goes in as written; said here too,
         // so the result names every one, not only the plan the person closed.
@@ -537,7 +626,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
             }
           };
           if (rec.action === "create") {
-            await ledger.record(orgId, { kind: "record-create", entity_kind: ws.kind, label: rec.name }, async () => {
+            await ledger.record(orgId, { kind: "record-create", entity_kind: ws.kind, label: rec.name, detail: { sheet: ws.sheet, row: rec.row } }, async () => {
               const id = await writer.create(orgId, { ...top, metadata });
               changed = "created";
               sum.created++;
@@ -548,7 +637,7 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
             const before = await platform().entities.snapshot(orgId, ws.kind, id);
             if (!before) throw new Error("the record is gone");
             const held = (before.metadata && typeof before.metadata === "object" ? before.metadata : {}) as Record<string, unknown>;
-            await ledger.record(orgId, { kind: "record-update", entity_kind: ws.kind, entity_id: id, label: rec.name, before }, async () => {
+            await ledger.record(orgId, { kind: "record-update", entity_kind: ws.kind, entity_id: id, label: rec.name, before, detail: { sheet: ws.sheet, row: rec.row } }, async () => {
               await writer.update(orgId, id, { ...top, metadata: { ...held, ...metadata } });
               changed = "updated";
               sum.updated++;
@@ -561,7 +650,8 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
           if (err instanceof JournalError) throw err;
         }
         done++;
-        if (done % PROGRESS_EVERY === 0) await setProgress(db, runId, done);
+        if (done - keptRows >= RESUME_EVERY_ROWS || Date.now() - keptAt > RESUME_EVERY_MS) await keep({ sheet: sheetIndex, record: recordIndex + 1 });
+        else if (done % PROGRESS_EVERY === 0) await db.updateTable("core_import_runs").set({ progress_done: done, heartbeat_at: new Date() }).where("id", "=", runId).execute();
       }
     }
     await db
@@ -570,6 +660,8 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
         status: "done",
         progress_done: done,
         finished_at: new Date(),
+        heartbeat_at: null,
+        resume: null,
         // jsonb-replace-ok: a run's summary and work have one writer, this job
         summary: sql`${JSON.stringify({ sheets: summaries })}::jsonb`,
         work: sql`'{}'::jsonb`, // jsonb-replace-ok: the run is finished, its plan is no longer needed
@@ -596,6 +688,8 @@ export async function runImport(orgId: string, runId: string): Promise<void> {
         error: (err as Error).message,
         progress_done: done,
         finished_at: new Date(),
+        heartbeat_at: null,
+        resume: null,
         summary: sql`${JSON.stringify({ sheets: summaries })}::jsonb`, // jsonb-replace-ok: this row has one writer
       } as never)
       .where("id", "=", runId)

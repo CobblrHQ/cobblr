@@ -16,6 +16,8 @@
 //
 // meta and the heavier imports are lazy so the pure rule can be unit tested.
 
+import type { TemplateSet } from "../db/workspace-template.js";
+
 export class WorkspaceNotProvisioned extends Error {
   readonly code = "workspace_not_created";
   constructor(readonly orgName: string, cause: unknown) {
@@ -31,7 +33,7 @@ export const WORKSPACE_NOT_CREATED_MESSAGE =
  *  nothing when it already has them. `resetFirst` clears a database an
  *  earlier attempt left half made. Throws when the database could not be
  *  made; module enabling is best effort, as at signup. */
-export async function finishProvisioning(orgId: string, ownerId: string | null, opts: { resetFirst?: boolean } = {}): Promise<void> {
+export async function finishProvisioning(orgId: string, ownerId: string | null, opts: { resetFirst?: boolean; template?: TemplateSet } = {}): Promise<void> {
   const { meta } = await import("../db/meta.js");
   const org = await meta
     .selectFrom("orgs")
@@ -41,7 +43,7 @@ export async function finishProvisioning(orgId: string, ownerId: string | null, 
   if (org.db_credentials_encrypted) return;
   const { provisionTenantDb } = await import("../db/provision.js");
   const startedAt = performance.now();
-  const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(org.db_name, opts);
+  const { credentialsEncrypted, migrationsApplied } = await provisionTenantDb(org.db_name, { ...opts, orgId });
   const databaseMs = Math.round(performance.now() - startedAt);
   await meta
     .updateTable("orgs")
@@ -81,15 +83,15 @@ export async function provisionWholeOrRemove(
   orgId: string,
   orgName: string,
   ownerId: string | null,
-  opts: { retryAfterMs?: number } = {},
+  opts: { retryAfterMs?: number; template?: TemplateSet } = {},
 ): Promise<void> {
   try {
-    await finishProvisioning(orgId, ownerId);
+    await finishProvisioning(orgId, ownerId, { template: opts.template });
   } catch (first) {
     console.error(`[org-provision] ${orgId} failed, trying once more:`, (first as Error).message);
     try {
       await new Promise((r) => setTimeout(r, opts.retryAfterMs ?? 1_500));
-      await finishProvisioning(orgId, ownerId, { resetFirst: true });
+      await finishProvisioning(orgId, ownerId, { resetFirst: true, template: opts.template });
     } catch (err) {
       console.error(`[org-provision] ${orgId} failed twice; removing the half-made workspace:`, err);
       const { hardDeleteOrg } = await import("./delete-org.js");

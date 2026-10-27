@@ -101,15 +101,19 @@ const STATUS_LINE = /\s*(?:→|->)\s*\d{3}\s*:?/g;
  * sentence that says something went wrong and nothing changed.
  */
 export function forAPerson(text: string | null | undefined, kinds: readonly KindWord[] = []): string {
-  const plain = inPlainWords(String(text ?? ""), kinds);
-  const stripped = plain
+  const plain = tidy(inPlainWords(String(text ?? ""), kinds));
+  const stripped = tidy(plain
     .replace(STACK_FRAME, "")
     .replace(JSON_BODY, "")
     .replace(ERROR_SENTENCE, "")
     .replace(API_PATH, "")
-    .replace(STATUS_LINE, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+    .replace(STATUS_LINE, ""));
+  if (!stripped) return COULD_NOT_SAY;
+  // Nothing was written for a program, so it is the answer as given: "12."
+  // to "how many did we have?" has no words to look for and is still right
+  // (#8641). Only what is left once something was taken out must read as words.
+  if (stripped === plain) return stripped;
   return /[A-Za-z]{3,}.*[A-Za-z]{3,}/s.test(stripped) ? stripped : COULD_NOT_SAY;
 }
+
+const tidy = (t: string): string => t.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();

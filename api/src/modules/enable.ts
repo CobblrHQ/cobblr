@@ -108,6 +108,9 @@ async function ensureAllSandboxRolesForOrg(orgId: string): Promise<void> {
 
 export class ModuleRetiredError extends Error {}
 
+/** A module that cannot be switched off right now, and why. The route answers 400 for it by type, not by reading the sentence. */
+export class ModuleCannotDisableError extends Error {}
+
 export interface EnableResult {
   alreadyEnabled: boolean;
   migrationsApplied: number;
@@ -352,9 +355,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
   moduleName = canonicalModuleName(moduleName);
   const entry = getEntry(moduleName);
   if (entry && isFoundational(entry)) {
-    throw new Error(
-      `Cannot disable ${moduleName}: it's a foundational module and required by the platform.`,
-    );
+    throw new ModuleCannotDisableError(`${entry.manifest.displayName} is part of the platform and always stays on.`);
   }
   // Refuse if a dependent module is still enabled.
   const allEntries = listEntries();
@@ -369,7 +370,7 @@ export async function disableModuleForOrg(orgId: string, moduleName: string): Pr
       .where("module_name", "in", dependents)
       .execute();
     if (stillOn.length > 0) {
-      throw new Error(
+      throw new ModuleCannotDisableError(
         `Cannot disable ${moduleName}: still required by ${stillOn.map((s) => s.module_name).join(", ")}.`,
       );
     }
@@ -473,6 +474,85 @@ export function moduleMigrationFiles(moduleName: string): ModuleMigrationFiles {
   }
 }
 
+/** Run one module's migrations on one workspace and save its marker. True
+ *  when something was applied. Throws what the migration threw. */
+async function migrateOrgModule(orgId: string, moduleName: string): Promise<boolean> {
+  const entry = getEntry(moduleName);
+  if (!entry || !entry.manifest.schema) return false;
+  const migrationsDir = resolve(entry.rootPath, entry.manifest.schema.migrationsDir);
+  const pool = await getTenantPool(orgId);
+  const result = await runMigrations({
+    pool,
+    directory: migrationsDir,
+    scope: `tenant ${orgId} / module ${moduleName}`,
+  });
+  // Update the meta-side marker so /modules/:slug/health and the next
+  // boot's pre-check stay accurate. Written even when nothing was
+  // applied: a workspace opened because its count was NULL must not be
+  // opened again next boot for the same reason.
+  // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
+  await meta
+    .updateTable("org_modules")
+    .set({
+      last_migration: result.latest,
+      migration_count: result.total,
+      // greatest() skips a NULL, so an api that applied nothing
+      // breaking never erases what a newer one recorded.
+      ...(result.breaking.length
+        ? { newest_breaking_migration: sql<string>`greatest(newest_breaking_migration, ${result.breaking.reduce<string | null>((a, b) => newerName(a, b), null)})` }
+        : {}),
+    })
+    .where("org_id", "=", orgId)
+    .where("module_name", "=", moduleName)
+    .execute();
+  return result.applied.length > 0;
+}
+
+/** The modules each workspace has behind the migrations this api carries,
+ *  read meta-side without opening a tenant: the boot sync's pre-check, and
+ *  the catch-up pass's gate. */
+export async function behindModulesByOrg(orgIds?: string[]): Promise<Map<string, string[]>> {
+  if (orgIds && orgIds.length === 0) return new Map();
+  let q = meta
+    .selectFrom("org_modules")
+    .innerJoin("orgs", "orgs.id", "org_modules.org_id")
+    .where("orgs.db_credentials_encrypted", "is not", null)
+    .select(["org_modules.org_id", "org_modules.module_name", "org_modules.last_migration", "org_modules.migration_count", "org_modules.newest_breaking_migration"]);
+  if (orgIds) q = q.where("org_modules.org_id", "in", orgIds);
+  const byOrg = new Map<string, string[]>();
+  const files = new Map<string, ModuleMigrationFiles>();
+  for (const row of await q.execute()) {
+    let f = files.get(row.module_name);
+    if (!f) files.set(row.module_name, (f = moduleMigrationFiles(row.module_name)));
+    if (!moduleIsBehind(row, f)) continue;
+    const list = byOrg.get(row.org_id);
+    if (list) list.push(row.module_name);
+    else byOrg.set(row.org_id, [row.module_name]);
+  }
+  return byOrg;
+}
+
+/** Catch one workspace's behind modules up after boot (#8724). The boot sync
+ *  runs once, before this api serves; a workspace an older api made or
+ *  enabled a module on while this one booted (a blue-green roll runs both)
+ *  carries the older api's migrations only, and nothing else would run the
+ *  rest until the next boot. Leaves the pool open: the sweep that calls this
+ *  owns it. Throws the first failure, after trying every module. */
+export async function catchUpOrgMigrations(orgId: string): Promise<number> {
+  const behind = (await behindModulesByOrg([orgId])).get(orgId) ?? [];
+  let applied = 0;
+  let firstErr: Error | null = null;
+  for (const moduleName of behind) {
+    try {
+      if (await migrateOrgModule(orgId, moduleName)) applied++;
+    } catch (err) {
+      firstErr ??= new Error(`${moduleName}: ${(err as Error).message}`);
+    }
+  }
+  if (firstErr) throw firstErr;
+  return applied;
+}
+
 export async function syncTenantMigrations(): Promise<number> {
   // The version marker first, meta-side and per MODULE, not per workspace: a
   // manifest bump with no new migration left every existing workspace's
@@ -537,39 +617,8 @@ export async function syncTenantMigrations(): Promise<number> {
   const processOrg = async (orgId: string, moduleNames: string[]): Promise<void> => {
     try {
       for (const moduleName of moduleNames) {
-        const entry = getEntry(moduleName);
-        if (!entry || !entry.manifest.schema) continue;
         try {
-          const migrationsDir = resolve(
-            entry.rootPath,
-            entry.manifest.schema.migrationsDir,
-          );
-          const pool = await getTenantPool(orgId);
-          const result = await runMigrations({
-            pool,
-            directory: migrationsDir,
-            scope: `tenant ${orgId} / module ${moduleName}`,
-          });
-          if (result.applied.length > 0) touched++; // single-threaded event loop — ++ between awaits is safe
-          // Update the meta-side marker so /modules/:slug/health and the next
-          // boot's pre-check stay accurate. Written even when nothing was
-          // applied: a workspace opened because its count was NULL must not be
-          // opened again next boot for the same reason.
-          // SHAPE-UNCHANGED: migration bookkeeping on a module already on.
-          await meta
-            .updateTable("org_modules")
-            .set({
-              last_migration: result.latest,
-              migration_count: result.total,
-              // greatest() skips a NULL, so an api that applied nothing
-              // breaking never erases what a newer one recorded.
-              ...(result.breaking.length
-                ? { newest_breaking_migration: sql<string>`greatest(newest_breaking_migration, ${result.breaking.reduce<string | null>((a, b) => newerName(a, b), null)})` }
-                : {}),
-            })
-            .where("org_id", "=", orgId)
-            .where("module_name", "=", moduleName)
-            .execute();
+          if (await migrateOrgModule(orgId, moduleName)) touched++; // single-threaded event loop — ++ between awaits is safe
         } catch (err) {
           console.error(
             `[migrate-sync] failed for ${moduleName} on ${orgId}:`,

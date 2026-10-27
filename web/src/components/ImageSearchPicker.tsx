@@ -154,8 +154,9 @@ export function ImageSearchPicker({
   const rateLimited = `the web image search is not answering us right now (blocked or rate-limited) · it passes, try again later`;
   // What the server actually searched — shown IN the box, not as a placeholder.
   const searched = applied || (usesProp ? (searchedTerm ?? "") : (fetched.data?.query ?? query ?? ""));
+  const boxRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
-    setTerm((t) => nextTerm({ searched, term: t, touched }));
+    setTerm((t) => nextTerm({ searched, term: t, touched, focused: !!boxRef.current && document.activeElement === boxRef.current }));
   }, [searched, touched]);
 
   const [broken, setBroken] = useState<Set<string>>(new Set());
@@ -561,11 +562,14 @@ export function ImageSearchPicker({
       {searchable ? (
         <form onSubmit={submit} className="flex items-center gap-1.5">
           <SearchInput
+            ref={boxRef}
             value={term}
             onChange={(v) => {
               setTouched(true);
               setTerm(v);
             }}
+            // Left untyped, it shows what was searched again.
+            onBlur={() => setTerm((t) => nextTerm({ searched, term: t, touched }))}
             placeholder="search or paste an image link…"
             aria-label="Search for a picture, or paste an image link"
             size="sm"

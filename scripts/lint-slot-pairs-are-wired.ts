@@ -20,6 +20,9 @@
 //   2. A SCHEDULE-ONLY workflow with two crons runs scripts/ci-slot.sh as a
 //      `slot` job naming its own file, and every other job needs it. Without
 //      that, a morning where both slots fire does the work twice.
+//   4. (2026-10-27) A workflow that runs scripts/ci-slot.sh takes an `as_scheduled` dispatch input, and whatever
+//      only its scheduled run does tests that input too: a cron run of an older commit than main's is dispatched
+//      on main with as_scheduled=true in its place (the forge's schedules can freeze at one commit; lib/ci-slot.mjs).
 //   3. A workflow that ALSO runs on push must NOT call scripts/ci-slot.sh.
 //      This is the part that matters most and the one a copy gets wrong: the
 //      decision tells a cron run from a dispatch, and on this Forgejo a cron
@@ -61,6 +64,9 @@ export interface Shape {
   callsShared: boolean;
   singleSlotOk: boolean;
   ownStanddown: boolean;
+  runsSlot: boolean;
+  asScheduled: boolean;
+  scheduleOnly: string[];
 }
 export function shapeOf(src: string): Shape {
   const on = triggersOf(src);
@@ -70,6 +76,9 @@ export function shapeOf(src: string): Shape {
     callsShared: src.includes(SHARED),
     singleSlotOk: /#\s*SINGLE SLOT OK:\s*\S/.test(src),
     ownStanddown: /#\s*OWN STANDDOWN:\s*\S/.test(src),
+    runsSlot: /bash scripts\/ci-slot\.sh /.test(src),
+    asScheduled: /^ {6}as_scheduled:/m.test(on),
+    scheduleOnly: src.split("\n").filter((l) => /github\.event_name == 'schedule'|\$\{\{ github\.event_name \}\}" = "schedule"/.test(l) && !l.includes("as_scheduled") && !l.includes("event_name == 'workflow_dispatch'")).map((l) => l.trim()),
   };
 }
 
@@ -93,6 +102,18 @@ for (const name of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
     violations.push({
       file: name,
       what: `runs on push AND calls ${SHARED}. A cron run is stored as event=push here, so the standdown would see a merge and skip the run it protects. Move the slot instead, or find a signal that works for a push-triggered workflow`,
+    });
+  }
+  if (s.runsSlot && !s.asScheduled) {
+    violations.push({
+      file: name,
+      what: `runs ${SHARED} but takes no \`as_scheduled\` input. A cron run of an older commit is dispatched on main with as_scheduled=true (lib/ci-slot.mjs); declare it under workflow_dispatch's inputs`,
+    });
+  }
+  for (const line of s.runsSlot ? s.scheduleOnly : []) {
+    violations.push({
+      file: name,
+      what: `\`${line}\` is a scheduled run's alone, and the run ${SHARED} dispatches on main in its place is a dispatch with as_scheduled=true: test that too`,
     });
   }
   if (s.crons > 1 && !s.onPush && !s.callsShared && !s.ownStanddown) {

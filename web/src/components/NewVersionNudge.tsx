@@ -12,13 +12,14 @@
 // floats.
 import { useEffect, useState } from "react";
 import { RefreshCw, X } from "lucide-react";
-import { FloatingChrome } from "@cobblr/platform-web";
+import { FloatingChrome, useConfirm } from "@cobblr/platform-web";
 import { isSandboxSession } from "../lib/sandbox-session";
 import { healthzAtLoad, readHealthz } from "../lib/healthz";
 
 const POLL_MS = 3 * 60_000;
 
 export function NewVersionNudge() {
+  const confirm = useConfirm();
   const [stale, setStale] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   useEffect(() => {
@@ -63,7 +64,16 @@ export function NewVersionNudge() {
       <span>A new version is available.</span>
       <button
         type="button"
-        onClick={() => window.location.reload()}
+        onClick={async () => {
+          const discard = await confirm({
+            title: "Refresh the app?",
+            message: "Refreshing will discard any unfinished work. Save it first, or keep editing and refresh later.",
+            confirmLabel: "Discard and refresh",
+            cancelLabel: "Keep editing",
+            destructive: true,
+          });
+          if (discard) window.location.reload();
+        }}
         className="inline-flex items-center gap-1 rounded border border-white/60 px-2 py-0.5 text-xs font-semibold hover:bg-white/10"
       >
         <RefreshCw size={12} aria-hidden /> Refresh

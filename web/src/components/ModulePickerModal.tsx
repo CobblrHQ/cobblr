@@ -178,8 +178,8 @@ export function ModulePickerModal({ open, onClose, scopeToParent, inline, chrome
         m.retirement
           ? "Your data stays in this workspace, but this retired module cannot be enabled again. Export anything you need before disabling it."
           : m.dependencies.length === 0
-          ? `Module data stays in the tenant DB (re-enabling restores access). Any specialisation that depends on this module must be disabled first.`
-          : `Removes this module's contributed fields and wires from this workspace. Your entity data is unaffected.`,
+          ? "Your records stay, and come back when you turn it on again."
+          : "Its extra fields and wires leave this workspace. Your records stay, and come back when you turn it on again.",
       confirmLabel: "Disable",
       destructive: true,
     });
@@ -565,10 +565,13 @@ function Row({
         <ModuleParts m={m} />
       </div>
       <div className="shrink-0 flex items-center gap-2">
-        {m.enabled ? (
+        {m.enabled && m.band === "foundational" ? (
+          <span className="text-[10px] uppercase tracking-widest text-faint px-2 py-1">always on</span>
+        ) : m.enabled ? (
           <button
             onClick={onDisable}
             disabled={busy}
+            aria-label={`Disable ${m.displayName}`}
             className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 py-1"
           >
             disable
@@ -577,6 +580,7 @@ function Row({
           <button
             onClick={onEnable}
             disabled={busy || blocked || !!m.retirement}
+            aria-label={`Enable ${m.displayName}`}
             className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             enable
@@ -630,10 +634,13 @@ function CoreRow({
       >
         {m.description}
       </span>
-      {m.enabled ? (
+      {m.enabled && m.band === "foundational" ? (
+        <span className="text-[10px] uppercase tracking-widest text-faint px-2 shrink-0">always on</span>
+      ) : m.enabled ? (
         <button
           onClick={onDisable}
           disabled={busy}
+          aria-label={`Disable ${m.displayName}`}
           className="text-[10px] uppercase tracking-widest text-faint hover:text-ember-500 transition px-2 shrink-0"
         >
           disable
@@ -642,6 +649,7 @@ function CoreRow({
         <button
           onClick={onEnable}
           disabled={busy || blocked || !!m.retirement}
+          aria-label={`Enable ${m.displayName}`}
           className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border border-line dark:border-slate-700 text-accent hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
         >
           enable

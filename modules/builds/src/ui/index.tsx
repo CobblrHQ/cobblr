@@ -14,8 +14,8 @@ import { useId, useState } from "react";
 import { Link, useMatch } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Hammer, Plus, Trash2, X, Wrench, AlertTriangle, Layers, ListOrdered, Check, Circle, ChevronUp, ChevronDown, Clock, History, GitBranch, Search, CornerDownRight, CalendarClock } from "lucide-react";
-import { BuildsApi, BuildsApiError, type BuildSummary, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
-import { PickToLight, SubjectLink } from "@cobblr/platform-web";
+import { BuildsApi, BuildsApiError, type BuildSummary, type ComponentRow, type PartOption, type OperationRow, type GenealogyNode } from "./api.js";
+import { PickToLight, SegmentedChoice, SubjectLink } from "@cobblr/platform-web";
 import { shortageSentence } from "../shortage.js";
 import { BoardInspection } from "./Inspection.js";
 import { InspectionRegister } from "./InspectionRegister.js";
@@ -385,52 +385,16 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
               <PickToLight key={buildId} lines={d.components.flatMap(c => c.part_id ? [{ id: c.id, label: `${c.name} (${c.per_build * qty})`, ref: { kind: "inventory:part", id: c.part_id } }] : [])} />
               {d.components.length === 0 && <div className="text-sm text-muted italic">No components yet. Add the parts this build consumes.</div>}
               <ul className="divide-y divide-slate-100 dark:divide-slate-800 border border-line dark:border-slate-700 rounded">
-                {d.components.map((c) => {
-                  const isSub = c.kind === "subassembly";
-                  const short = !isSub && (c.available ?? 0) < c.per_build;
-                  return (
-                    <li key={c.id} className="flex items-center gap-3 px-3 py-2 text-sm group">
-                      <span className="flex-1">
-                        {isSub && <Layers size={12} className="inline-block mr-1.5 text-cobble-500 align-middle" />}
-                        <span className="text-content dark:text-mortar-100">{c.name}</span>
-                        {isSub && (
-                          <span className="ml-2 inline-flex items-center rounded bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-cobble-700 dark:text-cobble-300 align-middle">
-                            sub-assembly
-                          </span>
-                        )}
-                        {c.optional && <span className="text-[10px] text-muted ml-1.5">(optional)</span>}
-                        {c.notes && <span data-testid="component-notes" className="block text-xs text-muted whitespace-pre-wrap">{c.notes}</span>}
-                        {!isSub && c.part_id && limitingIds.has(c.part_id) && (
-                          <span className="ml-2 inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 align-middle">
-                            <AlertTriangle size={10} /> limiting
-                          </span>
-                        )}
-                      </span>
-                      <span className="text-xs text-muted tabular-nums">
-                        {isSub ? (
-                          <>
-                            {c.per_build}/build · {c.sub_max_buildable ?? 0} buildable
-                            {c.from_stock != null && c.to_make != null && (c.from_stock > 0 || c.to_make > 0) && (
-                              <> · <span data-testid="sub-plan">{[c.from_stock > 0 ? `${c.from_stock} from stock` : null, c.to_make > 0 ? `${c.to_make} to make` : null].filter(Boolean).join(", ")}</span></>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            {c.per_build}/build · <span className={short ? "text-red-500 font-medium" : ""}>{c.available} in stock</span>
-                          </>
-                        )}
-                      </span>
-                      {isSub && (
-                        <button type="button" onClick={() => stockChoice.mutate({ id: c.id, use_stock: c.use_stock === false })} disabled={stockChoice.isPending} className="text-[11px] rounded border border-line dark:border-slate-600 px-1.5 py-0.5 text-muted hover:text-content" title={c.use_stock === false ? "Always made from its parts. Press to use its stock first." : "Its stock is used first. Press to always make it."}>
-                          {c.use_stock === false ? "Always make" : "Use stock first"}
-                        </button>
-                      )}
-                      <button title="Remove component" type="button" onClick={() => removeComponent.mutate({ id: c.id, name: c.name })} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
-                        <X size={14} />
-                      </button>
-                    </li>
-                  );
-                })}
+                {d.components.map((c) => (
+                  <ComponentLine
+                    key={c.id}
+                    c={c}
+                    limiting={!!c.part_id && limitingIds.has(c.part_id)}
+                    choosing={stockChoice.isPending}
+                    onStockChoice={(use_stock) => stockChoice.mutate({ id: c.id, use_stock })}
+                    onRemove={() => removeComponent.mutate({ id: c.id, name: c.name })}
+                  />
+                ))}
               </ul>
             </div>
 
@@ -598,7 +562,7 @@ function OutputLine({
           aria-label="Part this build makes"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="flex-1 min-w-[10rem] rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
+          className="flex-1 min-w-0 basis-40 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-2 py-1.5 text-sm"
         />
         <button type="submit" disabled={pending || !name.trim()} className="px-3 py-1.5 text-xs rounded bg-cobble-600 text-white disabled:opacity-50">
           {output ? "Save" : "It makes this"}
@@ -685,7 +649,7 @@ export function OperationsSection({
                   )}
                 </button>
                 <span className="text-xs text-muted tabular-nums w-5">{i + 1}.</span>
-                <span className={`flex-1 ${op.status === "done" ? "line-through text-muted" : "text-content dark:text-mortar-100"}`}>
+                <span className={`flex-1 min-w-0 [overflow-wrap:anywhere] ${op.status === "done" ? "line-through text-muted" : "text-content dark:text-mortar-100"}`}>
                   {op.name}
                   <button
                     type="button"
@@ -715,7 +679,7 @@ export function OperationsSection({
                 >
                   Log
                 </button>
-                <div className="flex items-center hover-reveal">
+                <div className="flex shrink-0 items-center hover-reveal">
                   <button title="Move up" type="button" onClick={() => onMove(op, "up")} disabled={i === 0} className="text-slate-300 hover:text-content disabled:opacity-30" aria-label="Move up">
                     <ChevronUp size={14} />
                   </button>
@@ -1265,3 +1229,70 @@ export { ReflowStation } from "./ReflowStation.js";
 
 export { InspectionStation } from "./InspectionStation.js";
 export { BoardInspection } from "./Inspection.js";
+
+/** One line of a build's bill of materials: what it is, how much each build
+ *  takes and where it comes from, and its tools. */
+export function ComponentLine({ c, limiting, choosing, onStockChoice, onRemove }: {
+  c: ComponentRow;
+  limiting: boolean;
+  choosing: boolean;
+  onStockChoice: (useStock: boolean) => void;
+  onRemove: () => void;
+}) {
+  const isSub = c.kind === "subassembly";
+  const short = !isSub && (c.available ?? 0) < c.per_build;
+  return (
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm group">
+      <span className="flex-1 min-w-0 basis-40 [overflow-wrap:anywhere]">
+        {isSub && <Layers size={12} className="inline-block mr-1.5 text-cobble-500 align-middle" />}
+        <span className="text-content dark:text-mortar-100">{c.name}</span>
+        {isSub && (
+          <span className="ml-2 inline-flex items-center rounded bg-cobble-50 dark:bg-cobble-900/30 px-1.5 py-0.5 text-[10px] font-medium text-cobble-700 dark:text-cobble-300 align-middle">
+            sub-assembly
+          </span>
+        )}
+        {c.optional && <span className="text-[10px] text-muted ml-1.5">(optional)</span>}
+        {c.notes && <span data-testid="component-notes" className="block text-xs text-muted whitespace-pre-wrap">{c.notes}</span>}
+        {!isSub && limiting && (
+          <span className="ml-2 inline-flex items-center gap-0.5 rounded bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 align-middle">
+            <AlertTriangle size={10} /> limiting
+          </span>
+        )}
+      </span>
+      <span className="text-xs text-muted tabular-nums min-w-0">
+        {isSub ? (
+          <>
+            {c.per_build}/build · {c.sub_max_buildable ?? 0} buildable
+            {c.from_stock != null && c.to_make != null && (c.from_stock > 0 || c.to_make > 0) && (
+              <> · <span data-testid="sub-plan">{[c.from_stock > 0 ? `${c.from_stock} from stock` : null, c.to_make > 0 ? `${c.to_make} to make` : null].filter(Boolean).join(", ")}</span></>
+            )}
+          </>
+        ) : (
+          <>
+            {c.per_build}/build · <span className={short ? "text-red-500 font-medium" : ""}>{c.available} in stock</span>
+          </>
+        )}
+      </span>
+      <span className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
+      {/* Both ways are named, the one in force marked: a single button
+          read as an order to "Use stock first" while it named the state
+          it was already in, and pressing it threw the stock away (#8630). */}
+      {isSub && (
+        <SegmentedChoice
+          label={`Where each ${c.name} comes from`}
+          value={c.use_stock === false ? "make" : "stock"}
+          onChange={(v) => onStockChoice(v === "stock")}
+          disabled={choosing}
+          options={[
+            { value: "stock", label: "Stock first", testId: "sub-from-stock" },
+            { value: "make", label: "Always make", testId: "sub-always-make" },
+          ]}
+        />
+      )}
+      <button title="Remove component" type="button" onClick={onRemove} className="text-slate-300 hover:text-red-500 hover-reveal" aria-label="Remove component">
+        <X size={14} />
+      </button>
+      </span>
+    </li>
+  );
+}

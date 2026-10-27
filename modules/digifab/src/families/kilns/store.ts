@@ -4,6 +4,7 @@ import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import type { DigifabDB } from "../../db.js";
 import { buildDriverById } from "../../jobs-core.js";
+import { bridgeAnswer } from "../../bridge-wait.js";
 import { FiringSchema, FinishSchema, ProfileSchema, TelemetrySchema, firingLinks, replacementReminders, type Firing, type Finish } from "./model.js";
 import { z } from "zod";
 export class KilnRefusal extends Error {}
@@ -14,6 +15,7 @@ export async function firingHours(db: Kysely<DigifabDB>, machineId: string) {
 }
 export async function saveKilnProfile(db: Kysely<DigifabDB>, orgId: string, machineId: string, value: unknown) {
  const profile = ProfileSchema.parse(value);
+ const expected = z.object({ expected_profile: ProfileSchema.nullable().default(null) }).parse(value).expected_profile;
  const machine = await platform().entities.lookup(orgId, "machines:machine", machineId);
  if (!machine || machine.retired) throw new KilnRefusal("Choose an existing machine for this kiln.");
  const hours = await firingHours(db, machineId);
@@ -24,14 +26,26 @@ export async function saveKilnProfile(db: Kysely<DigifabDB>, orgId: string, mach
   if (!device || !TelemetrySchema.safeParse(device.raw?.kiln).success) throw new KilnRefusal("Choose a kiln on your bridge with supported telemetry.");
  }
  const values = { connection_id: profile.connection_id, device_id: profile.device_id, components: JSON.stringify(profile.components), schedules: JSON.stringify(profile.schedules) };
- await db.insertInto("digifab_kiln_profiles").values({ machine_id: machineId, ...values }).onConflict(oc => oc.column("machine_id").doUpdateSet(values)).execute();
+ const saved = expected
+  ? await db.updateTable("digifab_kiln_profiles").set(values).where("machine_id", "=", machineId)
+    .where(sql<boolean>`connection_id is not distinct from ${expected.connection_id}::uuid`)
+    .where(sql<boolean>`device_id is not distinct from ${expected.device_id}::text`)
+    .where(sql<boolean>`components = ${JSON.stringify(expected.components)}::jsonb`)
+    .where(sql<boolean>`schedules = ${JSON.stringify(expected.schedules)}::jsonb`)
+    .returning("machine_id").executeTakeFirst()
+  : await db.insertInto("digifab_kiln_profiles").values({ machine_id: machineId, ...values }).onConflict(oc => oc.column("machine_id").doNothing()).returning("machine_id").executeTakeFirst();
+ if (!saved) throw new KilnRefusal("These kiln settings changed since you opened them. Your draft is kept. Reopen Kiln settings to review the newer profile before saving again.");
  return { ok: true };
 }
-async function checkLoad(orgId: string, recipe: Firing) {
+async function checkNewLoad(orgId: string, recipe: Firing) {
  for (const piece of recipe.pieces) {
   const found = await platform().entities.lookup(orgId, piece.kind, piece.id);
-  if (!found || found.retired) throw new KilnRefusal("A piece in this load no longer exists in this workspace.");
+  if (!found) throw new KilnRefusal("A piece in this load no longer exists in this workspace.");
+  if (found.retired) throw new KilnRefusal("A piece in this load is archived. Restore it before adding it to a new firing log.");
  }
+ await checkGlazes(orgId, recipe);
+}
+async function checkGlazes(orgId: string, recipe: Firing) {
  for (const glaze of recipe.glazes) await readGlaze(orgId, glaze);
 }
 const LiquidStock = z.object({ shape: z.literal("liquid"), unit: z.literal("ml"), revision: z.number().int().nonnegative() });
@@ -45,7 +59,7 @@ export async function createFiring(db: Kysely<DigifabDB>, orgId: string, value: 
  const input = CreateSchema.parse(value);
  const profile = await db.selectFrom("digifab_kiln_profiles").selectAll().where("machine_id", "=", input.machine_id).executeTakeFirst();
  if (!profile) throw new KilnRefusal("Set up firing logs on this machine first.");
- await checkLoad(orgId, input.firing);
+ await checkNewLoad(orgId, input.firing);
  const inserted = await db.insertInto("digifab_firings").values({ id: input.id, machine_id: input.machine_id, name: input.firing.name, recipe: JSON.stringify(input.firing), connection_id: profile.connection_id, device_id: profile.device_id, peak_c: null, duration_hours: null, started_at: null, ended_at: null }).onConflict(oc => oc.column("id").doNothing()).returning("id").executeTakeFirst();
  if (inserted) await platform().activity.log({ orgId, userId, action: "firing_created", ref: { module: "digifab", entityType: "firing", entityId: input.id }, diff: { name: input.firing.name, machine_id: input.machine_id } });
  const row = await db.selectFrom("digifab_firings").selectAll().where("id", "=", input.id).executeTakeFirstOrThrow();
@@ -67,7 +81,7 @@ async function checkFinish(db: Kysely<DigifabDB>, orgId: string, firing: StoredF
   const telemetry = TelemetrySchema.safeParse(device?.raw?.kiln);
   if (telemetry.success && telemetry.data.running) throw new KilnRefusal("Stop or complete the firing on the kiln before finishing its log.");
  }
- await checkLoad(orgId, firing.recipe);
+ await checkGlazes(orgId, firing.recipe);
 }
 export async function finishFiring(db: Kysely<DigifabDB>, orgId: string, userId: string | null, id: string, value: unknown) {
  const finish = FinishSchema.parse(value);
@@ -110,7 +124,7 @@ export async function readKiln(db: Kysely<DigifabDB>, orgId: string, machineId: 
  if (profile?.connection_id) {
   try {
    const driver = await buildDriverById(db, orgId, profile.connection_id);
-   const device = (await driver?.listDevices())?.find(d => d.id === profile.device_id);
+   const device = (driver ? await bridgeAnswer(driver.listDevices()) : undefined)?.find(d => d.id === profile.device_id);
    telemetry = TelemetrySchema.parse(device?.raw?.kiln);
   } catch { connection_error = "The kiln did not answer. Check its controller and bridge; its last log is kept."; }
  }

@@ -35,7 +35,7 @@ import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionAppWorkspace, ProvisionAppError, refreshManagedApp, importFromOwnApp, pointScanFallbackAtApp } from "../platform/provision-app.js";
 import { checkEntitlement } from "../platform/hosted-seams.js";
-import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleRetiredError } from "../modules/enable.js";
+import { disableModuleForOrg, enableModuleForOrg, isDefaultModule, ModuleCannotDisableError, ModuleRetiredError } from "../modules/enable.js";
 import { USER_SOURCE } from "../platform/bundle-claims.js";
 import { baseKindOf } from "../platform/entities.js";
 import { publicHistoryDiff, historyBag } from "../platform/record-history.js";
@@ -330,7 +330,7 @@ orgsRouter.post(
     } catch (err) {
       // Surface dependent-module errors as 400 (user-actionable)
       // rather than 500.
-      if (err instanceof Error && err.message.startsWith("Cannot disable")) {
+      if (err instanceof ModuleCannotDisableError) {
         res.status(400).json({ error: { code: "module_in_use", message: err.message } });
         return;
       }

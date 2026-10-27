@@ -64,20 +64,23 @@ export function registerLocationsResolvers(): void {
           q = q.where(sql<boolean>`metadata ->> ${key} = ${String(val)}`);
         }
       }
-      const rows = (await groupListRows(db, q.orderBy("depth").orderBy("position").orderBy("name"), query)) ?? await q
-        // Match the /locations list endpoint's order EXACTLY so the user's
-        // manual sibling order (set by drag → `position`) is honoured
-        // EVERYWHERE locations surface through the generic layer — pickers,
-        // the labels browser, other modules' location dropdowns — not just on
-        // the Locations page. Shallow first, then manual order, then natural
-        // name as the tiebreaker.
-        .orderBy("depth")
-        .orderBy("position")
-        .orderBy("name")
-        .limit(limit)
-        .offset(offset)
-        .execute();
-      return { items: rows.map(toResolved) };
+      const [rows, counted] = await Promise.all([
+        (async () => (await groupListRows(db, q.orderBy("depth").orderBy("position").orderBy("name"), query)) ?? await q
+          // Match the /locations list endpoint's order EXACTLY so the user's
+          // manual sibling order (set by drag → `position`) is honoured
+          // EVERYWHERE locations surface through the generic layer — pickers,
+          // the labels browser, other modules' location dropdowns — not just on
+          // the Locations page. Shallow first, then manual order, then natural
+          // name as the tiebreaker.
+          .orderBy("depth")
+          .orderBy("position")
+          .orderBy("name")
+          .limit(limit)
+          .offset(offset)
+          .execute())(),
+        q.clearSelect().select((eb) => eb.fn.countAll<string>().as("n")).executeTakeFirst(),
+      ]);
+      return { items: rows.map(toResolved), total: Number(counted?.n ?? 0) };
     },
     { tags: true },
   );

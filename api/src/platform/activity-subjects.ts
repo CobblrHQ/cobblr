@@ -10,7 +10,7 @@
 // back to activityPresentation's words for the kind, never the stored type.
 
 import type { Kysely } from "kysely";
-import type { ActivitySubject } from "@cobblr/platform-contract/activity-summary";
+import { accountRowNamesTheWorkspace, type ActivitySubject } from "@cobblr/platform-contract/activity-summary";
 import { openRecordPath } from "@cobblr/platform-contract/instance-detail";
 import { meta } from "../db/meta.js";
 import { getEntry as getModuleEntry } from "../modules/registry.js";
@@ -115,6 +115,14 @@ export async function nameActivityRows(
     if (record) recordByRef.set(`${ref.kind}:${ref.id}`, record);
   }
 
+  // A row about a person's account is said by that person's name (#8640).
+  const accountIds = [...new Set(items.filter((i) => i.entity_type === "user" && i.entity_id && !accountRowNamesTheWorkspace(i.action)).map((i) => i.entity_id))];
+  const people = new Map(
+    accountIds.length
+      ? (await meta.selectFrom("users").select(["id", "display_name"]).where("id", "in", accountIds).execute())
+          .map((u) => [u.id, u.display_name?.trim() || null] as const)
+      : [],
+  );
   for (const i of items) {
     const base = i.module_name ? `${i.module_name}:${i.entity_type}` : null;
     const r = base ? recordByRef.get(`${base}:${i.entity_id}`) : undefined;
@@ -149,7 +157,8 @@ export async function nameActivityRows(
         out.title = name;
         out.subject = { href: `/w/${slug}/configuration/modules`, title: name, kind: null, id: i.entity_id, thumbnail: null };
       }
-    } else if (i.entity_type === "user" || i.action === "member_joined") out.title = org.name;
+    } else if (i.entity_type === "user" && !accountRowNamesTheWorkspace(i.action)) out.title = people.get(i.entity_id) ?? null;
+    else if (i.entity_type === "user" || i.action === "member_joined") out.title = org.name;
     if (context?.scan) out.contextDiff = { scan: { ...context.scan, name: target?.title ?? context.scan.name } };
     else if (context?.record && target) out.contextDiff = { record: { ...context.record, name: target.title } };
     named.set(i.id, out);

@@ -11,6 +11,7 @@
 // have to know the URL syntax.
 
 import { useEffect, useMemo, useState } from "react";
+import { useAddressDraft } from "../lib/useAddressDraft";
 import { useKindLabels } from "../lib/useKindLabels";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -121,6 +122,19 @@ export function SearchPage() {
     grouped.reduce((n, [, items]) => n + items.length, 0) +
     exact.filter((c) => !grouped.some(([kind, items]) => kind === c.entity_kind && items.some((h) => h.id === c.entity_id))).length;
   const anyMore = grouped.some(([kind]) => hasMore(kind));
+  // How many there are in all, where every kind with more could count them:
+  // 2,033 resistors read "20 results, and more below" (#8657).
+  const totalOf = (kind: string, loaded: number): number | undefined => {
+    const t = results.data?.totals?.[kind];
+    return typeof t === "number" ? Math.max(t, loaded) : undefined;
+  };
+  const found = grouped.length > 0 && grouped.every(([kind, items]) => !hasMore(kind) || totalOf(kind, items.length) !== undefined)
+    ? shown + grouped.reduce((n, [kind, items]) => n + ((totalOf(kind, items.length) ?? items.length) - items.length), 0)
+    : undefined;
+  const resultsWord = (n: number) => `${n.toLocaleString()} ${n === 1 ? "result" : "results"}`;
+  const countLine = found !== undefined
+    ? found > shown ? `${resultsWord(found)}, ${shown.toLocaleString()} shown` : resultsWord(found)
+    : `${countOf(shown, "result")}${anyMore ? ", and more below" : ""}`;
 
   async function showMore(kind: string, loaded: number) {
     setLoadingKind(kind);
@@ -138,19 +152,9 @@ export function SearchPage() {
     }
   }
 
-  // The box is the page's own until the typing stops; the address follows.
-  const [draft, setDraft] = useState(q);
-  useEffect(() => {
-    if (draft.trim() !== q) setDraft(q);
-    // Only when the address changes from elsewhere (the header bar, Back).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
-  useEffect(() => {
-    if (draft.trim() === q) return;
-    const t = setTimeout(() => setParam("q", draft.trim() || null), 200);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
+  // The box is the page's own until the typing stops; the address follows,
+  // and only a change from elsewhere (the header bar, Back) replaces it.
+  const [draft, setDraft] = useAddressDraft(q, (value) => setParam("q", value));
 
   function setParam(name: string, value: string | null) {
     if (value === null || value === "") params.delete(name);
@@ -174,7 +178,7 @@ export function SearchPage() {
           Search
         </h1>
         <span className="text-sm text-muted dark:text-slate-400">
-          {results.data ? `${countOf(shown, "result")}${anyMore ? ", and more below" : ""}` : ""}
+          {results.data ? countLine : ""}
         </span>
         <div className="flex-1" />
         <SearchInput value={draft} onChange={setDraft} placeholder="search…" aria-label="Search" autoFocus wrapperClassName="w-56" />
@@ -285,7 +289,7 @@ export function SearchPage() {
             <span className="text-[10px] uppercase tracking-wider text-faint">
               {labels.collection(kind)}
             </span>
-            <span className="text-xs text-faint">{items.length}</span>
+            <span className="text-xs text-faint">{(() => { const t = totalOf(kind, items.length); return t !== undefined && t > items.length ? `${items.length} of ${t.toLocaleString()}` : items.length; })()}</span>
           </h2>
           <ul className="border border-line dark:border-slate-700 rounded divide-y divide-line dark:divide-slate-800 bg-surface dark:bg-slate-900">
             {items.map((h) => (
@@ -295,9 +299,9 @@ export function SearchPage() {
                   className="flex items-center gap-3 hover:text-accent"
                 >
                   <EntityThumb src={h.image_path} alt={h.title} size={36} />
-                  <span className="min-w-0 flex flex-col">
-                    <span className="flex items-baseline gap-3 min-w-0">
-                      <span className="font-medium truncate">{h.title}</span>
+                  <span className="min-w-0 flex-1 flex flex-col">
+                    <span className="flex flex-wrap items-baseline gap-x-3 min-w-0">
+                      <span className="font-medium [overflow-wrap:anywhere]">{h.title}</span>
                       {h.subtitle && (
                         <span className="text-xs text-muted truncate">
                           {h.subtitle}
@@ -309,12 +313,14 @@ export function SearchPage() {
                         <SnippetText text={h.snippet} q={q} />
                       </span>
                     )}
+                    {/* Under the name, never beside it: a pill held to its width took a
+                        phone's row and cut the thing searched for to "Passpor…" (#8632). */}
+                    {locName(h) && (
+                      <span className="self-start mt-0.5 text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5 [overflow-wrap:anywhere]" data-testid="search-hit-place">
+                        {locName(h)}
+                      </span>
+                    )}
                   </span>
-                  {locName(h) && (
-                    <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-accent border border-line dark:border-slate-600 rounded-full px-1.5 py-0.5">
-                      {locName(h)}
-                    </span>
-                  )}
                 </Link>
                 <button type="button" className="text-xs text-accent py-1" onClick={() => void light(h.kind, h.id)}>Where is it?</button>
               </li>

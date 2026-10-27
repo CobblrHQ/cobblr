@@ -11,7 +11,9 @@
 // (a-test-reuses-a-pass-only-while-nothing-it-reads-changed.test.ts).
 //   IMPORTS  the forward closure of its imports (a workspace package: every file under it)
 //   NAMES    a file its source names: path, extensionless path, or a distinct basename; a directory
-//            it walks (every non-code file under it); and the non-code files beside and below it
+//            it walks (every file under it, code too: 2026-10-27, a walk of modules/core-scan/src kept its
+//            key through #8605's edit to a .ts in it, and a red reached main); and the non-code files
+//            beside and below it
 //   READS    the files and directories it reads by a path built from its own directory
 //   LISTS    the files its listing patterns match
 // and itself.
@@ -203,7 +205,7 @@ export function unitTestInputs({ test, sources, packages, tree }) {
   }
   for (const m of s.matchAll(/["'`]([\w./@+-]+?)\/?(?:\*\*?[^"'`]*)?["'`]/g)) {
     const dir = m[1];
-    if (tree.dirs.has(dir) && walksDir(s, dir)) for (const p of tree.filesUnder(dir)) if (!CODE_EXT.test(p)) inputs.add(p);
+    if (tree.dirs.has(dir) && walksDir(s, dir)) for (const p of tree.filesUnder(dir)) inputs.add(p);
   }
   const tDir = test.slice(0, test.lastIndexOf("/"));
   if (tDir.includes("/")) for (const p of tree.filesUnder(tDir)) if (!CODE_EXT.test(p)) inputs.add(p);

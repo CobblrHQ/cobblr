@@ -370,9 +370,14 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
   };
   const FIT = 0.8;
 
+  const isCode = (_c: Cell, t: string) => productCodeKind(t) !== null || (/^\d{11}$/.test(t) && productCodeKind(`0${t}`) !== null);
+  // Identifier headings describe spelling, even when their values look like
+  // numbers, dates or checkboxes. Valid product codes still get checked.
+  if (H.key.test(h) && share(isCode) < FIT) return col;
+
   const isBool = (c: Cell) => parseBoolean(c) !== null;
   const boolDistinct = new Set(cells.map((c) => parseBoolean(c)).filter((b) => b !== null));
-  if (share(isBool) >= FIT && boolDistinct.has(true) && (distinct <= 4 || typeof cells[0]!.v === "boolean")) {
+  if (share(isBool) >= FIT && (boolDistinct.has(true) || texts.every((t) => /^(false|no|n)$/i.test(t.trim()))) && (distinct <= 4 || typeof cells[0]!.v === "boolean")) {
     // A column of bare 1s and 0s is as likely a count as a checkbox.
     const numericOnly = texts.every((t) => t === "0" || t === "1");
     if (!numericOnly || /\?$/.test(d.header.trim())) {
@@ -383,7 +388,6 @@ function describeColumn(d: ColumnDraft, dateOrderHint: DateOrder): UnderstoodCol
   }
 
   const realDates = cells.filter((c) => c.v instanceof Date).length;
-  const isCode = (_c: Cell, t: string) => productCodeKind(t) !== null || (/^\d{11}$/.test(t) && productCodeKind(`0${t}`) !== null);
   const isUrl = (_c: Cell, t: string) => /^https?:\/\/\S+$/i.test(t);
   const isNum = (c: Cell, t: string) => typeof c.v === "number" || parseNumber(t) !== null;
   const isNumOrFree = (c: Cell, t: string) => isNum(c, t) || FREE_RE.test(t);

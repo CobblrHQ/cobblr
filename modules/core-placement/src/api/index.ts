@@ -14,16 +14,14 @@ import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { placeLine, platform } from "@cobblr/platform-contract";
 import { tenantContext, sessionUser } from "../db.js";
-import { requireRole } from "./util.js";
 import { registerPlacementActionHandlers } from "./action-handlers.js";
+import { ExpectedPlacement, PlacementRef as Ref, PlacementPosition as Position } from "./placement-expectation.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
 
 // Side effect on import: the place/remove action handlers.
 registerPlacementActionHandlers();
 
 const router = Router({ mergeParams: true });
-
-const Ref = z.object({ kind: z.string().min(1).max(120), id: z.string().min(1).max(200) });
 
 function orgId(req: Request): string {
   return tenantContext(req).org.id;
@@ -227,11 +225,12 @@ router.put(
   }),
 );
 
-const Position = z.object({ x_mm: z.number().finite().min(-1_000_000).max(1_000_000), y_mm: z.number().finite().min(-1_000_000).max(1_000_000) });
 const PlaceBody = z.object({
   containee: Ref,
   container: Ref,
   slot: z.string().max(120).nullish(),
+  expected: ExpectedPlacement.optional(),
+  preserve_identity: z.boolean().optional(),
   // A pin inside the container, millimetres from its top-left; null clears it.
   position: Position.nullish(),
   // What made the move ("floor plan"): the activity row says so.
@@ -247,12 +246,12 @@ const PlaceBody = z.object({
 router.post(
   "/place",
   wrap(async (req, res) => {
-    if (!(await requireCapability(req, res, "core-placement:place"))) return;
     const parsed = PlaceBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee + container required" } });
       return;
     }
+    if (!(await requireCapability(req, res, "core-placement:place", parsed.data.containee))) return;
     if (parsed.data.one_to_a_slot && !parsed.data.slot) {
       res.status(400).json({ error: { code: "bad_body", message: "one_to_a_slot needs a slot" } });
       return;
@@ -268,6 +267,8 @@ router.post(
       ...(parsed.data.via ? { via: parsed.data.via } : {}),
       ...(parsed.data.one_to_a_slot ? { oneToASlot: true } : {}),
       ...(parsed.data.qty != null ? { qty: parsed.data.qty } : {}),
+      ...(parsed.data.preserve_identity || parsed.data.expected ? { preserveIdentity: true } : {}),
+      ...(parsed.data.expected ? { expected: parsed.data.expected } : {}),
     });
     // When what went in is another record than the one asked (a split-off
     // part of it, or the record it joined there), say which: putting that one
@@ -291,12 +292,12 @@ const HomeBody = z.object({ containee: Ref, via: z.string().trim().min(1).max(80
 router.post(
   "/return-home",
   wrap(async (req, res) => {
-    if (!(await requireCapability(req, res, "core-placement:return-home"))) return;
     const parsed = HomeBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee required" } });
       return;
     }
+    if (!(await requireCapability(req, res, "core-placement:return-home", parsed.data.containee))) return;
     const to = await platform().placement.returnHome({
       orgId: orgId(req),
       containee: parsed.data.containee,
@@ -309,20 +310,20 @@ router.post(
   }),
 );
 
-const RemoveBody = z.object({ containee: Ref });
+const RemoveBody = z.object({ containee: Ref, expected: ExpectedPlacement.optional() });
 
 // POST /remove { containee } — take a thing out of its container.
 // AI-ACTION: core-placement:remove
 router.post(
   "/remove",
   wrap(async (req, res) => {
-    if (!(await requireCapability(req, res, "core-placement:remove"))) return;
     const parsed = RemoveBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "bad_body", message: "containee required" } });
       return;
     }
-    await platform().placement.remove({ orgId: orgId(req), containee: parsed.data.containee });
+    if (!(await requireCapability(req, res, "core-placement:remove", parsed.data.containee))) return;
+    await platform().placement.remove({ orgId: orgId(req), containee: parsed.data.containee, ...(parsed.data.expected ? { expected: parsed.data.expected } : {}) });
     res.status(204).end();
   }),
 );

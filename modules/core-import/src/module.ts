@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-import",
-  version: "0.7.1",
+  version: "0.7.2",
   displayName: "Import",
   description:
     "Bring your records in from a spreadsheet or another app: your items, where they are kept and their labels.",
@@ -32,6 +32,8 @@ export default defineModule({
     onBoot: async () => {
       const { registerSheetImportWorker } = await import("./services/sheet-import.js");
       registerSheetImportWorker();
+      const { registerStuckImportRunsHeal } = await import("./heal-stuck-runs.js");
+      registerStuckImportRunsHeal();
     },
   },
 

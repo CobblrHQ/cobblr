@@ -451,8 +451,9 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     scope: "workspace",
     invoke_handler: "platform.remove-field",
     user_invokable: true,
-    // adding it back restores the values, but not the field's own setup — its
-    // choices, unit, role and position are gone, and nobody remembers those.
+    // Undo puts the field back as it was (platform:restore-definition), choices,
+    // unit, meaning and place included. It still asks first: undoable here
+    // would let a chat that cannot show a confirmation delete fields outright.
     undoable: false,
     examples: ["remove the Colour field from parts", "I don't want to track shelf life any more"],
     args_schema: {
@@ -460,6 +461,25 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
       field: { label: "The field, by the label shown on the form (e.g. Shelf Life)", type: "text", required: true },
     },
     version: "0.1.0",
+  },
+  {
+    // NO-PHRASING: the undo step of remove-field, handed back on its card
+    // UI-REACH: an undo step; the toast after Delete field runs it
+    group: "organise",
+    id: "platform:restore-definition", changes: "setup",
+    min_role: "grantable",
+    label: "Put a removed field back",
+    icon: "undo-2",
+    version: "0.1.0",
+    description: "Undo of remove-field: the field comes back as it was.",
+    scope: "workspace",
+    invoke_handler: "platform.restore-definition",
+    user_invokable: true,
+    wire_only: true,
+    undoable: false,
+    args_schema: {
+      field: { label: "The removed field", type: "text", required: true },
+    },
   },
   {
     // UI-SCREEN: /fields

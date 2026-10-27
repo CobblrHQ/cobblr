@@ -2,6 +2,8 @@ import { z } from "zod";
 import { apiErrorMessage, toolFail, toolOk } from "../api.js";
 import { type AppRow, type BindingRow, type InstanceRow, type TemplateRow, type UnitVocabularyRow, type ViewRow, type WorkspaceTool } from "../tool-kit.js";
 
+const PARTS = ["all", "instances", "views", "automations", "relationships", "apps", "templates", "units", "devices", "ai"] as const;
+
 const tool: WorkspaceTool = {
   name: "get_workspace_setup",
   description:
@@ -10,13 +12,23 @@ const tool: WorkspaceTool = {
   paging: { by: "one-call", why: "a description of the setup, one area or a summary of all" },
   params: {
     part: z
-      .enum(["all", "instances", "views", "automations", "relationships", "apps", "templates", "units", "devices", "ai"])
+      .enum(PARTS)
       .optional()
       .describe("Area; default all"),
     bridge:z.string().max(60).optional().describe("Devices: bridge name; omit for default"),
   },
   execute: async (api, args) => {
     const part = typeof args.part === "string" && args.part ? args.part : "all";
+    // An area this tool does not read is not an area switched off. Asked for
+    // "fields", it said "not available in this workspace (its module may not
+    // be enabled)", and the model told the person their Colour field did not
+    // exist (#8331). A provider that ignores the enum gets the list instead.
+    if (!(PARTS as readonly string[]).includes(part)) {
+      return toolFail(
+        `get_workspace_setup has no "${part}" area; it reads ${PARTS.filter((p) => p !== "all").join(", ")}.` +
+          (part === "fields" || part === "kinds" ? " A kind's fields are read with list_record_kinds." : ""),
+      );
+    }
     if(part === "devices") {
       const res=await api.request("GET",`/edge/discovery${args.bridge?`?bridge=${encodeURIComponent(String(args.bridge))}`:""}`);
       if(res.status>=400)return toolFail(apiErrorMessage(res,"Could not discover devices"));

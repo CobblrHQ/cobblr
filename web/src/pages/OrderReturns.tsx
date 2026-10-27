@@ -1,8 +1,8 @@
 // Returns on an order, on the order itself (#4250).
 //
 // A return used to exist only as entries the store's email ingest wrote into
-// the order's metadata: nothing showed it and nobody could start one. Here an
-// arrived order can start a return on a line (how many, and why), each return
+// the order's metadata: nothing showed it and nobody could start one. Here a
+// received line can start its own return (how many, and why), each return
 // shows where it has got to as a row of stage pills, and the next stage is
 // one tap on its pill. Refunded asks the amount, prefilled with what the
 // returned items cost. A store's emails land on the same row as they arrive.
@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Undo2 } from "lucide-react";
 import { MoneyInput, useToast } from "@cobblr/platform-web";
 import { formatStoredMoney } from "@cobblr/platform-contract/money";
+import { receivedPurchaseQty } from "@cobblr/platform-contract/purchase-line-actions";
 import { REFUND_ALREADY_RECORDED, suggestedPurchaseRefund } from "@cobblr/platform-contract/purchase-refund";
 import { ApiError, api, type Order, type OrderItem, type OrderReturn, type ReturnStage } from "../lib/api";
 
@@ -30,12 +31,12 @@ const RANK: Record<ReturnStage, number> = { requested: 0, dropped_off: 1, receiv
 const returnsKey = (slug: string, orderId: string) => ["order-returns", slug, orderId];
 
 /** What a line can still send back: its count less the returns not cancelled. */
-export function returnableQty(item: Pick<OrderItem, "id" | "qty">, returns: OrderReturn[]): number {
+export function returnableQty(item: Pick<OrderItem, "id" | "qty" | "received_at" | "received_qty">, returns: OrderReturn[], order: Pick<Order, "status">): number {
   const out = returns.filter((r) => r.line_id === item.id && r.stage !== "cancelled").reduce((s, r) => s + r.qty, 0);
-  return Math.max(0, Number(item.qty) - out);
+  return Math.max(0, receivedPurchaseQty(order, { qty: Number(item.qty), received_at: item.received_at, received_qty: item.received_qty == null ? null : Number(item.received_qty) }) - out);
 }
 
-/** The button a line carries on an arrived order. */
+/** The button a received line carries. */
 export function StartReturnButton({ onClick }: { onClick: () => void }) {
   return (
     <button type="button" onClick={onClick} aria-label="Start a return for this line" title="Start a return" className="p-1.5 rounded text-faint hover:text-accent hover:bg-subtle dark:hover:bg-slate-800">
@@ -60,11 +61,10 @@ export function OrderReturns({
 }) {
   const returns = useQuery({ queryKey: returnsKey(slug, order.id), queryFn: () => api.listOrderReturns(slug, order.id) });
   const list = returns.data?.items ?? [];
-  const arrived = order.status === "arrived";
-  const returnable = items.filter((it) => returnableQty(it, list) > 0);
+  const returnable = items.filter((it) => returnableQty(it, list, order) > 0);
 
   if (!list.length && startLine === null) {
-    if (!arrived || !returnable.length) return null;
+    if (!returnable.length) return null;
     return (
       <button type="button" onClick={() => onStartLine("")} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline">
         <Undo2 size={13} /> Start a return
@@ -76,7 +76,7 @@ export function OrderReturns({
     <section aria-label="Returns" data-testid="order-returns">
       <div className="flex items-center justify-between mb-2">
         <div className="text-[10px] uppercase tracking-widest text-accent">returns ({list.length})</div>
-        {arrived && returnable.length > 0 && startLine === null && (
+        {returnable.length > 0 && startLine === null && (
           <button type="button" onClick={() => onStartLine("")} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline">
             <Undo2 size={13} /> Start a return
           </button>
@@ -97,7 +97,7 @@ function StartReturnForm({ slug, order, items, returns, lineId, onDone }: { slug
   const toast = useToast();
   const [line, setLine] = useState(lineId || (items.length === 1 ? items[0]!.id : ""));
   const chosen = items.find((it) => it.id === line) ?? null;
-  const max = chosen ? returnableQty(chosen, returns) : 0;
+  const max = chosen ? returnableQty(chosen, returns, order) : 0;
   const [qty, setQty] = useState("1");
   const [reason, setReason] = useState("");
   const start = useMutation({
@@ -123,7 +123,7 @@ function StartReturnForm({ slug, order, items, returns, lineId, onDone }: { slug
           {!line && <option value="">Choose a line</option>}
           {items.map((it) => (
             <option key={it.id} value={it.id}>
-              {it.description || "Item"} ({returnableQty(it, returns)} can go back)
+              {it.description || "Item"} ({returnableQty(it, returns, order)} can go back)
             </option>
           ))}
         </select>

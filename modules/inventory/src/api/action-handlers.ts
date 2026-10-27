@@ -123,6 +123,9 @@ interface StockDraw {
 }
 
 interface AdjustStockPayload {
+  resolveHolding?: boolean;
+  restoreSource?: boolean;
+  exact?: boolean;
   operationId?: string;
   operationKey?: string;
   /** All required draws succeed together, or none of the stock moves. */
@@ -162,6 +165,38 @@ interface AdjustStockPayload {
   /** The delta sets the count to what is actually there (a recount): the
    *  ledger line is a correction, never consumption or a purchase. */
   correction?: boolean;
+  /** The delta takes back a move made at `at` (a station's Undo): a count set
+   *  since then refuses it, so an old Undo never shifts what someone counted
+   *  after it (#8591). `ownCounts` of those counts are the move's own (a Set
+   *  total being taken back). */
+  takesBack?: { at?: unknown; ownCounts?: unknown };
+}
+
+/** Refuse a take-back over a count set after the move it takes back: a
+ *  correction on the ledger (a Set total, a recount, a typed count) is what
+ *  is there, and subtracting an older move from it makes a number nobody
+ *  counted. Another take-back is a correction too but counts nothing, so it
+ *  never refuses. Read under the record's row lock, so a count landing at the
+ *  same moment is either seen here or comes after. */
+async function refuseOverLaterCount(trx: Transaction<InventoryDB>, partId: string, t: NonNullable<AdjustStockPayload["takesBack"]>): Promise<void> {
+  const at = typeof t.at === "string" ? new Date(t.at) : null;
+  if (!at || Number.isNaN(at.getTime())) throw new ActionRefusal("Say when the move being taken back was made.");
+  const own = typeof t.ownCounts === "number" && t.ownCounts > 0 ? Math.floor(t.ownCounts) : 0;
+  const later = await trx
+    .selectFrom("inventory_consumption as c")
+    .innerJoin("inventory_parts as p", "p.id", "c.part_id")
+    .select(["p.name"])
+    .where("c.part_id", "=", partId)
+    .where("c.kind", "=", "correction")
+    .where("c.takes_back", "=", false)
+    .where("c.at", ">", at)
+    .orderBy("c.at")
+    .limit(1)
+    .offset(own)
+    .executeTakeFirst();
+  if (later) {
+    throw new ActionRefusal(`${later.name} was counted after this was done, so Undo would change that count. Nothing was undone; change the count yourself if it is still wrong.`);
+  }
 }
 
 const MEASURED = new Set(["mass", "length", "volume", "area"]);
@@ -264,7 +299,7 @@ type StockMovement = Record<string, unknown> & { updated?: { id: string; name: s
 export async function stockDeltaIn(
   trx: Transaction<InventoryDB>,
   orgId: string,
-  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; reporter?: "firmware"; operationKey?: string; operationId?: string; exact?: boolean; optional?: boolean },
+  p: { partId: string; delta: number; reason: string; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; takesBack?: boolean; reporter?: "firmware"; operationKey?: string; operationId?: string; exact?: boolean; optional?: boolean },
 ): Promise<StockMovement> {
   const { partId, delta, reason } = p;
   // Externally-tracked stock (e.g. a Spoolman spool, metadata.tracked_by): the
@@ -329,7 +364,7 @@ export async function stockDeltaIn(
     .executeTakeFirst();
   if (!updated) return { ok: false, error: "This item is no longer available to this usage tracker." };
 
-  await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null, operationKey: p.operationKey });
+  await recordConsumption(trx, { partId: updated.id, delta: applied, reason, sourceKind: p.sourceKind ?? null, sourceId: p.sourceId ?? null, kind: p.correction ? "correction" : null, operationKey: p.operationKey, ...(p.takesBack ? { takesBack: true } : {}) });
   return { updated, applied, verdict, requested: delta };
 }
 
@@ -646,7 +681,7 @@ export async function withBatchesIn(
   reason: string,
   delta: number,
   mutate: (batches: Batch[], ctx: { today: string; shelfLifeDays: number | null; qtyBefore: number }) => Batch[],
-  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; operationId?: string },
+  opts: { timezone?: string; userId?: string | null; sourceKind?: string | null; sourceId?: string | null; correction?: boolean; takesBack?: boolean; operationId?: string },
   prep: BatchPrep,
 ): Promise<BatchRun> {
   if (delta < 0 && !opts.correction) await assertStorageReady(trx, orgId, partId);
@@ -722,6 +757,7 @@ export async function withBatchesIn(
           sourceId: opts.sourceId ?? null,
           operationId: opts.operationId,
           ...(opts.correction ? { correction: true } : {}),
+          ...(opts.takesBack ? { takesBack: true } : {}),
         });
   if (movement && !movement.updated) return { out: movement, reason };
 
@@ -852,7 +888,7 @@ export function registerInventoryActionHandlers(): void {
       // The record the action was invoked ON counts too: a chat card or a row
       // button targets the entity and sends no partId, and the invoke used to
       // answer "skipped: missing partId" while claiming ok.
-      const partId = args.partId ?? ev.partId ?? ctx.entity?.id;
+      let partId = args.partId ?? ev.partId ?? ctx.entity?.id;
       const takeBack = (args as { takeBack?: unknown }).takeBack === true;
       const stated = takeBack ? -1 : (statedQuantity((ev as { quantity?: unknown }).quantity, args.delta) ?? args.delta ?? ev.delta);
       const reason = args.reason ?? ev.reason ?? "wire-driven adjustment";
@@ -862,8 +898,14 @@ export function registerInventoryActionHandlers(): void {
       if (stated === 0) return { ok: true, skipped: true, deliverySatisfied: true, reason: "no stock change requested" };
       const sourceKind = args.sourceKind ?? ev.sourceKind;
       const sourceId = args.sourceId ?? ev.sourceId;
+      const restoreSource = (args.restoreSource ?? ev.restoreSource) === true;
+      if (restoreSource && (stated <= 0 || !sourceKind || !sourceId)) throw new ActionRefusal("Restoring stock needs its original source and a positive quantity.");
+      if (((args.resolveHolding ?? ev.resolveHolding) === true && stated < 0) || restoreSource) {
+        const { stockedHoldingFor } = await import("./holdings.js");
+        partId = await stockedHoldingFor(ctx.orgId, partId, sourceKind, sourceId, restoreSource);
+      }
       if (takeBack && !(sourceKind && sourceId)) return { ok: true, skipped: true, reason: "nothing to take back without a source" };
-      const inUnit = takeBack ? { ok: true as const, delta: stated } : await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
+      const inUnit = takeBack || restoreSource ? { ok: true as const, delta: stated } : await inPartUnit(ctx.orgId, partId, stated, args.unit ?? ev.unit);
       if (!inUnit.ok) return { ok: true, skipped: true, reason: inUnit.reason };
       if (args.operationKey !== undefined) {
         return applyStockDelta(ctx.orgId, { partId, delta: inUnit.delta, reason, sourceKind: args.sourceKind, sourceId: args.sourceId, operationKey: args.operationKey });
@@ -884,8 +926,13 @@ export function registerInventoryActionHandlers(): void {
       // that follow a count change wait for the commit.
       const settled = await db.transaction().execute(async (trx): Promise<{ skipped: Record<string, unknown> } | { after: () => Promise<Record<string, unknown>> }> => {
         await trx.selectFrom("inventory_parts").select("id").where("id", "=", partId).forUpdate().execute();
+        if (args.takesBack) await refuseOverLaterCount(trx, partId, args.takesBack);
         let delta = inUnit.delta;
-        if (takeBack) {
+        if (restoreSource) {
+          const net = await appliedBySource(ctx.orgId, partId, sourceKind!, sourceId!, trx);
+          if (net >= 0) return { skipped: { ok: true, skipped: true, deliverySatisfied: true, reason: "nothing left to restore for this source" } };
+          delta = -net;
+        } else if (takeBack) {
           // What this source has added, net: all of it goes, and a line that
           // added nothing (never ticked, or already taken back) takes nothing.
           const net = await appliedBySource(ctx.orgId, partId, sourceKind!, sourceId!, trx);
@@ -919,9 +966,11 @@ export function registerInventoryActionHandlers(): void {
               sourceKind: sourceKind ?? null,
               sourceId: sourceId ?? null,
               ...(args.correction === true ? { correction: true } : {}),
+              ...(args.takesBack ? { takesBack: true } : {}),
             },
             prep,
           );
+          if (restoreSource && !run.movement?.updated) throw new ActionRefusal("The original stock movement could not be restored. Check its holding before trying again.");
           return { after: () => finishBatches(db, ctx.orgId, run) };
         }
         const movement = await stockDeltaIn(trx, ctx.orgId, {
@@ -931,8 +980,13 @@ export function registerInventoryActionHandlers(): void {
           sourceKind,
           sourceId,
           operationId: ev.operationId,
+          exact: (args.exact ?? ev.exact) === true,
           ...(args.correction === true ? { correction: true } : {}),
+          ...(args.takesBack ? { takesBack: true } : {}),
         });
+        if ((args.exact ?? ev.exact) === true && movement.skipped && movement.reason !== "operation already applied") {
+          throw new ActionRefusal("This stock is tracked elsewhere, so the requested units have not been removed here.");
+        }
         return { after: () => afterStockDelta(db, ctx.orgId, reason, movement) };
       });
       return "skipped" in settled ? settled.skipped : settled.after();

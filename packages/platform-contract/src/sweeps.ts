@@ -121,4 +121,10 @@ export interface PlatformSweeps {
   /** Run one pass now, over every workspace in its scope or the ones given,
    *  under its lock: the door for tests and admin routes. */
   run(name: string, opts?: { orgIds?: string[]; now?: Date }): Promise<TenantSweepRunResult>;
+  /** Run one pass for one workspace soon, not at its next idle round: a
+   *  record made a moment ago is looked at while the person is still there.
+   *  Coalesced, so a burst of saves is one round; and a round that never ran
+   *  because another visit held the workspace is asked for again, so the ask
+   *  is never lost (#8608). */
+  soon(name: string, orgId: string): void;
 }

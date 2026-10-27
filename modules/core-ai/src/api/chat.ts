@@ -14,7 +14,7 @@ import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
-import { missingActionArgs, undeclaredActionArgs, reconcileActionArgs } from "./action-args-guard.js";
+import { missingActionArgs, undeclaredActionArgs, reconcileActionArgs, recordTargetInArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { destinationLookedUp, destinationNotThere, movedItselfNotEmptied, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
@@ -391,8 +391,21 @@ async function actionLabels(c: Ctx): Promise<string[]> {
  *  for a minute: the guard above asks once per invoke, not once per turn. */
 const argsSchemaCache = new Map<
   string,
-  { at: number; byId: Map<string, Record<string, { label?: string; type?: string }>>; labels: string[] }
+  {
+    at: number;
+    byId: Map<string, Record<string, { label?: string; type?: string }>>;
+    labels: string[];
+    /** The record kinds each entity action runs on; none for a workspace action. */
+    kindsById: Map<string, string[]>;
+  }
 >();
+
+/** The kinds of record an action runs on (none for a workspace action). */
+async function actionRecordKinds(c: Ctx, actionId: string): Promise<string[]> {
+  const hit = argsSchemaCache.get(c.slug);
+  if (!hit || Date.now() - hit.at > 60_000) await actionArgsSchema(c, "");
+  return argsSchemaCache.get(c.slug)?.kindsById.get(actionId) ?? [];
+}
 /** Every action id this workspace has, memoised beside the arg schemas. */
 /** The registry with the inverse-only actions it hides by default, for the
  *  one reader that needs to know they exist: the refusal below. */
@@ -438,7 +451,7 @@ async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string
       const reg = await callApi(c, "GET", "/registered-actions");
       const items =
         (reg.body.items as
-          | Array<{ id: string; label?: string; args_schema?: Record<string, { label?: string; type?: string }> | null }>
+          | Array<{ id: string; label?: string; scope?: string; matched_kinds?: string[]; args_schema?: Record<string, { label?: string; type?: string }> | null }>
           | undefined) ?? [];
       argsSchemaCache.set(c.slug, {
         at: Date.now(),
@@ -446,6 +459,7 @@ async function actionArgsSchema(c: Ctx, actionId: string): Promise<Record<string
         // The user-facing names, for the act-don't-describe guard: a reply
         // that names one of these found the action and wrote about it.
         labels: items.map((a) => a.label ?? "").filter(Boolean),
+        kindsById: new Map(items.map((a) => [a.id, a.scope === "workspace" ? [] : (a.matched_kinds ?? [])])),
       });
     } catch {
       return null;
@@ -1098,6 +1112,15 @@ async function answerTurn(
         // above - the user still confirms the proposal either way.
         const fixed = reconcileActionArgs(schema, a.args);
         if (fixed) a.args = fixed.args;
+        // The record it runs on, named as an argument ({machineId} with no
+        // record): lifted into the call's record, as the id above (#8331).
+        if (!(a.entity_kind && a.entity_id)) {
+          const target = recordTargetInArgs(await actionRecordKinds(c, real ?? typed), a.args);
+          if (target) {
+            a.entity_kind = target.kind;
+            a.entity_id = target.id;
+          }
+        }
         const missing = missingActionArgs(real ?? typed, schema, a.args);
         if (missing) return missing;
         const extra = undeclaredActionArgs(real ?? typed, schema, a.args);

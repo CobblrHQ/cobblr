@@ -43,12 +43,16 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
   // Choices are editable AFTER the fact: they're suggestions stored as free text,
   // so adding or removing one can never orphan a saved value. (Renaming the field
   // or changing its type still isn't offered — those WOULD strand metadata.)
-  const [choices, setChoices] = useState<string[]>(fieldDef?.choices ?? []);
+  // The list the workspace has: a bundle's field carries the bundle's own in
+  // `choices` and the workspace's in `effective_choices`, and saving from the
+  // bundle's would drop what was added before.
+  const savedChoices = fieldDef?.effective_choices ?? fieldDef?.choices ?? [];
+  const [choices, setChoices] = useState<string[]>(savedChoices);
+  const savedKey = JSON.stringify(savedChoices);
   useEffect(() => {
-    setChoices(fieldDef?.choices ?? []);
-  }, [fieldDef?.id, fieldDef?.choices]);
-  const choicesDirty =
-    JSON.stringify(choices) !== JSON.stringify(fieldDef?.choices ?? []);
+    setChoices(savedChoices);
+  }, [fieldDef?.id, savedKey]);
+  const choicesDirty = JSON.stringify(choices) !== JSON.stringify(savedChoices);
 
   const saveChoices = useMutation({
     mutationFn: () =>
@@ -69,8 +73,9 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
 
   // Label and Required: plain edits of the definition. Type: offered where a
   // field holds a plain value, behind a preview of what would not fit.
-  const [label, setLabel] = useState(fieldDef?.display_label ?? "");
-  useEffect(() => setLabel(fieldDef?.display_label ?? ""), [fieldDef?.id, fieldDef?.display_label]);
+  const shownLabel = fieldDef?.effective_label ?? fieldDef?.display_label ?? "";
+  const [label, setLabel] = useState(shownLabel);
+  useEffect(() => setLabel(shownLabel), [fieldDef?.id, shownLabel]);
   const [retypeTo, setRetypeTo] = useState<string | null>(null);
   useEffect(() => setRetypeTo(null), [fieldDef?.id, fieldDef?.type]);
   const patch = useMutation({
@@ -91,7 +96,16 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
   const remove = useMutation({
     mutationFn: () => changeWorkspaceShape(qc, slug, () => api.deleteFieldDef(slug, fieldDef!.id)),
     onSuccess: () => {
-      toast.success(`Field "${fieldDef!.name}" deleted.`);
+      const gone = fieldDef!;
+      toast.action(`${gone.effective_label ?? gone.display_label} deleted.`, {
+        actionLabel: "Undo",
+        duration: 10000,
+        onAction: () => {
+          void changeWorkspaceShape(qc, slug, () => api.restoreFieldDef(slug, gone))
+            .then(() => toast.success(`${gone.effective_label ?? gone.display_label} is back, with its values.`))
+            .catch((e: unknown) => toast.error(e instanceof ApiError ? `Could not put it back: ${e.message}` : "Could not put it back."));
+        },
+      });
       onClose();
     },
     onError: (e: unknown) => {
@@ -102,8 +116,8 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
   async function handleDelete() {
     if (!fieldDef) return;
     const ok = await confirm({
-      title: `Delete field "${fieldDef.name}"?`,
-      message: `The field definition will be removed. Existing entity metadata values stored under "${fieldDef.name}" remain on each row but won't render anywhere until you re-add the field.`,
+      title: `Delete ${shownLabel}?`,
+      message: `The field goes from every form and list. What your records already hold in it is kept, and shows again if you bring the field back. Undo, right after, puts it back as it was.`,
       confirmLabel: "Delete field",
       destructive: true,
     });
@@ -120,7 +134,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="min-w-0">
           <div className="text-sm font-medium text-content dark:text-mortar-100 truncate">
-            {fieldDef.display_label}
+            {shownLabel}
           </div>
           <div className="text-[11px] font-mono text-faint dark:text-slate-500 truncate">
             {scopeLabel ?? fieldDef.entity_kind} · {fieldDef.name}
@@ -226,7 +240,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
           </label>
           <div className="flex gap-2">
             <input id={`label-${fieldDef.id}`} value={label} onChange={(e) => setLabel(e.target.value)} className="input sm:!text-sm flex-1 min-w-0" />
-            {label.trim() !== fieldDef.display_label && label.trim() !== "" && (
+            {label.trim() !== shownLabel && label.trim() !== "" && (
               <button
                 type="button"
                 onClick={() => patch.mutate({ display_label: label.trim() })}
@@ -247,7 +261,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
             ) : preview.data ? (
               <>
                 <p>
-                  Change {fieldDef.display_label} to {withArticle(TYPE_WORDS[retypeTo] ?? retypeTo)} field?{" "}
+                  Change {shownLabel} to {withArticle(TYPE_WORDS[retypeTo] ?? retypeTo)} field?{" "}
                   {preview.data.wontFit === 0
                     ? `All ${preview.data.checked} values it holds fit.`
                     : `${preview.data.wontFit} of ${preview.data.checked} values it holds will not fit, and stay as they are until someone changes them.`}
@@ -325,7 +339,7 @@ export function FieldDefDetail({ onClose, slug, fieldDef, scopeLabel }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setChoices(fieldDef.choices ?? [])}
+                  onClick={() => setChoices(savedChoices)}
                   className="text-[11px] text-muted hover:text-content dark:hover:text-mortar-100 transition"
                 >
                   Revert

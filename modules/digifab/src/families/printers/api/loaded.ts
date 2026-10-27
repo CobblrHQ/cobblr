@@ -7,7 +7,7 @@
 //                                      one it replaces goes back to its shelf
 //   POST /loaded/:machineId/unload     { slot }         back to its shelf
 
-import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { refuseIfLent, requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -71,6 +71,7 @@ loadedRouter.post(
     if (!(await requireCapability(req, res, "core-placement:place"))) return;
     const parsed = Load.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
+    if (await refuseIfLent(req, res, "core-placement:place", [{ kind: THING_KIND, id: parsed.data.part_id }])) return;
     const orgId = tenantContext(req).org.id;
     const machineId = String(req.params.machineId);
     const db = tenantDb(req);
@@ -132,6 +133,7 @@ loadedRouter.post(
       res.status(404).json({ error: { code: "slot_empty", message: `Nothing is loaded in slot ${parsed.data.slot}.` } });
       return;
     }
+    if (await refuseIfLent(req, res, "core-placement:return-home", [{ kind: THING_KIND, id: here.partId }])) return;
     const to = await platform().placement.returnHome({ orgId, containee: { kind: THING_KIND, id: here.partId }, placedBy: sessionUser(req)?.id ?? null, via: VIA });
     const place = to ? ((await platform().entities.lookupMany(orgId, [to]))[0] ?? null) : null;
     res.json({ ...(await view(orgId, tenantDb(req), machineId)), to: place });

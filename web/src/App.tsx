@@ -1,3 +1,4 @@
+import { WorkspaceAccessBoundary } from "./components/WorkspaceAccessBoundary";
 import { DeletedRecordUndo } from "./components/DeletedRecordUndo";
 // Top-level shell. AuthProvider hydrates from /me on mount; while
 // that's in flight we show nothing (a fast roundtrip avoids flash).
@@ -14,6 +15,7 @@ import { OPEN_RECORD_ROUTE } from "@cobblr/platform-contract/instance-detail";
 import { lazy, Suspense, useEffect, useState, type ComponentProps } from "react";
 import { lazyShellHost } from "./lib/lazyShellHost";
 const VaultPage = lazy(() => import("./pages/VaultPage").then((m) => ({ default: m.VaultPage })));
+const LentOutPage = lazy(() => import("./pages/LentOutPage").then((m) => ({ default: m.LentOutPage })));
 const RecentlyDeletedPage = lazy(() => import("./pages/RecentlyDeletedPage").then((m) => ({ default: m.RecentlyDeletedPage })));
 import { ScanFiledRefresh } from "./lib/scanFiled";
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
@@ -714,6 +716,7 @@ function ActiveOrgScopedRoutes() {
 
   if (unfinished) return <WorkspaceUnfinished slug={activeSlug} name={activeOrg?.name} />;
   return (
+    <WorkspaceAccessBoundary slug={activeSlug}>
     <WorkspacePlatformWeb orgSlug={activeSlug} role={role ?? null} appMode={!!appMode}>
       <Suspense fallback={<RouteFallback />}>
       {/* Host gate: turns the fabrication file renderers on/off with the
@@ -860,6 +863,7 @@ function ActiveOrgScopedRoutes() {
           <Route element={<ConfigurationLayout />}>
             <Route path="/configuration" element={<ConfigurationPage />} />
             <Route path="/configuration/s/:section" element={<ConfigSectionPage />} />
+            <Route path="/lent-out" element={<LentOutPage />} />
             <Route path="/configuration/recently-deleted" element={<RecentlyDeletedPage />} />
             <Route path="/configuration/tidy" element={<TidySuggestionsPage />} />
             <Route path="/configuration/general" element={<GeneralSettingsPage />} />
@@ -1126,5 +1130,6 @@ function ActiveOrgScopedRoutes() {
           BasketWidget) — the two used to overlap in that corner. */}
       {!onAdmin && labelsEnabled && !fullSide && !labelsRowInSidebar && <LabelsBasket orgSlug={activeSlug} getToken={getToken} />}
     </WorkspacePlatformWeb>
+    </WorkspaceAccessBoundary>
   );
 }

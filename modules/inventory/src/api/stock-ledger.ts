@@ -38,6 +38,9 @@ export interface ConsumptionEntry {
   /** "correction": the count was set to what is actually there. Not use, not
    *  a purchase, so the burn rate never reads it. */
   kind?: "correction" | null;
+  /** The line takes back an earlier move (an Undo): a correction, but never
+   *  a count of what is there. */
+  takesBack?: boolean;
   /** The person who did it; null when nobody did by hand. */
   byUser?: string | null;
 }
@@ -57,6 +60,7 @@ export async function recordConsumption(exec: LedgerExec, e: ConsumptionEntry): 
       source_kind: e.sourceKind ?? null,
       source_id: e.sourceId ?? null,
       kind: e.kind ?? null,
+      ...(e.takesBack ? { takes_back: true } : {}),
       // Who, without every caller having to say: the person this request acts
       // for (null for a wire on a timer, a sync, a job). One writer, so every
       // stock path names its person the same way.

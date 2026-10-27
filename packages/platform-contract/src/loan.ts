@@ -78,12 +78,13 @@ export function lentWhy(l: RecordLoan): string {
 export const OFF_WHILE_LENT: ReadonlySet<string> = new Set([
   "core-placement:place",
   "core-placement:return-home",
+  "core-placement:remove",
   "inventory:transfer-stock",
   "inventory:move-all-stock",
   "labels:print",
 ]);
 
-/** The same loan restriction for an action and a native field that moves it. */
+/** The same loan restriction for record actions, native fields and direct HTTP. */
 export function loanActionRefusal(actionId: string, fields: unknown): string | null {
   if (!OFF_WHILE_LENT.has(actionId)) return null;
   const loan = loanOfFields(fields);

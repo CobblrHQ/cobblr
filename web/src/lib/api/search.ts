@@ -40,6 +40,8 @@ export const searchApi = {
       kinds_failed?: string[];
       /** Kinds that filled their share, so may have more past `offset + per_kind`. */
       more_kinds?: string[];
+      /** How many each kind holds in all, for the kinds whose list can count. */
+      totals?: Record<string, number>;
     }>(
       "GET",
       `/orgs/${slug}/modules/core-search/search?${qs.toString()}`,

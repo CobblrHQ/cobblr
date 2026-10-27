@@ -101,16 +101,18 @@ export function CalendarPage() {
         <h1 className="font-display text-2xl font-extrabold text-content dark:text-mortar-100 page-title flex items-center gap-2">
           <CalendarDays size={22} className="text-accent" /> Calendar
         </h1>
-        <div className="flex items-center gap-1">
-          <button aria-label="Previous month" onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Previous month">
-            <ChevronLeft size={16} />
-          </button>
-          <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-[9rem] text-center">
-            {MONTHS[cursor.m]} {cursor.y}
-          </span>
-          <button aria-label="Next month" onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Next month">
-            <ChevronRight size={16} />
-          </button>
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
+          <div className="flex min-w-0 max-w-full items-center gap-1">
+            <button aria-label="Previous month" onClick={() => setCursor((c) => shiftMonth(c, -1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Previous month">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium text-content dark:text-mortar-100 min-w-0 sm:min-w-[9rem] text-center">
+              {MONTHS[cursor.m]} {cursor.y}
+            </span>
+            <button aria-label="Next month" onClick={() => setCursor((c) => shiftMonth(c, 1))} className="p-1.5 rounded hover:bg-cobble-100 dark:hover:bg-slate-800 transition" title="Next month">
+              <ChevronRight size={16} />
+            </button>
+          </div>
           <button onClick={() => { const d = new Date(); setCursor({ y: d.getFullYear(), m: d.getMonth() }); }} className="ml-1 text-[10px] uppercase tracking-widest text-accent hover:underline">
             today
           </button>
@@ -131,7 +133,7 @@ export function CalendarPage() {
       <div className="rounded-xl border border-line dark:border-slate-700 overflow-hidden">
         <div className="grid grid-cols-7 bg-surface dark:bg-slate-900 border-b border-line dark:border-slate-700">
           {WEEKDAYS.map((w) => (
-            <div key={w} className="px-2 py-1.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
+            <div key={w} className="px-0.5 py-1.5 text-[10px] uppercase tracking-widest text-faint dark:text-slate-500 text-center">{w}</div>
           ))}
         </div>
         <div className="grid grid-cols-7">
@@ -200,11 +202,11 @@ function DayList({ day, events, onOpen, onClose }: { day: string; events: Calend
   useEffect(() => { ref.current?.scrollIntoView?.({ block: "nearest" }); }, [day]);
   return (
     <section ref={ref} className="rounded-xl border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 p-3" data-testid="calendar-day-list" aria-label={`Everything on ${dayLabel(day, { weekday: "long", month: "long", day: "numeric" })}`}>
-      <div className="mb-2 flex items-baseline gap-2">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
         <h2 className="text-[10px] uppercase tracking-widest text-faint dark:text-slate-500">{dayLabel(day, { weekday: "long", month: "long", day: "numeric" })}</h2>
         <span className="text-xs text-faint">{events.length} {events.length === 1 ? "event" : "events"}</span>
         <div className="flex-1" />
-        <button type="button" onClick={onClose} className="rounded px-2 py-1 text-xs text-accent hover:underline max-sm:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]">Close</button>
+        <button type="button" onClick={onClose} className="shrink-0 rounded px-2 py-1 text-xs text-accent hover:underline max-sm:min-h-[44px] [@media(pointer:coarse)]:min-h-[44px]">Close</button>
       </div>
       <ul className="divide-y divide-line dark:divide-slate-700">
         {events.map((ev) => (

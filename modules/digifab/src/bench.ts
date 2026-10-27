@@ -17,6 +17,15 @@ export async function configuredControl(orgId:string,connectionId:string){
  const config=edge.config&&typeof edge.config==="object"?edge.config as Record<string,unknown>:edge;
  return config.control_enabled===true;
 }
+/** What the person called the machine and its instrument ("Bench power
+ *  supply", "Bench PSU"). Read from the workspace, never the bridge, so the
+ *  station names itself when its bridge is quiet too (#8655). */
+export async function benchNames(db:Kysely<DigifabDB>,orgId:string,machineId:string):Promise<{machine_name:string|null;instrument_label:string|null}>{
+ const machine=await platform().entities.lookup(orgId,"machines:machine",machineId).catch(()=>null);
+ const link=await db.selectFrom("digifab_device_links").select("connection_id").where("machine_id","=",machineId).executeTakeFirst();
+ const connection=link?await platform().devices.connections().get(orgId,link.connection_id).catch(()=>null):null;
+ return {machine_name:machine?.title?.trim()||null,instrument_label:connection?.label?.trim()||null};
+}
 export async function benchMachine(db:Kysely<DigifabDB>,orgId:string,machineId:string){
  const links=await db.selectFrom("digifab_device_links").selectAll().where("machine_id","=",machineId).execute();
  const instruments=[];

@@ -48,6 +48,12 @@ const Schema = z.object({
     .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
     .transform((v) => v === "true"),
 
+  // A new workspace's database is a copy of one kept migrated, rather than every migration run on
+  // an empty one (db/workspace-template.ts, #5443). Off by default; phase 1 is CI's test api only.
+  WORKSPACE_TEMPLATE: z
+    .preprocess((v) => (v === "" ? undefined : v), z.enum(["true", "false"]).default("false"))
+    .transform((v) => v === "true"),
+
   // HARNESS-ONLY: a stack that walks many specs at once from one address (the nightly walk) turns
   // the per-address sign-in and signup limits off. A production node refuses to boot with it
   // (platform/ip-limiter.ts reads it, and refuses there).

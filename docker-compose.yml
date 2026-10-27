@@ -262,6 +262,8 @@ services:
       # Bound the activity log on a public host; unset keeps every row.
       ACTIVITY_LOG_RETENTION_DAYS: ${ACTIVITY_LOG_RETENTION_DAYS:-}
       COBBLR_DISABLE_EXPERIMENTAL_MODULES: ${COBBLR_DISABLE_EXPERIMENTAL_MODULES:-}
+      # A new workspace's database copied from one kept migrated (api/src/db/workspace-template.ts); off unless true.
+      WORKSPACE_TEMPLATE: ${WORKSPACE_TEMPLATE:-}
       # Marketplace v0.3.x runtime install — sandboxed module
       # tarballs go here. Bind-mounted so installs persist across
       # api restarts AND survive image rebuilds.

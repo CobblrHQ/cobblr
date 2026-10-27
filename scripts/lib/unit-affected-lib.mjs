@@ -261,9 +261,11 @@ export function namedBy(path, tests, testSources, basenameCount) {
     // the letters (timeout, about, output). A path with a directory is specific enough as a substring; a bare one is not.
     const says = path.includes("/") ? src.includes(path) : quoted(src, path);
     if (says || src.includes(keyOf(path) + '"') || (distinct && quoted(src, base))) { out.add(t); continue; }
-    if (code) continue;
-    // Not code: a test that walks one of its directories, or sits beside or above it.
+    // A test that walks one of its directories reads it, code or not (2026-10-27: scan-recovery.test.ts walks
+    // modules/core-scan/src, and #8605's edit to a .ts in it neither selected it nor changed its cache key).
     if (dirs.some((d) => walksDir(src, d))) { out.add(t); continue; }
+    if (code) continue;
+    // Not code: a test that sits beside or above it.
     const tDir = t.slice(0, t.lastIndexOf("/"));
     if (fileDir && (fileDir === tDir || fileDir.startsWith(`${tDir}/`)) && tDir.includes("/")) out.add(t);
   }

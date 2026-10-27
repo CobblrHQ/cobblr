@@ -84,7 +84,10 @@ export function DormantActionButton({
       >
         {action.label}
         <span className="rounded bg-subtle dark:bg-slate-800 px-1 text-[9px] normal-case tracking-normal">off</span>
-      </button></ActionDescription></RecordActionItem>
+      </button></ActionDescription>
+      {/* The note goes where the door went: a door in a group menu drew its
+          note in the bar, under the menu's backdrop, so the first tap on Turn
+          on only closed the menu (#8648). */}
       {open && (
         <span
           role="dialog"
@@ -105,7 +108,7 @@ export function DormantActionButton({
             </button>
           )}
         </span>
-      )}
+      )}</RecordActionItem>
     </>
   );
 }

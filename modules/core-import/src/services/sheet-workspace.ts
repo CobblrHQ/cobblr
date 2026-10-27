@@ -44,8 +44,8 @@ interface MenuEntry {
 
 function nativeFields(kind: KindRecordLike | undefined): TargetField[] {
   return (kind?.fields ?? [])
-    .filter(isWritableNativeField)
-    .map((f) => ({ name: f.name, label: columnLabel(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, field_role: f.fieldRole ?? null, money: f.money ?? null }));
+    .filter((f) => f.type !== "object" && f.type !== "image-path")
+    .map((f) => ({ name: f.name, label: columnLabel(f.name), type: f.type === "url" ? "url" : (f.type ?? "text"), native: true, readOnly: !isWritableNativeField(f), field_role: f.fieldRole ?? null, money: f.money ?? null }));
 }
 
 export function instanceSlug(label: string): string {
@@ -250,7 +250,7 @@ export function newCollectionTarget(sheetName: string, targets: Target[]): Targe
  *  workspace hides from some role, so an owner's re-import of their own export
  *  saw those fields as empty and planned to "change" every row that had one. */
 export async function existingRecords(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<ExistingRecord[]> {
-  const all = await platform().entities.listAll(orgId, kind, { include_retired: true }, viewer, { cap: 50_000 });
+  const all = await platform().entities.listAll(orgId, kind, { include_retired: true }, { ...viewer, export: true }, { cap: 50_000 });
   return (all.items as Array<{ id: string; title: string; fields: Record<string, unknown> }>).map((r) => {
     const f = r.fields ?? {};
     const meta = (f.metadata && typeof f.metadata === "object" ? f.metadata : {}) as Record<string, unknown>;

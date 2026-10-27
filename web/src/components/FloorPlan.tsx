@@ -2124,7 +2124,7 @@ function DimInput({
     setText(formatLength(parsed, typed ?? unit));
   };
   return (
-    <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+    <label className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
       {label}
       <input
         value={text}
@@ -2337,7 +2337,7 @@ function EditPanel({
           </span>
         )}
         {loc.kind !== "area" && (
-          <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+          <label className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
             <input
               type="checkbox"
               checked={rect.wall_mounted === true}
@@ -2379,12 +2379,12 @@ function EditPanel({
         unit={unit}
         onCommit={(v, typed) => onResizeBound({ d_mm: v, ...(typed ? { unit: typed } : {}) })}
       />
-      <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+      <label className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
         view
         <select
           value={view}
           onChange={(e) => onBound({ ...bound, view: e.target.value === "front" ? "front" : "plan" })}
-          className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+          className="max-w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
         >
           <option value="plan">plan (top-down)</option>
           <option value="front">front (elevation)</option>
@@ -2392,13 +2392,13 @@ function EditPanel({
       </label>
       {/* The grid's size: auto follows the plan's units and zoom; a step of
           its units, Gridfinity's 42 mm, or any size typed beside it. */}
-      <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+      <label className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
         grid
         <select
           aria-label="Grid size"
           value={bound.grid_mm ? String(bound.grid_mm) : "auto"}
           onChange={(e) => onBound({ ...bound, grid_mm: e.target.value === "auto" ? undefined : Number(e.target.value) })}
-          className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+          className="max-w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
         >
           <option value="auto">auto</option>
           {gridPitches(bound.unit).map((p) => (
@@ -2435,7 +2435,7 @@ function AddOnWall({ onAdd }: { onAdd: (side: Edge, what: "door" | "window" | "c
         aria-label="Which wall"
         value={side}
         onChange={(e) => setSide(e.target.value as Edge)}
-        className="rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
+        className="max-w-full min-w-0 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1 py-0.5 text-xs text-content dark:text-slate-200"
       >
         <option value="top">top</option>
         <option value="bottom">bottom</option>
@@ -3085,7 +3085,7 @@ function PlanOutlineControl({ slug, loc, onPatch }: { slug: string; loc: Locatio
     },
   });
   return <>
-    <label className="inline-flex items-center gap-1.5 text-xs text-muted dark:text-slate-400">
+    <label className="inline-flex max-w-full flex-wrap items-center gap-1.5 text-xs text-muted dark:text-slate-400">
       Outline group
       <select aria-label="Outline group" value={outline?.tagId ?? "custom"} disabled={choose.isPending || tags.isPending || attached.isPending}
         onChange={(e) => choose.mutate(e.target.value)} className="max-w-48 rounded border border-line dark:border-slate-600 bg-surface dark:bg-slate-900 px-1.5 py-1">
@@ -3117,7 +3117,7 @@ function DecorControls({
   return (
     <>
       {withColour && (
-        <span role="group" aria-label="Colour on the plan" className="inline-flex items-center gap-1 text-xs text-muted dark:text-slate-400">
+        <span role="group" aria-label="Colour on the plan" className="inline-flex max-w-full flex-wrap items-center gap-1 text-xs text-muted dark:text-slate-400">
           custom colour
           <button
             type="button"

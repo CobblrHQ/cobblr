@@ -2,7 +2,7 @@
 // prints, then clear the queue. Returns the rendered batch with QR
 // SVGs so the client can drop them straight into a print preview.
 
-import { requireCapability } from "@cobblr/platform-contract/action-gate";
+import { refuseIfLent, requireCapability } from "@cobblr/platform-contract/action-gate";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { platform } from "@cobblr/platform-contract";
@@ -126,6 +126,7 @@ printRouter.post(
       res.status(400).json({ error: { code: "empty_queue", message: "Queue is empty" } });
       return;
     }
+    if (await refuseIfLent(req, res, "labels:print", items.map((it) => ({ kind: `${it.module_name}:${it.entity_type}`, id: it.entity_id })))) return;
     // Resolve the live base once, and record the ACTUAL printed URL in history.
     const base = await qrBaseFor(req);
 

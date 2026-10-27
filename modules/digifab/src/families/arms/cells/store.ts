@@ -4,6 +4,7 @@
 import "./db.js";
 import { sql, type Kysely, type Selectable } from "kysely";
 import { platform } from "@cobblr/platform-contract";
+import { bridgeAnswer } from "../../../bridge-wait.js";
 import type { CellJob, CellMachine, CellState } from "@cobblr/platform-contract/robot-cell";
 import type { DigifabDB } from "../../../db.js";
 import { buildDriverById } from "../../../jobs-core.js";
@@ -146,7 +147,7 @@ export async function readCell(db: Kysely<DigifabDB>, orgId: string, machineId: 
   const members = await Promise.all((await cellMembers(db, machineId)).map(async (m) => ({ ...m, title: m.machine_id ? (await platform().entities.lookup(orgId, "machines:machine", m.machine_id))?.title ?? null : null })));
   let state: CellState | null = null, connection_error: string | null = null;
   if (cell.connection_id) {
-    try { state = await (await cellDriver(db, orgId, cell.connection_id)).state(); }
+    try { state = await bridgeAnswer((async () => (await cellDriver(db, orgId, cell.connection_id!)).state())()); }
     catch { connection_error = "The cell's bridge did not answer. Its state is unknown; check the cell."; }
   }
   const jobs = await db.selectFrom("digifab_cell_jobs").select(["id", "label", "status", "outcome", "paused_on", "paused_reason", "cycles", "parts", "last_cycle_ms", "detail", "started_by", "started_at", "ended_at"]).where("cell_id", "=", machineId).orderBy("started_at", "desc").limit(20).execute();

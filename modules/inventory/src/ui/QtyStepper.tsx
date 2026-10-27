@@ -83,7 +83,7 @@ export function QtyStepper({
   // never a whole kilogram per tap (#4030).
   return (
     // In a table the row navigates to the record; stepping must not open it.
-    <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+    <span className="inline-flex max-w-full" onClick={(e) => e.stopPropagation()}>
       <StockStepper
         fractionDigits={9}
         qty={qty}

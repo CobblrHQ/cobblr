@@ -9,6 +9,7 @@ import { z } from "zod";
 import { EdgeOffline, EdgeTimeout, platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { buildDriverById } from "../jobs-core.js";
+import { printProcessKind } from "../station-offer.js";
 import { authorizeLaserStart, stationTokenHash } from "../laser-station.js";
 import { ReviewRequired } from "../drivers/job-review.js";
 import { LaserMaterialSchema, materialFromFields } from "../laser-material.js";
@@ -100,7 +101,7 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   const link = await db.selectFrom("digifab_device_links").select("machine_id").where("connection_id", "=", connection).where("remote_device_id", "=", device).executeTakeFirst();
   const machine = link?.machine_id ? await platform().entities.lookup(orgId, "machines:machine", link.machine_id) : null;
   const type = typeof machine?.fields.type === "string" ? machine.fields.type.trim() : "";
-  const processKind = driver?.printProcess === "fdm" ? "print" : driver?.printProcess === "resin" || driver?.printProcess === "large-format" ? driver.printProcess : null;
+  const processKind = printProcessKind(driver);
   // Known print processes keep the station and Stop reachable while the bridge is disconnected.
   let remote: RemoteDevice | undefined, connectionError: string | null = null;
   try { remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device); }

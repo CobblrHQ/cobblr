@@ -10,7 +10,9 @@
 //
 // THE BOUNDARY. A burst of 10 (a source id written by ten pushers at once, ten uploads measured for the
 // api's memory) is under the line on purpose: those are the races themselves and hold ten clients. A
-// `Promise.all(xs.map(...))` over a list is not judged: its length is not in the source.
+// `Promise.all(xs.map(...))` over a list is judged only where the source says its length: `xs` is pushed to in a
+// `for (let i = 0; i < N; ...)` loop whose N is a number or a const of this file (2026-10-27: sixty reads of
+// `parts.map(qtyOf)` took 35 of the api's 86 meta clients and failed run 59700, every test green).
 //
 // PROVE IT RED before you trust it green: run it against the real violation
 // that motivated it, watch it fail, then fix the violation. A lint that has
@@ -62,6 +64,23 @@ function check(file: string, src: string): Violation[] {
     const above = lines.slice(Math.max(0, line - 4), line).join("\n");
     if (/\/\/ BURST: \S/.test(above)) continue;
     out.push({ file, line, what: `${n} requests at once (over ${MAX_AT_ONCE}) with no // BURST: <why> above it` });
+  }
+  const consts = new Map([...src.matchAll(/\bconst\s+(\w+)\s*=\s*(\d+)\s*;/g)].map((m) => [m[1]!, Number(m[2])]));
+  const sized = new Map<string, number>();
+  for (const m of src.matchAll(/for\s*\(\s*let\s+(\w+)\s*=\s*0\s*;\s*\1\s*<\s*(\w+)\s*;[^)]*\)\s*\{/g)) {
+    const n = /^\d+$/.test(m[2]!) ? Number(m[2]) : consts.get(m[2]!);
+    if (n === undefined || n <= MAX_AT_ONCE) continue;
+    let depth = 1, i = (m.index ?? 0) + m[0].length;
+    for (; i < src.length && depth; i++) depth += src[i] === "{" ? 1 : src[i] === "}" ? -1 : 0;
+    for (const p of src.slice((m.index ?? 0) + m[0].length, i).matchAll(/\b(\w+)\.push\(/g)) sized.set(p[1]!, Math.max(n, sized.get(p[1]!) ?? 0));
+  }
+  for (const m of src.matchAll(/Promise\.all\(\s*(\w+)\.map\(/g)) {
+    const n = sized.get(m[1]!);
+    if (n === undefined) continue;
+    const line = src.slice(0, m.index ?? 0).split("\n").length;
+    const above = lines.slice(Math.max(0, line - 4), line).join("\n");
+    if (/\/\/ BURST: \S/.test(above)) continue;
+    out.push({ file, line, what: `${n} requests at once over ${m[1]} (filled to ${n} by a loop; over ${MAX_AT_ONCE}) with no // BURST: <why> above it` });
   }
   return out;
 }

@@ -20,7 +20,7 @@ import { API_CLIENT_DIR, apiClientMethods, callerCorpus, isCalled } from "./lib/
 /** Unreachable on 2026-09-08. Each is a surface still owed or a method to
  *  delete; either way, wiring one REMOVES it from here. */
 const BASELINE = new Set([
-  "orgLocal", "placementContainerOf", "authoringContext", "markNotificationRead", "markAllNotificationsRead", "setDigifabDevicePosition", "updateNavHeading", "invokeAi", "aiChat", "aiChatWrites",
+  "orgLocal", "placementContainerOf", "authoringContext", "markNotificationRead", "setDigifabDevicePosition", "updateNavHeading", "invokeAi", "aiChat", "aiChatWrites",
 ]);
 
 const methods = apiClientMethods();

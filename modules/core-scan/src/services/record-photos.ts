@@ -32,6 +32,7 @@ import type { CoreScanDB } from "../db.js";
 import { derivedQueryFor, fetchImage, imagePathForFile, storeFetchedImage, type FetchedImage } from "./entity-image.js";
 import { pictureOptions } from "./picture-options.js";
 import { pickPhotoOf } from "./shows-the-thing.js";
+import { curatedImageUrl } from "./curated-images.js";
 import { scanTargetsForOrg } from "./scan-target.js";
 
 export const RECORD_PHOTO_PASS = "core-scan.record-photo-suggestions";
@@ -83,19 +84,10 @@ export function subscribeRecordPhotos(
 /** Look at a workspace's queue soon, not at the next idle round, so a record
  *  made a moment ago is offered its picture while the person is still
  *  looking at it. Coalesced: a burst of saves (an import) is one nudge, and
- *  the round itself takes three, the rest following the drain cadence. */
-const NUDGE_AFTER_MS = 2_000;
-const nudges = new Map<string, ReturnType<typeof setTimeout>>();
+ *  the round itself takes three, the rest following the drain cadence; a
+ *  round another visit kept from running is asked for again (sweeps.soon). */
 export function nudge(orgId: string): void {
-  if (nudges.has(orgId)) return;
-  const t = setTimeout(() => {
-    nudges.delete(orgId);
-    void Promise.resolve()
-      .then(() => platform().sweeps.run(RECORD_PHOTO_PASS, { orgIds: [orgId] }))
-      .catch((err) => console.error(`[core-scan] org ${orgId}: picture suggestions round failed:`, (err as Error).message));
-  }, NUDGE_AFTER_MS);
-  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
-  nudges.set(orgId, t);
+  platform().sweeps.soon(RECORD_PHOTO_PASS, orgId);
 }
 
 /** Where the queue lives. The Kysely store below in the product; a test
@@ -304,6 +296,8 @@ export interface SuggestDeps {
 export interface FindSeams {
   describe: typeof derivedQueryFor;
   search: typeof pictureOptions;
+  /** The hand-picked catalog (a known printer's own photo), asked first. */
+  curated?: typeof curatedImageUrl;
 }
 
 /** The picture to suggest for one record: the best-ranked one that shows it,
@@ -313,10 +307,12 @@ export async function findPictureFor(
   orgId: string,
   kind: string,
   id: string,
-  seams: FindSeams = { describe: derivedQueryFor, search: pictureOptions },
+  seams: FindSeams = { describe: derivedQueryFor, search: pictureOptions, curated: curatedImageUrl },
 ): Promise<{ url: string; query: string } | null | "refused"> {
   const { query, name, brand } = await seams.describe(orgId, kind, id);
   if (!query) return null;
+  const curated = await seams.curated?.(query);
+  if (curated) return { url: curated, query };
   const { items, throttled } = await seams.search({ query, brand, limit: 8 });
   if (!items.length && throttled) return "refused";
   const url = pickPhotoOf(items, { name: name ?? query, brand })?.url ?? null;

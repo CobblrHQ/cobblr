@@ -38,8 +38,8 @@ function useDirections(value: unknown): string | null {
 }
 
 /** An address as a record shows it: what the place is called, the street
- *  address under it, and a Directions link. `inline` is one line, for a
- *  table cell or a calendar row. */
+ *  address under it, and a Directions link. `inline` is a compact row that
+ *  wraps Directions within a table cell or calendar row. */
 export function AddressView({ value, inline }: { value: unknown; inline?: boolean }) {
   const a = asAddress(value);
   const href = useDirections(a);
@@ -51,8 +51,8 @@ export function AddressView({ value, inline }: { value: unknown; inline?: boolea
   ) : null;
   if (inline) {
     return (
-      <span className="inline-flex min-w-0 items-baseline gap-2" data-testid="address-view">
-        <span className="truncate" title={addressText(a)}>{addressText(a)}</span>
+      <span className="inline-flex min-w-0 max-w-full flex-wrap items-baseline gap-2" data-testid="address-view">
+        <span className="min-w-0 truncate" title={addressText(a)}>{addressText(a)}</span>
         {directions}
       </span>
     );

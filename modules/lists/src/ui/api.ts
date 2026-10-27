@@ -2,7 +2,7 @@
 // Routes are mounted at /api/v1/orgs/:slug/modules/lists/...
 
 import { dayHere } from "@cobblr/platform-contract/day";
-import { describeUnreadableBody, noteWorkspaceWrite, workspaceFetch, type Edit } from "@cobblr/platform-web";
+import { describeUnreadableBody, noteWorkspaceWrite, waitingWritesToSend, workspaceFetch, type Edit } from "@cobblr/platform-web";
 import { dayLabel } from "@cobblr/platform-contract/day";
 import { parseLineAmount } from "../line-amount.js";
 
@@ -27,6 +27,8 @@ export interface ListItem {
   /** Who said they'd get this. The name is snapshotted server-side at claim
    *  time so a line stays readable without a membership lookup. */
   claimed_by: string | null;
+  /** Whether this promise belongs to the signed-in shopper. */
+  claimed_by_me?: boolean;
   claimed_by_name: string | null;
   claimed_at: string | null;
   created_at: string;
@@ -95,6 +97,18 @@ export class ListsApiError extends Error {
 
 export class ListsApi {
   constructor(private readonly slug: string, private readonly getToken: () => string | null) {}
+
+  /** The items added to a list on this device that an earlier page left
+   *  waiting (made offline, then the page reloaded): kept on the device and
+   *  sent when it can, so the list shows them waiting until they land (#8675). */
+  keptAdds(listId: string): string[] {
+    const token = this.getToken();
+    const path = `/orgs/${this.slug}/modules/lists/items`;
+    return waitingWritesToSend(token ? `Bearer ${token}` : null).flatMap((w) => {
+      const body = w.body as { list_id?: unknown; title?: unknown } | undefined;
+      return w.method === "POST" && w.path.split("?")[0] === path && body?.list_id === listId && typeof body.title === "string" ? [body.title] : [];
+    });
+  }
 
   private async req<T>(method: string, path: string, body?: unknown, extra?: Record<string, string>): Promise<T> {
     const headers: Record<string, string> = { ...extra };

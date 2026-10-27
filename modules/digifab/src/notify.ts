@@ -22,7 +22,7 @@ const COLOR: Record<PrintNotifyKind, number> = {
   failed: 0xe74c3c, // red
 };
 const VERB: Record<PrintNotifyKind, string> = {
-  started: "🖨️ Printing",
+  started: "🖨️ Started",
   progress: "🖨️ Printing",
   completed: "✅ Finished",
   failed: "❌ Print failed",
@@ -60,11 +60,20 @@ export async function notifyPrint(
       : null;
     const id = job?.linked_machine_id ?? link?.machine_id;
     const machine = id ? await platform().entities.lookup(orgId, "machines:machine", id) : null;
-    machineName = machine?.title || link?.machine_label || o.device;
+    // An unlinked printer is named as the fleet shows it, never by the
+    // manager's device id ("p2", #8647).
+    const listed = !machine?.title && !link?.machine_label && job?.connection_id && o.device
+      ? await db.selectFrom("digifab_fleet_device_cache").select("devices").where("connection_id", "=", job.connection_id).executeTakeFirst()
+      : null;
+    const devices = typeof listed?.devices === "string" ? JSON.parse(listed.devices) : listed?.devices;
+    const fleetName = Array.isArray(devices) ? (devices as Array<{ id?: unknown; name?: unknown }>).find((d) => d.id === o.device)?.name : null;
+    machineName = machine?.title || link?.machine_label || (typeof fleetName === "string" && fleetName.trim() ? fleetName : o.device);
   } catch {
     // A name lookup must not suppress an update about the print itself.
   }
-  const title = `${VERB[o.kind]} · ${o.fileRef}${machineName ? ` · ${machineName}` : ""}`.slice(0, 256);
+  // A milestone says how far along it is, so 25, 50 and 75 % are three different lines, not one repeated.
+  const howFar = o.kind === "progress" && o.progress != null ? ` ${Math.round(o.progress * 100)}%` : "";
+  const title = `${VERB[o.kind]}${howFar} · ${o.fileRef}${machineName ? ` · ${machineName}` : ""}`.slice(0, 256);
   const fields: Array<{ name: string; value: string; inline?: boolean }> = [];
   if (o.progress != null) fields.push({ name: "Progress", value: `${Math.round(o.progress * 100)}%` });
   const eta = fmtDur(o.etaSec);

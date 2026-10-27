@@ -49,9 +49,12 @@ function Row({ r, today, slug, here }: { r: StockPlaceRow; today: string; slug: 
   return (
     <li className="px-3 py-2 text-sm" data-testid="stock-here-row">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <Link to={r.detail_path} className="flex-1 min-w-0 basis-40 truncate text-content dark:text-mortar-100 hover:text-accent">
-          {inside && <span className="text-muted dark:text-slate-400">{inside} · </span>}
+        {/* The thing first, whole, and its sub-place under it: one cut line led
+            with the box, so on a phone every row was "Office box 9 · Vinyl re…"
+            and what the thing was is what got lost (#8633). */}
+        <Link to={r.detail_path} className="flex-1 min-w-0 basis-40 [overflow-wrap:anywhere] text-content dark:text-mortar-100 hover:text-accent">
           {r.name}
+          {inside && <span className="block text-xs text-muted dark:text-slate-400" data-testid="stock-here-inside">in {inside}</span>}
         </Link>
         <span className="inline-flex items-center gap-2">
           <StockStepper qty={r.qty} unit={r.unit} onStep={step} label={r.name} />

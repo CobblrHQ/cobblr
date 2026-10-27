@@ -1,3 +1,4 @@
+import { loanActionRefusal } from "@cobblr/platform-contract/loan";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
@@ -359,6 +360,8 @@ export function PartsListPage() {
   // rather than a count he has to go and re-find.
   const askCobb = useAskCobbAboutSelection(selected, partItems, "inventory:part", "part");
   // Tell Ask Cobb what's on this screen — `low_stock` is the module's own flag.
+  // How many records the list holds, when the server could say (#8657).
+  const matching = parts.data?.pages[0]?.matching;
   const lowStock = partItems.filter((p) => (p.rollup ? p.rollup.low : p.low_stock)).length;
   usePublishChatContext({
     kind: entityKind,
@@ -974,7 +977,7 @@ export function PartsListPage() {
           >
             {parts.isFetchingNextPage
               ? "loading…"
-              : `load more (${partItems.length} shown)`}
+              : `load more (${partItems.length} shown${matching != null ? ` of ${matching.toLocaleString()}` : ""})`}
           </button>
         </div>
       )}
@@ -1381,7 +1384,7 @@ function PartsTable({
                     p.location_id == null && p.location_name ? (
                       <span data-testid="held-in" title="Inside something: move it from its page">{p.location_name}</span>
                     ) : (
-                      <LocationCell label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
+                      <LocationCell refusal={loanActionRefusal("core-placement:place", p)} label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
                     )
                   )}
                 </td>
@@ -1647,7 +1650,7 @@ function PartsTable({
                       {p.location_id == null && p.location_name ? (
                         <span data-testid="held-in">{p.location_name}</span>
                       ) : (
-                        <LocationCell label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
+                        <LocationCell refusal={loanActionRefusal("core-placement:place", p)} label={fp.label("location", "Location")} value={p.location_id ?? null} name={p.location_name} onCommit={(v) => setCol(p, "location_id", v)} />
                       )}
                     </span>
                   )}
@@ -1724,8 +1727,9 @@ function CardFieldRows({
 
 /** A row's Location, changed in place: the platform's chips in a sheet (an
  *  area's chevron opens its shelves and bins), never a flat list (#6438). */
-function LocationCell({ label, value, name, onCommit }: { label: string; value: string | null; name: string | null | undefined; onCommit: (id: string | null) => void }) {
+function LocationCell({ label, value, name, onCommit, refusal }: { refusal?: string | null; label: string; value: string | null; name: string | null | undefined; onCommit: (id: string | null) => void }) {
   const [open, setOpen] = useState(false);
+  if (refusal) return <span className="min-w-0"><span>{name || "—"}</span><span className="block text-xs text-muted">{refusal}</span></span>;
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} title={`Change ${label.toLowerCase()}`} className="truncate text-left hover:underline">

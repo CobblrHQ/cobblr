@@ -73,6 +73,9 @@ import { listAll, listKindsForOrg, lookup } from "./entities.js";
 import {
   FieldDefCreate,
   createFieldDef,
+  FieldDefSnapshot,
+  restoreFieldDef,
+  snapshotOf,
   deleteFieldDef,
   kindFieldsWithMeaning,
   effectiveFieldDef,
@@ -1112,6 +1115,22 @@ export function registerPlatformActionHandlers(): void {
       ok: true,
       // Said out loud, because "removed" reads as "deleted my data" and it is not.
       summary: `"${found.label}" removed from ${(await kindWords(ctx.orgId, entityKind)).many}. Values already recorded are kept.`,
+      // The field as it was, so Undo puts back its choices, place and meaning too.
+      data: { name: result.def.name, field: snapshotOf(result.def) },
+    };
+  });
+  registerUndo("platform.remove-field", (result) => {
+    const field = (result as { data?: { field?: unknown } } | null)?.data?.field;
+    return field ? { action_id: "platform:restore-definition", args: { field } } : null;
+  });
+  registerHandler("platform.restore-definition", async (ctx: ActionInvokeContext) => {
+    const parsed = FieldDefSnapshot.safeParse(((ctx.args ?? {}) as Record<string, unknown>).field);
+    if (!parsed.success) return { ok: false, error: "field is required: the field as it was when it was removed" };
+    const result = await restoreFieldDef(ctx.orgId, parsed.data);
+    if (!result.ok) return { ok: false, error: result.message };
+    return {
+      ok: true,
+      summary: `"${result.def.display_label}" is back on ${(await kindWords(ctx.orgId, result.def.entity_kind)).many}, with the values it held.`,
       data: { name: result.def.name },
     };
   });

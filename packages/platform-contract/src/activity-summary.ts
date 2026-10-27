@@ -61,6 +61,7 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "secrets_exported": "exported secrets from",
   "field_def_created": "created",
   "field_def_deleted": "deleted",
+  "field_def_restored": "put back",
   "field_def_updated": "updated",
   "file_created": "added",
   "file_deleted": "deleted",
@@ -384,6 +385,24 @@ export const KIND_WORDS: Readonly<Record<string, string>> = {
 };
 export const kindWords = (entityType: string): string => KIND_WORDS[entityType] ?? "a record";
 
+/** The rows about an account that are said by the workspace ("You joined
+ *  Maker Shop"); every other row about an account is about that person
+ *  ("changed the password for Alex"), never the workspace (#8640). */
+const ACCOUNT_ROWS_ABOUT_THE_WORKSPACE = new Set(["user_created", "member_joined", "login"]);
+export const accountRowNamesTheWorkspace = (action: string): boolean => ACCOUNT_ROWS_ABOUT_THE_WORKSPACE.has(action);
+
+/** A person doing a thing to their own account, said as theirs: "changed
+ *  their password", never "changed the password for <workspace>" (#8640). */
+const ON_THEMSELVES: Readonly<Record<string, (their: string, them: string) => string>> = {
+  password_changed: (their) => `changed ${their} password`,
+  password_reset: (their) => `reset ${their} password`,
+  email_changed: (their) => `changed ${their} email address`,
+  sessions_revoked: (their) => `signed out all ${their} sessions`,
+  personal_export_requested: (their) => `requested a copy of ${their} data`,
+  phone_sign_in_code_minted: (_their, them) => `made a phone sign-in code for ${them}`,
+  phone_sign_in_code_revoked: (_their, them) => `cancelled a phone sign-in code for ${them}`,
+};
+
 export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: string, resolved?: ActivitySubject): ActivityPresentation {
   const d = bag(e.diff);
   const actor = activityActor(e, viewerId);
@@ -471,6 +490,16 @@ export function activityPresentation(e: SummaryEntry, slug: string, viewerId?: s
     if (!resolved) subject = { ...subject, title, href: `/w/${encodeURIComponent(slug)}/scan` };
   } else if (e.action === "module_enabled" && !e.user_id && !e.actor) {
     summary = `Set up for you: ${title}`;
+  } else if (e.entity_type === "user" && !accountRowNamesTheWorkspace(e.action)) {
+    // About a person's account: the person, and "their own" when they did it
+    // to themselves. "Alex changed the password for Notify review" read as the
+    // workspace's password, and Cobb said so to its owner (#8640).
+    const you = !!viewerId && e.entity_id === viewerId;
+    const self = !!e.entity_id && (e.user_id === e.entity_id || e.actor?.id === e.entity_id);
+    const own = ON_THEMSELVES[e.action];
+    if (self) summary = `${actor} ${own ? own(you ? "your" : "their", you ? "yourself" : "themselves") : `${verb} ${you ? "yourself" : "themselves"}`}`;
+    else summary = `${actor} ${verb} ${you ? "you" : e.entity_title ?? "an account"}`;
+    title = you ? "you" : e.entity_title ?? "an account";
   } else if (e.action === "user_created" || e.action === "member_joined") {
     // The subject is the workspace they joined, never the account record.
     title = e.entity_title ?? "the workspace";

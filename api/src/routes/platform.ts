@@ -490,7 +490,10 @@ platformOrgRouter.get(
         { kind, id },
         { rel, dir: dirParam, kind: kindFilter },
       );
-      res.json({ items });
+      const visible = req.tenant!.role === "guest"
+        ? await platform().entities.lookupMany(req.tenant!.org.id, items.map(({ kind, id }) => ({ kind, id })), { role: "guest", userId: req.session?.id })
+        : items;
+      res.json({ items: visible });
     } catch (err) {
       next(err);
     }
@@ -1490,16 +1493,25 @@ platformOrgRouter.get(
         (
           await meta
             .selectFrom("native_field_overrides")
-            .select(["entity_kind", "name", "overrides"])
+            .select(["entity_kind", "name", "display_label", "overrides"])
             .where("org_id", "=", req.tenant!.org.id)
             .execute()
-        ).map((o) => [`${o.entity_kind} ${o.name}`, o.overrides] as const),
+        ).map((o) => [`${o.entity_kind} ${o.name}`, o] as const),
       );
       const items = rawItems.map((f) => {
-        const blob = ownBlob.get(`${f.entity_kind} ${f.name}`);
+        const row = ownBlob.get(`${f.entity_kind} ${f.name}`);
+        const blob = row?.overrides;
         const own = f.bundle_id ? blob : undefined;
+        // What the workspace calls a shipped field is its own: `display_label`
+        // stays the bundle's here (this read manages the raw defs), and
+        // `effective_label` is the name a person sees.
+        const ownLabel = f.bundle_id ? row?.display_label : null;
         return {
           ...f,
+          ...(ownLabel ? { effective_label: ownLabel } : {}),
+          // The list the workspace has, for the editor to start from: a second
+          // addition made over the shipped list would replace the first.
+          ...(own?.choices ? { effective_choices: own.choices } : {}),
           ...(own?.learns !== undefined ? { learns: own.learns } : {}),
           private: blob?.private === true,
           bundle_external_id: f.bundle_id ? (bundleById.get(f.bundle_id)?.external_id ?? null) : null,

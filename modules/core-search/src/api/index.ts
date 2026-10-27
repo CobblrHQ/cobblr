@@ -102,8 +102,8 @@ router.get("/search", (req, res, next) => {
           filter: tag ? { _tag: tag } : undefined,
           include_retired: true,
         }, viewer);
-        if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false };
-        return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true };
+        if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false, total: undefined };
+        return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true, total: result.total };
       }),
     );
     const kindsFailed = candidateIds.filter((_, i) => perKindResults[i]!.failed);
@@ -156,6 +156,14 @@ router.get("/search", (req, res, next) => {
       // "show more" on exactly the groups that have it.
       has_more: perKind.some((list) => list.length === per_kind),
       more_kinds: candidateIds.filter((_, i) => perKind[i]!.length === per_kind),
+      // How many each kind holds in all, where its list could count them:
+      // 2,033 resistors read "20 results, and more below" (#8657).
+      totals: Object.fromEntries(
+        candidateIds.flatMap((id, i) => {
+          const t = perKindResults[i]!.total;
+          return typeof t === "number" && Number.isFinite(t) ? [[id, t]] : [];
+        }),
+      ),
     });
   })().catch(next);
 });

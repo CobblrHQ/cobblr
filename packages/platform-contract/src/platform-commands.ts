@@ -28,7 +28,7 @@ import type { ModuleCommandDecl } from "./index.js";
 export const PLATFORM_OWNER = "platform";
 
 /** Bumped when a command's sentence or plan changes. */
-export const PLATFORM_COMMANDS_VERSION = "0.2.0";
+export const PLATFORM_COMMANDS_VERSION = "0.3.0";
 
 export const PLATFORM_COMMANDS: ModuleCommandDecl[] = [
   {
@@ -51,5 +51,14 @@ export const PLATFORM_COMMANDS: ModuleCommandDecl[] = [
     template: "make {field} required",
     description: "Make {field} required",
     plan: [{ tool: "action", entityKind: "", actionId: "platform:edit-field", payload: { field: "{field}", required: true } }],
+  },
+  // Asked of a model, "rename the Colour field to Shade" was answered "I
+  // couldn't find a Colour field" one ask in three on the 2026-10-27 bench:
+  // the kinds list it read was cut before machines, where Colour is (#8331).
+  {
+    id: "platform:rename-a-field",
+    template: "rename the {field} field to {label}",
+    description: "Rename the {field} field to {label}",
+    plan: [{ tool: "action", entityKind: "", actionId: "platform:edit-field", payload: { field: "{field}", display_label: "{label}" } }],
   },
 ];

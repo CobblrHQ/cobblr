@@ -485,9 +485,11 @@ export interface ScannableInfo {
    *  hardcoding a default module. */
   default?: boolean;
   /** The action that moves this kind's quantity by a delta, invoked ON the
-   *  record with args `{ delta, reason, restock?, sourceKind?, sourceId? }`
-   *  and answering `{ ok, delta, newQty, clamped?, note?, error? }`: the
-   *  module's own quantity door, where its floor, lots and ledger live. When
+   *  record with args `{ delta, reason, restock?, correction?, takesBack?,
+   *  sourceKind?, sourceId? }` and answering `{ ok, delta, newQty, clamped?,
+   *  note?, error? }`: the module's own quantity door, where its floor, lots
+   *  and ledger live. `takesBack: { at, ownCounts }` marks an Undo of a move
+   *  made at `at`, which the module refuses over a count set since (#8591). When
    *  declared, core-scan takes an undone bump back through it; without it,
    *  the quantity field is written through the module's own route. */
   adjustAction?: string;

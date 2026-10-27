@@ -1543,9 +1543,11 @@ function EditableLabel({
   // A trimmed caption can be put back to the entity's system name. Only when we
   // know that name AND the caption differs from it (nothing to revert otherwise).
   const canRevert = canRevertToStock(value, stockName);
+  // A name keeps room to be read: on a phone the row's code chip, copies and
+  // delete wrap under it rather than squeeze it to its first letter (#8649).
   if (!editing) {
     return (
-      <span className="group/name flex items-center gap-1.5 flex-1 min-w-0">
+      <span className="group/name flex items-center gap-1.5 flex-1 min-w-0 basis-40">
         <button
           type="button"
           onClick={() => { setDraft(value); setEditing(true); }}
@@ -1579,7 +1581,7 @@ function EditableLabel({
     if (v !== value) onSave(v);
   };
   return (
-    <span className="flex items-center gap-1 flex-1 min-w-0">
+    <span className="flex items-center gap-1 flex-1 min-w-0 basis-40">
       <input aria-label="Name"
         autoFocus
         value={draft}

@@ -12,7 +12,7 @@ export type LineOffer = { offered: true } | { offered: false; reason: string | n
 
 export interface PurchaseLineContext {
   order: { status: string; add_to_stock?: boolean | null };
-  item: { qty: number; received_at: string | null; part_id: string | null };
+  item: { qty: number; received_at: string | null; received_qty?: number | null; part_id: string | null };
   /** Whether the line has units to scan in: true when its receipt line was
    *  found and is several of the same thing, false when the scan module said
    *  there is none or it is a pack of different things, null while that is
@@ -35,6 +35,11 @@ function scanIn({ order, item, scanLine }: PurchaseLineContext): LineOffer {
   return scanLine === true ? { offered: true } : { offered: false, reason: null };
 }
 
-function startReturn({ order }: PurchaseLineContext): LineOffer {
-  return order.status === "arrived" ? { offered: true } : { offered: false, reason: null };
+export function receivedPurchaseQty(order: { status: string }, item: { qty: number; received_at?: string | null; received_qty?: number | null }): number {
+  if (order.status === "arrived" || item.received_at) return Math.max(0, item.qty);
+  return Math.max(0, Math.min(item.qty, item.received_qty ?? 0));
+}
+
+function startReturn({ order, item }: PurchaseLineContext): LineOffer {
+  return receivedPurchaseQty(order, item) > 0 ? { offered: true } : { offered: false, reason: null };
 }

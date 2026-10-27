@@ -495,9 +495,40 @@ export async function walkWith(
   return out;
 }
 
+export const SOON_AFTER_MS = 2_000;
+/** How many times a round that never ran is asked for again. Each ask has
+ *  already waited out RUN_NOW_LOCK_WAIT_MS for the workspace. */
+export const SOON_ASKS = 5;
+
+/** sweeps.soon over a given run, so the coalescing and the asking again are a
+ *  unit test. A skipped round used to be dropped: the record stayed queued
+ *  until the next idle round, and a test's checked-out workspace, which no
+ *  scheduled round visits, never matched at all (#8608). */
+export function soonWith(run: PlatformSweeps["run"], afterMs = SOON_AFTER_MS): PlatformSweeps["soon"] {
+  const pending = new Map<string, ReturnType<typeof setTimeout>>();
+  const ask = (name: string, orgId: string, asksLeft: number): void => {
+    const key = `${name}\0${orgId}`;
+    if (pending.has(key)) return;
+    const t = setTimeout(() => {
+      pending.delete(key);
+      void Promise.resolve()
+        .then(() => run(name, { orgIds: [orgId] }))
+        .then((r) => {
+          if (r.skipped && asksLeft > 1) ask(name, orgId, asksLeft - 1);
+          else if (r.skipped) console.warn(`[tenant-sweeps] ${name}: workspace ${orgId} stayed busy for ${SOON_ASKS} asks; its idle round will reach it`);
+        })
+        .catch((err) => console.error(`[tenant-sweeps] ${name}: a round asked for workspace ${orgId} failed:`, (err as Error).message));
+    }, afterMs);
+    if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
+    pending.set(key, t);
+  };
+  return (name, orgId) => ask(name, orgId, SOON_ASKS);
+}
+
 export const tenantSweeps: PlatformSweeps = {
   register: registerTenantSweep,
   run: runTenantSweep,
+  soon: soonWith(runTenantSweep),
 };
 
 /** Tests: forget every pass (the registry is process-wide). */

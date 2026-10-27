@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { purchaseLineActions } from "@cobblr/platform-contract/purchase-line-actions";
 import { api, type Order, type OrderItem } from "../lib/api";
 
-export function usePurchaseLineActions(slug: string, order: Pick<Order, "status" | "add_to_stock">, item: Pick<OrderItem, "id" | "qty" | "received_at" | "part_id">) {
+export function usePurchaseLineActions(slug: string, order: Pick<Order, "status" | "add_to_stock">, item: Pick<OrderItem, "id" | "qty" | "received_at" | "received_qty" | "part_id">) {
   const qty = Number(item.qty);
   // Only a line that could scan in asks whether it has a receipt line to
   // count against; the answer is the scan module's (slots null = none). A
@@ -26,7 +26,7 @@ export function usePurchaseLineActions(slug: string, order: Pick<Order, "status"
   const scanLine = line.isError ? true : (line.data ?? null);
   return purchaseLineActions({
     order: { status: order.status, add_to_stock: order.add_to_stock ?? null },
-    item: { qty, received_at: item.received_at ?? null, part_id: item.part_id ?? null },
+    item: { qty, received_qty: item.received_qty == null ? null : Number(item.received_qty), received_at: item.received_at ?? null, part_id: item.part_id ?? null },
     scanLine,
   });
 }

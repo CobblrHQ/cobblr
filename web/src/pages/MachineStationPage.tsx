@@ -74,7 +74,10 @@ function UnavailableMachineStation({ kind, error, refused }: { kind?: string | n
 
 function BenchMachineStation({slug,machineId}:{slug:string;machineId?:string|null}) {
   usePageTitle("Bench station");
-  return <><SkipToContent/><main id={MAIN_ID} className="mx-auto max-w-3xl p-4 space-y-4"><h1 className="text-xl font-semibold">Bench station</h1>{machineId?<BenchInstrument slug={slug} machineId={machineId}/>:<p>Link this instrument to a machine record in Configuration → Devices before collecting readings.</p>}</main></>;
+  return <><SkipToContent/><main id={MAIN_ID} className="mx-auto max-w-3xl p-4 space-y-4"><h1 className="text-xl font-semibold">Bench station</h1>{machineId?<BenchInstrument slug={slug} machineId={machineId} station/>:<>
+   <p>Link this instrument to a machine record before collecting readings: in Devices, open the instrument's connection and choose its machine under "link to machine".</p>
+   <div className="flex flex-wrap gap-2"><Link className={button} to="/configuration/devices?tab=machines">Link it in Devices</Link><Link className={button} to="/digifab">Exit to the fleet</Link></div>
+  </>}</main></>;
 }
 
 function LaserMachineStationPage() {
@@ -176,7 +179,13 @@ function LaserMachineStationPage() {
 
   return <><SkipToContent /><main id={MAIN_ID} tabIndex={-1} className="min-h-screen bg-surface text-content p-4 sm:p-6 max-w-5xl mx-auto space-y-5" data-testid="machine-station">
     <GlobalScanWedge activeSlug={slug} />
-    <header className="flex flex-wrap items-center justify-between gap-3"><div><h1 className="text-2xl font-semibold">Laser station</h1><p className="text-muted break-all">{connection && device ? fabricationFullName(fabricationMachineName(connection, device), fabricationBridgeName(connection, bridges.data?.bridges ?? [])) : "Laser"}</p></div><details className="text-sm"><summary className="cursor-pointer min-h-11 flex items-center">Station settings</summary><div className="space-y-3 py-3"><Link to="/digifab" className="block">Exit to the fleet</Link><button className={button} onClick={() => void run(async () => { await navigator.clipboard.writeText(`${window.location.origin}/w/${slug}${stationPath}`); })}>Copy station link</button>{credential && (mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); await screens.refetch(); })}>Revoke this screen</button>)}{screens.data?.items.filter(s => s.connection_id === connectionId && s.remote_device_id === deviceId && !s.revoked_at).map(s => <div key={s.id} className="flex flex-wrap gap-2 items-center"><span>{s.label} · {s.id.slice(0, 8)}</span>{mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, s.id); if (credential?.id === s.id) { localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); } await screens.refetch(); })}>Revoke screen</button>}</div>)}</div></details></header>
+    <header className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Laser station</h1>
+        <details className="text-sm"><summary className="cursor-pointer min-h-11 flex items-center">Station settings</summary><div className="space-y-3 py-3"><Link to="/digifab" className="block">Exit to the fleet</Link><button className={button} onClick={() => void run(async () => { await navigator.clipboard.writeText(`${window.location.origin}/w/${slug}${stationPath}`); })}>Copy station link</button>{credential && (mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, credential.id); localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); await screens.refetch(); })}>Revoke this screen</button>)}{screens.data?.items.filter(s => s.connection_id === connectionId && s.remote_device_id === deviceId && !s.revoked_at).map(s => <div key={s.id} className="flex flex-wrap gap-2 items-center"><span>{s.label} · {s.id.slice(0, 8)}</span>{mayRevoke && <button className={button} disabled={busy} onClick={() => void run(async () => { await api.revokeDigifabStation(slug, s.id); if (credential?.id === s.id) { localStorage.removeItem(storageKey); setCredential(null); setReview(null); setConfirmed(null); } await screens.refetch(); })}>Revoke screen</button>}</div>)}</div></details>
+      </div>
+      <p className="text-muted break-all">{connection && device ? fabricationFullName(fabricationMachineName(connection, device), fabricationBridgeName(connection, bridges.data?.bridges ?? [])) : "Laser"}</p>
+    </header>
     {/* Whether this laser takes Stop and Pause here comes from the fleet's
         answer: drawn as it came, the controls arrived above Authorize and the
         sheet's buttons and moved them under a finger (#8542). */}

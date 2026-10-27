@@ -391,19 +391,10 @@ export async function matchRound(orgId: string, db: Db, now = new Date(), holder
 
 // ── Signals ─────────────────────────────────────────────────────────────
 
-const NUDGE_AFTER_MS = 2_000;
-const nudges = new Map<string, ReturnType<typeof setTimeout>>();
-/** A round soon, coalesced: a burst of saves is one round. */
+/** A round soon, coalesced: a burst of saves is one round, and a round
+ *  another visit kept from running is asked for again (sweeps.soon). */
 export function nudge(orgId: string): void {
-  if (nudges.has(orgId)) return;
-  const t = setTimeout(() => {
-    nudges.delete(orgId);
-    void Promise.resolve()
-      .then(() => platform().sweeps.run(MATCH_PASS, { orgIds: [orgId] }))
-      .catch((err) => console.error(`[core-documents] org ${orgId}: a matching round failed:`, (err as Error).message));
-  }, NUDGE_AFTER_MS);
-  if (typeof t === "object" && t && "unref" in t) (t as { unref: () => void }).unref();
-  nudges.set(orgId, t);
+  platform().sweeps.soon(MATCH_PASS, orgId);
 }
 
 /** A record made or changed, by any door: matched again when its facts

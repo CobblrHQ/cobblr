@@ -9,6 +9,7 @@
 // in the workspace at the chosen priority — proves the config
 // works without waiting for a real event.
 
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { productName } from "@cobblr/platform-web";
 import { useState } from "react";
 import { AreaTabs, NOTIFICATION_TABS } from "../components/AreaTabs";
@@ -31,6 +32,17 @@ import { notificationKeys } from "../lib/notification-keys";
 import { useDiscordStatus } from "../lib/useDiscordStatus";
 
 const PRIORITIES: NotificationPriority[] = ["low", "normal", "high", "urgent"];
+
+/** A channel as this page names it ("In-app", "Push to my devices"), never its
+ *  stored id: the self-test said "Test delivered via in_app." (#8642). */
+export function channelSaid(channel: string): string {
+  return CHANNEL_OPTIONS.find((o) => o.channel === channel)?.label ?? channel.replace(/_/g, " ");
+}
+
+/** What a test that reached some channels says. */
+export function deliveredSaid(via: readonly string[], test = true): string {
+  return `${test ? "Test delivered" : "Delivered"}: ${via.map(channelSaid).join(", ")}.`;
+}
 
 const CHANNEL_OPTIONS: Array<{
   channel: NotificationChannelName;
@@ -235,7 +247,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
         // confirmation of a transient probe; sticking around as long
         // as a destructive-action toast made the UI feel cluttered
         // during back-to-back tests.
-        toast.success(`Delivered via ${r.deliveredVia.join(", ")}.`, {
+        toast.success(deliveredSaid(r.deliveredVia, false), {
           duration: 2500,
         });
       }
@@ -250,7 +262,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
       if (!r.notificationId) toast.info("Your notification settings did not allow this test.");
       else if (!r.deliveredVia.length) toast.info("Test recorded, but no channel reported delivery. Check your notification settings.");
-      else toast.success(`Test delivered via ${r.deliveredVia.join(", ")}.`);
+      else toast.success(deliveredSaid(r.deliveredVia));
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Couldn't send the test notification."),
   });
@@ -261,10 +273,10 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
     onSuccess: (r, args) => {
       if (r.deliveredVia.length === 0) {
         toast.error(
-          `Test at priority=${args.priority} didn't deliver. Check config or threshold.`,
+          `The ${args.priority}-priority test didn't deliver. Check the channel's settings and the lowest priority it takes.`,
         );
       } else {
-        toast.success(`Delivered via ${r.deliveredVia.join(", ")}.`, {
+        toast.success(deliveredSaid(r.deliveredVia, false), {
           duration: 2500,
         });
       }
@@ -275,8 +287,8 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
 
   async function handleRemove(b: NotificationChannelBinding) {
     const ok = await confirm({
-      title: `Remove ${b.channel} binding?`,
-      message: `Stops sending '${b.event_type}' events to this channel. The config (secrets included) will be deleted.`,
+      title: `Remove ${channelSaid(b.channel)}?`,
+      message: `Stops sending ${b.event_type === "*" ? "every event" : `“${kindLabel.get(b.event_type) ?? b.event_type}”`} to this channel. Its settings, secrets included, are deleted.`,
       confirmLabel: "Remove",
       destructive: true,
     });
@@ -313,7 +325,7 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
               onClick={() => test.mutate(p)}
               disabled={test.isPending}
               className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded border border-line dark:border-slate-700 text-muted hover:bg-subtle dark:hover:bg-slate-800 transition disabled:opacity-50"
-              title={`Fire a test.notification through every binding at priority=${p}`}
+              title={`Send ${withArticle(`${p}-priority test`)} through every channel`}
             >
               {p === "urgent" && <Zap size={9} className="inline -mt-0.5" />} {p}
             </button>
@@ -385,13 +397,13 @@ function WorkspaceBindings({ orgId }: { orgId: string }) {
                   <td className="px-3 py-2 text-right">
                     <div className="inline-flex items-center gap-2">
                       <button
-                        aria-label={`Send a test notification through THIS binding at priority=${b.min_priority} (its threshold)`}
+                        aria-label={`Send a test through ${channelSaid(b.channel)} at ${b.min_priority} priority, the lowest it takes`}
                         onClick={() =>
                           testOne.mutate({ id: b.id, priority: b.min_priority })
                         }
                         disabled={testOne.isPending}
                         className="text-accent hover:text-accent transition disabled:opacity-50"
-                        title={`Send a test notification through THIS binding at priority=${b.min_priority} (its threshold)`}
+                        title={`Send a test through ${channelSaid(b.channel)} at ${b.min_priority} priority, the lowest it takes`}
                       >
                         <Send size={12} />
                       </button>

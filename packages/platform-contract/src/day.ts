@@ -172,6 +172,11 @@ function partsOf(day: Day): [number, number, number] | null {
   return t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? [y, mo, d] : null;
 }
 
+/** Whether a value is a day that exists: YYYY-MM-DD with a real month and a real date for it ("2026-02-31" is not). */
+export function isRealDay(value: unknown): value is Day {
+  return typeof value === "string" && partsOf(value) !== null;
+}
+
 /**
  * A day as a person reads it, the same day in every zone: "Oct 16, 2026",
  * or whatever `opts` asks for. The value is read by `fieldDay`, so a stored

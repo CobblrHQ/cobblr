@@ -34,9 +34,28 @@ export function registerCadenceActionHandlers(): void {
     }
     // "I got 3", stated on the gesture, beats the wire's fixed qty_delta.
     const stated = statedQuantity((ctx.event?.payload as { quantity?: unknown } | undefined)?.quantity, args.qty_delta);
-    const qtyDelta = stated ?? Number(args.qty_delta);
+    let qtyDelta = stated ?? Number(args.qty_delta);
     if (!Number.isFinite(qtyDelta) || qtyDelta === 0) {
       return { ok: false, error: "qty_delta must be a non-zero number" };
+    }
+
+    const eventUnit = (ctx.event?.payload as { unit?: unknown } | undefined)?.unit;
+    const unit = typeof eventUnit === "string" ? eventUnit.trim() : "";
+    if (unit) {
+      const baseKind = await platform().entities.baseKindOf(ctx.orgId, entity.kind);
+      const unitField = platform().entities.getScannable(baseKind)?.unitField;
+      if (unitField) {
+        const record = await platform().entities.lookup(ctx.orgId, entity.kind, entity.id);
+        if (!record) return { ok: false, error: "The record could not be found to convert its quantity." };
+        const rawUnit = record.fields[unitField];
+        const own = typeof rawUnit === "string" ? rawUnit.trim() : "";
+        // "each" is the stock default, so a count keeps the stated amount.
+        if (own && own.toLowerCase() !== "each" && own.toLowerCase() !== unit.toLowerCase()) {
+          const converted = await platform().units.convert(ctx.orgId, qtyDelta, unit, own);
+          if (converted == null || !Number.isFinite(converted)) return { ok: false, error: `${unit} does not convert to ${own}` };
+          qtyDelta = Math.round(converted * 1e6) / 1e6;
+        }
+      }
     }
 
     const context = String(args.context ?? "normal");

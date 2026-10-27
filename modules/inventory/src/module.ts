@@ -14,7 +14,7 @@ import { PART_FIELD_LABELS } from "./part-field-labels.js";
 
 export default defineModule({
   name: "inventory",
-  version: "0.22.6",
+  version: "0.22.7",
   displayName: "Inventory",
   description:
     "Parts and supplies: how many you have, where they are kept, and what is running low.",
@@ -111,10 +111,18 @@ export default defineModule({
           // platform reasons over (the UI renders from the row, not from here).
           // Declared now with fieldRole "identifier" so the resolvable registry
           // builds a scan+search provider for it: a lasered serial resolves to its
-          // part with no hand-written QR rule. The sibling parity fields
-          // (model_number, assigned_to, warranty_*) stay undeclared — they are not
-          // identifiers. See docs/design-decisions/resolvable-registry.md D6.
+          // part with no hand-written QR rule.
+          // See docs/design-decisions/resolvable-registry.md D6.
           { name: "serial_number", type: "text", fieldRole: "identifier", trait: "unique" },
+          { name: "asset_id", type: "number", readOnly: true },
+          { name: "created_at", type: "date", readOnly: true },
+          { name: "model_number", type: "text" },
+          { name: "assigned_to", type: "text" },
+          { name: "warranty_expires", type: "date" },
+          { name: "lifetime_warranty", type: "boolean" },
+          { name: "warranty_details", type: "text" },
+          { name: "insured", type: "boolean" },
+          { name: "archived", type: "boolean" },
         ],
         // Cross-module readable: name + description for labels & rendering,
         // qty/min_qty for low-stock / dep-satisfied checks, unit for quantity
@@ -127,6 +135,7 @@ export default defineModule({
         assistantReadableFields: ["notes"],
         exposableFields: [
           "name",
+          "asset_id",
           "state",
           "description",
           // Who made it. Once withheld with supplier_url as procurement
@@ -773,7 +782,7 @@ export default defineModule({
         undoable: true,
         label: "Adjust part stock",
         description:
-          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots?, once?, reversible?, takeBack?, sourceKind?, sourceId? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true (set in the args, or carried by the event, as a received purchase does) a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
+          "Add or subtract from a part's on-hand qty. Wire it to purchases.order_item.received for auto-bump-on-arrival, or fire it from any other event source. Args: { partId, delta, reason?, restock?, lots?, once?, reversible?, restoreSource?, resolveHolding?, exact?, takeBack?, takesBack?, sourceKind?, sourceId? }, or { draws: [{ partId, quantity, optional }], reason? } for an atomic component draw. Required draws move in full or the entire draw rolls back; optional draws take what is available. lots: [{ lot, qty }], how many of the arriving units carry which batch number; each becomes a lot of its own. With restock: true (set in the args, or carried by the event, as a received purchase does) a positive delta is stock that arrived: a lot dated today, good until today plus the item's shelf life, and the record's bought-on date moves to today. Anything arriving on an empty record is dated the same way.",
         // Tightened from { any: true } to inventory:part-only — wire
         // can still hit it for any source via target traversal, but
         // the manual-button surface stays scoped.
@@ -792,6 +801,9 @@ export default defineModule({
         argsSchema: {
           unit: { label: "The unit delta is in (\"g\"); converted to the thing's own unit first", type: "text" },
           operationKey: { label: "Receipt key for a recoverable stock draw", type: "text" },
+          resolveHolding: { label: "Resolve the only stocked place before a draw, following this source's previous draw on retry", type: "boolean" },
+          restoreSource: { label: "Restore only what this source removed, to its original holding; requires sourceKind and sourceId", type: "boolean" },
+          exact: { label: "Refuse a draw that cannot be supplied in full", type: "boolean" },
           once: { label: "Apply once per source: a repeat for the same thing, source and direction changes nothing", type: "boolean" },
           reversible: { label: "With once: the source can take it back, so a repeat is judged on what it has done net (a shopping line unticked, then ticked again)", type: "boolean" },
           takeBack: { label: "Take back whatever this source has added, net (a shopping line unticked); delta is ignored", type: "boolean" },
@@ -803,6 +815,7 @@ export default defineModule({
           timezone: { label: "Timezone to date arriving stock in (optional)", type: "text" },
           reason: { label: "Reason (optional)", type: "text" },
           correction: { label: "This sets the count to what is actually there, a recount: filed as a correction, never as use or a purchase (optional)", type: "boolean" },
+          takesBack: { label: "The delta takes back a move made at this time: { at, ownCounts? }. A count set since refuses it (optional)", type: "json" },
           sourceKind: { label: "Record kind this adjustment came from (optional)", type: "text" },
           sourceId: { label: "Record id this adjustment came from (optional)", type: "text" },
         },

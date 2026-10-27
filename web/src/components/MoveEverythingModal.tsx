@@ -7,10 +7,22 @@ import { countOf } from "@cobblr/platform-contract/plural";
 import { ApiError, api, type Location, type PlaceHolder, type PlaceMove } from "../lib/api";
 import { LocationTreePicker } from "./LocationTreePicker";
 
-/** What the toast says once it is done. */
-export function movedSentence(m: PlaceMove): string {
+/** Whether a move changed nothing: no thing or place moved and nothing was
+ *  deleted, so it has nothing to undo. */
+export function movedNothing(m: PlaceMove): boolean {
+  return m.things.length === 0 && m.places.length === 0 && !m.deleted;
+}
+
+/** What the toast says once it is done. `placesLeft`: places inside it that
+ *  stayed, because they were not asked to move. Saying only "had nothing in
+ *  it" over a place whose rooms held 301 things contradicted the page (#8634). */
+export function movedSentence(m: PlaceMove, placesLeft = 0): string {
   const what = [m.things.length ? countOf(m.things.length, "thing") : null, m.places.length ? countOf(m.places.length, "place") : null].filter(Boolean);
-  const moved = what.length ? `Moved ${what.join(" and ")} from ${m.from.name} into ${m.to.name}.` : `${m.from.name} had nothing in it to move.`;
+  const moved = what.length
+    ? `Moved ${what.join(" and ")} from ${m.from.name} into ${m.to.name}.`
+    : placesLeft > 0
+      ? `Nothing is kept in ${m.from.name} itself, so nothing moved. Its ${countOf(placesLeft, "place")}, and what is in them, stayed; move everything again with "Also move" ticked to take them too.`
+      : `${m.from.name} had nothing in it to move.`;
   return m.deleted ? `${moved} ${m.from.name} is deleted.` : moved;
 }
 
@@ -100,6 +112,11 @@ export function MoveEverythingModal({
             <input type="checkbox" className="mt-1" checked={withPlaces} disabled={merge} onChange={(e) => setPlaces(e.target.checked)} />
             <span>
               Also move the {placesInside === 1 ? "place" : countOf(placesInside, "place")} inside it, with what is in {placesInside === 1 ? "it" : "them"}
+              {!withPlaces && (
+                <span className="block text-xs text-muted dark:text-slate-400" data-testid="move-only-own">
+                  Unticked, only what is kept in {place.name} itself moves; {placesInside === 1 ? "the place" : "the places"} inside it, and everything in {placesInside === 1 ? "it" : "them"}, stay.
+                </span>
+              )}
             </span>
           </label>
         )}

@@ -13,6 +13,13 @@
 // id each let the page answer differently from the action. A genuine
 // exception says so beside the route: `// GATE: <why>`.
 //
+// AND A LOAN. A route for an action a loan turns off (OFF_WHILE_LENT: moving,
+// sending home, labelling) also asks about the loan: requireCapability(req,
+// res, "<that id>", <the record>), or refuseIfLent(req, res, "<that id>", refs)
+// once it has read the records,
+// so a lent thing is refused at every door the action is (#8235, 2026-10-27:
+// the action refused a lent part, the placement route moved it).
+//
 // THE BOUNDARY. GET routes are not read: a read's rights are the field and
 // kind scopes, not an action's. A route that names an exemption rather than an
 // action is not paired, so not judged.
@@ -26,6 +33,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { onlyChanged } from "./lib/lint-only-files.ts";
+import { OFF_WHILE_LENT } from "../packages/platform-contract/src/loan.ts";
 
 /** Where the rule bites. Keep it narrow: a lint over the whole repo judges
  *  files whose authors never heard of it. */
@@ -60,8 +68,10 @@ const ROUTE = /\b\w+\.(get|post|put|patch|delete)\(/;
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // The call as code, not as spelled: `requireCapability(req,res,"x")` and a line-broken call are the
 // same gate as the spaced one (a false "gates on another capability id" on #5281, 2026-10-08).
-const ARGS = (third: string) => `\\(\\s*req\\s*,\\s*res\\s*,\\s*${third}\\s*\\)`;
+const ARGS = (third: string) => `\\(\\s*req\\s*,\\s*res\\s*,\\s*${third}\\s*[),]`;
 const gatesOn = (id: string) => new RegExp(`requireCapability${ARGS(`["'\`]${esc(id)}["'\`]`)}`);
+const asksTheLoan = (id: string) =>
+  new RegExp(`(refuseIfLent\\(\\s*req\\s*,\\s*res\\s*,\\s*["'\`]${esc(id)}["'\`]\\s*,|requireCapability\\(\\s*req\\s*,\\s*res\\s*,\\s*["'\`]${esc(id)}["'\`]\\s*,\\s*[^)\\s])`);
 
 export function check(file: string, src: string): Violation[] {
   const out: Violation[] = [];
@@ -82,6 +92,9 @@ export function check(file: string, src: string): Violation[] {
     const head = lines.slice(i, start + 1).join("\n");
     const body = lines.slice(start, end).join("\n");
     if (/\/\/ GATE: \S/.test(head)) continue;
+    if (OFF_WHILE_LENT.has(id) && !asksTheLoan(id).test(body)) {
+      out.push({ file, line: start + 1, what: `the route for ${id} moves or labels a thing a loan holds, and never asks: pass the record to requireCapability(req, res, "${id}", record), or call refuseIfLent(req, res, "${id}", [the records it touches])` });
+    }
     if (gatesOn(id).test(body)) continue;
     // A same-file helper handed the id, that gates on what it was handed.
     const helper = new RegExp(`(\\w+)\\(\\s*req\\s*,\\s*res\\s*,\\s*["'\`]${esc(id)}["'\`]`).exec(body)?.[1];

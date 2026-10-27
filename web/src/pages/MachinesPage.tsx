@@ -61,6 +61,7 @@ import {
   PhoneRecordList,
   usePhoneLayout,
   EntityTile,
+  LentChip,
   ViewModeToggle,
   changeWorkspaceShape,
   useViewMode,
@@ -68,6 +69,7 @@ import {
 import { EntityAttachments } from "../components/EntityAttachments";
 import { LocationTreePicker } from "../components/LocationTreePicker";
 import { countOf, itemNounFor, pluralise } from "@cobblr/platform-contract/plural";
+import { readRecordLoan } from "@cobblr/platform-contract/loan";
 
 const ENTITY_KIND = "machines:machine";
 
@@ -431,6 +433,15 @@ export function MachinesPage({
             onChange={setPageTab}
             options={[{ value: "items", label: nounPlural }, { value: "versions", label: "Versions" }, ...(showContributedTabs ? contributedTabs.map((p) => ({ value: p.id, label: p.title })) : [])]}
           />
+        )}
+        {allRows.some((m) => readRecordLoan(m.metadata)) && (
+          <Link
+            to="/lent-out"
+            data-testid="lent-out-link"
+            className={`${HEADER_CONTROL} px-2.5 rounded-md text-[10px] uppercase tracking-widest text-muted dark:text-slate-400 hover:bg-subtle dark:hover:bg-slate-800`}
+          >
+            Lent out ({allRows.filter((m) => readRecordLoan(m.metadata)).length})
+          </Link>
         )}
         {((machines.data?.gone_count ?? 0) > 0 || showGone) && (
           <button
@@ -966,7 +977,7 @@ function LiveChip({ dev }: { dev: DigifabFleetDevice }) {
   );
 }
 
-function MachineTable({
+export function MachineTable({
   rows,
   lensFieldDefs,
   onRowClick,
@@ -1007,7 +1018,7 @@ function MachineTable({
             return { label: d.display_label, value: v === null || v === undefined || v === "" ? null : String(v) };
           }),
           quantity: m.quantity,
-          aside: live?.get(m.id) ? <LiveChip dev={live.get(m.id)!.dev} /> : undefined,
+          aside: live?.get(m.id) || readRecordLoan(m.metadata) ? <>{live?.get(m.id) && <LiveChip dev={live.get(m.id)!.dev} />}<LentChip metadata={m.metadata} /></> : undefined,
         }))}
         onOpen={onRowClick}
         selection={showSelect ? { selected: selected!, onToggle: onToggle!, onSelectAll } : undefined}
@@ -1085,6 +1096,7 @@ function MachineTable({
                     {m.state}
                   </span>
                   {live?.get(m.id) && <LiveChip dev={live.get(m.id)!.dev} />}
+                  <LentChip metadata={m.metadata} />
                 </div>
               </td>
               {lensFieldDefs.map((d) => {
@@ -1150,7 +1162,7 @@ export function MachineTileGrid({
             subtitle={[m.family || m.manufacturer || m.short_name || null, m.units?.length ? `${m.units.length} named` : null].filter(Boolean).join(" · ") || null}
             count={m.quantity}
             badge={m.state}
-            status={live?.get(m.id) ? <LiveChip dev={live.get(m.id)!.dev} /> : undefined}
+            status={live?.get(m.id) || readRecordLoan(m.metadata) ? <>{live?.get(m.id) && <LiveChip dev={live.get(m.id)!.dev} />}<LentChip metadata={m.metadata} /></> : undefined}
           />
         </button>
       ))}
@@ -1506,7 +1518,7 @@ export function EnableJobManagerCard({ words, noun, pending, onEnable }: { words
   );
 }
 
-function NewMachineModal({
+export function NewMachineModal({
   open,
   onClose,
   instance,
@@ -1756,20 +1768,8 @@ function NewMachineModal({
       toast.success(`${(noun ?? "machine").charAt(0).toUpperCase()}${(noun ?? "machine").slice(1)} added.`);
       void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
       void qc.invalidateQueries({ queryKey: ["digifab-links", activeSlug] });
-      // Auto-fetch a product photo for a new printer — the user does nothing; it
-      // appears on the next refresh. Best-effort, only with something to search.
-      if (printerFlow && kind && kind !== "other") {
-        const q = [m.manufacturer, m.family, "3D printer"].filter(Boolean).join(" ");
-        if (q.replace("3D printer", "").trim()) {
-          void (async () => {
-            const r = await api.enrichEntityImage(activeSlug, { entity_kind: "machines:machine", entity_id: m.id, query: q, instance }).catch(() => null);
-            if (r?.image_path) {
-              void qc.invalidateQueries({ queryKey: ["machines", activeSlug] });
-              void qc.invalidateQueries({ queryKey: ["machine", activeSlug, m.id] });
-            }
-          })();
-        }
-      }
+      // No photo is fetched here: a picture nobody chose is offered, never put
+      // on the record (#8651).
       onClose();
       if (onCreated) onCreated(m.id);
       else {

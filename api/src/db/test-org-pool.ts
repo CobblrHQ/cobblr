@@ -73,7 +73,7 @@ async function bakeOneOrg(index: number): Promise<void> {
   const email = `pool-${suffix}-${Date.now().toString(36)}@cobblr-test.local`;
   const password_hash = await hashPassword("pool-org-not-secret-1234");
   const userRow = { id: await createAccount(meta, { email, password_hash, display_name: `pool ${suffix}` }, { via: "pool" }) };
-  const { orgId, slug } = await provisionOrgForUser(userRow.id, `pool ${suffix}`);
+  const { orgId, slug } = await provisionOrgForUser(userRow.id, `pool ${suffix}`, { template: "all" });
   // Signup RETURNS SUCCESSFULLY even when tenant provisioning failed — the org
   // row is deliberately kept so an operator can re-provision (see the 503 in
   // middleware/tenant.ts). So a bare "it didn't throw" is not proof the org is

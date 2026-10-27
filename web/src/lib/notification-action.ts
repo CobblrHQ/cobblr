@@ -46,6 +46,8 @@ export interface NotificationLike {
 export interface NotificationAction {
   /** In-app path to go to. Absent when the click stays put. */
   path?: string;
+  /** A public route outside the workspace router, opened as a document. */
+  documentPath?: string;
   /** A foreign origin, for a new tab. */
   external?: string;
   /** Workspace to switch to on the way. Null when nothing should move. */
@@ -70,6 +72,11 @@ export function notificationAction(
   // Nowhere to go: mark it read and leave everything else alone. In particular
   // do not switch workspace, which used to happen on the way to nowhere.
   if (!path && !external) return STAY;
+
+  // Token pages live outside /w/:slug, so the workspace router cannot open them.
+  if (path?.startsWith("/invite/")) {
+    return { documentPath: path, switchTo: null, close: true, goesSomewhere: true };
+  }
 
   return {
     ...(path ? { path } : {}),

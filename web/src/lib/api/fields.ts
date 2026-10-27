@@ -55,6 +55,12 @@ export interface PlatformFieldDef {
   /** Owning bundle's identity when bundle-shipped — powers the manage-the-bundle link. */
   bundle_external_id?: string | null;
   bundle_name?: string | null;
+  /** On a bundle's field the workspace has renamed: the name a person gave it,
+   *  while `display_label` stays the bundle's. Show THIS. */
+  effective_label?: string | null;
+  /** On a bundle's field the workspace has changed the choices of: the list it
+   *  has now (`choices` stays the bundle's). An editor starts from THIS. */
+  effective_choices?: string[] | null;
   id: string;
   org_id: string;
   /** The kind this def applies to. When it came from a SCOPE, the server has
@@ -175,6 +181,9 @@ export const fieldsApi = {
     request<PlatformFieldDef>("PATCH", `/orgs/${slug}/field-defs/${id}`, body),
   deleteFieldDef: (slug: string, id: string) =>
     request<void>("DELETE", `/orgs/${slug}/field-defs/${id}`),
+  /** Put a deleted field back as it was (the def held at the moment of deleting). */
+  restoreFieldDef: (slug: string, field: PlatformFieldDef) =>
+    request<PlatformFieldDef>("POST", `/orgs/${slug}/field-defs/restore`, field),
   /** What changing a field's type would do to the values it holds. */
   retypePreview: (slug: string, id: string, to: string) =>
     request<{ from: string; to: string; checked: number; complete: boolean; wontFit: number; examples: Array<{ id: string; title: string; value: unknown }>; drops: string[] }>(

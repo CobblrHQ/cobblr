@@ -455,10 +455,11 @@ jobsRouter.post(
     if (!(await requireCapability(req, res, "digifab:operate"))) return;
     const ctx = tenantContext(req);
     const db = tenantDb(req);
-    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run", "make_ordinal"]).where("id", "=", req.params.id!).executeTakeFirst();
+    const job = await db.selectFrom("digifab_jobs").select(["id", "status", "target_pool", "cnc_setup", "cnc_usage_recorded_at", "embroidery_run", "make_ordinal", "laser_layout"]).where("id", "=", req.params.id!).executeTakeFirst();
     if (!job) return void res.status(404).json({ error: { code: "not_found", message: "no such job" } });
     if (job.make_ordinal != null) return void res.status(409).json({ error: { code: "batch_approval_required", message: "Use the batch card for this print. To print another batch, prepare it in Makes." } });
     if (job.embroidery_run) return void res.status(409).json({ error: { code: "embroidery_station_required", message: "Prepare a new embroidery run or record this run at its embroidery station." } });
+    if (job.laser_layout) return void res.status(409).json({ error: { code: "laser_replacement_required", message: "Prepare a new laser batch on available material. This sheet's layout cannot be retried." } });
     if (job.status !== "failed" && job.status !== "cancelled") {
       return void res.status(409).json({ error: { code: "not_retryable", message: "only a failed or cancelled job can be retried" } });
     }

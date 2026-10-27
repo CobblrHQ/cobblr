@@ -29,6 +29,7 @@ export const ROUTE_CHUNKS: ReadonlyArray<readonly [string, Loader]> = [
   ["/tracking", () => import("@cobblr/tracking/ui")],
   ["/instances", () => import("../pages/InstancePage")],
   ["/machines", () => import("../pages/MachinesPage")],
+  ["/lent-out", () => import("../pages/LentOutPage")],
   ["/assets", () => import("../pages/AssetsPage")],
   ["/records", () => import("../pages/RecordsPage")],
   ["/purchases", () => import("../pages/PurchasesPage")],

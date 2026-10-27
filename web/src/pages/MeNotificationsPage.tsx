@@ -75,7 +75,11 @@ export function MeNotificationsPage() {
     onError: (e: unknown) => toast.error(`Couldn't clear them: ${e instanceof Error ? e.message : String(e)}`),
   });
   const markAll = useMutation({
-    mutationFn: () => api.meMarkAllNotificationsRead(),
+    mutationFn: async () => {
+      if (!orgFilter) return api.meMarkAllNotificationsRead();
+      const { marked } = await api.markAllNotificationsRead(orgFilter);
+      return { count: marked };
+    },
     onSuccess: ({ count }) => {
       toast.success(`Marked ${count} read`);
       void qc.invalidateQueries({ queryKey: notificationKeys.all() });
@@ -95,6 +99,10 @@ export function MeNotificationsPage() {
     // The same decision the bell makes, so one row cannot behave two ways.
     const act = notificationAction(n);
     if (!act.goesSomewhere) return;
+    if (act.documentPath) {
+      window.location.assign(act.documentPath);
+      return;
+    }
     if (act.switchTo && setActiveSlug(act.switchTo, act.path)) return;
     if (act.path) navigate(act.path);
     else if (act.external) window.open(act.external, "_blank", "noopener");

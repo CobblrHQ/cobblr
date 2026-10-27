@@ -594,7 +594,10 @@ async function updateFieldDefNow(
   // single chokepoint: every client PATCHes through here, so none of them can
   // clobber a bundle field.
   let routedChoices = false;
-  if ((def.bundle_id && (patch.choices !== undefined || patch.learns !== undefined)) || patch.private !== undefined) {
+  // A label is the same: a person's name for a shipped field is theirs, and an
+  // update that re-pushes the bundle's row must not put the bundle's back.
+  const routesLabel = !!def.bundle_id && patch.display_label !== undefined;
+  if ((def.bundle_id && (patch.choices !== undefined || patch.learns !== undefined)) || patch.private !== undefined || routesLabel) {
     const existing = await meta
       .selectFrom("native_field_overrides")
       .selectAll()
@@ -616,20 +619,28 @@ async function updateFieldDefNow(
       else delete blob.private;
     }
     const blobSql = sql`${JSON.stringify(blob)}::jsonb` as unknown as FieldOverrideBlob;
+    // Naming the field what the bundle names it clears the person's name, so
+    // the bundle's later rewording reaches them.
+    const overrideLabel = routesLabel ? (patch.display_label === def.display_label ? null : (patch.display_label ?? null)) : (existing?.display_label ?? null);
+    // The row carries a place too, and the form takes any place on it as the
+    // person's own: a row born from a choice or a label keeps the field where
+    // the bundle put it (it once read 0, and the field jumped to the top).
+    const keptPosition = existing?.position ?? def.position;
     await meta
       .insertInto("native_field_overrides")
       .values({
         org_id: orgId,
         entity_kind: def.entity_kind,
         name: def.name,
-        display_label: existing?.display_label ?? null,
+        display_label: overrideLabel,
         hidden: existing?.hidden ?? false,
-        position: existing?.position ?? 0,
+        position: keptPosition,
         overrides: blobSql,
         bundle_id: null,
       })
       .onConflict((c) =>
         c.columns(["org_id", "entity_kind", "name"]).doUpdateSet({
+          display_label: overrideLabel,
           overrides: blobSql,
           bundle_id: null,
           updated_at: new Date(),
@@ -639,6 +650,7 @@ async function updateFieldDefNow(
     if (def.bundle_id) {
       delete updates.choices;
       delete updates.learns;
+      delete updates.display_label;
     }
     routedChoices = true;
   }
@@ -667,7 +679,7 @@ async function updateFieldDefNow(
   });
   clearComputedDefsCache();
   return routedChoices
-    ? { ok: true, def: updated, effectiveChoices: patch.choices ?? def.choices }
+    ? { ok: true, def: routesLabel ? { ...updated, display_label: patch.display_label ?? updated.display_label } : updated, effectiveChoices: patch.choices ?? def.choices }
     : { ok: true, def: updated };
 }
 
@@ -694,6 +706,107 @@ async function deleteFieldDefNow(orgId: string, id: string): Promise<DeleteField
   });
   clearComputedDefsCache();
   return { ok: true, def: deleted };
+}
+
+/** A deleted field as it was, to put back. Only a field a person made comes
+ *  back this way; a bundle's or a module's belongs to them. */
+export const FieldDefSnapshot = z.object({
+  id: z.string().uuid(),
+  entity_kind: z.string().min(1),
+  name: z.string().regex(FIELD_KEY_PATTERN),
+  display_label: z.string().min(1),
+  type: z.string().min(1),
+  required: z.boolean().optional(),
+  position: z.number().int().optional(),
+  choices: z.array(z.string()).nullable().optional(),
+  renderer: z.string().nullable().optional(),
+  unit: z.string().nullable().optional(),
+  template: z.string().nullable().optional(),
+  help: z.string().nullable().optional(),
+  section_id: z.string().uuid().nullable().optional(),
+  ref_kind: z.string().nullable().optional(),
+  decode_role: z.string().nullable().optional(),
+  field_role: z.string().nullable().optional(),
+  fact_scope: z.string().nullable().optional(),
+  applies_to: z.unknown().optional(),
+  learns: z.boolean().nullable().optional(),
+  aggregate: z.enum(["sum", "per_unit", "none"]).nullable().optional(),
+});
+
+export type FieldDefSnapshotInput = z.infer<typeof FieldDefSnapshot>;
+
+/** A field row as the snapshot that restores it. */
+export function snapshotOf(def: FieldDefRow): FieldDefSnapshotInput {
+  return {
+    id: def.id,
+    entity_kind: def.entity_kind,
+    name: def.name,
+    display_label: def.display_label,
+    type: def.type,
+    required: def.required,
+    position: def.position,
+    choices: def.choices,
+    renderer: def.renderer,
+    unit: def.unit,
+    template: def.template,
+    help: def.help,
+    section_id: def.section_id,
+    ref_kind: def.ref_kind,
+    decode_role: def.decode_role,
+    field_role: def.field_role,
+    fact_scope: def.fact_scope,
+    applies_to: def.applies_to ?? null,
+    learns: def.learns,
+    aggregate: def.aggregate,
+  };
+}
+
+export type RestoreFieldDefResult =
+  | { ok: true; def: FieldDefRow }
+  | { ok: false; code: "already_there"; message: string };
+
+/** Put a deleted field back exactly as it was: the same id, key, label,
+ *  choices, place and meaning, so the values still on the records show again
+ *  under what the person had set up. */
+async function restoreFieldDefNow(orgId: string, snap: FieldDefSnapshotInput): Promise<RestoreFieldDefResult> {
+  try {
+    const row = await meta
+      .insertInto("module_field_defs")
+      .values({
+        id: snap.id,
+        org_id: orgId,
+        entity_kind: snap.entity_kind,
+        name: snap.name,
+        display_label: snap.display_label,
+        type: snap.type as never,
+        required: snap.required ?? false,
+        position: snap.position ?? 0,
+        bundle_id: null,
+        source_module: null,
+        choices: snap.choices ? JSON.stringify(snap.choices) : null,
+        renderer: snap.renderer ?? null,
+        unit: snap.unit ?? null,
+        template: snap.template ?? null,
+        help: snap.help ?? null,
+        section_id: snap.section_id ?? null,
+        ref_kind: snap.ref_kind ?? null,
+        decode_role: snap.decode_role ?? null,
+        field_role: snap.field_role ?? null,
+        fact_scope: snap.fact_scope ?? null,
+        applies_to: snap.applies_to == null ? null : (JSON.stringify(snap.applies_to) as never),
+        learns: snap.learns ?? null,
+        aggregate: snap.aggregate ?? null,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await activity.log({ orgId, action: "field_def_restored", ref: { module: null, entityType: "field_def", entityId: row.id } });
+    clearComputedDefsCache();
+    return { ok: true, def: row };
+  } catch (err) {
+    // unique (org_id, entity_kind, name), or the id: the field is already there.
+    if ((err as { code?: string }).code === "23505") return { ok: false, code: "already_there", message: `"${snap.display_label}" is already on this kind of record.` };
+    throw err;
+  }
 }
 
 export interface RetypePreview {
@@ -845,6 +958,14 @@ export async function createFieldDef(...args: Parameters<typeof createFieldDefNo
 export async function updateFieldDef(...args: Parameters<typeof updateFieldDefNow>): ReturnType<typeof updateFieldDefNow> {
   try {
     return await updateFieldDefNow(...args);
+  } finally {
+    forgetFieldDefs(args[0]);
+  }
+}
+
+export async function restoreFieldDef(...args: Parameters<typeof restoreFieldDefNow>): ReturnType<typeof restoreFieldDefNow> {
+  try {
+    return await restoreFieldDefNow(...args);
   } finally {
     forgetFieldDefs(args[0]);
   }

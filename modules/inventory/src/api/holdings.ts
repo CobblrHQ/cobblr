@@ -18,7 +18,7 @@ import { heldInLines } from "@cobblr/platform-contract";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { sql, type Kysely } from "kysely";
-import { platform } from "@cobblr/platform-contract";
+import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { coerceMetadata } from "@cobblr/platform-contract/entity-metadata";
 import {
   HOLDING_IDENTITY_FIELDS,
@@ -33,6 +33,7 @@ import { expiryFor, putLots, takeLots, addBatch, servedLots, type Batch } from "
 import { withBatches } from "./action-handlers.js";
 import { recordConsumption } from "./stock-ledger.js";
 import { asyncHandler, badBody, requireCapability } from "./util.js";
+import { refuseIfLent } from "@cobblr/platform-contract/action-gate";
 
 /** One row under a card: the stock of this thing in one place. */
 export interface HoldingRow {
@@ -238,6 +239,31 @@ export async function liftHoldingsToCards<T extends { id: string }>(
 /** The card a record belongs to (itself, when it is not a holding). */
 export async function cardIdOf(c: HoldingsCtx, id: string): Promise<string> {
   return (await cardOfHoldings(c, [id])).get(id) ?? id;
+}
+
+/** Resolve a source without guessing between stocked places. A retry follows
+ * its ledger entry even if the first attempt emptied that holding. */
+export async function stockedHoldingFor(orgId: string, partId: string, sourceKind?: string, sourceId?: string, restoreSource = false): Promise<string> {
+  const c = await holdingsCtxForPart(orgId, null, partId);
+  if (!c) throw new ActionRefusal("This item was deleted, so its stock could not be adjusted.");
+  const cardId = await cardIdOf(c, partId);
+  const ids = [cardId, ...((await holdingsOfCards(c, [cardId])).get(cardId) ?? [])];
+  if (sourceKind && sourceId) {
+    const prior = await c.db.selectFrom("inventory_consumption").select(["part_id", sql<string>`sum(delta::numeric)`.as("net")])
+      .where("part_id", "in", ids).where("source_kind", "=", sourceKind).where("source_id", "=", sourceId)
+      .groupBy("part_id").execute();
+    const drawn = prior.filter(row => Number(row.net) < 0);
+    if (drawn.length === 1) return drawn[0]!.part_id;
+    if (restoreSource) {
+      if (!prior.length) throw new ActionRefusal("The original stock movement could not be confirmed. Check the returned units and adjust their stock manually.");
+      if (!drawn.length) return prior[0]!.part_id;
+      throw new ActionRefusal("The original stock movement spans several places. Check their counts before undoing this return.");
+    }
+  }
+  const stocked = await c.db.selectFrom("inventory_parts").select("id")
+    .where("id", "in", ids).where("instance", "=", c.instance).where("qty", ">", "0").execute();
+  if (stocked.length > 1) throw new ActionRefusal("Stock is kept in more than one place. Check which place supplied the return; its units have not been removed from stock.");
+  return stocked[0]?.id ?? partId;
 }
 
 /** Write a card's identity to its holdings (or, from a holding, to its card and
@@ -842,6 +868,7 @@ holdingsRouter.post(
     if (!(await requireCapability(req, res, "inventory:transfer-stock"))) return;
     const parsed = Transfer.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
+    if (await refuseIfLent(req, res, "inventory:transfer-stock", [{ kind: "inventory:part", id: req.params.id! }])) return;
     const out = await transferStock(holdingsCtx(req), req.params.id!, parsed.data);
     if (isRefusal(out)) {
       res.status(out.status).json({ error: out.error });
@@ -861,6 +888,7 @@ holdingsRouter.post(
     if (!(await requireCapability(req, res, "inventory:move-all-stock"))) return;
     const parsed = MoveAll.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
+    if (await refuseIfLent(req, res, "inventory:move-all-stock", [{ kind: "inventory:part", id: req.params.id! }])) return;
     const out = await moveAllTo(holdingsCtx(req), req.params.id!, parsed.data);
     if (isRefusal(out)) {
       res.status(out.status).json({ error: out.error });

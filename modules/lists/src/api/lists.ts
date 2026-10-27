@@ -193,7 +193,7 @@ listsRouter.get(
       const all = [...effects, ...own];
       annotated.push({ ...it, on_check: all, will_date: await willDate(ctx.org.id, { kind: ref.kind, id: ref.id }, all, sessionUser(req)?.id ?? null) });
     }
-    res.json({ ...list, items: annotated });
+    res.json({ ...list, items: annotated.map(it => ({ ...it, claimed_by_me: !!it.claimed_by && it.claimed_by === sessionUser(req)?.id })) });
   }),
 );
 
@@ -334,7 +334,7 @@ listsRouter.get(
     if (!requireRole(req, res, "member")) return;
     const row = await tenantDb(req).selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
     if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
-    res.json(row);
+    res.json({ ...row, claimed_by_me: !!row.claimed_by && row.claimed_by === sessionUser(req)?.id });
   }),
 );
 
@@ -351,7 +351,14 @@ listsRouter.patch(
     // The row as it was: the log says what this edit changed (#4517), and the
     // amount the line already states is what a check-off must not rewrite.
     const before = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
-    const own = parseLineAmount(parsed.data.qty ?? before?.qty);
+    if (!before) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
+    const who = sessionUser(req);
+    const changingClaim = parsed.data.claimed !== undefined && parsed.data.checked !== true;
+    if (parsed.data.claimed === true && parsed.data.checked === true) {
+      return void res.status(400).json({ error: { code: "invalid_body", message: "A bought item cannot also be claimed." } });
+    }
+    if (changingClaim && !who) return void res.status(403).json({ error: { code: "forbidden", message: "Sign in to claim an item." } });
+    const own = parseLineAmount(parsed.data.qty ?? before.qty);
     if (parsed.data.title !== undefined) patch.title = parsed.data.title;
     if (parsed.data.note !== undefined) patch.note = parsed.data.note;
     if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
@@ -376,14 +383,24 @@ listsRouter.patch(
         patch.claimed_at = null;
       }
     }
-    if (parsed.data.claimed !== undefined) {
-      const who = sessionUser(req);
+    if (changingClaim) {
       patch.claimed_by = parsed.data.claimed ? (who?.id ?? null) : null;
       patch.claimed_by_name = parsed.data.claimed ? (who?.display_name || who?.email || null) : null;
       patch.claimed_at = parsed.data.claimed ? new Date() : null;
     }
-    const row = await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst();
-    if (!row) return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
+    let update = db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!);
+    if (changingClaim) {
+      // The ownership check must see the row when it is written, not the earlier read.
+      update = update.where("checked", "=", false);
+      update = parsed.data.claimed
+        ? update.where(eb => eb.or([eb("claimed_by", "is", null), eb("claimed_by", "=", who!.id)]))
+        : update.where("claimed_by", "=", who!.id);
+    }
+    const row = await update.returningAll().executeTakeFirst();
+    if (!row) {
+      if (changingClaim) return void res.status(409).json({ error: { code: "claim_conflict", message: "This item's claim has changed. Refresh the list before trying again." } });
+      return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
+    }
     if (parsed.data.checked !== undefined) {
       // If this line was seeded from another entity (carries a source_ref) and
       // is being CHECKED (bought), surface that entity's id under the wire
@@ -476,7 +493,7 @@ listsRouter.patch(
       diff: parsed.data as Record<string, unknown>,
       before,
     });
-    res.json(row);
+    res.json({ ...row, claimed_by_me: !!row.claimed_by && row.claimed_by === sessionUser(req)?.id });
   }),
 );
 

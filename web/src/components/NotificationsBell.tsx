@@ -196,6 +196,10 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     // move you, and it does not close the panel out from under you: nobody
     // reads one notification at a time.
     if (!act.goesSomewhere) return;
+    if (act.documentPath) {
+      window.location.assign(act.documentPath);
+      return;
+    }
     if (act.switchTo && setActiveSlug(act.switchTo, act.path)) return;
     if (act.path) navigate(act.path);
     else if (act.external) window.open(act.external, "_blank", "noopener");
@@ -451,20 +455,24 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
     </>
   );
 
+  const bellSaid =
+    count === 0
+      ? "Notifications"
+      : otherOnly
+        ? `${count} unread notification${count === 1 ? "" : "s"} in other workspaces`
+        : other > 0
+          ? `Notifications: ${here} unread here, ${other} in other workspaces`
+          : `${here} unread notification${here === 1 ? "" : "s"}`;
+
   return (
     <div className="relative" ref={wrapperRef}>
       <button
         onClick={() => setOpen((o) => !o)}
         className={asRow ? "relative " + "w-full flex items-center gap-2.5 px-3 py-1.5 rounded text-[13px] text-muted dark:text-slate-400 hover:text-accent hover:bg-subtle/60 dark:hover:bg-slate-800/40 transition" : "text-faint dark:text-slate-500 hover:text-content dark:hover:text-mortar-100 transition p-[6px] relative"}
-        title={
-          count === 0
-            ? "Notifications"
-            : otherOnly
-              ? `${count} unread notification${count === 1 ? "" : "s"} in other workspaces`
-              : other > 0
-                ? `${here} unread here · ${other} in other workspaces`
-                : `${here} unread notification${here === 1 ? "" : "s"}`
-        }
+        title={bellSaid}
+        // The whole sentence is the button's name: the badge's number alone
+        // read "1 unread, button" and never said what was unread (#8643).
+        aria-label={asRow ? undefined : bellSaid}
       >
         {/* Always a normal bell — a struck-through (BellOff) icon reads as
             "notifications muted", which is wrong; zero unread is just an empty
@@ -479,7 +487,7 @@ export function NotificationsBell({ panelOnly = false, asRow = false }: { panelO
               className={`absolute -top-2 -right-2.5 text-[9px] font-bold rounded-full min-w-[14px] h-[14px] flex items-center justify-center px-1 leading-none ${
                 otherOnly ? "bg-sky-600 text-white" : "bg-ember-500 text-mortar-50"
               }`}
-              aria-label={otherOnly ? `${count} unread in other workspaces` : `${count} unread`}
+              aria-hidden="true"
             >
               {count > 99 ? "99+" : count}
             </span>

@@ -161,7 +161,7 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
 
 function LendForm({ people, onCancel, onSave }: { people: Array<{ id: string; name: string; left?: boolean }>; onCancel: () => void; onSave: (args: Record<string, unknown>) => Promise<void> }) {
   const [holder, setHolder] = useState("");
-  const [reason, setReason] = useState<string>("repair");
+  const [reason, setReason] = useState<string>("");
   const [since, setSince] = useState<string>(() => dayHere(new Date()));
   const [due, setDue] = useState("");
   const [note, setNote] = useState("");
@@ -211,7 +211,7 @@ function LendForm({ people, onCancel, onSave }: { people: Array<{ id: string; na
         </label>
         <label className="block space-y-1">
           <span className="text-sm font-medium text-content">Due back</span>
-          <input type="date" data-testid="lend-due" className={input} value={due} onChange={(e) => setDue(e.target.value)} />
+          <input type="date" data-testid="lend-due" className={input} value={due} min={since || undefined} onChange={(e) => setDue(e.target.value)} />
         </label>
       </div>
       <label className="block space-y-1">

@@ -48,7 +48,10 @@ const tool: WorkspaceTool = {
     // (#6335), more than a turn has room for. A wire-only action is never
     // offered (offerableToAssistant).
     const actionId = typeof args.action_id === "string" ? args.action_id.trim() : "";
-    const takesAKind = (a: (typeof items)[number]) => !!a.args_schema && "entity_kind" in a.args_schema;
+    // Any argument that names a kind: entity_kind, and add-wire's source_kind,
+    // whose absence under kind=inventory:part left "when stock hits zero,
+    // email me" answered with directions to Wires (#8331).
+    const takesAKind = (a: (typeof items)[number]) => Object.keys(a.args_schema ?? {}).some((k) => k === "kind" || k.endsWith("_kind"));
     const picked = items.filter(offerableToAssistant)
       .filter((a) => !actionId || a.id === actionId)
       .filter((a) => !kind || (a.scope === "workspace" ? takesAKind(a) : (a.matched_kinds ?? []).includes(kind)));

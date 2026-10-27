@@ -332,6 +332,7 @@ function AddEntryModal({
         };
         throw new Error(err.error?.message ?? `HTTP ${res.status}`);
       }
+      await res.json();
       noteWorkspaceWrite(`/api/v1/orgs/${orgSlug}/modules/core-maintenance/entries`, res);
       toast.success("Maintenance entry added.");
       void qc.invalidateQueries({

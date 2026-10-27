@@ -127,6 +127,9 @@ async function sendThing(orgId: string, userId: string, kind: string, id: string
   for (const d of defs) {
     const value = d.native ? f[d.name] : bag[d.name] ?? f[d.name];
     if (value === null || value === undefined || value === "" || d.type === "computed") continue;
+    // An unticked box says nothing a new record does not already: a part's
+    // Lifetime warranty, false on every part, was offered to every book (#8710).
+    if (d.type === "boolean" && value === false) continue;
     if (hidden.has(d.name)) continue;
     if (d.type === "secret" && !includeSecrets) { omitted.push(`${d.display_label}: secret not included`); continue; }
     if (d.type === "secret") throw new SendError("Secret fields need the encrypted reveal service before they can travel.");

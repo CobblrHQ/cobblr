@@ -10,9 +10,12 @@
 // record IS, and the maker's name is not what it is:
 //   • a banner or a graphic is never a product photo (shape, or what it says
 //     it is: a logo, an infographic, a company's services page);
-//   • the record's head noun ("printer", "spool", "drill"), or its model
-//     number when the name is only a maker and a model, has to be in what the
-//     picture is called;
+//   • the record's model number, when its name has one, has to be in what the
+//     picture is called, and otherwise its head noun ("printer", "spool",
+//     "drill"): a new "Prusa MK4 3D printer" was given a Prusa XL, because any
+//     printer said "printer" (#8651);
+//   • a picture comparing several, or of a part made for the thing ("Hotend
+//     kit for Prusa MK4/XL"), is not a picture of it;
 //   • the brand's words count for nothing either way.
 // Not sure means no: a record with no picture is better than one with a wrong
 // picture, which reads as the platform saying something false about it.
@@ -37,6 +40,8 @@ const DESCRIPTORS = new Set(["2d", "3d", "4k", "8k", "4g", "5g", "hd", "uhd"]);
 /** A quantity or a size: "100g", "17in", "2", "1.75mm". Says nothing about what. */
 const MEASURE = /^\d+([.,]\d+)?(mm|cm|m|in|inch|ft|g|kg|mg|ml|l|oz|lb|lbs|w|v|mah|pcs|pc|pack|ct)?$/;
 /** What a picture says it is when it is not a photo of a product. */
+/** A picture of several things set side by side. */
+const COMPARISON = /\b(vs|versus|compared|comparison)\b/;
 const GRAPHIC = /\b(banners?|headers?|logos?|infographics?|brochures?|flyers?|collages?|clip ?art|illustrations?|vectors?|icons?|wallpapers?|templates?|diagrams?|charts?|screenshots?|services|solutions|manufacturing|fabrication|capabilities|company|industries|ai[- ]generated|renders?|mock-?ups?)\b/;
 
 const tokens = (text: string): string[] => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -104,6 +109,13 @@ function sameWord(want: string, have: string): boolean {
   return want.length >= 6 && editDistanceAtMostOne(want, have);
 }
 
+/** "… for Prusa MK4": the words after a "for" name the record, so the picture
+ *  is of something made to go with it. */
+function madeFor(title: string[], item: ThingToPicture, head: string | null, models: string[]): boolean {
+  const own = new Set([...tokens(item.brand ?? ""), ...models, ...(head ? [head] : [])]);
+  return title.some((w, i) => w === "for" && title.slice(i + 1, i + 4).some((t) => own.has(t) || models.some((m) => t.includes(m))));
+}
+
 export function showsTheThing(r: DdgImageResult, item: ThingToPicture): PictureVerdict {
   if (r.width && r.height) {
     const ar = r.width / r.height;
@@ -114,9 +126,13 @@ export function showsTheThing(r: DdgImageResult, item: ThingToPicture): PictureV
   if (graphic && !tokens(graphic).some((w) => own.has(w))) return { ok: false, reason: `says it is ${graphic}, not the thing` };
 
   const { head, models } = whatItIs(item);
+  const named = tokens(item.name);
+  const title = tokens(r.title ?? "");
+  if (title.some((w) => COMPARISON.test(w)) && !named.some((w) => COMPARISON.test(w))) return { ok: false, reason: "compares several, not a photo of one" };
+  if (!named.includes("for") && madeFor(title, item, head, models)) return { ok: false, reason: "a part made for it, not it" };
   const words = pictureWords(r);
   const joined = words.join(" ");
-  if (models.some((m) => joined.includes(m))) return { ok: true };
+  if (models.length) return models.some((m) => joined.includes(m)) ? { ok: true } : { ok: false, reason: `never says ${models[0]}` };
   if (head && words.some((w) => sameWord(head, w))) return { ok: true };
   if (!head && !models.length) return { ok: false, reason: "the name says only who made it, not what it is" };
   return { ok: false, reason: `never says ${head ?? models[0]}` };

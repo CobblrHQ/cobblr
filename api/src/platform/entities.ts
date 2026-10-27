@@ -25,7 +25,7 @@ import { secretWriter, secretReadContextFor } from "./secret-fields.js";
 import { runSecretPresence } from "./secret-presence.js";
 import { isStoredSecret, isMaskedSecret, maskSecretValues, omitSecretValues, type SecretReadContext } from "@cobblr/platform-contract/secret-field";
 import { noteResolverFailure } from "./resolver-failures.js";
-import { sql } from "kysely";
+import { sql, type Kysely } from "kysely";
 import { perReadRequest, perRequest } from "../lib/request-context.js";
 import type {
   EntityKindRecord,
@@ -39,7 +39,7 @@ import type {
   ResolvedEntity,
 } from "@cobblr/platform-contract";
 import { walkListPages } from "./entity-list-walk.js";
-import { platform, TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, isTextWhereOp, type EntityViewer, type FilterPredicate, type ListResolverOptions } from "@cobblr/platform-contract";
+import { platform, viewQuery, SYSTEM_VIEWER, TRAIT_PRESETS, stockDisclosureFromConfig, traitAxisValue, isTextWhereOp, type EntityViewer, type FilterPredicate, type ListResolverOptions } from "@cobblr/platform-contract";
 import { meta } from "../db/meta.js";
 import { instanceKindName } from "./instance-kind.js";
 import { INSTANCE_ITEM_DETAIL, resolveDetailPath } from "@cobblr/platform-contract/instance-detail";
@@ -759,12 +759,61 @@ export async function canResolve(orgId: string, kind: string): Promise<boolean> 
   return !!(resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind)));
 }
 
+export class GuestScopeError extends Error {
+  readonly status = 503;
+  readonly code = "guest_scope_unavailable";
+  constructor() { super("The shared records could not be checked. Try again in a moment."); }
+  toJSON() { return { error: { code: this.code, message: this.message } }; }
+}
+
+async function guestRecordIds(orgId: string, kind: string, viewer?: EntityViewer): Promise<Set<string> | null> {
+  if (viewer?.role !== "guest" || viewer.system) return null;
+  return perRequest(`guest-records:${orgId}:${kind}:${viewer.userId ?? ""}`, async () => {
+    const org = await meta.selectFrom("orgs").select("portal_config").where("id", "=", orgId).executeTakeFirst();
+    const pinned = org?.portal_config?.pinned_views ?? [];
+    const ids = new Set<string>();
+    if (!pinned.length) return ids;
+    const { getTenantDb } = await import("../db/tenant.js");
+    const db = await getTenantDb(orgId) as unknown as Kysely<{ core_views_views: { id: string; entity_kind: string; owner_user_id: string | null; config: Record<string, unknown> } }>;
+    const views = await db.selectFrom("core_views_views").select("config")
+      .where("id", "in", pinned).where("entity_kind", "=", kind)
+      // A workspace view, the one kind a guest can open (core-views visibleTo): a private one shares nothing.
+      .where("owner_user_id", "is", null).execute();
+    for (const view of views) {
+      // SYSTEM-READ: evaluate the owner's selection, including hidden filter fields; only ids leave this scope.
+      const selected = await walkListPages((limit, offset) => listUnscoped(orgId, kind, { ...viewQuery(view.config), limit, offset }, SYSTEM_VIEWER));
+      if (!selected.complete || selected.failed || selected.unapplied?.length) throw new GuestScopeError();
+      for (const row of selected.items) ids.add(row.id);
+    }
+    return ids;
+  });
+}
+
+export async function guestMayReadRecord(orgId: string, kind: string, id: string): Promise<boolean> {
+  return (await guestRecordIds(orgId, kind, { role: "guest" }))!.has(id);
+}
+
+export async function list(orgId: string, kind: string, query: EntityListQuery = {}, viewer?: EntityViewer): Promise<EntityListResult> {
+  const allowed = await guestRecordIds(orgId, kind, viewer);
+  if (!allowed) return listUnscoped(orgId, kind, query, viewer);
+  if (!allowed.size) return { items: [], total: 0 };
+  // Aggregates must never be computed over rows outside the guest's selection.
+  if (normalizeGrouping(query.group_by).length) throw new GuestScopeError();
+  const all = await walkListPages((limit, offset) => listUnscoped(orgId, kind, { ...query, limit, offset }, viewer));
+  if (!all.complete || all.failed) throw new GuestScopeError();
+  const rows = all.items.filter(row => allowed.has(row.id));
+  const offset = query.offset ?? 0;
+  return { items: rows.slice(offset, offset + (query.limit ?? 50)), total: rows.length, ...(all.unapplied?.length ? { unapplied: all.unapplied } : {}) };
+}
+
 export async function lookup(
   orgId: string,
   kind: string,
   id: string,
   viewer?: EntityViewer,
 ): Promise<ResolvedEntity | null> {
+  const allowed = await guestRecordIds(orgId, kind, viewer);
+  if (allowed && !allowed.has(id)) return null;
   const resolver = resolvers.get(kind) ?? (await instanceFallbackEntityResolver(orgId, kind));
   if (!resolver) return null;
   const publicRead = viewer?.publicRead === true;
@@ -856,6 +905,13 @@ export async function lookupMany(
   refs: ReadonlyArray<{ kind: string; id: string }>,
   viewer?: EntityViewer,
 ): Promise<ResolvedEntity[]> {
+  if (viewer?.role === "guest" && !viewer.system) {
+    const permitted = [];
+    for (const ref of refs) {
+      if ((await guestRecordIds(orgId, ref.kind, viewer))?.has(ref.id)) permitted.push(ref);
+    }
+    refs = permitted;
+  }
   if (refs.length === 0) return [];
   const secretContext = !viewer?.system && viewer?.userId ? await secretReadContextFor(orgId, viewer.userId, viewer.role ?? "member") : undefined;
   // Group refs by kind so each kind's resolver gets its own fan-out.
@@ -1046,7 +1102,7 @@ export async function listable(orgId: string, kind: string): Promise<boolean> {
  *  resolver is registered for the kind. Otherwise calls the
  *  resolver and projects each item through the kind's
  *  exposableFields whitelist — same trust boundary as lookup(). */
-export async function list(
+async function listUnscoped(
   orgId: string,
   kind: string,
   query: EntityListQuery = {},
@@ -1183,7 +1239,13 @@ export async function list(
     // reader can see only because a field they may not read matched would
     // tell them what that field says. Those rows are left out.
     const own = await ownWhitelist(orgId, kind, whitelist, viewer);
-    const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, own, fieldReadScopes, readScope, publicRead)) : result.items;
+    // "Hidden" here is what the person may not see on the record itself: its
+    // own table's fields, less what a read scope keeps from them. A field only
+    // other modules may not read is not hidden from the person searching: a
+    // part's serial, shown on its page, made the search for it drop the part
+    // once the part said its serial (#8710). The public keep the narrow set.
+    const judged = publicRead ? own : await ownWhitelist(orgId, kind, whitelist, { ...viewer, export: true, assistant: false });
+    const rows = query.q && fieldReadScopes ? result.items.filter((r) => !matchedOnlyWhatIsHidden(r, query.q!, judged, fieldReadScopes, readScope, publicRead)) : result.items;
     items = await Promise.all(
       rows.map(async (r) =>
         applyServedTitle(await applyMemberFields(orgId, await applyRelationFields(

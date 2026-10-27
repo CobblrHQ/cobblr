@@ -24,6 +24,7 @@ import { isUndeliverableAddress } from "../platform/usernames.js";
 import { attemptPasswordLogin, clearLoginAttempts, recordFailedLogin } from "../auth/password-login.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
 import { provisionWholeOrRemove, WorkspaceNotProvisioned, WORKSPACE_NOT_CREATED_MESSAGE } from "../platform/provision-workspace.js";
+import type { TemplateSet } from "../db/workspace-template.js";
 import { slugifyBase } from "../lib/slugify.js";
 import { hashPassword } from "../auth/password.js";
 import { TRIAL_MODE, TRIAL_TTL_DAYS } from "../platform/trial.js";
@@ -233,6 +234,9 @@ interface AuthResponse {
 export async function provisionOrgForUser(
   userId: string,
   orgName: string,
+  // The test pool's workspaces turn every module on, so theirs is copied from
+  // the template that has them all (db/workspace-template.ts).
+  opts: { template?: TemplateSet } = {},
 ): Promise<{ orgId: string; slug: string; dbName: string; provisioned: boolean }> {
   const dbName = tenantDbName();
   const client = await metaPool.connect();
@@ -289,7 +293,7 @@ export async function provisionOrgForUser(
   // at all (platform/provision-workspace.ts): one more try from a clean slate,
   // then the row goes and the caller hears WorkspaceNotProvisioned, instead of
   // a workspace that answers 503 on every page for good.
-  await provisionWholeOrRemove(orgId, orgName, userId);
+  await provisionWholeOrRemove(orgId, orgName, userId, { template: opts.template });
 
   try {
     await activity.log({
