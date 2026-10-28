@@ -45,6 +45,9 @@ registerRemoveComponentAction();
 
 registerAddComponentAction();
 import { registerSetSubAssemblySourceAction } from "./set-sub-assembly-source-action.js";
+import { registerSetLineRecoverableAction } from "./set-line-recoverable-action.js";
+
+registerSetLineRecoverableAction();
 
 registerSetSubAssemblySourceAction();
 

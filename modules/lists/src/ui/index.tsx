@@ -221,7 +221,10 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
     mutationFn: ({ id, checked, quantity }: { id: string; checked: boolean; quantity?: number }) => api.toggleItem(id, checked, quantity),
     // Waits for the fresh list, so a line's box does not blink back to the old
     // answer between the save and the read.
-    onSuccess: () => Promise.all([qc.invalidateQueries({ queryKey: ["lists-detail", listId] }), qc.invalidateQueries({ queryKey: ["lists"] })]),
+    onSuccess: (line) => {
+      if (line.already_bought_by) toast.error(`${line.already_bought_by} already bought this`);
+      return Promise.all([qc.invalidateQueries({ queryKey: ["lists-detail", listId] }), qc.invalidateQueries({ queryKey: ["lists"] })]);
+    },
     onError: (e) => toast.error(e instanceof ListsApiError ? e.message : String(e)),
   });
   // A box tapped again before its first tap has saved: what the person last
@@ -424,6 +427,9 @@ function ListDetailModal({ listId, focusItemId, api, orgSlug, onClose }: { listI
                   >
                     <RotateCcw size={10} /> {it.metadata.source_ref.kind.split(":")[0]}
                   </span>
+                )}
+                {it.checked && it.metadata?.bought_by?.name && (
+                  <span className="ml-2 text-[10px] text-muted align-middle">bought by {it.metadata.bought_by.name}</span>
                 )}
                 {it.claimed_by_name && !it.checked && (
                   <span

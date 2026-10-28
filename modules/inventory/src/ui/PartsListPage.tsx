@@ -1,9 +1,10 @@
 import { loanActionRefusal } from "@cobblr/platform-contract/loan";
 import { quantityNumber } from "@cobblr/platform-contract/quantity-number";
+import { readRecordLoan } from "@cobblr/platform-contract/loan";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { SpoolmanModal } from "./SpoolmanModal";
 import { FilamentCatalog } from "./FilamentCatalog";
-import { SelectBox, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan } from "@cobblr/platform-web";
+import { SelectBox, LentChip, LocationChips, LocationPicker, Modal, NewItemMenu, useCloseToOrigin, useRecordActions, useStillAsking, workspaceFetch, editOf, useCan } from "@cobblr/platform-web";
 // Parts list — filterable table. Search, category, location, state,
 // low-stock toggle. Clicking a row opens the part detail page.
 
@@ -804,6 +805,7 @@ export function PartsListPage() {
         )}
           </>
         )}
+        <Link to="/lent-out" className="min-h-11 rounded-md border border-line px-3 py-2 text-sm text-muted hover:text-accent">Lent out</Link>
         {/* Scan into THIS instance — lands the scanned item in the yarn table
             (core-scan is always on). The /scan page reads the target params. */}
         {instance && (
@@ -1344,6 +1346,7 @@ function PartsTable({
                         {p.title ?? p.name}
                       </Link>
                     </EditableCell>
+                    <LentChip metadata={p.metadata} wrap />
                     {p.manufacturer && (
                       <span className="ml-2 text-[11px] text-faint dark:text-slate-500">{p.manufacturer}</span>
                     )}
@@ -1584,6 +1587,7 @@ function PartsTable({
                     {p.title ?? p.name}
                   </Link>
                 </EditableCell>
+                <LentChip metadata={p.metadata} wrap />
                 {p.manufacturer && !hide("manufacturer") && (
                   <span className="ml-2 text-[11px] text-faint dark:text-slate-500">
                     {p.manufacturer}
@@ -1814,50 +1818,59 @@ function PartsTileGrid({ items, basePath }: { items: PartListItem[]; basePath: s
   const units = useUnits();
   return (
     <div className={TILE_GRID}>
-      {items.map((p) => (
-        <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
-          <EntityTile
-            src={p.image_path}
-            suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}
-            color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
-            values={p.metadata as Record<string, unknown> | null}
-            title={p.name}
-            subtitle={p.manufacturer || p.category_name || null}
-            badge={
-              !disclosure.stock ? undefined : isAssorted(p) ? (
-                [assortedQty(p), units.suffix(p.unit)].filter(Boolean).join(" ")
-              ) : p.rollup ? (
-                // Kept in several places: everything held, and where it is short.
-                <span className={p.rollup.low ? "text-ember-600 dark:text-ember-500" : undefined}>
-                  {[fmt(p.rollup.qty), units.suffix(p.unit)].filter(Boolean).join(" ")} · {p.rollup.places} places
-                  {p.rollup.low ? ` · low in ${p.rollup.low_count}` : ""}
-                </span>
-              ) : p.low_stock ? (
-                // On hand against the minimum, an open unit counted: the tile
-                // read "0 / 1" over a skein with 160 m left (#2848).
-                <span className="text-ember-600 dark:text-ember-500">
-                  {fmt(onHandOf(p))} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
-                  {openUnitsLabel(p.open_units, fmt) ? ` · ${openUnitsLabel(p.open_units, fmt)}` : ""}
-                </span>
-              ) : (
-                listStockReading(p.stock) ?? [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
-              )
-            }
-            attention={!disclosure.stock ? false : p.rollup ? p.rollup.low : p.low_stock}
-            // The table's rule, on the tile: a counted thing in one place
-            // steps; an estimate or a thing held in several places does not
-            // (each place steps on its own row). The tile keeps the tap from
-            // opening the item behind it.
-            status={
-              disclosure.stock && !isAssorted(p) && !p.rollup && !listStockReading(p.stock) ? (
-                <span className="flex justify-end">
-                  <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
-                </span>
-              ) : undefined
-            }
-          />
-        </Link>
-      ))}
+      {items.map((p) => {
+        const lent = readRecordLoan(p.metadata);
+        const showCount = disclosure.stock && !isAssorted(p) && !p.rollup && !listStockReading(p.stock);
+        return (
+          <Link key={p.id} to={`${basePath}/parts/${p.id}`} className="block">
+            <EntityTile
+              src={p.image_path}
+              suggestedSrc={suggestedSrcFor(suggestions, p.id, p.image_path)}
+              color={(p.metadata as Record<string, unknown> | null)?.color as string | undefined}
+              values={p.metadata as Record<string, unknown> | null}
+              title={p.name}
+              subtitle={p.manufacturer || p.category_name || null}
+              badge={
+                !disclosure.stock ? undefined : isAssorted(p) ? (
+                  [assortedQty(p), units.suffix(p.unit)].filter(Boolean).join(" ")
+                ) : p.rollup ? (
+                  // Kept in several places: everything held, and where it is short.
+                  <span className={p.rollup.low ? "text-ember-600 dark:text-ember-500" : undefined}>
+                    {[fmt(p.rollup.qty), units.suffix(p.unit)].filter(Boolean).join(" ")} · {p.rollup.places} places
+                    {p.rollup.low ? ` · low in ${p.rollup.low_count}` : ""}
+                  </span>
+                ) : p.low_stock ? (
+                  // On hand against the minimum, an open unit counted: the tile
+                  // read "0 / 1" over a skein with 160 m left (#2848).
+                  <span className="text-ember-600 dark:text-ember-500">
+                    {fmt(onHandOf(p))} / {p.min_qty == null ? "—" : fmt(p.min_qty)}
+                    {openUnitsLabel(p.open_units, fmt) ? ` · ${openUnitsLabel(p.open_units, fmt)}` : ""}
+                  </span>
+                ) : (
+                  listStockReading(p.stock) ?? [fmt(p.qty), units.suffix(p.unit), openUnitsLabel(p.open_units, fmt) ? `+ ${openUnitsLabel(p.open_units, fmt)}` : ""].filter(Boolean).join(" ")
+                )
+              }
+              attention={!disclosure.stock ? false : p.rollup ? p.rollup.low : p.low_stock}
+              // The table's rule, on the tile: a counted thing in one place
+              // steps; an estimate or a thing held in several places does not
+              // (each place steps on its own row). The tile keeps the tap from
+              // opening the item behind it.
+              status={
+                lent || showCount ? (
+                  <>
+                    <LentChip metadata={p.metadata} wrap />
+                    {showCount && (
+                      <span className="flex justify-end">
+                        <QtyStepper partId={p.id} qty={Number(p.qty)} unit={p.unit} label={p.name} size="sm" />
+                      </span>
+                    )}
+                  </>
+                ) : undefined
+              }
+            />
+          </Link>
+        );
+      })}
     </div>
   );
 }

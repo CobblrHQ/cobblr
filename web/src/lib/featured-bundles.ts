@@ -4799,14 +4799,15 @@ export const FEATURED_BUNDLES: FeaturedBundle[] = [
     manifest: {
       id: "cobblr.flagship.wardrobe",
       catalog: "extended",
-      version: "0.1.6",
+      version: "0.1.7",
       name: "Wardrobe",
       description: "Catalog your clothing as its own table (type, colour, season, formality, a photo each) grouped by type. Optional Outfits table for planning looks.",
       author: "Cobblr",
-      released_at: "2026-09-30",
+      released_at: "2026-10-27",
       changelog:
         "The Outfit Planner reads in plain sentences. Earlier: Opens as a catalog of things you own, and stays one: a number typed into one item no longer turns the whole collection into stock tracking with Use one, Used up and a reorder point. Earlier: First release: your wardrobe as its own inventory table (a “New garment” button, only clothing fields, the parts/stock cruft hidden), with a pinned “By type” view + plain-language hints. Turn on Outfits to plan looks by occasion + the date you'll wear them (they land on your calendar); the Outfit Planner app drags garments onto a figure.",
       releases: [
+        { version: "0.1.7", released_at: "2026-10-27", notes: "Saving or deleting a look from an older Outfit Planner explains the conflict and keeps newer saved looks." },
         { version: "0.1.6", released_at: "2026-10-02", notes: "A dropdown says whether a value you type is remembered as a choice for next time; the open ones (a brand, a vendor, a material) offer what you typed before." },
         { version: "0.1.5", released_at: "2026-09-30", notes: "The Outfit Planner reads in plain sentences." },
       ],

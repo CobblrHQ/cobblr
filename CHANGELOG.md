@@ -2,6 +2,14 @@
 
 User-facing changes, newest first. Dates are release dates.
 
+## 2026-10-28
+
+### Features
+- Sales orders are paid by a list of payments (part payment and split cash and card), Home and Sales say what you are owed and who owes it, and a draft order can hold its stock for a customer so it is never sold twice.
+- With no AI connected, Ask Cobb answers what's due this week from the calendar, says where a thing is, and adds stock to a part by name as a card to confirm
+- A station your team shares now asks who's working, and records each change to the person who tapped their name.
+- An item that arrives damaged can be marked from its scan: not added to stock, and shown as arrived damaged where the delivery is checked.
+
 ## 2026-10-27
 
 ### Features
@@ -12,6 +20,8 @@ User-facing changes, newest first. Dates are release dates.
 
 ### Fixes
 - A record saved while its workspace was busy is still matched to its library item (a cartridge to its ROM in RomM) and offered its picture, instead of waiting for the next quiet round.
+- A new member no longer sees other people's email addresses (owners and admins do), members of a newly made workspace can lend and return things, an older workspace's owner is asked once whether to allow it, and the join page promises checkout only where it works. A pinned Knowledge page now shows on a new member's Home as a Read first card until they open or dismiss it.
+- Sales can record a customer's return and its refund (goods back on the shelf, a refund never more than was paid, an exact Undo, and Refund due on a cancelled paid order), a new order starts on the day it was made, a sale's paid day is the same day on its page, History and the export, Home's Inventory tile says what the stock cost, and Sales shows the month at a glance (sold, received, owed, refunded, refund due, by month) with an Export for accountant whose totals add up to it.
 - A tool library's Lend form no longer starts every loan as a repair, refuses a due-back day before the day it was lent, and the Tool Library bundle stops adding Borrower and Due back fields the loan never filled (unused ones are hidden, none deleted). A lent tool now says who has it, and Overdue, in the Machines list, and a new Lent out page lists everything that is out by who has it.
 
 ## 2026-10-26

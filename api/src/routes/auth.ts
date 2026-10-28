@@ -259,10 +259,10 @@ export async function provisionOrgForUser(
           ? new Date(Date.now() + TRIAL_TTL_DAYS * 86_400_000)
           : null;
         const orgRow = await client.query<{ id: string }>(
-          `insert into orgs (name, slug, db_name, trial_expires_at)
-           values ($1, $2, $3, $4)
+          `insert into orgs (name, slug, db_name, trial_expires_at, time_zone)
+           values ($1, $2, $3, $4, (select time_zone from users where id = $5))
            returning id`,
-          [orgName.trim(), slug, dbName, trialExpiresAt],
+          [orgName.trim(), slug, dbName, trialExpiresAt, userId],
         );
         orgId = orgRow.rows[0]!.id;
         // Append the new workspace at the BOTTOM of the user's switcher

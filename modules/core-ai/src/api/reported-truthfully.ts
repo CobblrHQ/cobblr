@@ -92,3 +92,20 @@ export function claimedAfterHandBack(text: string): string | null {
     "Your answer says it happened. Say what the result asked for instead (usually a question for the person), and do not say anything was done."
   );
 }
+
+// A turn whose every write was handed back, and that changed nothing, ends on
+// words that say so. "Lend the cordless drill to Sam until Friday" was refused
+// four rounds running and the turn ended "Lend cordless drill to Sam until
+// Friday": the request said back, which reads as done. The next turn's model
+// read it so, and told the person "Sam has the cordless drill" (#8738). No
+// claim word, so claimedAfterHandBack let it through. When nothing ran,
+// "Nothing was changed." is always true; it is added unless the answer says
+// so already, or asks the person something.
+const SAYS_NOT_DONE = /\b(nothing (?:was|has been|is) changed|didn['’]t|did not|couldn['’]t|could not|can['’]t|cannot|haven['’]t|have not|hasn['’]t|wasn['’]t|was not|not (?:been|done|made))\b/i;
+
+export function endsHonestly(text: string, handedBack: boolean, appliedCount: number): string {
+  if (!handedBack || appliedCount > 0) return text;
+  const said = text.trim();
+  if (!said || said.endsWith("?") || SAYS_NOT_DONE.test(said)) return text;
+  return `${said.replace(/[.!]*$/, ".")} Nothing was changed.`;
+}

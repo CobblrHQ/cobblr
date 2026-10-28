@@ -256,7 +256,11 @@ export function Modal({ open, onClose, title, subtitle, children, size = "md", d
             </button>
           </div>
         )}
-        <div className={(flush ? "" : "p-5 ") + "flex-1 min-h-0 overflow-y-auto"}>{children}</div>
+        {/* Positioned, so it holds what is placed absolutely inside it (an
+            sr-only file input): left to the overlay, such a piece below the
+            sheet made the fixed overlay itself scroll, and a control scrolled
+            into view carried the title under the status bar (#6881). */}
+        <div className={(flush ? "" : "p-5 ") + "relative flex-1 min-h-0 overflow-y-auto"}>{children}</div>
         {footer && (
           <div className="shrink-0 border-t border-line dark:border-slate-700 px-5 py-2.5 bg-surface dark:bg-slate-900">
             {footer}

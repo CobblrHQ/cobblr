@@ -56,7 +56,7 @@ export function ActionDescription({ description, children, listed = false }: { d
     >
       {cloneElement(children, { "aria-describedby": open && !listed ? id : undefined, title: words })}
       {listed && <span className="min-w-0 text-xs text-muted dark:text-slate-400">{words}</span>}
-      {open && !listed && rect && createPortal(<PopoverLayer id={id} role="tooltip" style={{ left: rect.left, top: rect.bottom + 6, width: 256 }} className="z-[80] max-w-[calc(100vw-2rem)] rounded-md border border-line bg-surface p-2 text-xs normal-case text-content shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-mortar-200">{words}</PopoverLayer>, document.body)}
+      {open && !listed && rect && createPortal(<PopoverLayer id={id} role="tooltip" flipAbove={rect.top} style={{ left: rect.left, top: rect.bottom + 6, width: 256 }} className="pointer-events-none z-[80] max-w-[calc(100vw-2rem)] rounded-md border border-line bg-surface p-2 text-xs normal-case text-content shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-mortar-200">{words}</PopoverLayer>, document.body)}
     </span>
   );
 }

@@ -14,8 +14,9 @@ import { sql } from "kysely";
 import { meta } from "../db/meta.js";
 import { runMigrations } from "../db/migrate.js";
 import { migrateConcurrently } from "./migrate-concurrently.js";
-import { describeMigrationFiles, healthVerdict, unreadableMigrationFiles, moduleIsBehind, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
+import { describeMigrationFiles, healthVerdict, unreadableMigrationFiles, moduleIsBehind, needsCatchUp, newerName, pendingCause, type ModuleMigrationFiles, type PendingCause } from "./migration-currency.js";
 import { getTenantPool, evictTenantPool } from "../db/tenant.js";
+import { appliedBudget } from "../db/connection-budget.js";
 import { canonicalModuleName, getEntry, listEntries } from "./registry.js";
 import * as activity from "../platform/activity.js";
 import { isTrialDenied, isTrialDeniedForOrg } from "../platform/trial.js";
@@ -509,8 +510,8 @@ async function migrateOrgModule(orgId: string, moduleName: string): Promise<bool
 }
 
 /** The modules each workspace has behind the migrations this api carries,
- *  read meta-side without opening a tenant: the boot sync's pre-check, and
- *  the catch-up pass's gate. */
+ *  read meta-side without opening a tenant: the catch-up pass's gate. A
+ *  ledger ahead of this build is not behind (needsCatchUp). */
 export async function behindModulesByOrg(orgIds?: string[]): Promise<Map<string, string[]>> {
   if (orgIds && orgIds.length === 0) return new Map();
   let q = meta
@@ -524,7 +525,7 @@ export async function behindModulesByOrg(orgIds?: string[]): Promise<Map<string,
   for (const row of await q.execute()) {
     let f = files.get(row.module_name);
     if (!f) files.set(row.module_name, (f = moduleMigrationFiles(row.module_name)));
-    if (!moduleIsBehind(row, f)) continue;
+    if (!needsCatchUp(row, f)) continue;
     const list = byOrg.get(row.org_id);
     if (list) list.push(row.module_name);
     else byOrg.set(row.org_id, [row.module_name]);
@@ -638,7 +639,9 @@ export async function syncTenantMigrations(): Promise<number> {
     }
   };
   const entries = [...byOrg.entries()];
-  const CAP = 10;
+  // No more workers than workspace pools the budget gives this api: past it,
+  // each extra worker waits at the connection limit and then opens past it.
+  const CAP = Math.min(10, appliedBudget()?.tenantPools ?? 10);
   let cursor = 0;
   const worker = async (): Promise<void> => {
     while (cursor < entries.length) {

@@ -30,6 +30,7 @@ export const ESCORT_DESTINATIONS: EscortDestination[] = [
       role: "role to preselect: member, editor, admin or guest",
     },
     why: "membership is a human decision",
+    covered_by: ["platform:set-members-may-lend"],
   },
   {
     id: "api-tokens",

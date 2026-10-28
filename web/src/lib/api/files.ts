@@ -84,7 +84,7 @@ export const filesApi = {
   fileUsage: (slug: string) => request<{ bytes_used: number; quota_bytes: number | null }>("GET", `/orgs/${slug}/modules/core-files/files/usage`),
   listFileFolders: (slug: string) => request<{ items: FileFolder[]; top_level_file_count: number }>("GET", `/orgs/${slug}/modules/core-files/folders`),
   createFileFolder: (slug: string, body: { name: string; parent_id?: string | null }) => request<FileFolder>("POST", `/orgs/${slug}/modules/core-files/folders`, body),
-  updateFileFolder: (slug: string, id: string, body: { name?: string; parent_id?: string | null }) => request<FileFolder>("PATCH", `/orgs/${slug}/modules/core-files/folders/${id}`, body),
+  updateFileFolder: (slug: string, id: string, edit: Edit<{ name?: string; parent_id?: string | null }>) => request<FileFolder>("PATCH", `/orgs/${slug}/modules/core-files/folders/${id}`, edit.body, edit.headers),
   deleteFileFolder: (slug: string, id: string) => request<void>("DELETE", `/orgs/${slug}/modules/core-files/folders/${id}`),
   /** Rename a file, or move it to a folder (null: the top level). */
   getFile: (slug: string, id: string) => request<FileRecord>("GET", `/orgs/${slug}/modules/core-files/files/${id}`),

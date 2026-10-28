@@ -419,8 +419,10 @@ export function LocationsPage() {
           their LABEL below `sm` instead (they are recognisable, and rarely the
           reason you opened this page), and "+ New location" has moved down to
           share the search row. The heading is the one item that may shrink, so
-          the row can never push the page wider than the screen. */}
-      <div className="flex items-center gap-x-2 sm:gap-x-3 border-b border-line dark:border-slate-700 pb-3">
+          the row can never push the page wider than the screen. At 200% text
+          the labelled buttons alone outgrow a tablet, so only then the row
+          wraps instead of running Import off the edge (#8846). */}
+      <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-3 gap-y-2 border-b border-line dark:border-slate-700 pb-3">
         <h1 className="text-2xl font-semibold text-content dark:text-mortar-100 min-w-0 truncate">
           Locations
         </h1>

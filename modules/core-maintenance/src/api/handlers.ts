@@ -23,15 +23,17 @@ import { registerNeedsRepairAction } from "./needs-repair-action.js";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
-import { completeEntry, rollForward, rolledFromOf, unrollIfCurrent } from "../schedules-store.js";
+import { serviceTimeZone, completeEntry, rollForward, rolledFromOf, unrollIfCurrent } from "../schedules-store.js";
 import { createSchedule, ScheduleCreateBody, ScheduleUpdateBody, RenewBody, updateSchedule, renewSchedule, removeSchedule } from "./schedules.js";
 import { NagBody, CadenceBody, changeNag } from "./reminders.js";
 import { moneyForStorage } from "@cobblr/platform-contract/money";
 import { TermBody } from "../term-fields.js";
 import { updateTerm, endRenewal } from "../terms-store.js";
 
+import { serviceDay } from "../schedule.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
-import { CompletionBody } from "./completion-input.js";
+import { MaintenanceRefusal } from "../refusal.js";
+import { CompletionBody, CounterReading } from "./completion-input.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 const str = (v: unknown): string | null =>
@@ -165,11 +167,14 @@ export function registerMaintenanceHandlers(): void {
     if (!e) return { ok: false, error: "this runs on a record: say which thing was serviced" };
     const args = (ctx.args ?? {}) as Record<string, unknown>;
 
+    const counterReading = CounterReading.safeParse(args.counter_reading);
+    if (!counterReading.success) return { ok: false, error: invalidBodyMessage(counterReading.error.issues) };
     const name = str(args.name);
     if (!name) return { ok: false, error: "say what was done, e.g. \"oil change\" or \"replace filter\"" };
 
     const performedAt = when(args.performed_at);
-    const scheduledAt = when(args.scheduled_at);
+    const scheduled = when(args.scheduled_at);
+    const scheduledAt = scheduled ? serviceDay(scheduled, await serviceTimeZone(ctx.orgId)) : null;
     // The route requires one of the two, and for good reason: an entry that is
     // neither history nor scheduled appears in no list and reads as lost.
     // Default to "done now", which is what "log that I serviced it" means.
@@ -181,29 +186,33 @@ export function registerMaintenanceHandlers(): void {
       : [e.kind, e.kind];
 
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
-    const row = await db
-      .insertInto("core_maintenance_entries")
-      .values({
-        entity_module: entityModule,
-        entity_type: entityType,
-        entity_id: e.id,
-        name,
-        description: str(args.description),
-        performed_at: performed,
-        scheduled_at: scheduledAt,
-        cost_cents: args.cost == null ? null : moneyForStorage(args.cost, "cents"),
-        performed_by: performed ? ctx.userId : null,
-        notes: str(args.notes),
-        recurrence_rule: str(args.recurrence_rule),
-        schedule_id: str(args.schedule_id),
-        // Where it happens: the place Cobb found with find_addresses, or the
-        // address as the person said it.
-        address: asAddress(args.address),
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    // A service that belongs to a schedule moves it forward (#3876).
-    const rolled = await rollForward(db, ctx.orgId, row);
+    const { row, rolled } = await db.transaction().execute(async (tx) => {
+      const row = await tx
+        .insertInto("core_maintenance_entries")
+        .values({
+          entity_module: entityModule,
+          entity_type: entityType,
+          entity_id: e.id,
+          name,
+          description: str(args.description),
+          performed_at: performed,
+          counter_reading: counterReading.data ?? null,
+          scheduled_at: scheduledAt,
+          cost_cents: args.cost == null ? null : moneyForStorage(args.cost, "cents"),
+          performed_by: performed ? ctx.userId : null,
+          notes: str(args.notes),
+          recurrence_rule: str(args.recurrence_rule),
+          schedule_id: str(args.schedule_id),
+          // Where it happens: the place Cobb found with find_addresses, or the
+          // address as the person said it.
+          address: asAddress(args.address),
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      // A service that belongs to a schedule moves it forward (#3876).
+      const rolled = await rollForward(tx, ctx.orgId, row);
+      return { row, rolled };
+    });
 
     return {
       ok: true,
@@ -289,7 +298,13 @@ export function registerMaintenanceHandlers(): void {
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
     const parsed = CompletionBody.safeParse(args);
     if (!parsed.success) return { ok: false, error: invalidBodyMessage(parsed.error.issues) };
-    const completed = await completeEntry(db, ctx.orgId, id, ctx.userId, when(parsed.data.performed_at) ?? new Date());
+    let completed;
+    try {
+      completed = await completeEntry(db, ctx.orgId, id, ctx.userId, when(parsed.data.performed_at) ?? new Date(), parsed.data.counter_reading);
+    } catch (error) {
+      if (error instanceof MaintenanceRefusal) return { ok: false, error: error.message };
+      throw error;
+    }
     if (!completed) return { ok: false, error: "This service is no longer scheduled." };
     const { row, rolled, before } = completed;
     if (completed.skipped) return { ok: true, skipped: true, summary: "This service was already done." };
@@ -301,7 +316,7 @@ export function registerMaintenanceHandlers(): void {
         performed_at: row.performed_at,
         ...(rolled ? { next_due_at: rolled.next?.scheduled_at ?? null, schedule_was: rolled.was } : {}),
       },
-      was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null },
+      was: { performed_at: before?.performed_at ?? null, performed_by: before?.performed_by ?? null, counter_reading: before.counter_reading == null ? null : Number(before.counter_reading) },
     };
   });
 }
@@ -328,7 +343,7 @@ function registerUndos(): void {
     return { ok: true, summary: `Removed the ${row.name} entry.`, removed: row.id };
   });
   platform().actions.registerHandler("core-maintenance.reopen-entry", async (ctx) => {
-    const a = (ctx.args as { entry_id?: unknown; performed_at?: unknown; performed_by?: unknown; schedule_was?: unknown } | null) ?? {};
+    const a = (ctx.args as { entry_id?: unknown; performed_at?: unknown; performed_by?: unknown; counter_reading?: unknown; schedule_was?: unknown } | null) ?? {};
     const id = String(a.entry_id ?? "").trim();
     if (!id) return { ok: false, error: "missing entry_id" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<CoreMaintenanceDB>;
@@ -340,6 +355,7 @@ function registerUndos(): void {
         .updateTable("core_maintenance_entries")
         .set({
           performed_at: instantFromInput(a.performed_at),
+          counter_reading: CounterReading.parse(a.counter_reading) ?? null,
           performed_by: typeof a.performed_by === "string" && a.performed_by ? a.performed_by : null,
         } as never)
         .where("id", "=", id)
@@ -366,10 +382,10 @@ function registerUndos(): void {
     };
   });
   const reopen = (result: unknown) => {
-    const r = result as { ok?: unknown; result?: { id?: unknown; schedule_was?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown } } | null;
+    const r = result as { ok?: unknown; result?: { id?: unknown; schedule_was?: unknown }; was?: { performed_at?: unknown; performed_by?: unknown; counter_reading?: unknown } } | null;
     if (r?.ok !== true || typeof r.result?.id !== "string" || !r.was) return null;
     const at = r.was.performed_at instanceof Date ? r.was.performed_at.toISOString() : typeof r.was.performed_at === "string" ? r.was.performed_at : null;
-    return { action_id: "core-maintenance:reopen-entry", args: { entry_id: r.result.id, performed_at: at, performed_by: r.was.performed_by ?? null, ...(r.result.schedule_was ? { schedule_was: r.result.schedule_was } : {}) } };
+    return { action_id: "core-maintenance:reopen-entry", args: { entry_id: r.result.id, performed_at: at, performed_by: r.was.performed_by ?? null, counter_reading: r.was.counter_reading ?? null, ...(r.result.schedule_was ? { schedule_was: r.result.schedule_was } : {}) } };
   };
   platform().actions.registerUndo("core-maintenance.complete", reopen);
   platform().actions.registerUndo("core-maintenance.reopen-entry", reopen);

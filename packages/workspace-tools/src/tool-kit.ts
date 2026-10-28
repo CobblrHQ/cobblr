@@ -427,6 +427,7 @@ export interface MaintenanceRow {
   entity_id?: string | null;
   scheduled_at?: string | null;
   performed_at?: string | null;
+  counter_reading?: string | number | null;
   recurrence_rule?: string | null;
   notes?: string | null;
   address?: unknown;

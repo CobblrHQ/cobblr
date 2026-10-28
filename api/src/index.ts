@@ -122,7 +122,7 @@ import * as recurrenceRegistry from "./platform/recurrence-registry.js";
 import * as calendarRegistry from "./platform/calendar-registry.js";
 import { registerDateFieldSource, queryDateField, unreadableDateField, registerOverdueSource, overdue } from "./platform/date-field-calendar.js";
 import { registerUsedAddressSource } from "./platform/addresses-used.js";
-import { dayForPerson } from "./platform/person-day.js";
+import { workspaceZoneIfKnown, dayForPerson } from "./platform/person-day.js";
 import { registerDefaultRequestGuard } from "./platform/default-request-guard.js";
 import { registerTrialMode } from "./platform/trial.js";
 import * as computedFields from "./platform/computed-fields.js";
@@ -432,11 +432,11 @@ async function boot() {
       get: async (orgId) => {
         const row = await meta
           .selectFrom("orgs")
-          .select(["id", "slug", "app_mode", "portal_config"])
+          .select(["id", "slug", "app_mode", "portal_config", "time_zone"])
           .where("id", "=", orgId)
           .executeTakeFirst();
         const accent = (row?.portal_config as { admin_theme?: { accent?: unknown } } | undefined)?.admin_theme?.accent;
-        return row ? { id: row.id, slug: row.slug, app_mode: row.app_mode ?? null, accent: typeof accent === "string" ? accent : null } : null;
+        return row ? { id: row.id, slug: row.slug, time_zone: row.time_zone || await workspaceZoneIfKnown(orgId), app_mode: row.app_mode ?? null, accent: typeof accent === "string" ? accent : null } : null;
       },
     },
     resolvables: {

@@ -23,6 +23,11 @@
 //   4. (2026-10-27) A workflow that runs scripts/ci-slot.sh takes an `as_scheduled` dispatch input, and whatever
 //      only its scheduled run does tests that input too: a cron run of an older commit than main's is dispatched
 //      on main with as_scheduled=true in its place (the forge's schedules can freeze at one commit; lib/ci-slot.mjs).
+//   5. (2026-10-28) A workflow that runs scripts/ci-slot.sh and has a run-level `concurrency:` puts a dispatch in
+//      its own group (`github.event_name` in the group). The run ci-slot.sh dispatches in a stood-down cron run's
+//      place is a dispatch, and Forgejo leaves a job's `if:` to the runner that picks it up: the stood-down run
+//      holds a shared group until its gated runner reaches a no-op job. e2e-suite's night run (68003) waited
+//      behind its own stood-down cron (68002) from 06:16Z on 10-28, its slot's turn passing every four minutes.
 //   3. A workflow that ALSO runs on push must NOT call scripts/ci-slot.sh.
 //      This is the part that matters most and the one a copy gets wrong: the
 //      decision tells a cron run from a dispatch, and on this Forgejo a cron
@@ -67,6 +72,15 @@ export interface Shape {
   runsSlot: boolean;
   asScheduled: boolean;
   scheduleOnly: string[];
+  sharedGroup: string | null;
+}
+
+/** The run-level concurrency group, when it is one group for a cron run and a dispatch alike (null otherwise). */
+export function sharedGroupOf(src: string): string | null {
+  const at = src.search(/^concurrency:/m);
+  if (at < 0) return null;
+  const line = src.slice(at).split("\n").slice(0, 4).find((l) => /^\s+group:/.test(l)) ?? src.slice(at).split("\n")[0] ?? "";
+  return /event_name/.test(line) ? null : line.trim();
 }
 export function shapeOf(src: string): Shape {
   const on = triggersOf(src);
@@ -78,6 +92,7 @@ export function shapeOf(src: string): Shape {
     ownStanddown: /#\s*OWN STANDDOWN:\s*\S/.test(src),
     runsSlot: /bash scripts\/ci-slot\.sh /.test(src),
     asScheduled: /^ {6}as_scheduled:/m.test(on),
+    sharedGroup: sharedGroupOf(src),
     scheduleOnly: src.split("\n").filter((l) => /github\.event_name == 'schedule'|\$\{\{ github\.event_name \}\}" = "schedule"/.test(l) && !l.includes("as_scheduled") && !l.includes("event_name == 'workflow_dispatch'")).map((l) => l.trim()),
   };
 }
@@ -116,6 +131,12 @@ for (const name of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
       what: `\`${line}\` is a scheduled run's alone, and the run ${SHARED} dispatches on main in its place is a dispatch with as_scheduled=true: test that too`,
     });
   }
+  if (s.runsSlot && s.sharedGroup) {
+    violations.push({
+      file: name,
+      what: `\`${s.sharedGroup}\` is one concurrency group for a cron run and the dispatch ${SHARED} sends in its place, so a stood-down cron run holds its own replacement until a runner reaches its no-op job. Give a dispatch its own group: group: \${{ github.event_name == 'workflow_dispatch' && format('<name>-dispatch-{0}', github.ref) || '<name>' }}`,
+    });
+  }
   if (s.crons > 1 && !s.onPush && !s.callsShared && !s.ownStanddown) {
     violations.push({
       file: name,
@@ -127,7 +148,7 @@ for (const name of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
 if (violations.length) {
   console.error(`lint:slot-pairs-are-wired - ${violations.length} scheduled workflow(s) that a merge can silently eat:`);
   for (const v of violations) console.error(`  .forgejo/workflows/${v.file}  ${v.what}`);
-  console.error(`\nWhy: docs/operations/CI_DEPLOY.md, "A schedule is lost by a merge in its own minute".`);
+  console.error(`\nWhy: docs/operations/ci/deploy-and-release.md, "A schedule is lost by a merge in its own minute".`);
   process.exit(1);
 }
 console.log(`lint:slot-pairs-are-wired OK (${scheduled} scheduled workflow(s))`);

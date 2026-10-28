@@ -39,6 +39,8 @@ export interface ComponentRow {
   sub_max_buildable?: number;
   /** Take the sub-assembly's stock first (true), or always make it. */
   use_stock?: boolean;
+  /** A part line: back to stock when a print is scrapped after it ran (true), or used up (#8758). */
+  recoverable?: boolean;
   /** For plan_qty builds: how many come off the shelf, how many are made. */
   from_stock?: number;
   to_make?: number;

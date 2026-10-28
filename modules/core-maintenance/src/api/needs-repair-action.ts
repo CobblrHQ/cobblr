@@ -4,6 +4,8 @@
 // names the record; this module owns the write), and so can the assistant on a
 // record. What reported it is kept on the entry. Its undo removes the entry.
 // Wired in ./handlers.ts.
+import { serviceDay } from "../schedule.js";
+import { serviceTimeZone } from "../schedules-store.js";
 import { platform } from "@cobblr/platform-contract";
 import type { Kysely } from "kysely";
 import type { CoreMaintenanceDB } from "../db.js";
@@ -27,7 +29,7 @@ export function registerNeedsRepairAction(): void {
         entity_id: e.id,
         name: "Needs repair",
         notes: str(args.notes),
-        scheduled_at: new Date(),
+        scheduled_at: serviceDay(new Date(), await serviceTimeZone(ctx.orgId)),
         metadata: sourceKind && sourceId ? { reported_by: { kind: sourceKind, id: sourceId } } : {},
       })
       .returning(["id", "name", "scheduled_at"])

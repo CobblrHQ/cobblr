@@ -30,6 +30,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { requireRole } from "../auth/capability.js";
 import { withTenant } from "../middleware/tenant.js";
 import * as activity from "../platform/activity.js";
+import { withoutOtherEmails, accountEmailFor, diffWithoutEmails, seesAccountEmails } from "../platform/account-emails.js";
 import * as notifications from "../platform/notifications.js";
 import { provisionOrgForUser } from "./auth.js";
 import { applyBlueprint, BlueprintManifest } from "./blueprint.js";
@@ -1010,7 +1011,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
     const shown = await Promise.all(items.map(async i => {
       const kind = kindOf(i) ?? (i.module_name ? `${i.module_name}:${i.entity_type}` : i.entity_type);
       const hidden = (await visibilityByKind.get(kind)!)(i.diff);
-      return { ...i, diff: publicHistoryDiff(i.diff, hidden), restorable: !!Object.keys(historyBag(historyBag(i.diff).version_before)).length && !!await writersByKind.get(kind) };
+      return { ...i, diff: publicHistoryDiff(seesAccountEmails(req.tenant!.role) || !/^invite_/.test(i.action) ? i.diff : diffWithoutEmails(i.diff), hidden), restorable: !!Object.keys(historyBag(historyBag(i.diff).version_before)).length && !!await writersByKind.get(kind) };
     }));
 
     // What each edit changed, in words: labels, values by type, a photo as a
@@ -1028,7 +1029,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       return items.map(() => []);
     });
 
-    res.json({
+    const answer = {
       items: shown.map((i, n) => {
         const entry = {
         ...i,
@@ -1042,7 +1043,7 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
           ? {
               id: i.user_id,
               display_name: userById.get(i.user_id)?.display_name ?? null,
-              email: userById.get(i.user_id)?.email ?? null,
+              email: accountEmailFor({ id: req.session!.id, role: req.tenant!.role }, i.user_id, userById.get(i.user_id)?.email ?? null),
             }
           : null,
         token: i.api_token_id ? tokenFor(i.api_token_id) : null,
@@ -1053,7 +1054,14 @@ orgsRouter.get("/:slug/activity", requireAuth, withTenant, async (req, res, next
       total,
       // The next page starts below the last id shown; null once this page is short.
       next_before: items.length === limit ? items[items.length - 1]!.id : null,
-    });
+    };
+    // A row's words, diff and subject come from many places that may name an account; whoever
+    // may not read other accounts' addresses reads none of them here (#8659).
+    if (seesAccountEmails(req.tenant!.role)) return void res.json(answer);
+    const orgId = req.tenant!.org.id;
+    const accounts = await meta.selectFrom("org_memberships as m").innerJoin("users as u", "u.id", "m.user_id").select(["u.id", "u.email"]).where("m.org_id", "=", orgId).execute();
+    const invited = await meta.selectFrom("workspace_invites").select("invited_email").where("org_id", "=", orgId).where("invited_email", "is not", null).execute();
+    res.json(withoutOtherEmails(answer, [...accounts.filter((a) => a.id !== req.session!.id).map((a) => a.email), ...invited.map((i) => i.invited_email!)]));
   } catch (err) {
     next(err);
   }

@@ -2733,7 +2733,7 @@ export function registerPlatformActionHandlers(): void {
     const d = (result as { data?: { kind?: unknown; holder?: unknown; loan?: RecordLoan; before?: Array<{ id?: unknown; before?: RecordLoan | null }> } } | null)?.data;
     const rows = (d?.before ?? []).filter((b): b is { id: string; before: RecordLoan | null } => typeof b.id === "string");
     if (!rows.length || typeof d?.kind !== "string") return null;
-    if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...(typeof d.holder === "string" ? { only_if_holder: d.holder } : {}) } };
+    if (rows.every((r) => !r.before)) return { action_id: "platform:return", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), expected_loans: Object.fromEntries(rows.map((r) => [r.id, d.loan])), ...(typeof d.holder === "string" ? { only_if_holder: d.holder } : {}) } };
     const first = rows[0]!.before;
     if (!first || !rows.every((r) => JSON.stringify(r.before) === JSON.stringify(first))) return null;
     return { action_id: "platform:lend", args: { entity_kind: d.kind, ids: rows.map((r) => r.id), ...first, expected_loan: d.loan } };
@@ -2745,6 +2745,7 @@ export function registerPlatformActionHandlers(): void {
     if (!ids.length) return { ok: false, error: "ids are required - read the records first and pass their real ids, never their names" };
     const r = await returnLoan(ctx.orgId, ctx.userId, kind, ids, {
       onlyIfHolder: str(ctx.args?.only_if_holder) || null,
+      expected_loans: ctx.args?.expected_loans && typeof ctx.args.expected_loans === "object" && !Array.isArray(ctx.args.expected_loans) ? ctx.args.expected_loans as Record<string, unknown> : undefined,
       ...(typeof ctx.args?.repaired === "boolean" ? { repaired: ctx.args.repaired } : {}),
       work: str(ctx.args?.work) || null,
     });
@@ -3195,6 +3196,35 @@ export function registerPlatformActionHandlers(): void {
     const d = (result as { data?: { focused?: unknown; before?: unknown } } | null)?.data;
     if (typeof d?.focused !== "boolean" || typeof d.before !== "boolean" || d.before === d.focused) return null;
     return { action_id: "platform:set-simple-mode", args: { on: d.before } };
+  });
+
+  registerHandler("platform.set-members-may-lend", async (ctx: ActionInvokeContext) => {
+    const on = (ctx.args ?? {}).on;
+    if (typeof on !== "boolean") return { ok: false, error: "on must be true (members may lend) or false (only people granted it)" };
+    const was = await meta.selectFrom("orgs").select(["members_may_lend", "members_lend_asked"]).where("id", "=", ctx.orgId).executeTakeFirst();
+    await meta
+      .updateTable("orgs")
+      .set({ members_may_lend: on, members_lend_asked: true, updated_at: new Date() })
+      .where("id", "=", ctx.orgId)
+      .execute();
+    await activity.log({
+      orgId: ctx.orgId,
+      userId: ctx.userId ?? undefined,
+      action: on ? "members_may_lend" : "members_may_not_lend",
+      ref: { module: null, entityType: "org", entityId: ctx.orgId },
+      diff: { members_may_lend: on },
+    });
+    return {
+      ok: true,
+      summary: on ? "members may now lend and return things" : "members need a grant to lend and return things",
+      data: { members_may_lend: on, before: !!was?.members_may_lend },
+    };
+  });
+
+  registerUndo("platform.set-members-may-lend", (result) => {
+    const d = (result as { data?: { members_may_lend?: unknown; before?: unknown } } | null)?.data;
+    if (typeof d?.members_may_lend !== "boolean" || typeof d.before !== "boolean" || d.before === d.members_may_lend) return null;
+    return { action_id: "platform:set-members-may-lend", args: { on: d.before } };
   });
 
   /** The preset and the direction, read once for the plan and the run. By

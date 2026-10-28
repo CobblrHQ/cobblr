@@ -154,7 +154,9 @@ attachmentsRouter.get(
         const fileId = /\/core-files\/files\/([0-9a-f-]{36})\/raw/i.exec(imagePath)?.[1]?.toLowerCase() ?? null;
         const att = fileId ? items.find((i) => i.file_id === fileId) : undefined;
         const file = fileId && !att ? await db.selectFrom("core_files_files").select(["filename", "metadata"]).where("id", "=", fileId).where("deleted_at", "is", null).executeTakeFirst() : undefined;
-        main = { image_path: imagePath, file_id: fileId, attached: !!att, filename: att?.filename ?? file?.filename ?? null, photo_source: photoSourceOf(att?.metadata ?? file?.metadata) };
+        if (!fileId || att || file) {
+          main = { image_path: imagePath, file_id: fileId, attached: !!att, filename: att?.filename ?? file?.filename ?? null, photo_source: photoSourceOf(att?.metadata ?? file?.metadata) };
+        }
       }
     }
     res.json({

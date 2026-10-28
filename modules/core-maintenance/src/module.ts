@@ -13,7 +13,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "core-maintenance",
-  version: "0.2.19",
+  version: "0.2.21",
   displayName: "Maintenance",
   description:
     "Remember when things need servicing: log what was done and get a reminder when the next one is due.",
@@ -122,7 +122,7 @@ export default defineModule({
         // along with the warranty fields; eligibility (physical, unique) stands.
         face: "maintained",
         description:
-          "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost` (what it cost, as an amount: 45 or \"$45.50\"), `recurrence_rule`, `address` (where it happens: a place from find_addresses, or the address as said; it becomes the calendar event's Where). With neither date it logs as done now. Reading the history is list_maintenance.",
+          "Record maintenance on this record: what was done and when, or schedule the next one. Pass `name` (what was done, e.g. \"oil change\"), and optionally `performed_at`, `scheduled_at`, `notes`, `cost` (what it cost, as an amount: 45 or \"$45.50\"), `recurrence_rule`, `address` (where it happens: a place from find_addresses, or the address as said; it becomes the calendar event's Where). For a past service on a mileage or use schedule, pass `counter_reading` at service, not today's reading. With neither date it logs as done now. Reading the history is list_maintenance.",
         icon: "wrench",
         // Anything a workspace OWNS can need servicing: a mower, a printer, a
         // vehicle, a water filter, a lease. That is physical + unique. It was
@@ -137,7 +137,8 @@ export default defineModule({
           description: { label: "Longer description of the work (optional)", type: "text" },
           recurrence_rule: { label: "How often it repeats, as an RRULE (optional)", type: "text" },
           name: { label: "What was done", type: "text", required: true },
-          performed_at: { label: "When it was done (ISO date)", type: "text" },
+          performed_at: { label: "When it was done", type: "date", ask: true },
+          counter_reading: { label: "Counter reading at service (required for past service by mileage or use)", type: "number", ask: true },
           scheduled_at: { label: "When it is next due (ISO date)", type: "text" },
           notes: { label: "Notes", type: "text" },
           cost: { label: "What it cost", type: "text", money: true },
@@ -324,6 +325,7 @@ export default defineModule({
           entry_id: { label: "The entry's id", type: "text" },
           performed_at: { label: "When it said it was done, or blank", type: "text" },
           performed_by: { label: "Who it said did it, or blank", type: "text" },
+          counter_reading: { label: "Previous counter reading at service", type: "number" },
           schedule_was: { label: "Previous service schedule", type: "json" },
         },
       },
@@ -337,13 +339,14 @@ export default defineModule({
         undoable: true,
         label: "Mark service done",
         description:
-          "Mark a SCHEDULED maintenance entry as done. Pass `entry_id` (list_maintenance returns ids) and optionally `performed_at`; it defaults to now.",
+          "Mark a SCHEDULED maintenance entry as done. Pass `entry_id` (list_maintenance returns ids) and optionally `performed_at`; it defaults to now. For a past service by mileage or use, pass `counter_reading` at service.",
         icon: "check",
         scope: "workspace" as const,
         invokeHandler: "core-maintenance.complete",
         argsSchema: {
           entry_id: { label: "The scheduled entry's id", type: "text", required: true },
-          performed_at: { label: "When it was done (ISO date)", type: "text" },
+          performed_at: { label: "When it was done", type: "date", ask: true },
+          counter_reading: { label: "Counter reading at service (required for past service by mileage or use)", type: "number", ask: true },
         },
       },
       {

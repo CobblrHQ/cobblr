@@ -9,7 +9,7 @@
 //
 // Cached for a minute per person: a filing door asks once per record, and a
 // zone does not change between two of them. A miss is one small meta read.
-import { arrivedEverywhere, dayIn, type Day } from "@cobblr/platform-contract/day";
+import { WORKSPACE_ZONE_UNSET, arrivedEverywhere, dayIn, type Day } from "@cobblr/platform-contract/day";
 import { meta } from "../db/meta.js";
 import { ttlCache } from "../lib/ttl-cache.js";
 
@@ -50,4 +50,31 @@ export async function dayForPerson(userId: string | null | undefined, opts: { sa
 export function forgetTimeZone(userId?: string): void {
   if (userId) zones.delete(userId);
   else zones.clear();
+}
+
+/** A workspace's calendar zone, or null while it is not known: no owner has
+ *  reported one. Kept once learned, even when its owner travels. A reader with
+ *  a zone of its own reads an unknown one in that zone, the way every date was
+ *  read before workspaces had a zone (#8748). */
+export async function workspaceZoneIfKnown(orgId: string): Promise<string | null> {
+  const org = await meta.selectFrom("orgs").select("time_zone").where("id", "=", orgId).executeTakeFirst();
+  if (org?.time_zone) return org.time_zone;
+  const owners = await meta.selectFrom("org_memberships").select("user_id")
+    .where("org_id", "=", orgId).where("role", "=", "owner")
+    .orderBy("joined_at").orderBy("user_id").execute();
+  for (const owner of owners) {
+    const zone = await timeZoneOf(owner.user_id);
+    if (!zone) continue;
+    const saved = await meta.updateTable("orgs").set({ time_zone: zone })
+      .where("id", "=", orgId).where("time_zone", "is", null).returning("time_zone").executeTakeFirst();
+    if (saved?.time_zone) return saved.time_zone;
+    const current = await meta.selectFrom("orgs").select("time_zone").where("id", "=", orgId).executeTakeFirst();
+    if (current?.time_zone) return current.time_zone;
+  }
+  return null;
+}
+
+/** The workspace's calendar zone, UTC while it is not known. */
+export async function workspaceTimeZone(orgId: string): Promise<string> {
+  return (await workspaceZoneIfKnown(orgId)) ?? WORKSPACE_ZONE_UNSET;
 }

@@ -12,13 +12,13 @@ import { sql } from "kysely";
 import { platform } from "@cobblr/platform-contract";
 import { sessionUser, tenantContext, tenantDb } from "../db.js";
 import { asyncHandler, badBody, requireRole } from "./util.js";
-import { completeEntry, rollForward, reconcileSchedules } from "../schedules-store.js";
+import { completeEntry, rollForward, reconcileSchedules, serviceTimeZone } from "../schedules-store.js";
 import { present } from "./schedules.js";
 import { MaintenanceRefusal } from "../refusal.js";
-import { calendarDue } from "../schedule.js";
+import { calendarDue, serviceDay } from "../schedule.js";
 import { asAddress } from "@cobblr/platform-contract/address";
 import { instantFromInput } from "@cobblr/platform-contract/day";
-import { CompletionBody } from "./completion-input.js";
+import { CompletionBody, CounterReading } from "./completion-input.js";
 
 export const entriesRouter = Router({ mergeParams: true });
 
@@ -50,6 +50,7 @@ const EntryCreate = z
     name: z.string().min(1).max(200),
     description: z.string().max(2_000).nullable().optional(),
     performed_at: When,
+    counter_reading: CounterReading,
     scheduled_at: When,
     cost_cents: z.number().int().nonnegative().nullable().optional(),
     notes: z.string().max(4_000).nullable().optional(),
@@ -68,6 +69,7 @@ const EntryCreate = z
   );
 
 const EntryUpdate = z.object({
+  counter_reading: CounterReading,
   name: z.string().min(1).max(200).optional(), // none-refused-ok: a column of this name is NOT NULL, so a null stays refused here
   description: z.string().max(2_000).nullable().optional(),
   performed_at: When,
@@ -135,6 +137,7 @@ entriesRouter.get(
     // Where each open entry stands, from the one calendar rule the record's
     // schedule uses, so the list never counts its own days (#3991).
     const now = new Date();
+    const zone = await serviceTimeZone(tenantContext(req).org.id, filter.tz);
     // What each entry is for, by name: a service log that says "assets·asset"
     // does not say which of a hundred assets. One lookup per record.
     const orgId = tenantContext(req).org.id;
@@ -153,9 +156,11 @@ entriesRouter.get(
       items: rows.map((r) => {
         const entity_title = titles.get(`${r.entity_module}:${r.entity_type}|${r.entity_id}`) ?? null;
         const schedule = r.schedule_id ? presented.get(r.schedule_id) ?? null : null;
-        return r.scheduled_at && !r.performed_at
-          ? { ...r, entity_title, schedule, due: { ...calendarDue(new Date(r.scheduled_at), now, filter.tz ?? null), ...schedule?.due } }
-          : { ...r, entity_title, schedule, attachments: paperwork.get(r.id) ?? [] };
+        const scheduled = r.scheduled_at ? serviceDay(r.scheduled_at, zone) : null;
+        const entry = { ...r, scheduled_at: scheduled };
+        return scheduled && !r.performed_at
+          ? { ...entry, entity_title, schedule, due: { ...calendarDue(scheduled, now, filter.tz || zone), ...schedule?.due } }
+          : { ...entry, entity_title, schedule, attachments: paperwork.get(r.id) ?? [] };
       }),
     });
   }),
@@ -179,7 +184,7 @@ entriesRouter.get(
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
-    res.json(row);
+    res.json({ ...row, scheduled_at: row.scheduled_at ? serviceDay(row.scheduled_at, await serviceTimeZone(tenantContext(req).org.id)) : null });
   }),
 );
 
@@ -193,28 +198,34 @@ entriesRouter.post(
     const ctx = tenantContext(req);
     const session = sessionUser(req);
     const db = tenantDb(req);
+    const zone = await serviceTimeZone(ctx.org.id);
+    const scheduled = instantFromInput(parsed.data.scheduled_at);
 
-    const row = await db
-      .insertInto("core_maintenance_entries")
-      .values({
-        entity_module: parsed.data.entity_module,
-        entity_type: parsed.data.entity_type,
-        entity_id: parsed.data.entity_id,
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        performed_at: instantFromInput(parsed.data.performed_at),
-        scheduled_at: instantFromInput(parsed.data.scheduled_at),
-        cost_cents: parsed.data.cost_cents ?? null,
-        performed_by: parsed.data.performed_at ? session.id : null,
-        notes: parsed.data.notes ?? null,
-        recurrence_rule: parsed.data.recurrence_rule ?? null,
-        schedule_id: parsed.data.schedule_id ?? null,
-        address: parsed.data.address ?? null,
-      } as never)
-      .returningAll()
-      .executeTakeFirstOrThrow();
-    // A service that belongs to a schedule rolls it forward (#3876).
-    await rollForward(db, ctx.org.id, row);
+    const row = await db.transaction().execute(async (tx) => {
+      const inserted = await tx
+        .insertInto("core_maintenance_entries")
+        .values({
+          entity_module: parsed.data.entity_module,
+          entity_type: parsed.data.entity_type,
+          entity_id: parsed.data.entity_id,
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          performed_at: instantFromInput(parsed.data.performed_at),
+          counter_reading: parsed.data.counter_reading ?? null,
+          scheduled_at: scheduled ? serviceDay(scheduled, zone) : null,
+          cost_cents: parsed.data.cost_cents ?? null,
+          performed_by: parsed.data.performed_at ? session.id : null,
+          notes: parsed.data.notes ?? null,
+          recurrence_rule: parsed.data.recurrence_rule ?? null,
+          schedule_id: parsed.data.schedule_id ?? null,
+          address: parsed.data.address ?? null,
+        } as never)
+        .returningAll()
+        .executeTakeFirstOrThrow();
+      // A service that belongs to a schedule rolls it forward (#3876).
+      await rollForward(tx, ctx.org.id, inserted);
+      return inserted;
+    });
 
     void platform().events.emit("core-maintenance.entry.created", {
       orgId: ctx.org.id,
@@ -244,14 +255,17 @@ entriesRouter.patch(
     const ctx = tenantContext(req);
     const db = tenantDb(req);
 
+    const zone = await serviceTimeZone(ctx.org.id);
     const patch: Record<string, unknown> = { updated_at: new Date() };
+    if (parsed.data.counter_reading !== undefined) patch.counter_reading = parsed.data.counter_reading;
     if (parsed.data.name !== undefined) patch.name = parsed.data.name;
     if (parsed.data.description !== undefined) patch.description = parsed.data.description;
     if (parsed.data.performed_at !== undefined) {
       patch.performed_at = instantFromInput(parsed.data.performed_at);
     }
     if (parsed.data.scheduled_at !== undefined) {
-      patch.scheduled_at = instantFromInput(parsed.data.scheduled_at);
+      const scheduled = instantFromInput(parsed.data.scheduled_at);
+      patch.scheduled_at = scheduled ? serviceDay(scheduled, zone) : null;
     }
     if (parsed.data.cost_cents !== undefined) patch.cost_cents = parsed.data.cost_cents;
     if (parsed.data.notes !== undefined) patch.notes = parsed.data.notes;
@@ -267,11 +281,17 @@ entriesRouter.patch(
     // the schedule last counted, the schedule's last-done date follows the
     // correction. The schedule is locked, so two saves at once queue (#7128).
     const row = await db.transaction().execute(async (tx) => {
-      const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirst();
+      const found = await tx.selectFrom("core_maintenance_entries").select("schedule_id").where("id", "=", id).executeTakeFirst();
+      if (!found) return null;
+      if (found.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", found.schedule_id).forUpdate().executeTakeFirst();
+      // Match completion's lock order, then read what it actually left behind.
+      const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
       if (!before) return null;
-      if (before.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
+      if (before.performed_at && parsed.data.performed_at !== undefined && !patch.performed_at) {
+        throw new MaintenanceRefusal("This service is already completed. Reload before editing it, or use Undo to reopen it.", 409);
+      }
       if (before.schedule_id && !before.performed_at) {
-        const dateChanged = parsed.data.scheduled_at !== undefined && instantFromInput(parsed.data.scheduled_at)?.getTime() !== before.scheduled_at?.getTime();
+        const dateChanged = parsed.data.scheduled_at !== undefined && (patch.scheduled_at instanceof Date ? patch.scheduled_at.getTime() : undefined) !== (before.scheduled_at ? serviceDay(before.scheduled_at, zone).getTime() : undefined);
         const nameChanged = parsed.data.name !== undefined && parsed.data.name !== before.name;
         if (dateChanged || nameChanged) throw new MaintenanceRefusal("This service's name and due date come from its service schedule. Change the schedule on the record instead.");
       }
@@ -279,10 +299,10 @@ entriesRouter.patch(
       if (!updated || !parsed.data.performed_at) return updated;
       if (!before.performed_at) {
         await rollForward(tx, ctx.org.id, updated);
-      } else if (before.schedule_id && updated.performed_at && updated.performed_at.getTime() !== before.performed_at.getTime()) {
+      } else if (before.schedule_id && updated.performed_at && (updated.performed_at.getTime() !== before.performed_at.getTime() || parsed.data.counter_reading != null)) {
         await tx
           .updateTable("core_maintenance_schedules")
-          .set({ last_done_at: updated.performed_at, updated_at: new Date() })
+          .set({ last_done_at: updated.performed_at, ...(parsed.data.counter_reading != null ? { last_done_counter: parsed.data.counter_reading } : {}), updated_at: new Date() })
           .where("id", "=", before.schedule_id)
           .where("last_done_at", "=", before.performed_at)
           .execute();
@@ -297,7 +317,7 @@ entriesRouter.patch(
       orgId: ctx.org.id,
       entryId: row.id,
     });
-    res.json(row);
+    res.json({ ...row, scheduled_at: row.scheduled_at ? serviceDay(row.scheduled_at, await serviceTimeZone(tenantContext(req).org.id)) : null });
   }),
 );
 
@@ -354,12 +374,12 @@ entriesRouter.post(
     const ctx = tenantContext(req);
     const db = tenantDb(req);
     const completedAt = instantFromInput(parsed.data.performed_at) ?? new Date();
-    const completed = await completeEntry(db, ctx.org.id, id, session.id, completedAt);
+    const completed = await completeEntry(db, ctx.org.id, id, session.id, completedAt, parsed.data.counter_reading);
     if (!completed) {
       res.status(404).json({ error: { code: "not_found", message: "entry not found" } });
       return;
     }
     const row = completed.row;
-    res.json(row);
+    res.json({ ...row, scheduled_at: row.scheduled_at ? serviceDay(row.scheduled_at, await serviceTimeZone(tenantContext(req).org.id)) : null });
   }),
 );

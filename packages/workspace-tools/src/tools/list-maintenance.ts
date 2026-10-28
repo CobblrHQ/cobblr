@@ -60,6 +60,7 @@ const tool: WorkspaceTool = {
       entity_id: e.entity_id,
       ...(e.scheduled_at ? { scheduled: e.scheduled_at } : {}),
       ...(e.performed_at ? { done: e.performed_at } : { outstanding: true }),
+      ...(e.counter_reading != null ? { counter_reading: Number(e.counter_reading) } : {}),
       ...(e.recurrence_rule ? { repeats: e.recurrence_rule } : {}),
       ...((e as MaintenanceRow & { schedule?: unknown }).schedule ? { schedule: (e as MaintenanceRow & { schedule?: unknown }).schedule } : {}),
       ...((e as MaintenanceRow & { nag_stopped_at?: unknown }).nag_stopped_at ? { reminders_off: true } : {}),

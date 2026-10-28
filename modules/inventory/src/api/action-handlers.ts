@@ -1884,6 +1884,7 @@ export function registerInventoryActionHandlers(): void {
       .select([
         "id", "name", "qty", "unit", "instance",
         "manufacturer", "location_id", "image_path", "metadata",
+        "notes", "supplier_url", "cost",
       ])
       .where("id", "=", partId)
       .executeTakeFirst();
@@ -1915,6 +1916,9 @@ export function registerInventoryActionHandlers(): void {
         unit: src.unit,
         instance: src.instance as never,
         manufacturer: src.manufacturer ?? null,
+        notes: src.notes,
+        supplier_url: src.supplier_url,
+        cost: src.cost,
         image_path: src.image_path ?? null,
         metadata: sql`${JSON.stringify((src.metadata as Record<string, unknown> | null) ?? {})}::jsonb` as never,
       })

@@ -28,6 +28,9 @@ import { dueState, todayFrom } from "../lib/due-day.js";
 import { listShareEdits } from "../platform/share-edits.js";
 import { listAdditions } from "../platform/share-additions.js";
 import { listOpenLoans, type OpenLoan } from "../platform/custody.js";
+import { membersBorrowCard } from "../platform/members-borrow-card.js";
+import { readFirstCard } from "../platform/read-first-card.js";
+import { meta } from "../db/meta.js";
 import { daysUntil } from "@cobblr/platform-contract/day";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 
@@ -63,6 +66,9 @@ interface AttentionEntry {
   record?: { kind: string; id: string; name: string };
   /** For a dated entry: when, in the reader's words ("3d ago", "in 2d"). */
   when?: string;
+  /** A page to read on the card itself (a pinned house rule) and the tip it is put away under. */
+  body?: string;
+  tip?: string;
 }
 
 /** The collection a dated row belongs to. Its overdue, due-today and
@@ -83,7 +89,7 @@ interface AttentionCollection {
 
 interface AttentionRow {
   suggestion?: { id: string; candidate: TidyCandidate };
-  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits";
+  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits" | "members_borrow" | "read_first";
   label: string;
   count: number;
   /** Up to 3 item names, for the row's detail line. */
@@ -146,6 +152,25 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
         token,
       ),
     };
+    {
+      // A card is a nicety: a read that fails leaves the rest of the feed whole.
+      const asked = await meta.selectFrom("orgs").select("members_lend_asked").where("id", "=", req.tenant!.org.id).executeTakeFirst().catch(() => undefined);
+      const plain = await meta
+        .selectFrom("org_memberships")
+        .select(({ fn }) => fn.countAll<number>().as("n"))
+        .where("org_id", "=", req.tenant!.org.id)
+        .where("role", "in", ["member", "operator"])
+        .executeTakeFirst()
+        .catch(() => undefined);
+      const card = membersBorrowCard({ role: req.tenant!.role, asked: asked?.members_lend_asked ?? true, plainMembers: Number(plain?.n ?? 0) });
+      if (card) rows.push(card);
+    }
+    if (req.tenant!.role === "member" || req.tenant!.role === "operator") {
+      const pinned = await j<{ items: Array<{ id: string; title: string; body: string | null }> }>(`/orgs/${slug}/modules/knowledge/entries?pinned=1&limit=5`, token);
+      const me = await meta.selectFrom("users").select("tips").where("id", "=", req.session!.id).executeTakeFirst().catch(() => undefined);
+      const card = readFirstCard({ role: req.tenant!.role, pinned: pinned?.items ?? [], dismissed: me?.tips?.dismissed });
+      if (card) rows.push(card);
+    }
     for (const s of await listTidySuggestions(req.tenant!.org.id, req.tenant!.role)) rows.push({ kind: "tidy", label: s.candidate.why, count: s.candidate.records.length, sample: s.candidate.records.slice(0, 3).map((r) => r.name), route: s.candidate.action.route, suggestion: s });
 
     // Pending captures first — always actionable.
@@ -576,7 +601,7 @@ attentionRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
     // Severity order: overdue → low stock → a date nothing can read (a
     // reminder that will never fire) → someone waiting on your answer →
     // pending scans → upcoming.
-    const rank = { tidy: 5, overdue: 0, due_today: 1, low_stock: 2, unreadable_date: 3, suggested_edits: 4, photo_wanted: 5, pending_scans: 6, upcoming: 7 } as const;
+    const rank = { tidy: 5, members_borrow: 4, read_first: 3, overdue: 0, due_today: 1, low_stock: 2, unreadable_date: 3, suggested_edits: 4, photo_wanted: 5, pending_scans: 6, upcoming: 7 } as const;
     rows.sort((a, b) => rank[a.kind] - rank[b.kind] || b.count - a.count);
     res.json({ items: rows });
   } catch (err) {

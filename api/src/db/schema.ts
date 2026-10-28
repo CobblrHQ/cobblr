@@ -77,9 +77,15 @@ export interface UsersTable {
 }
 
 export interface OrgsTable {
+  time_zone: Generated<string | null>;
   main_currency: Generated<string>;
   low_stock_alerts: Generated<boolean>;
   warranty_reminders: Generated<boolean>;
+  /** A plain member may lend and return things without a grant. On for a
+   *  workspace born after migration 250; an older one is asked once. */
+  members_may_lend: Generated<boolean>;
+  /** The owner has answered (or was born answering) whether members may lend. */
+  members_lend_asked: Generated<boolean>;
   id: Generated<string>;
   /** "share": a share space, a small workspace holding what someone shares
    *  with its member, linked to the sharer's workspace (share_links). */

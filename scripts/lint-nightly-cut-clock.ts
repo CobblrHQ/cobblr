@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const SOURCE_OF_TRUTH = "scripts/lib/deploy-state.sh";
-const SCAN_DIRS = ["scripts", ".claude/skills"];
+const SCAN_DIRS = ["scripts", ".claude/skills", "docs/operations/ci"];
 const SCAN_FILES = [
   "CLAUDE.md",
   "docs/architecture/platform-spec.md",

@@ -40,6 +40,7 @@ import { ExportInboxModal } from "../components/ExportInboxModal";
 import { } from "../components/CameraCaptureSheet";
 import { } from "../panels/registry";
 import { LocationChipPicker } from "../components/LocationChipPicker";
+import { useScanSessionLocation } from "../lib/useScanSessionLocation";
 import { SessionLocationModal } from "../components/SessionLocationModal";
 import { committedGroupsOf, sendBackIdsOf } from "../lib/committedGroups";
 import { placeForFilingLine, sessionPlaceSuggestion, suggestedPlaceNames, suggestedPlaces } from "../lib/sessionPlaceSuggestion";
@@ -2348,10 +2349,9 @@ export function ScanPage() {
   /** Give every item in a session one location, without filing anything. The
    *  header's location chip uses this: a person who wants to say "these all live
    *  in the closet" should not have to commit them in the same breath. */
+  const sessionLocationSave = useScanSessionLocation(activeSlug);
   const applySessionLocation = async (ids: string[], locId: string, onlyUnset = false) => {
     setBulkBusy(true);
-    let ok = 0;
-    let lastErr: string | null = null;
     // A location a user picked for ONE item (the camera's "where does this one
     // go?", the card picker) is a decision, not a blank - the session chip must
     // fill gaps, never overwrite it. The chip itself knows the set is mixed;
@@ -2360,16 +2360,8 @@ export function ScanPage() {
     const targets = onlyUnset
       ? ids.filter((id) => !byId.get(id)?.target_location_id)
       : ids;
-    for (const id of targets) {
-      try {
-        await api.updateScanItem(activeSlug, id, { target_location_id: locId });
-        ok++;
-      } catch (e) {
-        lastErr = e instanceof Error ? e.message : String(e);
-      }
-    }
+    const { ok, lastErr } = await sessionLocationSave.mutateAsync({ ids: targets, locationId: locId });
     setBulkBusy(false);
-    void qc.invalidateQueries({ queryKey: scanInboxKeys.all(activeSlug) });
     const loc = (locsQ.data?.items ?? []).find((l) => l.id === locId);
     const where = loc ? filingLabel(loc) : "the location";
     if (ok === 0 && targets.length > 0) {

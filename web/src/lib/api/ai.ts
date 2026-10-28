@@ -1,3 +1,4 @@
+import type { BasicPrior } from "@cobblr/platform-contract/basics-limits";
 import { randomId } from "@cobblr/platform-contract/random-id";
 import type { ConnectionVerification } from "@cobblr/platform-contract/connection-verification";
 import type { AiConnectionTest, AiDefaultJobId, AiReportedModels } from "@cobblr/platform-contract";
@@ -116,14 +117,8 @@ export interface BasicAnswer {
     | { kind: "dismiss-offer" };
 }
 
-/** The prior turn, summarised for the no-AI answer call so control words can
- *  point at something. The conversation lives on the client; this is its
- *  bounded shadow. */
-export interface BasicPrior {
-  offered?: { id: string; message: string };
-  ran?: { id: string; message: string };
-  ledger_ids?: string[];
-}
+/** The prior turn, summarised for the no-AI answer call (the route's own schema). */
+export type { BasicPrior } from "@cobblr/platform-contract/basics-limits";
 
 /** One rule in the effective ruleset (GET …/core-ai/basics). */
 export interface BasicRuleRow {

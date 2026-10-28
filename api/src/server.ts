@@ -3,7 +3,7 @@ import { observeRolePasses } from "@cobblr/platform-contract/org-roles";
 import { startRequest } from "./platform/compute-ledger.js";
 import { answerServerError } from "./lib/server-error.js";
 import { tenantTeardownErrors } from "./middleware/tenant-errors.js";
-import { appliedBudget, connectionRefusals } from "./db/connection-budget.js";
+import { appliedBudget, connectionRefusals, lastConnectionRefusal } from "./db/connection-budget.js";
 import { cspReportsRouter } from "./routes/csp-reports.js";
 import { GroupingError } from "@cobblr/platform-contract/grouped-list";
 import { deletedRecordsRouter } from "./routes/deleted-records.js";
@@ -337,9 +337,10 @@ export function createApp(): AppHandles {
       outbound,
       pools,
       // What the server allows and this api sized itself to, and how many
-      // connections the server refused in the last ten minutes: a roll fails
-      // on any (connection-budget.ts).
-      db_connections: { ...(appliedBudget() ?? {}), refusals_10m: connectionRefusals() },
+      // connections the server refused in the last ten minutes and when the
+      // newest came: a roll fails on any after it stopped the older api
+      // (connection-budget.ts).
+      db_connections: { ...(appliedBudget() ?? {}), refusals_10m: connectionRefusals(), last_refusal_at: lastConnectionRefusal() },
       migrations_pending: pending,
       // Pairs whose ledger a declared shared-database peer has taken past
       // this build, harmlessly (additive only). Information for the deploy

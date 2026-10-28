@@ -151,7 +151,9 @@ export function SessionHeadline({
         </span>
       )}
       {countText && (
-        <span data-headline-count className="shrink-0 whitespace-nowrap font-normal text-faint" title={items ?? undefined}>
+        // Which form the count is in, for a check to read: "whole" is
+        // "N items", "short" the bare number (#6881).
+        <span data-headline-count={gone.has("countShort") ? "short" : "whole"} className="shrink-0 whitespace-nowrap font-normal text-faint" title={items ?? undefined}>
           {countText}
         </span>
       )}

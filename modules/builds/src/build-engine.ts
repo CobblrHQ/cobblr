@@ -275,6 +275,13 @@ export async function planBuild(orgId: string, buildId: string, qty: number, sto
   );
 }
 
+/** A plan less the parts something else charges: a print's measured spool is
+ *  its one charge, so the recipe's line for that spool is not taken again (#8757). */
+export function withoutParts(plan: BuildPlan, parts: ReadonlySet<string>): BuildPlan {
+  if (!parts.size) return plan;
+  return { ...plan, leaves: plan.leaves.filter((c) => !parts.has(c.part_id)), from_stock: plan.from_stock.filter((c) => !parts.has(c.part_id)) };
+}
+
 /** What a plan takes from the shelf: its leaves and its stocked sub-assemblies, in total. */
 export const planInputs = (plan: BuildPlan): ComponentInput[] => [...plan.from_stock, ...plan.leaves];
 

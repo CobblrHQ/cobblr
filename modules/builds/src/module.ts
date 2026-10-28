@@ -17,7 +17,7 @@ import { defineModule } from "@cobblr/platform-contract";
 
 export default defineModule({
   name: "builds",
-  version: "0.2.2",
+  version: "0.3.0",
   displayName: "Builds",
   description:
     "Describe what you make as a recipe of parts, see how many you could build right now and what runs out first, and take the parts from stock when you build one.",
@@ -443,6 +443,7 @@ export default defineModule({
           quantity: { label: "How many each build uses", type: "number", required: true },
           optional: { label: "Optional component", type: "boolean" },
           use_stock: { label: "For a sub-assembly, take it from stock first", type: "boolean" },
+          recoverable: { label: "For a part, back to stock if the print is scrapped", type: "boolean" },
           notes: { label: "Notes", type: "text" },
         },
       },
@@ -614,6 +615,24 @@ export default defineModule({
           build: { label: "Build", type: "text", required: true },
           sub_assembly: { label: "Sub-assembly", type: "text", required: true },
           use_stock: { label: "Take it from stock first", type: "boolean", required: true },
+        },
+      },
+      {
+        // UI-SCREEN: /builds the build's part line toggles Comes back if scrapped.
+        group: "make",
+        id: "builds:set-line-recoverable",
+        changes: "records",
+        runBy: "member",
+        examples: ["Put the brass inserts back if a bracket print is scrapped"],
+        label: "Comes back if a print is scrapped",
+        description: "Sets whether a build's part line goes back to stock when a fabrication job is scrapped or cancelled after it ran, or stays used up like filament it melted.",
+        scope: "workspace",
+        invokeHandler: "builds.set-line-recoverable",
+        userInvokable: true,
+        argsSchema: {
+          build: { label: "Build", type: "text", required: true },
+          part: { label: "Part", type: "text", required: true },
+          recoverable: { label: "Back to stock if the print is scrapped", type: "boolean", required: true },
         },
       },
     ],

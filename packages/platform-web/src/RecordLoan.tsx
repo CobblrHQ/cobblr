@@ -45,7 +45,7 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
   const toast = useToast();
   const { data } = useQuery({ queryKey: ["record-loan", orgSlug, kind, id], queryFn: () => api.lookupEntity(orgSlug, kind, id), staleTime: 30_000 });
   const [asking, setAsking] = useState(false);
-  const [returning, setReturning] = useState(false);
+  const [returning, setReturning] = useState<RecordLoan | null>(null);
   const [busy, setBusy] = useState(false);
   // Where it goes back to: its place is kept while it is out.
   const home = useQuery({
@@ -86,10 +86,10 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
           onClick={async () => {
             // Back from a repair asks whether it was, and that goes in its
             // service log; any other loan ends in one tap.
-            if (REPAIR.test(loan.reason ?? "")) return setReturning(true);
+            if (REPAIR.test(loan.reason ?? "")) return setReturning(loan);
             setBusy(true);
             try {
-              const { said, offered } = await run("platform:return", {});
+              const { said, offered } = await run("platform:return", { expected_loans: { [id]: loan } });
               if (!offered) toast.success(said);
             } catch (e) {
               toast.error((e as Error).message);
@@ -102,14 +102,14 @@ export function RecordLoan({ kind, id, className }: { kind: string; id: string; 
           <Undo2 size={12} aria-hidden />
           It's back
         </button></RecordActionItem>
-        <Modal open={returning} onClose={() => setReturning(false)} title={`${data.title} is back from ${loan.holder}`} size="sm">
+        <Modal open={!!returning} onClose={() => setReturning(null)} title={`${data.title} is back from ${returning?.holder ?? loan.holder}`} size="sm">
           {returning && (
             <ReturnForm
-              holder={loan.holder}
-              onCancel={() => setReturning(false)}
+              holder={returning.holder}
+              onCancel={() => setReturning(null)}
               onSave={async (args) => {
-                const { said, offered } = await run("platform:return", args);
-                setReturning(false);
+                const { said, offered } = await run("platform:return", { ...args, expected_loans: { [id]: returning } });
+                setReturning(null);
                 if (!offered) toast.success(said);
               }}
             />

@@ -43,12 +43,14 @@ function isDateOnly(date: string, allDay?: boolean): boolean {
 }
 
 interface BuildOpts {
+  /** The feed origin, so links remain usable outside the app. */
+  origin: string;
   name?: string;
   /** Override "now" for DTSTAMP — tests pass a fixed value for determinism. */
   nowMs?: number;
 }
 
-export function buildICS(events: CalendarEvent[], opts: BuildOpts = {}): string {
+export function buildICS(events: CalendarEvent[], opts: BuildOpts): string {
   const name = opts.name ?? productName();
   const dtstamp = toUtcStamp(opts.nowMs != null ? new Date(opts.nowMs) : new Date());
   const lines: string[] = [
@@ -72,7 +74,7 @@ export function buildICS(events: CalendarEvent[], opts: BuildOpts = {}): string 
     }
     lines.push(`SUMMARY:${esc(ev.title)}`);
     if (ev.category) lines.push(`CATEGORIES:${esc(ev.category.toUpperCase())}`);
-    if (ev.detailUrl) lines.push(`URL:${esc(ev.detailUrl)}`);
+    if (ev.detailUrl) lines.push(`URL:${esc(new URL(ev.detailUrl, opts.origin).href)}`);
     if (ev.location?.trim()) lines.push(`LOCATION:${esc(ev.location.trim())}`);
     // GEO is two FLOATs separated by a semicolon, unescaped (RFC 5545 §3.8.1.6).
     if (ev.geo && Number.isFinite(ev.geo.lat) && Number.isFinite(ev.geo.lon)) lines.push(`GEO:${ev.geo.lat};${ev.geo.lon}`);

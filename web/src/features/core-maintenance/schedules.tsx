@@ -44,7 +44,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const qc = useQueryClient();
   const toast = useToast();
   const runWithUndo = useRunWithUndo();
-  const kind = ctx.kind ?? "";
+  const kind = ctx.hints?.collection || ctx.kind || "";
   const [entityModule, entityType] = kind.includes(":") ? kind.split(":") : [kind, kind];
   const key = ["maintenance-schedules", ctx.slug, ctx.entityId];
 
@@ -143,12 +143,13 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
   const [editing, setEditing] = useState<string | null>(null);
   const edit = useMutation({
     mutationFn: (v: { id: string; name: string; n: number; unit: string; remind: MaintenanceReminder; overdue_every: OverdueCadence | null }) => {
-      const counter = counters.find((c) => c.key === v.unit);
+      const prior = schedulesQ.data?.items.find((s) => s.id === v.id);
+      const counter = counters.find((c) => c.key === v.unit)?.key ?? (prior?.counter_field === v.unit ? v.unit : null);
       // Through the action, so the change carries its Undo (#5808).
       return runWithUndo({ actionId: "core-maintenance:update-schedule", args: {
         schedule_id: v.id, name: v.name, remind: v.remind, overdue_every: v.overdue_every,
         ...(counter
-          ? { counter_field: counter.key, counter_every: v.n, every_n: null, every_unit: null }
+          ? { counter_field: counter, counter_every: v.n, every_n: prior?.counter_field ? prior.every_n : null, every_unit: prior?.counter_field ? prior.every_unit : null }
           : { every_n: Math.round(v.n), every_unit: v.unit as MaintenanceIntervalUnit, counter_field: null, counter_every: null }),
       } }, `${v.name} changed.`);
     },
@@ -264,6 +265,7 @@ export function MaintenanceSchedulesPanel({ ctx }: { ctx: EntityDetailPanelCtx }
               <li key={h.id} className="flex flex-wrap gap-x-2">
                 <span className="font-medium">{h.name}</span>
                 <span className="text-muted">{h.performed_at ? dayLabel(dayStoredHere(h.performed_at)) : ""}</span>
+                {h.counter_reading != null && <span className="text-muted">Reading: {Number(h.counter_reading).toLocaleString()}</span>}
                 {h.cost_cents != null && <span className="text-muted">{formatStoredMoney(h.cost_cents, "cents")}</span>}
                 {h.attachments?.map((f) => <button type="button" key={f.fileId} className="text-accent underline" onClick={() => { void openAuthedFile(ctx.slug, f.fileId, { filename: f.filename }); }}>{f.filename}</button>)}
                 {h.notes && <span className="text-muted italic truncate">{h.notes}</span>}
@@ -384,6 +386,9 @@ function EditSchedule({
           {UNITS.map((u) => (
             <option key={u.value} value={u.value}>{num === 1 ? u.one : u.many}</option>
           ))}
+          {schedule.counter_field && !counters.some((c) => c.key === schedule.counter_field) && (
+            <option value={schedule.counter_field}>{schedule.due.counter_label || schedule.counter_field.replace(/_/g, " ")}</option>
+          )}
           {counters.map((c) => (
             <option key={c.key} value={c.key}>{c.label}</option>
           ))}

@@ -382,8 +382,8 @@ export function FilesSection({
 
   const uploadAndAttach = useMutation({
     mutationFn: async (file: File) => {
-      // Snapshot BEFORE the upload: does the entity already have a photo?
-      const hadImage = !!list.data?.main || (list.data?.items ?? []).some((i) => i.kind === "image");
+      // Snapshot BEFORE the upload: does the entity have an available cover?
+      const hadCover = !!list.data?.main;
       const f = await api.uploadFile(activeSlug, file);
       // Then attach to this entity.
       const res = await fetch(
@@ -425,11 +425,9 @@ export function FilesSection({
           toast.dismiss(reading);
         }
       }
-      // The FIRST photo on an entity auto-becomes its cover — uploading a photo
-      // should "just show" without a separate Set-as-cover tap (beta feedback,
-      // "uploaded a yarn photo, it did not retain"). Best-effort: a failure here
-      // never fails the upload, and we only claim the cover when there isn't one.
-      if (file.type.startsWith("image/") && !hadImage) {
+      // A missing or deleted cover must not block a new photo from becoming
+      // the cover. An available cover is left as the person chose it.
+      if (file.type.startsWith("image/") && !hadCover) {
         try {
           await api.setMainPhoto(activeSlug, { entity_kind: `${sourceModule}:${sourceType}`, entity_id: sourceId, file_id: f.id });
         } catch (e) {

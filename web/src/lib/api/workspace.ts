@@ -87,7 +87,7 @@ export interface QueueJob {
 /** One row of the dashboard's "needs you" feed (api/src/routes/attention.ts). */
 export interface AttentionFeedItem {
   suggestion?: { id: string; candidate: import("@cobblr/platform-contract").TidyCandidate };
-  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits";
+  kind: "tidy" | "low_stock" | "overdue" | "due_today" | "upcoming" | "pending_scans" | "photo_wanted" | "unreadable_date" | "suggested_edits" | "members_borrow" | "read_first";
   label: string;
   count: number;
   sample: string[];
@@ -98,6 +98,9 @@ export interface AttentionFeedItem {
     action?: Record<string, string>;
     record?: { kind: string; id: string; name: string };
     when?: string;
+    /** A page read on the card itself (a pinned house rule) and the tip it is put away under. */
+    body?: string;
+    tip?: string;
   }>;
   /** The collection a dated row belongs to: its overdue, today and coming-up
    *  rows share it, and the dashboard shows them as one card. */

@@ -66,7 +66,7 @@ async function mirrorLoan(ctx: ActionInvokeContext, db: Kysely<AssetsDB>, id: st
       ? null
       : await platform().actions.invoke("platform:lend", { ...base, args: { entity_kind: "assets:asset", ids: [id], expected_loan: open, holder_id: next.assigned_to, ...(next.due_back ? { due_back: next.due_back } : {}) } })
     : open
-      ? await platform().actions.invoke("platform:return", { ...base, args: { entity_kind: "assets:asset", ids: [id] } })
+      ? await platform().actions.invoke("platform:return", { ...base, args: { entity_kind: "assets:asset", ids: [id], expected_loans: { [id]: open } } })
       : null;
   if (r && (r as { ok?: unknown }).ok !== true) console.error(`[assets] the loan on ${id} did not follow Who has it:`, (r as { error?: unknown }).error);
 }

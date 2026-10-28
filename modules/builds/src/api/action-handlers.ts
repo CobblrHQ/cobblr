@@ -8,7 +8,7 @@
 import { sql, type Kysely } from "kysely";
 import { isActionRefusal, platform } from "@cobblr/platform-contract";
 import type { BuildsDB } from "../db.js";
-import { consumePlan, explodeLeafComponents, planBuild, planLines } from "../build-engine.js";
+import { consumePlan, explodeLeafComponents, planBuild, planLines, withoutParts } from "../build-engine.js";
 import { closeFilledWorkOrders, madeByWorkOrder } from "../work-orders.js";
 import { buildUndoStep } from "../build-undo.js";
 
@@ -28,7 +28,7 @@ export function registerBuildsActionHandlers(): void {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
     // When fired by a wire (e.g. digifab.job.build_committed on send), the build
     // + qty ride on the event payload — same fallback as machines:record-usage.
-    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputOnGood?: boolean };
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputOnGood?: boolean; measuredParts?: unknown };
     // A fabrication job defers the output to its good verdict (#4050): the
     // components are used now, the parts count as made when they are judged
     // good (builds.credit-output), so a failed print never adds stock.
@@ -52,7 +52,9 @@ export function registerBuildsActionHandlers(): void {
     if ((build.metadata as { assembly?: unknown } | null)?.assembly) return { ok: false, error: "Use this board revision’s assembly work order to record production." };
 
     // Stocked sub-assemblies first, the rest exploded down to leaf parts; consume both.
-    const plan = await planBuild(ctx.orgId, buildId, qty);
+    // A print's measured spool is charged by the print; its recipe line is not charged again (#8757).
+    const measured = new Set(Array.isArray(ev.measuredParts) ? ev.measuredParts.filter((p): p is string => typeof p === "string") : []);
+    const plan = withoutParts(await planBuild(ctx.orgId, buildId, qty), measured);
 
     let consumed: Awaited<ReturnType<typeof consumePlan>>;
     try {
@@ -297,7 +299,7 @@ export function registerBuildsActionHandlers(): void {
   // seeded digifab.job.build_reversed wire; not user-invokable.
   platform().actions.registerHandler("builds.reverse-one", async (ctx) => {
     const args = (ctx.args as BuildOneArgs | null) ?? {};
-    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputCredited?: boolean };
+    const ev = (ctx.event?.payload ?? {}) as { buildId?: string; qty?: number; outputCredited?: boolean; unprintedShare?: unknown };
     const buildId =
       args.build_id?.trim() ||
       ev.buildId?.trim() ||
@@ -331,9 +333,15 @@ export function registerBuildsActionHandlers(): void {
     const comps = lastQty > 0 && took.length
       ? took.filter((c) => typeof c.part_id === "string" && Number(c.quantity) > 0).map((c) => ({ part_id: c.part_id as string, quantity: Number(c.quantity) / lastQty }))
       : await explodeLeafComponents(ctx.orgId, buildId);
+    // A print melts what it used whatever the verdict (#8758): a line marked to
+    // come back returns in full, every other line only for the share the
+    // machine never reached. A reversal that names no share (an undo of a
+    // build recorded by hand) puts everything back, as before.
+    const share = typeof ev.unprintedShare === "number" && Number.isFinite(ev.unprintedShare) ? Math.min(1, Math.max(0, ev.unprintedShare)) : 1;
+    const comesBack = share < 1 ? await recoverableParts(db, buildId) : new Set<string>();
     const returned: Array<{ part_id: string; quantity: number }> = [];
     for (const c of comps) {
-      const inc = c.quantity * qty;
+      const inc = c.quantity * qty * (comesBack.has(c.part_id) ? 1 : share);
       if (inc <= 0) continue;
       await platform()
         .actions.invoke("inventory:adjust-stock", {
@@ -391,6 +399,21 @@ export function registerBuildsActionHandlers(): void {
     });
     return { ok: true, runId: run.id, buildId, qtyReversed: qty, returned };
   });
+}
+
+/** The parts a build's lines (and its sub-assemblies' lines) mark to come back to stock. */
+async function recoverableParts(db: Kysely<BuildsDB>, buildId: string): Promise<Set<string>> {
+  const parts = new Set<string>();
+  const seen = new Set<string>();
+  for (let next = [buildId]; next.length; ) {
+    next = next.filter((id) => !seen.has(id));
+    if (!next.length) break;
+    for (const id of next) seen.add(id);
+    const lines = await db.selectFrom("builds_components").select(["part_id", "sub_assembly_build_id", "recoverable"]).where("build_id", "in", next).execute();
+    for (const l of lines) if (l.part_id && l.recoverable) parts.add(l.part_id);
+    next = lines.flatMap((l) => (l.sub_assembly_build_id ? [l.sub_assembly_build_id] : []));
+  }
+  return parts;
 }
 
 // A build is reversed, a reversal is built again: each is the other's inverse

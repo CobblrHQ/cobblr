@@ -23,6 +23,7 @@ export interface MaintenanceEntry {
   name: string;
   description: string | null;
   performed_at: string | null;
+  counter_reading?: string | number | null;
   scheduled_at: string | null;
   cost_cents: number | null;
   performed_by: string | null;

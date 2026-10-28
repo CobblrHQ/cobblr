@@ -7,6 +7,7 @@
 // Lai for a repair, and recording that by clearing the location and
 // overwriting the state is what this replaces. History keeps every loan.
 
+import { randomUUID } from "node:crypto";
 import { switchFaceOn } from "./faces.js";
 import { platform, PLATFORM_OWNER } from "@cobblr/platform-contract";
 import { LOAN_KEY, loanOfFields, readRecordLoan, sayLoan, type RecordLoan } from "@cobblr/platform-contract/loan";
@@ -37,6 +38,7 @@ export interface CustodyOutcome {
 }
 
 export interface ReturnDetails {
+  expected_loans?: Record<string, unknown>;
   onlyIfHolder?: string | null;
   repaired?: boolean;
   work?: string | null;
@@ -100,7 +102,7 @@ export async function lend(
     // A kind nobody lent before wears the Lending face from now on.
     await switchFaceOn(orgId, kind, "lendable").catch((err) => console.error(`[custody] Lending face for ${kind}:`, (err as Error).message));
     const done: CustodyOutcome[] = [];
-    const loan: RecordLoan = {
+    const terms: Omit<RecordLoan, "loan_id"> = {
       holder,
       holder_id: holderId,
       reason: details.reason?.trim() || null,
@@ -110,12 +112,13 @@ export async function lend(
       due_back: details.due_back ? details.due_back.slice(0, 10) : null,
       note: details.note?.trim() || null,
     };
+    const loan: RecordLoan = { ...terms, loan_id: randomUUID() };
     for (const ent of f.ents) {
       const fields = (ent.fields ?? {}) as Record<string, unknown>;
       const before = loanOfFields(fields);
       await platform().entities.mergeMetadata(orgId, kind, ent.id, { [LOAN_KEY]: loan });
       await f.writer.onLoan?.(orgId, ent.id, { holder_id: loan.holder_id, due_back: loan.due_back });
-      await activity.log({ orgId, userId, action: LENT, ref: await refOf(orgId, kind, ent.id), diff: { name: ent.title, said: sayLoan(loan), ...loan } });
+      await activity.log({ orgId, userId, action: LENT, ref: await refOf(orgId, kind, ent.id), diff: { name: ent.title, said: sayLoan(loan), ...terms } });
       done.push({ id: ent.id, title: ent.title, before });
     }
     return { ok: true as const, done, holder, loan };
@@ -143,6 +146,11 @@ export async function returnLoan(
       const moved = f.ents.find((e) => loanOfFields(e.fields)?.holder !== details.onlyIfHolder);
       if (moved) return { ok: false as const, error: `${moved.title} was lent to ${loanOfFields(moved.fields)?.holder ?? "someone else"} since, so this Undo would end their loan. Nothing was changed.` };
     }
+    const changed = f.ents.find((ent) => {
+      const expected = readRecordLoan({ loan: details.expected_loans?.[ent.id] });
+      return !expected || JSON.stringify(loanOfFields(ent.fields)) !== JSON.stringify(expected);
+    });
+    if (changed) return { ok: false as const, error: `${changed.title}'s loan changed or was not reviewed. Review the current loan before returning it. Nothing was changed.` };
     const done: CustodyOutcome[] = [];
     for (const ent of f.ents) {
       const before = loanOfFields(ent.fields)!;
@@ -154,7 +162,7 @@ export async function returnLoan(
         action: RETURNED,
         ref: await refOf(orgId, kind, ent.id),
         diff: {
-          name: ent.title, said: `Back from ${before.holder}`, holder: before.holder, reason: before.reason, since: before.since,
+          name: ent.title, said: `Back from ${before.holder}`, holder: before.holder, holder_id: before.holder_id, reason: before.reason, since: before.since, due_back: before.due_back, note: before.note,
           ...(typeof details.repaired === "boolean" ? { repaired: details.repaired } : {}),
           ...(details.work?.trim() ? { work: details.work.trim() } : {}),
         },

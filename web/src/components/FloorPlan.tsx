@@ -789,10 +789,53 @@ function PlanFor({
     if (rect) saveEntityRect(ent, { ...rect, ...patch });
   };
 
+  // The arrows move the focused place or thing one grid step, Shift ten, in
+  // Edit layout: without them a keyboard user could put nothing on the plan
+  // where it stands (#4115). Each press is a move like a drag's, with its own
+  // Undo; it never re-files the piece into what it lands on.
+  const nudgeOf = (e: React.KeyboardEvent): { dx: number; dy: number } | null => {
+    if (!edit || !bound || e.altKey || e.metaKey || e.ctrlKey) return null;
+    const n = e.shiftKey ? 10 : 1;
+    if (e.key === "ArrowLeft") return { dx: -n, dy: 0 };
+    if (e.key === "ArrowRight") return { dx: n, dy: 0 };
+    if (e.key === "ArrowUp") return { dx: 0, dy: -n };
+    if (e.key === "ArrowDown") return { dx: 0, dy: n };
+    return null;
+  };
+  const nudged = (r: FpRect, d: { dx: number; dy: number }) => {
+    const g = snapStep();
+    return clampRect({ ...r, x_mm: snap(r.x_mm + d.dx * g, g), y_mm: snap(r.y_mm + d.dy * g, g) }, bound!);
+  };
+  const nudgePlace = (e: React.KeyboardEvent, loc: Location) => {
+    const d = nudgeOf(e);
+    const r = d && readRect(freshMeta(`place:${loc.id}`, loc.metadata));
+    if (!d || !r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSel({ type: "item", id: loc.id });
+    const next = nudged(r, d);
+    if (next.x_mm !== r.x_mm || next.y_mm !== r.y_mm) saveRect(loc, next);
+  };
+  // A drag's preventDefault also keeps focus off what was grabbed, so the
+  // arrows had nothing to move after a click; the grab focuses it.
+  const focusPiece = (e: React.PointerEvent) =>
+    (e.currentTarget as HTMLElement).closest<HTMLElement>("button, [role=button]")?.focus({ preventScroll: true });
+  const nudgeEntity = (e: React.KeyboardEvent, ent: PlanEntity) => {
+    const d = nudgeOf(e);
+    const r = d && readRect(freshMeta(entKey(ent), ent.metadata));
+    if (!d || !r) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSel({ type: "entity", kind: ent.kind, id: ent.id });
+    const next = nudged(r, d);
+    if (next.x_mm !== r.x_mm || next.y_mm !== r.y_mm) saveEntityMeta(ent, `Moved ${ent.name}`, (base) => withRect(base, next));
+  };
+
   function startEntityDrag(e: React.PointerEvent, ent: PlanEntity, rect: FpRect, mode: "move" | "resize") {
     if (!edit || !bound) return;
     e.preventDefault();
     e.stopPropagation();
+    focusPiece(e);
     setSel({ type: "entity", kind: ent.kind, id: ent.id });
     const scale = mmPerPx();
     const startX = e.clientX;
@@ -867,6 +910,7 @@ function PlanFor({
     if (!edit || !bound) return;
     e.preventDefault();
     e.stopPropagation();
+    focusPiece(e);
     setSel({ type: "item", id: loc.id });
     const scale = mmPerPx();
     let startX = e.clientX;
@@ -1465,6 +1509,15 @@ function PlanFor({
           return (
             <div
               key={loc.id}
+              role="button"
+              tabIndex={0}
+              aria-label={loc.name}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.currentTarget.click();
+                } else nudgePlace(e, loc);
+              }}
               onPointerDown={(e) => startDrag(e, loc, r, "move")}
               onClick={(e) => {
                 if (edit) {
@@ -1602,6 +1655,7 @@ function PlanFor({
                 type="button"
                 aria-label={inTheWay.length ? `${loc.name}: ${inTheWay.map((f) => f.text).join("; ")}` : loc.name}
                 key={loc.id}
+                onKeyDown={(e) => nudgePlace(e, loc)}
                 onPointerDown={(e) => startDrag(e, loc, r, "move")}
                 onClick={(e) => {
                   if (edit) {
@@ -1758,7 +1812,7 @@ function PlanFor({
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
                   e.currentTarget.click();
-                }
+                } else nudgeEntity(e, ent);
               }}
               onPointerDown={(e) => startEntityDrag(e, ent, r, "move")}
               onClick={(e) => {

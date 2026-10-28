@@ -33,7 +33,7 @@ import { } from "../components/SessionReadVerdict";
 
 import { useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { StationNewFace } from "./StationNewFace";
 import { Camera, CheckCircle, ChevronDown, Download, ExternalLink, Flag, Image as ImageIcon, ImagePlus, Library, Loader2, MapPin, MoreHorizontal, Pencil, RefreshCw, RotateCcw, ScanLine, Scissors, Sparkles, X, Database } from "lucide-react";
 import { } from "../components/ScanImportModal";
@@ -475,6 +475,7 @@ export function InboxCard({
   station?: { onFiled: () => void };
 }) {
   const { activeSlug } = useActiveOrg();
+  const locationSaving = useIsMutating({ mutationKey: scanInboxKeys.locationSave(activeSlug) }) > 0;
   const handheld = useHandheld();
   const qc = useQueryClient();
   const toast = useToast();
@@ -1050,7 +1051,7 @@ export function InboxCard({
   const rowCount = useScanCountSave(item.id, restockMatch ?? NO_COUNTED_MATCH);
   const rowHave = Math.max(0, restockMatch?.qty ?? 0);
   const rowAmount = useMatchAmount(restockMatch?.unit);
-  const commitBusy = quickConfirm.isPending || quickMerge.isPending;
+  const commitBusy = locationSaving || quickConfirm.isPending || quickMerge.isPending;
   const runCommit = () => (rowState.action.kind === "merge" ? quickMerge.mutate() : quickConfirm.mutate());
   // "Ask an admin": the blocked row's button. The server explains what is
   // missing the way a 403 would, and the sheet offers the ask with this
@@ -3571,6 +3572,7 @@ export function InboxCard({
                   </span>
                   <ScanCardCommit
                     state={rowState}
+                    busyLabel={locationSaving ? "Saving location…" : undefined}
                     busy={commitBusy || askToFile.isPending}
                     onAdd={runCommit}
                     onReview={() => (rowState.action.kind === "blocked" && rowState.ask?.length ? askToFile.mutate() : openForm(dest))}
@@ -5018,6 +5020,7 @@ function ConfirmForm({
   locSlot?: HTMLElement | null;
 }) {
   const { activeSlug, activeOrg } = useActiveOrg();
+  const locationSaving = useIsMutating({ mutationKey: scanInboxKeys.locationSave(activeSlug) }) > 0;
   const { user } = useAuth();
   const isAdmin = !!user?.is_platform_admin;
   // Installing a bundle changes workspace composition → owner/admin only (the
@@ -5556,7 +5559,7 @@ function ConfirmForm({
             <button
               type="submit"
         form={formId}
-              disabled={confirmMut.isPending || (!name.trim() && !item.suggested_name)}
+              disabled={locationSaving || confirmMut.isPending || (!name.trim() && !item.suggested_name)}
               title={willInstall ? `${entry.label} is not set up yet: this turns it on and files the item there` : `Files the item into ${entry.label}`}
               data-testid="form-submit"
               className={row ? `${SHEET_ACTION_CLASS} bg-cobble-600 hover:bg-cobble-700 disabled:opacity-50` : "px-3 py-1.5 text-sm rounded bg-cobble-600 hover:bg-cobble-700 text-white disabled:opacity-50 inline-flex items-center gap-1"}
@@ -5568,7 +5571,7 @@ function ConfirmForm({
                   note beside it named a button that did not exist (#3068).
                   The table's name is the title, so the label stays short
                   enough to be whole beside Cancel on a phone. */}
-              {confirmMut.isPending
+              {locationSaving ? "Saving location…" : confirmMut.isPending
                 ? willInstall
                   ? `Turning on ${entry.label}…`
                   : "Adding…"
@@ -5878,7 +5881,7 @@ function ConfirmForm({
       id={formId}
       onSubmit={(e) => {
         e.preventDefault();
-        if (!name.trim() && !item.suggested_name) return;
+        if (locationSaving || (!name.trim() && !item.suggested_name)) return;
         confirmMut.mutate();
       }}
       // With the fields and the commit pair portalled up into the card, what

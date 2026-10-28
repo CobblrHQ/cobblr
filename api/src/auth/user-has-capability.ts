@@ -2,7 +2,7 @@ import type { PlatformAuth } from "@cobblr/platform-contract";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
 import { actionGateOf, gatePasses, capabilitiesHeldBy } from "../platform/action-gates.js";
-import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
+import { MEMBER_DEFAULT_CAPABILITIES, MEMBER_LEND_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
 
 export const userHasCapability: PlatformAuth["userHasCapability"] = async ({ orgId, userId, role, actionId }) => {
   if (role === "guest") return false;
@@ -35,8 +35,11 @@ export const userHasCapability: PlatformAuth["userHasCapability"] = async ({ org
   if (viaRole) return true;
   // What a plain member holds without a grant (take and put back stock),
   // unless a custom role governs them.
-  const byDefault = ids.find((id) => MEMBER_DEFAULT_CAPABILITIES.includes(id));
+  const byDefault = ids.find((id) => MEMBER_DEFAULT_CAPABILITIES.includes(id) || MEMBER_LEND_CAPABILITIES.includes(id));
   if (!byDefault) return false;
+  const mayLend = MEMBER_LEND_CAPABILITIES.includes(byDefault)
+    ? !!(await meta.selectFrom("orgs").select("members_may_lend").where("id", "=", orgId).executeTakeFirst())?.members_may_lend
+    : false;
   const custom = await meta
     .selectFrom("workspace_role_assignments")
     .select("user_id")
@@ -44,5 +47,5 @@ export const userHasCapability: PlatformAuth["userHasCapability"] = async ({ org
     .where("user_id", "=", userId)
     .limit(1)
     .executeTakeFirst();
-  return memberHoldsByDefault(role, byDefault, !!custom);
+  return memberHoldsByDefault(role, byDefault, !!custom, mayLend);
 };

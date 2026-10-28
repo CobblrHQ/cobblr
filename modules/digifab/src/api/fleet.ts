@@ -42,6 +42,7 @@ import type { DigifabDB } from "../db.js";
 import { readCachedList, readCachedInfo, refreshList, ensureInfo, ensureWarming } from "../printer-file-cache.js";
 import { optionalField, optionalText } from "@cobblr/platform-contract/optional-fields";
 import { fetchDevicesCached, withTimeout } from "./fleet-device-cache.js";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 export const fleetRouter = Router({ mergeParams: true });
 
@@ -64,20 +65,6 @@ async function fileDriverFor(
 ): Promise<MachineDriver | null> {
   const lan = await familyPreferredDriver(orgId, connId, deviceId);
   return lan ?? (await buildDriverById(db, orgId, connId));
-}
-
-/** Run `fn` over `items` with at most `limit` in flight at once. */
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const idx = next++;
-      out[idx] = await fn(items[idx]!);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
 }
 
 fleetRouter.get(

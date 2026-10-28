@@ -51,7 +51,7 @@ export const OUTFIT_PLANNER_HTML = String.raw`
   <div class="op-row" id="op-selbar" style="display:none">
     <button class="op-btn" id="op-front">Bring front</button>
     <button class="op-btn" id="op-remove">Remove</button>
-    <span class="op-size">size <input id="op-resize" type="range" min="36" max="200" value="92"></span>
+    <span class="op-size">size <input id="op-resize" aria-label="Garment size" type="range" min="36" max="200" value="92"></span>
   </div>
   <div class="op-pal-cat">// your garments: tap or drag onto the figure</div>
   <div class="op-palette" id="op-palette"></div>
@@ -71,9 +71,11 @@ export const OUTFIT_PLANNER_HTML = String.raw`
   var looksEl=document.getElementById('op-looks');
   var selbar=document.getElementById('op-selbar');
   var resize=document.getElementById('op-resize');
+  var saveButton=document.getElementById('op-save');
+  saveButton.disabled=true;
   var garments=[];      // {id,title,color,type,src}
   var items=[];         // placed: {garmentId,el,x,y,w,z,src,title}
-  var looks=[];         // saved
+  var looks=[], opened=null, ready=false, saving=false, looksError='';
   var sel=null, z=1;
 
   function rect(){return stage.getBoundingClientRect();}
@@ -180,17 +182,31 @@ export const OUTFIT_PLANNER_HTML = String.raw`
       var el=document.createElement('div');el.className='op-look';
       var t=document.createElement('span');t.textContent=L.name||('Look '+(idx+1));t.onclick=function(){loadLook(L);};
       var x=document.createElement('span');x.className='x';x.textContent='×';x.title='Delete';
-      x.onclick=function(e){e.stopPropagation();looks.splice(idx,1);persist();renderLooks();};
+      x.onclick=function(e){
+        e.stopPropagation();if(!ready||saving)return;
+        var next=looks.filter(function(_,i){return i!==idx;});
+        persist(next).then(function(){status.textContent='Deleted “'+L.name+'”.';})
+          .catch(function(err){status.textContent=(err&&err.message)||'Could not delete this look. Try again.';});
+      };
       el.appendChild(t);el.appendChild(x);looksEl.appendChild(el);
     });
   }
-  function persist(){return window.cobblr.appSave('looks',looks);}
-  document.getElementById('op-save').onclick=function(){
+  function persist(next){
+    saving=true;saveButton.disabled=true;
+    return window.cobblr.appSave('looks',next,{opened:opened}).then(function(){
+      looks=next;opened=next;renderLooks();
+    }).finally(function(){saving=false;saveButton.disabled=!ready;});
+  }
+  saveButton.onclick=function(){
+    if(!ready||saving)return;
     var nameEl=document.getElementById('op-lookname');
     var nm=(nameEl.value||'').trim()||('Look '+(looks.length+1));
     if(!items.length){status.textContent='Add a few garments to the figure first.';return;}
-    looks.unshift({name:nm,at:Date.now(),items:snapshot()});
-    nameEl.value='';persist().then(function(){renderLooks();status.textContent='Saved “'+nm+'”.';});
+    var next=[{name:nm,at:Date.now(),items:snapshot()}].concat(looks);
+    persist(next).then(function(){
+      if(nameEl.value.trim()===nm)nameEl.value='';
+      status.textContent='Saved “'+nm+'”.';
+    }).catch(function(err){status.textContent=((err&&err.message)||'Could not save this look.')+' Your current look is still here.';});
   };
 
   // ---- boot: list garments from the Wardrobe instance's saved view ----
@@ -205,8 +221,8 @@ export const OUTFIT_PLANNER_HTML = String.raw`
     return {id:row.id,title:row.title||f.name||'Garment',color:meta.color,type:meta.garment_type,image_path:ip};
   }
   function renderGarments(rows){
-    if(!rows.length){status.textContent='Your Wardrobe is empty. Add some garments (with photos) first.';return Promise.resolve();}
-    status.textContent=rows.length+' garments. Tap (or drag) any onto the figure, arrange, then Save look.';
+    if(!rows.length){status.textContent=looksError||'Your Wardrobe is empty. Add some garments (with photos) first.';return Promise.resolve();}
+    status.textContent=looksError||rows.length+' garments. Tap (or drag) any onto the figure, arrange, then Save look.';
     return Promise.all(rows.map(function(row){
       var g=garmentFromRow(row);
       if(!g.image_path)return Promise.resolve(g);
@@ -225,7 +241,9 @@ export const OUTFIT_PLANNER_HTML = String.raw`
     return window.cobblr.viewData(view.id,{limit:200}).then(renderGarments);
   }).catch(function(err){status.textContent='Could not load wardrobe: '+((err&&err.message)||err);});
 
-  window.cobblr.appLoad('looks').then(function(v){looks=Array.isArray(v)?v:[];renderLooks();}).catch(function(){});
+  window.cobblr.appLoad('looks').then(function(v){
+    opened=v;looks=Array.isArray(v)?v:[];ready=true;saveButton.disabled=false;renderLooks();
+  }).catch(function(err){looksError='Could not load saved looks: '+((err&&err.message)||err);status.textContent=looksError;});
 })();
 </script>
 `;

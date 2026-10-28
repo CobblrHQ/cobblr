@@ -86,10 +86,18 @@ export function isConnectionRefusal(err: unknown): boolean {
 
 const refusals: number[] = [];
 const WINDOW_MS = 10 * 60 * 1000;
+let lastRefusalAt: number | null = null;
 
 export function noteConnectionRefused(now: number = Date.now()): void {
   refusals.push(now);
+  lastRefusalAt = now;
   while (refusals.length && (refusals[0] ?? now) < now - WINDOW_MS) refusals.shift();
+}
+
+/** When the newest refusal came, or null for none since boot: a roll counts
+ *  only the ones after it stopped the older api. */
+export function lastConnectionRefusal(): string | null {
+  return lastRefusalAt === null ? null : new Date(lastRefusalAt).toISOString();
 }
 
 /** Refusals in the last ten minutes. */

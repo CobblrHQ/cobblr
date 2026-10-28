@@ -7,6 +7,8 @@
  *  itself. Added for the hosted identify scope: the allowance had to answer
  *  "is this workspace the yarn app?" and a module has no other way to ask. */
 export interface PlatformOrgInfo {
+  /** The workspace calendar zone, fixed independently of a reader travelling. */
+  time_zone?: string | null;
   id: string;
   slug: string;
   accent?: string | null;

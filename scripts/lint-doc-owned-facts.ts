@@ -47,8 +47,8 @@ interface OwnedFact {
 const FACTS: OwnedFact[] = [
   {
     what: "how the canary pair picks up a new build (canary-roll.timer, blue-green; Watchtower is deliberately OFF for it)",
-    owner: "docs/operations/CI_DEPLOY.md",
-    anchor: "#canary-rolls-blue-green-not-via-watchtower-changed-2026-08-17",
+    owner: "docs/operations/ci/deploy-and-release.md",
+    anchor: "#canary-and-staging-roll-blue-green-not-via-watchtower-canary-2026-08-17-staging-2026-10-11",
     claims: [
       // "Watchtower on" / "Watchtower enabled" — the two lines that were still
       // saying it eighteen days after canary moved off Watchtower.

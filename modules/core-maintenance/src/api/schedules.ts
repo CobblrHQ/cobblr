@@ -20,6 +20,7 @@ import { sql } from "kysely";
 import { pagedAnswer, readListPage, TOTAL_COLUMN } from "@cobblr/platform-contract/list-page";
 import { TermFields, termValues } from "../term-fields.js";
 import { optionalField } from "@cobblr/platform-contract/optional-fields";
+import { instantFromInput } from "@cobblr/platform-contract/day";
 
 export const schedulesRouter = Router({ mergeParams: true });
 
@@ -119,10 +120,11 @@ export async function present(orgId: string, s: ScheduleRow, timeZone?: string |
   };
 }
 
+// A bare day is stored at noon UTC, its own day in every zone; new Date()
+// put it at midnight UTC, the evening before west of Greenwich (#8717,
+// migration 0009 heals those already saved).
 function when(v: string | null | undefined): Date | null {
-  if (!v) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
+  return v ? instantFromInput(v) : null;
 }
 
 /** Create one, stamping the counter reading it starts from, and make its

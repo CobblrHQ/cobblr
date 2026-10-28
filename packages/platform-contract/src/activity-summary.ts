@@ -74,6 +74,8 @@ export const ACTIVITY_VERBS: Readonly<Record<string, string>> = {
   "folder_created": "created",
   "folder_deleted": "deleted",
   "holding_added": "added",
+  "members_may_lend": "allowed members to lend and return things in",
+  "members_may_not_lend": "stopped members lending and returning things in",
   "holding_split": "split",
   "holdings_combined": "combined",
   "inspection_created": "recorded",

@@ -179,8 +179,8 @@ export function InviteAcceptPage() {
         <p className="text-sm text-content dark:text-mortar-200">
           {p.reusable ? (
             <>
-              Join <strong>{p.org_name}</strong> as a <strong>{p.role}</strong>. You do this once; after that,
-              scan the label on anything you take.
+              Join <strong>{p.org_name}</strong> as a <strong>{p.role}</strong>. You do this once
+              {p.members_may_lend ? "; after that, scan the label on anything you take." : "."}
             </>
           ) : (
             <>

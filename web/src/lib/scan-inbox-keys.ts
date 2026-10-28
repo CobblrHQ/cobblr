@@ -12,6 +12,8 @@
 export const scanInboxKeys = {
   /** Everything below: what every inbox write invalidates. */
   all: (slug: string) => ["scan-inbox", slug] as const,
+  locationSave: (slug: string) => ["scan-inbox", slug, "location-save"] as const,
+  pendingLists: (slug: string) => ["scan-inbox", slug, "pending"] as const,
   pending: (slug: string, batchId: string | null, facet: string | null = null) => ["scan-inbox", slug, "pending", batchId, facet] as const,
   resolved: (slug: string) => ["scan-inbox", slug, "resolved"] as const,
   discarded: (slug: string) => ["scan-inbox", slug, "discarded"] as const,

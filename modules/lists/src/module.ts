@@ -190,7 +190,7 @@ export default defineModule({
         internal: true,
         label: "Link a typed line to the record it names",
         description:
-          "Internal: point an unticked line that has no record behind it at the record its title names, so ticking it restocks that record. A line that already has a record is left alone unless it is asked to relink (the line was corrected into another thing) or unlink (it no longer names a record).",
+          "Internal: on a list chosen for automatic running-low shopping, point an unticked line that has no record behind it at the record its title names, so ticking it restocks that record. Plain checklists are left alone. A line that already has a record is left alone unless it is asked to relink (the line was corrected into another thing) or unlink (it no longer names a record).",
         icon: "link",
         scope: "workspace" as const,
         userInvokable: false,

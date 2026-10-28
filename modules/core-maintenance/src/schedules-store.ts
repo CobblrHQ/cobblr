@@ -14,12 +14,13 @@
 // counters through its writer, and any number field marked `usage` from the
 // record, so only the machines module reads machines_machines.
 
+import { dayStoredAt, isStoredDay } from "@cobblr/platform-contract/day";
 import { refreshBoundRenewal } from "./bound-renewal.js";
 import { MaintenanceRefusal } from "./refusal.js";
 import { platform } from "@cobblr/platform-contract";
 import { sql, type Kysely, type Selectable } from "kysely";
 import type { CoreMaintenanceDB, CoreMaintenanceEntriesTable, CoreMaintenanceSchedulesTable } from "./db.js";
-import { dueState, hasCounter, nextRenewalExpiry, reminderAt, addInterval, type Due, type ScheduleState } from "./schedule.js";
+import { serviceDay, dueState, hasCounter, nextRenewalExpiry, reminderAt, addInterval, type Due, type ScheduleState } from "./schedule.js";
 import { termValues } from "./term-fields.js";
 
 export type ScheduleRow = Selectable<CoreMaintenanceSchedulesTable>;
@@ -67,13 +68,25 @@ export async function counterLabel(orgId: string, kind: string, field: string | 
   return (await counterDefs(orgId, kind)).find((d) => d.key === field)?.label ?? field.replace(/_/g, " ");
 }
 
+/** The zone a service day is counted in: the workspace's own; while it has
+ *  none, the reader's when the request names one; else none, and an instant
+ *  stays an instant (`serviceDay`). That is how every date was read before
+ *  workspaces had a zone, so none moves (#8748). */
+export async function serviceTimeZone(orgId: string, readerZone?: string | null): Promise<string | null> {
+  return (await platform().orgs?.get(orgId))?.time_zone || readerZone || null;
+}
+
 /** Where a schedule stands now, with its counter read. */
 export async function dueOf(orgId: string, s: ScheduleRow, now = new Date(), timeZone?: string | null): Promise<Due & { counter: number | null; counter_label: string; reminder_at: Date | null }> {
   const state = await renewalState(orgId, s);
+  const zone = await serviceTimeZone(orgId, timeZone);
+  state.last_done_at = state.last_done_at ? serviceDay(state.last_done_at, zone) : null;
+  state.created_at = serviceDay(state.created_at, zone);
+  state.current_expiry = state.current_expiry ? serviceDay(state.current_expiry, zone) : null;
   const kind = kindOf(s);
   const counter = hasCounter(state) ? await readCounter(orgId, kind, s.entity_id, state.counter_field) : null;
   const label = await counterLabel(orgId, kind, s.counter_field);
-  return { ...dueState(state, now, counter, label, timeZone), counter, counter_label: label, reminder_at: nextDueAtReminder(state) };
+  return { ...dueState(state, now, counter, label, timeZone || zone), counter, counter_label: label, reminder_at: nextDueAtReminder(state) };
 }
 
 async function openOccurrences(db: Db, scheduleId: string): Promise<EntryRow[]> {
@@ -105,7 +118,7 @@ async function ensureOccurrenceLocked(db: Db, orgId: string, s: ScheduleRow, now
   }
   const due = await dueOf(orgId, s, now);
   const byCounter = due.counter != null && due.next_due_counter != null && due.counter >= due.next_due_counter;
-  const target = byCounter ? now : due.next_due_at;
+  const target = byCounter ? serviceDay(now, await serviceTimeZone(orgId)) : due.next_due_at;
   const open = await openOccurrences(db, s.id);
   const [first, ...extra] = open;
   // Two open occurrences of one schedule is one too many: a race between a
@@ -164,9 +177,8 @@ async function scheduleFor(db: Db, entry: EntryRow): Promise<ScheduleRow | null>
 
 /** A service was done: roll its schedule forward from when it was done, close
  *  the occurrence it satisfied, and make the next one. Nothing happens for an
- *  entry that is not done yet or that no schedule matches. Never throws into
- *  the caller: the log is already written, and a schedule that failed to roll
- *  is caught up by the next sweep. */
+ *  entry that is not done yet or that no schedule matches. A missing historic
+ *  counter reading is refused inside the caller's transaction. */
 export interface RolledFrom {
   schedule_id: string;
   last_done_at: string | null;
@@ -192,6 +204,13 @@ async function rollForwardLocked(
       if (newExpiry) throw new MaintenanceRefusal("This renewal predates the last renewal. Log it as history instead.");
       return null;
     }
+    if (s.counter_field && entry.counter_reading == null) {
+      const today = await platform().accounts.dayFor(entry.performed_by);
+      const serviceDay = isStoredDay(entry.performed_at)
+        ? dayStoredAt(entry.performed_at, null)!
+        : await platform().accounts.dayFor(entry.performed_by, { now: entry.performed_at });
+      if (serviceDay < today) throw new MaintenanceRefusal("Enter the counter reading at service for a past service. Today's reading cannot establish the earlier mileage or use.");
+    }
     const renewal = await renewalState(orgId, s);
     const expiry = newExpiry ?? nextRenewalExpiry(renewal);
     if (s.anchor && expiry && renewal.current_expiry && !entry.is_term) {
@@ -199,7 +218,7 @@ async function rollForwardLocked(
       await db.updateTable("core_maintenance_entries").set(term).where("id", "=", entry.id).execute();
     }
     if (expiry) await writeExpiry(orgId, s, expiry);
-    const reading = s.counter_field ? await readCounter(orgId, kindOf(s), s.entity_id, s.counter_field) : null;
+    const reading = s.counter_field ? num(entry.counter_reading) ?? await readCounter(orgId, kindOf(s), s.entity_id, s.counter_field) : null;
     const rolled = await db
       .updateTable("core_maintenance_schedules")
       .set({
@@ -231,7 +250,7 @@ async function rollForwardLocked(
     };
     return { schedule_id: s.id, next, was };
   } catch (err) {
-    if (newExpiry) throw err;
+    if (newExpiry || err instanceof MaintenanceRefusal) throw err;
     console.warn(`[core-maintenance] roll-forward for entry ${entry.id} failed:`, (err as Error).message);
     return null;
   }
@@ -330,12 +349,12 @@ export async function rollForward(db: Db, orgId: string, entry: EntryRow, newExp
 }
 
 
-export async function completeEntry(db: Db, orgId: string, id: string, userId: string | null, at: Date) {
+export async function completeEntry(db: Db, orgId: string, id: string, userId: string | null, at: Date, reading?: number | null) {
   return db.transaction().execute(async (tx) => {
     const before = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirst();
     if (!before) return null;
     if (before.schedule_id) await tx.selectFrom("core_maintenance_schedules").select("id").where("id", "=", before.schedule_id).forUpdate().executeTakeFirst();
-    const row = await tx.updateTable("core_maintenance_entries").set({ performed_at: at, performed_by: userId, updated_at: new Date() }).where("id", "=", id).where("performed_at", "is", null).returningAll().executeTakeFirst();
+    const row = await tx.updateTable("core_maintenance_entries").set({ performed_at: at, performed_by: userId, ...(reading !== undefined ? { counter_reading: reading } : {}), updated_at: new Date() }).where("id", "=", id).where("performed_at", "is", null).returningAll().executeTakeFirst();
     if (!row) {
       const current = await tx.selectFrom("core_maintenance_entries").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
       return { row: current, rolled: null, before, skipped: true };

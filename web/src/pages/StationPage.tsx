@@ -855,7 +855,10 @@ function Station(props: { slug: string; address: string; kiosk: boolean; device:
           {view.kind === "outside" && (
             <Notice tone="bad" title={`${view.title} isn't kept at ${props.label}.`} body="Scan it at its own station, or change which collections this station keeps in its settings." onDismiss={() => setView({ kind: "ready" })} />
           )}
-          {view.kind === "record" && (
+          {/* The card waits for its record's own actions and draws all its buttons at once:
+              the card sits mid-screen, and a row of actions arriving after it moved +1 up 43 px
+              under the finger about to press it (found by the scripted-camera walk, #8623). */}
+          {view.kind === "record" && !recordActions.isLoading && (
             <RecordCard
               record={view.record}
               countable={view.countable}

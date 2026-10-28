@@ -248,7 +248,9 @@ export function newCollectionTarget(sheetName: string, targets: Target[]): Targe
 /** The records already in a collection, for matching rows to them, read as
  *  the person importing: a read with no reader leaves out every field a
  *  workspace hides from some role, so an owner's re-import of their own export
- *  saw those fields as empty and planned to "change" every row that had one. */
+ *  saw those fields as empty and planned to "change" every row that had one.
+ *  The export reading also includes native fields such as serial numbers;
+ *  the person's field read scopes and secret masking still apply. */
 export async function existingRecords(orgId: string, kind: string, viewer: { userId?: string; role?: string }): Promise<ExistingRecord[]> {
   const all = await platform().entities.listAll(orgId, kind, { include_retired: true }, { ...viewer, export: true }, { cap: 50_000 });
   return (all.items as Array<{ id: string; title: string; fields: Record<string, unknown> }>).map((r) => {

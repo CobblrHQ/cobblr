@@ -602,24 +602,27 @@ function injectedFailure(orgId: string, step: HandOverStep): void {
  *  does: "landing", an offer in a workspace's inbox before it records where
  *  it landed (#7711); "decide", an answer to it after it read the inbox row
  *  and before it finds the offer (#7743). 0 lets every waiting one go at
- *  once. Says how many wait there now. */
+ *  once. Says how many wait there now. With a `title`, only the offer of
+ *  that thing waits: an earlier offer sent again meanwhile (a send that
+ *  timed out on a loaded box) lands as it would, and never holds up the
+ *  batch the case's own offer is behind (#8781). */
 export type HandOverHold = "landing" | "decide";
-const handOverHolds = new Map<string, { until: number; waiting: Set<() => void> }>();
-export function holdHandOverForTests(orgId: string, at: HandOverHold, ms: number): number {
+const handOverHolds = new Map<string, { until: number; title?: string; waiting: Set<() => void> }>();
+export function holdHandOverForTests(orgId: string, at: HandOverHold, ms: number, title?: string): number {
   const key = `${orgId}/${at}`;
   const held = handOverHolds.get(key);
   if (ms > 0) {
-    handOverHolds.set(key, { until: Date.now() + ms, waiting: held?.waiting ?? new Set() });
+    handOverHolds.set(key, { until: Date.now() + ms, ...(title ? { title } : {}), waiting: held?.waiting ?? new Set() });
     return held?.waiting.size ?? 0;
   }
   handOverHolds.delete(key);
   for (const go of held?.waiting ?? []) go();
   return 0;
 }
-async function heldAt(orgId: string, at: HandOverHold): Promise<void> {
+async function heldAt(orgId: string, at: HandOverHold, title?: string): Promise<void> {
   const held = handOverHolds.get(`${orgId}/${at}`);
   const left = held ? held.until - Date.now() : 0;
-  if (!held || left <= 0) return;
+  if (!held || left <= 0 || (held.title && held.title !== title)) return;
   await new Promise<void>((resolve) => {
     const go = () => {
       clearTimeout(timer);
@@ -673,7 +676,7 @@ export function registerShareOfferOps(): void {
       acquiredOn: await platform().accounts.dayFor(null),
       as: await routeAs(link.org_id),
     });
-    await heldAt(link.org_id, "landing");
+    await heldAt(link.org_id, "landing", thing.name);
     if (landed) await meta.updateTable("share_offers").set({ landed: JSON.stringify({ org_id: link.org_id, inbox_id: landed.inbox_id }) as never }).where("id", "=", row.id).execute();
   });
 

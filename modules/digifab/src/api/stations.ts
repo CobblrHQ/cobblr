@@ -107,7 +107,10 @@ stationsRouter.get("/:connectionId/:deviceId", asyncHandler(async (req, res) => 
   try { remote = processKind ? undefined : (await driver?.listDevices())?.find(d => d.id === device); }
   catch (error) {
     const unavailable = error instanceof EdgeOffline || error instanceof EdgeTimeout || error instanceof DriverSaid || error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError" || /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|ECONNRESET|fetch failed|socket hang up/i.test(error.message));
-    if (!unavailable || await driver?.jobReviewKind?.() !== "cnc") throw error;
+    if (!unavailable) throw error;
+    // Any other machine's screen needs the bridge to know what it is; it says
+    // why it cannot be shown, never "Something went wrong" (#8798).
+    if (await driver?.jobReviewKind?.() !== "cnc") return void res.status(502).json({ error: { code: "station_unavailable", message: plainDriverError(error, "The machine's bridge", "reading its state") } });
     connectionError = plainDriverError(error, "CNC controller", "reading its state");
   }
   // A production test station is a bridge device of its own; it is read from the same device list, never a second call.

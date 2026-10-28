@@ -21,6 +21,7 @@ export interface CoreMaintenanceEntriesTable {
   name: string;
   description: string | null;
   performed_at: Date | null;
+  counter_reading: Generated<string | number | null>;
   scheduled_at: Date | null;
   cost_cents: number | null;
   performed_by: string | null;

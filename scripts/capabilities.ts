@@ -73,6 +73,16 @@ export interface VocabularyCapability extends Base {
 export const CAPABILITIES: Capability[] = [
   {
     kind: "owns",
+    id: "code:map-limit",
+    what: "a bounded-concurrency map (at most N in flight, results in order) is mapLimit from @cobblr/platform-contract/map-limit",
+    why: "four modules kept their own copy, and the workspace search kept none: it asked every kind at once, queued dozens behind a 3-connection pool, and named twelve kinds as unsearchable on a busy CI run (#7682)",
+    owner: "packages/platform-contract/src/map-limit.ts",
+    scope: ["modules/**/*.ts", "api/src/**/*.ts", "packages/**/*.ts"],
+    detect: /^(?!\s*(\/\/|\*)).*\basync\s+function\s+(mapLimit|mapWithLimit|mapConcurrent|withConcurrency)\b/,
+    use: 'import { mapLimit } from "@cobblr/platform-contract/map-limit"',
+  },
+  {
+    kind: "owns",
     id: "box:backup-copy",
     what: "a backup beside a box file is made by backup_copy: declared for a week in the box's leftovers manifest, the newest three kept",
     why: "every install wrote a .bak beside its script and nothing removed one; thirty aged in /opt/ci-health and five paged the owner as undeclared leftovers (2026-10-20, core #3204)",

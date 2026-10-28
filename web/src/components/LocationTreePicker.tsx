@@ -8,8 +8,16 @@
 // reveal its children. A leaf (no children) just picks. Search flattens to
 // matches with their path. Every place is pickable: no prop narrows it to one
 // kind (#6438; lint:capabilities, location:one-picker).
+//
+// Keys, from the search box: the arrows move through the rows and say which is
+// on, Enter picks it, the right arrow opens a place with places inside and the
+// left goes back up. The panel lives in <body>, outside any dialog, so closing
+// it (a pick, Escape, a click away, Tab out) puts focus back on its field;
+// before, a keyboard user could reach no row and Tab fell out of the dialog
+// (#8775). The rows stay buttons (walks and tests click them by name); the
+// search box points at the one the arrows are on.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Backpack, Check, ChevronDown, ChevronRight, MapPin, Plus, X } from "lucide-react";
@@ -76,6 +84,9 @@ export function LocationTreePicker({
   const [cursor, setCursor] = useState<string | null>(null); // the room we've drilled into (null = top)
   const [q, setQ] = useState("");
   const trigRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
+  const listId = useId();
+  const [active, setActive] = useState(-1);
   const panelRef = useRef<HTMLDivElement>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
@@ -107,8 +118,12 @@ export function LocationTreePicker({
     void qc.invalidateQueries({ queryKey: ["core-placement-holders", activeSlug] });
     onPlaced?.();
   };
-  const pickHolder = async (h: PlaceHolder) => {
+  const close = (refocus = true) => {
     setOpen(false);
+    if (refocus) requestAnimationFrame(() => openerRef.current?.focus());
+  };
+  const pickHolder = async (h: PlaceHolder) => {
+    close();
     setQ("");
     if (onPickHolder) {
       onPickHolder(h);
@@ -167,6 +182,7 @@ export function LocationTreePicker({
     reposition();
     setCursor(selected ? parentOf(selected) : null); // start at the selection's level
     setQ("");
+    setActive(-1);
     setOpen(true);
   };
   useLayoutEffect(() => {
@@ -183,10 +199,10 @@ export function LocationTreePicker({
       window.removeEventListener("scroll", onMove, true);
     };
   }, [open]);
-  useEscapeToClose(open, panelRef, () => setOpen(false));
+  useEscapeToClose(open, panelRef, () => close());
 
   const pick = async (id: string | null) => {
-    setOpen(false);
+    close();
     setQ("");
     // Inside a Backpack, the record has no place of its own to set: taking it
     // out, or putting it on a shelf, is a move out of the Backpack first.
@@ -204,6 +220,11 @@ export function LocationTreePicker({
   const drill = (id: string) => {
     setCursor(id);
     setQ("");
+    setActive(-1);
+  };
+  const search = (v: string) => {
+    setQ(v);
+    setActive(v.trim() ? 0 : -1);
   };
 
   const rows = q.trim()
@@ -218,6 +239,38 @@ export function LocationTreePicker({
     : cursor === null
       ? holderRows
       : [];
+
+  // The rows in the order they are drawn, for the keys.
+  const options: { pick: () => void; drill?: () => void }[] = [
+    ...(!q.trim() ? [{ pick: () => void pick(null) }] : []),
+    ...holderMatches.map((h) => ({ pick: () => void pickHolder(h) })),
+    ...rows.map((l) => ({ pick: () => void pick(l.id), drill: !q.trim() && hasKids(l.id) ? () => drill(l.id) : undefined })),
+  ];
+  const optionId = (i: number) => `${listId}-opt-${i}`;
+  const holderBase = !q.trim() ? 1 : 0;
+  const rowBase = holderBase + holderMatches.length;
+  useEffect(() => {
+    if (open && active >= 0) document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, open]);
+  const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!options.length) return;
+      setActive((a) => (e.key === "ArrowDown" ? Math.min(options.length - 1, a + 1) : Math.max(0, a - 1)));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      options[active]?.pick();
+    } else if (e.key === "ArrowRight" && !q && options[active]?.drill) {
+      e.preventDefault();
+      options[active]!.drill!();
+    } else if (e.key === "ArrowLeft" && !q && cursor) {
+      e.preventDefault();
+      const here = byId.get(cursor);
+      setCursor(here ? parentOf(here) : null);
+      setActive(-1);
+    }
+  };
 
   const sizeCls = size === "sm" ? "px-2 py-1 text-xs" : "px-2.5 py-1.5 text-sm";
 
@@ -237,7 +290,7 @@ export function LocationTreePicker({
         (className ? " " + className : "")
       }
     >
-      <button type="button" onClick={toggle} aria-expanded={open} title={description ? firstActionSentence(description) : undefined} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left">
+      <button ref={openerRef} type="button" onClick={toggle} aria-expanded={open} title={description ? firstActionSentence(description) : undefined} className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left">
         <MapPin size={13} className="shrink-0 text-faint" />
         <span className="truncate flex-1 text-left">
           {triggerLabel ? triggerLabel : inside ? (
@@ -277,10 +330,13 @@ export function LocationTreePicker({
     rect &&
     createPortal(
       <>
-        <OverlayLayer className="z-[60]" onClick={() => setOpen(false)} />
+        <OverlayLayer className="z-[60]" onClick={() => close()} />
         <PopoverLayer
           ref={panelRef}
           data-testid="location-tree-picker-panel"
+          onBlur={(e) => {
+            if (e.relatedTarget && !panelRef.current?.contains(e.relatedTarget as Node)) close();
+          }}
           className="z-[61] flex flex-col overflow-hidden rounded-lg border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 shadow-xl"
           style={{
             top: rect.bottom + 4,
@@ -290,7 +346,19 @@ export function LocationTreePicker({
           }}
         >
           <div className="border-b border-line dark:border-slate-800 p-2">
-            <SearchInput autoFocus value={q} onChange={setQ} placeholder="Search all locations…" aria-label="Search all locations" size="sm" />
+            <SearchInput
+              autoFocus
+              value={q}
+              onChange={search}
+              onKeyDown={onSearchKey}
+              placeholder="Search all locations…"
+              aria-label="Search all locations"
+              role="combobox"
+              aria-expanded
+              aria-controls={listId}
+              aria-activedescendant={active >= 0 && options[active] ? optionId(active) : undefined}
+              size="sm"
+            />
           </div>
           {!q.trim() && (
             <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-line dark:border-slate-800 px-2.5 py-1.5 text-xs text-muted">
@@ -315,12 +383,13 @@ export function LocationTreePicker({
               ))}
             </div>
           )}
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div id={listId} className="min-h-0 flex-1 overflow-y-auto">
             {!q.trim() && (
               <button
                 type="button"
+                id={optionId(0)}
                 onClick={() => pick(null)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-faint hover:bg-subtle dark:hover:bg-slate-800"
+                className={"flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-faint hover:bg-subtle dark:hover:bg-slate-800 " + (active === 0 ? "bg-subtle dark:bg-slate-800" : "")}
               >
                 {value === null && !chosen && <Check size={13} className="shrink-0 text-accent" />}
                 {noneLabel}
@@ -329,14 +398,16 @@ export function LocationTreePicker({
             {holderMatches.length > 0 && (
               <div data-testid="location-picker-holders" className="border-b border-line dark:border-slate-800">
                 <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-faint">Inside something</div>
-                {holderMatches.map((h) => {
+                {holderMatches.map((h, i) => {
                   const here = chosen?.kind === h.kind && chosen.id === h.id;
+                  const on = active === holderBase + i;
                   return (
                     <button
                       key={`${h.kind}:${h.id}`}
                       type="button"
+                      id={optionId(holderBase + i)}
                       onClick={() => void pickHolder(h)}
-                      className={"flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-subtle dark:hover:bg-slate-800 " + (here ? "bg-cobble-50 dark:bg-cobble-950/30" : "")}
+                      className={"flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-subtle dark:hover:bg-slate-800 " + (here ? "bg-cobble-50 dark:bg-cobble-950/30 " : "") + (on ? "bg-subtle dark:bg-slate-800" : "")}
                     >
                       {here ? <Check size={13} className="shrink-0 text-accent" /> : <Backpack size={13} className="shrink-0 text-faint" />}
                       <span className="truncate">{h.title}</span>
@@ -347,19 +418,22 @@ export function LocationTreePicker({
               </div>
             )}
             {rows.length === 0 && holderMatches.length === 0 && <div className="px-3 py-3 text-sm text-faint">Nothing here.</div>}
-            {rows.map((l) => {
+            {rows.map((l, i) => {
               const kids = hasKids(l.id);
               const parentPath = pathOf(l.id).slice(0, -1);
+              const on = active === rowBase + i;
               return (
                 <div
                   key={l.id}
                   className={
                     "flex items-stretch hover:bg-subtle dark:hover:bg-slate-800 " +
-                    (value === l.id && !inside ? "bg-cobble-50 dark:bg-cobble-950/30" : "")
+                    (value === l.id && !inside ? "bg-cobble-50 dark:bg-cobble-950/30 " : "") +
+                    (on ? "bg-subtle dark:bg-slate-800" : "")
                   }
                 >
                   <button
                     type="button"
+                    id={optionId(rowBase + i)}
                     onClick={() => pick(l.id)}
                     className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm"
                   >
@@ -376,6 +450,7 @@ export function LocationTreePicker({
                     <button
                       aria-label={`Open ${nameOf(l)}`}
                       type="button"
+                      tabIndex={-1}
                       onClick={() => drill(l.id)}
                       title={`Open ${nameOf(l)}`}
                       className="flex shrink-0 items-center border-l border-line/50 px-2 text-faint hover:text-accent dark:border-slate-800"
@@ -393,7 +468,7 @@ export function LocationTreePicker({
               // The picker steps aside for the form it opened: left up over
               // it, its full-screen layer took the form's Name and Create
               // (#7815).
-              setOpen(false);
+              close(false);
               setCreateOpen(true);
             }}
             className="flex w-full items-center gap-2 border-t border-line dark:border-slate-800 px-3 py-2 text-left text-sm text-accent hover:bg-subtle dark:hover:bg-slate-800"

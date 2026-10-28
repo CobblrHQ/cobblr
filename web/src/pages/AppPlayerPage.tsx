@@ -713,7 +713,7 @@ invoke:invoke,
 action:invoke,
 image:function(path){if(!path)return Promise.resolve(null);return send("cobblr:image",{path:path}).then(function(r){return (r&&r.dataUrl)||null;}).catch(function(){return null;});},
 appLoad:function(key){return send("cobblr:appdata",{op:"load",key:key}).then(function(r){return r?r.value:null;});},
-appSave:function(key,value){return send("cobblr:appdata",{op:"save",key:key,value:value});},
+appSave:function(key,value,options){var payload={op:"save",key:key,value:value};if(options&&Object.prototype.hasOwnProperty.call(options,"opened"))payload.opened=options.opened;return send("cobblr:appdata",payload);},
 mount:function(target,loader,render){var el=typeof target==="string"?document.querySelector(target):target;if(!el)return Promise.resolve();el.textContent="Loading\\u2026";return Promise.resolve().then(loader).then(function(data){el.innerHTML="";render(el,data);}).catch(function(err){el.textContent="\\u26a0 "+((err&&err.message)||err);});}
 };
 })();</script>`;
@@ -782,6 +782,7 @@ export function CustomBlock({
         op?: string;
         key?: string;
         value?: unknown;
+        opened?: unknown;
       };
       const KNOWN = ["cobblr:fetch", "cobblr:invoke", "cobblr:image", "cobblr:appdata"];
       if (!m || !m.type || !KNOWN.includes(m.type)) return;
@@ -848,9 +849,10 @@ export function CustomBlock({
               const res = await fetch(`/api/v1/orgs/${slug}/modules/core-apps/apps/${appSlug}/data/${key}`, {
                 method: "PUT",
                 headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-                body: JSON.stringify({ value: m.value ?? null }),
+                body: JSON.stringify({ value: m.value ?? null, ...(Object.hasOwn(m, "opened") ? { opened: m.opened } : {}) }),
               });
-              reply({ ok: res.ok, data: { ok: res.ok }, error: res.ok ? undefined : "save failed" });
+              const data = await res.json().catch(() => null);
+              reply({ ok: res.ok, data, error: res.ok ? undefined : data?.error?.message ?? "Could not save app data. Try again." });
             } else {
               const res = await fetch(`/api/v1/orgs/${slug}/modules/core-apps/apps/${appSlug}/data/${key}`, {
                 headers: { authorization: `Bearer ${token}` },

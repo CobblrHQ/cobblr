@@ -383,14 +383,14 @@ testSupportRouter.post("/test-support/hand-over-fails", async (req, res, next) =
 // Body: { slug, at, ms }; answers how many wait there.
 testSupportRouter.post("/test-support/hand-over-hold", async (req, res, next) => {
   try {
-    const { slug, at, ms } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number };
+    const { slug, at, ms, title } = (req.body ?? {}) as { slug?: string; at?: string; ms?: number; title?: string };
     const o = slug ? await meta.selectFrom("orgs").select("id").where("slug", "=", slug).executeTakeFirst() : undefined;
     if (!o || (at !== "landing" && at !== "decide") || typeof ms !== "number") {
       res.status(400).json({ error: { code: "bad_body", message: "slug of a workspace + at (landing|decide) + ms required" } });
       return;
     }
     const { holdHandOverForTests } = await import("../platform/share-offers.js");
-    res.json({ ok: true, waiting: holdHandOverForTests(o.id, at, ms) });
+    res.json({ ok: true, waiting: holdHandOverForTests(o.id, at, ms, typeof title === "string" && title ? title : undefined) });
   } catch (err) {
     next(err);
   }

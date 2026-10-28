@@ -13,6 +13,8 @@ import { dayLabel } from "@cobblr/platform-contract/day";
 export const LOAN_KEY = "loan";
 
 export interface RecordLoan {
+  /** Checkout identity; absent on older saved loans. */
+  loan_id?: string;
   /** Who has it, as the person said it ("Sam Lee"). */
   holder: string;
   /** The People record that names them, when there is one. */
@@ -38,8 +40,9 @@ export function readRecordLoan(metadata: unknown): RecordLoan | null {
   const r = l as Record<string, unknown>;
   const holder = text(r.holder);
   const since = day(r.since);
+  const loanId = text(r.loan_id);
   if (!holder || !since) return null;
-  return { holder, holder_id: text(r.holder_id), reason: text(r.reason), since, due_back: day(r.due_back), note: text(r.note) };
+  return { holder, holder_id: text(r.holder_id), reason: text(r.reason), since, due_back: day(r.due_back), note: text(r.note), ...(loanId ? { loan_id: loanId } : {}) };
 }
 
 /** The loan on a looked-up record's fields: its metadata, or the fields

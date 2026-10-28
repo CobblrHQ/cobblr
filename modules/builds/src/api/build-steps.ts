@@ -16,6 +16,8 @@ export interface ComponentInput {
   quantity: number;
   optional?: boolean;
   use_stock?: boolean;
+  /** A part line: back to stock when a print is scrapped after it ran (#8758). */
+  recoverable?: boolean;
   notes?: string | null;
 }
 
@@ -35,6 +37,7 @@ export async function addComponent(db: Db, buildId: string, c: ComponentInput) {
       quantity: String(c.quantity),
       optional: c.optional ?? false,
       use_stock: c.use_stock ?? true,
+      recoverable: c.recoverable ?? false,
       notes: c.notes ?? null,
     })
     .returningAll()

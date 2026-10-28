@@ -36,6 +36,8 @@ import { useBundleUpdates, type BundleUpdate } from "../lib/useBundleUpdates";
 import { classifyBundleUpdate, tierAutoApplies, updateMayTeardownCatalogs } from "../lib/bundleUpdateTier";
 import { useDetailRoute } from "../lib/useDetailRoute";
 import { TidySuggestionCard } from "../components/TidySuggestionCard";
+import { MembersBorrowCard } from "../components/MembersBorrowCard";
+import { ReadFirstCard } from "../components/ReadFirstCard";
 import { composeAttention } from "../lib/attention-cards";
 import { DatedCard } from "../components/DatedCard";
 import { DiscordReminderOffer } from "../components/DiscordReminderOffer";
@@ -432,7 +434,9 @@ function MoveIntoTablesCard({ slug }: { slug: string }) {
       className="md:flex-1 md:min-w-0 rounded-lg border border-cobble-400 dark:border-cobble-600 border-l-4 border-l-cobble-500 dark:border-l-cobble-400 bg-cobble-100 dark:bg-cobble-900 shadow-sm px-4 py-3 flex flex-col items-start gap-3 sm:flex-row sm:items-center"
       data-testid="move-into-tables-card"
     >
-      <div className="flex min-w-0 flex-1 items-start gap-3">
+      {/* Stacked on a phone, the words take the card's width, not their own line's:
+          at 200% text "2 items look like they belong in …" ran 78 px past it (#8784). */}
+      <div className="flex min-w-0 flex-1 items-start gap-3 self-stretch sm:self-auto">
         <span className="text-xl shrink-0 leading-tight">🗂️</span>
         <div className="min-w-0">
           <div className="text-sm font-semibold text-content dark:text-mortar-100">
@@ -512,7 +516,7 @@ function AttentionFeed({ slug }: { slug: string }) {
         {/* A collection's overdue, today and coming-up rows as ONE card
             (attention-cards.ts); every other row as it was. */}
         {cards.map((c, i) =>
-          c.type === "row" && c.item.suggestion ? (<TidySuggestionCard key={c.item.suggestion.id} slug={slug} suggestion={c.item.suggestion} />) : c.type === "dated" ? (
+          c.type === "row" && c.item.suggestion ? (<TidySuggestionCard key={c.item.suggestion.id} slug={slug} suggestion={c.item.suggestion} />) : c.type === "row" && c.item.kind === "members_borrow" ? (<MembersBorrowCard key="members-borrow" slug={slug} label={c.item.label} />) : c.type === "row" && c.item.kind === "read_first" ? (<ReadFirstCard key="read-first" slug={slug} entries={c.item.entries ?? []} />) : c.type === "dated" ? (
             <DatedCard key={`dated-${c.collection.key}`} slug={slug} card={c} />
           ) : (
             <AttentionRow key={`${c.item.kind}-${c.item.route}-${i}`} slug={slug} item={c.item} tone={tone[c.item.kind] ?? tone.upcoming ?? ""} glyph={glyph[c.item.kind] ?? "•"} />

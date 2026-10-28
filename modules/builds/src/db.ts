@@ -27,6 +27,8 @@ export interface ComponentsTable {
   optional: Generated<boolean>;
   /** A sub-assembly line: take its output's stock first (true) or always make it (0012). */
   use_stock: Generated<boolean>;
+  /** A part line: back to stock when a fabrication job is scrapped after it ran (0014). Default off: used up. */
+  recoverable: Generated<boolean>;
   notes: string | null;
   created_at: Generated<Date>;
 }

@@ -17,7 +17,7 @@
 import { actionsRunBy, capabilitiesHeldBy } from "../platform/action-gates.js";
 import { roleHoldsEveryCapability } from "@cobblr/platform-contract/org-roles";
 import { meta } from "../db/meta.js";
-import { MEMBER_DEFAULT_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
+import { MEMBER_DEFAULT_CAPABILITIES, MEMBER_LEND_CAPABILITIES, memberHoldsByDefault } from "../platform/capability-grants.js";
 
 async function hasAnyCustomRole(orgId: string, userId: string): Promise<boolean> {
   const row = await meta
@@ -67,10 +67,11 @@ export async function effectiveCapabilities(
   // A plain member (no custom role) holds the member defaults; a custom role
   // decides for itself. Same rule as userHasCapability (memberHoldsByDefault).
   const hasCustomRole = viaRole.length > 0 || (await hasAnyCustomRole(orgId, userId));
+  const mayLend = !!(await meta.selectFrom("orgs").select("members_may_lend").where("id", "=", orgId).executeTakeFirst())?.members_may_lend;
   const held = new Set([
     ...direct.map((r) => r.action_id),
     ...viaRole.map((r) => r.action_id),
-    ...MEMBER_DEFAULT_CAPABILITIES.filter((c) => memberHoldsByDefault(role, c, hasCustomRole)),
+    ...[...MEMBER_DEFAULT_CAPABILITIES, ...MEMBER_LEND_CAPABILITIES].filter((c) => memberHoldsByDefault(role, c, hasCustomRole, mayLend)),
     ...capabilitiesHeldBy(role),
   ]);
   // And what an action's own declaration lets this role run (#5170), the

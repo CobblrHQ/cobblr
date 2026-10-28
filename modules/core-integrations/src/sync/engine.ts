@@ -33,7 +33,7 @@ import { type Kysely } from "kysely";
 import type { CoreIntegrationsDB } from "../db.js";
 import { edgeRelayFetch } from "./edge-fetch.js";
 import { reconcileHoldings, retireHoldingsOf } from "./holdings.js";
-import { mapLimit } from "./map-limit.js";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 import { deleteMirror } from "./delete-mirror.js";
 
 /** A resolved, decrypted handle to one sync connection. */

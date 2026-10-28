@@ -161,26 +161,26 @@ export function FileDetailPage() {
         )}
       </section>
 
-      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+      <dl className="grid grid-cols-1 sm:grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
         <dt className="text-muted">Size</dt>
-        <dd className="tabular-nums">{formatBytes(f.size_bytes)}</dd>
+        <dd className="min-w-0 break-words tabular-nums">{formatBytes(f.size_bytes)}</dd>
         {f.width && f.height ? (
           <>
             <dt className="text-muted">Dimensions</dt>
-            <dd className="tabular-nums">
+            <dd className="min-w-0 break-words tabular-nums">
               {f.width} × {f.height}
             </dd>
           </>
         ) : null}
         <dt className="text-muted">Added</dt>
-        <dd>{new Date(f.created_at).toLocaleString()}</dd>
+        <dd className="min-w-0 break-words">{new Date(f.created_at).toLocaleString()}</dd>
         <dt className="text-muted">Folder</dt>
-        <dd>
+        <dd className="min-w-0">
           <select
             aria-label="Folder"
             value={f.folder_id ?? ""}
             onChange={(e) => update.mutate({ folder_id: e.target.value || null })}
-            className="max-w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-sm px-1 py-0.5"
+            className="w-full min-w-0 max-w-full rounded border border-line dark:border-slate-700 bg-surface dark:bg-slate-900 text-sm px-1 py-0.5"
           >
             <option value="">Top level</option>
             {[...paths.entries()]

@@ -200,3 +200,39 @@ export function recordTargetInArgs(
   const [kind, id] = [...found.entries()][0]!;
   return { kind, id };
 }
+
+// The other way round: the record named as the call's own, for an action that
+// takes its records as arguments.
+//
+//   "lend the cordless drill to Sam until Friday"  ->  platform:lend
+//     entity_kind: "inventory:part", entity_id: "<the drill>", args {holder: "Sam"}
+//
+// platform:lend runs on the workspace and takes the records it lends as
+// entity_kind and ids. The model named the drill as the call's record, four
+// rounds running, each refused "requires entity_kind ... the call does not
+// carry it", and the turn ended with nothing lent (#8738 walk, 2026-10-28).
+// The call's record is the record the action means: it fills entity_kind and
+// ids when the arguments leave them out, and nothing it does not declare.
+
+export function argsFromCallRecord(
+  schema: Record<string, ArgSpec> | null | undefined,
+  given: unknown,
+  record: { kind?: unknown; id?: unknown },
+): Record<string, unknown> | null {
+  const names = Object.keys(schema ?? {});
+  const kind = typeof record.kind === "string" && record.kind ? record.kind : null;
+  const id = typeof record.id === "string" && record.id ? record.id : null;
+  if (!kind || !names.length) return null;
+  if (given !== undefined && given !== null && (typeof given !== "object" || Array.isArray(given))) return null;
+  const out: Record<string, unknown> = { ...((given as Record<string, unknown> | undefined) ?? {}) };
+  let filled = false;
+  if (names.includes("entity_kind") && !out.entity_kind) {
+    out.entity_kind = kind;
+    filled = true;
+  }
+  if (id && names.includes("ids") && !(Array.isArray(out.ids) && out.ids.length)) {
+    out.ids = [id];
+    filled = true;
+  }
+  return filled ? out : null;
+}

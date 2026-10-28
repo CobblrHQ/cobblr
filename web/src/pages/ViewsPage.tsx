@@ -1,3 +1,4 @@
+import { loanOfFields } from "@cobblr/platform-contract/loan";
 import { totalLabel } from "@cobblr/platform-contract/field-aggregate";
 import { normalizeGrouping, type GroupBy } from "@cobblr/platform-contract/grouped-list";
 import { centsFromAmount, formatMoney, formatStoredMoney, fieldCurrency, type MoneyStorage } from "@cobblr/platform-contract/money";
@@ -23,7 +24,7 @@ import { WEEKDAYS, MONTHS, isoLocal, buildMonthGrid, shiftMonth } from "../lib/m
 import { useMutation } from "@tanstack/react-query";
 import { ApiError, api, type SavedView } from "../lib/api";
 import { useActiveOrg } from "../auth/ActiveOrgContext";
-import { SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
+import { LentChip, SelectBox, rowOpen, rovingRadio, ContributedViewToolbar, stillAsking, useViewToolbarPending, usePlatformWeb, Modal, useTickedRows, useAskCobbAboutSelection, downloadBlob, useToast, useConfirm, usePageTitle, BulkActionBar, BulkSetField, useFlowHost, EntityPhoto, useRunAction, runUndoSteps, undoStepsOf, LOCATION_GROUP_KEY, TILE_GRID, TILE_TITLE, distinctSubtitle, PhoneRecordList, usePhoneLayout } from "@cobblr/platform-web";
 import { groupRows, fieldVal, orderedGroups, NO_GROUP, NO_GROUP_LABEL } from "../lib/view-group-key";
 import { kindOptionLabels } from "../lib/kind-option-labels";
 import { RowStockProvider, useRowStock } from "../components/ViewRowStock";
@@ -363,6 +364,7 @@ export function SavedViewBody({
           {total === null ? `${items.length}+` : total} {(total ?? items.length) === 1 ? noun : plural}
         </span>
         {items.length > 0 && <ViewExportButton slug={activeSlug} viewId={view.id} grouped={!!data.groups} />}
+        {items.some((row) => loanOfFields(row.fields)) && <Link to="/lent-out" className="inline-flex min-h-9 items-center rounded-md border border-line px-3 py-1.5 text-sm text-muted hover:text-accent">Lent out</Link>}
         {/* The empty view offers "Add your first"; once it holds a row that door
             went with it, and the kind's create form was a tab away. A table view
             is the kind's own list page, which has its New button already. */}
@@ -1072,6 +1074,11 @@ function RecordCard({
   );
 }
 
+function ViewLoan({ row }: { row: ViewRow }) {
+  const loan = loanOfFields(row.fields);
+  return loan ? <div><LentChip metadata={{ loan }} wrap /></div> : null;
+}
+
 /** A row/card title that links to the record: RecordLink over its title. */
 function EntityTitleLink({ row, className }: { row: ViewRow; className?: string }) {
   return (
@@ -1574,6 +1581,7 @@ export function TableRenderer({
           state: stateCol ? formatCell(stateCol, r) : null,
           identity: [cols.includes("subtitle") ? r.subtitle : null],
           fields: shown.map((c) => ({ label: headerOf(c) || humanize(c), value: formatCell(c, r, fields.find((f) => f.name === c)?.money) })),
+          aside: loanOfFields(r.fields) ? <ViewLoan row={r} /> : undefined,
           trailing: stock.on ? stock.stepper(r) : undefined,
         }))}
         onOpen={(id) => {
@@ -1596,7 +1604,10 @@ export function TableRenderer({
       {cols.map((c) => (
         <td key={c} className="px-3 py-1.5 align-top truncate max-w-[260px]">
           {c === linkCol ? (
-            <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r, fields.find((f) => f.name === c)?.money)}</RecordLink>
+            <>
+              <RecordLink row={r} className="hover:text-accent hover:underline">{formatCell(c, r, fields.find((f) => f.name === c)?.money)}</RecordLink>
+              <ViewLoan row={r} />
+            </>
           ) : c === "qty" && stock.on ? (
             stock.stepper(r) ?? formatCell(c, r, fields.find((f) => f.name === c)?.money)
           ) : (
@@ -1695,6 +1706,7 @@ function GalleryTile({ row, src, title, caption }: { row: ViewRow; src: string |
       <div className="p-2">
         <div data-tile-title title={title} className={`${TILE_TITLE} text-sm`}>{title}</div>
         {distinctSubtitle(title, caption) && <div className="truncate text-xs text-muted dark:text-slate-400">{caption}</div>}
+        <ViewLoan row={row} />
       </div>
     </RecordLink>
   );

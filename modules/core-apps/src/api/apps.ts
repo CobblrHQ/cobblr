@@ -308,7 +308,7 @@ appsRouter.put(
       return;
     }
     if (!(await loadAppForData(req, res, req.params.slug!))) return;
-    const parsed = z.object({ value: z.unknown() }).safeParse(req.body);
+    const parsed = z.object({ value: z.unknown(), opened: z.unknown().optional() }).safeParse(req.body);
     if (!parsed.success) return badBody(res, parsed.error);
     const json = JSON.stringify(parsed.data.value ?? null);
     if (json.length > 400_000) {
@@ -316,13 +316,29 @@ appsRouter.put(
       return;
     }
     const db = tenantDb(req);
-    await db
-      .insertInto("core_apps_app_data")
-      .values({ app_slug: req.params.slug!, key: req.params.key!, value: sql`${json}::jsonb` as never })
-      .onConflict((c) =>
-        c.columns(["app_slug", "key"]).doUpdateSet({ value: sql`${json}::jsonb` as never, updated_at: new Date() }),
-      )
-      .execute();
+    const guarded = Object.hasOwn(parsed.data, "opened");
+    const opened = JSON.stringify(parsed.data.opened ?? null);
+    // Judge the opened value in the write itself, including two first saves
+    // racing to create the same key. A separate read would let both pass.
+    const saved = guarded && parsed.data.opened !== null
+      ? await db.updateTable("core_apps_app_data")
+        .set({ value: sql`${json}::jsonb` as never, updated_at: new Date() })
+        .where("app_slug", "=", req.params.slug!)
+        .where("key", "=", req.params.key!)
+        .where(sql<boolean>`value = ${opened}::jsonb`)
+        .returning("key").executeTakeFirst()
+      : await db.insertInto("core_apps_app_data")
+        .values({ app_slug: req.params.slug!, key: req.params.key!, value: sql`${json}::jsonb` as never })
+        .onConflict((c) => {
+          const update = c.columns(["app_slug", "key"])
+            .doUpdateSet({ value: sql`${json}::jsonb` as never, updated_at: new Date() });
+          return guarded ? update.where(sql<boolean>`core_apps_app_data.value = ${opened}::jsonb`) : update;
+        })
+        .returning("key").executeTakeFirst();
+    if (!saved) {
+      res.status(409).json({ error: { code: "changed_since", message: "Saved app data changed in another window. Reload before saving again." } });
+      return;
+    }
     res.json({ ok: true });
   }),
 );

@@ -40,13 +40,10 @@ async function partNamed(db: Kysely<InventoryDB>, title: string): Promise<string
 }
 
 export function registerListRestock(): void {
-  // A line typed by hand whose title names exactly one item is that item's
-  // line: ticking it restocks it, and the line says so before it is ticked.
-  // Typing it is the consent, as pressing Add to list is; a title that names
-  // nothing, or two things, stays plain words.
+  // Lists decides whether this line carries shopping intent before linking.
   platform().events.on("lists.item.added", "inventory", async (raw) => {
-    const ev = raw as { orgId?: string; itemId?: string };
-    if (!ev.orgId || !ev.itemId) return;
+    const ev = raw as { orgId?: string; itemId?: string; viaWire?: boolean };
+    if (!ev.orgId || !ev.itemId || ev.viaWire) return;
     try {
       const line = await platform().entities.lookup(ev.orgId, "lists:item", ev.itemId);
       const title = typeof line?.title === "string" ? line.title.trim() : "";

@@ -441,7 +441,7 @@ filesRouter.get(
         const kind = r.source_type.includes(":") ? r.source_type : `${r.source_module}:${r.source_type}`;
         const found = await platform().entities.lookup(orgId, kind, r.source_id, userId ? { userId } : undefined);
         if (!found) return null;
-        return { attachment_id: r.attachment_id, kind, id: r.source_id, role: r.role, title: found.title, detail_url: found.detailUrl ?? null };
+        return { attachment_id: r.attachment_id, kind, id: r.source_id, role: r.role, title: found.title, detail_url: found.detailUrl ?? (await platform().entities.detailPathForEntity(orgId, kind, r.source_id)) ?? null };
       }),
     );
     res.json({ items: items.filter((x) => x !== null) });

@@ -410,5 +410,5 @@ export { resetSharedReads, sharedRead } from "./shared-reads";
 export { IDEMPOTENCY_KEY, asAPersonsWrite, browserOffline, forgetWaitingWrites, keepWaitingWrite, keptByThisPage, landedWrite, madeByAMutation, madeByAPerson, sendWaitingWrites, sendingFailed, sendingWaits, subscribeWaitingWrites, waitingWriteCount, waitingWritesToSend, withWaitingWrites, type SendOutcome, type WaitingWrite } from "./waiting-writes";
 export { StatusRow, type StatusRowProps } from "./StatusRow";
 export { configureProductName, productName } from "./product-name";
-export { beginWrite, outcomeOf, resetWriteIdentities, type WriteOutcome } from "./write-identity";
+export { beginWrite, isAWrite, outcomeOf, resetWriteIdentities, type WriteOutcome } from "./write-identity";
 export { isKeptOffline, KEPT_OFFLINE, KEPT_SENTENCE, networkFailureMessage, OFFLINE_SENTENCE } from "./network-failure";

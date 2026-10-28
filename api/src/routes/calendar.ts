@@ -199,7 +199,7 @@ calendarPublicRouter.get("/:token", async (req, res, next) => {
         return detailUrl ? { ...event, detailUrl } : event;
       }),
     );
-    const ics = buildICS(addressed, { name: productName() });
+    const ics = buildICS(addressed, { name: productName(), origin: new URL(feedUrl(req, token)).origin });
     res
       .status(200)
       .type("text/calendar; charset=utf-8")

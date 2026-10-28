@@ -6,7 +6,7 @@ import { HandHelping } from "lucide-react";
 import { dayHere } from "@cobblr/platform-contract/day";
 import { loanOverdue, readRecordLoan } from "@cobblr/platform-contract/loan";
 
-export function LentChip({ metadata }: { metadata: unknown }) {
+export function LentChip({ metadata, wrap = false }: { metadata: unknown; wrap?: boolean }) {
   const loan = readRecordLoan(metadata);
   if (!loan) return null;
   const late = loanOverdue(loan, dayHere(new Date()));
@@ -14,10 +14,10 @@ export function LentChip({ metadata }: { metadata: unknown }) {
     <span
       data-testid="lent-chip"
       title={late ? `Overdue: ${loan.holder} has it` : `${loan.holder} has it`}
-      className={`inline-flex items-center gap-1 whitespace-nowrap text-[10px] ${late ? "font-medium text-ember-700 dark:text-ember-300" : "text-muted dark:text-slate-400"}`}
+      className={`inline-flex items-center gap-1 text-[10px] ${wrap ? "whitespace-normal" : "whitespace-nowrap"} ${late ? "font-medium text-ember-700 dark:text-ember-300" : "text-muted dark:text-slate-400"}`}
     >
       <HandHelping size={11} aria-hidden className="shrink-0" />
-      {late ? "Overdue · " : ""}With {loan.holder}
+      <span className={wrap ? "min-w-0 break-words" : undefined}>{late ? "Overdue · " : ""}With {loan.holder}</span>
     </span>
   );
 }

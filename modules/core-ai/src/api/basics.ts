@@ -7,7 +7,7 @@
 //
 // See docs/design-decisions/no-ai-chat-training.md.
 
-import { BASICS_MESSAGE_MAX } from "@cobblr/platform-contract/basics-limits";
+import { BASICS_MESSAGE_MAX, BasicPriorSchema } from "@cobblr/platform-contract/basics-limits";
 import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Request } from "express";
 import { isDeepStrictEqual } from "node:util";
@@ -72,13 +72,7 @@ const AnswerBody = z.object({
    *  control words — yes, again, undo — can point at something. Bounded, and
    *  never trusted to act by itself: every act it produces is executed through
    *  endpoints that re-validate (see control-context.ts). */
-  prior: z
-    .object({
-      offered: z.object({ id: z.string().max(64), message: z.string().max(BASICS_MESSAGE_MAX) }).optional(),
-      ran: z.object({ id: z.string().max(64), message: z.string().max(BASICS_MESSAGE_MAX) }).optional(),
-      ledger_ids: z.array(z.string().uuid()).max(50).optional(),
-    })
-    .optional(),
+  prior: BasicPriorSchema.optional(),
 });
 
 const BasicCreate = z.object({

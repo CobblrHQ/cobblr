@@ -991,7 +991,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     min_role: "grantable",
     label: "It's back",
     description:
-      "Things lent out are back: the loan ends, and each is at its own place again in the state it was in. Back from a repair, say whether it was repaired (repaired: true or false) and what was done (work). History keeps these details; a repair also goes in its service log as \"Repaired by <who>\" when available. Read the records first and pass their real ids and their kind.",
+      "Things lent out are back: the loan ends, and each is at its own place again in the state it was in. Back from a repair, say whether it was repaired (repaired: true or false) and what was done (work). History keeps these details; a repair also goes in its service log as \"Repaired by <who>\" when available. Read the records first and pass their real ids, their kind, and expected_loans with each complete current loan keyed by record id. Missing or changed loans refuse the whole return.",
     icon: "undo-2",
     scope: "workspace",
     invoke_handler: "platform.return",
@@ -1002,6 +1002,7 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     args_schema: {
       entity_kind: { label: "The kind of record", type: "text", required: true },
       ids: { label: "The records, by id (read them first)", type: "list", required: true },
+      expected_loans: { label: "The complete current loan for each record, keyed by record id (read them first)", type: "json", required: true },
       repaired: { label: "Back from a repair: was it repaired?", type: "boolean" },
       work: { label: "What was done, for its service log", type: "text" },
       only_if_holder: { label: "End the loan only while this person still has it (a loan's own Undo)", type: "text" },
@@ -1685,6 +1686,26 @@ export const PLATFORM_ACTIONS: PlatformActionDecl[] = [
     examples: ["this is too cluttered, simplify it", "turn simple mode off, I want the advanced screens"],
     args_schema: {
       on: { label: "True for simple, false for everything", type: "boolean", required: true },
+    },
+    version: "0.1.0",
+  },
+  {
+    group: "more",
+    // UI-SCREEN: / (the Home card "Members can't borrow yet")
+    id: "platform:set-members-may-lend", changes: "setup",
+    min_role: "admin",
+    label: "Let members lend and return things",
+    description:
+      "Say whether a plain member may check a thing out and take it back (Lend and It's back on a record) without being granted it, as a makerspace or a tool library needs. A workspace made recently allows it from the start; an older one is asked once. Owner or admin. Runs on the workspace, not a record.",
+    icon: "hand-helping",
+    scope: "workspace",
+    invoke_handler: "platform.set-members-may-lend",
+    user_invokable: true,
+    // a setting, and the opposite call is the undo
+    undoable: true,
+    examples: ["let members borrow tools", "members should be able to check things out", "stop members lending things out"],
+    args_schema: {
+      on: { label: "True to let members lend and return, false to keep it to people granted it", type: "boolean", required: true },
     },
     version: "0.1.0",
   },

@@ -15,6 +15,7 @@ export interface ScanCardCommitProps {
   state: ScanRowState;
   /** A commit is in flight. */
   busy: boolean;
+  busyLabel?: string;
   onAdd: () => void;
   onReview: () => void;
 }
@@ -60,7 +61,7 @@ export function ScanCardCommit(p: ScanCardCommitProps) {
         ) : (
           <CheckCircle size={11} className={`shrink-0 ${p.busy ? "animate-pulse" : ""}`} />
         )}
-        {p.busy ? (installs ? "Installing…" : "Adding…") : p.state.action.label}
+        {p.busy ? (p.busyLabel ?? (installs ? "Installing…" : "Adding…")) : p.state.action.label}
       </button>
     );
   }

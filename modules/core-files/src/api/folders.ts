@@ -97,39 +97,41 @@ foldersRouter.patch(
     const id = req.params.id!;
     const parsed = PatchBody.safeParse(req.body ?? {});
     if (!parsed.success) return badBody(res, parsed.error);
-    const db = tenantDb(req);
-    const current = await db.selectFrom("core_files_folders").selectAll().where("id", "=", id).executeTakeFirst();
-    if (!current) {
-      res.status(404).json({ error: { code: "not_found", message: "folder not found" } });
-      return;
-    }
-    const parent = parsed.data.parent_id;
-    if (parent) {
-      const up = await ancestry(db, parent);
-      if (up.length === 0) {
-        res.status(404).json({ error: { code: "parent_not_found", message: "That folder does not exist any more." } });
+    await tenantDb(req).transaction().execute(async (db) => {
+      const current = await db.selectFrom("core_files_folders").selectAll().where("id", "=", id).forUpdate().executeTakeFirst();
+      if (!current) {
+        res.status(404).json({ error: { code: "not_found", message: "folder not found" } });
         return;
       }
-      if (up.includes(id)) {
-        res.status(409).json({ error: { code: "into_itself", message: "A folder cannot go inside itself or one of its own folders." } });
-        return;
+      if (await platform().http.refuseStaleEdit(req, res, id, current)) return;
+      const parent = parsed.data.parent_id;
+      if (parent) {
+        const up = await ancestry(db, parent);
+        if (up.length === 0) {
+          res.status(404).json({ error: { code: "parent_not_found", message: "That folder does not exist any more." } });
+          return;
+        }
+        if (up.includes(id)) {
+          res.status(409).json({ error: { code: "into_itself", message: "A folder cannot go inside itself or one of its own folders." } });
+          return;
+        }
       }
-    }
-    try {
-      const row = await db
-        .updateTable("core_files_folders")
-        .set({ ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}), ...(parent !== undefined ? { parent_id: parent } : {}) })
-        .where("id", "=", id)
-        .returning(["id", "parent_id", "name", "created_at"])
-        .executeTakeFirstOrThrow();
-      res.json(row);
-    } catch (err) {
-      if (isUnique(err)) {
-        res.status(409).json({ error: { code: "name_taken", message: `There is already a folder called "${parsed.data.name ?? current.name}" there.` } });
-        return;
+      try {
+        const row = await db
+          .updateTable("core_files_folders")
+          .set({ ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}), ...(parent !== undefined ? { parent_id: parent } : {}) })
+          .where("id", "=", id)
+          .returning(["id", "parent_id", "name", "created_at"])
+          .executeTakeFirstOrThrow();
+        res.json(row);
+      } catch (err) {
+        if (isUnique(err)) {
+          res.status(409).json({ error: { code: "name_taken", message: `There is already a folder called "${parsed.data.name ?? current.name}" there.` } });
+          return;
+        }
+        throw err;
       }
-      throw err;
-    }
+    });
   }),
 );
 

@@ -9,7 +9,7 @@
 // hard-code the item name.
 
 import { sql, type Kysely } from "kysely";
-import { platform, requireActionEntity } from "@cobblr/platform-contract";
+import { platform, requireActionEntity, type WireEffect } from "@cobblr/platform-contract";
 import type { ListsDB } from "../db.js";
 
 let registered = false;
@@ -27,6 +27,12 @@ interface AddItemArgs {
    *  running low). Kept on the line, so the gesture that asked is the consent
    *  (#6062), never a workspace-wide switch. */
   restocks?: boolean;
+}
+
+function shoppingDestination(effects: WireEffect[], line: { list_id: string; title: string }): boolean {
+  return effects.some((effect) => effect.action_id === "lists:add-item" &&
+    (effect.args?.listId ? effect.args.listId === line.list_id :
+      String(effect.args?.listTitle ?? "Shopping list").trim().toLowerCase() === line.title.trim().toLowerCase()));
 }
 
 export function registerListActionHandlers(): void {
@@ -157,6 +163,18 @@ export function registerListActionHandlers(): void {
     const unlink = a.unlink === true;
     if (!itemId || (!unlink && (!kind || !id))) return { ok: false, error: "say which line and which record" };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<ListsDB>;
+    if (!unlink && a.relink !== true) {
+      const line = await db.selectFrom("lists_items as i")
+        .innerJoin("lists_lists as l", "l.id", "i.list_id")
+        .select(["i.list_id", "l.title"])
+        .where("i.id", "=", itemId).executeTakeFirst();
+      if (!line) return { ok: true, linked: 0 };
+      // Choosing automatic shopping is consent for title matching on that
+      // list. Words on another checklist never ask to buy a second object.
+      const incoming = await platform().wires.effectsOf(ctx.orgId, "inventory.stock.low", kind);
+      const chosen = shoppingDestination(incoming, line);
+      if (!chosen) return { ok: true, linked: 0 };
+    }
     // A line corrected into another thing (#7866) is pointed at the record its
     // new words name, or at none: the old record is not what is being bought.
     const patch = JSON.stringify({ source_ref: { kind, id }, restocks: true });

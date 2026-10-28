@@ -4,6 +4,7 @@
 // messages render markdown; the input auto-grows. Portals to <body> so the
 // header's backdrop-blur can't trap its position:fixed (CLAUDE.md modal note).
 
+import { undoAsk, undoTarget, undoneSaid } from "../lib/undo-target";
 import { aiAvailabilityKeys } from "../lib/ai-availability-keys";
 import { mayRead } from "../lib/acting-role";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -76,6 +77,8 @@ interface Msg {
   commandRequest?: CommandRunResult["pendingRequest"];
   role: "user" | "assistant";
   content: string;
+  /** The turn failed, and this is why: kept in the conversation (#8738). */
+  failed?: boolean;
   /** What was in context when this was SENT. A message reads differently once
    *  you have scrolled back to it — "tell me about these" is meaningless
    *  without the two racks it came with — so the message keeps its own copy
@@ -1202,36 +1205,30 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       // so "yes" and "again" stay the model's to read. Without this the
       // model composed a fresh +1 stock write for "put it back" (rig,
       // 2026-09-13): right count, wrong road, a second ledger row.
-      const handles = (() => {
-        for (let i = next.length - 1; i >= 0; i--) {
-          const m = next[i]!;
-          if (m.undone) continue;
-          const h = m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : []);
-          if (h.length) return h;
-        }
-        return [] as string[];
-      })();
-      if (handles.length && text.trim().split(/\s+/).length <= 6) {
-        const control = await api.answerBasic(activeSlug, text, { ledger_ids: handles }).catch(() => null);
+      const target = undoTarget(next);
+      if (target && text.trim().split(/\s+/).length <= 6) {
+        // Classified as the server's undo rule reads it.
+        const control = await api.answerBasic(activeSlug, text, undoAsk(target)).catch(() => null);
         const undoAct = control?.act?.kind === "undo" ? control.act : null;
-        if (undoAct) {
+        if (undoAct && target.kind === "card") {
+          // "Undo that" said to a card nobody pressed: nothing was done, so
+          // the card is dropped, by name (#8738).
+          const card = next[target.index]!;
+          dropCard(target.index, `Nothing was done: I dropped “${card.content.trim()}”.`);
+          setBusy(false);
+          return;
+        }
+        if (undoAct && target.kind === "change") {
           let ok = 0;
           for (const id of undoAct.ledger_ids) {
             const u = await api.aiChatUndo(activeSlug, id).catch(() => ({ ok: false, message: "" }));
             if (u.ok) ok++;
           }
           if (ok) workspaceChanged();
-          setMessages((prev) => {
-            const copy = [...prev];
-            for (let i = copy.length - 1; i >= 0; i--) {
-              const m = copy[i]!;
-              if ((m.ledgerIds ?? (m.ledgerId ? [m.ledgerId] : [])).length > 0 && !m.undone) {
-                copy[i] = { ...m, undone: true };
-                break;
-              }
-            }
-            return [...copy, { role: "assistant", content: ok === undoAct.ledger_ids.length ? "✓ Undone." : ok ? `✓ Undid ${ok} of ${undoAct.ledger_ids.length}.` : "✗ I couldn't undo that." }];
-          });
+          setMessages((prev) => [
+            ...prev.map((m, i) => (i === target.index ? { ...m, undone: true } : m)),
+            { role: "assistant", content: undoneSaid(target.said, ok, undoAct.ledger_ids.length) },
+          ]);
           setBusy(false);
           return;
         }
@@ -1256,8 +1253,8 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
       await followTurn(started.turn_id, next);
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : "Something went wrong.";
-      setError(/no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg);
       setBusy(false);
+      saidItFailed(msg);
     }
   }
 
@@ -1587,7 +1584,18 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
     setStartedAt(null);
     setStreaming("");
     setBusy(false);
-    setError(/no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg);
+    saidItFailed(msg);
+  }
+
+  /** A turn that failed answers its question in the conversation, not in a
+   *  banner that is gone on the next reload. Without it the saved conversation
+   *  held the question with nothing after it, and the next turn's model took
+   *  that ask as still open: "Print a label for Shelf A" came back as a card
+   *  to lend the drill, the request the failed turn had been about (#8738). */
+  function saidItFailed(msg: string) {
+    const said = /no provider|not entitled|not available|no_ai/i.test(msg) ? "AI isn't enabled for this workspace yet." : msg;
+    setError(null);
+    setMessages((m) => [...m, { role: "assistant", content: said, failed: true }]);
   }
 
   // On mount (and workspace change): is a turn already running for me? Two
@@ -1762,11 +1770,15 @@ export function ChatPanel({ open: railOpen, setOpen }: { open: boolean; setOpen:
   }
 
   function cancel(idx: number) {
+    dropCard(idx, "Okay, left it alone.");
+  }
+
+  function dropCard(idx: number, said: string) {
     const m = messages[idx];
     markResolved(idx);
     setMessages((prev) => [
       ...prev.map((x, i) => (i === idx ? { ...x, offerState: { status: "cancelled" as const } } : x)),
-      { role: "assistant", content: "Okay, left it alone." },
+      { role: "assistant", content: said },
     ]);
     if (m?.offerId) void api.aiChatCancelOffer(activeSlug, m.offerId).catch(() => undefined);
   }

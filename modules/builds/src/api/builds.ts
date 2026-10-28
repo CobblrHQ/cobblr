@@ -61,6 +61,8 @@ const ComponentCreate = z
     optional: z.boolean().optional(),
     // A sub-assembly line: take its output's stock first (default) or always make it.
     use_stock: z.boolean().optional(),
+    // A part line: back to stock when a print is scrapped after it ran (default: used up, #8758).
+    recoverable: z.boolean().optional(),
     notes: z.string().max(2_000).nullable().optional(),
   })
   .refine((d) => (d.part_id ? !d.sub_assembly_build_id : !!d.sub_assembly_build_id), {

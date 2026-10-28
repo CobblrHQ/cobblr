@@ -42,6 +42,8 @@ export interface InvitePreview {
   org_name: string;
   org_slug: string;
   invited_by_name: string;
+  /** Whether a member of this workspace may check things out (the join page promises it only where they can). */
+  members_may_lend?: boolean;
   status: "open" | "consumed" | "revoked" | "expired" | "full" | "paused";
   reusable?: boolean;
 }

@@ -8,6 +8,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { EntityPhoto, Modal, NumberField, useConfirm, usePhotoPick, useRunAction, useToast, useUnits } from "@cobblr/platform-web";
+import { sayLoan } from "@cobblr/platform-contract/loan";
 import { countOf } from "@cobblr/platform-contract/plural";
 import type { StocktakeItem, StocktakeScope } from "../stocktake.js";
 import type { InventoryApi } from "./api";
@@ -135,7 +136,8 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
     const counted: Array<{ id: string; qty: number }> = [];
     const gone: StocktakeItem[] = [];
     for (const i of items) {
-      if (!here.has(i.id)) gone.push(i);
+      if (i.loan) keep.push(i.id);
+      else if (!here.has(i.id)) gone.push(i);
       else {
         const left = here.get(i.id);
         if (left === 0) gone.push(i);
@@ -209,7 +211,7 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
     <Modal open onClose={busy ? () => {} : onClose} title={placeId ? `What's still in ${label}?` : `Which of ${label} are still here?`} size="md">
       <div className="space-y-3" data-testid="whats-still-here-sheet">
         <p className="text-sm text-muted dark:text-slate-400">
-          Tick what is really there. Everything you leave unticked is marked gone, not finished or thrown out, so nothing is learned from it.
+          Tick what is really there. Unticked things are marked gone, except anything lent out. Known loans stay in your collection. To mark a loaned thing gone, open its record and check who has it first.
         </p>
         {items.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -269,15 +271,17 @@ export function WhatsStillHereSheet({ api, slug, scope, label: initialLabel, fix
         ) : (
           <ul className="max-h-[55vh] overflow-y-auto divide-y divide-line dark:divide-slate-800 rounded-md border border-line dark:border-slate-700">
             {items.map((i) => {
-              const ticked = here.has(i.id);
+              const ticked = !!i.loan || here.has(i.id);
               return (
                 <li key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2" data-testid="stocktake-row">
                   <label className="flex flex-1 min-w-0 basis-48 items-center gap-3 cursor-pointer">
-                    <input type="checkbox" checked={ticked} onChange={() => toggle(i.id)} aria-label={`${i.title} is still here`} />
+                    {!i.loan && <input type="checkbox" checked={ticked} onChange={() => toggle(i.id)} aria-label={`${i.title} is still here`} />}
                     <EntityPhoto src={i.image_path} alt={i.title} size={32} className="rounded-md bg-subtle text-muted shrink-0" />
                     <span className={`min-w-0 truncate text-sm ${ticked ? "text-content dark:text-mortar-100" : "text-muted dark:text-slate-400 line-through"}`}>{i.title}</span>
                   </label>
-                  {ticked ? (
+                  {i.loan ? (
+                    <span className="w-full text-sm text-muted dark:text-slate-400">{sayLoan(i.loan)} · Kept, lent out</span>
+                  ) : ticked ? (
                     <span className="inline-flex items-center gap-2 text-xs text-muted dark:text-slate-400">
                       <NumberField
                         value={here.get(i.id) ?? i.qty}

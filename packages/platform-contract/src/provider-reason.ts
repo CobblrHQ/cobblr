@@ -115,6 +115,10 @@ export function redactSecrets(text: string, secrets: ReadonlyArray<unknown>): st
 
 export type CredentialDoor = "personal" | "workspace";
 
+/** A provider's id, as the router carries it: lowercase words joined by
+ *  hyphens or underscores, no spaces. Never a name a person reads. */
+export const PROVIDER_ID = /^[a-z0-9]+(?:[-_][a-z0-9]+)+$/;
+
 /** Where to go to fix the key, by the door it came through. */
 function whereToFix(door: CredentialDoor | undefined): string {
   return door === "workspace" ? "Configuration → AI" : "Your account → Connections";
@@ -129,7 +133,10 @@ export function providerSentence(
   reason: ProviderReason,
   opts: { provider: string; door?: CredentialDoor; retryAfterSec?: number; status?: number; model?: string },
 ): string {
-  const who = opts.provider || "your AI provider";
+  // A provider's id ("google-ai-studio") is never said to a person: the
+  // caller names it by its label, or the sentence says "your AI provider"
+  // (#8738: "google-ai-studio could not answer" in Cobb's panel).
+  const who = opts.provider && !PROVIDER_ID.test(opts.provider) ? opts.provider : "your AI provider";
   switch (reason) {
     case "invalid_key":
       return `This ${who} key is not valid. Replace it under ${whereToFix(opts.door)}. Nothing was changed.`;

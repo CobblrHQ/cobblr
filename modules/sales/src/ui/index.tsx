@@ -490,6 +490,7 @@ function OrderDetailModal({ api, orgSlug, orderId, onClose }: { api: SalesApi; o
               entityKind="sales:order"
               entityId={orderId}
               values={d.metadata ?? {}}
+              hideNames={new Set(["due_date"])}
               onCommit={(name, value) => update.mutate({ metadata: { [name]: value } })}
             />
 

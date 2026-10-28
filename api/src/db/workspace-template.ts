@@ -100,6 +100,27 @@ function superClient(database?: string) {
   return createClient({ connectionString: url.toString() }, `workspace template ${database ?? "superuser"}`);
 }
 
+/** Every step that writes the template role's rows in the shared catalog
+ *  takes this lock, held to its commit: a copy's REASSIGN and DROP OWNED, a
+ *  build's role, grants, rename and drops, and a test's own. Two at once
+ *  fail "tuple concurrently updated" or "deleted" (#8823). It is taken on
+ *  the superuser's own database, because an advisory lock belongs to one
+ *  database and each copy and build works in its own. */
+const ROLE_LOCK = "select pg_advisory_lock(hashtext('cobblr-workspace-template-role'))";
+const ROLE_UNLOCK = "select pg_advisory_unlock(hashtext('cobblr-workspace-template-role'))";
+export async function withTemplateRoleLock<T>(fn: (c: ReturnType<typeof superClient>) => Promise<T>): Promise<T> {
+  const c = superClient();
+  await c.connect();
+  try {
+    await c.query(ROLE_LOCK);
+    return await fn(c);
+  } finally {
+    // Ending the session lets the lock go too, should the unlock not answer.
+    await c.query(ROLE_UNLOCK).catch(() => undefined);
+    await c.end().catch(() => undefined);
+  }
+}
+
 /** The ledger's base and module scopes, as provision.ts and enable.ts write them. */
 export const baseScope = (dbName: string): string => `tenant ${dbName}`;
 export const moduleScope = (orgId: string, module: string): string => `tenant ${orgId} / module ${module}`;
@@ -125,6 +146,8 @@ async function migrateInto(pool: ReturnType<typeof createPool>, baseDir: string,
 }
 
 const known = new Map<TemplateSet, string>();
+/** Templates of a set kept on one server: this build's and the newest others. */
+const KEEP_TEMPLATES = 4;
 const building = new Map<TemplateSet, Promise<string | null>>();
 
 /** The template to clone for `set`, when one for today's migrations is built;
@@ -148,6 +171,11 @@ export async function readyTemplate(set: TemplateSet, baseDir: string): Promise<
     building.set(set, run);
   }
   return null;
+}
+
+/** The api stops naming `template`: the next readyTemplate looks again. */
+export function forgetTemplate(template: string): void {
+  for (const [set, name] of known) if (name === template) known.delete(set);
 }
 
 /** Build `set`'s template now and wait for it (tests, and a bake that wants it first). */
@@ -187,22 +215,27 @@ async function buildTemplate(set: TemplateSet, baseDir: string, modules: Templat
     await c.query("select pg_advisory_lock(hashtext('cobblr-workspace-template'))");
     if (((await c.query("select 1 from pg_database where datname = $1", [name])).rowCount ?? 0) > 0) return name;
     const password = randomBytes(24).toString("base64url");
-    const role = (await c.query("select 1 from pg_roles where rolname = $1", [TEMPLATE_ROLE])).rowCount
-      ? `ALTER ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`
-      : `CREATE ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`;
-    await c.query(role);
-    await c.query(`DROP DATABASE IF EXISTS "${work}"`);
-    // Owned by the superuser, not the role: a copy hands everything the role
-    // owns to the workspace's user (REASSIGN OWNED), and that reaches the
-    // databases the role owns too, which must never include a template.
-    await c.query(`CREATE DATABASE "${work}"`);
-    await c.query(`GRANT ALL ON DATABASE "${work}" TO ${TEMPLATE_ROLE}`);
-    const inside = superClient(work);
-    await inside.connect();
+    await c.query(ROLE_LOCK);
     try {
-      await inside.query(`GRANT CREATE, USAGE ON SCHEMA public TO ${TEMPLATE_ROLE}`);
+      const role = (await c.query("select 1 from pg_roles where rolname = $1", [TEMPLATE_ROLE])).rowCount
+        ? `ALTER ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`
+        : `CREATE ROLE ${TEMPLATE_ROLE} WITH LOGIN PASSWORD '${password}'`;
+      await c.query(role);
+      await c.query(`DROP DATABASE IF EXISTS "${work}"`);
+      // Owned by the superuser, not the role: a copy hands everything the role
+      // owns to the workspace's user (REASSIGN OWNED), and that reaches the
+      // databases the role owns too, which must never include a template.
+      await c.query(`CREATE DATABASE "${work}"`);
+      await c.query(`GRANT ALL ON DATABASE "${work}" TO ${TEMPLATE_ROLE}`);
+      const inside = superClient(work);
+      await inside.connect();
+      try {
+        await inside.query(`GRANT CREATE, USAGE ON SCHEMA public TO ${TEMPLATE_ROLE}`);
+      } finally {
+        await inside.end();
+      }
     } finally {
-      await inside.end();
+      await c.query(ROLE_UNLOCK);
     }
     const url = new URL(env.DATABASE_URL);
     const pool = createPool({ host: url.hostname, port: url.port ? Number(url.port) : 5432, database: work, user: TEMPLATE_ROLE, password, max: 4 }, `workspace template ${work}`);
@@ -211,13 +244,24 @@ async function buildTemplate(set: TemplateSet, baseDir: string, modules: Templat
     } finally {
       await pool.end();
     }
-    await c.query(`ALTER DATABASE "${work}" WITH ALLOW_CONNECTIONS false`);
-    await c.query(`ALTER DATABASE "${work}" RENAME TO "${name}"`);
-    // Older templates of this set: nothing clones them once a newer one exists
-    // here, but a process still on older code might, and it falls back to the
-    // full path when it finds one gone.
-    const old = await c.query<{ datname: string }>("select datname from pg_database where datname like $1 and datname <> $2", [`cobblr_tpl_${set}_%`, name]);
-    for (const { datname } of old.rows) await c.query(`DROP DATABASE IF EXISTS "${assertIdent(datname)}"`).catch(() => undefined);
+    await c.query(ROLE_LOCK);
+    try {
+      await c.query(`ALTER DATABASE "${work}" WITH ALLOW_CONNECTIONS false`);
+      await c.query(`ALTER DATABASE "${work}" RENAME TO "${name}"`);
+      // Older templates of this set: the newest few stay. Apis on other commits
+      // share one Postgres (CI's jobs; old and new processes in a rolling
+      // deploy), and one still copies from the template its code names: a build
+      // that dropped every older one left another run's api failing each copy,
+      // 910 times in one CI run (#5443). Beyond the newest KEEP_TEMPLATES, a
+      // template is from code nothing still runs.
+      const old = await c.query<{ datname: string }>(
+        "select datname from pg_database where datname like $1 and datname <> $2 order by oid desc offset $3",
+        [`cobblr_tpl_${set}_%`, name, KEEP_TEMPLATES - 1],
+      );
+      for (const { datname } of old.rows) await c.query(`DROP DATABASE IF EXISTS "${assertIdent(datname)}"`).catch(() => undefined);
+    } finally {
+      await c.query(ROLE_UNLOCK);
+    }
     console.log(`[workspace-template] built ${name} (${modules.length} modules) in ${Math.round(performance.now() - started)}ms`);
     return name;
   } finally {
@@ -239,7 +283,15 @@ export async function cloneTemplate(template: string, dbName: string, userName: 
       await c.query(`DROP DATABASE IF EXISTS "${dbName}"`);
       await c.query(`DROP USER IF EXISTS "${userName}"`);
     }
-    await c.query(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+    try {
+      await c.query(`CREATE DATABASE "${dbName}" TEMPLATE "${template}"`);
+    } catch (err) {
+      // Gone (another server's build, a cleanup): the api stops naming it, so
+      // the next workspace looks again and builds it, rather than every one
+      // failing on the same missing name until a restart (#5443).
+      if (/does not exist/.test((err as Error).message)) forgetTemplate(template);
+      throw err;
+    }
     await c.query(`ALTER DATABASE "${dbName}" WITH ALLOW_CONNECTIONS true`);
     await c.query(`CREATE USER "${userName}" WITH LOGIN PASSWORD '${escaped}'`);
     await c.query(`ALTER DATABASE "${dbName}" OWNER TO "${userName}"`);
@@ -248,32 +300,35 @@ export async function cloneTemplate(template: string, dbName: string, userName: 
   } finally {
     await c.end();
   }
-  const inside = superClient(dbName);
-  await inside.connect();
-  try {
-    await inside.query("begin");
-    await inside.query(`REASSIGN OWNED BY ${TEMPLATE_ROLE} TO "${userName}"`);
-    await inside.query(`DROP OWNED BY ${TEMPLATE_ROLE}`);
-    await inside.query("update migrations set name = $1 || substr(name, length($2) + 1) where name like $3", [
-      `${baseScope(dbName)}::`,
-      `${baseScope(TEMPLATE_SCOPE_ID)}::`,
-      `${baseScope(TEMPLATE_SCOPE_ID)}::%`,
-    ]);
-    await inside.query("update migrations set name = $1 || substr(name, length($2) + 1) where name like $3", [
-      `tenant ${orgId} / module `,
-      `tenant ${TEMPLATE_SCOPE_ID} / module `,
-      `tenant ${TEMPLATE_SCOPE_ID} / module %`,
-    ]);
-    await freshIds(inside);
-    const n = Number((await inside.query("select count(*) from migrations")).rows[0].count);
-    await inside.query("commit");
-    return n;
-  } catch (err) {
-    await inside.query("rollback").catch(() => undefined);
-    throw err;
-  } finally {
-    await inside.end();
-  }
+  // REASSIGN and DROP OWNED write the template role's shared rows (#8823).
+  return withTemplateRoleLock(async () => {
+    const inside = superClient(dbName);
+    await inside.connect();
+    try {
+      await inside.query("begin");
+      await inside.query(`REASSIGN OWNED BY ${TEMPLATE_ROLE} TO "${userName}"`);
+      await inside.query(`DROP OWNED BY ${TEMPLATE_ROLE}`);
+      await inside.query("update migrations set name = $1 || substr(name, length($2) + 1) where name like $3", [
+        `${baseScope(dbName)}::`,
+        `${baseScope(TEMPLATE_SCOPE_ID)}::`,
+        `${baseScope(TEMPLATE_SCOPE_ID)}::%`,
+      ]);
+      await inside.query("update migrations set name = $1 || substr(name, length($2) + 1) where name like $3", [
+        `tenant ${orgId} / module `,
+        `tenant ${TEMPLATE_SCOPE_ID} / module `,
+        `tenant ${TEMPLATE_SCOPE_ID} / module %`,
+      ]);
+      await freshIds(inside);
+      const n = Number((await inside.query("select count(*) from migrations")).rows[0].count);
+      await inside.query("commit");
+      return n;
+    } catch (err) {
+      await inside.query("rollback").catch(() => undefined);
+      throw err;
+    } finally {
+      await inside.end();
+    }
+  });
 }
 
 /** New ids for the rows the migrations seeded with random ones (inventory's

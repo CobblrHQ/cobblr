@@ -15,7 +15,7 @@ import type {
 } from "@cobblr/platform-contract";
 import type { FieldSpec, SyncEntityTypeManifest, SyncSourceManifest } from "./manifest.js";
 import { lotsByPlace, type StockRow } from "./lots-by-place.js";
-import { mapLimit } from "./map-limit.js";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 /** Resolve a "$.a.b" dot-path against a record; "='lit'" returns the literal.
  *  A `$.path|last` suffix takes the final segment of a URL/IRI value, so a

@@ -5,6 +5,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { placeLine, platform } from "@cobblr/platform-contract";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
+
+/** Kinds a search asks at once: no more than the smallest workspace pool
+ *  (CI keeps 3 connections a workspace, a server 5). */
+const KINDS_AT_ONCE = 3;
 
 const router = Router({ mergeParams: true });
 
@@ -84,13 +89,16 @@ router.get("/search", (req, res, next) => {
       ? allKinds.filter((k) => kindsParam.includes(k.id)).map((k) => k.id)
       : allKinds.map((k) => k.id);
 
-    // Fan out, in parallel. Each kind's list resolver is independent
-    // — one slow kind doesn't block fast ones. A resolver that throws comes
-    // back `failed`, and is NAMED in `kinds_failed` rather than counted as
-    // "no matches": a search that could not ask two kinds looked exactly like
-    // one that asked and found nothing, for three weeks (#3824).
-    const perKindResults = await Promise.all(
-      candidateIds.map(async (kind) => {
+    // Fan out, a few kinds at a time. Each kind's list resolver is
+    // independent, but they share the workspace's database pool (3 to 5
+    // connections): every kind at once queued dozens behind it, and on a busy
+    // server the ones at the back waited out the pool's own timeout and came
+    // back failed, twelve kinds "couldn't be searched" in one search (#7682).
+    // A resolver that throws comes back `failed`, and is NAMED in
+    // `kinds_failed` rather than counted as "no matches": a search that could
+    // not ask two kinds looked exactly like one that asked and found nothing,
+    // for three weeks (#3824).
+    const perKindResults = await mapLimit(candidateIds, KINDS_AT_ONCE, async (kind) => {
         // Search finds what was retired too: "where is my old drill" is a
         // question about something archived, and a search that cannot find
         // it lies by omission. Lists and views leave retired records out
@@ -104,8 +112,7 @@ router.get("/search", (req, res, next) => {
         }, viewer);
         if (tag && result.unapplied?.some((p) => p.col === "_tag")) return { items: [], failed: false, total: undefined };
         return { items: result.items.map((item) => ({ ...item, kind })), failed: result.failed === true, total: result.total };
-      }),
-    );
+    });
     const kindsFailed = candidateIds.filter((_, i) => perKindResults[i]!.failed);
     const perKind = perKindResults.map((r) => r.items);
 

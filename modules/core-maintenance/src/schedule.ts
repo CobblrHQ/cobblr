@@ -9,11 +9,20 @@
 // was due: an oil change done a month late starts the next three months from
 // the day it was actually changed.
 
-import { dayIn, dayStoredAt, daysUntil, spanWords } from "@cobblr/platform-contract/day";
+import { dayIn, dayStoredAt, daysUntil, spanWords, instantOnDay } from "@cobblr/platform-contract/day";
 
 // The calendar step rule is shared with everything else that repeats.
 import { addInterval, INTERVAL_UNITS, type IntervalUnit } from "@cobblr/platform-contract/interval";
 export { addInterval, INTERVAL_UNITS, type IntervalUnit };
+
+/** A service deadline is a workspace calendar day, encoded at noon UTC. */
+export function serviceDay(at: Date, timeZone: string | null | undefined): Date {
+  // No zone to count a day in (a workspace that has none, read by nobody in
+  // particular): the instant stays as it was, and each reader reads its day
+  // in their own zone, as before workspaces had one (#8748).
+  if (!timeZone) return at;
+  return instantOnDay(dayStoredAt(at, timeZone)!)!;
+}
 
 export type RenewalAnchor = string | { month: number; last_day: true };
 export type OverdueCadence = "day" | "week" | "month" | "off";

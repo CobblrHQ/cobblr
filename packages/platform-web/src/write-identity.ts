@@ -11,6 +11,13 @@
 // a second create on purpose is a second create.
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/** A write of any method: what the client forgets once it lands. The refusal
+ *  sheet's isMutating leaves PUT out; read there it kept every landed PUT as
+ *  still on its way, laid over each later read (#6881). */
+export function isAWrite(method: string): boolean {
+  return MUTATING.has(method.toUpperCase());
+}
 /** As long as the server keeps an answer. */
 const KEPT_MS = 24 * 60 * 60 * 1000;
 

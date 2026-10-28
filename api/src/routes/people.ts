@@ -13,6 +13,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { withTenant } from "../middleware/tenant.js";
 import { createPerson, listPeople, personForUser, updatePerson } from "../platform/people.js";
 import { thingsOfPerson } from "../platform/person-things.js";
+import { accountEmailFor } from "../platform/account-emails.js";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
 
 export const peopleRouter = Router({ mergeParams: true });
@@ -24,7 +25,8 @@ const isAdmin = (role: string | undefined) => role === "owner" || role === "admi
 
 peopleRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
   try {
-    res.json({ items: await listPeople(req.tenant!.org.id) });
+    const viewer = { id: req.session!.id, role: req.tenant!.role };
+    res.json({ items: (await listPeople(req.tenant!.org.id)).map((p) => (p.user_id ? { ...p, email: accountEmailFor(viewer, p.user_id, p.email) } : p)) });
   } catch (err) {
     next(err);
   }
@@ -65,7 +67,8 @@ peopleRouter.get("/things", requireAuth, withTenant, async (req, res, next) => {
       return;
     }
     const groups = await thingsOfPerson(orgId, person.id, { userId: req.session!.id, role: req.tenant!.role });
-    res.json({ person, groups, count: groups.reduce((n, g) => n + g.items.length, 0) });
+    const shownPerson = person.user_id ? { ...person, email: accountEmailFor({ id: req.session!.id, role: req.tenant!.role }, person.user_id, person.email) } : person;
+    res.json({ person: shownPerson, groups, count: groups.reduce((n, g) => n + g.items.length, 0) });
   } catch (err) {
     next(err);
   }

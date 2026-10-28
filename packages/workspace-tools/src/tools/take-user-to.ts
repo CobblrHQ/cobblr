@@ -23,8 +23,8 @@ const tool: WorkspaceTool = {
     destination: z
       .string()
       .describe(`One of: ${ESCORT_DESTINATIONS.map((d) => d.id).join(", ")}`),
-    email: z.string().optional().describe("members only: email to prefill on the invite form"),
-    role: z.string().optional().describe("members only: member, editor, admin or guest"),
+    email: z.string().optional().describe("members only: invitee email"),
+    role: z.string().optional().describe("members only: role"),
   },
   execute: async (_api, args) => {
     const id = typeof args.destination === "string" ? args.destination.trim().toLowerCase() : "";

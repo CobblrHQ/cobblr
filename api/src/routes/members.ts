@@ -26,6 +26,7 @@ import { canActOnRole } from "../auth/capability.js";
 import { ORG_ROLES, INVITABLE_ORG_ROLES } from "@cobblr/platform-contract/org-roles";
 import { REFUSAL, claimJoinUse, inviteStatus, joinThroughInvite } from "../platform/join-invite.js";
 import { clearPeopleCache, linkPersonToUser, listPeople, personForUser } from "../platform/people.js";
+import { accountEmailFor } from "../platform/account-emails.js";
 import { handOffThings, type HandOffResult } from "../platform/person-things.js";
 import { instantFromInput } from "@cobblr/platform-contract/day";
 import { withWorkspaceLock } from "../platform/workspace-lock.js";
@@ -101,7 +102,8 @@ membersRouter.get("/", requireAuth, withTenant, async (req, res, next) => {
       .where("m.org_id", "=", req.tenant!.org.id)
       .orderBy("m.joined_at")
       .execute();
-    res.json({ items: rows, self: { user_id: req.session!.id, role: req.tenant!.role } });
+    const viewer = { id: req.session!.id, role: req.tenant!.role };
+    res.json({ items: rows.map((r) => ({ ...r, email: accountEmailFor(viewer, r.user_id, r.email) })), self: { user_id: req.session!.id, role: req.tenant!.role } });
   } catch (err) {
     next(err);
   }
@@ -636,6 +638,7 @@ invitesRootRouter.get("/invites/:token", async (req, res, next) => {
         "i.paused_at",
         "o.name as org_name",
         "o.slug as org_slug",
+        "o.members_may_lend",
         "u.display_name as invited_by_name",
       ])
       .where("i.token", "=", token)

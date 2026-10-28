@@ -38,7 +38,7 @@ export function FilesPage() {
     return asked && /^[0-9a-f-]{36}$/i.test(asked) ? asked : TOP;
   });
   const [search, setSearch] = useState("");
-  const [renaming, setRenaming] = useState<{ kind: "file" | "folder"; id: string; value: string; was?: string } | null>(null);
+  const [renaming, setRenaming] = useState<{ kind: "file" | "folder"; id: string; value: string; was: string } | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   // A file the app can show (a PDF, an SVG, a model) opens in place; the
   // rest open in a new tab.
@@ -128,7 +128,7 @@ export function FilesPage() {
     onError: fail,
   });
   const updateFolder = useMutation({
-    mutationFn: (v: { id: string; name: string }) => api.updateFileFolder(activeSlug, v.id, { name: v.name }),
+    mutationFn: (v: { id: string; name: string; was: string }) => api.updateFileFolder(activeSlug, v.id, editOf({ name: v.was }, { name: v.name })),
     onSuccess: refresh,
     onError: fail,
   });
@@ -141,9 +141,9 @@ export function FilesPage() {
   const commitRename = () => {
     if (!renaming) return;
     const value = renaming.value.trim();
-    if (value) {
+    if (value && value !== renaming.was) {
       if (renaming.kind === "file") updateFile.mutate({ id: renaming.id, filename: value, opened: { filename: renaming.was } });
-      else updateFolder.mutate({ id: renaming.id, name: value });
+      else updateFolder.mutate({ id: renaming.id, name: value, was: renaming.was });
     }
     setRenaming(null);
   };
@@ -287,7 +287,7 @@ export function FilesPage() {
                   <span className="text-xs text-faint"> · {f.file_count}</span>
                 </button>
               )}
-              <button type="button" title="Rename" aria-label={`Rename ${f.name}`} onClick={() => setRenaming({ kind: "folder", id: f.id, value: f.name })} className="text-faint hover:text-accent p-1">
+              <button type="button" title="Rename" aria-label={`Rename ${f.name}`} onClick={() => setRenaming({ kind: "folder", id: f.id, value: f.name, was: f.name })} className="text-faint hover:text-accent p-1">
                 <Pencil size={13} />
               </button>
               <button type="button" title="Delete" aria-label={`Delete ${f.name}`} onClick={() => deleteFolder.mutate(f.id)} className="text-faint hover:text-ember-500 p-1">

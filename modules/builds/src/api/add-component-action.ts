@@ -19,7 +19,7 @@ export function registerAddComponentAction(): void {
     if (!part === !sub) return { ok: false, error: "Say the part (part_id) or the sub-assembly build, one of the two." };
     if (!(quantity > 0)) return { ok: false, error: "How many each build uses is more than zero." };
     const db = (await platform().tenants.getDb(ctx.orgId)) as Kysely<BuildsDB>;
-    const row = await addComponent(db, build.id, { ...(part ? { part_id: part } : { sub_assembly_build_id: sub }), quantity, optional: a.optional === true, ...(typeof a.use_stock === "boolean" ? { use_stock: a.use_stock } : {}), notes: str(a.notes) || null });
+    const row = await addComponent(db, build.id, { ...(part ? { part_id: part } : { sub_assembly_build_id: sub }), quantity, optional: a.optional === true, ...(typeof a.use_stock === "boolean" ? { use_stock: a.use_stock } : {}), ...(typeof a.recoverable === "boolean" ? { recoverable: a.recoverable } : {}), notes: str(a.notes) || null });
     return { ok: true, summary: `Added ${quantity} of it to what this build is made of.`, data: { component: row.id } };
   });
   platform().actions.registerUndo("builds.add-component", (result, uctx) => {

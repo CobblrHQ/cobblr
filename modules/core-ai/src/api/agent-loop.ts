@@ -19,7 +19,7 @@
 // "✓ done — Undo" cards. Read results are clamped so a big list can't blow the
 // prompt; the round cap keeps a confused model from ping-ponging forever.
 
-import { claimedAfterHandBack } from "./reported-truthfully.js";
+import { claimedAfterHandBack, endsHonestly } from "./reported-truthfully.js";
 import { resultBudgetFor } from "@cobblr/workspace-tools";
 import type { ToolCall, ChatTurn } from "../providers/tool-wire.js";
 import { scrubIds, namesFromToolResults } from "./scrub-ids.js";
@@ -315,7 +315,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
             continue;
           }
         }
-        return { kind: "reply", text: spoken, applied, ...withFailed() };
+        return { kind: "reply", text: endsHonestly(spoken, handedBack, applied.length), applied, ...withFailed() };
       }
       // No tool calls AND no words. Two different models arrive here for two
       // opposite reasons, and the nudge has to serve both:
@@ -517,7 +517,7 @@ export async function runAgentLoop(turns: ChatTurn[], deps: AgentLoopDeps): Prom
   // happened, never a blank bubble.
   return {
     kind: "reply",
-    text: said || "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
+    text: said ? endsHonestly(said, handedBack, applied.length) : "I couldn't finish that one: I ran out of steps before reaching an answer. Try asking again, or in a different way.",
     applied,
     ...withFailed(),
   };

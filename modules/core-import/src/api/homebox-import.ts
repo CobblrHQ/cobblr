@@ -21,6 +21,7 @@ import { requireRole } from "./util.js";
 import { parseHomebox, homeboxMetadata, locationPathKey, type HomeboxItem, type HomeboxParse } from "../services/homebox.js";
 import { apiFetch, selfOrigin } from "@cobblr/platform-contract/self-api";
 import { invalidBodyMessage } from "@cobblr/platform-contract/invalid-body";
+import { mapLimit } from "@cobblr/platform-contract/map-limit";
 
 export const homeboxRouter = Router({ mergeParams: true });
 
@@ -47,21 +48,6 @@ async function api<T = unknown>(method: string, path: string, token: string, bod
   // what callers branch on); this parses, it does not write.
   const json = (await res.json().catch(() => null)) as T;
   return { status: res.status, json };
-}
-
-async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T, i: number) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, async () => {
-      for (;;) {
-        const i = next++;
-        if (i >= items.length) return;
-        out[i] = await fn(items[i]!, i);
-      }
-    }),
-  );
-  return out;
 }
 
 /** Preview payload: what WILL happen, plus a mapped sample + any warnings. */

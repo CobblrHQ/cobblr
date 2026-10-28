@@ -20,6 +20,7 @@ import { shortageSentence } from "../shortage.js";
 import { BoardInspection } from "./Inspection.js";
 import { InspectionRegister } from "./InspectionRegister.js";
 import { useRunAction, offerUndo } from "@cobblr/platform-web";
+import { withArticle } from "@cobblr/platform-contract/plural";
 import { normaliseActionResult } from "@cobblr/platform-contract/action-result";
 import { dayLabel } from "@cobblr/platform-contract/day";
 
@@ -246,6 +247,15 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
     onSuccess: invalidate,
     onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : String(e)),
   });
+  // A part line used up by a print (filament it melts) or back to stock if the print is scrapped (#8758).
+  const comeBackChoice = useMutation({
+    mutationFn: async (v: { partId: string; recoverable: boolean }) => {
+      const outcome = await runBack({ actionId: "builds:set-line-recoverable", args: { build: buildId, part: v.partId, recoverable: v.recoverable } });
+      if (outcome && typeof outcome === "object" && "ok" in outcome && outcome.ok === false) throw new Error(String((outcome as { error?: unknown }).error ?? "Not saved."));
+    },
+    onSuccess: invalidate,
+    onError: (e) => toast.error(e instanceof BuildsApiError ? e.message : e instanceof Error ? e.message : String(e)),
+  });
   const stockChoice = useMutation({
     mutationFn: (v: { id: string; use_stock: boolean }) => api.setComponentUseStock(buildId, v.id, v.use_stock),
     onSuccess: invalidate,
@@ -392,6 +402,8 @@ export function BuildDetailModal({ buildId, api, orgSlug, onClose }: { buildId: 
                     limiting={!!c.part_id && limitingIds.has(c.part_id)}
                     choosing={stockChoice.isPending}
                     onStockChoice={(use_stock) => stockChoice.mutate({ id: c.id, use_stock })}
+                    buildName={d.build.name}
+                    onComeBackChoice={(recoverable) => c.part_id && comeBackChoice.mutate({ partId: c.part_id, recoverable })}
                     onRemove={() => removeComponent.mutate({ id: c.id, name: c.name })}
                   />
                 ))}
@@ -1232,11 +1244,15 @@ export { BoardInspection } from "./Inspection.js";
 
 /** One line of a build's bill of materials: what it is, how much each build
  *  takes and where it comes from, and its tools. */
-export function ComponentLine({ c, limiting, choosing, onStockChoice, onRemove }: {
+export function ComponentLine({ c, limiting, choosing, onStockChoice, buildName, onComeBackChoice, onRemove }: {
   c: ComponentRow;
   limiting: boolean;
   choosing: boolean;
   onStockChoice: (useStock: boolean) => void;
+  /** The build's name, for the scrapped-print choice's label. */
+  buildName?: string;
+  /** A part line: used up by a print (false) or back to stock when it is scrapped (true). */
+  onComeBackChoice?: (recoverable: boolean) => void;
   onRemove: () => void;
 }) {
   const isSub = c.kind === "subassembly";
@@ -1286,6 +1302,20 @@ export function ComponentLine({ c, limiting, choosing, onStockChoice, onRemove }
           options={[
             { value: "stock", label: "Stock first", testId: "sub-from-stock" },
             { value: "make", label: "Always make", testId: "sub-always-make" },
+          ]}
+        />
+      )}
+      {/* A print melts its filament whatever the verdict, so a line is used up
+          unless it is marked to come back, like inserts never fitted (#8758). */}
+      {!isSub && onComeBackChoice && (
+        <SegmentedChoice
+          label={`If ${withArticle(buildName ?? "build")} print is scrapped, ${c.name}`}
+          value={c.recoverable ? "back" : "used"}
+          onChange={(v) => onComeBackChoice(v === "back")}
+          disabled={choosing}
+          options={[
+            { value: "used", label: "Used up", testId: "line-used-up" },
+            { value: "back", label: "Back to stock", testId: "line-back-to-stock" },
           ]}
         />
       )}

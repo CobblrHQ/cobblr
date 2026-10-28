@@ -1418,7 +1418,7 @@ function PrintHistorySection({ slug }: { slug: string }) {
                       const dur = durMin >= 60 ? `${Math.floor(durMin / 60)}h ${durMin % 60}m` : durMin > 0 ? `${durMin}m` : null;
                       return (
                         <li key={r.id}>
-                        <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-left hover:bg-subtle dark:hover:bg-slate-800">
+                        <button type="button" onClick={() => setPrintOpen(r)} className="w-full flex items-start gap-2 px-2 py-1.5 text-xs text-left hover:bg-subtle dark:hover:bg-slate-800">
                           {r.cover ? (
                             // EXTERNAL-IMAGE-OK: the vendor task cover URL from the printer's own API.
                             <EntityPhoto src={r.cover} alt="" size={36} className="rounded" placeholder={null} />
@@ -1427,16 +1427,18 @@ function PrintHistorySection({ slug }: { slug: string }) {
                               <span className={"w-1.5 h-1.5 rounded-full " + (r.outcome === "scrap" ? "bg-amber-500" : r.status === "completed" ? "bg-moss-500" : r.status === "failed" ? "bg-ember-500" : "bg-faint")} />
                             </span>
                           )}
-                          <span className="flex-1 min-w-0">
-                            <span className="block truncate text-content dark:text-mortar-100" title={jobDisplayName(r)}>{jobDisplayName(r)}</span>
-                            {r.sub_label && r.sub_label !== jobDisplayName(r) && <span className="block truncate text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
+                          <span className="flex-1 min-w-0 [overflow-wrap:anywhere]">
+                            <span className="block text-content dark:text-mortar-100" title={jobDisplayName(r)}>{jobDisplayName(r)}</span>
+                            {r.sub_label && r.sub_label !== jobDisplayName(r) && <span className="block text-faint text-[10px]" title={r.sub_label}>{r.sub_label}</span>}
+                            <span className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-faint">
+                              {r.outcome === "scrap" && <span className="text-amber-600 dark:text-amber-400">scrapped</span>}
+                              <span className="min-w-0 max-w-full" title={r.device}>{r.device}</span>
+                              {dur && <span>{dur}</span>}
+                              {r.filament_g != null && <span>{Math.round(r.filament_g)}g</span>}
+                              {r.status === "completed" && <span className="tabular-nums">{r.cost != null ? printMoney(r.cost, r.cost_currency) : "not priced"}</span>}
+                              <span>{new Date(r.at).toLocaleDateString()}</span>
+                            </span>
                           </span>
-                          {r.outcome === "scrap" && <span className="text-amber-600 dark:text-amber-400 shrink-0">scrapped</span>}
-                          <span className="text-faint truncate max-w-[22%] shrink-0" title={r.device}>{r.device}</span>
-                          {dur && <span className="text-faint shrink-0">{dur}</span>}
-                          {r.filament_g != null && <span className="text-faint shrink-0">{Math.round(r.filament_g)}g</span>}
-                          {r.status === "completed" && <span className="text-faint shrink-0 tabular-nums">{r.cost != null ? printMoney(r.cost, r.cost_currency) : "not priced"}</span>}
-                          <span className="text-faint shrink-0">{new Date(r.at).toLocaleDateString()}</span>
                         </button>
                         </li>
                       );
@@ -2490,18 +2492,20 @@ function NewJobModal({
           <div className="text-[11px] text-faint italic">Tip: define a build (bill-of-materials) to have this job draw its parts from inventory automatically.</div>
         )}
         {buildList.length > 0 && (
-          <label className="block">
-            <span className={lbl}>Produces a build (optional)</span>
-            <Combobox
-              value={buildId}
-              onChange={setBuildId}
-              options={buildList.map((b) => ({ value: b.id, label: b.name }))}
-              placeholder=" - don't make a build - "
-              allowClear
-            />
+          <div className="block">
+            <label className="block">
+              <span className={lbl}>Produces a build (optional)</span>
+              <Combobox
+                value={buildId}
+                onChange={setBuildId}
+                options={buildList.map((b) => ({ value: b.id, label: b.name }))}
+                placeholder=" - don't make a build - "
+                allowClear
+              />
+            </label>
             {buildId && (
-              <div className="mt-1.5 flex items-center gap-2 text-[13px] text-content dark:text-mortar-200">
-                <span>How many?</span>
+              <label className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-content dark:text-mortar-200">
+                <span>How many builds?</span>
                 <input
                   type="number"
                   min="1"
@@ -2510,10 +2514,10 @@ function NewJobModal({
                   onChange={(e) => setBuildQty(e.target.value)}
                   className={field + " w-20"}
                 />
-              </div>
+              </label>
             )}
             <span className="block text-[11px] text-faint mt-1">When this job is sent to the machine, the build's components are drawn from inventory and the finished part is added (× qty). A scrapped, cancelled or failed print puts them back.</span>
-          </label>
+          </div>
         )}
         <FieldPack items={[
           {

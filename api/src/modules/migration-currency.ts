@@ -72,6 +72,17 @@ export function moduleIsBehind(row: OrgModuleMarker, files: ModuleMigrationFiles
   return migrationState(row, files) !== "current";
 }
 
+/** True when a pass AFTER boot must open the workspace: its ledger lacks a
+ *  migration this build ships. Ahead is not: a newer api beside this one
+ *  (every blue-green roll) applied it, and this api's own boot already took
+ *  the one exact look. An older api reading ahead as behind opened all 1,946
+ *  of staging's workspaces mid-roll to apply nothing, each logging a
+ *  downgrade, while the newer api caught the same ones up; the two together
+ *  ran a 100-connection Postgres out for six minutes (2026-10-28). */
+export function needsCatchUp(row: OrgModuleMarker, files: ModuleMigrationFiles): boolean {
+  return migrationState(row, files) === "behind";
+}
+
 /** What /healthz says about one pair. Ahead is information only when a
  *  peer is DECLARED to share this database (COBBLR_SHARED_DB_PEER) and it
  *  applied nothing that breaks an older reader that this build never

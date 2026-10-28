@@ -495,7 +495,9 @@ export async function pollJob(
 
   const terminal = TERMINAL.has(status);
   const linkedMachineId = status === "completed" ? await machineOfJob(db, job) : job.linked_machine_id;
-  const fields = { ...(status === "completed" ? { linked_machine_id: linkedMachineId } : {}), progress, error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
+  // A print that stops reports no progress on its last poll; it keeps how far it
+  // got, which is the share of a recipe it used up (#8758).
+  const fields = { ...(status === "completed" ? { linked_machine_id: linkedMachineId } : {}), progress: progress ?? (terminal && status !== "completed" ? (job.progress ?? null) : null), error, eta_sec: etaSec != null ? Math.round(etaSec) : null, poll_errors: 0, unreachable_since: null, last_polled_at: new Date() };
   const cutterJob = terminal && (!!await db.selectFrom("digifab_large_prints").select("job_id").where("job_id", "=", jobId).executeTakeFirst() || !!await db.selectFrom("digifab_cutter_plans").select("id").where("job_id", "=", jobId).executeTakeFirst());
   const materialPlan = status === "completed" && !cutterJob && driver.printProcess !== "resin"
     ? await planJobMaterial(db, orgId, job) : null;
@@ -656,10 +658,29 @@ async function commitBuildIfLinked(
     jobId,
     buildId: job.linked_build_id,
     qty: job.build_qty != null ? Number(job.build_qty) : 1,
+    // A spool the print measures is charged by the print, once, at completion;
+    // the recipe's line for the same spool is satisfied by it (#8757).
+    measuredParts: await measuredSpools(db, orgId, jobId),
     // builds:build-one consumes the components and leaves the output for
     // digifab.job.build_output, fired by the good verdict.
     outputOnGood: true,
   });
+}
+
+/** The spools a print draws by what it measures (the picked spool, or the
+ *  spools loaded on its printer when the file says its grams). Before #8757 the
+ *  recipe charged its spool at send and the print charged the same spool again
+ *  at completion: 50 g printed, 100 g gone. */
+async function measuredSpools(db: Kysely<DigifabDB>, orgId: string, jobId: string): Promise<string[]> {
+  const job = await db
+    .selectFrom("digifab_jobs")
+    .select(["id", "file_ref", "material_part_id", "material_grams", "material_grams_by_tool", "linked_machine_id", "connection_id", "target_device"])
+    .where("id", "=", jobId)
+    .executeTakeFirst();
+  if (!job) return [];
+  // A workspace that cannot plan a print's material measures nothing here, so the recipe stays the charge.
+  const plan = await planJobMaterial(db, orgId, job).catch(() => ({ draws: [] as Array<{ part_id: string }> }));
+  return [...new Set(plan.draws.map((d) => d.part_id))];
 }
 
 /** The reversal twin of commitBuildIfLinked. A job whose build was committed at
@@ -677,7 +698,7 @@ export async function reverseBuildIfCommitted(
 ): Promise<boolean> {
   const job = await db
     .selectFrom("digifab_jobs")
-    .select(["linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "build_output_at"])
+    .select(["linked_build_id", "build_qty", "build_consumed_at", "build_reversed_at", "build_output_deferred", "build_output_at", "status", "progress"])
     .where("id", "=", jobId)
     .executeTakeFirst();
   if (!job?.linked_build_id || !job.build_consumed_at || job.build_reversed_at) return false;
@@ -701,6 +722,11 @@ export async function reverseBuildIfCommitted(
     // committed before #4050, or by a good verdict. A deferred output that was
     // never credited has nothing to take back.
     outputCredited: !job.build_output_deferred || !!job.build_output_at,
+    // What the machine never reached: a finished print reached all of it, a
+    // stopped one its progress, one that never started none. Only that share
+    // of what the recipe used goes back, besides lines marked to come back:
+    // melted filament never returns to a spool (#8758).
+    unprintedShare: job.status === "completed" ? 0 : 1 - Math.min(1, Math.max(0, Number(job.progress ?? 0) || 0)),
   });
   return true;
 }

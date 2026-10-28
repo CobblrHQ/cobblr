@@ -27,6 +27,12 @@ import { fieldDay } from "@cobblr/platform-contract/field-day";
 /** A calendar day, `YYYY-MM-DD`. */
 export type Day = string;
 
+/** A workspace's calendar zone before one is known: UTC, the zone every due
+ *  date was kept in before workspaces had a zone of their own, so a workspace
+ *  with none set keeps the dates it always had (#8717). A guess west of UTC
+ *  moved every one of them a day early. */
+export const WORKSPACE_ZONE_UNSET = "UTC";
+
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** The calendar day it is at `now` in `timeZone` (an IANA name). An unknown

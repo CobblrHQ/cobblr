@@ -294,6 +294,11 @@ function fitTableOf(t: Target): FitTable {
   };
 }
 
+/** How many of a table's own column names make a sheet read as its export. */
+const OWN_COLUMNS_OF_AN_EXPORT = 3;
+/** A header as a column key: "Asset id" and "asset_id" are one column. */
+const columnKey = (header: string) => header.trim().toLowerCase().replace(/[\s-]+/g, "_");
+
 export function scoreTargets(sheet: UnderstoodSheet, filename: string, targets: Target[]): TargetScore[] {
   const nameCol = sheet.columns.findIndex((c) => c.role === "name");
   // VOCAB-ENUMERATION OK: a column role (sheet-understand's own vocabulary), not a field role
@@ -333,13 +338,25 @@ export function scoreTargets(sheet: UnderstoodSheet, filename: string, targets: 
       } else {
         score += 1;
       }
+      // A column named for one of the table's own columns is that column's data,
+      // never evidence for a custom field: Inventory's own export brought back
+      // went to a new Sets collection, whose set number took asset_id and barcode
+      // as identifiers, and every record was added again (#8783). A sheet made of
+      // a table's own columns reads as an export of that table.
+      const natives = new Set(t.fields.filter((f) => f.native).map((f) => f.name));
+      const ownColumns = sheet.columns.filter((c) => natives.has(columnKey(c.header)));
       const matched = sheet.columns.filter((c) => {
+        if (natives.has(columnKey(c.header))) return false;
         const f = matchField(c, t.fields.filter((f) => !f.native));
         return f !== null;
       });
       if (matched.length) {
         score += 2 * matched.length;
         why.push(`${matched.length} column${matched.length === 1 ? "" : "s"} match its fields (${matched.map((c) => c.header).slice(0, 3).join(", ")})`);
+      }
+      if (ownColumns.length >= OWN_COLUMNS_OF_AN_EXPORT) {
+        score += ownColumns.length;
+        why.push(`${countOf(ownColumns.length, "column")} are its own (${ownColumns.map((c) => c.header).slice(0, 3).join(", ")})`);
       }
       const rowsHere = topCounts.get(i) ?? 0;
       if (sample.length && rowsHere) {

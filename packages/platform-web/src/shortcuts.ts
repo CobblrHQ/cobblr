@@ -113,6 +113,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     binds: ["ArrowRight"],
   },
   {
+    id: "open-place",
+    keys: ["→", "←"],
+    does: "Open the highlighted place to see what is inside it, or go back up a level",
+    where: "A location picker",
+    binds: ["ArrowRight", "ArrowLeft"],
+  },
+  {
     id: "another-choice",
     keys: [","],
     does: "Keep what you typed as one choice and start the next",
@@ -125,6 +132,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
     does: "Take off the last choice, when nothing is typed",
     where: "A box that takes a list of choices, such as a dropdown field's",
     binds: ["Backspace"],
+  },
+  {
+    id: "nudge",
+    keys: ["←", "↑", "→", "↓"],
+    does: "Move the focused rack, shelf, room or thing one grid step; with Shift, ten",
+    where: "A floor plan in Edit layout",
+    binds: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
   },
   {
     id: "turn",

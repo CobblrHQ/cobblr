@@ -303,6 +303,7 @@ async function realDeps(): Promise<WalkDeps> {
   const locks = await openLockSession("tenant-sweeps");
   const { meta } = await import("../db/meta.js");
   const { getTenantDb, releaseSweepPool } = await import("../db/tenant.js");
+  const { appliedBudget } = await import("../db/connection-budget.js");
   return {
     holdLock: locks.tryHold,
     done: locks.close,
@@ -329,7 +330,9 @@ async function realDeps(): Promise<WalkDeps> {
     },
     openDb: getTenantDb,
     releaseDb: releaseSweepPool,
-    concurrency: SWEEP_CONCURRENCY,
+    // The budget's sweep share (connection-budget.ts): four workspaces open
+    // beside people and the boot's own walk ran past the api's worst case.
+    concurrency: Math.min(SWEEP_CONCURRENCY, appliedBudget()?.sweepPools ?? SWEEP_CONCURRENCY),
   };
 }
 

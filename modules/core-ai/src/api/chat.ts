@@ -14,7 +14,7 @@ import { requireAPerson } from "@cobblr/platform-contract/person-door";
 import { Router, type Response } from "express";
 import { humanizeProviderError, type ProviderFailureDetail } from "./provider-error.js";
 import { providerReasonOf } from "@cobblr/platform-contract/provider-reason";
-import { missingActionArgs, undeclaredActionArgs, reconcileActionArgs, recordTargetInArgs } from "./action-args-guard.js";
+import { argsFromCallRecord, missingActionArgs, undeclaredActionArgs, reconcileActionArgs, recordTargetInArgs } from "./action-args-guard.js";
 import { groundingNudgeFor } from "./groundless-answer.js";
 import { destinationLookedUp, destinationNotThere, movedItselfNotEmptied, movedNotCreated } from "./move-not-create.js";
 import { outsideChoices } from "./field-choices.js";
@@ -852,6 +852,14 @@ class TurnError extends Error {
 
 /** What a failed call carried beside its message (the router's refusal:
  *  provider-reason.ts), for the sentence a person reads. */
+/** The provider by the name its connection page shows ("Google AI Studio
+ *  (free tier)"), never its id, for the sentence a person reads (#8738). */
+function namedProvider(detail: ProviderFailureDetail | undefined, msg: string): ProviderFailureDetail | undefined {
+  const id = detail?.provider ?? msg.replace(/^core-ai invoke failed:\s*/i, "").match(/^([a-z0-9-]+):/i)?.[1];
+  const label = id ? platform().ai.getProvider(id)?.label : undefined;
+  return label ? { ...(detail ?? {}), provider: label } : detail;
+}
+
 function failureDetailOf(err: unknown): ProviderFailureDetail | undefined {
   if (err instanceof TurnError) return err.detail;
   const e = err as { reason?: unknown; door?: unknown; retryAfterSec?: unknown; message?: string } | null;
@@ -1121,6 +1129,10 @@ async function answerTurn(
             a.entity_id = target.id;
           }
         }
+        // And the other way round: the call's record, for an action that
+        // takes its records as entity_kind and ids (platform:lend, #8738).
+        const fromRecord = argsFromCallRecord(schema, a.args, { kind: a.entity_kind, id: a.entity_id });
+        if (fromRecord) a.args = fromRecord;
         const missing = missingActionArgs(real ?? typed, schema, a.args);
         if (missing) return missing;
         const extra = undeclaredActionArgs(real ?? typed, schema, a.args);
@@ -1532,7 +1544,7 @@ chatRouter.post(
         // The blocking route (older clients, tests, the MCP server) gets the
         // same one sentence the turn path gives a person, never a provider's
         // JSON body; the raw text is in the log above and the AI call log.
-        const human = humanizeProviderError(msg, failureDetailOf(err));
+        const human = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
         // A plan worked out before the model was asked does not need it: the
         // reply is the refusal, and the card is still the plan.
         if (hit) {
@@ -1593,7 +1605,7 @@ chatRouter.post(
         if (!(err instanceof TurnError) || err.status === 502) console.error(`[core-ai] chat failed: ${msg}`);
         // The raw provider text is in the log above and in the AI call log;
         // the person gets one sentence, never a JSON body.
-        const human = humanizeProviderError(msg, failureDetailOf(err));
+        const human = humanizeProviderError(msg, namedProvider(failureDetailOf(err), msg));
         if (hit) {
           // The plan needed no model; the turn ends on it, with the refusal as
           // what the reply says.

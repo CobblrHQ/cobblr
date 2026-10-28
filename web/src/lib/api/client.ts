@@ -6,7 +6,7 @@ import { getStationTokenOverride, noteStationTokenRefused } from "../station-tok
 import { sessionChanged, sessionIdentityOf } from "../session-identity";
 import { getImpersonationToken } from "../impersonation";
 import { forgetDashboardCopies } from "../../dashboard/device-copy";
-import { UploadError, beginWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
+import { UploadError, beginWrite, isAWrite, describeUnreadableBody, outcomeOf, noteWorkspaceWrite, primedRead, productName, resetPrimedReads, sendUpload, sharedRead, uploadErrorOf, browserOffline, keepWaitingWrite, landedWrite, madeByAMutation, madeByAPerson, sendingFailed, sendingWaits, withWaitingWrites, networkFailureMessage, OFFLINE_SENTENCE, KEPT_OFFLINE, KEPT_SENTENCE } from "@cobblr/platform-web";
 import { approvalDedupeKey } from "@cobblr/platform-contract/blocked-action";
 import { EDITED_FROM_HEADER } from "@cobblr/platform-contract/edited-from";
 import type { BlockedAction } from "@cobblr/platform-contract/blocked-action";
@@ -401,8 +401,8 @@ async function sendRequest<T>(
     if (!down) setOfflineAsOf(null);
   }
   noteWorkspaceShape(path, res.headers.get("x-cobblr-workspace-shape"));
-  if (isMutating(method) && !impToken) landedWrite(method, path, headers["Authorization"], key);
-  if (res.ok && isMutating(method)) {
+  if (isAWrite(method) && !impToken) landedWrite(method, path, headers["Authorization"], key);
+  if (res.ok && isAWrite(method)) {
     noteWorkspaceWrite(path, res);
     noteAiAvailabilityWrite(path);
   }

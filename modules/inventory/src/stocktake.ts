@@ -16,6 +16,7 @@
 // A count ("half the cheddar") keeps the record and lowers its quantity
 // through the same stock door every other count uses, as a correction: it is
 // what is there, not a use.
+import { readRecordLoan, type RecordLoan } from "@cobblr/platform-contract/loan";
 import type { Kysely } from "kysely";
 import { ActionRefusal, platform } from "@cobblr/platform-contract";
 import { countOf } from "@cobblr/platform-contract/plural";
@@ -37,6 +38,7 @@ export interface StocktakeItem {
   /** What a scanner reads off it, so a scan in the sheet ticks this row. */
   barcode: string | null;
   created_at: string;
+  loan?: RecordLoan | null;
 }
 
 export interface StocktakePlan {
@@ -132,6 +134,7 @@ export async function scopeOf(orgId: string, rawScope: unknown): Promise<{ scope
       unit: r.unit,
       image_path: r.image_path,
       barcode: barcodeOf(r.metadata),
+      loan: readRecordLoan(r.metadata),
       created_at: new Date(r.created_at).toISOString(),
     })),
   };
@@ -180,7 +183,8 @@ export async function planStocktake(orgId: string, input: StocktakeInput): Promi
   const counted: StocktakePlan["counted"] = [];
   for (const item of items) {
     const n = counts.get(item.id);
-    if (n !== undefined) {
+    if (item.loan) kept.push(item);
+    else if (n !== undefined) {
       if (n === 0) gone.push(item);
       else if (n >= item.qty) kept.push(item);
       else counted.push({ ...item, before: item.qty, after: n });

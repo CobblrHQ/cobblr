@@ -363,10 +363,17 @@ listsRouter.patch(
     if (parsed.data.note !== undefined) patch.note = parsed.data.note;
     if (parsed.data.qty !== undefined) patch.qty = parsed.data.qty;
     // The custom fields MERGE into the live row (#3625).
-    if (parsed.data.metadata !== undefined) patch.metadata = platform().db.mergeJsonb("metadata", parsed.data.metadata as Record<string, unknown>) as never;
+    // Who bought a line is on the line, so a second shopper who ticks what
+    // someone else already bought is told, and the list shows the buyer (#8861).
+    const buyer = who ? { id: who.id, name: who.display_name || who.email || null } : null;
+    const keptBuyer = (before.metadata as { bought_by?: { id?: string; name?: string | null } } | null)?.bought_by;
+    const metaPatch: Record<string, unknown> = { ...(parsed.data.metadata ?? {}) };
+    if (parsed.data.checked === true && !before.checked) metaPatch.bought_by = buyer;
+    if (parsed.data.checked === false) metaPatch.bought_by = null;
+    if (Object.keys(metaPatch).length) patch.metadata = platform().db.mergeJsonb("metadata", metaPatch) as never;
     if (parsed.data.checked !== undefined) {
       patch.checked = parsed.data.checked;
-      patch.checked_at = parsed.data.checked ? new Date() : null;
+      patch.checked_at = parsed.data.checked ? (before.checked ? before.checked_at : new Date()) : null;
       // The amount bought is the line's amount from now on, so a shared list
       // reads "×3" on every phone, not only the one that said so.
       // Said as the line wrote it: "1 kg" stays "1 kg" when the amount is the
@@ -396,7 +403,20 @@ listsRouter.patch(
         ? update.where(eb => eb.or([eb("claimed_by", "is", null), eb("claimed_by", "=", who!.id)]))
         : update.where("claimed_by", "=", who!.id);
     }
-    const row = await update.returningAll().executeTakeFirst();
+    let row = await update.returningAll().executeTakeFirst();
+    // Never mind on a line nobody holds is already what was asked: it answers
+    // as done and changes nothing, so a stale screen or a retry is not an
+    // error. Only another shopper's claim refuses (#8803).
+    let claimNoop = false;
+    if (!row && changingClaim && parsed.data.claimed === false) {
+      const now = await db.selectFrom("lists_items").selectAll().where("id", "=", req.params.id!).executeTakeFirst();
+      if (now && !now.claimed_by) {
+        claimNoop = true;
+        const others = Object.keys(parsed.data).filter(k => k !== "claimed");
+        row = others.length ? await db.updateTable("lists_items").set(patch).where("id", "=", req.params.id!).returningAll().executeTakeFirst() : now;
+        if (!others.length) return void res.json({ ...now, claimed_by_me: false });
+      }
+    }
     if (!row) {
       if (changingClaim) return void res.status(409).json({ error: { code: "claim_conflict", message: "This item's claim has changed. Refresh the list before trying again." } });
       return void res.status(404).json({ error: { code: "not_found", message: "Item not found." } });
@@ -425,6 +445,9 @@ listsRouter.patch(
       // route answers (the row's inventory badge, the Groceries page). A
       // fire-and-forget emit let the answer beat the restock, the same shape
       // as the digifab cancel race (#2826). emit never rejects.
+      // A tick that states no amount (the assistant, the API) buys what the
+      // line says, as the phone's tick does (#8860).
+      const statedAmount = parsed.data.quantity ?? own?.value;
       await platform().events.emit("lists.item.checked", {
         orgId: ctx.org.id,
         listId: row.list_id,
@@ -434,11 +457,11 @@ listsRouter.patch(
         // `quantity`: how many the person said they got. An action whose
         // amount is a wire's fixed arg (adjust-stock's delta, record-event's
         // qty_delta) takes a stated quantity over it; see those handlers.
-        ...(parsed.data.checked && parsed.data.quantity !== undefined ? { quantity: parsed.data.quantity } : {}),
+        ...(parsed.data.checked && statedAmount !== undefined ? { quantity: statedAmount } : {}),
         // The unit it was written in, when the workspace knows it, so 1 kg
         // lands on a pantry item kept in g as 1000; a word it does not know
         // ("boxes") is a count and goes without (#7867).
-        ...(parsed.data.checked && parsed.data.quantity !== undefined && own?.unit && (await platform().units.resolve(ctx.org.id, own.unit).catch(() => null)) ? { unit: own.unit } : {}),
+        ...(parsed.data.checked && statedAmount !== undefined && own?.unit && (await platform().units.resolve(ctx.org.id, own.unit).catch(() => null)) ? { unit: own.unit } : {}),
         // Whatever a tick does to the record it counts once per line: a
         // mis-tap and a second tick is still one purchase (the wires' adjust
         // and record steps read these to refuse the repeat).
@@ -473,7 +496,7 @@ listsRouter.patch(
       const sourceRef = ((row.metadata as { source_ref?: { kind?: string; id?: string } } | null) ?? {}).source_ref;
       await platform().events.emit("lists.item.renamed", { orgId: ctx.org.id, listId: row.list_id, itemId: row.id, from: before.title, to: row.title, ...(sourceRef?.id ? { sourceRef } : {}) });
     }
-    if (parsed.data.claimed !== undefined) {
+    if (parsed.data.claimed !== undefined && !claimNoop) {
       void platform().events.emit("lists.item.claimed", {
         orgId: ctx.org.id,
         listId: row.list_id,
@@ -493,7 +516,8 @@ listsRouter.patch(
       diff: parsed.data as Record<string, unknown>,
       before,
     });
-    res.json({ ...row, claimed_by_me: !!row.claimed_by && row.claimed_by === sessionUser(req)?.id });
+    const alreadyBoughtBy = parsed.data.checked === true && before.checked && keptBuyer?.id && keptBuyer.id !== who?.id ? (keptBuyer.name ?? "someone") : undefined;
+    res.json({ ...row, claimed_by_me: !!row.claimed_by && row.claimed_by === sessionUser(req)?.id, ...(alreadyBoughtBy ? { already_bought_by: alreadyBoughtBy } : {}) });
   }),
 );
 

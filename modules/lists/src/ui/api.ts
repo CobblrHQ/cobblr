@@ -31,11 +31,13 @@ export interface ListItem {
   claimed_by_me?: boolean;
   claimed_by_name: string | null;
   claimed_at: string | null;
+  /** Set on the answer to a tick of a line someone else already bought (#8861). */
+  already_bought_by?: string;
   created_at: string;
   /** Set by the add-item wire when a line came from another entity (e.g. an
    *  inventory part that ran low). Drives the "from inventory" provenance badge
    *  and is what closes the buy→restock loop on check-off. */
-  metadata?: ({ source_ref?: { kind?: string; id?: string } } & Record<string, unknown>) | null;
+  metadata?: ({ source_ref?: { kind?: string; id?: string }; bought_by?: { id?: string; name?: string | null } | null } & Record<string, unknown>) | null;
   /** What checking this line off will do: the wires that fire on its source
    *  record, from the kernel. Absent on a line with no source, or once checked. */
   on_check?: CheckEffect[];
